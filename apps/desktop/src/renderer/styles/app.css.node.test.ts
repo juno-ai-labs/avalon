@@ -1573,11 +1573,23 @@ describe('option keycaps', () => {
 });
 
 describe('elicitation option hover', () => {
-  it('layers a reader-accent tint over the option instead of replacing its surface', () => {
+  it('layers the reader accent without the later generic brand fill or selected border', () => {
     const hover = rule('.app-shell .elicitation-option:hover');
+    const dividerColor = 'color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent)';
     expect(hover).toContain('background-image: linear-gradient(color-mix(in srgb, var(--av-sys-color-accent-tint) 50%, transparent) 0 100%);');
+    expect(hover).toContain('background-color: transparent;');
     expect(hover).not.toMatch(/(?:^|[;{\s])background:/u);
-    expect(hover).not.toContain('var(--hover-layer)');
+    expect(hover).not.toContain('var(--av-sys-color-brand-');
+    expect(hover).not.toContain('border-color:');
+    expect(rule('.app-shell .elicitation-option + .elicitation-option'))
+      .toContain(`border-top: .5px solid ${dividerColor};`);
+    expect(rule('.app-shell .elicitation-option.is-selected,\n.app-shell .elicitation-option.is-selected:hover'))
+      .toContain(`border-color: ${dividerColor};`);
+    expect(rule('.app-shell .elicitation-option:hover .elicitation-checkbox'))
+      .toContain('border-color: var(--av-sys-color-accent-strong);');
+    // These selectors tie in specificity, so selected must follow hover.
+    expect(stylesheet.indexOf('.app-shell .elicitation-option:hover .elicitation-checkbox'))
+      .toBeLessThan(stylesheet.indexOf('.app-shell .elicitation-option.is-selected .elicitation-checkbox'));
   });
 });
 
