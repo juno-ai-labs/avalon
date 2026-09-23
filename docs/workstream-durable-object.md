@@ -1826,6 +1826,26 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ## Changelog
 
+### 2026-09-22 — Project each Breakout's viewer marker to the Channel rail
+
+**What changed:** The Channel parent includes each visible Breakout's projected
+run state and viewer attention in its child directory. Child user effects advance
+the per-viewer child waterline, so the control socket updates a badge after a
+read or mention without waiting for another common-state change.
+
+**Why:** The Channel rail previously showed state for neither Main nor its
+Breakouts, while the Channel navigation drew a state dot over its icon. A badge
+on each conversation row identifies the conversation that needs attention, and
+the Channel navigation count includes Main as well as Breakouts.
+
+**Considered and rejected:** Fetching every Breakout's detail separately when
+opening the Channel would add cross-object reads to the navigation path. The
+parent already stores the child projections and serves their directory.
+
+**Consequences:** A child without a projection has no attention badge until its
+projection arrives. Every row uses the shared attention predicate and the same
+count badge as the other sidebars.
+
 ### 2026-09-22 — A provider callback can admit an ordinary member message
 
 **What changed:** Product request auth accepts a server-only
