@@ -2182,7 +2182,8 @@ describe("a member's message travels the whole pipeline", () => {
         elicitationId,
         input: { answer: "a" },
       });
-      expect(answered.status).toBe(404);
+      expect(answered.status).toBe(409);
+      expect(answered.body).toMatchObject({ error: "elicitation_cancelled" });
       // A direct canonical aside does not advance the model's transcript mark.
       expect(await runInDurableObject(stub, (_instance, state) =>
         state.storage.sql.exec<{ transcript_projected_through: number }>(
