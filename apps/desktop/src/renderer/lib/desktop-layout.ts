@@ -34,9 +34,10 @@ export function readArtifactPanel(key: string): SavedArtifactPanel | null {
 /** Save the first visible row's identity; list reordering then restores the row, not a pixel. */
 export function useSemanticScroll(
   ref: RefObject<HTMLElement | null>, key: string, rowSelector: string, ready: boolean,
-  onMissing?: () => void,
+  onMissing?: () => void, missingRevision?: unknown,
 ): void {
   const restored = useRef<string | null>(null);
+  const missingAttempt = useRef<{ key: string; saved: string; revision: unknown } | null>(null);
   useLayoutEffect(() => {
     if (!ready || restored.current === key) return;
     const container = ref.current;
@@ -46,7 +47,13 @@ export function useSemanticScroll(
     const row = [...container.querySelectorAll<HTMLElement>(rowSelector)]
       .find((candidate) => candidate.dataset.layoutId === saved);
     if (!row) {
-      if (onMissing) onMissing();
+      if (onMissing) {
+        const previous = missingAttempt.current;
+        if (previous?.key !== key || previous.saved !== saved || previous.revision !== missingRevision) {
+          missingAttempt.current = { key, saved, revision: missingRevision };
+          onMissing();
+        }
+      }
       else { restored.current = key; writeLayout(key, null); }
       return;
     }
@@ -56,14 +63,22 @@ export function useSemanticScroll(
   useLayoutEffect(() => {
     const container = ref.current;
     if (!container) return;
+    let frame: number | null = null;
     const save = (): void => {
       if (restored.current !== key) return;
       const top = container.getBoundingClientRect().top;
       const first = [...container.querySelectorAll<HTMLElement>(rowSelector)]
         .find((row) => row.getBoundingClientRect().bottom > top);
-      if (first?.dataset.layoutId) writeLayout(key, first.dataset.layoutId);
+      if (first?.dataset.layoutId && readLayout(key) !== first.dataset.layoutId) writeLayout(key, first.dataset.layoutId);
     };
-    container.addEventListener('scroll', save, { passive: true });
-    return () => container.removeEventListener('scroll', save);
+    const scheduleSave = (): void => {
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => { frame = null; save(); });
+    };
+    container.addEventListener('scroll', scheduleSave, { passive: true });
+    return () => {
+      container.removeEventListener('scroll', scheduleSave);
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
   }, [key, ready, ref, rowSelector]);
 }

@@ -5,9 +5,9 @@ import { layoutKey, readArtifactPanel, readLayout, useSemanticScroll, writeLayou
 
 const key = layoutKey('org', 'person', 'channels-scroll:space');
 
-function List({ ids }: { ids: string[] }): React.JSX.Element {
+function List({ ids, onMissing }: { ids: string[]; onMissing?: () => void }): React.JSX.Element {
   const ref = useRef<HTMLElement | null>(null);
-  useSemanticScroll(ref, key, '[data-layout-id]', true);
+  useSemanticScroll(ref, key, '[data-layout-id]', true, onMissing, ids);
   return <nav data-testid="scroll" ref={ref}>{ids.map((id) =>
     <div data-layout-id={id} key={id}>{id}</div>)}</nav>;
 }
@@ -15,9 +15,11 @@ function List({ ids }: { ids: string[] }): React.JSX.Element {
 beforeEach(() => {
   localStorage.clear();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 it('returns to the first visible row after the order changes', () => {
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1; });
   const first = render(<List ids={['a', 'b', 'c']} />);
   const rows = first.container.querySelectorAll<HTMLElement>('[data-layout-id]');
   vi.spyOn(first.container.querySelector('nav')!, 'getBoundingClientRect').mockReturnValue({ top: 100 } as DOMRect);
@@ -37,6 +39,18 @@ it('returns to the first visible row after the order changes', () => {
   } finally {
     HTMLElement.prototype.scrollIntoView = original;
   }
+});
+
+it('asks for a missing row only when the loaded directory changes', () => {
+  writeLayout(key, 'saved');
+  const onMissing = vi.fn();
+  const ids = ['first'];
+  const view = render(<List ids={ids} onMissing={onMissing} />);
+  expect(onMissing).toHaveBeenCalledTimes(1);
+  view.rerender(<List ids={ids} onMissing={onMissing} />);
+  expect(onMissing).toHaveBeenCalledTimes(1);
+  view.rerender(<List ids={['first', 'second']} onMissing={onMissing} />);
+  expect(onMissing).toHaveBeenCalledTimes(2);
 });
 
 it('ignores a malformed saved artifact panel', () => {

@@ -13,11 +13,13 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
   const workstreams = useWorkstreamsQuery();
   const spaces = useSpaceDirectories().active.data;
   const { session } = useAppSession();
-  const { state } = useWorkspaceSocket();
+  const { state, sidebarConnect } = useWorkspaceSocket();
   const routeState: unknown = useLocation().state;
   const savedRoute = routeState == null && session?.workspace && session.user
     ? readLayout(layoutKey(session.workspace.id, session.user.id, 'last-route')) : null;
-  const savedChannel = /^\/workstreams\/([^/?]+)(?:\?substream=([^&]+))?$/.exec(savedRoute ?? '');
+  const savedChannel = /^\/workstreams\/([^/?]+)$/.exec((savedRoute ?? '').split('?')[0]!);
+  const savedSpace = /^\/spaces\/([^/?]+)$/.exec((savedRoute ?? '').split('?')[0]!);
+  const savedBreakout = new URLSearchParams((savedRoute ?? '').split('?')[1] ?? '').get('substream');
   let savedChannelId: string | null = null;
   try { if (savedChannel) savedChannelId = decodeURIComponent(savedChannel[1]!); }
   catch { /* Ignore malformed local state. */ }
@@ -30,6 +32,11 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
     () => loaded?.filter((workstream) => !skipped.has(workstream.id)) ?? [],
     [loaded, skipped],
   );
+  let savedSpaceId: string | null = null;
+  try { if (savedSpace) savedSpaceId = decodeURIComponent(savedSpace[1]!); }
+  catch { /* Ignore malformed local state. */ }
+  const awaitingSpace = savedSpaceId !== null && !spaces && state !== 'unavailable'
+    && sidebarConnect?.spacesLive !== false;
   // A batch can take a whole loaded page — the day's work streams, say — while
   // older ones sit beyond the cursor. No candidate on the pages held is then
   // not an empty workspace; ask for the next page before deciding it is.
@@ -41,7 +48,8 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
   const needsMore = loaded !== undefined && workstreams.hasMore
     && (savedChannelId !== null
       ? !candidates.some((row) => row.id === savedChannelId)
-      : candidates.length === 0 && !/^\/spaces\//.test(savedRoute ?? ''));
+      : candidates.length === 0 && !awaitingSpace
+        && !spaces?.items.some((row) => row.id === savedSpaceId));
   const { fetchMore } = workstreams;
   useEffect(() => {
     if (needsMore) fetchMore();
@@ -59,14 +67,12 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
   // leave carries state (including an empty skip list) and uses recency instead.
   if (savedRoute) {
     if (savedChannelId !== null && candidates.some((row) => row.id === savedChannelId)) {
-      return <Navigate replace to={savedRoute} />;
+      return <Navigate replace state={savedBreakout ? { restoredBreakout: savedBreakout } : undefined}
+        to={`/workstreams/${encodeURIComponent(savedChannelId)}${savedBreakout ? `?substream=${encodeURIComponent(savedBreakout)}` : ''}`} />;
     }
-    const space = /^\/spaces\/([^/?]+)$/.exec(savedRoute);
-    if (space && session?.workspace?.accessClass !== 'guest') {
-      if (!spaces) return <LoadingState label="Opening spaces…" />;
-      let id: string | null = null;
-      try { id = decodeURIComponent(space[1]!); } catch { /* Ignore malformed local state. */ }
-      if (spaces.items.some((row) => row.id === id)) return <Navigate replace to={savedRoute} />;
+    if (savedSpaceId !== null && session?.workspace?.accessClass !== 'guest') {
+      if (awaitingSpace) return <LoadingState label="Opening spaces…" />;
+      if (spaces?.items.some((row) => row.id === savedSpaceId)) return <Navigate replace to={`/spaces/${encodeURIComponent(savedSpaceId)}`} />;
     }
   }
   return <Navigate replace to={first ? `/workstreams/${encodeURIComponent(first.id)}` : '/workstreams/new'} />;

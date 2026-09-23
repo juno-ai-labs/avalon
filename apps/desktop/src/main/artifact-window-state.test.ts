@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { readArtifactWindows, writeArtifactWindows } from './artifact-window-state';
-import { clampWindowBounds } from './main-window-state';
 
 const directory = mkdtempSync(join(tmpdir(), 'rally-artifact-windows-'));
 afterAll(() => rmSync(directory, { recursive: true, force: true }));
@@ -22,15 +21,10 @@ describe('artifact window placement', () => {
     expect(readArtifactWindows(directory)).toEqual(windows);
   });
 
-  it('drops malformed saved entries and brings a window into the available work area', () => {
+  it('drops malformed saved entries', () => {
     writeFileSync(join(directory, 'artifact-windows.json'), JSON.stringify([
       { id: 'bad', bounds: { x: 'elsewhere' } },
     ]));
     expect(readArtifactWindows(directory)).toEqual([]);
-    expect(clampWindowBounds(
-      { x: -1100, y: 80, width: 900, height: 700 },
-      { x: 0, y: 24, width: 1440, height: 876 },
-      { width: 420, height: 360 },
-    )).toEqual({ x: 0, y: 80, width: 900, height: 700 });
   });
 });

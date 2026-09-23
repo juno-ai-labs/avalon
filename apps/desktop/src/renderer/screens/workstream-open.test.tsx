@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
@@ -133,9 +133,10 @@ function recoveryBoot(overrides: Partial<WorkstreamBoot> = {}): WorkstreamBoot {
 }
 
 let navigateInTest: ReturnType<typeof useNavigate>;
-function NavigationProbe(): null { navigateInTest = useNavigate(); return null; }
+let locationInTest: ReturnType<typeof useLocation>;
+function NavigationProbe(): null { navigateInTest = useNavigate(); locationInTest = useLocation(); return null; }
 
-function renderScreen(seed?: (queryClient: QueryClient) => void, substreamId?: string): QueryClient {
+function renderScreen(seed?: (queryClient: QueryClient) => void, substreamId?: string, restored = false): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
@@ -143,7 +144,9 @@ function renderScreen(seed?: (queryClient: QueryClient) => void, substreamId?: s
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={[`/workstreams/${workstreamId}${substreamId ? `?substream=${substreamId}` : ''}`]}>
+        <MemoryRouter initialEntries={[{ pathname: `/workstreams/${workstreamId}`,
+          search: substreamId ? `?substream=${substreamId}` : '',
+          state: restored ? { restoredBreakout: substreamId } : null }]}>
           <NavigationProbe />
           <Routes>
             <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
@@ -181,6 +184,17 @@ describe('socket-first channel open', () => {
       state: 'connecting',
       workspaceSocketState: 'connecting',
     });
+  });
+
+  it('returns a restored Breakout to Main when the loaded child directory no longer contains it', async () => {
+    const missing = '00000000-0000-7000-8000-00000000066a';
+    const parent = recoveryBoot();
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      cache.setQueryData(['ordered-transcript', workstreamId], parent.transcript);
+      cache.setQueryData(['workstream-children', workstreamId], { privateChildren: [] });
+    }, missing, true);
+    await waitFor(() => expect(locationInTest.search).toBe(''));
   });
 
   it('uses only the selected guest conversation roster despite a cached organization directory', async () => {

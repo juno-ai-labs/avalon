@@ -188,8 +188,6 @@ const bridge: RallyDesktopBridge = {
   forgetRestorableArtifactWindow: (id) => ipcRenderer.invoke('artifact:forget-window', id) as Promise<void>,
   getPoppedOutArtifactVersions: () =>
     ipcRenderer.invoke('artifact:popped-out-versions') as Promise<Record<string, number>>,
-  closePoppedOutArtifacts: (resourceIds) =>
-    ipcRenderer.invoke('artifact:close-pop-outs', resourceIds) as Promise<void>,
   updatePoppedOutArtifact: (request) =>
     ipcRenderer.invoke('artifact:update-pop-out', request) as Promise<boolean>,
   openSidekicks: (target) => ipcRenderer.invoke('system:open-sidekicks', target) as Promise<void>,
