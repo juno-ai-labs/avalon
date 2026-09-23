@@ -24,8 +24,8 @@ choice. Importing a prior assistant answer never claims Rally executed it.
 
 ## How it works
 
-The sidebar's single plus menu offers **Start New Channel…**, **Import Channel
-from Claude or ChatGPT…**, and **Create New Space…**. The import dialog requires
+The sidebar's single plus menu offers **Start New Channel**, **Import Channel
+from Claude or ChatGPT**, and **Create New Space**. The import dialog requires
 a Space, a Channel name, and a source. Sources are a shared conversation URL,
 Claude chats and Cowork tasks found on this Mac, or one local Claude Code session
 JSONL file. **Create** imports one selected conversation in one action. Only Spaces

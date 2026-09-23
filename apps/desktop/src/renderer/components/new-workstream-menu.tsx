@@ -196,9 +196,9 @@ export function NewWorkstreamMenu({
       </Tip>
       <DropdownMenu.Portal>
         <DropdownMenu.Content className="menu-content new-workstream-menu" align="start" sideOffset={6}>
-          <DropdownMenu.Item className="menu-item" disabled={selectableSpaces.length === 0} onSelect={() => open('channel')}>Start New Channel…</DropdownMenu.Item>
-          <DropdownMenu.Item className="menu-item" disabled={selectableSpaces.length === 0} onSelect={() => open('import')}>Import Channel from Claude or ChatGPT…</DropdownMenu.Item>
-          <DropdownMenu.Item className="menu-item" disabled={!canCreateSpace} onSelect={() => open('space')}>Create New Space…</DropdownMenu.Item>
+          <DropdownMenu.Item className="menu-item" disabled={selectableSpaces.length === 0} onSelect={() => open('channel')}>Start New Channel</DropdownMenu.Item>
+          <DropdownMenu.Item className="menu-item" disabled={selectableSpaces.length === 0} onSelect={() => open('import')}>Import Channel from Claude or ChatGPT</DropdownMenu.Item>
+          <DropdownMenu.Item className="menu-item" disabled={!canCreateSpace} onSelect={() => open('space')}>Create New Space</DropdownMenu.Item>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
