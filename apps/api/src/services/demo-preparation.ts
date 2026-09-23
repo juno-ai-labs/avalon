@@ -26,6 +26,7 @@
 import {
   DEMO_PREPARATION_PHASES,
   DemoOperationStatusSchema,
+  type DemoCastEntry,
   asWorkspaceId,
   type DemoOperationPhaseStatus,
   type DemoOperationStatus,
@@ -42,7 +43,7 @@ import { uuidV7 } from "../lib/uuid-v7";
 import { logInfo, logWarn } from "../observability/logger";
 import { copyTemplateConnections } from "./demo-connection-copy";
 import { DEMO_PRESENTER_ROLE, DemoPackSchema, PLACEHOLDER_DEMO_PACK, demoCastRoles, type DemoPack } from "./demo-pack";
-import { DEMO_CAST_EMAIL_DOMAIN, assertDemoCastNamesDistinct, listDemoCastCandidates, readDemoCast } from "./demo-cast";
+import { DEMO_CAST_EMAIL_DOMAIN, assertDemoCastNamesDistinct, listDemoCastCandidates, mintDemoPersona, nameDemoPersonas, readDemoCast } from "./demo-cast";
 import { checkDemoReadiness, demoReadinessManifest } from "./demo-readiness";
 import {
   applyDemoSeedAction,
@@ -406,7 +407,7 @@ async function launchAttempt(env: Env, operationId: string, attempt: number): Pr
  */
 export async function startDemoOperation(
   env: Env,
-  input: { operationId: string; companyName: string; presenterUserId: string; cast: Record<string, string> },
+  input: { operationId: string; companyName: string; presenterUserId: string; cast: Record<string, DemoCastEntry> },
   operator: { operatorId: string | null } = { operatorId: null },
 ): Promise<DemoOperationStatus> {
   requireDemoRegion(env);
@@ -422,11 +423,8 @@ export async function startDemoOperation(
   if (started) return started;
   const pack = activeDemoPack();
   const castRoles = demoCastRoles(pack.roles);
-  const bound: Record<string, string> = {};
   for (const role of castRoles) {
-    const userId = input.cast[role];
-    if (!userId) throw new ApiError(422, "demo_pack_role_unbound", `Nobody is cast as "${role}"`);
-    bound[role] = userId;
+    if (!input.cast[role]) throw new ApiError(422, "demo_pack_role_unbound", `Nobody is cast as "${role}"`);
   }
   for (const role of Object.keys(input.cast)) {
     if (role === DEMO_PRESENTER_ROLE) {
@@ -437,27 +435,39 @@ export async function startDemoOperation(
     if (!castRoles.includes(role)) throw new ApiError(422, "demo_pack_role_unknown", `The pack has no role "${role}"`);
   }
   const presenter = await assertTemplatePresenter(env, input.presenterUserId);
-  // Every cast id is a colleague, read here so the names below are the
+  const presenterRole = pack.roles.includes(DEMO_PRESENTER_ROLE) ? DEMO_PRESENTER_ROLE : null;
+  const chosen: Record<string, string> = {};
+  const typed: Record<string, string> = {};
+  for (const role of castRoles) {
+    const entry = input.cast[role]!;
+    if (typeof entry === "string") chosen[role] = entry;
+    else typed[role] = entry.name;
+  }
+  // Every chosen id is a colleague, read here so the names below are the
   // directory's rather than the request's.
-  const people = await readDemoCast(env, {
-    cast: bound,
-    presenterRole: pack.roles.includes(DEMO_PRESENTER_ROLE) ? DEMO_PRESENTER_ROLE : null,
-  });
-  const cast = {
-    ...(pack.roles.includes(DEMO_PRESENTER_ROLE) ? { [DEMO_PRESENTER_ROLE]: input.presenterUserId } : {}),
-    ...bound,
-  };
+  const people = await readDemoCast(env, { cast: chosen, presenterRole });
   // One person cannot play two parts: the seeded conversation has them
   // answering themselves, and the readiness barrier reads one directory row
   // for two roles.
-  const seated = Object.values(cast);
-  if (new Set(seated).size !== seated.length) {
+  const picked = [...(presenterRole ? [input.presenterUserId] : []), ...Object.values(chosen)];
+  if (new Set(picked).size !== picked.length) {
     throw new ApiError(422, "demo_cast_duplicate", "Each pack role must be played by a different person");
   }
   assertDemoCastNamesDistinct([
     ...Object.values(people).map((person) => person.name),
-    ...(pack.roles.includes(DEMO_PRESENTER_ROLE) ? [presenter.name] : []),
+    ...Object.values(typed),
+    ...(presenterRole ? [presenter.name] : []),
   ]);
+  // A typed name is played by a persona minted for this operation and role,
+  // only once every check has passed.
+  const bound: Record<string, string> = { ...chosen };
+  for (const [role, name] of Object.entries(typed)) {
+    bound[role] = (await mintDemoPersona(env, { operationId: input.operationId, role, name })).userId;
+  }
+  const cast = {
+    ...(presenterRole ? { [presenterRole]: input.presenterUserId } : {}),
+    ...bound,
+  };
   const at = nowIso();
   const inserted = await env.DB.prepare(
     `INSERT INTO demo_operations
@@ -475,6 +485,7 @@ export async function startDemoOperation(
   // millisecond both launch, and the loser's duplicate instance marked the
   // operation failed under a driver that was running fine.
   if (inserted.meta.changes === 1) {
+    await nameDemoPersonas(env, input.operationId, typed);
     await launchAttempt(env, input.operationId, 1);
     logInfo(env, "demo_operation_started", {
       operation_id: input.operationId,
@@ -809,6 +820,7 @@ async function phaseBody(
       const presenterMember = await assertTemplatePresenter(env, record.presenter_user_id);
       const people = await readDemoCast(env, {
         cast,
+        operationId: record.operation_id,
         presenterRole: pack.roles.includes(DEMO_PRESENTER_ROLE) ? DEMO_PRESENTER_ROLE : null,
       });
       // Against the directory as it reads now, not as the start request found
