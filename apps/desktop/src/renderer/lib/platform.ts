@@ -528,14 +528,6 @@ const browserBridge: RallyDesktopBridge = {
     }
     return versions;
   },
-  async closePoppedOutArtifacts(resourceIds) {
-    const closing = new Set(resourceIds);
-    for (const [opened, artifact] of browserArtifactWindows) {
-      if (!closing.has(artifact.resourceId)) continue;
-      browserArtifactWindows.delete(opened);
-      if (!opened.closed) opened.close();
-    }
-  },
   async updatePoppedOutArtifact(request) {
     const opened = [...browserArtifactWindows.entries()]
       .filter(([candidate, artifact]) => !candidate.closed

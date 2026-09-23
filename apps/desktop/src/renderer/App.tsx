@@ -2,7 +2,6 @@ import { AppErrorBoundary } from "@rally/ui/components/app-error-boundary";
 import { createQueryClient } from "./lib/query-client";
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { Region } from "@rally/contracts/regions";
-import { SITE_MANIFEST_MIME_TYPE } from '@rally/contracts';
 import { QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { Cable, RefreshCcw } from 'lucide-react';
 import { type PropsWithChildren, useEffect, useRef, useState } from 'react';
@@ -18,6 +17,7 @@ import { localCacheScope } from './lib/local-cache';
 import { FaviconApiProvider } from './lib/favicon-api';
 import { LocalCacheScopeProvider } from './lib/local-cache-scope';
 import { desktopBridge } from './lib/platform';
+import { restorePoppedOutArtifacts } from './lib/popped-out-artifacts';
 import { useWorkspaceQuery } from './lib/use-workspace';
 import {
   abandonPendingWorkstreamFeedOpen,
@@ -274,41 +274,15 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
   const { api } = useAppSession();
   useEffect(() => {
     if (!api || new URLSearchParams(window.location.search).has('surface')) return;
-    let cancelled = false;
-    void desktopBridge().getRestorableArtifactWindows().then(async (windows) => {
-      await Promise.all(windows.map(async (saved) => {
-        if (cancelled) return;
-        try {
-          const current = (await api.getResourceVersions(saved.resourceId))[0];
-          if ((current?.mimeType ?? saved.mimeType) === SITE_MANIFEST_MIME_TYPE
-            || (!current?.mimeType && saved.kind === 'site')) {
-            const access = await api.openArtifact(saved.resourceId);
-            if (cancelled) return;
-            await desktopBridge().popOutArtifact({
-              kind: 'site', restoreId: saved.id, resourceId: saved.resourceId,
-              version: current?.version ?? saved.version,
-              title: current?.title ?? saved.title,
-              artifactId: access.artifactId, url: access.openUrl,
-            });
-          } else {
-            const content = await api.getResourcePreviewContent(saved.resourceId);
-            if (cancelled) return;
-            await desktopBridge().popOutArtifact({
-              kind: 'generated', restoreId: saved.id, resourceId: saved.resourceId,
-              version: current?.version ?? saved.version,
-              title: current?.title ?? saved.title,
-              content: new Uint8Array(await content.arrayBuffer()),
-              mimeType: content.type || current?.mimeType || saved.mimeType || 'text/plain',
-            });
-          }
-        } catch (error) {
-          if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
-            await desktopBridge().forgetRestorableArtifactWindow(saved.id);
-          }
-        }
-      }));
+    const controller = new AbortController();
+    void restorePoppedOutArtifacts({
+      bridge: desktopBridge(),
+      getResourceVersions: (id) => api.getResourceVersions(id),
+      loadResourceContent: (id, signal) => api.getResourcePreviewContent(id, signal),
+      openSiteArtifact: (id) => api.openArtifact(id),
+      signal: controller.signal,
     }).catch(() => undefined);
-    return () => { cancelled = true; };
+    return () => controller.abort();
   }, [api, workspace.id]);
   const settingsSurface = new URLSearchParams(window.location.search).get('surface') === 'settings';
   if (settingsSurface) {

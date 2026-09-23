@@ -488,8 +488,6 @@ export interface RallyDesktopBridge {
   forgetRestorableArtifactWindow: (id: string) => Promise<void>;
   /** Versions currently shown by detached artifact windows, keyed by resource. */
   getPoppedOutArtifactVersions: () => Promise<Record<string, number>>;
-  /** Close detached windows whose owning conversation is leaving the renderer. */
-  closePoppedOutArtifacts: (resourceIds: string[]) => Promise<void>;
   /** Replace one detached window; resolves true while another stale window remains. */
   updatePoppedOutArtifact: (request: DesktopArtifactWindowRequest) => Promise<boolean>;
   /**

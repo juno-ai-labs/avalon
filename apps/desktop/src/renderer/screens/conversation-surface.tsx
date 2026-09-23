@@ -2274,9 +2274,9 @@ export function ConversationSurface({
     // A failed owned read is not a pending one: the attachments answered, and
     // hiding them because the other half failed takes down a list that worked.
     // The error still travels beside the rows that did arrive.
-    owned: readOwnedSidekickDetails ? ownedSidekicks.data ?? [] : [],
-    attached: attachedSidekicks.data ?? [],
-    recommended: recommendedSidekicks.data ?? [],
+    owned: readOwnedSidekickDetails ? ownedSidekicks.data ?? (ownedSidekicks.isError ? [] : undefined) : [],
+    attached: attachedSidekicks.data ?? (attachedSidekicks.isError ? [] : undefined),
+    recommended: recommendedSidekicks.data ?? (recommendedSidekicks.isError ? [] : undefined),
     ...(detail.participants.some((person) => person.id === session?.user.id)
       ? { onRemoveAttachment: (sidekickId: string) => removeSidekick.mutate({ sidekickId, recommendation: false, workstreamId: id!, substreamId }) }
       : {}),

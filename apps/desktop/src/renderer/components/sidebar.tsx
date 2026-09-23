@@ -1345,7 +1345,8 @@ export function Sidebar({
   useSemanticScroll(scrollRef,
     layoutKey(workspace.id, workspace.currentUser.id, `channels-scroll:${selectedSpaceId ?? 'all'}`),
     '[data-workstream-id]', !loading,
-    hasMoreWorkstreams ? () => { if (!loadingMoreWorkstreams) onLoadMoreWorkstreams?.(); } : undefined);
+    hasMoreWorkstreams ? () => { if (!loadingMoreWorkstreams) onLoadMoreWorkstreams?.(); } : undefined,
+    workstreams);
   const revealedDeepLinkRevision = useRef<number | null>(null);
   // The search row — and, in the rail, the New work stream row under it — sit
   // above the scroll box rather than in it, so search is at the top of the

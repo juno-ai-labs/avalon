@@ -19,20 +19,28 @@ the device remembers only the view the person chose.
 
 The renderer keeps rail widths, collapsed state, and first visible Space or
 Channel row in local storage. The row key is an ID, so a reordered directory
-opens at the same object instead of yesterday's pixel offset. Channel position
+opens at the same object instead of yesterday's pixel offset. Scroll events are
+coalesced into one layout read per animation frame. A missing saved Channel row
+asks for the next directory page once per loaded list revision, so a failed
+page does not start a retry loop. Channel position
 is scoped to the selected Space. The selected artifact panel is scoped to a
 Channel and Breakout address; its resource is looked up in the freshly loaded
 conversation before the panel is drawn.
 
-The shell records only Space and Channel routes, including a Breakout query.
+The shell records only Space and Channel routes, including a Breakout query; it
+omits transient search-result turn and sequence parameters.
 The root landing checks the saved target against the current directory before
-opening it. Explicit departures carry route state and keep their existing
+opening it. A saved Breakout is checked against the Channel's child directory
+before it remains selected. Explicit departures carry route state and keep their existing
 recency-based landing. A missing saved target falls back to that landing.
 
 Each detached artifact window has a local main-process record with resource
 identity, version, title, normal bounds, and display ID. Moving or resizing
-updates it; closing the window removes it; signing out closes the windows and
-clears their records; application quit preserves them. On
+updates the in-memory record, while closing or quitting writes its last
+placement. Closing the window removes it; signing out forcibly closes the
+windows and clears their records. Switching Organizations closes the old
+windows but retains their placements for a later return. Application quit
+preserves them. On
 the next signed-in launch the renderer gets the records for that person and
 Organization, fetches the current version, and obtains fresh authorized bytes
 or a fresh single-use site URL. Main restores the window on its former display
@@ -92,4 +100,7 @@ Stable row and resource identities let the app restore against current authority
 
 **Consequences:** Restoration may wait for directory or resource authorization.
 New layout state should use the same device scope and leave resource validity
-to the API rather than treating a saved identifier as proof of access.
+to the API rather than treating a saved identifier as proof of access. Review
+found that continuous native move events must not synchronously write the
+registry, and switching Organizations must shut the former Organization's
+windows before the new session is shown.
