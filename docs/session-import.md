@@ -75,6 +75,11 @@ file paths and session IDs never appear in the picker.
 The main process reads only that selected transcript for import. A JSONL file
 picker remains available when Claude Code discovery misses a session. A public
 share URL identifies one conversation.
+The update dialog resolves the Channel's recorded source identity automatically
+and shows its title as read-only text. It offers no conversation dropdown:
+another conversation would fail the source-identity check. If the original
+Claude Code transcript is missing from local discovery, the person can choose
+its file; the same identity check applies.
 The Claude Code adapter
 follows the active JSONL parent chain, keeps visible user and assistant text,
 combines consecutive assistant fragments, and omits tool calls, tool results,
@@ -264,6 +269,8 @@ Cowork requires a local JSONL transcript. It refreshes when Rally regains focus,
 shortens long menu labels, and omits internal IDs and duplicate title text. The
 account-export choice was removed from creation and update. A Channel records source message
 IDs and revisions in its own SQLite transaction and offers an explicit update.
+The update dialog matches that recorded source automatically and displays its
+title without a conversation selector.
 New or revised source turns append after any Rally turns, with replay receipts
 and a Bind history transition for imported assistant replies.
 
@@ -271,6 +278,8 @@ and a Bind history transition for imported assistant replies.
 while a cached title without messages led to a selection that could never import.
 Showing an export file beside a selected local chat also made the update dialog
 look as though both inputs were required.
+Offering other conversations in the update dialog implied they could replace
+the original source, even though the Channel rejects a different source.
 Source sessions can also continue after a Rally Channel has received its own
 messages; comparing against the Channel tail would duplicate or reject valid
 source updates. Selecting one conversation and keeping a separate source
