@@ -402,6 +402,17 @@ describe("a demo preparation operation", () => {
     expect(await row(env, OPERATION_ID)).toMatchObject({ status: "running", attempt: 2 });
   });
 
+  it("refuses a resumed later phase when deployment changed the pack", async () => {
+    const { env } = fixture();
+    await startDemoOperation(env, request());
+    await runDemoPreparationPhase(env, OPERATION_ID, "checking_template", { attempt: 1 });
+    await env.DB.prepare("UPDATE demo_operations SET pack_version = 'previous-pack' WHERE operation_id = ?")
+      .bind(OPERATION_ID).run();
+    await expect(runDemoPreparationPhase(env, OPERATION_ID, "seeding_conversations", { attempt: 1 }))
+      .rejects.toMatchObject({ code: "demo_pack_changed" });
+    expect(await row(env, OPERATION_ID)).toMatchObject({ status: "failed", error_code: "demo_pack_changed" });
+  });
+
   it("runs the template check against the real rows and fails the operation on a presenter the template lost", async () => {
     const { env } = fixture();
     await startDemoOperation(env, request());
@@ -603,7 +614,7 @@ describe("the operator routes", () => {
     expect(body.pack.roles).toEqual(["presenter", "priya", "marcus", "dana"]);
     expect(body.pack.presenterRole).toBe("presenter");
     // Each part is labelled, so the form's dropdowns say which one they are.
-    expect(body.pack.roleLabels).toEqual({ priya: "Product", marcus: "Sales", dana: "Legal" });
+    expect(body.pack.roleLabels).toEqual({ priya: "Solutions engineer / IT", marcus: "Sales lead / business owner", dana: "Manager / finance approver" });
     // The presenter is chosen from the template's active members alone.
     expect(body.members.map((member) => member.userId)).toEqual([PRESENTER_ID]);
     // The rest are cast from the company's directory: everyone on its domain

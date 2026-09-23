@@ -803,12 +803,12 @@ async function phaseBody(
   options: { attempt: number; deadlineAt?: number },
 ): Promise<DemoPhaseOutcome> {
   const pack = activeDemoPack();
+  if (record.pack_version !== pack.version) {
+    throw new ApiError(409, "demo_pack_changed", `The pack in service is ${pack.version}, not ${record.pack_version}`);
+  }
   const cast = castOf(record);
   switch (phase) {
     case "checking_template": {
-      if (record.pack_version !== pack.version) {
-        throw new ApiError(409, "demo_pack_changed", `The pack in service is ${pack.version}, not ${record.pack_version}`);
-      }
       const template = await env.DB.prepare(
         `SELECT id FROM workspaces WHERE id = ? AND region = ? AND abandoned_at IS NULL`,
       ).bind(DEMO_TEMPLATE_WORKSPACE_ID, env.AVALON_REGION).first<{ id: string }>();

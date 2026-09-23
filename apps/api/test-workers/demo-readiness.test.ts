@@ -18,10 +18,14 @@ import { env } from "cloudflare:workers";
 import { reset } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { asUserId, asWorkstreamId } from "@rally/contracts";
+import { DemoPackSchema, PLACEHOLDER_DEMO_PACK } from "../src/services/demo-pack";
+import { SpaceService } from "../src/services/space-service";
+
 import type { ParentEffectEnvelope } from "@rally/contracts/conversation-effects";
 
 import { demoReadinessManifest, checkDemoReadiness } from "../src/services/demo-readiness";
-import { demoSeedReceipts } from "../src/services/demo-seeder";
+import { demoSeedReceipts, demoSeedSpaceId, openDemoSeedSession } from "../src/services/demo-seeder";
 import {
   consumeEffectBodies,
   deliverChildEffects,
@@ -30,6 +34,9 @@ import {
 } from "./helpers/conversation-effects";
 import {
   DEMO_OPERATION_ID,
+  DEMO_PRESENTER_ID,
+  DEMO_PRIYA_ID,
+  DEMO_MARCUS_ID,
   DEMO_SIDEKICK_PACK,
   DEMO_TWO_ROOM_PACK,
   DEMO_WORKSPACE_ID,
@@ -88,6 +95,57 @@ async function deliverDirectoryEffects(workstreamId: string): Promise<number> {
 }
 
 describe("the readiness barrier", () => {
+  it("plays the shipped pack and rejects wrong Space placement and state until repaired", async () => {
+    const danaId = asUserId("00000000-0000-7000-8000-00000000d5a7");
+    await env.DB.prepare(`INSERT INTO users (id, email, name, timezone, created_at)
+      VALUES (?, 'dana@example.com', 'Dana Park', 'UTC', '2026-01-01T00:00:00.000Z')`).bind(danaId).run();
+    await env.DB.prepare(`INSERT INTO workspace_members (workspace_id, user_id, status, role)
+      VALUES (?, ?, 'active', 'member')`).bind(DEMO_WORKSPACE_ID, danaId).run();
+    const pack = DemoPackSchema.parse(PLACEHOLDER_DEMO_PACK);
+    const seed = await openDemoSeedSession(demoSeedEnv(), {
+      operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, pack,
+      roles: { presenter: DEMO_PRESENTER_ID, priya: DEMO_PRIYA_ID, marcus: DEMO_MARCUS_ID, dana: danaId },
+    });
+    for (const action of seed.actions) await playDemoAction(seed, action);
+    const receipts = await demoSeedReceipts(env.DB, DEMO_OPERATION_ID);
+    expect(receipts).toHaveLength(pack.steps.length);
+    const manifest = demoReadinessManifest(pack, seed.cast, receipts);
+    for (const receipt of receipts.filter((item) => item.kind === "create_substream")) {
+      await deliverChildEffects(env, demoRoomStub(receipt.workstreamId!, receipt.substreamId!));
+    }
+    for (const room of manifest.views[0]!.rooms) await deliverDirectoryEffects(room.workstreamId);
+    const published = receipts.find((receipt) => receipt.kind === "sidekick")!;
+    await deliverChildEffects(env, demoRunStub(published.sidekickId!, published.sidekickRunId!));
+    const sidekick = parentStubFor(env, "global", {
+      workspaceId: DEMO_WORKSPACE_ID, parentKind: "automation", parentId: published.sidekickId!,
+    });
+    for (const envelope of await pendingParentEffects(sidekick)) {
+      if (envelope.effect.kind.startsWith("directory_")) {
+        expect((await consumeEffectBodies(env, [envelope])).retried).toBe(0);
+      }
+    }
+    const check = () => checkDemoReadiness(demoSeedEnv(), {
+      operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest,
+    });
+    expect((await check()).gaps).toEqual([]);
+    const service = new SpaceService(demoSeedEnv(), seed.auth.get(DEMO_MARCUS_ID)!);
+    const acmeId = await demoSeedSpaceId(DEMO_OPERATION_ID, "acme");
+    const proposalId = asWorkstreamId(receipts.find((receipt) => receipt.actionId === "proposal-open")!.workstreamId!);
+    const general = await service.ensureGeneral();
+    await service.addChannel(general.id, proposalId);
+    await service.removeChannel(acmeId, proposalId);
+    expect((await check()).gaps).toEqual(expect.arrayContaining([
+      expect.objectContaining({ room: "acme-proposal", code: "space_membership" }),
+    ]));
+    await service.addChannel(acmeId, proposalId);
+    await service.removeChannel(general.id, proposalId);
+    await service.updatePresentation(acmeId, { name: "Wrong account", iconKey: "handshake", colorKey: "blue" });
+    expect((await check()).gaps.filter((gap) => gap.code === "space_state").map((gap) => gap.room).sort())
+      .toEqual(["acme-proposal", "acme-review"]);
+    await service.updatePresentation(acmeId, { name: "Customer: Acme", iconKey: "handshake", colorKey: "blue" });
+    expect(await check()).toMatchObject({ ready: true, gaps: [] });
+  }, 90_000);
+
   it("waits for the presenter's projection and is Ready only once the effects have landed", async () => {
     const seed = await openDemoTestSession(DEMO_TWO_ROOM_PACK);
     for (const action of seed.actions) await playDemoAction(seed, action);
