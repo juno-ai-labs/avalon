@@ -62,8 +62,8 @@ for both Cowork and Claude Code because the shared event provider does not
 record which desktop surface produced the transcript. Local Claude Code sessions write
 JSONL under `~/.claude/projects/<project>/`. The Claude app also shows cloud
 Code sessions; they may have no matching local JSONL file, and this picker does
-not import them. The import dialog no longer offers an account-export source;
-the backend decoder and update dialog still accept a previously imported export.
+not import them. The import and update dialogs use selected local Claude chats;
+the backend decoder still accepts account exports from programmatic callers.
 The desktop lists local Claude Code session files on demand under the configured
 Claude Code data directory. The person chooses one conversation from a dropdown;
 menu labels show recognizable titles, shortening long ones through the middle
@@ -262,13 +262,15 @@ Code sessions with recognizable titles, then reads only the selected transcript.
 The Claude chat picker requires a complete IndexedDB or HTTP cache snapshot;
 Cowork requires a local JSONL transcript. It refreshes when Rally regains focus,
 shortens long menu labels, and omits internal IDs and duplicate title text. The
-account-export choice was removed from creation. A Channel records source message
+account-export choice was removed from creation and update. A Channel records source message
 IDs and revisions in its own SQLite transaction and offers an explicit update.
 New or revised source turns append after any Rally turns, with replay receipts
 and a Bind history transition for imported assistant replies.
 
 **Why:** A file picker missed the chats and tasks people recognize in Claude,
 while a cached title without messages led to a selection that could never import.
+Showing an export file beside a selected local chat also made the update dialog
+look as though both inputs were required.
 Source sessions can also continue after a Rally Channel has received its own
 messages; comparing against the Channel tail would duplicate or reject valid
 source updates. Selecting one conversation and keeping a separate source
@@ -280,9 +282,10 @@ inspectable, user-selected sources; the Claude Code JSONL file picker remains a
 fallback when discovery misses a session.
 
 **Consequences:** Claude's undocumented cache remains an opportunistic source,
-so a title alone never qualifies for the picker. Existing export-backed Channels
-remain updateable and the export decoder remains available to programmatic
-callers. The source's historical branch is append-only in Rally: deleting or
+so a title alone never qualifies for the picker. An existing export-backed Channel
+can update through the dialog when the same conversation is available locally;
+the export decoder remains available to programmatic callers. The source's
+historical branch is append-only in Rally: deleting or
 reordering prior source messages requires a new Channel, and a revised message
 is marked as superseding the earlier turn. Cloud Code sessions without a local
 file cannot be selected from the local picker.

@@ -3,8 +3,7 @@ import type { SessionImportPreview } from '@rally/contracts';
 import type { RallyApi } from '../lib/api';
 import { desktopBridge } from '../lib/platform';
 import { Button, InlineError, Modal } from './primitives';
-import { claudeExportRecords } from './new-workstream-menu';
-import { claudeCodeSessionOption, claudeExportOption } from './session-import-picker-labels';
+import { claudeCodeSessionOption } from './session-import-picker-labels';
 
 export interface ImportedSource {
   provider: 'chatgpt' | 'claude' | 'claude_code';
@@ -21,10 +20,9 @@ export function SessionImportUpdateDialog({ api, open, onClose, source, workstre
 }): React.JSX.Element {
   const [sessions, setSessions] = useState<Array<{ id: string; title: string; project: string; updatedAt: number }>>([]);
   const [claudeSessions, setClaudeSessions] = useState<Array<{ id: string; kind: 'chat' | 'cowork'; title: string; updatedAt: number; sourceSessionId: string }>>([]);
+  const [claudeSessionsLoaded, setClaudeSessionsLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState('');
   const [fileText, setFileText] = useState('');
-  const [titles, setTitles] = useState<string[]>([]);
-  const [conversationIndex, setConversationIndex] = useState(-1);
   const [pendingPreview, setPendingPreview] = useState<SessionImportPreview | null>(null);
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
   const [saving, setSaving] = useState(false);
@@ -54,9 +52,10 @@ export function SessionImportUpdateDialog({ api, open, onClose, source, workstre
         if (!active) return;
         const matching = items.filter((item) => (source.provider === 'claude' ? item.kind === 'chat' : item.kind === 'cowork'));
         setClaudeSessions(matching);
+        setClaudeSessionsLoaded(true);
         const match = matching.find((item) => item.sourceSessionId === source.sessionId);
         if (match) setSelectedId(match.id);
-      }).catch(() => { /* A previously imported export file remains available. */ });
+      }).catch(() => { if (active) setClaudeSessionsLoaded(true); });
     };
     refresh();
     const unsubscribe = desktopBridge().onApplicationForegroundChanged((foregrounded) => {
@@ -83,8 +82,7 @@ export function SessionImportUpdateDialog({ api, open, onClose, source, workstre
             ? await desktopBridge().readLocalClaudeCodeSession(selectedId) : fileText;
         const input = source.url
           ? { kind: 'link' as const, url: source.url }
-          : { kind: 'export' as const, provider: source.provider, text: source.provider === 'claude' && !selectedClaudeSession
-            ? JSON.stringify(claudeExportRecords(text).records[conversationIndex]) : text };
+          : { kind: 'export' as const, provider: source.provider, text };
         preview = await api.previewSessionImport(input);
         if (preview.source.provider !== source.provider || preview.source.sessionId !== source.sessionId) {
           throw new Error('Choose the original source conversation for this channel.');
@@ -104,7 +102,8 @@ export function SessionImportUpdateDialog({ api, open, onClose, source, workstre
     }
   };
 
-  const canSubmit = Boolean(source.url || selectedId || (fileText && (source.provider !== 'claude' || conversationIndex >= 0)));
+  const canSubmit = Boolean(source.url || selectedClaudeSession
+    || (source.provider === 'claude_code' && (selectedId || fileText)));
   return <Modal
     footer={<>
       <Button disabled={saving} onClick={onClose}>Cancel</Button>
@@ -128,6 +127,8 @@ export function SessionImportUpdateDialog({ api, open, onClose, source, workstre
           {claudeSessions.map((session) => <option key={session.id} title={session.title} value={session.id}>{claudeCodeSessionOption(session, claudeSessions)}</option>)}
         </select>
       </label>}
+      {source.provider === 'claude' && claudeSessionsLoaded && claudeSessions.length === 0
+        && <p>Open the source conversation in Claude, then return to Rally to refresh this list.</p>}
       {source.provider === 'claude_code' && sessions.length > 0 && !selectedClaudeSession && <label className="form-field">
         <span>Conversation</span>
         <select aria-label="Conversation" className="session-import-select" disabled={saving} title={sessions.find((session) => session.id === selectedId)?.title} onChange={(event) => {
@@ -139,44 +140,23 @@ export function SessionImportUpdateDialog({ api, open, onClose, source, workstre
           {sessions.map((session) => <option key={session.id} title={session.title} value={session.id}>{claudeCodeSessionOption(session, sessions)}</option>)}
         </select>
       </label>}
-      <label className="form-field">
-        <span>{source.provider === 'claude_code' ? 'Or choose the conversation file' : 'Claude conversations.json'}</span>
-        <input accept={source.provider === 'claude_code' ? '.jsonl,.json,application/json' : '.json,application/json'}
+      {source.provider === 'claude_code' && <label className="form-field">
+        <span>Or choose the conversation file</span>
+        <input accept=".jsonl,.json,application/json"
           disabled={saving} onChange={(event) => {
             const file = event.target.files?.[0];
             const revision = ++readRevision.current;
             setSelectedId('');
             setFileText('');
-            setTitles([]);
-            setConversationIndex(-1);
             sourceChanged();
             if (!file) return;
             void file.text().then((text) => {
               if (revision !== readRevision.current) return;
-              if (source.provider === 'claude') {
-                const parsed = claudeExportRecords(text);
-                setTitles(parsed.titles);
-                const matchingIndex = parsed.records.findIndex((record) => {
-                  const item = record as { uuid?: unknown; conversation_id?: unknown; id?: unknown };
-                  return [item.uuid, item.conversation_id, item.id].includes(source.sessionId);
-                });
-                setConversationIndex(matchingIndex >= 0 ? matchingIndex : parsed.records.length === 1 ? 0 : -1);
-              }
               setFileText(text);
             }).catch((error: unknown) => {
               if (revision === readRevision.current) setFailure(error instanceof Error ? error.message : 'The file could not be read.');
             });
           }} type="file" />
-      </label>
-      {source.provider === 'claude' && titles.length > 1 && <label className="form-field">
-        <span>Conversation</span>
-        <select aria-label="Conversation" className="session-import-select" disabled={saving} title={titles[conversationIndex]} onChange={(event) => {
-          setConversationIndex(Number(event.target.value));
-          sourceChanged();
-        }} value={conversationIndex}>
-          <option value={-1}>Select a conversation</option>
-          {titles.map((title, index) => <option key={index} title={title} value={index}>{claudeExportOption(title, index, titles)}</option>)}
-        </select>
       </label>}
     </>}
     {failure && <InlineError>{failure}</InlineError>}

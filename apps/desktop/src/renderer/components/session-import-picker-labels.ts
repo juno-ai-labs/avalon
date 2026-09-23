@@ -16,10 +16,3 @@ export function claudeCodeSessionOption(session: ClaudeCodeSessionChoice, sessio
   const date = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(session.updatedAt);
   return `${shortenSessionLabel(session.title, 36)} · ${date}`;
 }
-
-export function claudeExportOption(title: string, index: number, titles: readonly string[]): string {
-  const matching = titles.filter((other) => other === title);
-  if (matching.length === 1) return shortenSessionLabel(title, 56);
-  const occurrence = titles.slice(0, index + 1).filter((other) => other === title).length;
-  return `${shortenSessionLabel(title, 40)} (${occurrence} of ${matching.length})`;
-}
