@@ -76,20 +76,16 @@ test('the release workflow rebuilds Sideline when an installed-app input changes
     assert.match(workflow, new RegExp(`^[ ]{6}- ${path.replaceAll('*', '\\*')}$`, 'mu'));
   }
   assert.match(workflow, /^[ ]{2}queue: single$/mu);
-  assert.match(workflow, /node apps\/sideline\/scripts\/plan-release\.mjs/u);
-  assert.match(workflow, /node apps\/sideline\/scripts\/apply-release-version\.mjs/u);
-  assert.match(workflow, /test "\$\(git rev-parse origin\/main\)" = "\$SIDELINE_RELEASE_REF"/u);
-  assert.match(workflow, /git reset --hard "\$SIDELINE_RELEASE_REF"/u);
-  assert.doesNotMatch(workflow, /git reset --hard origin\/main/u);
+  assert.match(workflow, /node apps\/sideline\/scripts\/stamp-release\.mjs/u);
+  assert.match(workflow, /should_release: \$\{\{ steps\.stamp\.outputs\.should_release \}\}/u);
+  assert.match(workflow, /api_deployment_ref: \$\{\{ steps\.stamp\.outputs\.api_deployment_ref \}\}/u);
+  assert.match(workflow, /if: steps\.stamp\.outputs\.should_release == 'true' && steps\.stamp\.outputs\.requires_api_deploy == 'true'/u);
+  assert.match(workflow, /ref: \$\{\{ needs\.verify\.outputs\.commit \}\}/u);
+  assert.match(workflow, /if: needs\.verify\.outputs\.should_release == 'true'/u);
   assert.match(workflow, /actions\/workflows\/deploy-api\.yml\/runs/u);
   assert.match(workflow, /git merge-base --is-ancestor "\$SIDELINE_API_DEPLOYMENT_REF" "\$candidate_sha"/u);
   assert.doesNotMatch(workflow, /--commit "\$SIDELINE_API_DEPLOYMENT_REF"/u);
   assert.match(workflow, /gh run watch "\$run_id".*--exit-status/u);
-  assert.ok(
-    workflow.indexOf('already exists; refusing')
-      < workflow.indexOf('node apps/sideline/scripts/apply-release-version.mjs'),
-    'every version-stamping attempt must reject an existing remote tag first',
-  );
   assert.ok(
     workflow.lastIndexOf('already exists; refusing') < workflow.indexOf('release:publish'),
     'the remote tag must be checked immediately before publication',
