@@ -205,12 +205,10 @@ ends in an artificial pending poll: the human approval and follow-up commitments
 are already visible, and the presenter can continue normally.
 
 Each example stands alone. Business names, customer contact Maya Chen, prices,
-quotes and transcript are fictional. The existing casting system still binds
-roles to **real colleague accounts**; this pack does not create fictional login
-identities. Three colleagues play compatible roles across scenarios, keeping the
-existing casting form and number of required accounts. Use dedicated demo
-accounts if fictional speaker names are required; they must meet the same
-company-domain/sign-in requirements. No real customer or guest is seeded.
+quotes and transcript are fictional. Three cast parts play compatible roles
+across scenarios. The casting form accepts fictional names as personas, or can
+seat real colleagues from its suggestions; the presenter remains a signed-in
+template member. Personas cannot sign in. No real customer or guest is seeded.
 
 #### Boundaries the demonstration must preserve
 
@@ -796,8 +794,8 @@ without changing product capabilities or customer data.
 
 **Consequences:** Replace older demos with New demo and separate retirement, not
 Retry. Keep source facts and arithmetic consistent across snapshots; joining is
-never implicit private-data sharing. Casting still requires colleague accounts,
-and real import/distribution requires its ordinary provider configuration.
+never implicit private-data sharing. Casting uses the existing colleague/persona
+flow; real import/distribution requires its ordinary provider configuration.
 
 Shipped in [#956](https://github.com/juno-ai-labs/avalon/pull/956).
 
