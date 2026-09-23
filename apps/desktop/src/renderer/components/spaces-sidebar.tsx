@@ -355,7 +355,7 @@ export function SpacesSidebar({
                   as={readOnly ? 'button' : NavLink}
                   {...(readOnly ? { type: 'button' as const } : { to: `/spaces/${space.id}` })}
                   aria-label={space.name}
-                  aria-description={space.scope === 'workspace' ? 'Public space' : 'Private space'}
+                  aria-description={space.scope === 'workspace' ? 'Public space' : undefined}
                   badge={{
                     count: space.attentionCount ?? 0,
                     label: `${space.attentionCount ?? 0} ${space.attentionCount === 1 ? 'conversation needs' : 'conversations need'} attention in ${space.name}`,
@@ -463,7 +463,7 @@ export function SpacesSidebar({
                   onClick={() => onSelect(space.id)}
                 >
                   <SidebarNavigationRowContent
-                    activity={space.scope === 'workspace' ? 'Public space' : 'Private space'}
+                    activity={space.scope === 'workspace' ? 'Public space' : undefined}
                     icon={<span className="spaces-sidebar-mark"><SpaceIcon size={22} space={space} /></span>}
                     title={space.name}
                   />
@@ -497,9 +497,7 @@ export function SpacesSidebar({
                         <span className="sidebar-workstream-preview-name">{space.name}</span>
                       </span>
                     </div>
-                    <p className="sidebar-workstream-preview-scope">
-                      {space.scope === 'personal' ? 'Private space' : 'Organization space'}
-                    </p>
+                    {space.scope === 'workspace' && <p className="sidebar-workstream-preview-scope">Organization space</p>}
                   </div>
                 </Tooltip.Content>
               </Tooltip.Portal>
