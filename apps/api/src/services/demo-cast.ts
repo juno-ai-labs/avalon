@@ -7,6 +7,10 @@
  * from the template's own members, because the new workspace receives copies
  * of the template's connections; everybody else comes from this list.
  *
+ * A part may instead be played by a **persona**: a name the operator typed,
+ * minted here as a user with no platform identity and an address under
+ * `.invalid`, so it can be seated and can act but can never sign in.
+ *
  * The list is the company's directory, filtered to one thing — an account on
  * the company's email domain that has signed in to this region. That filter is
  * the boundary, not a convenience for the form: seating an account in a demo
@@ -18,6 +22,7 @@
  */
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { uuidV7 } from "../lib/uuid-v7";
 import type { DemoPackRole } from "./demo-pack";
 
 /**
@@ -43,6 +48,55 @@ export interface DemoCastCandidate {
  * who is a colleague.
  */
 const CASTABLE = `platform_user_id IS NOT NULL AND email LIKE ? ESCAPE '\\'`;
+
+/**
+ * The domain every persona's address is on. `.invalid` is reserved (RFC 2606),
+ * so no mail is ever sent to one and no real account can hold one; with no
+ * platform identity, nobody can sign in as one either.
+ */
+export const DEMO_PERSONA_EMAIL_DOMAIN = "persona.invalid";
+
+/** A persona: seatable because it can never sign in. */
+const PERSONA = `platform_user_id IS NULL AND email LIKE '%@${DEMO_PERSONA_EMAIL_DOMAIN}'`;
+
+/** The address of the persona playing one role of one operation. */
+export function demoPersonaEmail(operationId: string, role: DemoPackRole): string {
+  return `${operationId}.${role}@${DEMO_PERSONA_EMAIL_DOMAIN}`;
+}
+
+/**
+ * Mint the persona playing one role of one operation, or answer the one
+ * already minted. Never renames: two concurrent first submissions of one
+ * operation both reach this before either claims the operation, so a rename
+ * here would let the loser rewrite the winner's cast. The winner sets the
+ * names it claimed with `nameDemoPersonas` once its claim has landed.
+ */
+export async function mintDemoPersona(env: Env, input: {
+  operationId: string;
+  role: DemoPackRole;
+  name: string;
+}): Promise<DemoCastCandidate> {
+  const email = demoPersonaEmail(input.operationId, input.role);
+  const at = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO users (id, google_subject, email, name, avatar_url, created_at, updated_at)
+     VALUES (?, NULL, ?, ?, NULL, ?, ?)
+     ON CONFLICT (email) DO NOTHING`,
+  ).bind(uuidV7(), email, input.name, at, at).run();
+  const row = await env.DB.prepare(`SELECT id, name, email FROM users WHERE email = ?`)
+    .bind(email).first<{ id: string; name: string; email: string }>();
+  if (!row) throw new ApiError(500, "demo_persona_unwritten", `The persona for "${input.role}" was not written`);
+  return { userId: row.id, name: row.name, email: row.email };
+}
+
+/** Give the winning submission's personas the names it was started with. */
+export async function nameDemoPersonas(env: Env, operationId: string, names: Readonly<Record<DemoPackRole, string>>): Promise<void> {
+  const at = new Date().toISOString();
+  const statements = Object.entries(names).map(([role, name]) => env.DB.prepare(
+    `UPDATE users SET name = ?, updated_at = ? WHERE email = ? AND platform_user_id IS NULL`,
+  ).bind(name, at, demoPersonaEmail(operationId, role)));
+  if (statements.length > 0) await env.DB.batch(statements);
+}
 
 /**
  * A LIKE pattern matching every address on the domain, with the wildcards a
@@ -82,24 +136,30 @@ export async function listDemoCastCandidates(env: Env): Promise<DemoCastCandidat
 export async function readDemoCast(env: Env, input: {
   cast: Readonly<Record<DemoPackRole, string>>;
   presenterRole: DemoPackRole | null;
+  /** The stored cast's operation: only then is a persona accepted, and only its own. */
+  operationId?: string;
 }): Promise<Record<DemoPackRole, DemoCastCandidate>> {
   const wanted = Object.entries(input.cast).filter(([role]) => role !== input.presenterRole);
   if (wanted.length === 0) return {};
   const ids = [...new Set(wanted.map(([, userId]) => userId))];
   const rows = await env.DB.prepare(
     `SELECT id, name, email FROM users
-      WHERE ${CASTABLE} AND id IN (${ids.map(() => "?").join(", ")})`,
+      WHERE ((${CASTABLE}) OR (${PERSONA})) AND id IN (${ids.map(() => "?").join(", ")})`,
   ).bind(domainPattern(DEMO_CAST_EMAIL_DOMAIN), ...ids)
     .all<{ id: string; name: string; email: string }>();
   const colleagues = new Map((rows.results ?? []).map((row) => [row.id, row]));
   const read: Record<DemoPackRole, DemoCastCandidate> = {};
   for (const [role, userId] of wanted) {
-    const person = colleagues.get(userId);
+    const found = colleagues.get(userId);
+    const isPersona = found?.email.toLowerCase().endsWith(`@${DEMO_PERSONA_EMAIL_DOMAIN}`) ?? false;
+    const person = isPersona && (input.operationId === undefined || found!.email.toLowerCase() !== demoPersonaEmail(input.operationId, role).toLowerCase())
+      ? undefined
+      : found;
     if (!person) {
       throw new ApiError(
         422,
         "demo_cast_not_a_colleague",
-        `The person cast as "${role}" is not a @${DEMO_CAST_EMAIL_DOMAIN} account in this region`,
+        `The person cast as "${role}" is neither a @${DEMO_CAST_EMAIL_DOMAIN} account in this region nor this operation's persona`,
       );
     }
     read[role] = { userId: person.id, name: person.name, email: person.email };
