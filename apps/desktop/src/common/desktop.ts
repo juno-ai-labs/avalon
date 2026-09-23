@@ -360,6 +360,10 @@ export interface DesktopRestorableArtifactWindow {
 }
 
 export interface RallyDesktopBridge {
+  listLocalClaudeSessions: () => Promise<Array<{ id: string; kind: 'chat' | 'cowork'; title: string; updatedAt: number; sourceSessionId: string }>>;
+  readLocalClaudeSession: (id: string) => Promise<{ provider: 'claude' | 'claude_code'; text: string }>;
+  listLocalClaudeCodeSessions: () => Promise<Array<{ id: string; title: string; project: string; updatedAt: number }>>;
+  readLocalClaudeCodeSession: (id: string) => Promise<string>;
   getRuntimeConfig: () => Promise<RuntimeConfig>;
   /** Whether any Rally window currently owns application focus. */
   getApplicationForegroundState: () => Promise<boolean>;

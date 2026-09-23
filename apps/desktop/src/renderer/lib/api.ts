@@ -1536,6 +1536,20 @@ export class RallyApi {
     return result.workstream.id;
   }
 
+  async importedSessionSource(workstreamId: string): Promise<{ provider: 'chatgpt' | 'claude' | 'claude_code'; sessionId: string; url: string | null } | null> {
+    const result = await this.request(`/workstreams/${workstreamId}/import/source`, {
+      schema: z.strictObject({ source: z.strictObject({ provider: z.enum(['chatgpt', 'claude', 'claude_code']),
+        sessionId: z.string(), url: z.string().nullable() }).nullable() }),
+    });
+    return result.source;
+  }
+
+  async updateImportedSession(workstreamId: string, preview: SessionImportPreview, clientMessageId: string): Promise<{ added: number; updated: number }> {
+    return this.request(`/workstreams/${workstreamId}/import/update`, { method: 'POST',
+      body: { ...preview, clientMessageId },
+      schema: z.strictObject({ added: z.number().int().nonnegative(), updated: z.number().int().nonnegative() }) });
+  }
+
   async createWorkstream(input: {
     title?: string;
     openingMessage: string;

@@ -4,6 +4,7 @@ import { describeZodIssues } from "@rally/contracts/zod-diagnostics";
 import type { Env } from "../env";
 import { FirecrawlClient, FirecrawlError } from "../lib/firecrawl";
 import { ApiError } from "../lib/api-error";
+import { workstreamImportHash } from "../durable-objects/workstream-import-hash";
 
 const object = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -83,7 +84,7 @@ function sourceFiles(value: unknown, kind: ConversationFile["kind"]): Conversati
   return [sourceFile(original, kind), sourceFile(value, kind)];
 }
 
-function visibleMessage(role: "user" | "assistant", body: string, files: ConversationFile[]) {
+function visibleMessage(role: "user" | "assistant", body: string, files: ConversationFile[], sourceMessageId?: string) {
   // Claude's share/export text can contain complete artifact documents. Preserve
   // them as files, never execute or deploy their HTML, JavaScript or SVG.
   const rendered = body.replace(/<antArtifact\b([^>]*)>([\s\S]*?)<\/antArtifact>/g, (_match, attributes: string, content: string) => {
@@ -97,7 +98,8 @@ function visibleMessage(role: "user" | "assistant", body: string, files: Convers
     files.push({ name: match[1]!, mimeType: "application/octet-stream", kind: role === "assistant" ? "artifact" : "attachment",
       source: { kind: "unavailable", reference: match[2]!, reason: "This sandbox file is not included in the source conversation." } });
   }
-  return rendered.trim() || files.length ? [{ role, text: rendered, ...(files.length ? { files } : {}) }] : [];
+  return rendered.trim() || files.length ? [{ role, text: rendered, ...(files.length ? { files } : {}),
+    ...(sourceMessageId ? { sourceMessageId } : {}) }] : [];
 }
 
 function chatGptMessages(value: unknown): SubstreamContent["messages"] {
@@ -120,8 +122,9 @@ function chatGptMessages(value: unknown): SubstreamContent["messages"] {
     if (!Array.isArray(conversation['linear_conversation'])) throw new Error("Expected mapping/current_node or linear_conversation");
     nodes = conversation['linear_conversation'];
   }
-  return nodes.flatMap((node) => {
+  return nodes.flatMap((node, index) => {
     const message = object(object(node)['message']);
+    const sourceMessageId = text(message['id']) || text(object(node)['id']) || `position:${index}`;
     const sourceRole = object(message['author'])['role'];
     const role = sourceRole === "tool" && message['channel'] === "final" ? "assistant" : sourceRole;
     const metadata = object(message['metadata']);
@@ -136,7 +139,7 @@ function chatGptMessages(value: unknown): SubstreamContent["messages"] {
       const images = array(content['parts']).filter((part) => object(part)['content_type'] === "image_asset_pointer");
       return visibleMessage("assistant", "", images.map((part) => sourceFile({
         ...object(part), name: text(metadata['image_gen_title']) || "Generated image",
-      }, "artifact")));
+      }, "artifact")), sourceMessageId);
     }
     const kind = role === "user" ? "attachment" : "artifact";
     const files = array(metadata['attachments']).flatMap((file) => sourceFiles(file, kind));
@@ -150,7 +153,7 @@ function chatGptMessages(value: unknown): SubstreamContent["messages"] {
       else if (object(part)['content_type'] === "image_asset_pointer") files.push(sourceFile(part, kind));
       else throw new Error("Unsupported ChatGPT visible content part");
     }
-    return visibleMessage(role, parts.join("\n\n"), files);
+    return visibleMessage(role, parts.join("\n\n"), files, sourceMessageId);
   });
 }
 
@@ -159,7 +162,7 @@ function claudeMessages(value: unknown): SubstreamContent["messages"] {
   const messages = Array.isArray(value) ? value : Array.isArray(data['chat_messages']) ? data['chat_messages']
     : Object.hasOwn(data, 'message') ? [data] : null;
   if (!messages) throw new Error("Expected Claude chat_messages or Code message records");
-  return messages.flatMap((value) => {
+  return messages.flatMap((value, index) => {
     const event = object(value);
     if (event['isCompactSummary'] === true || event['isMeta'] === true) return [];
     const message = Object.hasOwn(event, 'message') ? object(event['message']) : event;
@@ -205,27 +208,102 @@ function claudeMessages(value: unknown): SubstreamContent["messages"] {
     }
     else if (typeof message['text'] === 'string') parts.push(message['text']);
     else throw new Error("Expected Claude visible message content");
-    return visibleMessage(role, parts.join("\n\n"), files);
+    return visibleMessage(role, parts.join("\n\n"), files,
+      text(message['uuid']) || text(message['id']) || text(event['uuid']) || `position:${index}`);
   });
 }
 
-export function parseSessionExport(provider: "chatgpt" | "claude", input: string, sourceUrl: string | null = null): SessionImportPreview {
+function claudeCodeMessages(value: unknown): SubstreamContent["messages"] {
+  const events = Array.isArray(value) ? value : [value];
+  if (!events.every((event) => object(event)['type'] !== undefined)) throw new Error("Expected Claude Code JSONL events");
+  const byUuid = new Map(events.flatMap((event): [string, unknown][] => {
+    const uuid = text(object(event)['uuid']);
+    return uuid ? [[uuid, event]] : [];
+  }));
+  const lastPrompt = [...events].reverse().find((event) => object(event)['type'] === 'last-prompt');
+  let leaf = text(object(lastPrompt)['leafUuid'])
+    || text(object([...events].reverse().find((event) => {
+      const row = object(event);
+      return row['isSidechain'] !== true && row['uuid'] && (row['type'] === 'user' || row['type'] === 'assistant');
+    }))['uuid']);
+  let selected = events;
+  if (leaf) {
+    const active: unknown[] = [];
+    const visited = new Set<string>();
+    while (leaf) {
+      if (visited.has(leaf)) throw new Error("Claude Code session has a cyclic conversation branch");
+      visited.add(leaf);
+      const event = byUuid.get(leaf);
+      if (!event) throw new Error("Claude Code session has an incomplete conversation branch");
+      active.push(event);
+      leaf = text(object(event)['parentUuid']);
+    }
+    selected = active.reverse();
+  }
+  const messages: SubstreamContent["messages"] = [];
+  const seen = new Set<string>();
+  for (const raw of selected) {
+    const event = object(raw);
+    if (event['type'] !== 'user' && event['type'] !== 'assistant') continue;
+    if (event['isSidechain'] === true || event['isMeta'] === true || event['isCompactSummary'] === true) continue;
+    const uuid = text(event['uuid']);
+    if (uuid && seen.has(uuid)) continue;
+    if (uuid) seen.add(uuid);
+    const message = object(event['message']);
+    const content = message['content'];
+    const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : array(content);
+    const visible = blocks.filter((block) => object(block)['type'] === 'text');
+    if (visible.some((block) => typeof object(block)['text'] !== 'string')) throw new Error("Expected Claude Code text block text");
+    const unsupported = blocks.find((block) => !['text', 'thinking', 'redacted_thinking', 'tool_use', 'tool_result', 'fallback'].includes(text(object(block)['type'])));
+    if (unsupported) throw new Error("Unsupported Claude Code content block type");
+    const body = visible.map((block) => text(object(block)['text'])).filter(Boolean).join("\n\n").trim();
+    if (!body) continue;
+    const role = event['type'] as 'user' | 'assistant';
+    const previous = messages.at(-1);
+    if (role === 'assistant' && previous?.role === 'assistant') previous.text += `\n\n${body}`;
+    else messages.push({ role, text: body, sourceMessageId: uuid || `position:${messages.length}` });
+  }
+  return messages;
+}
+
+export function parseSessionExport(provider: "chatgpt" | "claude" | "claude_code", input: string, sourceUrl: string | null = null): SessionImportPreview {
   try {
     let value: unknown;
     if (provider === "chatgpt" && input.trimStart().startsWith("<")) value = chatGptHtmlData(input);
     else {
       try { value = JSON.parse(input) as unknown; }
-      catch { value = input.split(/\r?\n/).filter((line) => line.trim()).map((line) => JSON.parse(line) as unknown); }
+      catch {
+        const lines = input.split(/\r?\n/);
+        value = lines.flatMap((line, index) => {
+          if (!line.trim()) return [];
+          try { return [JSON.parse(line) as unknown]; }
+          catch (error) {
+            // The active Claude Code writer can be partway through its final
+            // JSONL record. Complete lines must still parse or the source is bad.
+            if (provider === 'claude_code' && index === lines.length - 1 && !input.endsWith('\n')) return [];
+            throw error;
+          }
+        });
+      }
     }
     if (Array.isArray(value) && (provider === "chatgpt" || value.some((entry) => Array.isArray(object(entry)["chat_messages"])))) {
       if (value.length !== 1) throw new Error("Choose one conversation from the export");
       value = value[0];
     }
     const data = object(value);
-    const messages = provider === "chatgpt" ? chatGptMessages(value) : claudeMessages(value);
+    const messages = provider === "chatgpt" ? chatGptMessages(value)
+      : provider === "claude_code" ? claudeCodeMessages(value) : claudeMessages(value);
+    const codeEvents = provider === "claude_code" ? array(value).map(object) : [];
+    const codeTitle = [...codeEvents].reverse().find((event) => event['type'] === 'custom-title' && text(event['customTitle']))?.['customTitle']
+      || [...codeEvents].reverse().find((event) => event['type'] === 'ai-title' && text(event['aiTitle']))?.['aiTitle'];
+    const sourceSessionId = provider === 'claude_code'
+      ? codeEvents.map((event) => text(event['sessionId'])).find(Boolean)
+        || text(codeEvents.find((event) => text(event['uuid']))?.['uuid'])
+      : text(data['uuid']) || text(data['conversation_id']) || text(data['id'])
+        || sourceUrl || (messages[0] ? workstreamImportHash({ provider, firstMessage: messages[0] }) : undefined);
     return SessionImportPreviewSchema.parse({
-      title: text(data['title']) || text(data['snapshot_name']) || text(data['name']) || `Imported ${provider === "chatgpt" ? "ChatGPT" : "Claude"} conversation`,
-      source: { provider, url: sourceUrl }, content: { messages },
+      title: text(data['title']) || text(data['snapshot_name']) || text(data['name']) || text(codeTitle) || `Imported ${provider === "chatgpt" ? "ChatGPT" : provider === "claude_code" ? "Claude Code" : "Claude"} conversation`,
+      source: { provider, url: sourceUrl, ...(sourceSessionId ? { sessionId: sourceSessionId } : {}) }, content: { messages },
     });
   } catch (error) {
     const detail = error instanceof z.ZodError ? `Invalid conversation fields: ${describeZodIssues(error)}`

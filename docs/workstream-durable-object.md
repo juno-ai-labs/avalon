@@ -23,6 +23,9 @@ hierarchy, its identity, its effect pipeline, and the conversation object.
 All four Durable Object classes in this subsystem (`WorkspaceDO`,
 `WorkstreamDO`, `AutomationDO`, and `SubstreamAgent`) use SQLite-backed
 namespaces and explicit SQL only.
+The main conversation's SQLite also owns the imported-session source identity,
+per-message revision checkpoint, and re-import receipts. The append and checkpoint
+commit together; [session import](session-import.md) owns the update semantics.
 Durable Object key/value persistence is forbidden by lint. `WorkspaceDO` is the
 authoritative cross-work-stream directory and inverted-index owner, first-party
 activity/digest log, connector-event store, and complete suggested-work product

@@ -233,7 +233,7 @@ describe('Sidebar channel markers', () => {
     const launcher = screen.getAllByRole('button', { name: 'New channel or space' })[0];
     if (!launcher) throw new Error('New channel launcher missing');
     fireEvent.keyDown(launcher, { key: 'ArrowDown' });
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Start a new channel' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Start New Channel…' }));
     expect(markSurfaceEntrypoint).not.toHaveBeenCalled();
 
     const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
@@ -1919,7 +1919,7 @@ describe('Sidebar channel markers', () => {
       .map((link) => link.getAttribute('aria-label'));
     const launcher = screen.getByRole('button', { name: 'New channel or space' });
     fireEvent.keyDown(launcher, { key: 'ArrowDown' });
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Start a new channel' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Start New Channel…' }));
 
     const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
     const spacePicker = within(dialog).getByRole('combobox', { name: 'Space' });

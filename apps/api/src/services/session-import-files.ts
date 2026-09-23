@@ -1,4 +1,5 @@
 import type { ConversationFile, PreparedConversation, SessionImportPreview } from '@rally/contracts';
+import { workstreamImportHash } from '../durable-objects/workstream-import-hash';
 import type { AuthContext, Env } from '../env';
 import { numericEnv } from '../env';
 import { stableUuid } from '../lib/stable-uuid';
@@ -73,13 +74,26 @@ export async function resolveSessionImportFiles(env: Env, preview: SessionImport
 }
 
 /** Import bytes with upload semantics; artifacts are files, never fabricated executions. */
-export async function prepareSessionImport(env: Env, auth: AuthContext, preview: SessionImportPreview, operationId: string): Promise<PreparedConversation> {
+export async function prepareSessionImport(env: Env, auth: AuthContext, preview: SessionImportPreview, operationId: string,
+  existingRevisions: ReadonlyMap<string, string> = new Map()): Promise<PreparedConversation> {
   const uploader = new ResourceService(env, auth);
   const person = await env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(auth.userId).first<{ name: string }>();
   const provenance = { kind: 'imported_session', source: preview.source,
     importedByUserId: auth.userId, importedByName: person?.name || 'A workspace member' };
   const messages: PreparedConversation['messages'] = [];
   for (const [messageIndex, message] of preview.content.messages.entries()) {
+    const sourceRevision = message.sourceMessageId
+      ? workstreamImportHash({ role: message.role, text: message.text, files: message.files ?? [] }) : undefined;
+    if (message.sourceMessageId && existingRevisions.get(message.sourceMessageId) === sourceRevision) {
+      // The owner compares the complete source checkpoint again at commit time.
+      // No old attachment needs another workspace upload for this snapshot.
+      // Attachment-only messages need a nonempty transport placeholder; the
+      // authority never materializes an unchanged entry.
+      messages.push({ role: message.role, text: message.text || "Unchanged source attachment", attachmentIds: [], structuredContent: {
+        ...provenance, sourceMessageId: message.sourceMessageId, sourceRevision,
+      } });
+      continue;
+    }
     const attachmentIds: string[] = [];
     const missing: string[] = [];
     for (const [fileIndex, file] of (message.files ?? []).entries()) {
@@ -108,7 +122,11 @@ export async function prepareSessionImport(env: Env, auth: AuthContext, preview:
       }
     }
     messages.push({ role: message.role, text: [message.text, ...missing].filter(Boolean).join('\n\n'),
-      attachmentIds, structuredContent: provenance });
+      attachmentIds, structuredContent: {
+        ...provenance,
+        ...(message.sourceMessageId ? { sourceMessageId: message.sourceMessageId,
+          sourceRevision } : {}),
+      } });
   }
   return { messages };
 }
