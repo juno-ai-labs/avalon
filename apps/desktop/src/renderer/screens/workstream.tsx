@@ -164,9 +164,9 @@ export function WorkstreamScreen(): React.JSX.Element {
     queryKey: ['workstream', id], queryFn: async () => undefined, enabled: false,
   });
   const importedSource = useQuery({
-    queryKey: ['workstream-import-source', id],
+    queryKey: ['workstream-import-source', session?.user.id, id],
     queryFn: () => api!.importedSessionSource(id),
-    enabled: Boolean(api && id),
+    enabled: Boolean(api && session?.user.id && id),
     staleTime: Number.POSITIVE_INFINITY,
   });
   // The rail's mark follows the sidebar row rather than this detail, so one
