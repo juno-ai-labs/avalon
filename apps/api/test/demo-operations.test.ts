@@ -297,6 +297,24 @@ describe("a demo preparation operation", () => {
     expect(await row(env, OPERATION_ID)).toMatchObject({ status: "failed", error_code: "demo_cast_not_a_colleague" });
   });
 
+  it("plays a typed name with a persona that cannot sign in, and refuses one that is somebody else's", async () => {
+    const { env } = fixture();
+    // The presenter's own name, typed into a part, is the same collision as two colleagues'.
+    await expect(startDemoOperation(env, { ...request(), cast: { priya: PRIYA_ID, marcus: { name: "adam" }, dana: DANA_ID } }))
+      .rejects.toMatchObject({ code: "demo_cast_name_duplicate" });
+    const started = await startDemoOperation(env, {
+      ...request(),
+      cast: { priya: PRIYA_ID, marcus: { name: "Jane Doe" }, dana: { name: "Johnny Appleseed" } },
+    });
+    expect(started.castNames).toMatchObject({ priya: "Priya Raman", marcus: "Jane Doe", dana: "Johnny Appleseed" });
+    const persona = await env.DB.prepare("SELECT email, platform_user_id FROM users WHERE id = ?")
+      .bind(started.cast.marcus).first<{ email: string; platform_user_id: string | null }>();
+    expect(persona).toEqual({ email: `${OPERATION_ID}.marcus@persona.invalid`, platform_user_id: null });
+    // And the first phase accepts it as castable.
+    await runDemoPreparationPhase(env, OPERATION_ID, "checking_template", { attempt: 1 });
+    expect(await row(env, OPERATION_ID)).toMatchObject({ error_code: null });
+  });
+
   it("refuses to prepare a demo whose cast came to share a name after the row was written", async () => {
     // A name is not fixed: it is rewritten from the platform identity every
     // time somebody signs in, so two people in one demo can collide between
@@ -517,9 +535,9 @@ describe("the operator routes", () => {
     expect(await misfiledTemplate.text()).not.toContain("@rallywith.ai");
   });
 
-  it("refuses the cast as the operator used to give it: a name per role, not an account", async () => {
-    // The wire shape changed, and an old client is refused by the contract at
-    // the boundary rather than reaching the directory read with a name in hand.
+  it("refuses a bare name where an account id belongs: a typed name is sent as { name }", async () => {
+    // A string is always an account id, so a name cannot be mistaken for one
+    // and reach the directory read.
     const { env, app, launched } = fixture();
     const headers = { authorization: `Bearer ${DEMOS_TOKEN}`, "content-type": "application/json" };
     const named = await app.request("/internal/demos", {
