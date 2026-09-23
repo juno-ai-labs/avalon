@@ -16,6 +16,7 @@ basis.
 | `apps/api/src/routes/sideline.ts` | The authenticated catalog and new-message HTTP boundary. |
 | `apps/api/src/services/demo-preparation.ts` | Creates the complete ordered relationship set for the people seated by one demo operation. |
 | `apps/sideline/` | Narrow Electron host: Google sign-in, encrypted operator session, typed IPC, card state, and native handoff to Rally. |
+| `apps/sideline/scripts/stamp-release.mjs` | Replans on a moved `main` tip before stamping and emits the final commit and API gate. |
 | `.github/workflows/release-sideline-macos.yml` | Frozen-commit verification, Developer ID signing, Apple notarization, artifact retention, and R2 publication. |
 | `packages/contracts/src/impersonation.ts` | Relationship, catalog, and send wire contracts. |
 | `packages/ui/src/components/sideline-composer.tsx` | Browser-safe card-stack presentation and searchable selectors. |
@@ -62,11 +63,13 @@ object prefix.
 The **Release Sideline for macOS** workflow runs when a merge to `main` changes
 the Sideline app, its shared UI or contracts, workspace install/build inputs, or
 the shared macOS release helpers it consumes. Inside one non-cancelling release
-queue, a cheap planner compares the current tip with the newest reachable
+queue, the verification job compares the current tip with the newest reachable
 `sideline-v<version>` tag. It skips a stale queued run with no remaining release
 inputs, keeps `0.1.0` for the first release, and otherwise advances Sideline's
-patch version. The workflow commits that version to `main`, freezes the exact
-commit, then runs lint, typecheck, Sideline tests, and the portable
+patch version. If a concurrent workflow moves `main` before stamping, it
+replans on the new tip and recomputes the API deployment gate. The workflow
+commits the version to `main`, freezes the exact commit, then runs lint,
+typecheck, Sideline tests, and the portable
 release-tooling tests before claiming an Apple Silicon runner. That runner
 imports the existing Developer ID identity, builds the arm64 app with hardened
 runtime, notarizes and staples the application and DMG, verifies both ZIP and
@@ -77,9 +80,8 @@ new bytes under the same versioned names. When shared contracts changed,
 distribution waits for the successful API deployment associated with the newest
 first-parent commit that introduced them to `main`. A manual dispatch uses the
 same planner when no signed artifact exists; release versions are no longer
-bumped by hand. Version stamping refuses to absorb a newer `main` tip after
-planning, so the packaged contract tree and the deployment revision checked by
-the gate cannot diverge; rerunning replans from that newer tip.
+bumped by hand. The packaged contract tree and the deployment revision checked
+by the gate come from the final successful plan.
 
 Publication uses the existing desktop-release bucket under the disjoint prefix
 `sideline/stable/darwin/arm64/`. Versioned ZIP, DMG, and blockmap objects are
@@ -201,6 +203,30 @@ operator key. It registers only `sideline:`, while **Open in Rally** emits the
 existing `rallywithai:` deep link for the main app.
 
 ## Changelog
+
+### 2026-09-23 — Replan a Sideline stamp after main moves
+
+**What changed:** Sideline now plans and stamps in one verification job. When a
+concurrent release stamp wins the push to `main`, Sideline fetches the new tip,
+recomputes its release version and shared-contract API deployment gate, and
+tries the stamp again. The successful plan's commit feeds verification, signing,
+artifact naming, and publication.
+
+**Why:** Rally and Sideline have independent release queues but both stamp
+`main`. Rally's 1.446.0 bump landed between Sideline's plan and stamp, causing
+the 0.1.6 run to fail before building even though no Sideline publisher held its
+queue. A later bot-authored bump does not necessarily trigger another Sideline
+workflow, so failing for a manual replan can strand a relevant release.
+
+**Considered and rejected:** Combining both application releases into one long
+workflow would couple their signing and failure lifecycles and still leave
+ordinary merges able to advance `main`. Resetting to the new tip under the old
+plan would sign code whose contract deployment gate had not been recomputed.
+
+**Consequences:** A lost stamp push can retry without changing the immutable
+artifact or publication stages. The final planned tip, API gate, and stamped
+commit must stay together; verification and signing never follow a newer tip
+after the stamp succeeds.
 
 ### 2026-09-22 — Retry publication from one signed artifact
 
