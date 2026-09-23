@@ -4,12 +4,13 @@
 // again before any code is verified or signed.
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { writeFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { isEntryPoint } from '../../desktop/scripts/entry-point.mjs';
+import { applySidelineReleaseVersion } from './apply-release-version.mjs';
+import { planFromHead } from './plan-release.mjs';
 
 const repositoryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
@@ -21,38 +22,8 @@ function git(args, cwd) {
   }).trim();
 }
 
-function run(args, cwd, environment = process.env) {
-  execFileSync(process.execPath, args, { cwd, env: environment, stdio: 'inherit' });
-}
-
-function parsePlannerOutputs(value) {
-  const outputs = Object.fromEntries(value.trim().split('\n').map((line) => {
-    const separator = line.indexOf('=');
-    if (separator < 1) throw new Error(`Invalid Sideline release plan output: ${line}`);
-    return [line.slice(0, separator), line.slice(separator + 1)];
-  }));
-  for (const key of ['should_release', 'version', 'tag', 'ref', 'requires_api_deploy', 'api_deployment_ref']) {
-    if (!(key in outputs)) throw new Error(`Sideline release plan omitted ${key}`);
-  }
-  return outputs;
-}
-
-async function planCurrentTree(cwd) {
-  const directory = await mkdtemp(join(tmpdir(), 'sideline-release-plan-'));
-  const outputPath = join(directory, 'outputs');
-  try {
-    run(['apps/sideline/scripts/plan-release.mjs'], cwd, {
-      ...process.env,
-      GITHUB_OUTPUT: outputPath,
-    });
-    return parsePlannerOutputs(await readFile(outputPath, 'utf8'));
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-}
-
 function applyVersion(version, cwd) {
-  run(['apps/sideline/scripts/apply-release-version.mjs', version], cwd);
+  return applySidelineReleaseVersion(version, resolve(cwd, 'apps/sideline/package.json'));
 }
 
 function remoteTagExists(tag, cwd) {
@@ -68,10 +39,23 @@ function pushStamp(cwd) {
   return result;
 }
 
+async function writeOutputs(plan, commit, outputPath) {
+  const outputs = [
+    `should_release=${plan.shouldRelease}`,
+    `version=${plan.version}`,
+    `tag=${plan.tag}`,
+    `ref=${plan.ref}`,
+    `requires_api_deploy=${plan.requiresApiDeploy}`,
+    `api_deployment_ref=${plan.apiDeploymentRef}`,
+    `commit=${commit}`,
+  ];
+  await writeFile(outputPath, `${outputs.join('\n')}\n`, { flag: 'a' });
+}
+
 export async function stampSidelineRelease({
   cwd = repositoryDirectory,
   outputPath = process.env.GITHUB_OUTPUT,
-  planRelease = planCurrentTree,
+  planRelease = planFromHead,
   applyReleaseVersion = applyVersion,
 } = {}) {
   if (!outputPath) throw new Error('GITHUB_OUTPUT is required to stamp a Sideline release');
@@ -81,18 +65,19 @@ export async function stampSidelineRelease({
     git(['reset', '--hard', 'origin/main'], cwd);
     const plannedTip = git(['rev-parse', 'HEAD'], cwd);
     const plan = await planRelease(cwd);
-    if (plan.ref !== plannedTip) throw new Error('Sideline planner did not read the checked-out main tip');
+    console.log(`Sideline release plan: ${plan.shouldRelease ? 'release' : 'skip'} — ${plan.reason}`);
 
-    if (plan.should_release === 'false') {
+    if (!plan.shouldRelease) {
+      // A Rally bot stamp can change root package.json, a Sideline release
+      // input, without triggering another workflow run.
       git(['fetch', 'origin', 'main'], cwd);
       if (git(['rev-parse', 'origin/main'], cwd) !== plannedTip) {
         console.log('main moved after Sideline planning; replanning');
         continue;
       }
-      await writeFile(outputPath, `${Object.entries(plan).map(([key, value]) => `${key}=${value}`).join('\n')}\ncommit=${plannedTip}\n`, { flag: 'a' });
+      await writeOutputs(plan, plannedTip, outputPath);
       return plan;
     }
-    if (plan.should_release !== 'true') throw new Error(`Invalid Sideline release decision: ${plan.should_release}`);
 
     if (remoteTagExists(plan.tag, cwd)) {
       throw new Error(`${plan.tag} already exists; refusing to rebuild a published version`);
@@ -117,16 +102,11 @@ export async function stampSidelineRelease({
         continue;
       }
     } else {
-      git(['fetch', 'origin', 'main'], cwd);
-      if (git(['rev-parse', 'origin/main'], cwd) !== plannedTip) {
-        console.log('main moved while resuming Sideline; replanning');
-        continue;
-      }
       console.log(`main already declares ${plan.version}; resuming its unpublished release`);
     }
 
     const commit = git(['rev-parse', 'HEAD'], cwd);
-    await writeFile(outputPath, `${Object.entries(plan).map(([key, value]) => `${key}=${value}`).join('\n')}\ncommit=${commit}\n`, { flag: 'a' });
+    await writeOutputs(plan, commit, outputPath);
     return { ...plan, commit };
   }
 }

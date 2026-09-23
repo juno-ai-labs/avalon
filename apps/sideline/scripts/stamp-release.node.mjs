@@ -61,12 +61,13 @@ test('a competing main stamp replans the Sideline commit and API deployment gate
           contractCommit = git(rival, ['rev-parse', 'HEAD']);
         }
         return {
-          should_release: 'true',
+          shouldRelease: true,
           version: '0.1.6',
           tag: 'sideline-v0.1.6',
           ref,
-          requires_api_deploy: plans === 1 ? 'false' : 'true',
-          api_deployment_ref: plans === 1 ? '' : contractCommit,
+          requiresApiDeploy: plans !== 1,
+          apiDeploymentRef: plans === 1 ? '' : contractCommit,
+          reason: 'a Sideline input changed',
         };
       },
       applyReleaseVersion: async (version, cwd) => {
@@ -84,6 +85,42 @@ test('a competing main stamp replans the Sideline commit and API deployment gate
     assert.match(outputs, new RegExp(`^api_deployment_ref=${contractCommit}$`, 'mu'));
     assert.match(outputs, /^requires_api_deploy=true$/mu);
     assert.match(outputs, new RegExp(`^commit=${stamped}$`, 'mu'));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('an existing remote release tag stops stamping before changing the manifest', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sideline-stamp-tag-'));
+  const remote = join(root, 'origin.git');
+  const runner = join(root, 'runner');
+  try {
+    git(root, ['init', '--bare', '--initial-branch=main', remote]);
+    git(root, ['clone', remote, runner]);
+    await mkdir(join(runner, 'apps/sideline'), { recursive: true });
+    await writeFile(join(runner, 'apps/sideline/package.json'), '{"version":"0.1.5"}\n');
+    git(runner, ['add', '.']);
+    git(runner, ['-c', 'user.name=Release Test', '-c', 'user.email=release-test@example.com', 'commit', '-m', 'Seed Sideline']);
+    git(runner, ['push', 'origin', 'HEAD:main']);
+    git(runner, ['tag', 'sideline-v0.1.6']);
+    git(runner, ['push', 'origin', 'sideline-v0.1.6']);
+    let applied = false;
+    await assert.rejects(stampSidelineRelease({
+      cwd: runner,
+      outputPath: join(root, 'outputs'),
+      planRelease: async (cwd) => ({
+        shouldRelease: true,
+        version: '0.1.6',
+        tag: 'sideline-v0.1.6',
+        ref: git(cwd, ['rev-parse', 'HEAD']),
+        requiresApiDeploy: false,
+        apiDeploymentRef: '',
+        reason: 'a Sideline input changed',
+      }),
+      applyReleaseVersion: async () => { applied = true; },
+    }), /sideline-v0\.1\.6 already exists/u);
+    assert.equal(applied, false);
+    assert.equal(JSON.parse(await readFile(join(runner, 'apps/sideline/package.json'), 'utf8')).version, '0.1.5');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
