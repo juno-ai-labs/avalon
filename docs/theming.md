@@ -160,6 +160,9 @@ serves it through `rally-font://`.
   is translucent in **both** appearances on purpose — an opaque fill has to know
   what is behind it, which is how `sys.color.surface.raised` came to be a hover
   on the light canvas that *was* the canvas.
+- **Elicitation hover uses the reader's accent.** The scoped row clears the
+  generic brand background beneath its accent tint; its thin row divider stays
+  visible on hover and selection.
 - **A control's resting chip fill is `cmp.control.background-quiet`, not the
   hover wash.** They carry the same weight today and are still two tokens: the
   composer's round tools rest on the quiet fill and hover a step above it, so a
