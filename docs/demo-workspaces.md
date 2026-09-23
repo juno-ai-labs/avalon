@@ -799,6 +799,8 @@ Retry. Keep source facts and arithmetic consistent across snapshots; joining is
 never implicit private-data sharing. Casting still requires colleague accounts,
 and real import/distribution requires its ordinary provider configuration.
 
+Shipped in [#956](https://github.com/juno-ai-labs/avalon/pull/956).
+
 ### 2026-09-23 — A part can be played by any typed name
 
 **What changed:** The New demo form's parts are text fields, not colleague
