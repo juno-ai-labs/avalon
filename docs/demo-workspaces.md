@@ -115,9 +115,9 @@ the template losing Linear during one.
 typed name.** The presenter signs
 in, owns the demo, and it is their view of it that the readiness barrier
 verifies, so they are chosen from the template's own members. Every other role
-is cast from the **company's directory**: everyone with an account on the
-company's own email domain who has signed in to this region, listed by address
-in the New demo form's dropdowns. `demo-cast.ts` holds that domain — the one
+is a typed name; the **company's directory** — everyone with an account on the
+company's own email domain who has signed in to this region — is what the New
+demo form suggests, and the only accounts a request may name. `demo-cast.ts` holds that domain — the one
 place it is written down — and the query that reads it. The pack names each
 part it is casting for (`roleLabels`: Product, Sales and Legal for the pack in
 service), because a role token reads as this pack's own character and a
@@ -374,7 +374,8 @@ in.
 verifies the pack in service is the one the operation recorded, the template
 workspace exists in this region, the presenter is a signed-in regional user and
 still an active member of the template, and every other role is played by an
-account that is still a colleague on the company's domain.
+account that is still a colleague on the company's domain, or by the persona
+minted for this operation and that role — never another operation's.
 `creating_workspace` allocates the workspace id onto the operation's row
 *before* creating the workspace, so a crash between the two retries the same
 id — which is why that column carries no foreign key to `workspaces`; creates
@@ -499,7 +500,8 @@ demo's.
   moved past, and every status write names the attempt it belongs to.
 - **A cast account is a colleague or a persona.** A start request carries an
   account or a typed name per role; every account must be a signed-in account
-  on the company's email domain or a persona that cannot sign in — checked before the row is written and again by the
+  on the company's email domain. A persona is reached only by typing a name, and
+  the template check accepts only this operation's own — checked before the row is written and again by the
   template check before the first write, so the page's list is never what
   bounds who a demo can seat.
 - **Nobody is in a demo twice, and no two of them share a name.** One person
@@ -663,12 +665,13 @@ already holds one token per region for; the demo routers refuse the telemetry
 roles as the telemetry router refuses `demos`.
 
 The presenter must be an active member of the template, and every cast member
-an account on the company's email domain — both checked before the row is
+an account on the company's email domain or this operation's own persona — both checked before the row is
 written and again by the first phase. The new workspace is owned by the
 presenter and receives copies of the template's connections, so a presenter
 outside the template would be handed its credentials; a cast member is seated
 in that workspace and so reaches the same copies, which is what the domain
-bounds. Plaintext credentials exist only inside the copying operation and
+bounds; a persona cannot sign in, so it reaches nothing. Digest delivery skips
+`.invalid` addresses, so a seated persona is never mailed. Plaintext credentials exist only inside the copying operation and
 never enter a response, a log, or a receipt. The template's row is not written
 during a copy, which is asserted rather than assumed. A copy shares the
 template's upstream grant, and the presenter owns the demo's Disconnect: only a
@@ -729,7 +732,9 @@ colleagues for three parts, so no demo could be cast without a duplicate. The
 default"; typing resolves that — the field asks one question, and a
 colleague's name still seats the colleague.
 
-**Consequences:** Persona rows accumulate, one per typed part per operation,
+**Consequences:** A persona is never renamed by a mint: two concurrent first
+submissions both mint before either claims the operation, so only the winner
+names its personas, after its claim. Persona rows accumulate, one per typed part per operation,
 and are never deleted. A name that two colleagues share is played by a
 persona, not either of them. Changing the persona address derivation orphans
 personas already minted for an operation that may still be retried.
