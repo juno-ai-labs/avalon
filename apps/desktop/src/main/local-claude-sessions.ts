@@ -41,7 +41,10 @@ function decodeBlob(bytes: Buffer): Row | null {
 
 async function blobs(): Promise<Row[]> {
   const files = await nestedFiles(blobRoot(), () => true);
-  return (await Promise.all(files.map(async (file) => decodeBlob(await readFile(file))))).filter((value): value is Row => value !== null);
+  return (await Promise.all(files.map(async (file) => {
+    const bytes = await readFile(file).catch(() => null);
+    return bytes ? decodeBlob(bytes) : null;
+  }))).filter((value): value is Row => value !== null);
 }
 
 function chatCatalog(values: Row[]): LocalClaudeSession[] {
@@ -159,9 +162,12 @@ export async function readLocalClaudeSession(id: string): Promise<{ provider: 'c
   if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(id)) throw new Error('Invalid local session selection');
   const values = await blobs();
   const snapshots = values.map((value) => value['conversationUuid'] === id ? completeChat(value, id) : null).filter((value): value is Row => value !== null);
-  const fromBlob = snapshots.sort((a, b) => Date.parse(string(b['updated_at'])) - Date.parse(string(a['updated_at'])))[0];
+  const fromBlob = snapshots.sort((a, b) => Date.parse(string(b['updated_at'])) - Date.parse(string(a['updated_at']))
+    || list(b['chat_messages']).length - list(a['chat_messages']).length)[0];
   const fromCache = await cachedChat(id);
-  const latest = fromCache && (!fromBlob || Date.parse(string(fromCache['updated_at'])) > Date.parse(string(fromBlob['updated_at']))) ? fromCache : fromBlob;
+  const latest = fromCache && (!fromBlob || Date.parse(string(fromCache['updated_at'])) > Date.parse(string(fromBlob['updated_at']))
+    || (fromCache['updated_at'] === fromBlob['updated_at']
+      && list(fromCache['chat_messages']).length > list(fromBlob['chat_messages']).length)) ? fromCache : fromBlob;
   if (!latest) throw new Error('This chat’s messages are not saved on this Mac. Open it in Claude, then try again.');
   return { provider: 'claude', text: JSON.stringify(latest) };
 }

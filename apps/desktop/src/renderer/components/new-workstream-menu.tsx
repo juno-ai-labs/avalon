@@ -108,7 +108,11 @@ export function NewWorkstreamMenu({
             : 'The selected Claude conversation could not be read.');
         });
       }).catch(() => {
-        if (active) setFailure('Claude chats could not be listed.');
+        if (active) {
+          fileReadRevision.current += 1;
+          setFileText('');
+          setFailure('Claude chats could not be listed.');
+        }
       });
     };
     refresh();
@@ -225,7 +229,7 @@ export function NewWorkstreamMenu({
             setImportRequestId(crypto.randomUUID());
           }} value={importSource}>
             <option value="link">Shared conversation link</option>
-            <option value="claude_local">Claude chats on this Mac</option>
+            {window.rally && <option value="claude_local">Claude chats on this Mac</option>}
             <option value="claude_code">Claude Code on this Mac</option>
           </select>
         </label>}

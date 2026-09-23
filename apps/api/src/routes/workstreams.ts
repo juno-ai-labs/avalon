@@ -215,6 +215,17 @@ workstreamRoutes.post("/:id/import/update", zValidator("param", idParam),
     }
     const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
     const checkpoint = await client.importedSessionCheckpoint();
+    const recorded = await client.importedSessionSource();
+    if (!recorded) throw new ApiError(409, "session_import_source_missing", "This channel has no updateable source session");
+    if (body.source.provider !== recorded.provider || body.source.sessionId !== recorded.sessionId
+      || body.source.url !== recorded.url) {
+      throw new ApiError(409, "session_import_source_mismatch", "Select the original source conversation for this channel");
+    }
+    const ids = body.content.messages.map((message) => message.sourceMessageId!);
+    if (new Set(ids).size !== ids.length) throw new ApiError(422, "session_import_duplicate_message", "The source contains duplicate message IDs");
+    if (checkpoint.some((entry, index) => ids[index] !== entry.sourceMessageId)) {
+      throw new ApiError(409, "session_import_branch_changed", "The source removed or reordered earlier messages. Import this branch into a new channel");
+    }
     const conversation = await prepareSessionImport(c.env, getAuth(c), body, body.clientMessageId,
       new Map(checkpoint.map((message) => [message.sourceMessageId, message.sourceRevision])));
     return c.json(SessionImportUpdateResponseSchema.parse(await client.updateImportedSession(body.clientMessageId, conversation)));

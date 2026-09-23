@@ -76,6 +76,20 @@ describe("shared session import", () => {
     ].map((event) => JSON.stringify(event)).join("\n"));
     expect(result.title).toBe("Chosen title");
   });
+  it('keeps Claude Code image and document blocks, including attachment-only turns', () => {
+    const result = parseSessionExport('claude_code', [
+      { type: 'user', sessionId: 'code-files', uuid: 'u1', message: { role: 'user', content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aGVsbG8=' } },
+      ] } },
+      { type: 'assistant', sessionId: 'code-files', uuid: 'a1', parentUuid: 'u1', message: { role: 'assistant', content: [
+        { type: 'document', title: 'Notes', source: { type: 'text', media_type: 'text/plain', data: 'Summary' } },
+      ] } },
+    ].map((event) => JSON.stringify(event)).join('\n'));
+    expect(result.content.messages).toMatchObject([
+      { role: 'user', text: '', files: [{ kind: 'attachment', source: { kind: 'inline', data: 'aGVsbG8=' } }] },
+      { role: 'assistant', text: '', files: [{ kind: 'artifact', source: { kind: 'inline', data: 'Summary' } }] },
+    ]);
+  });
   it("imports complete records from a file still being written and refuses a malformed complete record", () => {
     const first = JSON.stringify({ type: "user", uuid: "u1", sessionId: "session-1",
       message: { role: "user", content: "Question" } });
@@ -99,7 +113,8 @@ describe("shared session import", () => {
       .toEqual([{ role: "user", text: "Only turn", sourceMessageId: "position:0" }]);
     const first = parseSessionExport("claude", JSON.stringify({ chat_messages: [{ sender: "human", content: "First chat" }] }));
     const second = parseSessionExport("claude", JSON.stringify({ chat_messages: [{ sender: "human", content: "Another chat" }] }));
-    expect(first.source.sessionId).not.toBe(second.source.sessionId);
+    expect(first.source.sessionId).toBeUndefined();
+    expect(second.source.sessionId).toBeUndefined();
     expect(() => parseSessionExport("claude", JSON.stringify({ chat_messages: [
       { sender: "human", content: "Question" }, { sender: "assistant", content: [{ type: "unknown secret payload" }] },
     ] }))).toThrow("Unsupported Claude content block type");
