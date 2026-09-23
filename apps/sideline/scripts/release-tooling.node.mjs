@@ -77,6 +77,7 @@ test('the release workflow rebuilds Sideline when an installed-app input changes
   }
   assert.match(workflow, /^[ ]{2}queue: single$/mu);
   assert.match(workflow, /node apps\/sideline\/scripts\/stamp-release\.mjs/u);
+  assert.match(workflow, /fetch-depth: 0\n[ ]{10}ref: main\n[ ]{10}persist-credentials: true/u);
   assert.match(workflow, /should_release: \$\{\{ steps\.stamp\.outputs\.should_release \}\}/u);
   assert.match(workflow, /api_deployment_ref: \$\{\{ steps\.stamp\.outputs\.api_deployment_ref \}\}/u);
   assert.match(workflow, /if: steps\.stamp\.outputs\.should_release == 'true' && steps\.stamp\.outputs\.requires_api_deploy == 'true'/u);

@@ -9,6 +9,7 @@ import { applySidelineReleaseVersion } from './apply-release-version.mjs';
 import {
   latestContractCommit,
   nextPatchVersion,
+  planFromHead,
   planSidelineRelease,
   sidelineReleaseInputPaths,
 } from './plan-release.mjs';
@@ -86,10 +87,13 @@ test('the API deployment ref is the main-line merge that introduced a second-par
     git(directory, ['init', '--initial-branch=main']);
     git(directory, ['config', 'user.name', 'Sideline Release Test']);
     git(directory, ['config', 'user.email', 'sideline-release-test@example.com']);
+    await mkdir(join(directory, 'apps/sideline'), { recursive: true });
     await mkdir(join(directory, 'packages/contracts'), { recursive: true });
+    await writeFile(join(directory, 'apps/sideline/package.json'), '{"version":"0.1.5"}\n');
     await writeFile(join(directory, 'packages/contracts/schema.ts'), 'export const version = 1;\n');
     git(directory, ['add', '.']);
     git(directory, ['commit', '-m', 'Add contract']);
+    git(directory, ['tag', 'sideline-v0.1.5']);
 
     git(directory, ['switch', '-c', 'feature']);
     await writeFile(join(directory, 'packages/contracts/schema.ts'), 'export const version = 2;\n');
@@ -104,6 +108,12 @@ test('the API deployment ref is the main-line merge that introduced a second-par
     const mergeSha = git(directory, ['rev-parse', 'HEAD']);
 
     assert.equal(latestContractCommit(mergeSha, directory), mergeSha);
+    const plan = await planFromHead(directory);
+    assert.equal(plan.shouldRelease, true);
+    assert.equal(plan.ref, mergeSha);
+    assert.equal(plan.version, '0.1.6');
+    assert.equal(plan.requiresApiDeploy, true);
+    assert.equal(plan.apiDeploymentRef, mergeSha);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
