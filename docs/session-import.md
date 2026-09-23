@@ -255,64 +255,37 @@ cannot reconstruct original files automatically.
 
 ## Changelog
 
-### 2026-09-23 — Simplify the local Claude picker
+### 2026-09-23 — Import local Claude sessions and update their source history
 
-**What changed:** The creation dialog now names the local source “Claude chats
-on this Mac”, removes the account-export choice, and refreshes the local list
-when Rally regains focus. The selected title appears only in the dropdown. The
-list now omits chat and Cowork titles without a complete local transcript.
+**What changed:** The desktop lists local Claude chats, Cowork tasks, and Claude
+Code sessions with recognizable titles, then reads only the selected transcript.
+The Claude chat picker requires a complete IndexedDB or HTTP cache snapshot;
+Cowork requires a local JSONL transcript. It refreshes when Rally regains focus,
+shortens long menu labels, and omits internal IDs and duplicate title text. The
+account-export choice was removed from creation. A Channel records source message
+IDs and revisions in its own SQLite transaction and offers an explicit update.
+New or revised source turns append after any Rally turns, with replay receipts
+and a Bind history transition for imported assistant replies.
 
-**Why:** The export choice and repeated short title distracted from the local
-chats people recognize in Claude. A title without messages led to a selection
-that could never import. Reopening a chat in Claude can make a local copy
-available, so the list must refresh when the person returns to Rally.
-
-**Future changes must respect:** Keep existing export-backed Channels updateable
-and leave the decoder available to programmatic callers. Do not treat a cached
-title as a complete transcript.
-
-### 2026-09-23 — Read Claude desktop chats and Cowork tasks
-
-**What changed:** The desktop now lists Claude's cached chat titles alongside
-Cowork metadata titles, then reads only a selected complete local chat snapshot
-or Cowork JSONL transcript. Re-import reacquires the same source identity.
-
-**Why:** The earlier file picker covered Claude Code but missed the chats and
-tasks people recognize in Claude's sidebar. Cowork has a separate local session
-tree, and chat cache metadata cannot stand in for a transcript. Account export
-remains the fallback where Claude has not retained complete local messages.
-
-**Future changes must respect:** These are undocumented Claude cache formats.
-Keep reads local and read-only, detect complete message data before import, and
-preserve source IDs across re-import rather than binding a Channel to a cache
-filename.
-
-### 2026-09-23 — Add selected-session import and explicit source updates
-
-**What changed:** Desktop discovery lists local Claude Code sessions separately
-from importing one selected JSONL file; the account-export chooser sends one
-selected conversation. A Channel records the imported source's message IDs and
-revisions in its own SQLite transaction and offers an explicit update action.
-New or revised source turns append after Rally turns, with replay receipts and a
-Bind history transition for imported assistant replies. Conversation pickers
-shorten long labels while showing full details for the selected source.
-
-**Why:** Source sessions can continue independently after a Channel has already
-received Rally messages. Comparing the source to the Channel tail would duplicate
-history or reject a valid update. Selecting a conversation before reading its
-complete transcript avoids importing an entire account export or unrelated Code
-sessions.
+**Why:** A file picker missed the chats and tasks people recognize in Claude,
+while a cached title without messages led to a selection that could never import.
+Source sessions can also continue after a Rally Channel has received its own
+messages; comparing against the Channel tail would duplicate or reject valid
+source updates. Selecting one conversation and keeping a separate source
+checkpoint makes both operations explicit and repeatable.
 
 **Considered and rejected:** Automatic polling and the Claude account's
-unpublished authenticated API. Local JSONL and account exports are inspectable,
-user-selected sources; the JSONL file picker remains a fallback when discovery
-does not find a session.
+unpublished authenticated API. Local cache snapshots and JSONL files are
+inspectable, user-selected sources; the Claude Code JSONL file picker remains a
+fallback when discovery misses a session.
 
-**Consequences:** The source's historical branch is append-only in Rally.
-Deleting or reordering previously imported source messages requires a new Channel;
-an updated source message is visibly marked as such rather than rewriting earlier
-facts. Cloud Code sessions with no local file still require an accessible export;
-the Claude app's cloud list does not establish that a local JSONL exists.
+**Consequences:** Claude's undocumented cache remains an opportunistic source,
+so a title alone never qualifies for the picker. Existing export-backed Channels
+remain updateable and the export decoder remains available to programmatic
+callers. The source's historical branch is append-only in Rally: deleting or
+reordering prior source messages requires a new Channel, and a revised message
+is marked as superseding the earlier turn. Cloud Code sessions without a local
+file cannot be selected from the local picker.
 
 ### 2026-09-22 — Import selected local Claude and Claude Code files
 
