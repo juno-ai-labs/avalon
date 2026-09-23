@@ -1970,6 +1970,8 @@ mutable display name the creation identity.
 **Consequences:** Internal callers own identity stability. Replaying creation is
 not an update API; audience and appearance changes use their normal writers.
 
+Shipped in [#956](https://github.com/juno-ai-labs/avalon/pull/956).
+
 ### 2026-09-22 — Needs attention shows the Channel-to-Breakout identity
 
 **What changed:** Every Needs attention row now puts its conversation identity
