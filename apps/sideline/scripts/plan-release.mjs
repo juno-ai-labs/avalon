@@ -136,14 +136,14 @@ function gitOutput(args, cwd = repositoryDirectory) {
   }).trim();
 }
 
-function latestReachableTag(headSha) {
+function latestReachableTag(headSha, cwd) {
   const tags = gitOutput([
     'for-each-ref',
     `--merged=${headSha}`,
     '--sort=-version:refname',
     '--format=%(refname:short)',
     'refs/tags/sideline-v*',
-  ]).split('\n').filter(Boolean);
+  ], cwd).split('\n').filter(Boolean);
   return tags.find((tag) => {
     try {
       parseSidelineTag(tag);
@@ -154,13 +154,13 @@ function latestReachableTag(headSha) {
   });
 }
 
-function changedPathsSince(tag, headSha) {
+function changedPathsSince(tag, headSha, cwd) {
   try {
-    const base = gitOutput(['rev-parse', `${tag}^{commit}`]);
+    const base = gitOutput(['rev-parse', `${tag}^{commit}`], cwd);
     const output = execFileSync(
       '/usr/bin/git',
       ['diff', '--no-renames', '--name-only', '-z', `${base}..${headSha}`],
-      { cwd: repositoryDirectory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     );
     return output.split('\0').filter(Boolean);
   } catch {
@@ -192,17 +192,21 @@ function report(plan) {
   return undefined;
 }
 
-async function main() {
-  const headSha = gitOutput(['rev-parse', 'HEAD']);
-  const manifest = JSON.parse(await readFile(resolve(sidelineDirectory, 'package.json'), 'utf8'));
-  const latestTag = latestReachableTag(headSha);
-  return report(planSidelineRelease({
+export async function planFromHead(cwd = repositoryDirectory) {
+  const headSha = gitOutput(['rev-parse', 'HEAD'], cwd);
+  const manifest = JSON.parse(await readFile(resolve(cwd, 'apps/sideline/package.json'), 'utf8'));
+  const latestTag = latestReachableTag(headSha, cwd);
+  return planSidelineRelease({
     headSha,
     manifestVersion: manifest.version,
     latestTag,
-    changedPaths: latestTag ? changedPathsSince(latestTag, headSha) : [],
-    apiDeploymentRef: latestContractCommit(headSha),
-  }));
+    changedPaths: latestTag ? changedPathsSince(latestTag, headSha, cwd) : [],
+    apiDeploymentRef: latestContractCommit(headSha, cwd),
+  });
+}
+
+async function main() {
+  return report(await planFromHead());
 }
 
 if (isEntryPoint(import.meta.url)) {
