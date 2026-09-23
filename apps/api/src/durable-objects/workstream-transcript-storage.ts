@@ -3019,17 +3019,27 @@ export class WorkstreamTranscriptStorage {
       attachmentsByTurn.set(attachment.part_id, current);
     }
     const blocksByTurn = new Map<string, TranscriptBlock[]>();
-    const cancelledElicitations = blocks.some((block) => block.message_type === "elicitation")
-      ? new Set(this.sql.exec<{ elicitation_id: string } & Record<string, SqlStorageValue>>(
-        `SELECT elicitation_id FROM elicitation_requests WHERE status = 'cancelled'`,
-      ).toArray().map((row) => row.elicitation_id))
-      : new Set<string>();
-    for (const block of blocks) {
-      const hydrated = hydrateBlock(
+    const hydratedBlocks = blocks.map((block) => hydrateBlock(
         block,
         mentionsByTurn.get(block.turn_id) ?? [],
         attachmentsByTurn.get(block.turn_id) ?? [],
-      );
+      ));
+    const elicitationIds = hydratedBlocks.flatMap((block) => {
+      if (block.type !== "text" || block.messageType !== "elicitation"
+        || !block.structuredContent) return [];
+      const source = "elicitation" in block.structuredContent
+        ? block.structuredContent.elicitation : block.structuredContent;
+      return source && typeof source === "object" && "id" in source
+        && typeof source.id === "string" ? [source.id] : [];
+    });
+    const cancelledElicitations = new Set(boundParameterChunks(elicitationIds)
+      .flatMap((ids) => this.sql.exec<{ elicitation_id: string } & Record<string, SqlStorageValue>>(
+        `SELECT elicitation_id FROM elicitation_requests WHERE status = 'cancelled'
+          AND elicitation_id IN (${ids.map(() => "?").join(", ")})`,
+        ...ids,
+      ).toArray().map((row) => row.elicitation_id)));
+    for (const [index, block] of blocks.entries()) {
+      const hydrated = hydratedBlocks[index]!;
       if (hydrated.type === "text" && hydrated.messageType === "elicitation"
         && hydrated.structuredContent) {
         const wrapped = "elicitation" in hydrated.structuredContent;
@@ -3889,6 +3899,25 @@ export class WorkstreamTranscriptStorage {
     return open.size === withheld.calls.length ? open : new Set();
   }
 
+  private cancelledQuestionRequests(projection: BindLoopProjectionState): Array<{
+    elicitationId: string;
+    toolCallId: string;
+  }> {
+    const withheld = pendingBindToolBatch(projection);
+    if (!withheld || withheld.calls.length === 0) return [];
+    return boundParameterChunks(withheld.calls.map((call) => call.receiptToolCallId))
+      .flatMap((ids) => this.sql.exec<{
+        elicitation_id: string; tool_call_id: string;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT elicitation_id, tool_call_id FROM elicitation_requests
+          WHERE status = 'cancelled'
+            AND tool_call_id IN (${ids.map(() => "?").join(", ")})
+          ORDER BY created_at, elicitation_id`,
+        ...ids,
+      ).toArray())
+      .map((row) => ({ elicitationId: row.elicitation_id, toolCallId: row.tool_call_id }));
+  }
+
   /**
    * The tool batch that must be settled before this loop may go back to `idle`,
    * or `null` when nothing holds the release.
@@ -3961,9 +3990,7 @@ export class WorkstreamTranscriptStorage {
     // visible instead: `nextLoopWorkAt` derives no instant, and the loop is
     // reported once through `substream_loop_parked_with_queued_input`.
     if (openToolCallIds.size === 0) return [];
-    const cancelled = new Set(this.sql.exec<{ tool_call_id: string } & Record<string, SqlStorageValue>>(
-      `SELECT tool_call_id FROM elicitation_requests WHERE status = 'cancelled'`,
-    ).toArray().map((row) => row.tool_call_id));
+    const cancelled = new Set(this.cancelledQuestionRequests(projection).map((row) => row.toolCallId));
     const answers = new Map<string, PendingLoopInputRow>();
     for (const pending of pendingInputs) {
       const toolCallId = this.answeredQuestionToolCallId(pending);
@@ -4015,6 +4042,7 @@ export class WorkstreamTranscriptStorage {
     // in the pass, which is also the order the room saw them in.
     const scanThrough = this.transcriptThrough();
     const appendedInThisPass = new Set<string>();
+    const cancelledQuestions = this.cancelledQuestionRequests(previous);
     for (const pending of this.inputsBindCanAccept(previous, pendingInputs)) {
       const material = parsePendingInputMaterial(pending);
       // The transition below appends `bindPayload`, which is always the user
@@ -4029,6 +4057,17 @@ export class WorkstreamTranscriptStorage {
       const steps: PreparedPendingBindStep[] = [];
       if (pending.message_type === "elicitation" && !material.authorization.elicitationId) {
         throw new Error("elicitation_pending_input_identity_missing");
+      }
+      // Every promoted input can be the one that resumes a batch with a
+      // cancelled sibling, including an answer to another question in it.
+      for (const question of cancelledQuestions) {
+        if (!pendingBindToolBatch(projection)?.calls.some((call) =>
+          call.receiptToolCallId === question.toolCallId)) continue;
+        const cancellation = await this.prepareElicitationAnswerToolResult(
+          projection, question.elicitationId,
+        );
+        steps.push(cancellation);
+        projection = cancellation.next;
       }
       if (material.authorization.elicitationId) {
         const answerStep = await this.prepareElicitationAnswerToolResult(
@@ -4046,21 +4085,6 @@ export class WorkstreamTranscriptStorage {
         // waits for the next text input, which appends it after this result.
         prepared.push({ pending, material, steps, next: projection, projectedThrough: null });
         continue;
-      }
-      // A new message cancelled the withheld question when it committed. Bind
-      // still requires one tool result per call before accepting user text.
-      const cancelledQuestions = this.sql.exec<{ elicitation_id: string; tool_call_id: string } & Record<string, SqlStorageValue>>(
-        `SELECT elicitation_id, tool_call_id FROM elicitation_requests WHERE status = 'cancelled'
-          ORDER BY created_at, elicitation_id`,
-      ).toArray();
-      for (const question of cancelledQuestions) {
-        if (!pendingBindToolBatch(projection)?.calls.some((call) =>
-          call.receiptToolCallId === question.tool_call_id)) continue;
-        const cancellation = await this.prepareElicitationAnswerToolResult(
-          projection, question.elicitation_id,
-        );
-        steps.push(cancellation);
-        projection = cancellation.next;
       }
       // The turns nobody admitted. A message that started no run is a
       // canonical turn and nothing else, and until now it stayed that way:

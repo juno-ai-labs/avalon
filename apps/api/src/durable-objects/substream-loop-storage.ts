@@ -491,7 +491,13 @@ export class SubstreamLoopStorage {
           ${onlySupersededByQueuedInput ? `AND EXISTS (
             SELECT 1 FROM pending_loop_inputs AS pending
              WHERE pending.message_type != 'elicitation'
-               AND pending.created_at > elicitation_requests.created_at
+               AND (pending.created_at > elicitation_requests.created_at
+                 OR (pending.created_at = elicitation_requests.created_at
+                   AND EXISTS (
+                     SELECT 1 FROM participant_transcript_turns AS question
+                      WHERE question.client_message_id = 'elicitation:' || elicitation_requests.elicitation_id
+                        AND pending.admitted_after_transcript_sequence >= question.transcript_sequence
+                   )))
           )` : ""}
       RETURNING elicitation_id`,
     ).toArray();

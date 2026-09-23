@@ -1847,7 +1847,12 @@ blocked. The durable request state and model protocol must move together.
 
 **Consequences:** A late answer is rejected as no longer open. Runtime recovery
 also cancels a question if a previously queued ordinary input was committed
-after it, releasing the existing backlog when that object next wakes.
+after it, releasing the existing backlog when that object next wakes. For
+same-millisecond arrivals, recovery uses the canonical transcript sequence to
+distinguish which came first. This cold-start recovery can be removed after
+pre-change queued inputs have drained. A late answer receives the specific
+`elicitation_cancelled` error. A cancelled question in a multi-question batch
+is settled in Bind before any queued answer in that batch is promoted.
 
 ### 2026-09-22 — Project each Breakout's viewer marker to the Channel rail
 
