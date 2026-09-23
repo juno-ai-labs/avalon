@@ -1118,13 +1118,17 @@ describe('Sidebar channel markers', () => {
 
     expect(document.querySelectorAll('.workstream-row-status')).toHaveLength(0);
     expect(document.querySelectorAll('.workstream-row .status-dot')).toHaveLength(0);
+    expect(screen.getByRole('link', { name: /Board decision/u })).toHaveAccessibleDescription(/1 conversation needs attention/u);
+    expect(screen.getByRole('link', { name: /Completed mention/u })).toHaveAccessibleDescription(/1 conversation needs attention/u);
+    expect(screen.getByRole('link', { name: /Completed unseen/u })).toHaveAccessibleDescription(/1 conversation needs attention/u);
+    expect(within(screen.getByRole('link', { name: /Missing sidebar row/u })).queryByText('1')).not.toBeInTheDocument();
     expect(document.querySelector('.sidebar-automation-marker')).toBeNull();
     expect(screen.queryByRole('img', { name: /Automation-generated/u })).not.toBeInTheDocument();
     expect(document.querySelector('.brand-lockup')).toBeNull();
     expect(document.querySelector('.sidebar-titlebar')).not.toBeNull();
   });
 
-  it('draws a Breakout attention count on a Channel row and omits zero', () => {
+  it('counts Main and Breakout attention together on a Channel row and omits zero', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -1134,7 +1138,9 @@ describe('Sidebar channel markers', () => {
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[
-              { ...workstream('active-breakouts', 'Launch', 'completed'), breakoutAttentionCount: 2 },
+              { ...workstream('active-breakouts', 'Launch', 'completed', undefined, { hasUnread: true }), breakoutAttentionCount: 2 },
+              { ...workstream('guest-breakout', 'Shared channel', 'completed', undefined, { hasUnread: true }),
+                associativeSubstreamId: '00000000-0000-7000-8000-000000000099', breakoutAttentionCount: 1 },
               { ...workstream('quiet-breakouts', 'Roadmap', 'completed'), breakoutAttentionCount: 0 },
             ]}
           />
@@ -1143,65 +1149,10 @@ describe('Sidebar channel markers', () => {
     );
 
     const launch = screen.getByRole('link', { name: 'Launch' });
-    expect(launch).toHaveAccessibleDescription(/2 breakouts need attention in Launch/u);
-    expect(within(launch).getByText('2')).toHaveAttribute('aria-hidden', 'true');
+    expect(launch).toHaveAccessibleDescription(/3 conversations need attention/u);
+    expect(within(launch).getByText('3')).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByRole('link', { name: 'Shared channel' })).toHaveAccessibleDescription(/1 conversation needs attention/u);
     expect(within(screen.getByRole('link', { name: 'Roadmap' })).queryByText('0')).not.toBeInTheDocument();
-  });
-
-  it('keeps status off the channel icon even when it has personal attention', () => {
-    render(
-      <MemoryRouter initialEntries={['/workstreams/unseen']}>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[]}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[
-              workstream('unseen', 'Warehouse migration', 'running', '2026-07-31T20:00:00.000Z', {
-                unseen: true,
-                // Everything else is true as well, and none of it wins.
-                youAreMentioned: true,
-                hasUnread: true,
-              }),
-              workstream('running', 'Pricing restructure', 'running'),
-            ]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    const row = screen.getByRole('link', { name: /Warehouse migration/u });
-    expect(row.querySelector('.status-dot')).toBeNull();
-  });
-
-  it('keeps the channel navigation glyph free of state badges', () => {
-    render(
-      <MemoryRouter initialEntries={['/workstreams/mentioned']}>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[]}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[
-              workstream('mentioned', 'Launch blockers', 'running', '2026-07-31T20:00:00.000Z', {
-                youAreMentioned: true,
-                hasUnread: true,
-              }),
-              workstream('unread', 'Vendor contract', 'running', '2026-07-31T20:00:00.000Z', {
-                hasUnread: true,
-              }),
-              workstream('read', 'Release notes', 'completed', '2026-07-31T20:00:00.000Z', {
-                hasUnread: true,
-              }),
-            ]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    expect(document.querySelectorAll('.workstream-row .status-dot')).toHaveLength(0);
   });
 
   it('shows the next active timer and its brief prompt in a tooltip', async () => {

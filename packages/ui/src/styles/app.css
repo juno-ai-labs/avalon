@@ -3206,7 +3206,7 @@ pre {
 .waiting-workstream-row:hover { background-image: var(--hover-layer); border-color: var(--av-ref-color-line-2); }
 .waiting-workstream-row:focus-visible { border-color: var(--av-sys-color-focus-default); outline: 0; }
 /* The label beside the dot is deliberately not coloured by state: the dot
-   carries the marker here, exactly as it does in the sidebar.
+   carries the ranked marker on this Space row.
 
    These rows were built for the home screen's Needs attention section, whose
    membership rule admitted only unseen, mentioned, and needs-input — so a

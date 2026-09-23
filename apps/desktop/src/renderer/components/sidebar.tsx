@@ -17,7 +17,7 @@ import { NewWorkstreamMenu } from './new-workstream-menu';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import type { ContainerOrder, CreateSpaceRequest, PersonalOrder, SpaceSummary, WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
+import { conversationNeedsViewer, type ContainerOrder, type CreateSpaceRequest, type PersonalOrder, type SpaceSummary, type WorkstreamBatchFilter, type WorkstreamBatchUpdate } from '@rally/contracts';
 import { IconDots } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { Archive, ChevronsLeft, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderMinus, FolderPlus, Globe2, Info, LogOut, Megaphone, Menu, Pencil, Pin, PinOff, Plus, Settings, Smartphone } from 'lucide-react';
@@ -657,6 +657,9 @@ function WorkstreamRow({
   const [managingAccess, setManagingAccess] = useState(false);
   const socketWarmup = useWorkstreamSocketHoverWarmup(workstream.id);
   const socketOpenContext = useWorkstreamSocketOpenContext(workstream.id);
+  const mainVisible = !workstream.associativeSubstreamId || workstream.associativeSubstreamId === '0';
+  const attentionCount = (workstream.breakoutAttentionCount ?? 0)
+    + Number(mainVisible && conversationNeedsViewer(workstream));
   const destination = `/workstreams/${workstream.id}${workstream.associativeSubstreamId && workstream.associativeSubstreamId !== '0'
     ? `?substream=${encodeURIComponent(workstream.associativeSubstreamId)}`
     : ''}`;
@@ -901,8 +904,8 @@ function WorkstreamRow({
             aria-describedby={previewOpen ? `workstream-preview-${workstream.id}` : undefined}
             aria-label={[naming ? 'Rally is naming this channel' : workstream.title, drag?.position].filter(Boolean).join(', ')}
             badge={{
-              count: workstream.breakoutAttentionCount ?? 0,
-              label: `${workstream.breakoutAttentionCount ?? 0} ${workstream.breakoutAttentionCount === 1 ? 'breakout needs' : 'breakouts need'} attention in ${workstream.title}`,
+              count: attentionCount,
+              label: `${attentionCount} ${attentionCount === 1 ? 'conversation needs' : 'conversations need'} attention`,
             }}
             className={({ isActive }: { isActive: boolean }) => clsx(
               'workstream-row',

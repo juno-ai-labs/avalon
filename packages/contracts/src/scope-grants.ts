@@ -179,6 +179,8 @@ export type ScopeInvitationResult = z.infer<typeof ScopeInvitationResultSchema>;
 export const SharedWorkstreamRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, parentId: IdSchema, userId: UserIdSchema,
   membershipIncarnation: z.string().min(1),
+  /** New navigation readers opt in; older strict response parsers keep their shape. */
+  includeAttention: z.boolean().optional(),
 });
 export const SharedWorkstreamSchema = z.strictObject({
   parentId: IdSchema,
@@ -203,6 +205,7 @@ export const SharedNavigationWorkstreamSchema = SharedWorkstreamSchema.omit({ co
     appearance: WorkstreamAppearanceSchema.optional(),
     scope: z.enum(["personal", "workspace"]),
     archived: z.boolean(),
+    needsAttention: z.boolean().optional(),
   })),
 });
 export type SharedNavigationWorkstream = z.infer<typeof SharedNavigationWorkstreamSchema>;
