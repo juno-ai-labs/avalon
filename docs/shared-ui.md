@@ -39,6 +39,9 @@ The sidebar can omit Main without inventing an accessible Main route. Browser
 participants and resources belong to the selected authorized conversation; desktop
 can continue supplying parent-owned workstream context. Directory appearance comes
 from canonical reads and preserves the existing Main-label boundary.
+In the desktop Spaces rail and the shared Breakout rail, private Spaces and the
+Main row of a private Channel omit the redundant scope subtitle. Public scope
+remains explicit, and the underlying access scope does not change.
 
 Every collapsible desktop hierarchy sidebar composes `SidebarCollapseFooter`.
 The primitive owns the expand/collapse control, accessible state, constrained
