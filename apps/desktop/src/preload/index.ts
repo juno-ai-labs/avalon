@@ -106,6 +106,10 @@ ipcRenderer.on('deep-link-error:changed', (_event, rawNotice: unknown) => {
 });
 
 const bridge: RallyDesktopBridge = {
+  listLocalClaudeSessions: () => ipcRenderer.invoke('session-import:local-claude-list') as ReturnType<RallyDesktopBridge['listLocalClaudeSessions']>,
+  readLocalClaudeSession: (id) => ipcRenderer.invoke('session-import:local-claude-read', id) as ReturnType<RallyDesktopBridge['readLocalClaudeSession']>,
+  listLocalClaudeCodeSessions: () => ipcRenderer.invoke('session-import:local-claude-code-list') as Promise<Array<{ id: string; title: string; project: string; updatedAt: number }>>,
+  readLocalClaudeCodeSession: (id) => ipcRenderer.invoke('session-import:local-claude-code-read', id) as Promise<string>,
   getRuntimeConfig: () => ipcRenderer.invoke('runtime:get-config') as Promise<RuntimeConfig>,
   getApplicationForegroundState: () => ipcRenderer.invoke('application:foreground-get') as Promise<boolean>,
   onApplicationForegroundChanged: (listener) => {

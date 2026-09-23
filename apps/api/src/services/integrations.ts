@@ -204,6 +204,7 @@ import {
 import {
   participantModelMessageContent,
   projectElicitationResponseMessage,
+  projectImportedSourceMessage,
   projectParticipantModelMessage,
   renderElicitationResponseMessage,
 } from "./workstream-participant-model-message";
@@ -1458,10 +1459,12 @@ async function projectModelProtocolTranscript(
     });
     const imported = ImportedMessageProvenanceSchema.safeParse(message.structuredContent);
     if (imported.success && (message.author.type === "human" || message.author.type === "agent")) {
-      // Historical roles remain intact. The importer is a custodian, not the
-      // author of the source prompt; do not apply the live-member author wrapper.
+      // The importer is a custodian. Keep source roles in canonical history,
+      // while presenting provider text to Bind as attributed, overheard context.
       projected.push(modelDerivative(
-        { role: message.author.type === "human" ? "user" : "assistant", content: [message.textContent, ...(sources.length ? [buildAttachmentManifestPart(sources).text] : [])].filter(Boolean).join("\n\n") },
+        projectImportedSourceMessage({ provider: imported.data.source.provider,
+          role: message.author.type === 'human' ? 'user' : 'assistant',
+          text: [message.textContent, ...(sources.length ? [buildAttachmentManifestPart(sources).text] : [])].filter(Boolean).join('\n\n') }),
         "participant_turn", message.id, message.sequenceNumber,
       ));
       continue;
