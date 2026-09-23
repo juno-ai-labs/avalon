@@ -102,12 +102,17 @@ kind: "main")` on the `SpaceDO`, which enqueues and synchronously delivers the
 provisional directory projection; `provisionWorkstreamObject` for the
 conversation's title, scope and creator — **with no opening message and no run
 admitted**; and finally the appearance, through the same writer a Channel's icon
-and colour go through. Any failure cancels the reservation, so nothing ever
-renders a Space whose object never opened.
+and colour go through. A failed first creation cancels only the reservation it
+made; a failed replay preserves the earlier reservation and any Channels in it,
+even before its first projection arrives.
 
 Internal setup callers may pass a stable creation id to `SpaceService.create`.
 The reservation reuses that identity, and child reservation and provisioning
-resume under it. The service refuses a replay whose name, audience or appearance
+resume under it: the main child reservation reuses substream `0`, and conversation
+provisioning leaves already-initialized state intact. Appearance still goes
+through its normal writer. The reservation reports whether it was newly created;
+an inaccessible existing identity is refused as `space_not_found`, never inserted
+again. The service refuses a replay whose name, audience or appearance
 changed, rather than rewriting an existing Space. Ordinary client creation still
 allocates its id; the HTTP request does not expose this option. Demo setup uses
 operation-derived ids so retries and two Channels in one Space agree; see
@@ -1957,7 +1962,8 @@ afterwards.
 ### 2026-09-23 — Resume internal Space creation under a stable identity
 
 **What changed:** Internal `SpaceService.create` callers may supply an identity;
-replays reuse the reservation and refuse changed creation attributes. The HTTP
+replays reuse the reservation, preserve it on provisioning failure, and refuse
+changed creation attributes or an inaccessible identity. The HTTP
 create contract is unchanged.
 
 **Why:** Two demo Channels need one account Space even after interrupted setup.

@@ -620,6 +620,7 @@ import {
   WorkspaceSpaceMembershipRequestSchema,
   WorkspaceSpaceMembershipSettleRequestSchema,
   WorkspaceSpaceMutationResultSchema,
+  WorkspaceSpaceReserveResultSchema,
   WorkspaceSpacePresentationRequestSchema,
   WorkspaceContainerOrderRequestSchema,
   WorkspaceSpaceRequestSchema,
@@ -656,6 +657,7 @@ import {
   type WorkspaceSpaceMembershipRequest,
   type WorkspaceSpaceMembershipSettleRequest,
   type WorkspaceSpaceMutationResult,
+  type WorkspaceSpaceReserveResult,
   type WorkspaceSpacePresentationRequest,
   type WorkspaceContainerOrderRequest,
   type WorkspaceSpaceRequest,
@@ -6157,16 +6159,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * either provisioned or cancelled — the snapshot below is what a client
    * applies, and a Space whose object never opened must not reach one.
    */
-  async reserveSpace(input: WorkspaceSpaceReserveRequest): Promise<WorkspaceSpaceMutationResult> {
+  async reserveSpace(input: WorkspaceSpaceReserveRequest): Promise<WorkspaceSpaceReserveResult> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceReserveRequestSchema, input, "reserve_space");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
-    const storage = this.spaceStorage();
-    const existing = request.spaceId ? storage.readable(request.userId, request.spaceId) : false;
-    const space = existing || storage.reserve(request, request.spaceId ?? uuidV7(), null);
-    return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
+    const reserved = this.spaceStorage().reserveForCreation(request, request.spaceId ?? uuidV7());
+    if (!reserved.space) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
+    return WorkspaceSpaceReserveResultSchema.parse({ ok: true, ...reserved });
   }
 
   /**

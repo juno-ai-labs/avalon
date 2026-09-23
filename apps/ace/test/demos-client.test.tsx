@@ -59,7 +59,7 @@ const template = {
     version: 'multiplayer-2026-09',
     roles: ['presenter', 'priya', 'marcus', 'dana'],
     presenterRole: 'presenter',
-    roleLabels: { priya: 'Product', marcus: 'Sales', dana: 'Legal' },
+    roleLabels: { priya: 'Solutions engineer / IT', marcus: 'Sales lead / business owner', dana: 'Manager / finance approver' },
   },
   members: [
     { userId: PRESENTER_ID, name: 'Adam', email: 'adam@rallywith.ai', role: 'owner' },
@@ -199,8 +199,8 @@ describe('the Demos page', () => {
     const suggestions = container.querySelector('datalist')!.textContent;
     expect(suggestions).toContain('priya@rallywith.ai');
     expect(suggestions).not.toContain('adam@rallywith.ai');
-    expect(container.textContent).toContain('Product');
-    expect(container.textContent).toContain('Legal');
+    expect(container.textContent).toContain('Solutions engineer / IT');
+    expect(container.textContent).toContain('Manager / finance approver');
     expect(buttonNamed('Start preparation').title).toBe('3 parts are still unnamed');
 
     await act(async () => { type(parts[0]!, 'priya raman'); });
