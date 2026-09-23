@@ -18,6 +18,32 @@ export async function purgeCloudflareUrls({
     }
   }
 
+  await confirmedCloudflarePurge({
+    apiToken, fetchImplementation, label: 'Cloudflare URL purge', payload: { files: urls }, zoneId,
+  });
+}
+
+export async function purgeCloudflarePrefix({
+  apiToken,
+  fetchImplementation = fetch,
+  prefixUrl,
+  zoneId,
+}) {
+  const url = new URL(prefixUrl);
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash
+    || !url.pathname.endsWith('/') || url.pathname === '/') {
+    throw new Error('Cloudflare prefix purge requires a non-root HTTPS directory URL');
+  }
+  await confirmedCloudflarePurge({
+    apiToken,
+    fetchImplementation,
+    label: 'Cloudflare prefix purge',
+    payload: { prefixes: [`${url.host}${url.pathname}`] },
+    zoneId,
+  });
+}
+
+async function confirmedCloudflarePurge({ apiToken, fetchImplementation, label, payload, zoneId }) {
   let response;
   try {
     response = await fetchImplementation(
@@ -28,12 +54,12 @@ export async function purgeCloudflareUrls({
           authorization: `Bearer ${apiToken}`,
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ files: urls }),
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(30_000),
       },
     );
   } catch {
-    throw new Error('Cloudflare URL purge request failed');
+    throw new Error(`${label} request failed`);
   }
 
   const body = await response.json().catch(() => undefined);
@@ -45,7 +71,7 @@ export async function purgeCloudflareUrls({
     || body.result.id.length === 0
   ) {
     throw new Error(
-      `Cloudflare URL purge could not be confirmed (HTTP ${response.status}; codes: ${cloudflareErrorCodes(body)})`,
+      `${label} could not be confirmed (HTTP ${response.status}; codes: ${cloudflareErrorCodes(body)})`,
     );
   }
 }

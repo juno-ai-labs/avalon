@@ -190,19 +190,15 @@ jobs:
     timeout-minutes: 90
     environment: desktop-release
     permissions:
-      contents: write
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.artifact.outputs['artifact-id'] }}
     env:
       CSC_NAME: Juno AI Labs Inc. (7ZLT6A8W25)
       APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
       APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
       APPLE_TEAM_ID: 7ZLT6A8W25
-      SIDELINE_RELEASE_R2_BUCKET: ${{ vars.RALLY_RELEASE_R2_BUCKET || vars.AVALON_RELEASE_R2_BUCKET }}
-      SIDELINE_RELEASE_PREFIX: sideline/stable/darwin/arm64
-      SIDELINE_RELEASE_BASE_URL: https://downloads.rallywith.ai
-      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -260,12 +256,52 @@ jobs:
         run: pnpm --filter @rally/sideline package:release
 
       - name: Preserve signed release artifacts
+        id: artifact
         uses: actions/upload-artifact@v4
         with:
           name: Sideline-${{ needs.plan.outputs.version }}-macOS
           path: apps/sideline/release/release/
           if-no-files-found: error
           retention-days: 30
+
+  publish:
+    needs: [plan, verify, release]
+    if: needs.plan.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: desktop-release
+    permissions:
+      contents: write
+    env:
+      SIDELINE_RELEASE_R2_BUCKET: ${{ vars.RALLY_RELEASE_R2_BUCKET || vars.AVALON_RELEASE_R2_BUCKET }}
+      SIDELINE_RELEASE_PREFIX: sideline/stable/darwin/arm64
+      SIDELINE_RELEASE_BASE_URL: https://downloads.rallywith.ai
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.verify.outputs.commit }}
+          persist-credentials: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.release.outputs.artifact_id }}
+          path: apps/sideline/release/release
+          merge-multiple: true
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.0
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
 
       - name: Confirm the release tag is still unpublished
         shell: bash
@@ -278,6 +314,8 @@ jobs:
           }
 
       - name: Publish update feed and installer to R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: pnpm --filter @rally/sideline release:publish
 
       - name: Record the published release tag
