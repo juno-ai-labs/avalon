@@ -47,7 +47,7 @@ export async function listSharedDirectory(env: Env, workspaceId: WorkspaceId, us
 }
 
 /** Guest browser hierarchy; canonical Channel owners still decide every label released. */
-export async function listSharedNavigationDirectory(env: Env, workspaceId: WorkspaceId, userId: UserId) {
+export async function listSharedNavigationDirectory(env: Env, workspaceId: WorkspaceId, userId: UserId, includeAttention = false) {
   const relationship = await readWorkspaceRelationship(env.DB, workspaceId, userId);
   if (relationship?.status !== "active") {
     return SharedNavigationDirectorySchema.parse({ spaces: [], workstreams: [] });
@@ -61,7 +61,7 @@ export async function listSharedNavigationDirectory(env: Env, workspaceId: Works
     const parent = await durableObjectStubForWorkspace(env, env.WORKSTREAM_DOS, workspaceId,
       workstreamDOName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(parentId)));
     return SharedNavigationWorkstreamSchema.nullable().parse(await parent.readSharedWorkstream({
-      workspaceId, parentId, userId, membershipIncarnation: relationship.incarnation,
+      workspaceId, parentId, userId, membershipIncarnation: relationship.incarnation, includeAttention,
     }));
   }));
   const workstreams = items.filter((item) => item !== null);

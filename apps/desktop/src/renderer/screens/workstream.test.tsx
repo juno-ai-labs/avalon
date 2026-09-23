@@ -27,6 +27,7 @@ import {
   workstreamRunTiming,
   workstreamShowsReadyState,
   resourceVersionsQueryKey,
+  railChildrenWithAttention,
   workspaceMemberFromSession,
 } from './workstream';
 import { conversationActivityRow, conversationShowsStoppingRow } from './conversation-surface';
@@ -137,6 +138,30 @@ const headerWorkstream: WorkstreamDetail = {
   connections: [],
   backgroundTasks: [],
 };
+
+describe('Channel rail attention from projected conversations', () => {
+  it('badges an unopened sibling and a guest-visible sibling independently of the selected detail', () => {
+    const rows = railChildrenWithAttention([
+      { substreamId: 'selected', harnessStatus: 'completed' as const, unreadCount: 0 },
+      { substreamId: 'member-sibling', youAreMentioned: true },
+      { substreamId: 'guest-sibling', needsAttention: true },
+    ], 'selected', { ...headerWorkstream, hasUnread: true });
+    expect(rows?.map((row) => row.needsAttention)).toEqual([false, true, true]);
+  });
+
+  it('uses the latest projected viewer state for the selected Breakout and normalizes idle runs', () => {
+    const detail = { ...headerWorkstream, hasUnread: false, youAreMentioned: false };
+    expect(railChildrenWithAttention([
+      { substreamId: 'selected', harnessStatus: 'idle' as const, unreadCount: 1 },
+      { substreamId: 'quiet', harnessStatus: 'idle' as const },
+    ], 'selected', detail)?.map((row) => row.needsAttention)).toEqual([true, false]);
+    expect(railChildrenWithAttention([{ substreamId: 'selected' }], 'selected', {
+      ...headerWorkstream, hasUnread: true,
+    })?.[0]?.needsAttention).toBe(true);
+    expect(railChildrenWithAttention([{ substreamId: 'selected', needsAttention: true }], 'selected', detail)?.[0]?.needsAttention)
+      .toBe(false);
+  });
+});
 
 describe('running channel message delivery', () => {
   it('keeps accepted pending messages visibly pending until canonical promotion', () => {

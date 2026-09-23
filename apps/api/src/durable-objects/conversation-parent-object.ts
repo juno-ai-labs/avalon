@@ -320,6 +320,13 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
     void _now;
   }
 
+  /** A child's viewer row changed while the parent's projection is still held here. */
+  protected onChildUserProjection(_substreamId: string, _userId: string, _now: number): void {
+    void _substreamId;
+    void _userId;
+    void _now;
+  }
+
   /** Log fields naming this object, for the outbox drain's records. */
   protected abstract parentLogFields(): Record<string, unknown>;
 
@@ -523,7 +530,9 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
           );
         }
       } else if (envelope.effect.kind === "directory_user") {
-        this.upsertChildProjection("user", substreamId, envelope.effect.userId, envelope, now);
+        if (this.upsertChildProjection("user", substreamId, envelope.effect.userId, envelope, now)) {
+          this.onChildUserProjection(substreamId, envelope.effect.userId, now);
+        }
         if (this.aggregatesChildProjection(substreamId)) {
           const aggregate = this.aggregateUser(envelope.effect.userId);
           this.onChildUserAggregate(substreamId, envelope.effect.userId, aggregate, envelope, now);
