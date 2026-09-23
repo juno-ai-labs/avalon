@@ -2093,6 +2093,137 @@ describe("canonical ordered work-stream transcript", () => {
       .toEqual([queued.inputId]);
   });
 
+  it("cancels a withheld question when another message arrives and activates that message", async () => {
+    const { transcript, sql, storage } = open();
+    seedPendingInputRoot(sql);
+    const first = await admitPendingInput({ storage, withAttachment: false });
+    await transcript.commitBindTransition(initializePersistentLoop(), NOW + 2);
+    sql.exec(`UPDATE substream_loops SET bind_state_revision = 1 WHERE id = 1`);
+    const activated = await transcript.activatePendingInput({
+      loopId: "persistent-loop",
+      expectedInputId: first.inputId,
+      expectedLoopRevision: first.loop.loop()!.revision,
+      expectedBindGeneration: 1,
+      expectedBindStateRevision: 1,
+      receipt: {
+        substreamId: "0", runId: "00000000-0000-7000-8000-000000000185",
+        executionEpoch: 1, leaseOwner: "cancel-owner", leaseExpiresAt: NOW + 100_000,
+        executionContextJson: "{}",
+        executionPrincipalJson: JSON.stringify({ type: "user", userId: "user-1" }),
+        origin: "human_message", model: "test/model",
+      },
+      enqueueRegionalEffectsInTransaction: () => undefined,
+      now: NOW + 3,
+    });
+    const turnId = "persistent-loop:turn:1";
+    const reservation = first.loop.reserveAssistantTurn({
+      executionId: activated.receiptRunId, executionEpoch: 1,
+      leaseOwner: "cancel-owner", expectedLoopRevision: activated.loop.revision,
+      receiptRunId: activated.receiptRunId, turnId, modelTurnIndex: 1,
+      streamId: "cancel-stream", now: NOW + 4,
+    });
+    await transcript.commitBindTransition({
+      kind: "assistant_reserved", loopId: "persistent-loop", generation: 1,
+      stateRevision: 3, turnId, modelTurnIndex: 1,
+      transcriptSequence: reservation.reservation.transcript_sequence,
+    }, NOW + 5, {
+      executionId: activated.receiptRunId, executionEpoch: 1,
+      leaseOwner: "cancel-owner", expectedBindStateRevision: 2,
+    });
+    await transcript.commitBindTransition({
+      kind: "assistant_accepted", loopId: "persistent-loop", generation: 1,
+      stateRevision: 4, turnId, modelTurnIndex: 1,
+      transcriptSequence: reservation.reservation.transcript_sequence,
+      message: { role: "assistant", content: null, tool_calls: [{
+        id: "provider-cancel-call", type: "function",
+        function: { name: "request_elicitation", arguments: "{}" },
+      }] },
+    }, NOW + 6, {
+      executionId: activated.receiptRunId, executionEpoch: 1,
+      leaseOwner: "cancel-owner", expectedBindStateRevision: 3,
+    });
+    sql.exec(
+      `INSERT INTO elicitation_requests
+         (elicitation_id, run_id, tool_call_id, prompt, response_type, options_json,
+          minimum_selections, maximum_selections, target_user_id, status, answer_json,
+          answered_by_user_id, external_actor_json, created_at, answered_at)
+       VALUES ('elicitation-cancel', ?, ?, 'Which scope?', 'text', '[]', 0, NULL,
+               NULL, 'pending', NULL, NULL, NULL, ?, NULL)`,
+      activated.receiptRunId, `${turnId}:tool:0`, NOW + 6,
+    );
+    const next = await admitPendingInput({
+      storage, inputId: "00000000-0000-7000-8000-000000000186",
+      clientMessageId: "new-message-cancels-question", text: "Use the latest note @Ada",
+      bindContent: "Use the latest note", withAttachment: false,
+    });
+    expect(sql.exec(`SELECT status FROM elicitation_requests WHERE elicitation_id = 'elicitation-cancel'`).one())
+      .toEqual({ status: "cancelled" });
+    sql.exec(`UPDATE substream_loops SET status = 'idle', active_execution_id = NULL,
+      active_execution_epoch = NULL, lease_owner = NULL, lease_expires_at = NULL,
+      revision = revision + 1 WHERE id = 1`);
+    expect(transcript.nextActivationInput("persistent-loop")?.input_id).toBe(next.inputId);
+    const resumed = await transcript.activatePendingInput({
+      loopId: "persistent-loop", expectedInputId: next.inputId,
+      expectedLoopRevision: next.loop.loop()!.revision,
+      expectedBindGeneration: 1, expectedBindStateRevision: 4,
+      receipt: {
+        substreamId: "0", runId: "00000000-0000-7000-8000-000000000187",
+        executionEpoch: 1, leaseOwner: "cancel-owner-2", leaseExpiresAt: NOW + 100_000,
+        executionContextJson: "{}",
+        executionPrincipalJson: JSON.stringify({ type: "user", userId: "user-1" }),
+        origin: "human_message", model: "test/model",
+      },
+      enqueueRegionalEffectsInTransaction: () => undefined, now: NOW + 10,
+    });
+    expect(resumed.transitions.map((transition) => transition.kind))
+      .toEqual(["tool_result_accepted", "protocol_user_appended"]);
+    const messages = bindLoopNonSystemMessages(transcript.readBindProjection("persistent-loop")!);
+    expect(JSON.parse(String(messages.at(-2)?.content))).toMatchObject({
+      data: { elicitationId: "elicitation-cancel", answer: null, cancelled: true },
+    });
+    expect(messages.at(-1)).toMatchObject({ role: "user", content: "Use the latest note" });
+
+    // Simulate a queued input written by the old admission path before this
+    // cancellation rule existed. Recovery compares durable arrival times.
+    await admitPendingInput({
+      storage, inputId: "00000000-0000-7000-8000-000000000188",
+      clientMessageId: "legacy-queued-after-question", text: "Later note @Ada",
+      withAttachment: false,
+    });
+    sql.exec(
+      `INSERT INTO elicitation_requests
+         (elicitation_id, run_id, tool_call_id, prompt, response_type, options_json,
+          minimum_selections, maximum_selections, target_user_id, status, answer_json,
+          answered_by_user_id, external_actor_json, created_at, answered_at)
+       VALUES ('legacy-question', ?, ?, 'Old question', 'text', '[]', 0, NULL,
+               NULL, 'pending', NULL, NULL, NULL, ?, NULL)`,
+      activated.receiptRunId, `${turnId}:tool:1`, NOW - 1,
+    );
+    next.loop.cancelPendingElicitations(NOW + 40, true);
+    expect(sql.exec(`SELECT status FROM elicitation_requests WHERE elicitation_id = 'legacy-question'`).one())
+      .toEqual({ status: "cancelled" });
+    sql.exec(
+      `INSERT INTO elicitation_requests
+         (elicitation_id, run_id, tool_call_id, prompt, response_type, options_json,
+          minimum_selections, maximum_selections, target_user_id, status, answer_json,
+          answered_by_user_id, external_actor_json, created_at, answered_at)
+       VALUES ('newer-question', ?, ?, 'New question', 'text', '[]', 0, NULL,
+               NULL, 'pending', NULL, NULL, NULL, ?, NULL)`,
+      activated.receiptRunId, `${turnId}:tool:2`, NOW + 1,
+    );
+    next.loop.cancelPendingElicitations(NOW + 40, true);
+    expect(sql.exec(`SELECT status FROM elicitation_requests WHERE elicitation_id = 'newer-question'`).one())
+      .toEqual({ status: "pending" });
+    await admitPendingInput({
+      storage, actor: "system", messageType: "automation_activation",
+      inputId: "00000000-0000-7000-8000-000000000189",
+      clientMessageId: "sidekick-message-cancels-question", text: "Sidekick result",
+      withAttachment: false,
+    });
+    expect(sql.exec(`SELECT status FROM elicitation_requests WHERE elicitation_id = 'newer-question'`).one())
+      .toEqual({ status: "cancelled" });
+  });
+
   it("appends a host authority's derived inputs at the settled step, closes them in the same commit, and replays without a second message", async () => {
     const { transcript, sql, storage } = open();
     seedPendingInputRoot(sql);

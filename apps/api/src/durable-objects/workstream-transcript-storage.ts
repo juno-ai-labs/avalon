@@ -3019,12 +3019,29 @@ export class WorkstreamTranscriptStorage {
       attachmentsByTurn.set(attachment.part_id, current);
     }
     const blocksByTurn = new Map<string, TranscriptBlock[]>();
+    const cancelledElicitations = blocks.some((block) => block.message_type === "elicitation")
+      ? new Set(this.sql.exec<{ elicitation_id: string } & Record<string, SqlStorageValue>>(
+        `SELECT elicitation_id FROM elicitation_requests WHERE status = 'cancelled'`,
+      ).toArray().map((row) => row.elicitation_id))
+      : new Set<string>();
     for (const block of blocks) {
       const hydrated = hydrateBlock(
         block,
         mentionsByTurn.get(block.turn_id) ?? [],
         attachmentsByTurn.get(block.turn_id) ?? [],
       );
+      if (hydrated.type === "text" && hydrated.messageType === "elicitation"
+        && hydrated.structuredContent) {
+        const wrapped = "elicitation" in hydrated.structuredContent;
+        const source = wrapped ? hydrated.structuredContent.elicitation : hydrated.structuredContent;
+        if (source && typeof source === "object" && "id" in source
+          && typeof source.id === "string" && cancelledElicitations.has(source.id)) {
+          const resolved = { ...source, status: "cancelled", answer: null };
+          hydrated.structuredContent = wrapped
+            ? { ...hydrated.structuredContent, elicitation: resolved }
+            : resolved;
+        }
+      }
       const current = blocksByTurn.get(block.turn_id) ?? [];
       current.push(hydrated);
       blocksByTurn.set(block.turn_id, current);
@@ -3843,18 +3860,15 @@ export class WorkstreamTranscriptStorage {
   }
 
   /**
-   * The withheld calls of an open question, and nothing else.
+   * The withheld calls owned by elicitation requests, and nothing else.
    *
    * A batch withheld for any other reason is nobody's to close by answering:
    * only a live execution can repair it from the tool receipts, which is what
    * `unsettledToolBatchBlockingRelease` below keeps the loop alive for.
    *
-   * `cancelled` is deliberately not an open question. The row only ever moves
-   * `pending -> answered` or `pending -> cancelled`, and a cancelled question
-   * has no answer coming, so counting it as open would park the queue on an
-   * input that can never arrive. The release guard has always read the status
-   * this way; this selector did not, and the two disagreeing is how the same
-   * batch could be judged answerable here and unsettled there.
+   * A cancelled request still owns a withheld call until promotion appends its
+   * cancellation result. It is eligible to move with the next pending input,
+   * so the release guard may let the idle loop wait for that input.
    */
   private openQuestionToolCallIds(projection: BindLoopProjectionState): Set<string> {
     const withheld = pendingBindToolBatch(projection);
@@ -3868,7 +3882,7 @@ export class WorkstreamTranscriptStorage {
     ).flatMap((receiptToolCallIds) =>
       this.sql.exec<{ tool_call_id: string } & Record<string, SqlStorageValue>>(
         `SELECT tool_call_id FROM elicitation_requests
-          WHERE status IN ('pending', 'answered')
+          WHERE status IN ('pending', 'answered', 'cancelled')
             AND tool_call_id IN (${receiptToolCallIds.map(() => "?").join(", ")})`,
         ...receiptToolCallIds,
       ).toArray().map((row) => String(row.tool_call_id))));
@@ -3896,9 +3910,8 @@ export class WorkstreamTranscriptStorage {
    * something else. The release that produced it checked for an unmaterialized
    * assistant turn and not for this.
    *
-   * A batch of open questions is the one exception, and is not withheld work at
-   * all: its answer is a pending input, so the room releases itself as soon as
-   * somebody replies.
+   * A batch of elicitation calls is the one exception: an answer or a newer
+   * message supplies its result through pending-input promotion.
    */
   unsettledToolBatchBlockingRelease(loopId: string): PendingBindToolBatch | null {
     const projection = this.readBindProjection(loopId);
@@ -3948,6 +3961,9 @@ export class WorkstreamTranscriptStorage {
     // visible instead: `nextLoopWorkAt` derives no instant, and the loop is
     // reported once through `substream_loop_parked_with_queued_input`.
     if (openToolCallIds.size === 0) return [];
+    const cancelled = new Set(this.sql.exec<{ tool_call_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT tool_call_id FROM elicitation_requests WHERE status = 'cancelled'`,
+    ).toArray().map((row) => row.tool_call_id));
     const answers = new Map<string, PendingLoopInputRow>();
     for (const pending of pendingInputs) {
       const toolCallId = this.answeredQuestionToolCallId(pending);
@@ -3962,7 +3978,8 @@ export class WorkstreamTranscriptStorage {
     // exists to avoid, not a queue that could have drained a little further.
     // The rest is parked, not dropped: it is the same queue on the next pass,
     // and the last answer releases it.
-    if (answers.size !== openToolCallIds.size) return closing;
+    if (answers.size + [...openToolCallIds].filter((id) => cancelled.has(id)).length
+      !== openToolCallIds.size) return closing;
     const closed = new Set(closing);
     return [...closing, ...pendingInputs.filter((pending) => !closed.has(pending))];
   }
@@ -4029,6 +4046,21 @@ export class WorkstreamTranscriptStorage {
         // waits for the next text input, which appends it after this result.
         prepared.push({ pending, material, steps, next: projection, projectedThrough: null });
         continue;
+      }
+      // A new message cancelled the withheld question when it committed. Bind
+      // still requires one tool result per call before accepting user text.
+      const cancelledQuestions = this.sql.exec<{ elicitation_id: string; tool_call_id: string } & Record<string, SqlStorageValue>>(
+        `SELECT elicitation_id, tool_call_id FROM elicitation_requests WHERE status = 'cancelled'
+          ORDER BY created_at, elicitation_id`,
+      ).toArray();
+      for (const question of cancelledQuestions) {
+        if (!pendingBindToolBatch(projection)?.calls.some((call) =>
+          call.receiptToolCallId === question.tool_call_id)) continue;
+        const cancellation = await this.prepareElicitationAnswerToolResult(
+          projection, question.elicitation_id,
+        );
+        steps.push(cancellation);
+        projection = cancellation.next;
       }
       // The turns nobody admitted. A message that started no run is a
       // canonical turn and nothing else, and until now it stayed that way:
@@ -4183,7 +4215,7 @@ export class WorkstreamTranscriptStorage {
          FROM elicitation_requests WHERE elicitation_id = ?`,
       elicitationId,
     ).toArray()[0];
-    if (!row || row.status !== "answered") {
+    if (!row || (row.status !== "answered" && row.status !== "cancelled")) {
       throw new Error("elicitation_answer_not_committed");
     }
     const position = /^(.*:turn:\d+):tool:(\d+)$/u.exec(row.tool_call_id);
@@ -4228,6 +4260,7 @@ export class WorkstreamTranscriptStorage {
           data: {
             elicitationId,
             answer: row.answer_json === null ? null : JSON.parse(row.answer_json),
+            ...(row.status === "cancelled" ? { cancelled: true } : {}),
           },
         }),
       },

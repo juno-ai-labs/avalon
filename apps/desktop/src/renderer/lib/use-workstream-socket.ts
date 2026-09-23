@@ -68,6 +68,7 @@ import {
   reconcileAuthoritativeTranscriptOverlays,
   removeTranscriptOverlay,
   replaceTranscriptOverlay,
+  setTranscriptElicitationState,
   transcriptOverlaysQueryKey,
   transcriptOverlaysWithoutCanonicalMatch,
   type TranscriptOverlay,
@@ -1830,6 +1831,12 @@ export function useWorkstreamSocket(
           );
         });
       } else if (event.type === 'elicitation_created' || event.type === 'elicitation_answered') {
+        if (event.elicitation.status === 'cancelled') {
+          queryClient.setQueryData<WorkstreamTranscriptSnapshot>(transcriptQueryKey, (current) =>
+            current ? setTranscriptElicitationState(current, event.elicitation.id, {
+              status: 'cancelled', answer: null,
+            }) : current);
+        }
         const messageId = elicitationMessageId(event.elicitation.id);
         const afterTranscriptSequence = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
           transcriptQueryKey,
