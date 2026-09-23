@@ -38,110 +38,68 @@ concurrency:
   queue: single
 
 jobs:
-  plan:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      should_release: ${{ steps.plan.outputs.should_release }}
-      ref: ${{ steps.plan.outputs.ref }}
-      version: ${{ steps.plan.outputs.version }}
-      tag: ${{ steps.plan.outputs.tag }}
-      requires_api_deploy: ${{ steps.plan.outputs.requires_api_deploy }}
-      api_deployment_ref: ${{ steps.plan.outputs.api_deployment_ref }}
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Fetch the release watermark and current main tip
-        run: git fetch --tags origin main
-
-      - name: Plan from the tip after entering the singleton queue
-        run: git checkout --detach origin/main
-
-      - id: plan
-        run: node apps/sideline/scripts/plan-release.mjs
-
   verify:
-    needs: plan
-    if: needs.plan.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
       actions: read
       contents: write
     outputs:
-      commit: ${{ steps.commit.outputs.sha }}
+      should_release: ${{ steps.stamp.outputs.should_release }}
+      commit: ${{ steps.stamp.outputs.commit }}
+      version: ${{ steps.stamp.outputs.version }}
+      tag: ${{ steps.stamp.outputs.tag }}
+      requires_api_deploy: ${{ steps.stamp.outputs.requires_api_deploy }}
+      api_deployment_ref: ${{ steps.stamp.outputs.api_deployment_ref }}
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          ref: ${{ needs.plan.outputs.ref }}
           persist-credentials: true
 
-      - name: Stamp the next Sideline patch version on main
-        shell: bash
-        env:
-          SIDELINE_RELEASE_REF: ${{ needs.plan.outputs.ref }}
-          SIDELINE_RELEASE_VERSION: ${{ needs.plan.outputs.version }}
-          SIDELINE_RELEASE_TAG: ${{ needs.plan.outputs.tag }}
-        run: |
-          set -euo pipefail
-          git fetch origin main
-          test "$(git rev-parse origin/main)" = "$SIDELINE_RELEASE_REF" || {
-            echo "main advanced after Sideline release planning; rerun to bind the build and API gate to the new tip" >&2
-            exit 1
-          }
-          git reset --hard "$SIDELINE_RELEASE_REF"
-          test -z "$(git ls-remote --tags origin "refs/tags/${SIDELINE_RELEASE_TAG}")" || {
-            echo "${SIDELINE_RELEASE_TAG} already exists; refusing to rebuild a published version" >&2
-            exit 1
-          }
-          node apps/sideline/scripts/apply-release-version.mjs "$SIDELINE_RELEASE_VERSION"
-          if git diff --quiet; then
-            echo "main already declares ${SIDELINE_RELEASE_VERSION}; resuming its unpublished release"
-          else
-            git add apps/sideline/package.json
-            git -c user.name='github-actions[bot]' \
-                -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-                commit -m "Bump Sideline to ${SIDELINE_RELEASE_VERSION} for release"
-            git push origin HEAD:main
-          fi
-
-      - id: commit
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      # A different release workflow can stamp main after this run starts.
+      # Replan on the fetched tip after a lost push, including the API gate.
+      - name: Plan and stamp the Sideline release
+        id: stamp
+        run: node apps/sideline/scripts/stamp-release.mjs
 
       - uses: pnpm/action-setup@v4
+        if: steps.stamp.outputs.should_release == 'true'
         with:
           version: 11.13.0
           run_install: false
 
       - uses: actions/setup-node@v4
+        if: steps.stamp.outputs.should_release == 'true'
         with:
           node-version: 22
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+        if: steps.stamp.outputs.should_release == 'true'
 
       - name: Lint
+        if: steps.stamp.outputs.should_release == 'true'
         env:
           NODE_OPTIONS: --max-old-space-size=8192
         run: pnpm lint
 
       - name: Typecheck
+        if: steps.stamp.outputs.should_release == 'true'
         env:
           NODE_OPTIONS: --max-old-space-size=8192
         run: pnpm typecheck
 
       - name: Test Sideline
+        if: steps.stamp.outputs.should_release == 'true'
         run: pnpm --filter @rally/sideline test
 
       - name: Require the matching API deployment for shared contracts
-        if: needs.plan.outputs.requires_api_deploy == 'true'
+        if: steps.stamp.outputs.should_release == 'true' && steps.stamp.outputs.requires_api_deploy == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          SIDELINE_API_DEPLOYMENT_REF: ${{ needs.plan.outputs.api_deployment_ref }}
+          SIDELINE_API_DEPLOYMENT_REF: ${{ steps.stamp.outputs.api_deployment_ref }}
         run: |
           set -euo pipefail
           while true; do
@@ -184,8 +142,8 @@ jobs:
           done
 
   release:
-    needs: [plan, verify]
-    if: needs.plan.outputs.should_release == 'true'
+    needs: verify
+    if: needs.verify.outputs.should_release == 'true'
     runs-on: macos-26
     timeout-minutes: 90
     environment: desktop-release
@@ -259,14 +217,14 @@ jobs:
         id: artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Sideline-${{ needs.plan.outputs.version }}-macOS
+          name: Sideline-${{ needs.verify.outputs.version }}-macOS
           path: apps/sideline/release/release/
           if-no-files-found: error
           retention-days: 30
 
   publish:
-    needs: [plan, verify, release]
-    if: needs.plan.outputs.should_release == 'true'
+    needs: [verify, release]
+    if: needs.verify.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: desktop-release
@@ -306,7 +264,7 @@ jobs:
       - name: Confirm the release tag is still unpublished
         shell: bash
         env:
-          SIDELINE_RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+          SIDELINE_RELEASE_TAG: ${{ needs.verify.outputs.tag }}
         run: |
           test -z "$(git ls-remote --tags origin "refs/tags/${SIDELINE_RELEASE_TAG}")" || {
             echo "${SIDELINE_RELEASE_TAG} already exists; refusing to overwrite its published artifacts" >&2
@@ -321,7 +279,7 @@ jobs:
       - name: Record the published release tag
         shell: bash
         env:
-          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+          RELEASE_TAG: ${{ needs.verify.outputs.tag }}
         run: |
           git -c user.name='github-actions[bot]' \
               -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
