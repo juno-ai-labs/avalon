@@ -59,7 +59,8 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
   streaming; a human body names it *Speak*, not *Speak response*. Look Up and
   Share are macOS-only, behind trusted IPC. Share sends the selected or
   whole-message rendered plain text, never the stored markdown.
-- Editable text fields in the main, Sidekicks, and settings windows use an
+- `apps/desktop/src/main/editable-text-menu.ts` gives editable text fields in
+  the main, Sidekicks, and settings windows an
   Electron native context menu for spelling suggestions, dictionary learning,
   and editing commands. The main process installs it only for editable targets;
   message prose and sidebar rows retain their renderer-owned menus.
@@ -691,6 +692,28 @@ alongside its socket sequence, so revisiting a conversation can resume after the
 activation event without losing the warning; later clears replace that retained set.
 
 ## Changelog
+
+### 2026-09-22 — Editable fields get native text actions
+
+**What changed:** Main installs one native context-menu handler for editable
+fields in the main, Sidekicks, and settings windows. Message prose and sidebar
+rows keep their renderer-owned menus.
+
+**Why:** Electron had spellcheck enabled but supplied no page context menu, so
+right-clicking a Channel draft could not offer corrections or editing actions.
+The main process receives the spelling suggestions and edit capabilities needed
+to build that menu.
+
+**Considered and rejected:** Extending the Radix message menu to editable
+fields. That menu is for copying rendered messages and speaking them; duplicating
+native editing and spelling behavior there would lose the platform's field
+capabilities and blur the boundary between prose and drafts.
+
+**Consequences:** New trusted windows with editable fields need the installer;
+future menu changes must leave renderer-owned message and sidebar actions intact
+and pass the originating frame and coordinates to native popup actions.
+
+PR [#948](https://github.com/juno-ai-labs/avalon/pull/948).
 
 ### 2026-09-21 — Expanded hierarchy headers keep their identity marks
 
