@@ -11,7 +11,7 @@ describe("shared session import", () => {
       tool: { parent: "thinking", message: message("tool", "Tool result") },
       b: { parent: "tool", message: message("assistant", "Selected answer") },
     } }));
-    expect(content.content.messages).toEqual([{ role: "user", text: "Question" }, { role: "assistant", text: "Selected answer" }]);
+    expect(content.content.messages).toEqual([{ role: "user", text: "Question", sourceMessageId: "position:0" }, { role: "assistant", text: "Selected answer", sourceMessageId: "position:3" }]);
   });
   it("decodes the observed ChatGPT loader reference format without executing script", () => {
     const table = [
@@ -23,7 +23,7 @@ describe("shared session import", () => {
     ];
     const html = `<script>window.streamController.enqueue(${JSON.stringify(JSON.stringify(table))})</script>`;
     expect(parseSessionExport("chatgpt", html).content.messages).toEqual([
-      { role: "user", text: "Question" }, { role: "assistant", text: "Answer" },
+      { role: "user", text: "Question", sourceMessageId: "position:0" }, { role: "assistant", text: "Answer", sourceMessageId: "position:1" },
     ]);
   });
 
@@ -42,7 +42,47 @@ describe("shared session import", () => {
       { type: "user", isCompactSummary: true, message: { role: "user", content: "compacted" } },
       { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "Fixed" }] } },
     ].map((value) => JSON.stringify(value)).join("\n"));
-    expect(result.content.messages).toEqual([{ role: "user", text: "Fix this" }, { role: "assistant", text: "Fixed" }]);
+    expect(result.content.messages).toEqual([{ role: "user", text: "Fix this", sourceMessageId: "position:0" }, { role: "assistant", text: "Fixed", sourceMessageId: "position:4" }]);
+  });
+  it("imports a local Claude Code transcript as visible turns without repeated assistant fragments", () => {
+    const line = (value: unknown) => JSON.stringify(value);
+    const result = parseSessionExport("claude_code", [
+      { type: "user", uuid: "u1", message: { role: "user", content: "Fix this" } },
+      { type: "assistant", uuid: "abandoned", parentUuid: "u1", message: { role: "assistant", content: [{ type: "text", text: "Wrong branch." }] } },
+      { type: "assistant", uuid: "a1", parentUuid: "u1", message: { id: "same-request", role: "assistant", content: [{ type: "thinking", thinking: "private" }, { type: "tool_use", name: "Read", input: { path: ".env" } }] } },
+      { type: "user", uuid: "u2", parentUuid: "a1", message: { role: "user", content: [{ type: "tool_result", content: "private file bytes" }] } },
+      { type: "assistant", uuid: "a2", parentUuid: "u2", message: { id: "same-request", role: "assistant", content: [{ type: "text", text: "Found the issue." }] } },
+      { type: "assistant", uuid: "a3", parentUuid: "a2", message: { id: "same-request", role: "assistant", content: [{ type: "text", text: "Fixed it." }] } },
+      { type: "assistant", uuid: "a3", parentUuid: "a2", message: { id: "same-request", role: "assistant", content: [{ type: "text", text: "Fixed it." }] } },
+      { type: "user", uuid: "u3", parentUuid: "a3", isCompactSummary: true, message: { role: "user", content: "private summary" } },
+      { type: "user", uuid: "u4", parentUuid: "u3", message: { role: "user", content: "Thanks" } },
+      { type: "assistant", uuid: "a4", parentUuid: "u4", message: { role: "assistant", content: [{ type: "text", text: "You’re welcome." }] } },
+      { type: "last-prompt", leafUuid: "a4" },
+    ].map(line).join("\n"));
+    expect(result.source.provider).toBe("claude_code");
+    expect(result.content.messages).toEqual([
+      { role: "user", text: "Fix this", sourceMessageId: "u1" },
+      { role: "assistant", text: "Found the issue.\n\nFixed it.", sourceMessageId: "a2" },
+      { role: "user", text: "Thanks", sourceMessageId: "u4" },
+      { role: "assistant", text: "You’re welcome.", sourceMessageId: "a4" },
+    ]);
+  });
+  it("uses the local Claude Code transcript's custom title ahead of generated titles", () => {
+    const result = parseSessionExport("claude_code", [
+      { type: "user", uuid: "u1", message: { role: "user", content: "Question" } },
+      { type: "ai-title", aiTitle: "Generated title" },
+      { type: "custom-title", customTitle: "Chosen title" },
+      { type: "ai-title", aiTitle: "Later generated title" },
+    ].map((event) => JSON.stringify(event)).join("\n"));
+    expect(result.title).toBe("Chosen title");
+  });
+  it("imports complete records from a file still being written and refuses a malformed complete record", () => {
+    const first = JSON.stringify({ type: "user", uuid: "u1", sessionId: "session-1",
+      message: { role: "user", content: "Question" } });
+    const active = parseSessionExport("claude_code", `${first}\n{"type":"assistant"`);
+    expect(active.source.sessionId).toBe("session-1");
+    expect(active.content.messages).toEqual([{ role: "user", text: "Question", sourceMessageId: "u1" }]);
+    expect(() => parseSessionExport("claude_code", `${first}\n{"type":"assistant"\n`)).toThrow("Malformed conversation data");
   });
   it("retains attachment-only messages, embedded image bytes and artifact documents", () => {
     const result = parseSessionExport("claude", JSON.stringify({ chat_messages: [
@@ -56,7 +96,10 @@ describe("shared session import", () => {
   });
   it("reads a one-record Code JSONL export and refuses unsupported visible text shapes", () => {
     expect(parseSessionExport("claude", JSON.stringify({ type: "user", message: { role: "user", content: "Only turn" } })).content.messages)
-      .toEqual([{ role: "user", text: "Only turn" }]);
+      .toEqual([{ role: "user", text: "Only turn", sourceMessageId: "position:0" }]);
+    const first = parseSessionExport("claude", JSON.stringify({ chat_messages: [{ sender: "human", content: "First chat" }] }));
+    const second = parseSessionExport("claude", JSON.stringify({ chat_messages: [{ sender: "human", content: "Another chat" }] }));
+    expect(first.source.sessionId).not.toBe(second.source.sessionId);
     expect(() => parseSessionExport("claude", JSON.stringify({ chat_messages: [
       { sender: "human", content: "Question" }, { sender: "assistant", content: [{ type: "unknown secret payload" }] },
     ] }))).toThrow("Unsupported Claude content block type");
@@ -67,7 +110,7 @@ describe("shared session import", () => {
         type: "text", media_type: "text/plain", data: "Café notes\nFollow up tomorrow.",
       } }] },
     ] }));
-    expect(result.content.messages).toEqual([{ role: "user", text: "", files: [{
+    expect(result.content.messages).toEqual([{ role: "user", text: "", sourceMessageId: "position:0", files: [{
       name: "Meeting notes", mimeType: "text/plain", kind: "attachment",
       source: { kind: "inline", encoding: "utf8", data: "Café notes\nFollow up tomorrow." },
     }] }]);
@@ -123,9 +166,9 @@ describe("shared session import", () => {
       node("assistant", { content_type: "text", parts: ["Here is your garden"] }),
     ] }));
     expect(result.content.messages).toEqual([
-      { role: "user", text: "Draw a garden" },
-      { role: "assistant", text: "", files: [{ name: "Garden.png", mimeType: "image/png", kind: "artifact", source: { kind: "unavailable", reference: "sediment://image-1", reason: expect.any(String) } }] },
-      { role: "assistant", text: "Here is your garden" },
+      { role: "user", text: "Draw a garden", sourceMessageId: "position:0" },
+      { role: "assistant", text: "", sourceMessageId: "position:6", files: [{ name: "Garden.png", mimeType: "image/png", kind: "artifact", source: { kind: "unavailable", reference: "sediment://image-1", reason: expect.any(String) } }] },
+      { role: "assistant", text: "Here is your garden", sourceMessageId: "position:7" },
     ]);
   });
   it("refuses truncated Claude messages and unknown visible ChatGPT blocks", () => {

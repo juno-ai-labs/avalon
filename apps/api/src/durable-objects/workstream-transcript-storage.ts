@@ -259,7 +259,7 @@ export interface PendingInputDeliveryEffectInput {
 
 type ProtocolUserTransition = Extract<BindLoopTransition, { kind: "protocol_user_appended" }>;
 type PendingSettlementTransition = Extract<BindLoopTransition, {
-  kind: "tool_result_accepted" | "protocol_user_appended";
+  kind: "tool_result_accepted" | "protocol_user_appended" | "protocol_history_appended";
 }>;
 
 export interface PendingSteerSettlementOutcome {
@@ -2941,7 +2941,7 @@ export class WorkstreamTranscriptStorage {
   }
 
   /**
-   * The human and external text turns in `[startInclusive, endExclusive)` —
+   * Human, external, and imported assistant text turns in `[startInclusive, endExclusive)` —
    * what the gap-fill considers. Filtered here so a wide range hydrates only
    * what it will use.
    */
@@ -2955,7 +2955,10 @@ export class WorkstreamTranscriptStorage {
          FROM participant_transcript_turns AS turn INDEXED BY participant_transcript_sequence_idx
         WHERE turn.transcript_sequence >= ? AND turn.transcript_sequence < ?
           AND turn.entry_kind = 'conversation'
-          AND turn.actor IN ('human', 'external')
+          AND (turn.actor IN ('human', 'external') OR
+            (turn.actor = 'assistant' AND EXISTS (
+              SELECT 1 FROM transcript_facts source_fact
+               WHERE source_fact.fact_id = turn.root_fact_id AND source_fact.run_id IS NULL)))
           AND turn.message_type = 'text'
         ORDER BY turn.transcript_sequence`,
       startInclusive,
@@ -3306,7 +3309,8 @@ export class WorkstreamTranscriptStorage {
       changedMessages = [{ position: 0, message: next.systemProjection.message }];
     } else if (transition.kind === "assistant_accepted"
       || transition.kind === "tool_result_accepted"
-      || transition.kind === "protocol_user_appended") {
+      || transition.kind === "protocol_user_appended"
+      || transition.kind === "protocol_history_appended") {
       if (nextCount !== previousCount + 1) {
         throw new Error("bind_loop_projection_delta_invalid");
       }
@@ -3319,7 +3323,7 @@ export class WorkstreamTranscriptStorage {
     }
     for (const { position, message } of changedMessages) {
       const suffix = position === nextCount - 1
-        && ["assistant_accepted", "tool_result_accepted", "protocol_user_appended"].includes(transition.kind)
+        && ["assistant_accepted", "tool_result_accepted", "protocol_user_appended", "protocol_history_appended"].includes(transition.kind)
         ? transition.kind
         : `message:${position}`;
       const factId = `${transition.loopId}:state:${transition.stateRevision}:${suffix}`;
@@ -3347,7 +3351,8 @@ export class WorkstreamTranscriptStorage {
       messageFacts.push({ position, factId });
       if (suffix === "assistant_accepted"
         || suffix === "tool_result_accepted"
-        || suffix === "protocol_user_appended") {
+        || suffix === "protocol_user_appended"
+        || suffix === "protocol_history_appended") {
         appendedFactId = factId;
       }
     }
@@ -4077,10 +4082,10 @@ export class WorkstreamTranscriptStorage {
    * The conversation turns in `(fromExclusive, toInclusive]` the projection has
    * never seen, each as the transition that appends it.
    *
-   * Only human and external text turns qualify, and the query says so rather
+   * Human, external, and imported assistant text turns qualify, and the query says so rather
    * than hydrating every turn in the range and discarding most of them: the
    * range spans everything since the last admission, a long run's tool rows
-   * included. Assistant turns are produced by the projection itself; status
+   * included. Rally assistant turns are produced by the projection itself; status
    * rows are not conversation; an elicitation answer is a pending input by
    * construction and carries no text of its own. A turn that *was* a pending
    * input is already here under exactly the provenance built below, which is
@@ -4107,6 +4112,7 @@ export class WorkstreamTranscriptStorage {
       .flatMap((turn) => {
         const text = turn.blocks.find((block) => block.type === "text");
         if (!text || text.type !== "text") return [];
+        if (turn.actor === "assistant" && text.structuredContent?.kind !== "imported_session") return [];
         const provenance: BindLoopMessageOrigin = {
           originKind: "derived",
           sourceKind: "participant_turn",
@@ -4123,7 +4129,7 @@ export class WorkstreamTranscriptStorage {
     let projection = previous;
     for (const { turn, text, provenance, key } of candidates) {
       if (appendedInThisPass.has(key) || alreadyProjected.has(key)) continue;
-      const message = projectParticipantTextMessage({
+      const message = turn.actor === "assistant" ? null : projectParticipantTextMessage({
         author: turn.actor === "external" && turn.externalActor
           ? {
               type: "external",
@@ -4146,16 +4152,15 @@ export class WorkstreamTranscriptStorage {
         })),
         overheard: true,
       });
-      if (!message) continue;
-      const transition: ProtocolUserTransition = {
-        kind: "protocol_user_appended",
-        loopId: previous.loopId,
-        generation: projection.generation,
-        stateRevision: projection.stateRevision + 1,
-        message: modelMessageWithoutProvenance(message),
-        provenance,
-        activationInputId: null,
-      };
+      if (turn.actor !== "assistant" && !message) continue;
+      const transition: PendingSettlementTransition = turn.actor === "assistant"
+        ? { kind: "protocol_history_appended", loopId: previous.loopId,
+          generation: projection.generation, stateRevision: projection.stateRevision + 1,
+          message: { role: "assistant", content: text.structuredContent?.supersedesTurnId
+            ? `Updated source reply (use this version):\n\n${text.text}` : text.text }, provenance }
+        : { kind: "protocol_user_appended", loopId: previous.loopId,
+          generation: projection.generation, stateRevision: projection.stateRevision + 1,
+          message: modelMessageWithoutProvenance(message!), provenance, activationInputId: null };
       const next = applyBindLoopTransition(projection, transition);
       const facts = await this.materializeProjectionFacts(transition, projection, next);
       const appended = facts.messageFacts[0];
@@ -4931,7 +4936,7 @@ export class WorkstreamTranscriptStorage {
         transition.callIndex,
       );
     }
-    if (transition.kind === "protocol_user_appended") {
+    if (transition.kind === "protocol_user_appended" || transition.kind === "protocol_history_appended") {
       return transition.provenance;
     }
     if (transition.kind === "state_replaced") return protocolOrigin();

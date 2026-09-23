@@ -21,6 +21,7 @@ import {
   type WorkstreamTranscriptSnapshot,
   type WorkstreamAppearancePatch,
   type WorkstreamMessageAdmissionReceipt,
+  type PreparedConversation,
 } from "@rally/contracts";
 import type {
   AcknowledgeWorkstreamReadRequestSchema,
@@ -311,6 +312,22 @@ export class WorkstreamObjectClient {
     input: WorkstreamObjectCreateMessageInput,
   ): Promise<WorkstreamMessageAdmissionReceipt> {
     return CreatedMessageSchema.parse(await this.request({ operation: "create_message", input }));
+  }
+
+  async importedSessionSource(): Promise<{ provider: "chatgpt" | "claude" | "claude_code"; sessionId: string; url: string | null } | null> {
+    return z.strictObject({ source: z.strictObject({ provider: z.enum(["chatgpt", "claude", "claude_code"]),
+      sessionId: z.string(), url: z.string().nullable() }).nullable() }).parse(
+      await this.request({ operation: "import_source_get" })).source;
+  }
+
+  async importedSessionCheckpoint(): Promise<Array<{ sourceMessageId: string; sourceRevision: string }>> {
+    return z.strictObject({ messages: z.array(z.strictObject({ sourceMessageId: z.string(), sourceRevision: z.string() })) }).parse(
+      await this.request({ operation: "import_source_checkpoint_get" })).messages;
+  }
+
+  async updateImportedSession(operationId: string, conversation: PreparedConversation): Promise<{ added: number; updated: number }> {
+    return z.strictObject({ added: z.number().int().nonnegative(), updated: z.number().int().nonnegative() }).parse(
+      await this.request({ operation: "import_source_update", operationId, conversation }));
   }
 
   /**

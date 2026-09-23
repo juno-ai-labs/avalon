@@ -1,5 +1,7 @@
 import { startCanvaConnection } from './canva-loopback';
 import { boundsWithoutConversationDetails, clampWindowBounds, readMainWindowState, writeMainWindowState } from './main-window-state';
+import { listLocalClaudeCodeSessions, readLocalClaudeCodeSession } from './claude-code-sessions';
+import { listLocalClaudeSessions, readLocalClaudeSession } from './local-claude-sessions';
 import {
   ActivateWorkspaceRequestSchema,
   ClientFeatureFlagsSchema,
@@ -3249,6 +3251,24 @@ function registerIpc(): void {
   ipcMain.handle('runtime:get-config', (event) => {
     assertTrustedIpcSender(event);
     return runtimeConfig();
+  });
+  ipcMain.handle('session-import:local-claude-code-list', (event) => {
+    assertMainWindowIpcSender(event);
+    return listLocalClaudeCodeSessions();
+  });
+  ipcMain.handle('session-import:local-claude-list', (event) => {
+    assertMainWindowIpcSender(event);
+    return listLocalClaudeSessions();
+  });
+  ipcMain.handle('session-import:local-claude-read', (event, id: unknown) => {
+    assertMainWindowIpcSender(event);
+    if (typeof id !== 'string') throw new Error('Invalid local session selection');
+    return readLocalClaudeSession(id);
+  });
+  ipcMain.handle('session-import:local-claude-code-read', (event, id: unknown) => {
+    assertMainWindowIpcSender(event);
+    if (typeof id !== 'string') throw new Error('Invalid local session selection');
+    return readLocalClaudeCodeSession(id);
   });
   ipcMain.handle('application:foreground-get', (event) => {
     assertTrustedIpcSender(event);

@@ -894,6 +894,7 @@ pre {
   padding: 5px;
   z-index: 120;
 }
+.new-workstream-menu { max-width: calc(100vw - 20px); }
 
 .menu-label { color: var(--av-sys-color-text-subtle); display: flex; flex-direction: column; font-size: var(--av-cmp-control-font-size); padding: 7px 10px; }
 .menu-label small { color: var(--av-sys-color-text-muted); margin-top: 2px; }
@@ -5331,6 +5332,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .automation-run-row time,
 .run-duration { color: var(--av-ref-color-neutral-9); font-size: 9px; text-align: right; }
 .form-field { display: grid; gap: 6px; min-width: 0; }
+.session-import-select { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dialog-body > .form-field + .form-field { margin-top: 16px; }
 /* Tailwind's preflight zeroes paragraph margins and list markers, and the
    dialog body sets no gap of its own, so consecutive paragraphs render as one

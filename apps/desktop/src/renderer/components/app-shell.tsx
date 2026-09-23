@@ -984,9 +984,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             state: { channelName: name, returnTo: location.pathname },
           });
         }}
-        onImportChannel={async ({ clientMessageId, name, spaceId, url }) => {
+        onImportChannel={async ({ clientMessageId, name, spaceId, source }) => {
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
-          const preview = await api.previewSessionImport({ kind: 'link', url });
+          const preview = await api.previewSessionImport(source);
           const id = await api.importSession(preview, clientMessageId, { title: name, spaceIds: [spaceId] });
           await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
           void navigate(`/workstreams/${id}`);

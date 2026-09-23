@@ -4014,12 +4014,12 @@ export interface RunHarnessInput {
     wouldEnd: boolean;
   }) => {
     transitions: readonly Extract<BindLoopTransition, {
-      kind: "tool_result_accepted" | "protocol_user_appended";
+      kind: "tool_result_accepted" | "protocol_user_appended" | "protocol_history_appended";
     }>[];
     stop: boolean;
   } | Promise<{
     transitions: readonly Extract<BindLoopTransition, {
-      kind: "tool_result_accepted" | "protocol_user_appended";
+      kind: "tool_result_accepted" | "protocol_user_appended" | "protocol_history_appended";
     }>[];
     stop: boolean;
   }>;

@@ -13,7 +13,7 @@ import {
   SidebarTitleHeader,
 } from '@rally/ui/components/resizable-sidebar';
 import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
-import { NewWorkstreamMenu } from './new-workstream-menu';
+import { NewWorkstreamMenu, type ChannelImportInput } from './new-workstream-menu';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
@@ -139,7 +139,7 @@ interface SidebarProps {
     filter: WorkstreamBatchFilter,
   ) => Promise<{ matchedCount: number; matchedNoteCount: number }>;
   onCreateChannel?: (input: { name: string; spaceId: string }) => Promise<void>;
-  onImportChannel?: (input: { clientMessageId: string; name: string; spaceId: string; url: string }) => Promise<void>;
+  onImportChannel?: (input: ChannelImportInput) => Promise<void>;
   onCreateSpace?: (input: CreateSpaceRequest) => Promise<SpaceSummary>;
   onAddChannelToSpace?: (spaceId: string, workstreamId: string) => Promise<void>;
   onMoveChannelToSpace?: (sourceSpaceId: string, targetSpaceId: string, workstreamId: string) => Promise<void>;
