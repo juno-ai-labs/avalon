@@ -1,5 +1,6 @@
 import { ShareConversationButton, ShareConversationDialog } from "../components/scope-sharing-panel";
 import { ConversationHeader } from '@rally/ui/components/conversation-header';
+import { IconCloudDownload } from '@tabler/icons-react';
 
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -20,7 +21,7 @@ import { CONTEXT_SIDEBAR_ENABLED, useUiStore } from '../lib/ui-store';
 import type { WorkstreamChildDirectory } from '../lib/use-workstream-control-socket';
 import type { WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
-import { Button, InlineError, Modal } from '../components/primitives';
+import { Button, IconButton, InlineError, Modal } from '../components/primitives';
 import { SessionImportUpdateDialog } from '../components/session-import-update-dialog';
 
 import { useCachedWorkstreamAppearance } from '../lib/use-workstreams-query';
@@ -605,7 +606,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       renderHeader={(context) => (
         <WorkstreamHeader
           actions={api && session?.workspace ? <>
-            {selectedSubstreamId === '0' && importedSource.data && <Button onClick={() => setImportUpdateOpen(true)}>Import Updates…</Button>}
+            {selectedSubstreamId === '0' && importedSource.data && <IconButton label="Import updates" onClick={() => setImportUpdateOpen(true)}><IconCloudDownload aria-hidden="true" size={18} stroke={1.8} /></IconButton>}
             <ShareConversationButton api={api} workspaceId={session.workspace.id}
               parentId={id} substreamId={selectedSubstreamId} />
           </> : null}
