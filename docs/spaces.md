@@ -102,8 +102,21 @@ kind: "main")` on the `SpaceDO`, which enqueues and synchronously delivers the
 provisional directory projection; `provisionWorkstreamObject` for the
 conversation's title, scope and creator — **with no opening message and no run
 admitted**; and finally the appearance, through the same writer a Channel's icon
-and colour go through. Any failure cancels the reservation, so nothing ever
-renders a Space whose object never opened.
+and colour go through. A failed first creation cancels only the reservation it
+made; a failed replay preserves the earlier reservation and any Channels in it,
+even before its first projection arrives.
+
+Internal setup callers may pass a stable creation id to `SpaceService.create`.
+The reservation reuses that identity, and child reservation and provisioning
+resume under it: the main child reservation reuses substream `0`, and conversation
+provisioning leaves already-initialized state intact. Appearance still goes
+through its normal writer. The reservation reports whether it was newly created;
+an inaccessible existing identity is refused as `space_not_found`, never inserted
+again. The service refuses a replay whose name, audience or appearance
+changed, rather than rewriting an existing Space. Ordinary client creation still
+allocates its id; the HTTP request does not expose this option. Demo setup uses
+operation-derived ids so retries and two Channels in one Space agree; see
+[demo workspaces](demo-workspaces.md#space-placement-and-replacing-older-demos).
 
 ### What the hidden conversation is asked
 
@@ -1945,6 +1958,25 @@ or on the `space_intents` row holds the same word for whoever reads it
 afterwards.
 
 ## Changelog
+
+### 2026-09-23 — Resume internal Space creation under a stable identity
+
+**What changed:** Internal `SpaceService.create` callers may supply an identity;
+replays reuse the reservation, preserve it on provisioning failure, and refuse
+changed creation attributes or an inaccessible identity. The HTTP
+create contract is unchanged.
+
+**Why:** Two demo Channels need one account Space even after interrupted setup.
+[Demo workspaces](demo-workspaces.md#2026-09-23--demonstrate-human-intervention-in-shared-outcomes)
+records the owning decision.
+
+**Considered and rejected:** Looking up Spaces by title, which would make a
+mutable display name the creation identity.
+
+**Consequences:** Internal callers own identity stability. Replaying creation is
+not an update API; audience and appearance changes use their normal writers.
+
+Shipped in [#956](https://github.com/juno-ai-labs/avalon/pull/956).
 
 ### 2026-09-22 — Needs attention shows the Channel-to-Breakout identity
 

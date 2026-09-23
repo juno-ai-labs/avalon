@@ -121,7 +121,7 @@ ordinary message to start execution, including after preparing a private child.
 
 Demo pack creation has an explicit `execution: history` mode for prose. It uses
 `createPrepared` and verifies canonical turns rather than waiting for an invented
-run. The decision-memo opening exercises that path. Scripted tool/elicitation
+run. The Acme proposal opening exercises that path. Scripted tool/elicitation
 scenarios continue through ordinary production executions.
 
 First continuation reads the complete canonical transcript, including attachment
