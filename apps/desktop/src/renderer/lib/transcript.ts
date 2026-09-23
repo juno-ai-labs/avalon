@@ -82,7 +82,7 @@ export interface TranscriptOverlay {
 export function setTranscriptElicitationState(
   snapshot: WorkstreamTranscriptSnapshot,
   elicitationId: string,
-  state: { status: 'open' | 'answered'; answer: string | string[] | null },
+  state: { status: 'open' | 'answered' | 'cancelled'; answer: string | string[] | null },
 ): WorkstreamTranscriptSnapshot {
   const updateTurn = (turn: TranscriptTurn): TranscriptTurn => {
     let changed = false;
@@ -1105,7 +1105,8 @@ function answeredElicitationCanonical(
   const answers = new Map<string, TranscriptOverlay>();
   for (const overlay of overlays) {
     const elicitation = overlay.message.elicitation;
-    if (overlay.message.messageType !== 'elicitation' || elicitation?.status !== 'answered') continue;
+    if (overlay.message.messageType !== 'elicitation'
+      || (elicitation?.status !== 'answered' && elicitation?.status !== 'cancelled')) continue;
     if (!canonical.some((message) => message.elicitation?.id === elicitation.id)) continue;
     answers.set(elicitation.id, overlay);
   }

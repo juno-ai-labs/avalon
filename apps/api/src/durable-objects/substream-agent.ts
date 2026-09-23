@@ -1202,6 +1202,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           now: recoveryStartedAt,
         });
       }
+      // Older versions could admit an ordinary input behind an open question
+      // and park it there. Reconcile only rows that were already queued after
+      // that question; a message from before it does not supersede it.
+      this.state.storage.transactionSync(() => {
+        this.loop.cancelPendingElicitations(recoveryStartedAt, true);
+      });
       // A run left behind by a previous isolate is rediscovered here, by
       // arming the alarm rather than by starting a drain this constructor
       // cannot stay alive to finish. The full derivation runs rather than an
@@ -4589,7 +4595,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       tool_call_id: string;
     }>(
       `SELECT tool_call_id FROM elicitation_requests
-        WHERE status IN ('pending', 'answered')`,
+        WHERE status IN ('pending', 'answered', 'cancelled')`,
     ).toArray().map((row) => row.tool_call_id));
     // A completed core tool receipt is only evidence that the question was
     // made visible. Its deliberately withheld protocol result is the future
@@ -5519,6 +5525,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       occurredAt: pending.occurredAtUtc,
     };
     switch (pending.reference.kind) {
+      case "elicitation_cancelled": {
+        const elicitation = this.product.elicitationById(pending.reference.elicitationId);
+        if (!elicitation) throw new Error("semantic_realtime_elicitation_missing");
+        return ServerSocketEventSchema.parse({
+          ...base,
+          type: "elicitation_answered",
+          elicitation,
+        });
+      }
       case "transcript_turn": {
         const turn = this.transcript.participantTurn(pending.reference.turnId);
         if (!turn) throw new Error("semantic_realtime_turn_missing");
@@ -7304,15 +7319,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // stays open. Admitting the answer arms its own wake.
     if (loop) {
       if (this.transcript.nextActivationInput(loop.loop_id) !== undefined) return now;
-      // The room then goes quiet with messages still queued. No path writes
-      // `elicitation_requests.status = 'cancelled'` today — every one of them
-      // writes `answered` — so in practice a question nobody answers, because
-      // the reader missed the card or left, stalls it with no expiry to end the
-      // wait. `openQuestionToolCallIds` reads the status rather than assuming
-      // that, so the day cancellation does ship this branch keeps its meaning:
-      // a cancelled question is not one an answer can still arrive for. The stall is correct; being unable
-      // to see it is not, and this is the one branch where the loop stops
-      // without an error to find it by.
+      // The room then goes quiet with messages still queued only if an open
+      // question is waiting for its answer. A newly admitted ordinary message
+      // cancels that question and supplies the tool result during promotion.
       const queued = this.loop.pendingInputs();
       if (queued.length > 0) {
         logWarn(this.env, "substream_loop_parked_with_queued_input", {
