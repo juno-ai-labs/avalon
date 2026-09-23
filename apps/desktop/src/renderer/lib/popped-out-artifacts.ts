@@ -2,6 +2,50 @@ import { SITE_MANIFEST_MIME_TYPE } from '@rally/contracts';
 import type { RallyDesktopBridge } from '../../common/desktop';
 import type { WorkstreamResource } from './types';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreview } from './resource-preview';
+import { ApiError } from './api';
+import type { DesktopRestorableArtifactWindow } from '../../common/desktop';
+
+export async function restorePoppedOutArtifacts(input: {
+  bridge: Pick<RallyDesktopBridge, 'getRestorableArtifactWindows' | 'popOutArtifact' | 'forgetRestorableArtifactWindow'>;
+  getResourceVersions: (resourceId: string) => Promise<{ version: number; title: string; mimeType: string | null }[]>;
+  loadResourceContent: (resourceId: string, signal?: AbortSignal) => Promise<Blob>;
+  openSiteArtifact: (resourceId: string) => Promise<{ artifactId: string; openUrl: string }>;
+  signal: AbortSignal;
+}): Promise<void> {
+  const windows = await input.bridge.getRestorableArtifactWindows();
+  await Promise.all(windows.map(async (saved: DesktopRestorableArtifactWindow) => {
+    if (input.signal.aborted) return;
+    try {
+      const current = (await input.getResourceVersions(saved.resourceId))[0];
+      if (input.signal.aborted) return;
+      const version = current?.version ?? saved.version;
+      const title = current?.title ?? saved.title;
+      if ((current?.mimeType ?? saved.mimeType) === SITE_MANIFEST_MIME_TYPE
+        || (!current?.mimeType && saved.kind === 'site')) {
+        const access = await input.openSiteArtifact(saved.resourceId);
+        if (input.signal.aborted) return;
+        await input.bridge.popOutArtifact({
+          kind: 'site', restoreId: saved.id, resourceId: saved.resourceId,
+          version, title, artifactId: access.artifactId, url: access.openUrl,
+        });
+      } else {
+        const content = await readResourcePreview(input.loadResourceContent, saved.resourceId,
+          input.signal, MAX_RESOURCE_PREVIEW_WAIT_MS);
+        const bytes = new Uint8Array(await content.arrayBuffer());
+        if (input.signal.aborted) return;
+        await input.bridge.popOutArtifact({
+          kind: 'generated', restoreId: saved.id, resourceId: saved.resourceId,
+          version, title, content: bytes,
+          mimeType: content.type || current?.mimeType || saved.mimeType || 'text/plain',
+        });
+      }
+    } catch (error) {
+      if (!input.signal.aborted && error instanceof ApiError && (error.status === 403 || error.status === 404)) {
+        await input.bridge.forgetRestorableArtifactWindow(saved.id);
+      }
+    }
+  }));
+}
 
 export interface RefreshPoppedOutArtifactsInput {
   bridge: Pick<

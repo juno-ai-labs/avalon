@@ -65,7 +65,7 @@ export function SidekickSection({ items, failure, onOpen, onMenuOpen, onRefresh,
       {failure === 'load' && onRefresh && <SidebarRefreshRow onRefresh={onRefresh} />}
     </section>;
   }
-  return <section aria-label="Sidekicks" className="workstream-context-section sidekick-section"><SidebarHorizontalLine /><h2>Sidekicks</h2>
+  return <section aria-label="Sidekicks" className="workstream-context-section sidekick-section" data-layout-id={layoutId}><SidebarHorizontalLine /><h2>Sidekicks</h2>
     {failure === 'load' ? onRefresh && <SidebarRefreshRow onRefresh={onRefresh} />
       : failure && <InlineError>{sidekickSectionFailureCopy[failure]}</InlineError>}
     <ul className="sidekick-section-list">{items.map((item) => <ContextMenu.Root key={item.id} onOpenChange={(open) => { if (open) onMenuOpen?.(); }}><li data-layout-id={`sidekick:${item.id}`}>

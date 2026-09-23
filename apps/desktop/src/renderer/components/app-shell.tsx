@@ -532,8 +532,10 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     const path = location.pathname;
     if (!/^\/spaces\/[^/]+$/.test(path)
       && (!/^\/workstreams\/[^/]+$/.test(path) || path === '/workstreams/new')) return;
+    const breakout = new URLSearchParams(location.search).get('substream');
     writeLayout(layoutKey(workspace.id, workspace.currentUser.id, 'last-route'),
-      `${path}${location.search}`);
+      path.startsWith('/workstreams/') && breakout
+        ? `${path}?substream=${encodeURIComponent(breakout)}` : path);
   }, [location.pathname, location.search, workspace.id, workspace.currentUser.id]);
   const currentPathname = useLatestCommittedValue(location.pathname);
   const shellMounted = useLayoutMountedRef();

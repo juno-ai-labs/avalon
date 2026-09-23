@@ -11,7 +11,7 @@ vi.mock('../lib/app-session', () => ({ useAppSession: () => ({
 const spaces = vi.hoisted(() => ({ data: undefined as { items: { id: string }[] } | undefined }));
 vi.mock('../lib/use-space-directories', () => ({ useSpaceDirectories: () => ({ active: spaces }) }));
 
-const socket = vi.hoisted(() => ({ state: 'connecting' }));
+const socket = vi.hoisted(() => ({ state: 'connecting', sidebarConnect: null as { spacesLive: boolean } | null }));
 vi.mock('../lib/workspace-socket', () => ({ useWorkspaceSocket: () => socket }));
 
 const directory = vi.hoisted(() => ({
@@ -54,6 +54,7 @@ describe('default channel landing', () => {
     directory.hasMore = false;
     directory.fetchMore = vi.fn();
     socket.state = 'connecting';
+    socket.sidebarConnect = null;
   });
 
   it('resumes the last reachable breakout and ignores a stale Channel', async () => {
@@ -75,6 +76,31 @@ describe('default channel landing', () => {
     spaces.data = { items: [{ id: 'saved' }] };
     view.rerender(<Router />);
     expect(await screen.findByTestId('destination')).toHaveTextContent('/spaces/saved');
+  });
+
+  it('falls back when an older socket cannot deliver Spaces', async () => {
+    directory.data = [stream('recent', null, '2026-09-05')];
+    socket.sidebarConnect = { spacesLive: false };
+    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/spaces/saved');
+    render(<Router />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/recent');
+  });
+
+  it('pages the Channel directory after a saved Space has disappeared', () => {
+    directory.data = [];
+    directory.hasMore = true;
+    spaces.data = { items: [] };
+    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/spaces/gone');
+    render(<Router />);
+    expect(directory.fetchMore).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('status')).toHaveTextContent('Opening channels');
+  });
+
+  it('resumes a Breakout from a route with transient search parameters', async () => {
+    directory.data = [stream('saved', null, '2026-09-05')];
+    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/workstreams/saved?substream=child&turn=old&sequence=7');
+    render(<Router />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/saved?substream=child');
   });
 
   it('pages to a saved Channel beyond the opening directory page', async () => {

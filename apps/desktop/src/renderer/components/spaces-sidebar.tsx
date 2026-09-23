@@ -38,7 +38,7 @@ import { SidebarSearch } from './sidebar-search';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 
 interface SpacesSidebarProps {
-  scrollStateKey?: string;
+  scrollStateKey: string;
   accountSlotRef: (element: HTMLDivElement | null) => void;
   availableWidth: number;
   sidekickSlotRef: (element: HTMLDivElement | null) => void;
@@ -86,7 +86,7 @@ const SPACE_DRAG_TYPE = 'application/x-rally-space-id';
  */
 export function SpacesSidebar({
   accountSlotRef,
-  scrollStateKey = 'rally.desktop-layout:spaces-scroll',
+  scrollStateKey,
   availableWidth,
   sidekickSlotRef,
   collapsed,
