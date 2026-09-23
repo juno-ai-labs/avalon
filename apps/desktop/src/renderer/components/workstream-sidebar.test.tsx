@@ -103,6 +103,13 @@ describe('WorkstreamSidebar', () => {
     expect(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' })).toHaveClass('sidebar-row');
   });
 
+  it('omits the private channel subtitle from Main in the Breakout rail', () => {
+    setup({ ...workstream, scope: 'personal' });
+    const main = screen.getByRole('button', { name: 'Go to conversation: Launch preparation' });
+    expect(main).not.toHaveAccessibleDescription('Private channel');
+    expect(within(main).queryByText('Private channel')).not.toBeInTheDocument();
+  });
+
   it('marks the main conversation with the channel\u2019s own icon and colour', () => {
     // 'rocket' is not what this id generates ('atom'), so the assertion fails
     // if the saved icon stops being read rather than passing down either branch.
