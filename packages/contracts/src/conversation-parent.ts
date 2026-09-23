@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { IdSchema, SubstreamIdSchema, UserIdSchema, WorkspaceIdSchema } from "./identifiers";
 import { WorkstreamAppearanceSchema } from "./workstream-appearance";
+import { HarnessStatusSchema } from "./conversation-attention";
 import {
   ContextPluginRefSchema,
   ContextConfigSchema,
@@ -218,6 +219,10 @@ export const ListVisiblePrivateChildrenResultSchema = z.strictObject({
     substreamId: SubstreamIdSchema,
     title: z.string().min(1).max(500),
     appearance: WorkstreamAppearanceSchema.optional(),
+    harnessStatus: HarnessStatusSchema.optional(),
+    unreadCount: z.number().int().nonnegative().optional(),
+    youAreMentioned: z.boolean().optional(),
+    unseen: z.boolean().optional(),
     createdByUserId: UserIdSchema,
     createdAt: z.number().int().nonnegative(),
     updatedAt: z.number().int().nonnegative(),

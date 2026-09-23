@@ -17,6 +17,7 @@ const parentId = asWorkstreamId("00000000-0000-4000-8000-000000000072");
 const actorId = asUserId("00000000-0000-4000-8000-000000000073");
 const recipientId = asUserId("00000000-0000-4000-8000-000000000074");
 const childId = asSubstreamId("00000000-0000-4000-8000-000000000075");
+const siblingId = asSubstreamId("00000000-0000-4000-8000-000000000081");
 const firstSpaceId = "00000000-0000-4000-8000-000000000076";
 const secondSpaceId = "00000000-0000-4000-8000-000000000077";
 const privateSpaceId = "00000000-0000-4000-8000-000000000080";
@@ -286,6 +287,8 @@ it("hands committed grants to the durable parent outbox even when Queue delivery
     workstreams: [{ parentId, title: "Private parent", scope: "personal", archived: false,
       conversations: [{ substreamId: childId, title: "Shared breakout", scope: "personal", archived: false }] }],
   });
+  expect((await listSharedNavigationDirectory(env, workspaceId, recipientId, true))
+    .workstreams[0]?.conversations[0]?.needsAttention).toBe(false);
   await room().mutateScopeGrant({ ...mutation(), active: false, expectedRevision: added.grant.revision });
   // The workspace still contains the added candidate, but the canonical grant
   // has already been revoked. No Queue flush is needed to stop exposing labels.
@@ -394,6 +397,35 @@ it("releases canonical Channel and shared conversation labels without granting M
       appearance: { icon: "star", color: "red" } }] });
   await env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(recipientId).run();
   expect(await room().readSharedWorkstream(request)).toBeNull();
+});
+
+it("opts guest navigation into attention for each granted Breakout without releasing Main", async () => {
+  const sibling = { kind: "conversation" as const, workspaceId, parentId, substreamId: siblingId };
+  await runInDurableObject(room(), (_instance, state) => {
+    state.storage.sql.exec(
+      "INSERT INTO conversation_children (substream_id,kind,created_at,title) VALUES (?,'child',2,'Second shared breakout')",
+      siblingId,
+    );
+    state.storage.sql.exec(`INSERT INTO substream_user_directory
+      (substream_id,user_id,source_version,payload_hash,effect_json,updated_at)
+      VALUES (?,?,1,'sibling-attention',json(?),2)`, siblingId, recipientId, JSON.stringify({
+      kind: "directory_user", userId: recipientId, isParticipant: true,
+      unreadCount: 1, youAreMentioned: true, unseen: false, listable: true,
+    }));
+  });
+  await seedActorGrant(child);
+  await seedActorGrant(sibling);
+  expect(await room().mutateScopeGrant(mutation())).toMatchObject({ status: "committed" });
+  expect(await room().mutateScopeGrant(mutation(sibling))).toMatchObject({ status: "committed" });
+  const request = { workspaceId, parentId, userId: recipientId, membershipIncarnation: recipientId };
+  expect((await room().readSharedWorkstream(request))?.conversations).toEqual([
+    { substreamId: childId, title: "Shared breakout", scope: "personal", archived: false },
+    { substreamId: siblingId, title: "Second shared breakout", scope: "personal", archived: false },
+  ]);
+  expect((await room().readSharedWorkstream({ ...request, includeAttention: true }))?.conversations).toEqual([
+    { substreamId: childId, title: "Shared breakout", scope: "personal", archived: false, needsAttention: false },
+    { substreamId: siblingId, title: "Second shared breakout", scope: "personal", archived: false, needsAttention: true },
+  ]);
 });
 
 it("lists inherited and archived readable children but omits restricted and unready scopes", async () => {
