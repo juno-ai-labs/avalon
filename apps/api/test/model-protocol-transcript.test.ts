@@ -234,7 +234,7 @@ function transcriptPort(
 }
 
 describe("durable UI-to-model transcript projection", () => {
-  it("preserves imported roles without attributing original prompts to the importer", async () => {
+  it("presents imported roles as overheard source context without attributing prompts to the importer", async () => {
     const provenance = { kind: "imported_session", source: { provider: "claude", url: null }, importedByUserId: USER_ID, importedByName: "Adam" };
     const result = await __integrationTesting.projectModelProtocolTranscript(projectionEnv([], {}), {
       workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, triggerMessageId: null,
@@ -243,7 +243,8 @@ describe("durable UI-to-model transcript projection", () => {
       message("00000000-0000-4000-8000-000000000081", 2, { author: "agent", textContent: "Original answer", structuredContent: provenance }),
     ]);
     expect(result.messages.map(({ role, content }) => ({ role, content }))).toEqual([
-      { role: "user", content: "Original question" }, { role: "assistant", content: "Original answer" },
+      { role: "user", content: "SAID TO THE ROOM, NOT TO RALLY\n\nIMPORTED Claude USER MESSAGE\n\nOriginal question" },
+      { role: "user", content: "SAID TO THE ROOM, NOT TO RALLY\n\nIMPORTED Claude ASSISTANT REPLY\n\nOriginal answer" },
     ]);
   });
 
