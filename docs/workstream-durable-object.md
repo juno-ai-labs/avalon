@@ -1834,8 +1834,9 @@ the per-viewer child waterline, so the control socket updates a badge after a
 read or mention without waiting for another common-state change.
 
 **Why:** The Channel rail previously showed state for neither Main nor its
-Breakouts, while the Channel navigation drew a badge over its icon. A badge on
-each conversation row identifies the conversation that needs attention.
+Breakouts, while the Channel navigation drew a state dot over its icon. A badge
+on each conversation row identifies the conversation that needs attention, and
+the Channel navigation count includes Main as well as Breakouts.
 
 **Considered and rejected:** Fetching every Breakout's detail separately when
 opening the Channel would add cross-object reads to the navigation path. The
