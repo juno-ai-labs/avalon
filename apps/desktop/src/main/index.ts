@@ -117,6 +117,7 @@ import {
 import { ApplicationIconController } from './application-icon-controller';
 import { ApplicationLifecycleTelemetry } from './application-lifecycle-telemetry';
 import { applicationMenuTemplate } from './application-menu';
+import { installEditableTextMenu } from './editable-text-menu';
 import { shareText, showDefinitionForSelection } from './text-services';
 import { ApplicationOpenObserver, initialApplicationOpenEntrypoint } from './application-open-observer';
 import { RendererCrashRecovery } from './renderer-crash-recovery';
@@ -4344,6 +4345,8 @@ const settingsWindowController = new SettingsWindowController({
     });
     settingsWindow = window;
 
+    installEditableTextMenu(window);
+
     installWindowDiagnostics(window, 'settings');
     window.setMenuBarVisibility(false);
     // Both wired before the load starts, because both can fire during it:
@@ -4440,6 +4443,7 @@ async function createSidekicksWindow(requestedTarget?: SidekicksWindowTarget): P
   });
 
   const sidekicksWebContentsId = sidekicksWindow.webContents.id;
+  installEditableTextMenu(sidekicksWindow);
   sidekicksWindow.webContents.on('render-process-gone', () => realtimeSocketBroker.closeOwner(sidekicksWebContentsId));
   sidekicksWindow.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
     if (isMainFrame && !isInPlace) realtimeSocketBroker.closeOwner(sidekicksWebContentsId);
@@ -4524,6 +4528,8 @@ async function createMainWindow(): Promise<void> {
     },
   });
   const mainWindowWebContentsId = mainWindow.webContents.id;
+
+  installEditableTextMenu(mainWindow);
 
   installWindowDiagnostics(mainWindow, 'main');
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
