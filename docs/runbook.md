@@ -1028,12 +1028,13 @@ Three GitHub Actions workflows carry the mechanical part of this procedure. They
 - `.github/workflows/release-desktop-macos.yml` freezes the version-bumped release commit and runs lint, typecheck, the Electron desktop test suite (`pnpm --filter @rally/desktop test`), and the release invariants on Ubuntu before it claims macOS; the Apple runner then guards the tag, runs the packaged Crashpad fixture, builds, signs, notarizes, staples, and verifies the macOS package, checks configured regional APIs, publishes the immutable payloads, promotes the release manifest, and records the release config on `main`. The health gate can be bypassed only through the `skip_health_gate` dispatch input. It runs automatically on a merge to `main` matching its cheap admission filter; the Ubuntu planner rejects contract-only changes outside the desktop's derived import closure before bumping or claiming macOS. A manual dispatch names an existing tag. Nothing triggers on a tag.
 - `.github/workflows/release-sideline-macos.yml` automatically releases after a
   `main` change to Sideline, its shared UI/contracts, workspace build inputs, or
-  the shared macOS release helpers. Its singleton planner compares the current
-  tip with the latest `sideline-v<version>` tag, skips a stale run with no
-  outstanding inputs, and stamps the next Sideline patch version itself; do
-  not bump `apps/sideline/package.json` by hand. Stamping is bound to the exact
-  planned `main` tip and fails for a replan if that tip advances, keeping the
-  packaged contract tree aligned with the API deployment gate. The workflow
+  the shared macOS release helpers. Its singleton verification job fetches
+  `main`, compares that tip with the latest `sideline-v<version>` tag, skips a
+  stale run with no outstanding inputs, and stamps the next Sideline patch
+  version itself; do not bump `apps/sideline/package.json` by hand. If another
+  workflow advances `main` before the stamp is pushed, it fetches and replans,
+  including the shared-contract API deployment gate. It never silently builds
+  a newer tree using the old plan. The workflow
   freezes the stamped commit, repeats workspace lint/typecheck plus Sideline
   and release-tooling tests, and waits for the matching API deployment when
   contracts changed. It builds, signs, notarizes, and preserves one release
