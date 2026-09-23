@@ -20,6 +20,7 @@ it('defers main-window creation and restores and persists native geometry', asyn
   const loading = new Promise<void>((resolve) => { finishLoad = resolve; });
   const loaded = vi.fn(() => loading);
   const created = vi.fn((options: Record<string, unknown>) => options);
+  const installEditableTextMenu = vi.fn();
   const shown = vi.fn();
   const maximized = vi.fn();
   const writeState = vi.fn();
@@ -47,6 +48,7 @@ it('defers main-window creation and restores and persists native geometry', asyn
     conversationDetailsExpansion: 300, conversationDetailsAppliedWidth: 1480,
     userDataDirectory: () => '/tmp',
     windowBackgroundColor: () => '#fff', preloadPath: () => '/preload',
+    installEditableTextMenu,
     installWindowDiagnostics: vi.fn(), rendererUrl: () => 'app://rallywithai/index.html',
     loadRenderer: loaded,
   }) as () => Promise<void>;
@@ -66,6 +68,8 @@ it('defers main-window creation and restores and persists native geometry', asyn
   await Promise.all([opening, secondOpening]);
   expect(created).toHaveBeenCalledTimes(1);
   expect(created).toHaveBeenCalledWith(expect.objectContaining({ x: 100, y: 50, width: 1180, height: 900 }));
+  expect(installEditableTextMenu).toHaveBeenCalledTimes(1);
+  expect(installEditableTextMenu).toHaveBeenCalledWith(expect.any(Window));
   expect(loaded).toHaveBeenCalledTimes(1);
   await create();
   expect(shown).not.toHaveBeenCalled();
