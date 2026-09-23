@@ -8,9 +8,10 @@
  * objects in `test-workers/space-authority.test.ts`, because those are
  * properties of real storage rather than of this file's arithmetic.
  */
-import { asSpaceId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asSpaceId, asUserId, asWorkspaceId, asWorkstreamId, type SpaceSummary } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
 
+import type { WorkspaceSpaceReserveResult } from "../src/durable-objects/workspace-space-protocol";
 import type { AuthContext, Env } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
 import { SpaceService, spaceRefusal } from "../src/services/space-service";
@@ -28,7 +29,7 @@ const TARGET_SPACE_ID = asSpaceId("00000000-0000-7000-8000-0000000000d7");
 const CHANNEL_ID = asWorkstreamId("00000000-0000-7000-8000-0000000000d5");
 const SECOND_CHANNEL_ID = asWorkstreamId("00000000-0000-7000-8000-0000000000d6");
 
-function summary(overrides: Record<string, unknown> = {}) {
+function summary(overrides: Partial<SpaceSummary> = {}): SpaceSummary {
   return {
     id: SPACE_ID,
     name: "Company",
@@ -94,7 +95,7 @@ function workspaceDouble(overrides: Partial<WorkspaceDouble> = {}): WorkspaceDou
     cancelSpaceMembershipMove: vi.fn(async () => ({ cancelled: true })),
     finalizeSpaceMembershipRemoval: vi.fn(async () => ({ ok: true, space: summary() })),
     noteSpaceAudience: vi.fn(async () => ({ ok: true, space: summary({ revision: 4 }) })),
-    reserveSpace: vi.fn(async () => ({ ok: true, space: summary() })),
+    reserveSpace: vi.fn(async (): Promise<WorkspaceSpaceReserveResult> => ({ ok: true, space: summary(), created: true })),
     cancelSpaceReservation: vi.fn(async () => ({ cancelled: true })),
     recordSpaceIntentReceipt: vi.fn(async () => ({ recorded: true })),
     prepareSpaceArchive: vi.fn(async () => ({ ok: true, space: summary() })),
@@ -610,7 +611,7 @@ describe("SpaceService intent resumption", () => {
   it("replays an interrupted equivalent-audience move from its durable fences", async () => {
     const log: string[] = [];
     const workspace = workspaceDouble({
-      spaceSummary: vi.fn(async (input: { spaceId: string }) => ({
+      spaceSummary: vi.fn(async (input: { spaceId: SpaceSummary["id"] }) => ({
         ok: true,
         space: summary({ id: input.spaceId, name: input.spaceId === SPACE_ID ? "Source" : "Target" }),
       })),
