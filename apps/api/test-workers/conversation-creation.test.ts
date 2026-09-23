@@ -300,6 +300,36 @@ describe("creating a work stream", () => {
     expect(created.harnessRunId).toBeNull();
   });
 
+  it("shows import updates only to the original importer of a shared Channel", async () => {
+    const importEnv = withWorkspaceRuntimeDatabase(creationEnv(), WORKSPACE_ID);
+    const otherUserId = asUserId("00000000-0000-7000-8000-000000000bb3");
+    const otherSessionId = "00000000-0000-7000-8000-000000000bb4";
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO users(id,email,name,avatar_url,timezone,created_at) VALUES (?,'other@example.test','Other',NULL,'UTC','2026-09-17T00:00:00.000Z')")
+        .bind(otherUserId),
+      env.DB.prepare("INSERT INTO workspace_members(workspace_id,user_id,status,role,access_class,revision) VALUES (?,?,'active','member','member',1)")
+        .bind(WORKSPACE_ID, otherUserId),
+      env.DB.prepare("INSERT INTO sessions(id,user_id,workspace_id,region,revoked_at,expires_at) VALUES (?,?,?,'global',NULL,'2099-01-01T00:00:00.000Z')")
+        .bind(otherSessionId, otherUserId, WORKSPACE_ID),
+    ]);
+    const preview = parseSessionExport("claude_code", [
+      { type: "user", sessionId: "session-42", uuid: "u1", message: { role: "user", content: "Original question" } },
+      { type: "assistant", sessionId: "session-42", uuid: "a1", parentUuid: "u1", message: { role: "assistant", content: [{ type: "text", text: "Original answer" }] } },
+    ].map((row) => JSON.stringify(row)).join("\n"));
+    const prepared = await prepareSessionImport(importEnv, AUTH, preview, "shared-import");
+    const created = await new WorkstreamObjectCreationService(importEnv, AUTH).createPrepared({
+      title: "Shared import", clientMessageId: "shared-import", participantUserIds: [otherUserId],
+    }, prepared);
+    const client = new WorkstreamObjectClient(importEnv, AUTH, created.workstream.id);
+    expect(await client.importedSessionSource()).toEqual({ provider: "claude_code", sessionId: "session-42", url: null });
+    const otherClient = new WorkstreamObjectClient(importEnv, { ...AUTH, userId: otherUserId, sessionId: otherSessionId }, created.workstream.id);
+    await expect(otherClient.boot()).resolves.toBeDefined();
+    expect(await otherClient.importedSessionSource()).toBeNull();
+    await expect(otherClient.importedSessionCheckpoint()).rejects.toThrow("Only the original importer can update this channel");
+    await expect(otherClient.updateImportedSession(crypto.randomUUID(), prepared))
+      .rejects.toThrow("Only the original importer can update this channel");
+  });
+
   it("re-imports only source changes after Rally turns and projects the new source reply into the next run", async () => {
     const importEnv = withWorkspaceRuntimeDatabase(creationEnv(), WORKSPACE_ID);
     const snapshot = (answer: string, continued = false) => parseSessionExport("claude_code", [
