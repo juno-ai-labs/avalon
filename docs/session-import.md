@@ -80,6 +80,11 @@ and shows its title as read-only text. It offers no conversation dropdown:
 another conversation would fail the source-identity check. If the original
 Claude Code transcript is missing from local discovery, the person can choose
 its file; the same identity check applies.
+Only the person who imported the Channel sees the update action. The Channel's
+creator identity is also the importer identity for this creation path; its
+authority checks that identity before reading the source checkpoint or accepting
+an update. Other Channel members can read the imported transcript and add their
+own messages without gaining access to the import control.
 The Claude Code adapter
 follows the active JSONL parent chain, keeps visible user and assistant text,
 combines consecutive assistant fragments, and omits tool calls, tool results,
@@ -270,7 +275,8 @@ shortens long menu labels, and omits internal IDs and duplicate title text. The
 account-export choice was removed from creation and update. A Channel records source message
 IDs and revisions in its own SQLite transaction and offers an explicit update.
 The update dialog matches that recorded source automatically and displays its
-title without a conversation selector.
+title without a conversation selector. The import control and update authority
+are limited to the original importer.
 New or revised source turns append after any Rally turns, with replay receipts
 and a Bind history transition for imported assistant replies.
 
@@ -280,6 +286,8 @@ Showing an export file beside a selected local chat also made the update dialog
 look as though both inputs were required.
 Offering other conversations in the update dialog implied they could replace
 the original source, even though the Channel rejects a different source.
+Other Channel members may lack the original source on their Macs, so showing
+them an unusable update control would be misleading.
 Source sessions can also continue after a Rally Channel has received its own
 messages; comparing against the Channel tail would duplicate or reject valid
 source updates. Selecting one conversation and keeping a separate source

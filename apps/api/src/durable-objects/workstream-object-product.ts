@@ -1168,14 +1168,18 @@ export class WorkstreamObjectProductService {
 
   /** The import checkpoint belongs to this conversation, never to its regional directory row. */
   async importedSessionSource(auth: AuthContext): Promise<{ provider: string; sessionId: string; url: string | null } | null> {
-    await this.authorize(auth);
+    const root = await this.authorize(auth);
+    if (root.created_by_user_id !== auth.userId) return null;
     const row = first(this.storage.sql.exec<{ provider: string; session_id: string; source_url: string | null }>(
       `SELECT provider, session_id, source_url FROM imported_session_sources WHERE id = 1`));
     return row ? { provider: row.provider, sessionId: row.session_id, url: row.source_url } : null;
   }
 
   async importedSessionCheckpoint(auth: AuthContext): Promise<Array<{ sourceMessageId: string; sourceRevision: string }>> {
-    await this.authorize(auth);
+    const root = await this.authorize(auth);
+    if (root.created_by_user_id !== auth.userId) {
+      throw new ApiError(403, "session_import_update_denied", "Only the original importer can update this channel");
+    }
     return this.storage.sql.exec<{ source_message_id: string; source_revision: string }>(
       `SELECT source_message_id, source_revision FROM imported_session_messages`).toArray()
       .map((row) => ({ sourceMessageId: row.source_message_id, sourceRevision: row.source_revision }));
@@ -1187,6 +1191,9 @@ export class WorkstreamObjectProductService {
   }> {
     const conversation = PreparedConversationSchema.parse(rawConversation);
     const root = await this.authorize(auth);
+    if (root.created_by_user_id !== auth.userId) {
+      throw new ApiError(403, "session_import_update_denied", "Only the original importer can update this channel");
+    }
     const source = first(this.storage.sql.exec<{ provider: string; session_id: string; source_url: string | null }>(
       `SELECT provider, session_id, source_url FROM imported_session_sources WHERE id = 1`));
     if (!source) throw new ApiError(409, "session_import_source_missing", "This channel has no updateable source session");
