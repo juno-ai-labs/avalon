@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { planFromHead } from './plan-release.mjs';
 import { stampSidelineRelease } from './stamp-release.mjs';
 
 function git(cwd, args) {
@@ -98,7 +99,7 @@ test('an existing remote release tag stops stamping before changing the manifest
     git(root, ['init', '--bare', '--initial-branch=main', remote]);
     git(root, ['clone', remote, runner]);
     await mkdir(join(runner, 'apps/sideline'), { recursive: true });
-    await writeFile(join(runner, 'apps/sideline/package.json'), '{"version":"0.1.5"}\n');
+    await writeFile(join(runner, 'apps/sideline/package.json'), '{\n  "version": "0.1.5"\n}\n');
     git(runner, ['add', '.']);
     git(runner, ['-c', 'user.name=Release Test', '-c', 'user.email=release-test@example.com', 'commit', '-m', 'Seed Sideline']);
     git(runner, ['push', 'origin', 'HEAD:main']);
@@ -121,6 +122,82 @@ test('an existing remote release tag stops stamping before changing the manifest
     }), /sideline-v0\.1\.6 already exists/u);
     assert.equal(applied, false);
     assert.equal(JSON.parse(await readFile(join(runner, 'apps/sideline/package.json'), 'utf8')).version, '0.1.5');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a bot stamp during a skipped plan is replanned from the new release input', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sideline-stamp-skip-'));
+  const remote = join(root, 'origin.git');
+  const runner = join(root, 'runner');
+  const rival = join(root, 'rival');
+  const output = join(root, 'outputs');
+  try {
+    git(root, ['init', '--bare', '--initial-branch=main', remote]);
+    git(root, ['clone', remote, runner]);
+    await mkdir(join(runner, 'apps/sideline'), { recursive: true });
+    await writeFile(join(runner, 'apps/sideline/package.json'), '{\n  "version": "0.1.5"\n}\n');
+    await writeFile(join(runner, 'package.json'), '{"version":"1.445.0"}\n');
+    git(runner, ['add', '.']);
+    git(runner, ['-c', 'user.name=Release Test', '-c', 'user.email=release-test@example.com', 'commit', '-m', 'Seed releases']);
+    git(runner, ['push', 'origin', 'HEAD:main']);
+    git(runner, ['tag', 'sideline-v0.1.5']);
+    git(runner, ['push', 'origin', 'sideline-v0.1.5']);
+    git(root, ['clone', remote, rival]);
+
+    let plans = 0;
+    await stampSidelineRelease({
+      cwd: runner,
+      outputPath: output,
+      planRelease: async (cwd) => {
+        const plan = await planFromHead(cwd);
+        plans += 1;
+        if (plans === 1) {
+          assert.equal(plan.shouldRelease, false);
+          await writeFile(join(rival, 'package.json'), '{"version":"1.446.0"}\n');
+          git(rival, ['add', '.']);
+          git(rival, ['-c', 'user.name=Rally Bot', '-c', 'user.email=rally-bot@example.com', 'commit', '-m', 'Bump Rally']);
+          git(rival, ['push', 'origin', 'HEAD:main']);
+        }
+        return plan;
+      },
+    });
+
+    assert.equal(plans, 2);
+    assert.equal(JSON.parse(await readFile(join(runner, 'apps/sideline/package.json'), 'utf8')).version, '0.1.6');
+    const stamped = git(runner, ['rev-parse', 'HEAD']);
+    assert.equal(git(runner, ['rev-parse', 'origin/main']), stamped);
+    assert.match(await readFile(output, 'utf8'), new RegExp(`^commit=${stamped}$`, 'mu'));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('an unpublished stamped version resumes from that exact commit', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sideline-stamp-resume-'));
+  const remote = join(root, 'origin.git');
+  const runner = join(root, 'runner');
+  const output = join(root, 'outputs');
+  try {
+    git(root, ['init', '--bare', '--initial-branch=main', remote]);
+    git(root, ['clone', remote, runner]);
+    await mkdir(join(runner, 'apps/sideline'), { recursive: true });
+    await writeFile(join(runner, 'apps/sideline/package.json'), '{\n  "version": "0.1.5"\n}\n');
+    git(runner, ['add', '.']);
+    git(runner, ['-c', 'user.name=Release Test', '-c', 'user.email=release-test@example.com', 'commit', '-m', 'Publish 0.1.5']);
+    git(runner, ['tag', 'sideline-v0.1.5']);
+    await writeFile(join(runner, 'apps/sideline/package.json'), '{\n  "version": "0.1.6"\n}\n');
+    git(runner, ['add', '.']);
+    git(runner, ['-c', 'user.name=Release Bot', '-c', 'user.email=release-bot@example.com', 'commit', '-m', 'Stamp unpublished 0.1.6']);
+    const stamped = git(runner, ['rev-parse', 'HEAD']);
+    git(runner, ['push', 'origin', 'HEAD:main']);
+    git(runner, ['push', 'origin', 'sideline-v0.1.5']);
+
+    await stampSidelineRelease({ cwd: runner, outputPath: output });
+    assert.equal(git(runner, ['rev-parse', 'HEAD']), stamped);
+    assert.equal(git(runner, ['rev-parse', 'origin/main']), stamped);
+    assert.match(await readFile(output, 'utf8'), new RegExp(`^commit=${stamped}$`, 'mu'));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
