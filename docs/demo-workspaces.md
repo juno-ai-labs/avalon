@@ -40,7 +40,7 @@ Tool/elicitation scenarios retain ordinary scripted executions. See
 | `apps/api/src/services/demo-workspace-visibility.ts` | The template and unpublished-candidate filter, applied in regional discovery and activation. `DEMO_TEMPLATE_WORKSPACE_ID`, the template's UUID, is declared here and nowhere else. |
 | `apps/api/src/services/demo-pack.ts` | The pack schema and its playability rules, the planner that binds a pack to a cast, the label each part is cast under, and the placeholder pack — its three rooms and its standing Sidekick. |
 | `.agents/skills/demo-scenario/SKILL.md` | Adding a scenario to the shipped pack from a plain-language description, for an author who does not read the code: what to ask, how Rally has to sound, the files a scenario touches, and the loop that produces the `expect` block. Invoke it as `/demo-scenario`. |
-| `apps/api/src/services/demo-cast.ts` | Who a demo can be cast from: the company's email domain, the directory query the New demo form's dropdowns are built from, and the check that every cast id is one of those accounts. |
+| `apps/api/src/services/demo-cast.ts` | Who a demo can be cast from: the company's email domain, the directory query the New demo form suggests from, persona minting for a typed name, and the check that every cast id is a colleague or a persona. |
 | `apps/api/src/services/demo-seeder.ts` | Plays one action at a time through the production write paths, waits for its run to settle as specified, and records the receipt. `sidekickDraft` is the definition a Sidekick step publishes. |
 | `apps/api/src/services/demo-seed-provider.ts` | The `fetch` a seeded run's harness config carries: answers the run's one inference request from the seed and refuses the next. |
 | `apps/api/src/services/demo-readiness.ts` | The manifest of what every verified viewer should find, derived from the pack and the receipts, and the one comparison against their real directory, attention and canonical reads. |
@@ -111,7 +111,8 @@ the template losing Linear during one.
 
 ### Casting a demo
 
-**Everybody in a demo is a colleague with a real account.** The presenter signs
+**The presenter is a colleague with a real account; every other part is a
+typed name.** The presenter signs
 in, owns the demo, and it is their view of it that the readiness barrier
 verifies, so they are chosen from the template's own members. Every other role
 is cast from the **company's directory**: everyone with an account on the
@@ -122,6 +123,15 @@ part it is casting for (`roleLabels`: Product, Sales and Legal for the pack in
 service), because a role token reads as this pack's own character and a
 colleague put in the wrong part has its scripted words attributed to them under
 their real name.
+
+Each part is a text field that suggests colleagues. A name that exactly one
+colleague carries (case-insensitive) is sent as their account and seats them;
+any other name is sent as `{ name }` and played by a **persona**
+(`mintDemoPersona`): a `users` row with that name, no platform identity and an
+address `<operationId>.<role>@persona.invalid`, minted when the start request
+passes its checks. A persona is seated and acts like anyone else but can never
+sign in, so it widens nothing. The derived address makes minting idempotent,
+and personas are never cleaned up — a demo's history references them.
 
 The two lists are different questions, which is why the template answers both
 rather than filtering one. A presenter is handed the template's connections,
@@ -487,9 +497,9 @@ demo's.
   the row before the workspace exists.
 - **One driver at a time.** A phase refuses a driver whose attempt the row has
   moved past, and every status write names the attempt it belongs to.
-- **The cast is chosen, and only from colleagues.** A start request carries an
-  account per role, and every one of them must be a signed-in account on the
-  company's email domain — checked before the row is written and again by the
+- **A cast account is a colleague or a persona.** A start request carries an
+  account or a typed name per role; every account must be a signed-in account
+  on the company's email domain or a persona that cannot sign in — checked before the row is written and again by the
   template check before the first write, so the page's list is never what
   bounds who a demo can seat.
 - **Nobody is in a demo twice, and no two of them share a name.** One person
@@ -704,6 +714,25 @@ the cast discussed is answerable. That was a product defect in every
 multi-person room, not a demo concern, and it is fixed where it lived.
 
 ## Changelog
+
+### 2026-09-23 — A part can be played by any typed name
+
+**What changed:** The New demo form's parts are text fields, not colleague
+dropdowns. A start request's cast entry is an account id or `{ name }`; a name
+is played by a persona minted for the operation (`demo-cast.ts`), and
+`readDemoCast` accepts personas beside colleagues. The page no longer refuses
+to open the form when the company has fewer people than parts.
+
+**Why:** With three people in the company, whoever presents leaves two
+colleagues for three parts, so no demo could be cast without a duplicate. The
+2026-09-10 entry rejected per-part personas as "a question with no good
+default"; typing resolves that — the field asks one question, and a
+colleague's name still seats the colleague.
+
+**Consequences:** Persona rows accumulate, one per typed part per operation,
+and are never deleted. A name that two colleagues share is played by a
+persona, not either of them. Changing the persona address derivation orphans
+personas already minted for an operation that may still be retried.
 
 ### 2026-09-21 — Demo preparation produces platform impersonation relationships
 

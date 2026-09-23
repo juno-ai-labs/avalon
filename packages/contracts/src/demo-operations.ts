@@ -24,18 +24,29 @@ export const DemoOperationStatusValueSchema = z.enum(["running", "ready", "faile
 const RoleSchema = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u);
 
 /**
+ * Who plays one part: a colleague's account, or a name the operator typed.
+ * A name is played by a persona the region mints for this operation — a user
+ * with that name and no way to sign in — so a demo can be staffed by anyone,
+ * including more people than the company has.
+ */
+export const DemoCastEntrySchema = z.union([
+  IdSchema,
+  z.strictObject({ name: z.string().trim().min(1).max(255) }),
+]);
+export type DemoCastEntry = z.infer<typeof DemoCastEntrySchema>;
+
+/**
  * What the operator submits. The pack is the regional API's; the cast is the
- * operator's — an account per role, chosen from the people on the company's
- * own email domain. Everybody in a demo is a real colleague: the presenter
- * signs in and shows it, and the rest are the teammates whose names and
- * addresses the presenter is content to have on screen.
+ * operator's — per role, either a colleague on the company's own email domain
+ * or a typed name. The presenter is always a real template member, because
+ * they sign in and show it.
  */
 export const DemoOperationStartRequestSchema = z.strictObject({
   operationId: IdSchema,
   companyName: z.string().trim().min(1).max(80),
   presenterUserId: IdSchema,
-  /** The account playing each pack role but the presenter's. */
-  cast: z.record(RoleSchema, IdSchema),
+  /** Who plays each pack role but the presenter's. */
+  cast: z.record(RoleSchema, DemoCastEntrySchema),
 });
 export type DemoOperationStartRequest = z.infer<typeof DemoOperationStartRequestSchema>;
 
