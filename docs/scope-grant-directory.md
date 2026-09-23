@@ -47,6 +47,12 @@ asks WorkspaceDO only for the visible Space marks and containment edges of those
 canonically admitted Channels. The response preserves parent archive state separately
 from each conversation, so clients do not offer a child restore while its parent is
 archived.
+The current Channel rail opts into `?attention=1` on `/sharing/navigation`.
+WorkstreamDO then derives one attention boolean from each *admitted*
+conversation's common and requesting-viewer projections. The default response
+keeps its previous shape for deployed clients with strict navigation parsers.
+This remains a navigation snapshot, refreshed on focus or directory
+invalidation; it does not create a guest socket for unopened Breakouts.
 
 ## Invariants
 
@@ -100,6 +106,25 @@ Negative controls bypass canonical admission, truncate the admitted Channel set,
 flatten the browser's Space filter; the corresponding tests fail.
 
 ## Changelog
+
+### 2026-09-23 — Project guest Breakout attention in opt-in navigation
+
+**What changed:** The hierarchical navigation read can include a viewer-scoped
+attention boolean for each canonically admitted conversation when the caller
+opts in. Existing callers receive the old response shape.
+
+**Why:** A guest with multiple Breakout grants could see only the selected
+Breakout's badge. The guest does not have a Main control connection, so the
+member child directory cannot fill the sibling rows.
+
+**Considered and rejected:** Opening Main's control socket for child-only
+guests would cross its authorization boundary. Fetching each Breakout detail
+separately would add requests to navigation. The grant owner already holds
+both projections alongside the admission decision.
+
+**What a future change has to respect:** Only admitted conversations receive
+attention state. The response is a snapshot and older strict clients must keep
+the original shape unless they opt in.
 
 ### 2026-09-21 — Project shared Channels into guest Space navigation
 

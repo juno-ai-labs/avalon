@@ -365,11 +365,12 @@ describe("substream preparation on workerd", () => {
     // the mention's own effects.
     await deliverChildEffects(TEST_ENV, child);
     await deliverParentEffects(TEST_ENV, parent());
-    const childWaterlineBeforeMention = await runInDurableObject(parent(), (_instance, state) =>
+    const childWaterline = () => runInDurableObject(parent(), (_instance, state) =>
       state.storage.sql.exec<{ waterline: number }>(
         `SELECT MAX(waterline) AS waterline FROM workstream_state_changes WHERE state_key = ?`,
         `children:${OTHER_ID}`,
       ).one().waterline);
+    const childWaterlineBeforeMention = await childWaterline();
 
     const text = "@Other take a look at this";
     const sent = await post(child, "/internal/product", {
@@ -412,11 +413,7 @@ describe("substream preparation on workerd", () => {
     // badge, so the row has to be queued *ahead* of it rather than merely
     // queued.
     expect(mention?.requiredProjectionVersion).toBeGreaterThan(0);
-    expect(await runInDurableObject(parent(), (_instance, state) =>
-      state.storage.sql.exec<{ waterline: number }>(
-        `SELECT MAX(waterline) AS waterline FROM workstream_state_changes WHERE state_key = ?`,
-        `children:${OTHER_ID}`,
-      ).one().waterline)).toBeGreaterThan(childWaterlineBeforeMention);
+    expect(await childWaterline()).toBeGreaterThan(childWaterlineBeforeMention);
     expect((await parent().listVisiblePrivateChildren({
       workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, userId: OTHER_ID,
     })).children).toContainEqual(expect.objectContaining({
@@ -425,11 +422,7 @@ describe("substream preparation on workerd", () => {
       unreadCount: 1,
       harnessStatus: expect.any(String),
     }));
-    const childWaterlineBeforeRead = await runInDurableObject(parent(), (_instance, state) =>
-      state.storage.sql.exec<{ waterline: number }>(
-        `SELECT MAX(waterline) AS waterline FROM workstream_state_changes WHERE state_key = ?`,
-        `children:${OTHER_ID}`,
-      ).one().waterline);
+    const childWaterlineBeforeRead = await childWaterline();
     expect((await post(child, "/internal/product", {
       operation: "acknowledge_read", auth: otherAuth,
       input: { readThroughSequenceNumber: 1, observedManualUnreadGeneration: 0 },
@@ -439,11 +432,7 @@ describe("substream preparation on workerd", () => {
     );
     expect(readUserEffect).toBeDefined();
     expect(await consumeEffectBodies(TEST_ENV, [readUserEffect])).toMatchObject({ acked: 1, retried: 0 });
-    expect(await runInDurableObject(parent(), (_instance, state) =>
-      state.storage.sql.exec<{ waterline: number }>(
-        `SELECT MAX(waterline) AS waterline FROM workstream_state_changes WHERE state_key = ?`,
-        `children:${OTHER_ID}`,
-      ).one().waterline)).toBeGreaterThan(childWaterlineBeforeRead);
+    expect(await childWaterline()).toBeGreaterThan(childWaterlineBeforeRead);
     await deliverChildEffects(TEST_ENV, child);
     const outbound: { text: string; to: string[] }[] = [];
     const originalFetch = globalThis.fetch;

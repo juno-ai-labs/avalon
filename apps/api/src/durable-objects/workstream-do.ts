@@ -10,7 +10,7 @@ import { CreateScopeInvitationsSchema, AcceptScopeInvitationSchema, RevokeScopeI
   ScopeInvitationResultSchema, type ScopeInvitationDescription, type ScopeInvitationResult } from "@rally/contracts/scope-grants";
 import { parseRpcInput } from "../lib/rpc-input";
 import type { Region } from "@rally/contracts/regions";
-import { safeParseSocketEvent, isUnknownSocketEvent } from "@rally/contracts";
+import { safeParseSocketEvent, isUnknownSocketEvent, conversationNeedsViewer } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationRequest } from '../services/authorization-policy';
 import { createIdentityObjectPort } from '../runtime/identity-port';
@@ -1497,6 +1497,15 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       row.substream_id,
       WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(row.effect_json)),
     ]));
+    const viewerProjections = request.includeAttention
+      ? new Map(this.parentSql.exec<{ substream_id: string; effect_json: string }>(
+          "SELECT substream_id,effect_json FROM substream_user_directory WHERE user_id = ?",
+          request.userId,
+        ).toArray().map((row) => [
+          row.substream_id,
+          WorkstreamDirectoryUserEffectSchema.parse(JSON.parse(row.effect_json)),
+        ]))
+      : null;
     const conversations = this.parentSql.exec<{
       substream_id: string;
       title: string | null;
@@ -1508,7 +1517,9 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       target: { kind: "conversation", workspaceId: request.workspaceId, parentId: request.parentId,
         substreamId: asSubstreamId(child.substream_id) } }, relationship).allowed)
       .map((child) => {
-        const appearance = projections.get(child.substream_id)?.appearance;
+        const common = projections.get(child.substream_id);
+        const viewer = viewerProjections?.get(child.substream_id);
+        const appearance = common?.appearance;
         return {
           substreamId: child.substream_id,
           archived: metadata.archived_at !== null || child.archived_at !== null,
@@ -1518,6 +1529,12 @@ export class WorkstreamDO extends ConversationParentDurableObject {
             ? metadata.scope
             : "personal",
           ...(appearance ? { appearance } : {}),
+          ...(viewerProjections ? { needsAttention: conversationNeedsViewer({
+            harnessStatus: common ? harnessStatus(common.state) : "completed",
+            hasUnread: (viewer?.unreadCount ?? 0) > 0,
+            youAreMentioned: viewer?.youAreMentioned,
+            unseen: viewer?.unseen,
+          }) } : {}),
         };
       });
     if (!conversations.length) return null;
@@ -2858,9 +2875,9 @@ export class WorkstreamDO extends ConversationParentDurableObject {
        RETURNING substream_id`,
       effect.title, now, substreamId, effect.title,
     ).toArray();
-    // The same child projection owns its appearance. Recomputing the visible
-    // rows is hash-deduplicated, so a title, icon or colour advances discovery
-    // while unrelated common-state changes write no new local state.
+    // The same child projection owns its appearance and run state. Recomputing
+    // visible rows is hash-deduplicated, so only changes to displayed fields
+    // advance discovery for the child's members.
     this.advancePrivateChildrenVersionsFor(substreamId, now);
   }
 
@@ -3230,14 +3247,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       nextPendingWakeup,
       nextTerminalActionAt: iso(row.next_terminal_action_at),
       privateChildren: this.visiblePrivateChildrenForUser(userId).map((child) => ({
-        substreamId: child.substreamId,
-        title: child.title,
-        ...(child.appearance ? { appearance: child.appearance } : {}),
-        ...(child.harnessStatus ? { harnessStatus: child.harnessStatus } : {}),
-        ...(child.unreadCount !== undefined ? { unreadCount: child.unreadCount } : {}),
-        ...(child.youAreMentioned !== undefined ? { youAreMentioned: child.youAreMentioned } : {}),
-        ...(child.unseen !== undefined ? { unseen: child.unseen } : {}),
-        createdByUserId: child.createdByUserId,
+        ...child,
         createdAt: iso(child.createdAt),
         updatedAt: iso(child.updatedAt),
       })),
