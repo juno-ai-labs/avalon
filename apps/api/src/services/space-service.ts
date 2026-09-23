@@ -35,6 +35,7 @@ import {
   WorkspaceSpaceMembershipMoveResultSchema,
   WorkspaceSpaceMembershipPlanResultSchema,
   WorkspaceSpaceMutationResultSchema,
+  WorkspaceSpaceReserveResultSchema,
   type SpaceIntentKind,
   type SpaceMember,
   type MemberWalkReach,
@@ -271,12 +272,14 @@ export class SpaceService {
    */
   async create(input: CreateSpaceRequest, spaceId?: SpaceId): Promise<SpaceSummary> {
     const workspace = await this.workspace();
-    const reserved = this.settled(await workspace.reserveSpace({
+    const reservation = WorkspaceSpaceReserveResultSchema.parse(await workspace.reserveSpace({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       space: input,
       ...(spaceId ? { spaceId } : {}),
-    }), input.name);
+    }));
+    if (!reservation.ok) throw spaceRefusal(reservation.code, input.name, reservation.unreachableUserIds, reservation.blockedWorkstreamIds);
+    const reserved = reservation.space;
     if (spaceId && (reserved.name !== input.name.trim() || reserved.scope !== input.scope
       || reserved.iconKey !== input.iconKey || reserved.colorKey !== input.colorKey || reserved.reach === "through_channel")) {
       throw new ApiError(409, "space_revision_conflict", "The creation identity already names a different Space");
@@ -286,9 +289,9 @@ export class SpaceService {
       await this.provisionSpaceObject(reserved.id, input);
       return await this.summary(reserved.id);
     } catch (error) {
-      // The Space never opened, so nothing may see it. A reservation left
-      // behind would be a Space in every member's sidebar that answers nothing.
-      await workspace.cancelSpaceReservation({
+      // A replay did not create this reservation and cannot undo earlier work,
+      // even while its first directory projection is still in flight.
+      if (reservation.created) await workspace.cancelSpaceReservation({
         workspaceId: asWorkspaceId(this.auth.workspaceId),
         userId: asUserId(this.auth.userId),
         spaceId: reserved.id,
@@ -303,9 +306,10 @@ export class SpaceService {
    * `create`'s two halves under one idempotent front door. The reservation is
    * the unique partial index's decision rather than a read — every caller here
    * is a retry of another, and the loser is answered with the Space the winner
-   * made — and only the caller that *made* it opens the object, because
-   * provisioning the same Space twice would reserve its main conversation
-   * twice.
+   * made — and only the caller that *made* it opens the object. General's
+   * existing callers need only its identity. Internal stable-id creation also
+   * resumes provisioning: reserveChild reuses substream 0, conversation
+   * provisioning retains initialized state, and appearance uses its normal writer.
    *
    * Reached by every creation that names no Space and by the cutover, which is
    * why it is here rather than inside either: a Channel created while the
@@ -1366,9 +1370,8 @@ export class SpaceService {
   }
 
   private provisionSpaceObject(spaceId: SpaceId, input: CreateSpaceRequest): Promise<void> {
-    // Named like every other reach into this object: a provision that fails is
-    // the Space's authority not opening, and the caller cancels the
-    // reservation and answers a person either way.
+    // A failure names the Space authority boundary. Only a caller that made
+    // the reservation may cancel it; replay failures leave it resumable.
     return this.throughSpaceAuthority(spaceId, input.name, "provision", () =>
       this.openSpaceObject(spaceId, input));
   }

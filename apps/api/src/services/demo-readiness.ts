@@ -31,7 +31,6 @@ import type { Workstream } from "@rally/contracts";
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
-import { SpaceService } from "./space-service";
 import { AutomationService } from "./automation-service";
 import {
   packRoomFacts,
@@ -43,6 +42,7 @@ import {
   type DemoPackRoomFacts,
 } from "./demo-pack";
 import { demoMemberAuth, demoSeedSpaceId, type DemoSeedReceipt } from "./demo-seeder";
+import { SpaceService } from "./space-service";
 import { workspaceAttention } from "./workspace-attention-service";
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
 import { WorkstreamObjectClient } from "./workstream-object-client";
@@ -333,6 +333,9 @@ export async function checkDemoReadiness(
       wholeDirectory(env, auth),
       workspaceAttention(env, auth),
     ]);
+    // Cache only within this viewer's poll: two account Channels share a Space,
+    // while another viewer must still prove their own visibility.
+    const spaceChecks = new Map<string, { id: string; code: "space_state" | "space_missing" | null }>();
     const byId = new Map(items.map((item) => [item.id, item]));
     const expectedIds = new Set(view.rooms.map((room) => room.workstreamId));
     for (const item of items) {
@@ -346,19 +349,24 @@ export async function checkDemoReadiness(
       }
       gaps.push(...compareRoom(room, actual, view.viewerUserId));
       if (room.space) {
-        const spaceId = await demoSeedSpaceId(input.operationId, room.space.key);
-        if (actual.spaceIds.length !== 1 || actual.spaceIds[0] !== spaceId) {
+        let checked = spaceChecks.get(room.space.key);
+        if (!checked) {
+          const id = await demoSeedSpaceId(input.operationId, room.space.key);
+          let code: "space_state" | "space_missing" | null = null;
+          try {
+            const space = await new SpaceService(env, auth).summary(id);
+            if (space.name !== room.space.name || space.status !== "active" || space.scope !== "workspace") code = "space_state";
+          } catch (error) {
+            if (!(error instanceof ApiError && error.code === "space_not_found")) throw error;
+            code = "space_missing";
+          }
+          checked = { id, code };
+          spaceChecks.set(room.space.key, checked);
+        }
+        if (actual.spaceIds.length !== 1 || actual.spaceIds[0] !== checked.id) {
           gap(room.room, "space_membership", `expected only ${room.space.name}`);
         }
-        try {
-          const space = await new SpaceService(env, auth).summary(spaceId);
-          if (space.name !== room.space.name || space.status !== "active" || space.scope !== "workspace") {
-            gap(room.room, "space_state", `expected active Organization Space ${room.space.name}`);
-          }
-        } catch (error) {
-          if (!(error instanceof ApiError && error.code === "space_not_found")) throw error;
-          gap(room.room, "space_missing", room.space.name);
-        }
+        if (checked.code) gap(room.room, checked.code, `expected active Organization Space ${room.space.name}`);
       }
     }
     const listedOrder = items.filter((item) => expectedIds.has(item.id)).map((item) => item.id);

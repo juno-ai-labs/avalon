@@ -83,6 +83,46 @@ function roomClient(
 }
 
 describe("seeding a pack", () => {
+  it("keeps an existing unprojected Space when replay provisioning fails", async () => {
+    const seed = await openDemoTestSession();
+    const service = new SpaceService(demoSeedEnv(), seed.auth.get(DEMO_PRIYA_ID)!);
+    const input = { name: "Customer: Acme", iconKey: "handshake", colorKey: "blue", scope: "workspace" } as const;
+    const id = await demoSeedSpaceId(DEMO_OPERATION_ID, "replay-failure");
+    const workspace = env.WORKSPACE_DOS.getByName(workspaceDOName("global", DEMO_WORKSPACE_ID));
+    // The first caller reserved this identity and stopped before provisioning.
+    expect(await workspace.reserveSpace({ workspaceId: DEMO_WORKSPACE_ID,
+      userId: DEMO_PRIYA_ID, space: input, spaceId: id })).toMatchObject({ ok: true, created: true });
+    const opened = await playDemoAction(seed, seed.actions[0]!);
+    await service.addChannel(id, asWorkstreamId(opened.workstreamId!));
+    expect(await runInDurableObject(workspace, (_instance, state) =>
+      state.storage.sql.exec<{ source_version: number }>(
+        "SELECT source_version FROM workspace_space_directory WHERE space_id = ?", id,
+      ).one().source_version)).toBe(0);
+    // Fail the regional anchor write on a real second provision, before any
+    // first projection reaches WorkspaceDO. No service or object is doubled.
+    await env.DB.prepare(`CREATE TRIGGER fail_space_replay BEFORE INSERT ON workstreams
+      BEGIN SELECT RAISE(ABORT, 'space_anchor_unavailable'); END`).run();
+    await expect(service.create(input, id)).rejects.toMatchObject({ code: "space_authority_unreachable" });
+    expect(await service.summary(id)).toMatchObject({ name: input.name, channelCount: 1 });
+    await env.DB.prepare("DROP TRIGGER fail_space_replay").run();
+    expect(await service.create(input, id)).toMatchObject({ id, channelCount: 1 });
+  });
+
+  it("refuses changed creation attributes and inaccessible existing identities", async () => {
+    const seed = await openDemoTestSession();
+    const service = new SpaceService(demoSeedEnv(), seed.auth.get(DEMO_PRIYA_ID)!);
+    const input = { name: "Private planning", iconKey: "handshake", colorKey: "blue", scope: "personal" } as const;
+    const id = await demoSeedSpaceId(DEMO_OPERATION_ID, "private-space");
+    await service.create(input, id);
+    for (const change of [{ name: "Renamed" }, { scope: "workspace" as const },
+      { iconKey: "briefcase" as const }, { colorKey: "green" as const }]) {
+      await expect(service.create({ ...input, ...change }, id)).rejects.toMatchObject({ code: "space_revision_conflict" });
+    }
+    const stranger = new SpaceService(demoSeedEnv(), seed.auth.get(DEMO_MARCUS_ID)!);
+    await expect(stranger.create(input, id)).rejects.toMatchObject({ code: "space_not_found" });
+    expect(await service.summary(id)).toMatchObject(input);
+  });
+
   it("places prepared and scripted Channels in one replayable named Space", async () => {
     const pack = DemoPackSchema.parse({
       version: "spaces-test", roles: ["presenter", "priya", "marcus"],
