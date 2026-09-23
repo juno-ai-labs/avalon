@@ -59,28 +59,43 @@ export const DEMO_PERSONA_EMAIL_DOMAIN = "persona.invalid";
 /** A persona: seatable because it can never sign in. */
 const PERSONA = `platform_user_id IS NULL AND email LIKE '%@${DEMO_PERSONA_EMAIL_DOMAIN}'`;
 
+/** The address of the persona playing one role of one operation. */
+export function demoPersonaEmail(operationId: string, role: DemoPackRole): string {
+  return `${operationId}.${role}@${DEMO_PERSONA_EMAIL_DOMAIN}`;
+}
+
 /**
  * Mint the persona playing one role of one operation, or answer the one
- * already minted. The address is derived from the operation and the role, so
- * a repeat or two concurrent first submissions land on one row. Minted before
- * the operation row exists, so a resubmission after a refusal renames it.
+ * already minted. Never renames: two concurrent first submissions of one
+ * operation both reach this before either claims the operation, so a rename
+ * here would let the loser rewrite the winner's cast. The winner sets the
+ * names it claimed with `nameDemoPersonas` once its claim has landed.
  */
 export async function mintDemoPersona(env: Env, input: {
   operationId: string;
   role: DemoPackRole;
   name: string;
 }): Promise<DemoCastCandidate> {
-  const email = `${input.operationId}.${input.role}@${DEMO_PERSONA_EMAIL_DOMAIN}`;
+  const email = demoPersonaEmail(input.operationId, input.role);
   const at = new Date().toISOString();
   await env.DB.prepare(
     `INSERT INTO users (id, google_subject, email, name, avatar_url, created_at, updated_at)
      VALUES (?, NULL, ?, ?, NULL, ?, ?)
-     ON CONFLICT (email) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at`,
+     ON CONFLICT (email) DO NOTHING`,
   ).bind(uuidV7(), email, input.name, at, at).run();
   const row = await env.DB.prepare(`SELECT id, name, email FROM users WHERE email = ?`)
     .bind(email).first<{ id: string; name: string; email: string }>();
   if (!row) throw new ApiError(500, "demo_persona_unwritten", `The persona for "${input.role}" was not written`);
   return { userId: row.id, name: row.name, email: row.email };
+}
+
+/** Give the winning submission's personas the names it was started with. */
+export async function nameDemoPersonas(env: Env, operationId: string, names: Readonly<Record<DemoPackRole, string>>): Promise<void> {
+  const at = new Date().toISOString();
+  const statements = Object.entries(names).map(([role, name]) => env.DB.prepare(
+    `UPDATE users SET name = ?, updated_at = ? WHERE email = ? AND platform_user_id IS NULL`,
+  ).bind(name, at, demoPersonaEmail(operationId, role)));
+  if (statements.length > 0) await env.DB.batch(statements);
 }
 
 /**
@@ -121,6 +136,8 @@ export async function listDemoCastCandidates(env: Env): Promise<DemoCastCandidat
 export async function readDemoCast(env: Env, input: {
   cast: Readonly<Record<DemoPackRole, string>>;
   presenterRole: DemoPackRole | null;
+  /** The stored cast's operation: only then is a persona accepted, and only its own. */
+  operationId?: string;
 }): Promise<Record<DemoPackRole, DemoCastCandidate>> {
   const wanted = Object.entries(input.cast).filter(([role]) => role !== input.presenterRole);
   if (wanted.length === 0) return {};
@@ -133,12 +150,16 @@ export async function readDemoCast(env: Env, input: {
   const colleagues = new Map((rows.results ?? []).map((row) => [row.id, row]));
   const read: Record<DemoPackRole, DemoCastCandidate> = {};
   for (const [role, userId] of wanted) {
-    const person = colleagues.get(userId);
+    const found = colleagues.get(userId);
+    const isPersona = found?.email.toLowerCase().endsWith(`@${DEMO_PERSONA_EMAIL_DOMAIN}`) ?? false;
+    const person = isPersona && (input.operationId === undefined || found!.email.toLowerCase() !== demoPersonaEmail(input.operationId, role).toLowerCase())
+      ? undefined
+      : found;
     if (!person) {
       throw new ApiError(
         422,
         "demo_cast_not_a_colleague",
-        `The person cast as "${role}" is neither a @${DEMO_CAST_EMAIL_DOMAIN} account in this region nor a persona`,
+        `The person cast as "${role}" is neither a @${DEMO_CAST_EMAIL_DOMAIN} account in this region nor this operation's persona`,
       );
     }
     read[role] = { userId: person.id, name: person.name, email: person.email };

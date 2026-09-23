@@ -43,7 +43,7 @@ import { uuidV7 } from "../lib/uuid-v7";
 import { logInfo, logWarn } from "../observability/logger";
 import { copyTemplateConnections } from "./demo-connection-copy";
 import { DEMO_PRESENTER_ROLE, DemoPackSchema, PLACEHOLDER_DEMO_PACK, demoCastRoles, type DemoPack } from "./demo-pack";
-import { DEMO_CAST_EMAIL_DOMAIN, assertDemoCastNamesDistinct, listDemoCastCandidates, mintDemoPersona, readDemoCast } from "./demo-cast";
+import { DEMO_CAST_EMAIL_DOMAIN, assertDemoCastNamesDistinct, listDemoCastCandidates, mintDemoPersona, nameDemoPersonas, readDemoCast } from "./demo-cast";
 import { checkDemoReadiness, demoReadinessManifest } from "./demo-readiness";
 import {
   applyDemoSeedAction,
@@ -485,6 +485,7 @@ export async function startDemoOperation(
   // millisecond both launch, and the loser's duplicate instance marked the
   // operation failed under a driver that was running fine.
   if (inserted.meta.changes === 1) {
+    await nameDemoPersonas(env, input.operationId, typed);
     await launchAttempt(env, input.operationId, 1);
     logInfo(env, "demo_operation_started", {
       operation_id: input.operationId,
@@ -819,6 +820,7 @@ async function phaseBody(
       const presenterMember = await assertTemplatePresenter(env, record.presenter_user_id);
       const people = await readDemoCast(env, {
         cast,
+        operationId: record.operation_id,
         presenterRole: pack.roles.includes(DEMO_PRESENTER_ROLE) ? DEMO_PRESENTER_ROLE : null,
       });
       // Against the directory as it reads now, not as the start request found

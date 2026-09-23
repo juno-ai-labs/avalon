@@ -210,6 +210,9 @@ describe('the Demos page', () => {
     expect(buttonNamed('Start preparation').disabled).toBe(true);
     expect(container.textContent).toContain('Two people in this demo are called');
 
+    // Each field says what it will be, so a typo is not silently a placeholder.
+    expect(container.textContent).toContain('Seats Priya Raman · priya@rallywith.ai');
+    expect(container.textContent).toContain('Placeholder person: cannot sign in');
     // Two colleagues share this name, so it is played by a persona instead.
     await act(async () => { type(parts[2]!, 'Sam Burton'); });
     const start = buttonNamed('Start preparation');
@@ -305,7 +308,7 @@ describe('the Demos page', () => {
     await render();
     expect(container.textContent).toContain('demo-template has no active members, and the presenter is cast from them.');
     // Not "the template could not be read": it read fine, and Refresh will not change it.
-    expect(container.textContent).toContain('Nobody to cast');
+    expect(container.textContent).toContain('Nobody to present');
     expect(container.textContent).not.toContain('Template unavailable');
     expect(buttonNamed('New demo').disabled).toBe(true);
   });
@@ -316,7 +319,7 @@ describe('the Demos page', () => {
     }));
     await render();
     expect(buttonNamed('New demo').disabled).toBe(false);
-    expect(container.textContent).not.toContain('Nobody to cast');
+    expect(container.textContent).not.toContain('Nobody to present');
   });
 });
 

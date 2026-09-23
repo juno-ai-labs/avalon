@@ -8,7 +8,7 @@ import type { Env, HonoAppEnv } from "../src/env";
 import { errorHandler } from "../src/middleware/errors";
 import { demoOperatorRoutes } from "../src/routes/demo-operations";
 import { DEMO_TEMPLATE_WORKSPACE_ID } from "../src/services/demo-workspace-visibility";
-import { listDemoCastCandidates } from "../src/services/demo-cast";
+import { listDemoCastCandidates, mintDemoPersona } from "../src/services/demo-cast";
 import { __demoPreparationTesting } from "../src/services/demo-preparation";
 import {
   abandonDemoOperation,
@@ -313,6 +313,21 @@ describe("a demo preparation operation", () => {
     // And the first phase accepts it as castable.
     await runDemoPreparationPhase(env, OPERATION_ID, "checking_template", { attempt: 1 });
     expect(await row(env, OPERATION_ID)).toMatchObject({ error_code: null });
+    // A persona is only ever reached by typing a name: its id is not an account a request may cast.
+    await expect(startDemoOperation(env, {
+      ...request(), operationId: "00000000-0000-7000-8000-00000000ffe1", cast: { priya: PRIYA_ID, marcus: started.cast.marcus!, dana: DANA_ID },
+    })).rejects.toMatchObject({ code: "demo_cast_not_a_colleague" });
+  });
+
+  it("names a persona after the submission that claimed the operation, not one that lost", async () => {
+    const { env } = fixture();
+    // The loser of a concurrent first submission has already minted the persona under its name.
+    await mintDemoPersona(env, { operationId: OPERATION_ID, role: "marcus", name: "Loser Name" });
+    const started = await startDemoOperation(env, { ...request(), cast: { priya: PRIYA_ID, marcus: { name: "Jane Doe" }, dana: DANA_ID } });
+    expect(started.castNames.marcus).toBe("Jane Doe");
+    // And a later mint for the claimed operation does not rename it back.
+    await mintDemoPersona(env, { operationId: OPERATION_ID, role: "marcus", name: "Loser Name" });
+    expect((await startDemoOperation(env, request())).castNames.marcus).toBe("Jane Doe");
   });
 
   it("refuses to prepare a demo whose cast came to share a name after the row was written", async () => {
