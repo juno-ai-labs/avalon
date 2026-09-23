@@ -28,19 +28,6 @@ on:
       - '.npmrc'
       - '.github/workflows/release-sideline-macos.yml'
   workflow_dispatch:
-    inputs:
-      resume_artifact_id:
-        description: Preserved signed artifact ID for publish-only recovery
-        type: string
-      resume_run_id:
-        description: Run that uploaded the preserved artifact
-        type: string
-      resume_sha:
-        description: Full stamped commit SHA to tag after publication
-        type: string
-      resume_version:
-        description: Version contained in the preserved artifact
-        type: string
 
 permissions:
   contents: read
@@ -52,7 +39,6 @@ concurrency:
 
 jobs:
   plan:
-    if: github.event_name != 'workflow_dispatch' || inputs.resume_artifact_id == ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -341,92 +327,3 @@ jobs:
               -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
               tag -a "$RELEASE_TAG" -m "Sideline ${RELEASE_TAG#sideline-v}" HEAD
           git push origin "refs/tags/${RELEASE_TAG}"
-
-  resume:
-    if: github.event_name == 'workflow_dispatch' && inputs.resume_artifact_id != ''
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    environment: desktop-release
-    permissions:
-      actions: read
-      contents: write
-    env:
-      SIDELINE_RELEASE_R2_BUCKET: ${{ vars.RALLY_RELEASE_R2_BUCKET || vars.AVALON_RELEASE_R2_BUCKET }}
-      SIDELINE_RELEASE_PREFIX: sideline/stable/darwin/arm64
-      SIDELINE_RELEASE_BASE_URL: https://downloads.rallywith.ai
-      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      RESUME_ARTIFACT_ID: ${{ inputs.resume_artifact_id }}
-      RESUME_RUN_ID: ${{ inputs.resume_run_id }}
-      RESUME_SHA: ${{ inputs.resume_sha }}
-      RESUME_VERSION: ${{ inputs.resume_version }}
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-          persist-credentials: true
-
-      - name: Bind the preserved artifact to the stamped release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          [[ "$RESUME_ARTIFACT_ID" =~ ^[0-9]+$ ]]
-          [[ "$RESUME_RUN_ID" =~ ^[0-9]+$ ]]
-          [[ "$RESUME_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$RESUME_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          git fetch origin main
-          git merge-base --is-ancestor "$RESUME_SHA" origin/main
-          stamp_version="$(git show "${RESUME_SHA}:apps/sideline/package.json" | node -e 'let s=""; process.stdin.on("data", c => s += c).on("end", () => console.log(JSON.parse(s).version))')"
-          test "$stamp_version" = "$RESUME_VERSION"
-          test -z "$(git ls-remote --tags origin "refs/tags/sideline-v${RESUME_VERSION}")"
-          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${RESUME_ARTIFACT_ID}" \
-            --jq '[.id == (env.RESUME_ARTIFACT_ID | tonumber), .workflow_run.id == (env.RESUME_RUN_ID | tonumber), .name == ("Sideline-" + env.RESUME_VERSION + "-macOS"), .expired == false] | all' \
-            | grep -qx true
-          source_sha="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${RESUME_ARTIFACT_ID}" --jq '.workflow_run.head_sha')"
-          test "$source_sha" = "$RESUME_SHA" || test "$source_sha" = "$(git rev-parse "${RESUME_SHA}^")"
-
-      - uses: actions/download-artifact@v4
-        with:
-          artifact-ids: ${{ inputs.resume_artifact_id }}
-          run-id: ${{ inputs.resume_run_id }}
-          github-token: ${{ github.token }}
-          path: apps/sideline/release/release
-          merge-multiple: true
-
-      - name: Confirm preserved artifact version
-        run: |
-          node --input-type=module -e '
-            import { loadReleaseDirectory } from "./apps/desktop/scripts/release-lib.mjs";
-            const release = await loadReleaseDirectory("./apps/sideline/release/release");
-            if (release.feed.version !== process.env.RESUME_VERSION) {
-              throw new Error("Preserved artifact version does not match the stamped commit");
-            }
-          '
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.13.0
-          run_install: false
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: Publish preserved bytes without rebuilding
-        run: pnpm --filter @rally/sideline release:publish
-
-      - name: Record the stamped release tag
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="sideline-v${RESUME_VERSION}"
-          git -c user.name='github-actions[bot]' \
-              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-              tag -a "$tag" -m "Sideline ${RESUME_VERSION}" "$RESUME_SHA"
-          git push origin "refs/tags/${tag}"

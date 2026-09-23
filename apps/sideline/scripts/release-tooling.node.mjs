@@ -95,9 +95,3 @@ test('the release workflow rebuilds Sideline when an installed-app input changes
     'the remote tag must be checked immediately before publication',
   );
 });
-
-test('same-version publication recovery binds the tag to the locally built bytes', async () => {
-  const publisher = await readFile(resolve(sidelineDirectory, 'scripts/publish-r2-release.mjs'), 'utf8');
-  assert.match(publisher, /liveFeedText !== localFeedText/u);
-  assert.match(publisher, /does not match this build/u);
-});
