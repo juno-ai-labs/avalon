@@ -112,11 +112,6 @@ function type(input: HTMLInputElement, value: string): void {
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
-function choose(select: HTMLSelectElement, value: string): void {
-  Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, value);
-  select.dispatchEvent(new Event('change', { bubbles: true }));
-}
-
 describe('the Demos page', () => {
   beforeEach(() => {
     container = document.createElement('div');
@@ -190,59 +185,44 @@ describe('the Demos page', () => {
     expect(container.textContent).toContain('Abandoned');
   });
 
-  it('starts a new demo by casting a colleague into each part, all of them distinct', async () => {
+  it('starts a new demo from typed names, seating a colleague only when the name is theirs alone', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(respond([]));
     await render();
     expect(container.textContent).toContain('No demos yet');
     await act(async () => { buttonNamed('New demo').click(); });
     const company = container.querySelector<HTMLInputElement>('input[placeholder="Alto Capital"]')!;
     await act(async () => { type(company, 'Alto Capital'); });
-    // Every part is cast from the same list of colleagues, and none of them is
-    // chosen for the operator: a default here would seat a real person in a
-    // demo workspace because nobody looked.
-    const [presenter, ...parts] = Array.from(container.querySelectorAll('select'));
-    expect(presenter!.value).toBe(PRESENTER_ID);
-    expect(parts.map((select) => select.value)).toEqual(['', '', '']);
-    expect(parts[0]!.textContent).toContain('Priya Raman · priya@rallywith.ai');
-    // Each dropdown says which part it is: a colleague put in the wrong one
-    // has the pack's scripted words attributed to them under their own name.
+    const parts = Array.from(container.querySelectorAll<HTMLInputElement>('input[list="demo-cast-colleagues"]'));
+    // Nobody is typed for the operator: a default could seat a real colleague.
+    expect(parts.map((input) => input.value)).toEqual(['', '', '']);
+    // Colleagues are suggested, but the presenter is in the demo already.
+    const suggestions = container.querySelector('datalist')!.textContent;
+    expect(suggestions).toContain('priya@rallywith.ai');
+    expect(suggestions).not.toContain('adam@rallywith.ai');
     expect(container.textContent).toContain('Product');
     expect(container.textContent).toContain('Legal');
-    // An uncast part says so rather than leaving Start dead with nothing to read.
-    expect(container.textContent).toContain('3 parts are still uncast');
-    expect(buttonNamed('Start preparation').title).toBe('3 parts are still uncast');
-    expect(buttonNamed('Start preparation').disabled).toBe(true);
+    expect(buttonNamed('Start preparation').title).toBe('3 parts are still unnamed');
 
-    await act(async () => { choose(parts[0]!, PRIYA_ID); });
-    await act(async () => { choose(parts[1]!, MARCUS_ID); });
-    // An uncast part blocks Start on its own.
+    await act(async () => { type(parts[0]!, 'priya raman'); });
+    await act(async () => { type(parts[1]!, 'Jane Doe'); });
+    // The presenter's own name is a collision like any other.
+    await act(async () => { type(parts[2]!, 'Adam'); });
     expect(buttonNamed('Start preparation').disabled).toBe(true);
+    expect(container.textContent).toContain('Two people in this demo are called');
 
-    // One person playing two parts blocks it, and says who.
-    await act(async () => { choose(parts[2]!, MARCUS_ID); });
-    expect(buttonNamed('Start preparation').disabled).toBe(true);
-    expect(container.textContent).toContain('Sam Burton is in this demo twice');
-    // The presenter is not among the options at all — they are in the demo
-    // already — so that collision is unreachable rather than refused.
-    expect(parts[2]!.textContent).not.toContain('adam@rallywith.ai');
-    // Two different people under one name is the other collision: nobody
-    // watching could tell which of them a mention names.
-    await act(async () => { choose(parts[2]!, NAMESAKE_ID); });
-    expect(buttonNamed('Start preparation').disabled).toBe(true);
-    expect(container.textContent).toContain('Two people in this demo are called Sam Burton');
-
-    await act(async () => { choose(parts[2]!, DANA_ID); });
+    // Each field says what it will be, so a typo is not silently a placeholder.
+    expect(container.textContent).toContain('Seats Priya Raman · priya@rallywith.ai');
+    expect(container.textContent).toContain('Placeholder person: cannot sign in');
+    // Two colleagues share this name, so it is played by a persona instead.
+    await act(async () => { type(parts[2]!, 'Sam Burton'); });
     const start = buttonNamed('Start preparation');
     expect(start.disabled).toBe(false);
     await act(async () => { start.click(); });
     await act(async () => { await Promise.resolve(); });
     const startCall = fetchMock.mock.calls.find((call) => String(call[0]).endsWith('/api/demos') && call[1]?.method === 'POST');
-    const body = JSON.parse(String(startCall?.[1]?.body)) as { operationId: string; companyName: string; presenterUserId: string; cast: Record<string, string> };
-    expect(body.companyName).toBe('Alto Capital');
+    const body = JSON.parse(String(startCall?.[1]?.body)) as { presenterUserId: string; cast: Record<string, unknown> };
     expect(body.presenterUserId).toBe(PRESENTER_ID);
-    // Account ids, not names, and the presenter is not among them.
-    expect(body.cast).toEqual({ priya: PRIYA_ID, marcus: MARCUS_ID, dana: DANA_ID });
-    expect(body.operationId).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(body.cast).toEqual({ priya: PRIYA_ID, marcus: { name: 'Jane Doe' }, dana: { name: 'Sam Burton' } });
     expect(container.textContent).toContain('Alto Capital-demo');
   });
 
@@ -328,69 +308,18 @@ describe('the Demos page', () => {
     await render();
     expect(container.textContent).toContain('demo-template has no active members, and the presenter is cast from them.');
     // Not "the template could not be read": it read fine, and Refresh will not change it.
-    expect(container.textContent).toContain('Nobody to cast');
+    expect(container.textContent).toContain('Nobody to present');
     expect(container.textContent).not.toContain('Template unavailable');
     expect(buttonNamed('New demo').disabled).toBe(true);
   });
 
-  it('never offers the presenter for a part, and says so when they leave too few colleagues', async () => {
-    // The two lists overlap on purpose — a template member is on the domain
-    // too — so exactly as many candidates as there are parts is a dead end
-    // whenever one of them is presenting.
+  it('opens the form when the company has fewer people than parts, since names can be typed', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(respond([], {
-      template: () => Response.json({
-        ...template,
-        members: [
-          { userId: PRESENTER_ID, name: 'Adam', email: 'adam@rallywith.ai', role: 'owner' },
-          { userId: COLLEAGUE_ID, name: 'Blake', email: 'blake@rallywith.ai', role: 'member' },
-        ],
-        // Blake presents but is not castable — an account off the domain that
-        // the template seats anyway — so switching to them frees all three.
-        castCandidates: [
-          { userId: PRESENTER_ID, name: 'Adam', email: 'adam@rallywith.ai' },
-          { userId: DANA_ID, name: 'Ben Diaz', email: 'ben@rallywith.ai' },
-          { userId: MARCUS_ID, name: 'Sam Burton', email: 'kb@rallywith.ai' },
-        ],
-      }),
+      template: () => Response.json({ ...template, castCandidates: template.castCandidates.slice(0, 1) }),
     }));
     await render();
-    await act(async () => { buttonNamed('New demo').click(); });
-    const [presenter, ...parts] = Array.from(container.querySelectorAll('select'));
-    // Three candidates, three parts, and one of them is presenting.
-    expect(parts[0]!.textContent).not.toContain('adam@rallywith.ai');
-    expect(container.textContent).toContain('Adam leaves 2 colleagues to cast them');
-    expect(buttonNamed('Start preparation').disabled).toBe(true);
-
-    // Presenting as somebody who is not a candidate frees all three.
-    await act(async () => { choose(presenter!, COLLEAGUE_ID); });
-    expect(container.textContent).not.toContain('leaves 2 colleagues');
-    expect(parts[0]!.textContent).toContain('adam@rallywith.ai');
-    expect(parts[0]!.textContent).not.toContain('blake@rallywith.ai');
-    expect(buttonNamed('Start preparation').disabled).toBe(true);
-  });
-
-  it('clears a part held by somebody who becomes the presenter', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(respond([]));
-    await render();
-    await act(async () => { buttonNamed('New demo').click(); });
-    const [presenter, ...parts] = Array.from(container.querySelectorAll('select'));
-    await act(async () => { choose(parts[0]!, COLLEAGUE_ID); });
-    expect(parts[0]!.value).toBe(COLLEAGUE_ID);
-    // Blake is presenting now, so the part they were holding is empty rather
-    // than pointing at somebody the dropdown no longer offers.
-    await act(async () => { choose(presenter!, COLLEAGUE_ID); });
-    expect(parts[0]!.value).toBe('');
-    expect(container.textContent).not.toContain('is in this demo twice');
-  });
-
-  it('says why when there are not enough colleagues to cast, instead of a form that cannot be submitted', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(respond([], {
-      template: () => Response.json({ ...template, castCandidates: template.castCandidates.slice(0, 2) }),
-    }));
-    await render();
-    expect(container.textContent).toContain('The pack has 3 parts besides the presenter, and only 2 @rallywith.ai accounts have signed in');
-    expect(container.textContent).toContain('Nobody to cast');
-    expect(buttonNamed('New demo').disabled).toBe(true);
+    expect(buttonNamed('New demo').disabled).toBe(false);
+    expect(container.textContent).not.toContain('Nobody to present');
   });
 });
 

@@ -176,7 +176,9 @@ async function deliverToTarget(
   request: typeof fetch,
 ): Promise<boolean> {
   if (target.targetType === "email") {
-    if (!target.emailAddress) return false;
+    // `.invalid` is reserved (RFC 2606) and never delivers: a demo persona
+    // carries one, and sending would only bounce.
+    if (!target.emailAddress || /\.invalid$/iu.test(target.emailAddress)) return false;
     const delivery = await sendResendEmail(env, {
       recipientEmail: target.emailAddress,
       subject: digestTitle(context),
