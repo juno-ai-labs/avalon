@@ -249,13 +249,13 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
             className={clsx('workstream-context-row workstream-conversation-row', currentSubstreamId === '0' && 'is-current')}
             aria-current={currentSubstreamId === '0' ? 'page' : undefined}
             aria-label={`Go to conversation: ${workstream.title}`}
-            aria-description={workstream.scope === undefined ? undefined : workstream.scope === 'workspace' ? 'Public channel' : 'Private channel'}
+            aria-description={workstream.scope === 'workspace' ? 'Public channel' : undefined}
             badge={{ count: workstream.needsAttention ? 1 : 0, label: `Main conversation needs attention in ${workstream.title}` }}
             type="button"
             onClick={() => { onSelectSubstream?.('0'); onFocusTranscript(); }}
           >
             <SidebarNavigationRowContent
-              activity={workstream.scope === undefined ? undefined : workstream.scope === 'workspace' ? 'Public channel' : 'Private channel'}
+              activity={workstream.scope === 'workspace' ? 'Public channel' : undefined}
               icon={<WorkstreamMark appearance={workstream.appearance} id={workstream.id} />}
               title={workstream.title}
             />
