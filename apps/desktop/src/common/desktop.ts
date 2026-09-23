@@ -325,6 +325,7 @@ export interface DesktopArtifactPreviewRequest {
 
 export interface DesktopSiteArtifactWindowRequest {
   kind: 'site';
+  restoreId?: string;
   resourceId: string;
   version: number;
   artifactId: string;
@@ -335,6 +336,7 @@ export interface DesktopSiteArtifactWindowRequest {
 
 export interface DesktopGeneratedArtifactWindowRequest {
   kind: 'generated';
+  restoreId?: string;
   resourceId: string;
   version: number;
   /** The authorized preview bytes, not the stored source file. */
@@ -347,6 +349,15 @@ export interface DesktopGeneratedArtifactWindowRequest {
 export type DesktopArtifactWindowRequest =
   | DesktopSiteArtifactWindowRequest
   | DesktopGeneratedArtifactWindowRequest;
+
+export interface DesktopRestorableArtifactWindow {
+  id: string;
+  kind: 'site' | 'generated';
+  resourceId: string;
+  version: number;
+  title: string;
+  mimeType?: string;
+}
 
 export interface RallyDesktopBridge {
   getRuntimeConfig: () => Promise<RuntimeConfig>;
@@ -473,10 +484,10 @@ export interface RallyDesktopBridge {
   /** Open a generated artifact in its own isolated window. */
   /** Resolves false when the host refuses or blocks the new window. */
   popOutArtifact: (request: DesktopArtifactWindowRequest) => Promise<boolean>;
+  getRestorableArtifactWindows: () => Promise<DesktopRestorableArtifactWindow[]>;
+  forgetRestorableArtifactWindow: (id: string) => Promise<void>;
   /** Versions currently shown by detached artifact windows, keyed by resource. */
   getPoppedOutArtifactVersions: () => Promise<Record<string, number>>;
-  /** Close detached windows whose owning conversation is leaving the renderer. */
-  closePoppedOutArtifacts: (resourceIds: string[]) => Promise<void>;
   /** Replace one detached window; resolves true while another stale window remains. */
   updatePoppedOutArtifact: (request: DesktopArtifactWindowRequest) => Promise<boolean>;
   /**

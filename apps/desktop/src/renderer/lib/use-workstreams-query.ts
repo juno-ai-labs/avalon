@@ -170,7 +170,11 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
   }, [sidebarConnect]);
 
   const fetchMore = useCallback(() => {
-    const cursor = nextCursor.current;
+    // The connect payload and its first page can render before the passive
+    // cursor-adoption effect. Sidebar layout restoration asks from a layout
+    // effect, so page one must expose its cursor without waiting for that pass.
+    const cursor = pagesLoaded.current === 1 && sidebarConnect
+      ? sidebarConnect.nextCursor : nextCursor.current;
     if (cursor === null || isFetchingMore) return;
     setIsFetchingMore(true);
     void listWorkstreams({
@@ -192,7 +196,7 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
       // clearing it would end the list early and quietly.
       .catch(() => undefined)
       .finally(() => setIsFetchingMore(false));
-  }, [debugEnabled, isFetchingMore, listWorkstreams, queryClient]);
+  }, [debugEnabled, isFetchingMore, listWorkstreams, queryClient, sidebarConnect]);
 
   // Since the key does not vary, toggling the preference has to ask for the
   // refetch itself. This has to be declared below `useQuery`: the query hands
@@ -211,7 +215,8 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
     void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
   }, [debugEnabled, queryClient]);
 
-  return { ...query, hasMore, isFetchingMore, fetchMore };
+  return { ...query, hasMore: pagesLoaded.current === 1 && sidebarConnect
+    ? sidebarConnect.nextCursor !== null : hasMore, isFetchingMore, fetchMore };
 }
 
 /**

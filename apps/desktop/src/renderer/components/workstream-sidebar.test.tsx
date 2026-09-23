@@ -21,7 +21,7 @@ function setup(detail: React.ComponentProps<typeof WorkstreamSidebar>['workstrea
   const onOpenArtifact = vi.fn();
   const onParticipants = vi.fn();
   const onFocusTranscript = vi.fn();
-  const view = render(<Tooltip.Provider><div><WorkstreamSidebar workstream={detail} presentUserIds={[person.id]} onOpenArtifact={onOpenArtifact} onParticipants={onParticipants} onFocusTranscript={onFocusTranscript} /></div></Tooltip.Provider>);
+  const view = render(<Tooltip.Provider><div><WorkstreamSidebar scrollStateKey="test-context-scroll" workstream={detail} presentUserIds={[person.id]} onOpenArtifact={onOpenArtifact} onParticipants={onParticipants} onFocusTranscript={onFocusTranscript} /></div></Tooltip.Provider>);
   return { ...view, onOpenArtifact, onParticipants, onFocusTranscript };
 }
 
@@ -167,7 +167,7 @@ describe('WorkstreamSidebar', () => {
   it('places children below Main and creation last without collapsing on navigation', () => {
     const onSelectSubstream = vi.fn();
     const onNewSubstream = vi.fn();
-    render(<Tooltip.Provider><WorkstreamSidebar
+    render(<Tooltip.Provider><WorkstreamSidebar scrollStateKey="test-context-scroll"
       workstream={{ ...workstream, privateChildren: [{
         substreamId: asSubstreamId('00000000-0000-7000-8000-000000000099'), title: 'Launch risks', createdByUserId: asUserId(person.id),
         createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
@@ -256,7 +256,7 @@ describe('WorkstreamSidebar', () => {
 
   it('labels the new Breakout and participant tooltips', async () => {
     const onNewSubstream = vi.fn();
-    render(<Tooltip.Provider><WorkstreamSidebar
+    render(<Tooltip.Provider><WorkstreamSidebar scrollStateKey="test-context-scroll"
       workstream={workstream}
       presentUserIds={[]}
       onNewSubstream={onNewSubstream}
@@ -298,7 +298,7 @@ describe('WorkstreamSidebar', () => {
 
   it('holds the place of a breakout being created, last and without a destination', () => {
     const onNewSubstream = vi.fn();
-    render(<Tooltip.Provider><WorkstreamSidebar
+    render(<Tooltip.Provider><WorkstreamSidebar scrollStateKey="test-context-scroll"
       workstream={{ ...workstream, privateChildren: [{
         substreamId: asSubstreamId('00000000-0000-7000-8000-000000000097'), title: 'Launch risks', createdByUserId: asUserId(person.id),
         createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
@@ -358,7 +358,7 @@ describe('WorkstreamSidebar', () => {
     // navigates. Two rows for one conversation is the thing this list must
     // never show, and the reserved id is what tells them apart.
     const reserved = asSubstreamId('00000000-0000-7000-8000-000000000096');
-    render(<Tooltip.Provider><WorkstreamSidebar
+    render(<Tooltip.Provider><WorkstreamSidebar scrollStateKey="test-context-scroll"
       workstream={{ ...workstream, privateChildren: [{
         substreamId: reserved, title: 'Retry budget failures', createdByUserId: asUserId(person.id),
         createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
@@ -383,7 +383,7 @@ describe('WorkstreamSidebar', () => {
   });
 
   it('keeps the breakout icon when its title has no first character', () => {
-    render(<Tooltip.Provider><WorkstreamSidebar
+    render(<Tooltip.Provider><WorkstreamSidebar scrollStateKey="test-context-scroll"
       workstream={{ ...workstream, privateChildren: [{
         substreamId: asSubstreamId('00000000-0000-7000-8000-000000000098'), title: '   ', createdByUserId: asUserId(person.id),
         createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
@@ -533,7 +533,7 @@ describe('WorkstreamSidebar', () => {
 
   it('lists the room’s Sidekicks under the people and keeps the section heading when it has none', () => {
     const onRemove = vi.fn();
-    const { rerender } = render(<Tooltip.Provider><WorkstreamSidebar
+    const { rerender } = render(<Tooltip.Provider><WorkstreamSidebar scrollStateKey="test-context-scroll"
       workstream={workstream}
       presentUserIds={[]}
       sidekicks={[
@@ -558,7 +558,7 @@ describe('WorkstreamSidebar', () => {
     // The heading is a stable landmark even while the answer is pending or the
     // room has no Sidekicks; the caller still keeps those two states apart.
     for (const pending of [{ sidekicks: [] }, {}]) {
-      rerender(<Tooltip.Provider><WorkstreamSidebar
+      rerender(<Tooltip.Provider><WorkstreamSidebar scrollStateKey="test-context-scroll"
         workstream={workstream} presentUserIds={[]} {...pending}
         onOpenArtifact={vi.fn()} onParticipants={vi.fn()} onFocusTranscript={vi.fn()}
       /></Tooltip.Provider>);
@@ -623,7 +623,7 @@ describe('WorkstreamSidebar', () => {
 
   it('replaces resources and participants when the selected channel changes', () => {
     const { rerender, onOpenArtifact, onParticipants } = setup();
-    rerender(<Tooltip.Provider><div><WorkstreamSidebar workstream={{ ...workstream, id: '00000000-0000-7000-8000-000000000022', title: 'Another channel', resources: [], participants: [] }} presentUserIds={[]} onOpenArtifact={onOpenArtifact} onParticipants={onParticipants} onFocusTranscript={vi.fn()} /></div></Tooltip.Provider>);
+    rerender(<Tooltip.Provider><div><WorkstreamSidebar scrollStateKey="test-context-scroll" workstream={{ ...workstream, id: '00000000-0000-7000-8000-000000000022', title: 'Another channel', resources: [], participants: [] }} presentUserIds={[]} onOpenArtifact={onOpenArtifact} onParticipants={onParticipants} onFocusTranscript={vi.fn()} /></div></Tooltip.Provider>);
     expect(screen.getByRole('button', { name: 'Go to conversation: Another channel' })).toHaveAttribute('aria-current', 'page');
     expect(screen.queryByRole('button', { name: 'Open Launch draft.md' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Ada Lovelace/ })).not.toBeInTheDocument();
@@ -638,7 +638,7 @@ describe('WorkstreamSidebar', () => {
     const second = { ...first, substreamId: asSubstreamId('00000000-0000-7000-8000-0000000000b2'), title: 'launch Comms' };
 
     function setupRail() {
-      render(<Tooltip.Provider><WorkstreamSidebar
+      render(<Tooltip.Provider><WorkstreamSidebar scrollStateKey="test-context-scroll"
         workstream={{ ...workstream, privateChildren: [first, second] }}
         presentUserIds={[]}
         onOpenArtifact={vi.fn()}
@@ -668,7 +668,7 @@ describe('WorkstreamSidebar', () => {
       const onSelectSubstream = vi.fn();
       const earlierId = asSubstreamId('00000000-0000-7000-8000-0000000000a1');
       const laterId = asSubstreamId('00000000-0000-7000-8000-0000000000f1');
-      render(<Tooltip.Provider><WorkstreamSidebar
+      render(<Tooltip.Provider><WorkstreamSidebar scrollStateKey="test-context-scroll"
         workstream={{ ...workstream, privateChildren: [
           { ...first, substreamId: laterId, title: 'Same' },
           { ...first, substreamId: earlierId, title: 'Same' },

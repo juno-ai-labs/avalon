@@ -53,21 +53,22 @@ const sidekickSectionFailureCopy: Record<Exclude<SidekickSectionFailure, 'load'>
  * arbitrary API responses out of the sidebar and leaves this shared
  * presentation boundary responsible for the words a person sees.
  */
-export function SidekickSection({ items, failure, onOpen, onMenuOpen, onRefresh }: {
+export function SidekickSection({ items, failure, onOpen, onMenuOpen, onRefresh, layoutId }: {
   items?: SidekickRow[] | undefined;
   failure?: SidekickSectionFailure | undefined;
   onOpen?: (id: string) => void; onMenuOpen?: () => void; onRefresh?: () => void;
+  layoutId?: string;
 }): React.JSX.Element {
   const Row = onOpen ? 'button' : 'div';
   if (!items?.length) {
-    return <section aria-label="Sidekicks" className="workstream-context-section sidekick-section"><SidebarHorizontalLine /><h2>Sidekicks</h2>
+    return <section aria-label="Sidekicks" className="workstream-context-section sidekick-section" data-layout-id={layoutId}><SidebarHorizontalLine /><h2>Sidekicks</h2>
       {failure === 'load' && onRefresh && <SidebarRefreshRow onRefresh={onRefresh} />}
     </section>;
   }
-  return <section aria-label="Sidekicks" className="workstream-context-section sidekick-section"><SidebarHorizontalLine /><h2>Sidekicks</h2>
+  return <section aria-label="Sidekicks" className="workstream-context-section sidekick-section" data-layout-id={layoutId}><SidebarHorizontalLine /><h2>Sidekicks</h2>
     {failure === 'load' ? onRefresh && <SidebarRefreshRow onRefresh={onRefresh} />
       : failure && <InlineError>{sidekickSectionFailureCopy[failure]}</InlineError>}
-    <ul className="sidekick-section-list">{items.map((item) => <ContextMenu.Root key={item.id} onOpenChange={(open) => { if (open) onMenuOpen?.(); }}><li>
+    <ul className="sidekick-section-list">{items.map((item) => <ContextMenu.Root key={item.id} onOpenChange={(open) => { if (open) onMenuOpen?.(); }}><li data-layout-id={`sidekick:${item.id}`}>
       {/* The rail's own tooltip rather than the platform's, as the artifact
           rows above take it: a name this rail truncates — or hides outright
           when compact — is the whole reason the row carries one. The note

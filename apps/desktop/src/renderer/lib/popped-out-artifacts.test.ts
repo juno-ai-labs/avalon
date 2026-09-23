@@ -2,6 +2,8 @@ import { SITE_MANIFEST_MIME_TYPE } from '@rally/contracts';
 import { describe, expect, it, vi } from 'vitest';
 import type { WorkstreamResource } from './types';
 import { refreshPoppedOutArtifacts } from './popped-out-artifacts';
+import { restorePoppedOutArtifacts } from './popped-out-artifacts';
+import { ApiError } from './api';
 
 const artifact: WorkstreamResource = {
   id: 'resource-document',
@@ -100,5 +102,42 @@ describe('refreshing detached artifact windows', () => {
       'https://example.test/one',
       'https://example.test/two',
     ]);
+  });
+});
+
+describe('restoring detached artifact windows', () => {
+  it('reads current authorized bytes before opening a saved generated window', async () => {
+    const popOutArtifact = vi.fn(async () => true);
+    const loadResourceContent = vi.fn(async () => new Blob(['current'], { type: 'text/plain' }));
+    await restorePoppedOutArtifacts({
+      bridge: {
+        getRestorableArtifactWindows: vi.fn(async () => [{ id: 'saved', kind: 'generated' as const,
+          resourceId: 'resource', version: 1, title: 'Old', mimeType: 'text/plain' }]),
+        popOutArtifact, forgetRestorableArtifactWindow: vi.fn(async () => undefined),
+      },
+      getResourceVersions: vi.fn(async () => [{ version: 2, title: 'Current', mimeType: 'text/plain' }]),
+      loadResourceContent,
+      openSiteArtifact: vi.fn(), signal: new AbortController().signal,
+    });
+    expect(loadResourceContent).toHaveBeenCalledWith('resource', expect.any(AbortSignal));
+    expect(popOutArtifact).toHaveBeenCalledWith(expect.objectContaining({
+      restoreId: 'saved', version: 2, title: 'Current', content: new Uint8Array([99, 117, 114, 114, 101, 110, 116]),
+    }));
+  });
+
+  it('forgets a saved window whose resource is no longer authorized', async () => {
+    const forgetRestorableArtifactWindow = vi.fn(async () => undefined);
+    const popOutArtifact = vi.fn(async () => true);
+    await restorePoppedOutArtifacts({
+      bridge: {
+        getRestorableArtifactWindows: vi.fn(async () => [{ id: 'saved', kind: 'site' as const,
+          resourceId: 'resource', version: 1, title: 'Old' }]),
+        popOutArtifact, forgetRestorableArtifactWindow,
+      },
+      getResourceVersions: vi.fn(async () => { throw new ApiError('Gone', 404); }),
+      loadResourceContent: vi.fn(), openSiteArtifact: vi.fn(), signal: new AbortController().signal,
+    });
+    expect(forgetRestorableArtifactWindow).toHaveBeenCalledWith('saved');
+    expect(popOutArtifact).not.toHaveBeenCalled();
   });
 });
