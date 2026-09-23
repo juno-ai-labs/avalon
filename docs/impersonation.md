@@ -74,42 +74,32 @@ DMG contents, and retains the exact release directory as a GitHub artifact for
 30 days. A separate publication job downloads that artifact, so retrying a
 failed publication never repeats signing or notarization and never substitutes
 new bytes under the same versioned names. When shared contracts changed,
-distribution waits for the successful
-API deployment associated with the newest first-parent commit that introduced
-them to `main`. A manual dispatch
-uses the same planner when no signed artifact exists;
-release versions are no longer bumped by hand.
-Version stamping refuses to absorb a newer `main` tip after planning, so the
-packaged contract tree and the deployment revision checked by the gate cannot
-diverge; rerunning replans from that newer tip.
+distribution waits for the successful API deployment associated with the newest
+first-parent commit that introduced them to `main`. A manual dispatch uses the
+same planner when no signed artifact exists; release versions are no longer
+bumped by hand. Version stamping refuses to absorb a newer `main` tip after
+planning, so the packaged contract tree and the deployment revision checked by
+the gate cannot diverge; rerunning replans from that newer tip.
 
 Publication uses the existing desktop-release bucket under the disjoint prefix
 `sideline/stable/darwin/arm64/`. Versioned ZIP, DMG, and blockmap objects are
 immutable after `latest-mac.yml` commits their version. Before that commit, a
 selected preserved artifact can reconcile objects left by an interrupted
 attempt. The publisher verifies each candidate against R2, purges the Sideline
-channel prefix, then SHA-512 checks the exact public URLs. The prefix purge is
-scoped to Sideline. It must target the Cloudflare zone that owns
-`downloads.rallywith.ai`; a successful purge request against another zone does
-not evict this domain's cached objects. A failed check leaves the
-manifest where it was; retrying publication reads the same signed artifact.
-Only
-`latest-mac.yml` and `Sideline.dmg` are mutable. The canonical DMG is hash-verified against R2, then fully
-SHA-512 checked at its exact public URL. The manifest moves last, after the
-versioned payloads and canonical installer are publicly verified, so a retry
-after commit verifies that the live manifest is byte-identical to the local
-release before it finishes the release tag. The channel prefix is purged again
-after the manifest upload before its exact URL is verified. Both the version-stamping job and
-the final publication boundary refuse a candidate tag that already exists.
-For a failed publication after the signed artifacts were preserved, the manual
-workflow accepts the exact artifact ID, source run ID, stamped commit SHA, and
-version. That path downloads the preserved directory, checks its identity and
-stamp, publishes it with the current publisher, and tags the stamped commit
-without signing or notarizing again.
-The embedded generic-provider URL points
-only at that prefix. A signed release build on packaged Apple Silicon checks it
-at launch and every three hours, downloads in the background, and offers to
-restart after the update is ready. Its application menu also exposes **Check
+channel prefix, then SHA-512 checks the exact public URLs. A failed check leaves
+the manifest where it was; retrying the failed publication job reads the same
+signed artifact. Only `latest-mac.yml` and `Sideline.dmg` are mutable. The
+canonical DMG is hash-verified against R2, then fully SHA-512 checked at its
+exact public URL. The manifest moves last, after the versioned payloads and
+canonical installer are publicly verified, so a retry after commit verifies
+that the live manifest is byte-identical to the local release before it finishes
+the release tag. The channel prefix is purged again after the manifest upload
+before its exact URL is verified. Both the version-stamping job and the final
+publication boundary refuse a candidate tag that already exists. The embedded
+generic-provider URL points only at that prefix. A signed release build on
+packaged Apple Silicon checks it at launch and every three hours, downloads in
+the background, and offers to restart after the update is ready. Its
+application menu also exposes **Check
 for Updates…** for an immediate manual check through the same updater. The item
 remains visible but disabled when updates are unavailable. Development, unsigned local packages,
 non-macOS, and non-arm64 builds never contact the production feed.
@@ -171,7 +161,8 @@ tests cover access, membership, relationship, destination, audit, self-send, and
 cross-participant admission boundaries. Sideline tests cover stable-versus-unknown
 retry classification, the auto-update host policy, and the shared composer's
 empty and validation states; its build covers the isolated main, preload, and
-renderer bundles. Release-tooling tests cover update-feed structure. Run:
+renderer bundles. Release-tooling tests cover update-feed structure and the
+publication order through in-memory R2 and public-cache adapters. Run:
 
 ```bash
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-impersonation.test.ts
@@ -218,7 +209,6 @@ job. A separate job publishes the preserved artifact and records the tag. A
 failed publication retries only that job. The publisher checks R2 bytes, purges
 the Sideline channel prefix, and fully hashes the exact public URLs before
 moving the feed.
-Manual recovery can select a preserved artifact by ID without rebuilding it.
 
 **Why:** The 0.1.3 publisher uploaded the correct installer, but the configured
 `desktop-release` Cloudflare zone ID was not the `rallywith.ai` zone. Purge
@@ -233,6 +223,8 @@ verify the exact public URLs, move the feed, and tag the stamped commit.
 key, leaving the updater's exact URL unproved. Rebuilding on retry changes
 notarized bytes while reusing versioned names and can strand the CDN on a prior
 candidate. Longer retries do not fix that identity problem.
+The manual publish-only dispatch used to recover 0.1.3 is not retained: a failed
+publication job can now be rerun against its preserved artifact directly.
 
 **Consequences:** The manifest stays the commit point. A stale CDN response can
 still fail a publication attempt, but the next publish-only retry uses identical
