@@ -2671,9 +2671,13 @@ export function MessageBlock({
   // how to read.
   const human = message.authorType === 'human' || message.authorType === 'external';
   const external = message.authorType === 'external';
-  const ownHumanMessage = message.authorType === 'human' && currentUserId !== undefined && message.author?.id === currentUserId;
-  const humanAuthorName = external
-    ? `${message.externalActor?.displayName ?? 'Slack workspace member'} · Slack`
+  // Cowork and Claude Code share a JSONL decoder and source provider. Keep the
+  // attribution accurate for both without exposing the storage format.
+  const importedProvider = message.importProvenance?.source.provider === 'chatgpt' ? 'ChatGPT' : 'Claude';
+  const ownHumanMessage = message.authorType === 'human' && !message.importProvenance
+    && currentUserId !== undefined && message.author?.id === currentUserId;
+  const humanAuthorName = message.importProvenance ? `${importedProvider} user`
+    : external ? `${message.externalActor?.displayName ?? 'Slack workspace member'} · Slack`
     : profile?.displayName ?? message.author?.name ?? 'Organization member';
   const sending = message.deliveryState === 'sending';
   const pending = message.deliveryState === 'steer_pending'
@@ -2718,9 +2722,9 @@ export function MessageBlock({
           messages the one thing on screen with no time against it. */}
       <MessageByline
         align={human ? 'end' : 'start'}
-        author={human ? humanAuthorName : message.importProvenance ? (message.importProvenance.source.provider === 'chatgpt' ? 'ChatGPT' : 'Claude') : automation ? automationAuthor : 'Rally'}
+        author={human ? humanAuthorName : message.importProvenance ? importedProvider : automation ? automationAuthor : 'Rally'}
         importedBy={message.importProvenance?.importedByName}
-        contextLabel={message.contextLabel}
+        contextLabel={message.importProvenance?.supersedesTurnId ? 'Updated source message' : message.contextLabel}
         createdAt={message.createdAt}
         dot={human}
         workSummary={message.workSummary ? workSummaryLabel(message.workSummary) : undefined}

@@ -15,21 +15,27 @@ choice. Importing a prior assistant answer never claims Rally executed it.
 | `apps/api/src/services/session-import-files.ts` | Constrained file retrieval, unavailable outcomes, upload reconciliation and trusted attribution. |
 | `apps/api/src/services/resource-service.ts` | Existing verified upload, staged R2 cleanup and resource creation. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Shared materialization, preparation receipts, file reservations, root/child publication. |
+| `apps/api/src/durable-objects/workstream-object-schema.ts` | Source-message checkpoint and update receipts owned by the Channel authority. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Canonical fact preparation for ordered conversations. |
+| `apps/desktop/src/main/claude-code-sessions.ts` | Read-only local Claude Code session listing and exact selected-file read. |
+| `apps/desktop/src/main/local-claude-sessions.ts` | Claude desktop chat catalog, selected cached chat snapshots, and Cowork metadata-to-JSONL discovery. |
 | `packages/agent-harness/src/evaluation.ts` | Scenario/checkpoint evaluation using the production Rally runtime. |
-| `apps/desktop/src/renderer/components/new-workstream-menu.tsx` | Unified sidebar launcher and its Space/name/URL import form. |
+| `apps/desktop/src/renderer/components/new-workstream-menu.tsx`, `session-import-update-dialog.tsx` | Separate session selection, import, and explicit update controls. |
 
 ## How it works
 
-The sidebar's single plus menu offers **Start a new channel**, **Import channel
-from Claude or ChatGPT**, and **Create a new space**. The import dialog requires
-a Space, a Channel name, and a shared conversation URL; **Create** imports it in
-one action. Only Spaces the person may edit are offered, and the launcher stays
-disabled until the Space directory is ready. Channel names stop at the server's
-180-character limit. It does not display an export picker or transcript preview.
+The sidebar's single plus menu offers **Start New Channel**, **Import Channel
+from Claude or ChatGPT**, and **Create New Space**. The import dialog requires
+a Space, a Channel name, and a source. Sources are a shared conversation URL,
+Claude chats and Cowork tasks found on this Mac, or one local Claude Code session
+JSONL file. **Create** imports one selected conversation in one action. Only Spaces
+the person may edit are offered, and the launcher stays disabled until the Space
+directory is ready. Channel names stop at the server's 180-character limit.
+There is no transcript preview.
 Available attachments and artifact files are resolved automatically; missing file
 references remain visible in the imported conversation. The source roles stay
-intact; the byline says who imported them. The entered name is the settled
+intact in the visible transcript; the byline says who imported them. The model
+receives imported source text as labeled, overheard context. The entered name is the settled
 Channel title; provider content does not override the name the person chose.
 
 Public links are acquired through the existing Firecrawl client using uncached
@@ -40,6 +46,55 @@ it can contain only navigation even when the embedded conversation is present.
 The service requires a successful source status and the expected final URL before
 decoding; a successful scraper envelope can still contain a block or login page.
 `FIRECRAWL_API_KEY` must be configured in the API environment.
+
+Claude chat, Cowork, and Claude Code use different storage. Claude Desktop's
+Chromium IndexedDB contains a cached chat catalog and sometimes a complete
+conversation snapshot; its HTTP cache can hold other complete chat responses.
+These are opportunistic local copies, not a durable account export. The picker
+lists only catalog chats with a complete local snapshot in IndexedDB or the HTTP
+cache. Selecting one reads the newest observed copy. A title cached without its
+messages is omitted; reopening the chat in Claude can make it available. The desktop cache is read-only and no
+account credentials or cookies are copied. Cowork stores separate `local_*.json`
+metadata and a nested `.claude/projects/<project>/<cliSessionId>.jsonl` transcript.
+Its metadata supplies the familiar title only when its JSONL exists; the JSONL is read only for the
+selected task. Cowork JSONL uses the Claude Code event adapter, with the CLI
+session ID as the stable re-import identity. Imported attribution says Claude
+for both Cowork and Claude Code because the shared event provider does not
+record which desktop surface produced the transcript. Local Claude Code sessions write
+JSONL under `~/.claude/projects/<project>/`. The Claude app also shows cloud
+Code sessions; they may have no matching local JSONL file, and this picker does
+not import them. The import and update dialogs use selected local Claude chats;
+the backend decoder still accepts account exports from programmatic callers.
+The desktop lists local Claude Code session files on demand under the configured
+Claude Code data directory. The person chooses one conversation from a dropdown;
+menu labels show recognizable titles, shortening long ones through the middle
+and showing a readable update date only when titles repeat. The selected title
+is shown only in the dropdown; no second title line appears below it. The Claude chat list refreshes when its source is selected and
+when Rally regains focus after the person visits Claude. A selected conversation
+is reread at that point before it can be imported. Internal
+file paths and session IDs never appear in the picker.
+The main process reads only that selected transcript for import. A JSONL file
+picker remains available when Claude Code discovery misses a session. A public
+share URL identifies one conversation.
+The update dialog resolves the Channel's recorded source identity automatically
+and shows its title as read-only text. It offers no conversation dropdown:
+another conversation would fail the source-identity check. If the original
+Claude Code transcript is missing from local discovery, the person can choose
+its file; the same identity check applies.
+Only the person who imported the Channel sees the update action. The Channel's
+creator identity is also the importer identity for this creation path; its
+authority checks that identity before reading the source checkpoint or accepting
+an update. Other Channel members can read the imported transcript and add their
+own messages without gaining access to the import control.
+Imports created before source checkpoints were introduced have no stable source
+message identities to compare. They remain readable, but have no update control;
+their source can be imported again into a new Channel.
+The Claude Code adapter
+follows the active JSONL parent chain, keeps visible user and assistant text,
+combines consecutive assistant fragments, and omits tool calls, tool results,
+thinking, compaction and sidechain events. It uses the transcript's latest custom
+title, then its latest generated title, when available.
+It does not read session credentials, project files or tool-result sidecars.
 
 There are three separate boundaries:
 
@@ -112,15 +167,57 @@ This provides an executable eval seam, not a scheduler or scoring database.
 
 ## Boundary
 
-Public APIs are `POST /workstreams/import/preview` and `POST /workstreams/import`.
+Public APIs are `POST /workstreams/import/preview`, `POST /workstreams/import`,
+`GET /workstreams/:id/import/source`, and `POST /workstreams/:id/import/update`.
 Clients can provide source content, not another importer's identity. Prepared
 conversation installation is an internal coordinator operation; the private-child
-receipt and conversation creator authorize it. Existing active conversations are
-not bulk-import targets.
+receipt and conversation creator authorize it. An existing Channel accepts only
+updates to its recorded source session, not a new bulk import.
 
-The URL freezes during submission. Resolved content and request identity are retained
-for retries after an uncertain response; editing the URL starts a new request.
-The decoding API continues to support JSON/JSONL exports for programmatic callers.
+### Re-importing a continuing source
+
+Re-import is an explicit action on the Channel created from a source. It does
+not require automatic polling. The Channel keeps a source identity and a
+checkpoint of source message identities and their content revisions, separate
+from its canonical transcript cursor. Claude Code supplies a session ID and
+event UUIDs; its consecutive assistant fragments need one stable group identity
+for the visible message. A Claude account export supplies a conversation ID and,
+when present, message IDs; visible messages without IDs use positions within
+that identified conversation. An export with no conversation ID cannot be
+imported because two unrelated files could otherwise claim the same source.
+A local file path is a way to acquire bytes, not the
+durable identity of a conversation. The person can select the source again when
+asking for an update.
+
+The importer compares the new source snapshot with that source checkpoint,
+never with the Channel's last turn. An unchanged source message is a no-op; a
+checkpoint read before file preparation skips uploads for unchanged messages,
+and the authority rechecks that checkpoint in the commit transaction. A
+new source message is appended at the Channel's current tail, after any Rally
+messages already committed there. A changed source message, including a Claude
+reply that was still growing at the first import, is appended as a clearly
+attributed update that names the source message it supersedes. The reader should
+see which version is current rather than two apparently independent replies.
+Previously committed Rally turns and imported facts are not rewritten. Source
+deletions or a changed visible-message order return a named branch-change
+conflict; the person can import that branch into a new Channel. This allows a
+Claude session to continue after somebody has also continued the Rally Channel.
+
+One authority-owned transaction must commit the new canonical turns, source
+checkpoint, and idempotency receipt together. Repeating the same snapshot then
+adds no turns, including after an uncertain response. As with initial import,
+these are historical user/assistant messages and do not start a Rally run or
+claim that Rally authored a source reply. The Bind projection has a distinct
+overheard `protocol_user_appended` transition, so the next Rally run reads both
+source roles as labeled context. Revisions identify the newer source version
+without giving provider text instruction authority. Re-import does not reuse the creation-only
+`createPrepared` operation or compare the source against the entire destination
+transcript.
+
+The source freezes during submission. Resolved content and request identity are retained
+for retries after an uncertain response; editing the URL, selecting another file or
+conversation starts a new request. The decoding API continues to support JSON/JSONL
+exports for programmatic callers.
 
 Source files are inline UTF-8/base64, recognized HTTPS downloads, or explicitly
 unavailable references. Known Claude image/document blocks (including plain-text
@@ -161,8 +258,10 @@ cannot reconstruct original files automatically.
 - `test/session-import-files.test.ts`: constrained origins, redirect refusal,
   frozen download bytes and the existing file size policy.
 - `test-workers/conversation-creation.test.ts`: real upload/R2 bytes, role-specific
-  attachments, failed reservation cleanup, idempotent creation, and actual provider
-  continuation with history and attachment manifests.
+  attachments, failed reservation cleanup, idempotent creation, explicit re-import
+  after Rally turns, source revision, and provider continuation with history.
+- `test-workers/space-routes.test.ts`: rejects a mismatched source before any
+  attachment upload is created.
 - `test-workers/substream-creation-runtime.test.ts`: private-child materialization,
   publication and conflicting replay.
 - `test-workers/workspace-draft-attachment-reservation.test.ts`: existing draft holds
@@ -170,10 +269,76 @@ cannot reconstruct original files automatically.
 - `packages/agent-harness/src/evaluation.test.ts`: production runtime from an initial
   scenario and serialized tool-settled checkpoint, with no repeated write after fork.
 - Desktop menu/launcher/transcript tests cover navigation and attribution. Real
-  Electron visual QA covers the URL-only dialog and submission
+  Electron visual QA covers session selection and update controls
   using a fixture API; backend lifecycle tests provide storage/execution evidence.
 
 ## Changelog
+
+### 2026-09-23 — Import local Claude sessions and update their source history
+
+**What changed:** The desktop lists local Claude chats, Cowork tasks, and Claude
+Code sessions with recognizable titles, then reads only the selected transcript.
+The Claude chat picker requires a complete IndexedDB or HTTP cache snapshot;
+Cowork requires a local JSONL transcript. It refreshes when Rally regains focus,
+shortens long menu labels, and omits internal IDs and duplicate title text. The
+account-export choice was removed from creation and update. A Channel records source message
+IDs and revisions in its own SQLite transaction and offers an explicit update.
+The update dialog matches that recorded source automatically and displays its
+title without a conversation selector. The import control and update authority
+are limited to the original importer.
+New or revised source turns append after any Rally turns, with replay receipts
+and a labeled Bind context transition for imported source text. Review fixes
+also keep local cache reads resilient to disappearing files, reject sources
+without a stable conversation ID, validate update shape before file uploads,
+and preserve Claude Code image and document blocks.
+
+**Why:** A file picker missed the chats and tasks people recognize in Claude,
+while a cached title without messages led to a selection that could never import.
+Showing an export file beside a selected local chat also made the update dialog
+look as though both inputs were required.
+Offering other conversations in the update dialog implied they could replace
+the original source, even though the Channel rejects a different source.
+Other Channel members may lack the original source on their Macs, so showing
+them an unusable update control would be misleading.
+Source sessions can also continue after a Rally Channel has received its own
+messages; comparing against the Channel tail would duplicate or reject valid
+source updates. Existing imports without message identities cannot be safely
+backfilled into a checkpoint. Imported provider text must remain labeled context
+for the model, since Rally did not author it. Selecting one conversation and keeping a separate source
+checkpoint makes both operations explicit and repeatable.
+
+**Considered and rejected:** Automatic polling and the Claude account's
+unpublished authenticated API. Local cache snapshots and JSONL files are
+inspectable, user-selected sources; the Claude Code JSONL file picker remains a
+fallback when discovery misses a session.
+
+**Consequences:** Claude's undocumented cache remains an opportunistic source,
+so a title alone never qualifies for the picker. Channels imported before the
+source checkpoint was added remain readable but cannot use the update dialog;
+the export decoder remains available to programmatic callers. The source's
+historical branch is append-only in Rally: deleting or
+reordering prior source messages requires a new Channel, and a revised message
+is marked as superseding the earlier turn. Cloud Code sessions without a local
+file cannot be selected from the local picker.
+
+### 2026-09-22 — Import selected local Claude and Claude Code files
+
+**What changed:** The sidebar import launcher accepts a Claude account export's
+`conversations.json` with one selected conversation, or a single Claude Code
+JSONL transcript. Claude Code has a distinct source label and text-only decoder.
+
+**Why:** A share link is unavailable for private Claude chats and local Claude
+Code sessions. Claude chat and Code use different storage, so one generic JSON
+decoder would misread Code's tool and streaming events as conversation turns.
+
+**Considered and rejected:** Reading Claude Desktop's Chromium profile or Claude
+Code's complete project tree automatically. Those locations include app state,
+credentials, tool output and unrelated files; choosing one source file makes the
+import boundary and resulting Channel explicit.
+
+**Consequences:** Claude account exports must be unpacked before selecting
+`conversations.json`; this flow imports one conversation per Channel. Claude Code
+transcripts omit execution artifacts and sidecars.
 
 ### 2026-09-20 — Put imports in the unified sidebar launcher
 
