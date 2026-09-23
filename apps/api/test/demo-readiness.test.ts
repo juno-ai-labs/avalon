@@ -22,9 +22,10 @@ const MEMO_ID = "00000000-0000-7000-8000-0000000000f1";
 const RENEWAL_ID = "00000000-0000-7000-8000-0000000000f2";
 const PRESS_ID = "00000000-0000-7000-8000-0000000000f3";
 const WORKSTREAM_IDS: Record<string, string> = {
-  "decision-memo": MEMO_ID,
-  "northgate-renewal": RENEWAL_ID,
-  "press-release": PRESS_ID,
+  "acme-proposal": MEMO_ID,
+  "vendor-selection": RENEWAL_ID,
+  "acme-review": PRESS_ID,
+  "sales-reviews": "00000000-0000-7000-8000-0000000000f4",
 };
 
 function receipt(overrides: Partial<DemoSeedReceipt> & Pick<DemoSeedReceipt, "actionId" | "kind">): DemoSeedReceipt {
@@ -50,7 +51,7 @@ function receipt(overrides: Partial<DemoSeedReceipt> & Pick<DemoSeedReceipt, "ac
 /** The placeholder pack's receipts, as the seeder would leave them. */
 function placeholderReceipts(): DemoSeedReceipt[] {
   const substreamIds = new Map<string, string>();
-  return PLACEHOLDER_DEMO_PACK.steps.map((step) => {
+  return DemoPackSchema.parse(PLACEHOLDER_DEMO_PACK).steps.map((step) => {
     if (step.kind === "sidekick") {
       // In no room and so in no conversation: both substream columns stay null,
       // which is what the receipts table's own CHECK requires of a Sidekick.
@@ -101,52 +102,41 @@ describe("the readiness manifest", () => {
     expect(manifest.views).toHaveLength(1);
     const [view] = manifest.views;
     expect(view?.viewerUserId).toBe(CAST.presenter!.userId);
-    // Newest first, by each room's last step in the *main* conversation. The
-    // press-release room's substream steps run last of all and do not count:
-    // a private child never reaches the directory row this order comes from.
     expect(view?.rooms.map((room) => room.room))
-      .toEqual(["press-release", "northgate-renewal", "decision-memo"]);
-    // Three drafts of one document, in the order they were uploaded, and no
-    // sign of the substream: not in the room list, not in the attachments.
+      .toEqual(["acme-proposal", "sales-reviews", "acme-review", "vendor-selection"]);
     expect(view?.rooms[0]).toMatchObject({
-      workstreamId: PRESS_ID,
+      workstreamId: MEMO_ID,
       harnessStatus: "completed",
-      resourceIds: ["resource-press-v1", "resource-press-v2", "resource-press-v3"],
-      participantUserIds: [CAST.marcus!.userId, CAST.priya!.userId, CAST.dana!.userId],
-      mentioned: false,
-      unseen: false,
-    });
-    expect(view?.rooms[1]).toMatchObject({
-      workstreamId: RENEWAL_ID,
-      harnessStatus: "needs_input",
-      elicitationId: "elicitation-renewal-marcus-2",
-      creatorUserId: CAST.marcus!.userId,
-      // The creator, the two seated, and the presenter by mention.
-      participantUserIds: [CAST.marcus!.userId, CAST.dana!.userId, CAST.priya!.userId, CAST.presenter!.userId],
-      unseen: true,
-      hasUnread: true,
-      mentioned: true,
+      resourceIds: ["resource-proposal-brief", "resource-proposal-v1", "resource-proposal-technical-note", "resource-proposal-v2"],
+      participantUserIds: [CAST.marcus!.userId, CAST.priya!.userId, CAST.presenter!.userId],
+      mentioned: true, unseen: true,
     });
     expect(view?.rooms[2]).toMatchObject({
-      workstreamId: MEMO_ID,
-      harnessStatus: "idle",
-      resourceIds: ["resource-memo-attach"],
-      participantUserIds: [CAST.priya!.userId, CAST.marcus!.userId],
+      workstreamId: PRESS_ID, harnessStatus: "completed",
+      resourceIds: ["resource-review-transcript", "resource-review-guide", "resource-review-v1", "resource-review-v2"],
+      participantUserIds: [CAST.marcus!.userId, CAST.priya!.userId, CAST.dana!.userId],
       mentioned: false,
+    });
+    expect(view?.rooms[3]).toMatchObject({
+      workstreamId: RENEWAL_ID, harnessStatus: "completed", elicitationId: null,
+      participantUserIds: [CAST.marcus!.userId, CAST.priya!.userId, CAST.dana!.userId],
     });
     expect(view?.attention).toEqual({ waitingForYou: 1, waitingReason: "mentioned" });
   });
 
   it("refuses a pack whose rooms were never confirmed", () => {
-    const receipts = placeholderReceipts().filter((row) => row.room !== "northgate-renewal");
+    const receipts = placeholderReceipts().filter((row) => row.room !== "vendor-selection");
     expect(() => demoReadinessManifest(PLACEHOLDER_DEMO_PACK, CAST, receipts))
-      .toThrow(/demo_readiness_room_unconfirmed|Room "northgate-renewal" has no receipt/u);
+      .toThrow(/demo_readiness_room_unconfirmed|Room "vendor-selection" has no receipt/u);
   });
 
   it("refuses a closing question that never opened", () => {
-    const receipts = placeholderReceipts().map((row) =>
-      row.actionId === "renewal-marcus-2" ? { ...row, elicitationId: null } : row);
-    expect(() => demoReadinessManifest(PLACEHOLDER_DEMO_PACK, CAST, receipts))
+    const pack = DemoPackSchema.parse({ ...PLACEHOLDER_DEMO_PACK, steps: [
+      ...PLACEHOLDER_DEMO_PACK.steps,
+      { kind: "message", id: "test-question", room: "acme-proposal", as: "marcus", text: "Choose.",
+        assistant: { kind: "ask", prompt: "Which?", options: ["One", "Two"] } },
+    ] });
+    expect(() => demoReadinessManifest(pack, CAST, placeholderReceipts()))
       .toThrow(/has no confirmed question/u);
   });
 });

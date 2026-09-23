@@ -864,6 +864,19 @@ export class WorkspaceSpaceStorage {
     });
   }
 
+  /** Reserve once, preserving an inaccessible identity without revealing its Space. */
+  reserveForCreation(request: WorkspaceSpaceReserveRequest, spaceId: string): {
+    space: SpaceSummary | false; created: boolean;
+  } {
+    return this.storage.transactionSync(() => {
+      const exists = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
+        "SELECT space_id FROM workspace_space_directory WHERE space_id = ?", spaceId,
+      ).toArray().length > 0;
+      if (exists) return { space: this.readable(request.userId, spaceId), created: false };
+      return { space: this.reserve(request, spaceId, null), created: true };
+    });
+  }
+
   /**
    * The Organization's one General Space, reserved once.
    *

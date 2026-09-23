@@ -125,6 +125,7 @@ its own is a boundary that drifts.
 
 | Call site | Reports |
 | --- | --- |
+| `apps/api/src/durable-objects/substream-agent.ts` | Product RPC failures preserve schema field codes in the response and log, so demo preparation names a malformed participant field without including its rejected value |
 | `apps/api/src/lib/rpc-input.ts` | `parseRpcInput` throws a message that survives an RPC hop |
 | `packages/connectors/src/observability.ts` | `connectorObservationErrorCode` names a provider-response mismatch |
 | `packages/connectors/src/observability.ts` | `healthCheck` logs a returned failure's own `reason_code`, never its `message` |

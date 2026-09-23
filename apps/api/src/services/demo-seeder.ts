@@ -36,6 +36,7 @@
  * `docs/demo-workspaces.md` owns the feature.
  */
 import {
+  asSpaceId,
   asUserId,
   asWorkspaceId,
   type AutomationDraft,
@@ -47,6 +48,7 @@ import { ApiError } from "../lib/api-error";
 import { logInfo } from "../observability/logger";
 import { AutomationService, createAutomation } from "./automation-service";
 import { demoSeedSummaryGateway } from "./demo-seed-provider";
+import { SpaceService } from "./space-service";
 import { ResourceService } from "./resource-service";
 import { SubstreamCreationService } from "./substream-creation-service";
 import { WorkstreamObjectClient } from "./workstream-object-client";
@@ -254,6 +256,11 @@ async function demoSeedDerivedId(purpose: string, operationId: string, actionId:
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
+/** A stable Space identity lets interrupted preparation resume without creating duplicates. */
+export async function demoSeedSpaceId(operationId: string, key: string) {
+  return asSpaceId(await demoSeedDerivedId("space", operationId, key));
+}
+
 /** The resource id of a seeded document, so a replayed upload attaches the draft it already made. */
 export function demoSeedResourceId(operationId: string, actionId: string): Promise<string> {
   return demoSeedDerivedId("resource", operationId, actionId);
@@ -412,6 +419,16 @@ export async function applyDemoSeedAction(
       // rather than seeded as a lie; `docs/demo-workspaces.md` says what a pack
       // does instead.
       if (action.scope === "personal") throw new Error("demo_seed_personal_room_unsupported");
+      const space = action.space ? session.pack.spaces?.[action.space] : undefined;
+      const spaceIds = [];
+      if (space && action.space) {
+        const creator = session.cast[space.as]!;
+        const spaceAuth = session.auth.get(creator.userId)!;
+        const createdSpace = await new SpaceService(env, spaceAuth).create({
+          name: space.name, iconKey: space.iconKey, colorKey: space.colorKey, scope: "workspace",
+        }, await demoSeedSpaceId(session.operationId, action.space));
+        spaceIds.push(createdSpace.id);
+      }
       if (action.execution === "history") {
         if (action.seed.assistant?.kind !== "say") throw new Error("prepared_demo_requires_text");
         const conversation = { messages: [
@@ -420,7 +437,7 @@ export async function applyDemoSeedAction(
         ] };
         const created = await new WorkstreamObjectCreationService(env, auth).createPrepared({
           title: action.title, clientMessageId, participantUserIds: action.participantUserIds,
-          descriptionSource: "authored", scope: action.scope,
+          descriptionSource: "authored", scope: action.scope, spaceIds,
         }, conversation, { reason: DEMO_SEED_REASON, notifyParticipants: false });
         const boot = await new WorkstreamObjectClient(env, auth, created.workstream.id).boot();
         const turns = boot.transcript.ranges.flatMap((range) => range.turns);
@@ -440,6 +457,7 @@ export async function applyDemoSeedAction(
         clientMessageId,
         participantUserIds: action.participantUserIds,
         attachmentIds: [],
+        spaceIds,
         descriptionSource: "authored",
         scope: action.scope,
       }, {

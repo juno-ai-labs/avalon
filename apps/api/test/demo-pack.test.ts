@@ -86,25 +86,22 @@ describe("the pack schema", () => {
     // check that keeps the checked-in pack playable.
     const parsed = DemoPackSchema.safeParse(PLACEHOLDER_DEMO_PACK);
     expect(parsed.success ? [] : parsed.error.issues.map((issue) => issue.message)).toEqual([]);
-    const rooms = PLACEHOLDER_DEMO_PACK.steps.filter((step) => step.kind === "create_workstream");
-    expect(rooms.map((step) => step.room))
-      .toEqual(["decision-memo", "northgate-renewal", "press-release"]);
-    // The pack's one question, in the renewal room, is the demo's opening beat:
-    // nothing said after it in that room, and no second question anywhere.
-    const asks = PLACEHOLDER_DEMO_PACK.steps.filter(
-      (step) => (step.kind === "create_workstream" || step.kind === "message") && step.assistant?.kind === "ask",
-    );
-    expect(asks.map((step) => step.id)).toEqual(["renewal-marcus-2"]);
-    // And one standing Sidekick, published and on a schedule, with one run
-    // already behind it.
-    const sidekicks = PLACEHOLDER_DEMO_PACK.steps.filter((step) => step.kind === "sidekick");
-    expect(sidekicks.map((step) => [step.name, step.scope, step.schedule.timezone, step.firstRun !== undefined]))
-      .toEqual([["Morning briefing", "workspace", "America/Los_Angeles", true]]);
-    // The press-release room's private child, which the presenter is in
-    // without being in its parent.
-    const children = PLACEHOLDER_DEMO_PACK.steps.filter((step) => step.kind === "create_substream");
-    expect(children.map((step) => [step.room, step.substream, step.participants]))
-      .toEqual([["press-release", "placement", ["priya", "dana", "presenter"]]]);
+    const steps = DemoPackSchema.parse(PLACEHOLDER_DEMO_PACK).steps;
+    expect(steps.filter((step) => step.kind === "create_workstream").map((step) => [step.room, step.space]))
+      .toEqual([["vendor-selection", "vendors"], ["acme-review", "acme"], ["sales-reviews", "sales"], ["acme-proposal", "acme"]]);
+    // All three stories have a human next action; none waits on an artificial poll.
+    expect(steps.filter((step) => "assistant" in step && step.assistant?.kind === "ask")).toEqual([]);
+    expect(steps.filter((step) => step.kind === "sidekick")
+      .map((step) => [step.name, step.scope, step.schedule.timezone, step.firstRun !== undefined]))
+      .toEqual([["Demo Call Review", "workspace", "America/Los_Angeles", true]]);
+    expect(steps.filter((step) => step.kind === "create_substream")
+      .map((step) => [step.room, step.substream, step.participants]))
+      .toEqual([
+        ["vendor-selection", "implementation-costs", ["priya", "presenter"]],
+        ["acme-review", "customer-response", ["priya", "dana", "presenter"]],
+        ["acme-proposal", "integration-requirements", ["marcus", "presenter"]],
+      ]);
+
   });
 
   it("expects of the presenter exactly what an idle viewer's flags derive to", () => {

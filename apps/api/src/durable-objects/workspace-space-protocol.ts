@@ -48,6 +48,8 @@ export type WorkspaceSpaceListRequest = z.infer<typeof WorkspaceSpaceListRequest
 
 export const WorkspaceSpaceReserveRequestSchema = SpaceActorSchema.extend({
   space: CreateSpaceRequestSchema,
+  /** Internal creation identity for resumable setup; absent for ordinary creates. */
+  spaceId: SpaceIdSchema.optional(),
 }).strict();
 export type WorkspaceSpaceReserveRequest = z.infer<typeof WorkspaceSpaceReserveRequestSchema>;
 
@@ -227,6 +229,13 @@ export const WorkspaceSpaceMutationResultSchema = z.union([
   WorkspaceSpaceAudienceFailureSchema,
 ]);
 export type WorkspaceSpaceMutationResult = z.infer<typeof WorkspaceSpaceMutationResultSchema>;
+
+export const WorkspaceSpaceReserveResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), space: SpaceSummarySchema, created: z.boolean() }),
+  WorkspaceSpaceAudienceFailureSchema,
+]);
+export type WorkspaceSpaceReserveResult = z.infer<typeof WorkspaceSpaceReserveResultSchema>;
+
 
 export const WorkspaceSpaceChannelPageRequestSchema = SpaceActorSchema.extend({
   spaceId: SpaceIdSchema,
