@@ -1573,11 +1573,17 @@ describe('option keycaps', () => {
 });
 
 describe('elicitation option hover', () => {
-  it('layers a reader-accent tint over the option instead of replacing its surface', () => {
+  it('layers the reader accent without the later generic brand fill and border', () => {
     const hover = rule('.app-shell .elicitation-option:hover');
     expect(hover).toContain('background-image: linear-gradient(color-mix(in srgb, var(--av-sys-color-accent-tint) 50%, transparent) 0 100%);');
+    expect(hover).toContain('background-color: transparent;');
+    expect(hover).toContain('border-color: transparent;');
     expect(hover).not.toMatch(/(?:^|[;{\s])background:/u);
-    expect(hover).not.toContain('var(--hover-layer)');
+    expect(hover).not.toContain('var(--av-sys-color-brand-');
+    expect(rule('.app-shell .elicitation-option.is-selected,\n.app-shell .elicitation-option.is-selected:hover'))
+      .toContain('border-color: transparent;');
+    expect(rule('.app-shell .elicitation-option:hover .elicitation-checkbox'))
+      .toContain('border-color: var(--av-sys-color-accent-strong);');
   });
 });
 
