@@ -1829,6 +1829,34 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ## Changelog
 
+### 2026-09-23 — A new room message cancels a pending elicitation
+
+**What changed:** Committing a new human, external, or system activation input
+marks unanswered elicitation requests cancelled in the same object transaction.
+The direct canonical human-message path does the same. The cancellation is
+published to the room, projected over the immutable question turn on transcript
+reads, and supplied to Bind as the withheld call's tool result before the new
+message is appended. A direct message that starts no run closes the question;
+the next invoked input settles its Bind call.
+
+**Why:** A scheduled Sidekick result was durably queued behind an unanswered
+question for days. The question's suspended tool call made every ordinary
+message invalid to append, even though the newer message made the old question
+irrelevant.
+
+**Considered and rejected:** Clearing only the UI card or changing only the
+request status leaves Bind's tool call without a result and keeps the queue
+blocked. The durable request state and model protocol must move together.
+
+**Consequences:** A late answer is rejected as no longer open. Runtime recovery
+also cancels a question if a previously queued ordinary input was committed
+after it, releasing the existing backlog when that object next wakes. For
+same-millisecond arrivals, recovery uses the canonical transcript sequence to
+distinguish which came first. This cold-start recovery can be removed after
+pre-change queued inputs have drained. A late answer receives the specific
+`elicitation_cancelled` error. A cancelled question in a multi-question batch
+is settled in Bind before any queued answer in that batch is promoted.
+
 ### 2026-09-22 — Project each Breakout's viewer marker to the Channel rail
 
 **What changed:** The Channel parent includes each visible Breakout's projected

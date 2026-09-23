@@ -2106,12 +2106,9 @@ describe("a member's message travels the whole pipeline", () => {
     }
   });
 
-  it("keeps an aside said while a question was open for the next request, after the answer", async () => {
-    // People talk while Rally's question is open. The answer is a tool result
-    // that has to follow its call directly, so it carries no gap-fill — and it
-    // must not move the mark past what was said meanwhile, or those turns are
-    // gone. They belong to the next text input, which appends them after the
-    // result and before itself.
+  it("cancels an open question when an aside arrives and keeps the aside for the next request", async () => {
+    // The aside closes the question without starting a run. The next invoked
+    // input supplies the cancellation tool result before the aside and itself.
     const stub = agentStub();
     try {
       await installScriptedProvider(
@@ -2142,7 +2139,6 @@ describe("a member's message travels the whole pipeline", () => {
               finish_reason: "tool_calls",
             }],
           }],
-          [{ choices: [{ delta: { content: "noted, going with A" }, finish_reason: "stop" }] }],
           [{ choices: [{ delta: { content: "here is the summary" }, finish_reason: "stop" }] }],
         ],
         { primaryModel: ASIDE_ELICITATION_MODEL, fallbackModels: [] },
@@ -2174,6 +2170,11 @@ describe("a member's message travels the whole pipeline", () => {
           `SELECT transcript_sequence FROM participant_transcript_turns WHERE turn_id = ?`,
           (aside.body.turn as { turnId: string }).turnId,
         ).one().transcript_sequence);
+      expect(await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ status: string }>(
+          `SELECT status FROM elicitation_requests WHERE elicitation_id = ?`,
+          elicitationId,
+        ).one().status)).toBe("cancelled");
 
       const answered = await product(stub, {
         operation: "answer_elicitation",
@@ -2181,19 +2182,9 @@ describe("a member's message travels the whole pipeline", () => {
         elicitationId,
         input: { answer: "a" },
       });
-      expect(answered.status).toBe(200);
-      // The answer resumes the loop: its run is the second row.
-      let resumedRunId: string | null = null;
-      await expect.poll(async () => {
-        resumedRunId = await runInDurableObject(stub, (_instance, state) =>
-          state.storage.sql.exec<{ run_id: string }>(
-            `SELECT run_id FROM runs ORDER BY created_at, run_id`,
-          ).toArray()[1]?.run_id ?? null);
-        return resumedRunId === null ? "the answer started no run" : "resumed";
-      }, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 50 }).toBe("resumed");
-      await settledRun(stub, resumedRunId!);
-      await waitForLoopRelease(stub);
-      // The answer advanced nothing: the aside is still above the mark.
+      expect(answered.status).toBe(409);
+      expect(answered.body).toMatchObject({ error: "elicitation_cancelled" });
+      // A direct canonical aside does not advance the model's transcript mark.
       expect(await runInDurableObject(stub, (_instance, state) =>
         state.storage.sql.exec<{ transcript_projected_through: number }>(
           `SELECT transcript_projected_through FROM substream_loops WHERE id = 1`,
@@ -2218,7 +2209,10 @@ describe("a member's message travels the whole pipeline", () => {
       const toolResult = index((message) => message.role === "tool");
       const asideIndex = index((message) => message.role === "user" && JSON.stringify(message.content).includes("sounds good"));
       const questionIndex = index((message) => message.role === "user" && JSON.stringify(message.content).includes("please summarize what we agreed"));
-      expect(toolResult, "the answer never reached the model as a tool result").toBeGreaterThanOrEqual(0);
+      expect(toolResult, "the cancellation never reached the model as a tool result").toBeGreaterThanOrEqual(0);
+      expect(JSON.parse(String(messages[toolResult]?.content))).toMatchObject({
+        data: { elicitationId, answer: null, cancelled: true },
+      });
       expect(asideIndex, "the aside said during the question never reached the model").toBeGreaterThan(toolResult);
       expect(questionIndex).toBeGreaterThan(asideIndex);
       expect(messages.filter((message) => message.role === "user" && JSON.stringify(message.content).includes("sounds good"))).toHaveLength(1);

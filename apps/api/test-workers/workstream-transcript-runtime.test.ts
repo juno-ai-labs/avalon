@@ -1562,13 +1562,7 @@ describe("work-stream transcript on workerd SQLite", () => {
       });
     });
 
-    it.each([
-      { status: "pending", answerable: true },
-      { status: "cancelled", answerable: false },
-    ])("treats a $status question as answerable=$answerable when the batch is withheld", async ({
-      status,
-      answerable,
-    }) => {
+    it.each(["pending", "cancelled"])("allows release with a %s elicitation call withheld", async (status) => {
       const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
         conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
       ));
@@ -1595,15 +1589,9 @@ describe("work-stream transcript on workerd SQLite", () => {
           `${LOOP_ID}:turn:1:tool:0`,
         );
 
-        // A question somebody can still answer is not withheld work: the room
-        // releases itself when they reply, so the release is allowed and the
-        // answer is admissible. A cancelled one has no answer coming, so the
-        // batch is the host's to settle and the release must be refused —
-        // reading `cancelled` as open is how the queue used to park for ever
-        // on an input nobody would ever send.
-        expect(transcript.unsettledToolBatchBlockingRelease(LOOP_ID)).toEqual(
-          answerable ? null : expect.objectContaining({ turnId: `${LOOP_ID}:turn:1` }),
-        );
+        // An answer or the next ordinary input supplies the withheld result.
+        // Neither call needs a running execution to settle it.
+        expect(transcript.unsettledToolBatchBlockingRelease(LOOP_ID)).toBeNull();
       });
     });
 

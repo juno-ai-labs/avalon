@@ -431,7 +431,7 @@ export interface ElicitationData {
   maximumSelections?: number;
   allowOther?: boolean;
   targetUserId?: string;
-  status: 'open' | 'answered';
+  status: 'open' | 'answered' | 'cancelled';
   answer?: unknown;
   answeredByName?: string;
   createdAt?: string;

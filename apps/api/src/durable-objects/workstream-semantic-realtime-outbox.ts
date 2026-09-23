@@ -10,6 +10,7 @@ import { z } from "zod";
  */
 export const SemanticRealtimeReferenceSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("transcript_turn"), turnId: z.string().min(1) }),
+  z.strictObject({ kind: z.literal("elicitation_cancelled"), elicitationId: z.string().min(1) }),
   z.strictObject({
     kind: z.literal("loop_input_upserted"),
     inputId: z.string().min(1),

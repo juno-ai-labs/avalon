@@ -3343,7 +3343,11 @@ export class WorkstreamObjectProductService {
     return this.elicitationsIncludingResolved().filter((elicitation) => elicitation.status === "open");
   }
 
-  private elicitationsIncludingResolved(): Elicitation[] {
+  elicitationById(elicitationId: string): Elicitation | undefined {
+    return this.elicitationsIncludingResolved(elicitationId)[0];
+  }
+
+  private elicitationsIncludingResolved(elicitationId?: string): Elicitation[] {
     const root = this.root();
     return this.storage.sql.exec<{
       elicitation_id: string; run_id: string; prompt: string; response_type: string;
@@ -3351,7 +3355,10 @@ export class WorkstreamObjectProductService {
       target_user_id: string | null; status: string; answer_json: string | null;
       answered_by_user_id: string | null; created_at: number; answered_at: number | null;
     }>(
-      `SELECT * FROM elicitation_requests ORDER BY created_at`,
+      `SELECT * FROM elicitation_requests
+        ${elicitationId === undefined ? "" : "WHERE elicitation_id = ?"}
+        ORDER BY created_at`,
+      ...(elicitationId === undefined ? [] : [elicitationId]),
     ).toArray().map((row) => ({
       id: row.elicitation_id,
       workstreamId: root.workstream_key,
@@ -4289,6 +4296,15 @@ export class WorkstreamObjectProductService {
             answeringUserId,
           ));
           if (!open) {
+            const cancelled = first(this.storage.sql.exec<{ ok: number }>(
+              `SELECT 1 AS ok FROM elicitation_requests
+                WHERE elicitation_id = ? AND status = 'cancelled'`,
+              input.elicitationId,
+            ));
+            if (cancelled) {
+              this.loops.discardInputPreparation({ inputId: preparation.input_id, now: input.now });
+              return { kind: "cancelled" as const };
+            }
             const stillPending = first(this.storage.sql.exec<{ ok: number }>(
               `SELECT 1 AS ok FROM elicitation_requests
                 WHERE elicitation_id = ? AND status = 'pending'`,
@@ -4314,6 +4330,14 @@ export class WorkstreamObjectProductService {
             answeringUserId,
           );
           if (answered.toArray().length !== 1) {
+            const cancelled = first(this.storage.sql.exec<{ ok: number }>(
+              `SELECT 1 AS ok FROM elicitation_requests
+                WHERE elicitation_id = ? AND status = 'cancelled'`,
+              input.elicitationId,
+            ));
+            if (cancelled) {
+              throw new ApiError(409, "elicitation_cancelled", "This question was cancelled by a newer message");
+            }
             throw new ApiError(409, "elicitation_already_answered", "This question was answered by someone else");
           }
           const remaining = Number(first(this.storage.sql.exec<{ count: number }>(
@@ -4366,6 +4390,9 @@ export class WorkstreamObjectProductService {
           "elicitation_already_answered",
           "This question was answered by someone else",
         );
+      }
+      if (result.kind === "cancelled") {
+        throw new ApiError(409, "elicitation_cancelled", "This question was cancelled by a newer message");
       }
       if (result.kind === "pending") return this.externalPendingMessageResult(result.input, true);
       return {
@@ -4802,6 +4829,7 @@ export class WorkstreamObjectProductService {
         if (receipt === "replayed") {
           throw new Error("substream_message_receipt_without_projection");
         }
+        this.loops.cancelPendingElicitations(now);
         const sequence = current.next_sequence_number;
         const attention = current.next_attention_ordinal;
         const openedParticipant = first(sql.exec<{ user_id: string }>(
@@ -5119,7 +5147,17 @@ export class WorkstreamObjectProductService {
          FROM elicitation_requests WHERE elicitation_id = ? AND status = 'pending'`,
       elicitationId,
     ));
-    if (!row) throw new ApiError(404, "elicitation_not_found", "This question is no longer open");
+    if (!row) {
+      const cancelled = first(this.storage.sql.exec<{ ok: number }>(
+        `SELECT 1 AS ok FROM elicitation_requests
+          WHERE elicitation_id = ? AND status = 'cancelled'`,
+        elicitationId,
+      ));
+      if (cancelled) {
+        throw new ApiError(409, "elicitation_cancelled", "This question was cancelled by a newer message");
+      }
+      throw new ApiError(404, "elicitation_not_found", "This question is no longer open");
+    }
     if (row.target_user_id !== null && row.target_user_id !== auth.userId) {
       throw new ApiError(403, "elicitation_target_mismatch", "This question is targeted to another participant");
     }
@@ -5196,6 +5234,14 @@ export class WorkstreamObjectProductService {
         answer === null ? null : JSON.stringify(answer), auth.userId, now, elicitationId,
       );
       if (changed.toArray().length !== 1) {
+        const cancelled = first(sql.exec<{ ok: number }>(
+          `SELECT 1 AS ok FROM elicitation_requests
+            WHERE elicitation_id = ? AND status = 'cancelled'`,
+          elicitationId,
+        ));
+        if (cancelled) {
+          throw new ApiError(409, "elicitation_cancelled", "This question was cancelled by a newer message");
+        }
         throw new ApiError(409, "elicitation_already_answered", "This question was answered by someone else");
       }
       remaining = Number(first(sql.exec<{ count: number }>(
