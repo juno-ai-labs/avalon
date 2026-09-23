@@ -4439,15 +4439,16 @@ pre {
 .app-shell .elicitation-option { background: transparent; border: 0; border-radius: 0; gap: var(--space-3); grid-template-columns: auto minmax(0, 1fr); min-height: 38px; padding: var(--space-2) var(--space-3); position: relative; }
 .app-shell .elicitation-option + .elicitation-option { border-top: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); }
 .app-shell .elicitation-option:has(input[type='checkbox']) { grid-template-columns: auto minmax(0, 1fr) auto; }
-.app-shell .elicitation-option:hover { background-image: linear-gradient(color-mix(in srgb, var(--av-sys-color-accent-tint) 50%, transparent) 0 100%); }
+.app-shell .elicitation-option:hover { background-color: transparent; background-image: linear-gradient(color-mix(in srgb, var(--av-sys-color-accent-tint) 50%, transparent) 0 100%); }
 .app-shell .elicitation-option.is-selected,
-.app-shell .elicitation-option.is-selected:hover { background: var(--av-cmp-row-background-selected); }
+.app-shell .elicitation-option.is-selected:hover { background: var(--av-cmp-row-background-selected); border-color: color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); }
 .app-shell .elicitation-option:has(input:focus-visible) { outline: 2px solid var(--av-sys-color-text-default); outline-offset: -2px; }
 .app-shell .elicitation-option-copy { grid-column: 2; grid-row: 1; }
 .app-shell .elicitation-option-copy strong { color: var(--av-sys-color-text-default); font-size: 14px; font-weight: 400; line-height: 20px; overflow-wrap: anywhere; }
 .app-shell .elicitation-option > kbd { align-items: center; background: var(--av-cmp-keycap-background); border: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); border-radius: 4px; display: inline-flex; font-size: 11px; grid-column: 1; grid-row: 1; justify-content: center; line-height: 16px; margin: 0; min-width: 18px; padding: 1px 4px; }
 .app-shell .elicitation-checkbox { grid-column: 3; grid-row: 1; }
 .app-shell .elicitation-option:has(input[type='checkbox']) > kbd { display: inline-flex; }
+.app-shell .elicitation-option:hover .elicitation-checkbox { border-color: var(--av-sys-color-accent-strong); }
 .app-shell .elicitation-option.is-selected .elicitation-checkbox { background: var(--av-cmp-bubble-human-background); border-color: var(--av-cmp-bubble-human-background); color: var(--av-cmp-bubble-human-foreground); }
 .app-shell .elicitation-actions .button { border-radius: 8px; }
 .app-shell .elicitation-skip { background: var(--av-cmp-control-background-quiet); color: var(--av-sys-color-text-default); }
