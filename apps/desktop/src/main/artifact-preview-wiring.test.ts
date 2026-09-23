@@ -73,7 +73,7 @@ describe('artifact preview wiring', () => {
     const factory = text.match(/function openArtifactWindow\([\s\S]*?\n\}/u)?.[0];
 
     expect(factory).toBeDefined();
-    expect(factory).toContain('poppedOutArtifacts.set(window, { resourceId: request.resourceId, version: request.version, stateId })');
+    expect(factory).toContain('poppedOutArtifacts.set(window, { workspaceId, userId, resourceId: request.resourceId, version: request.version, stateId })');
     expect(factory).toContain("window.once('closed', () => {");
     expect(factory).toContain('poppedOutArtifacts.delete(window)');
     expect(text).toContain("ipcMain.handle('artifact:popped-out-versions'");
