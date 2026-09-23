@@ -2266,6 +2266,9 @@ export function ElicitationPanel({
       </div>
     );
   }
+  if (elicitation.status === 'cancelled') {
+    return <div aria-label="Question cancelled" className="elicitation-resolved-answer human-message-bubble">Question cancelled</div>;
+  }
 
   const toggle = (value: string): void => {
     setError(null);
