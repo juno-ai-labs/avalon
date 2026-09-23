@@ -183,6 +183,14 @@ const singleSelectElicitation: ElicitationData = {
 };
 
 describe('ElicitationPanel', () => {
+  it('shows a cancelled question without answer controls', () => {
+    render(<ElicitationPanel
+      elicitation={{ ...singleSelectElicitation, status: 'cancelled', answer: null }}
+      onAnswer={vi.fn()}
+    />);
+    expect(screen.getByLabelText('Question cancelled')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Submit' })).not.toBeInTheDocument();
+  });
   it('keeps answer and skip diagnostics out of the response control', async () => {
     const answerDiagnostic = 'provider answer failure: request=private';
     const answer = vi.fn().mockRejectedValueOnce(new Error(answerDiagnostic));

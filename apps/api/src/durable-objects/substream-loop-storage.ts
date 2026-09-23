@@ -466,6 +466,9 @@ export class SubstreamLoopStorage {
         preparation.input_sequence,
         preparation.admitted_after_transcript_sequence,
       );
+      if (input.messageType !== "elicitation") {
+        this.cancelPendingElicitations(input.now);
+      }
       this.sql.exec(
         `UPDATE pending_loop_input_mailbox
             SET state = 'ready', envelope_json = NULL, updated_at = MAX(updated_at, ?)
@@ -477,6 +480,33 @@ export class SubstreamLoopStorage {
       this.#enqueueNewlyVisibleInputs(loop.loop_id, preparation.input_sequence, input.now);
       return { outcome: "admitted", input: this.#requiredInput(input.inputId) };
     });
+  }
+
+  /** A newly committed message supersedes every unanswered question in this room. */
+  cancelPendingElicitations(now: number, onlySupersededByQueuedInput = false): void {
+    const cancelled = this.sql.exec<{ elicitation_id: string } & Record<string, SqlStorageValue>>(
+      `UPDATE elicitation_requests
+          SET status = 'cancelled'
+        WHERE status = 'pending'
+          ${onlySupersededByQueuedInput ? `AND EXISTS (
+            SELECT 1 FROM pending_loop_inputs AS pending
+             WHERE pending.message_type != 'elicitation'
+               AND (pending.created_at > elicitation_requests.created_at
+                 OR (pending.created_at = elicitation_requests.created_at
+                   AND EXISTS (
+                     SELECT 1 FROM participant_transcript_turns AS question
+                      WHERE question.client_message_id = 'elicitation:' || elicitation_requests.elicitation_id
+                        AND pending.admitted_after_transcript_sequence >= question.transcript_sequence
+                   )))
+          )` : ""}
+      RETURNING elicitation_id`,
+    ).toArray();
+    for (const row of cancelled) {
+      enqueueSemanticRealtimeReference(this.sql, {
+        kind: "elicitation_cancelled",
+        elicitationId: row.elicitation_id,
+      }, now);
+    }
   }
 
   failInputPreparation(input: { inputId: string; terminalCode: string; now: number }): void {
