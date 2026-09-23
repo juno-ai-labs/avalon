@@ -17,6 +17,7 @@ import { localCacheScope } from './lib/local-cache';
 import { FaviconApiProvider } from './lib/favicon-api';
 import { LocalCacheScopeProvider } from './lib/local-cache-scope';
 import { desktopBridge } from './lib/platform';
+import { restorePoppedOutArtifacts } from './lib/popped-out-artifacts';
 import { useWorkspaceQuery } from './lib/use-workspace';
 import {
   abandonPendingWorkstreamFeedOpen,
@@ -271,6 +272,18 @@ function SettingsSurfaceTelemetry(): React.JSX.Element {
 
 function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX.Element {
   const { api } = useAppSession();
+  useEffect(() => {
+    if (!api || new URLSearchParams(window.location.search).has('surface')) return;
+    const controller = new AbortController();
+    void restorePoppedOutArtifacts({
+      bridge: desktopBridge(),
+      getResourceVersions: (id) => api.getResourceVersions(id),
+      loadResourceContent: (id, signal) => api.getResourcePreviewContent(id, signal),
+      openSiteArtifact: (id) => api.openArtifact(id),
+      signal: controller.signal,
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, [api, workspace.id]);
   const settingsSurface = new URLSearchParams(window.location.search).get('surface') === 'settings';
   if (settingsSurface) {
     return (
