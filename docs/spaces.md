@@ -105,6 +105,14 @@ admitted**; and finally the appearance, through the same writer a Channel's icon
 and colour go through. Any failure cancels the reservation, so nothing ever
 renders a Space whose object never opened.
 
+Internal setup callers may pass a stable creation id to `SpaceService.create`.
+The reservation reuses that identity, and child reservation and provisioning
+resume under it. The service refuses a replay whose name, audience or appearance
+changed, rather than rewriting an existing Space. Ordinary client creation still
+allocates its id; the HTTP request does not expose this option. Demo setup uses
+operation-derived ids so retries and two Channels in one Space agree; see
+[demo workspaces](demo-workspaces.md#space-placement-and-replacing-older-demos).
+
 ### What the hidden conversation is asked
 
 Nothing in the product opens a Space's main conversation, but the Space
@@ -1945,6 +1953,22 @@ or on the `space_intents` row holds the same word for whoever reads it
 afterwards.
 
 ## Changelog
+
+### 2026-09-23 — Resume internal Space creation under a stable identity
+
+**What changed:** Internal `SpaceService.create` callers may supply an identity;
+replays reuse the reservation and refuse changed creation attributes. The HTTP
+create contract is unchanged.
+
+**Why:** Two demo Channels need one account Space even after interrupted setup.
+[Demo workspaces](demo-workspaces.md#2026-09-23--demonstrate-human-intervention-in-shared-outcomes)
+records the owning decision.
+
+**Considered and rejected:** Looking up Spaces by title, which would make a
+mutable display name the creation identity.
+
+**Consequences:** Internal callers own identity stability. Replaying creation is
+not an update API; audience and appearance changes use their normal writers.
 
 ### 2026-09-22 — Needs attention shows the Channel-to-Breakout identity
 
