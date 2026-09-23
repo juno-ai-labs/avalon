@@ -322,6 +322,8 @@ describe("creating a work stream", () => {
     }, prepared);
     const client = new WorkstreamObjectClient(importEnv, AUTH, created.workstream.id);
     expect(await client.importedSessionSource()).toEqual({ provider: "claude_code", sessionId: "session-42", url: null });
+    expect((await client.boot()).transcript.ranges.flatMap((range) => range.turns)
+      .some((turn) => turn.blocks.some((block) => block.type === 'text' && block.text === 'Original question'))).toBe(true);
     const otherClient = new WorkstreamObjectClient(importEnv, { ...AUTH, userId: otherUserId, sessionId: otherSessionId }, created.workstream.id);
     await expect(otherClient.boot()).resolves.toBeDefined();
     expect(await otherClient.importedSessionSource()).toBeNull();
@@ -332,11 +334,11 @@ describe("creating a work stream", () => {
 
   it("re-imports only source changes after Rally turns and projects the new source reply into the next run", async () => {
     const importEnv = withWorkspaceRuntimeDatabase(creationEnv(), WORKSPACE_ID);
-    const snapshot = (answer: string, continued = false) => parseSessionExport("claude_code", [
+    const snapshot = (answer: string, continued = false, followup = 'Source follow-up') => parseSessionExport("claude_code", [
       { type: "user", sessionId: "session-42", uuid: "u1", message: { role: "user", content: "Original question" } },
       { type: "assistant", sessionId: "session-42", uuid: "a1", parentUuid: "u1", message: { role: "assistant", content: [{ type: "text", text: "Original answer" }] } },
       ...(continued ? [
-        { type: "user", sessionId: "session-42", uuid: "u2", parentUuid: "a1", message: { role: "user", content: "Source follow-up" } },
+        { type: "user", sessionId: "session-42", uuid: "u2", parentUuid: "a1", message: { role: "user", content: followup } },
         { type: "assistant", sessionId: "session-42", uuid: "a2", parentUuid: "u2", message: { role: "assistant", content: [{ type: "text", text: answer }] } },
       ] : []),
     ].map((row) => JSON.stringify(row)).join("\n"));
@@ -348,6 +350,8 @@ describe("creating a work stream", () => {
     const client = new WorkstreamObjectClient(importEnv, AUTH, created.workstream.id);
     expect(await client.importedSessionSource()).toEqual({ provider: "claude_code", sessionId: "session-42", url: null });
     const agent = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, created.workstream.id));
+    expect((await client.boot()).transcript.ranges.flatMap((range) => range.turns)
+      .some((turn) => turn.blocks.some((block) => block.type === 'text' && block.text === 'Original question'))).toBe(true);
     const rally = await client.createMessage({ text: "Rally's own follow-up", clientMessageId: "rally-between-imports",
       mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] });
     await runDurableObjectAlarm(agent);
@@ -359,6 +363,13 @@ describe("creating a work stream", () => {
     const updateId = "00000000-0000-7000-8000-000000000101";
     const update = await prepareSessionImport(importEnv, AUTH, continued, updateId);
     expect(await client.updateImportedSession(updateId, update)).toEqual({ added: 2, updated: 0 });
+    const attention = await runInDurableObject(agent, (_instance, state) => ({
+      seen: state.storage.sql.exec<{ seen_attention_ordinal: number }>(
+        `SELECT seen_attention_ordinal FROM member_attention WHERE user_id = ?`, USER_ID).one().seen_attention_ordinal,
+      next: state.storage.sql.exec<{ next_attention_ordinal: number }>(
+        `SELECT next_attention_ordinal FROM workstream WHERE id = 1`).one().next_attention_ordinal,
+    }));
+    expect(attention.seen).toBe(attention.next - 1);
     expect(await client.updateImportedSession(updateId, update)).toEqual({ added: 2, updated: 0 });
     const unchangedId = "00000000-0000-7000-8000-000000000102";
     const same = await prepareSessionImport(importEnv, AUTH, continued, unchangedId);
@@ -367,7 +378,7 @@ describe("creating a work stream", () => {
     const turns = allTurns.filter((turn, index) => allTurns.findIndex((candidate) => candidate.turnId === turn.turnId) === index);
     const text = turns.map((turn) => turn.blocks.find((block) => block.type === "text"))
       .map((block) => block?.type === "text" ? block.text : "");
-    expect(text).toEqual(["Original question", "Original answer", "Rally's own follow-up",
+    expect(text.slice(-5)).toEqual(["Original answer", "Rally's own follow-up",
       "Continuing the imported conversation.", "Source follow-up", "Later Claude answer"]);
 
     const revised = snapshot("Corrected Claude answer", true);
@@ -378,18 +389,35 @@ describe("creating a work stream", () => {
     const final = allFinal.filter((turn, index) => allFinal.findIndex((candidate) => candidate.turnId === turn.turnId) === index);
     expect(final.at(-1)?.blocks[0]).toMatchObject({ type: "text", text: "Corrected Claude answer",
       structuredContent: { supersedesTurnId: turns.at(-1)?.turnId } });
+    const revisedPrompt = await prepareSessionImport(importEnv, AUTH,
+      snapshot('Corrected Claude answer', true, 'Edited source follow-up'), 'prompt-revision');
+    expect(await client.updateImportedSession('00000000-0000-7000-8000-000000000104', revisedPrompt))
+      .toEqual({ added: 0, updated: 1 });
     await client.createMessage({ text: "Use the latest source answer", clientMessageId: "rally-after-imports",
       mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] });
     await runDurableObjectAlarm(agent);
     await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes("Corrected Claude answer")), { timeout: 20_000 }).toBe(true);
     const request = provider.calls.find((call) => JSON.stringify(call.messages).includes("Corrected Claude answer"))!;
     expect(request.messages).toEqual(expect.arrayContaining([
-      expect.objectContaining({ role: "assistant", content: expect.stringContaining("Corrected Claude answer") }),
+      expect.objectContaining({ role: "user", content: expect.stringContaining("IMPORTED Claude Code ASSISTANT REPLY — REVISED VERSION") }),
+      expect.objectContaining({ role: "user", content: expect.stringContaining("IMPORTED Claude Code USER MESSAGE — REVISED VERSION") }),
     ]));
   });
 
   it("imports user files and assistant artifacts through upload storage and attaches each to its source turn", async () => {
     const importEnv = withWorkspaceRuntimeDatabase(creationEnv(), WORKSPACE_ID);
+    const unavailablePreview = (reference: string): SessionImportPreview => ({
+      title: 'Unavailable download', source: { provider: 'claude', url: null, sessionId: 'url-session' },
+      content: { messages: [{ role: 'user', text: 'See the file', sourceMessageId: 'url-message', files: [
+        { name: 'report.pdf', mimeType: 'application/pdf', kind: 'attachment',
+          source: { kind: 'unavailable', reference, reason: 'Login required' } },
+      ] }] },
+    });
+    const firstUrl = await prepareSessionImport(importEnv, AUTH, unavailablePreview('https://claude.ai/file?token=one'), 'url-one');
+    const secondUrl = await prepareSessionImport(importEnv, AUTH, unavailablePreview('https://claude.ai/file?token=two'), 'url-two');
+    expect(firstUrl.messages[0]?.structuredContent).toMatchObject({
+      sourceRevision: (secondUrl.messages[0]?.structuredContent as { sourceRevision: string }).sourceRevision,
+    });
     const preview: SessionImportPreview = { title: "Imported files", source: { provider: "claude", url: null, sessionId: "files-session" }, content: { messages: [
       { role: "user", text: "", sourceMessageId: "files-u1", files: [{ name: "requirements.txt", mimeType: "text/plain", kind: "attachment", source: { kind: "inline", encoding: "utf8", data: "Keep it simple." } }] },
       { role: "assistant", text: "The artifact", sourceMessageId: "files-a1", files: [
@@ -437,7 +465,8 @@ describe("creating a work stream", () => {
     await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes("Use the imported files")), { timeout: 20_000 }).toBe(true);
     const request = provider.calls.find((call) => JSON.stringify(call.messages).includes("Use the imported files"))!;
     expect(request.messages.some((message) => message.role === "user" && JSON.stringify(message.content).includes("requirements.txt"))).toBe(true);
-    expect(request.messages.some((message) => message.role === "assistant" && JSON.stringify(message.content).includes("report.html"))).toBe(true);
+    expect(request.messages.some((message) => message.role === "user" && JSON.stringify(message.content).includes("IMPORTED Claude ASSISTANT REPLY")
+      && JSON.stringify(message.content).includes("report.html"))).toBe(true);
     await expect.poll(() => runInDurableObject(agent, (_instance, ctx) => ctx.storage.sql.exec<{ status: string }>(`SELECT status FROM runs WHERE trigger_part_id = ?`, followup.turn.turnId).toArray()[0]?.status), { timeout: 20_000 }).toBe("completed");
   });
 
@@ -473,7 +502,7 @@ describe("creating a work stream", () => {
     await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes("Continue from the original answer")), { timeout: 20_000 }).toBe(true);
     const call = provider.calls.find((call) => JSON.stringify(call.messages).includes("Continue from the original answer"))!;
     expect(call.messages).toEqual(expect.arrayContaining([
-      expect.objectContaining({ role: "user", content: "Original question" }),
+      expect.objectContaining({ role: "user", content: expect.stringContaining("IMPORTED Claude USER MESSAGE") }),
       expect.objectContaining({ role: "assistant", content: "Original answer" }),
     ]));
     await expect.poll(() => runInDurableObject(stub, (_instance, ctx) =>

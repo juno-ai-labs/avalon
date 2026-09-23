@@ -1,6 +1,7 @@
 import { stableUuid } from "../lib/stable-uuid";
 import {
   PreparedConversationSchema,
+  ImportedMessageProvenanceSchema,
   type PreparedConversation,
   ExternalActorSchema,
   PendingTranscriptInputSchema,
@@ -43,7 +44,7 @@ import {
   type PendingBindToolBatch,
 } from "@rally/agent-harness";
 import { uuidV7 } from "../lib/uuid-v7";
-import { projectParticipantTextMessage } from "../services/workstream-participant-model-message";
+import { projectImportedSourceMessage, projectParticipantTextMessage } from "../services/workstream-participant-model-message";
 import { boundParameterChunks } from "./bound-parameters";
 import {
   SubstreamLoopStorage,
@@ -259,7 +260,7 @@ export interface PendingInputDeliveryEffectInput {
 
 type ProtocolUserTransition = Extract<BindLoopTransition, { kind: "protocol_user_appended" }>;
 type PendingSettlementTransition = Extract<BindLoopTransition, {
-  kind: "tool_result_accepted" | "protocol_user_appended" | "protocol_history_appended";
+  kind: "tool_result_accepted" | "protocol_user_appended";
 }>;
 
 export interface PendingSteerSettlementOutcome {
@@ -3309,8 +3310,7 @@ export class WorkstreamTranscriptStorage {
       changedMessages = [{ position: 0, message: next.systemProjection.message }];
     } else if (transition.kind === "assistant_accepted"
       || transition.kind === "tool_result_accepted"
-      || transition.kind === "protocol_user_appended"
-      || transition.kind === "protocol_history_appended") {
+      || transition.kind === "protocol_user_appended") {
       if (nextCount !== previousCount + 1) {
         throw new Error("bind_loop_projection_delta_invalid");
       }
@@ -3323,7 +3323,7 @@ export class WorkstreamTranscriptStorage {
     }
     for (const { position, message } of changedMessages) {
       const suffix = position === nextCount - 1
-        && ["assistant_accepted", "tool_result_accepted", "protocol_user_appended", "protocol_history_appended"].includes(transition.kind)
+        && ["assistant_accepted", "tool_result_accepted", "protocol_user_appended"].includes(transition.kind)
         ? transition.kind
         : `message:${position}`;
       const factId = `${transition.loopId}:state:${transition.stateRevision}:${suffix}`;
@@ -3351,8 +3351,7 @@ export class WorkstreamTranscriptStorage {
       messageFacts.push({ position, factId });
       if (suffix === "assistant_accepted"
         || suffix === "tool_result_accepted"
-        || suffix === "protocol_user_appended"
-        || suffix === "protocol_history_appended") {
+        || suffix === "protocol_user_appended") {
         appendedFactId = factId;
       }
     }
@@ -4129,7 +4128,13 @@ export class WorkstreamTranscriptStorage {
     let projection = previous;
     for (const { turn, text, provenance, key } of candidates) {
       if (appendedInThisPass.has(key) || alreadyProjected.has(key)) continue;
-      const message = turn.actor === "assistant" ? null : projectParticipantTextMessage({
+      const imported = ImportedMessageProvenanceSchema.safeParse(text.structuredContent);
+      const message = imported.success ? projectImportedSourceMessage({
+        provider: imported.data.source.provider,
+        role: turn.actor === 'assistant' ? 'assistant' : 'user',
+        text: text.text,
+        revised: Boolean(imported.data.supersedesTurnId),
+      }) : turn.actor === "assistant" ? null : projectParticipantTextMessage({
         author: turn.actor === "external" && turn.externalActor
           ? {
               type: "external",
@@ -4152,15 +4157,10 @@ export class WorkstreamTranscriptStorage {
         })),
         overheard: true,
       });
-      if (turn.actor !== "assistant" && !message) continue;
-      const transition: PendingSettlementTransition = turn.actor === "assistant"
-        ? { kind: "protocol_history_appended", loopId: previous.loopId,
-          generation: projection.generation, stateRevision: projection.stateRevision + 1,
-          message: { role: "assistant", content: text.structuredContent?.supersedesTurnId
-            ? `Updated source reply (use this version):\n\n${text.text}` : text.text }, provenance }
-        : { kind: "protocol_user_appended", loopId: previous.loopId,
-          generation: projection.generation, stateRevision: projection.stateRevision + 1,
-          message: modelMessageWithoutProvenance(message!), provenance, activationInputId: null };
+      if (!message) continue;
+      const transition: PendingSettlementTransition = { kind: "protocol_user_appended", loopId: previous.loopId,
+        generation: projection.generation, stateRevision: projection.stateRevision + 1,
+        message: modelMessageWithoutProvenance(message), provenance, activationInputId: null };
       const next = applyBindLoopTransition(projection, transition);
       const facts = await this.materializeProjectionFacts(transition, projection, next);
       const appended = facts.messageFacts[0];
@@ -4936,7 +4936,7 @@ export class WorkstreamTranscriptStorage {
         transition.callIndex,
       );
     }
-    if (transition.kind === "protocol_user_appended" || transition.kind === "protocol_history_appended") {
+    if (transition.kind === "protocol_user_appended") {
       return transition.provenance;
     }
     if (transition.kind === "state_replaced") return protocolOrigin();

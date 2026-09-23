@@ -77,12 +77,6 @@ export type BindLoopTransition =
       activationInputId: string | null;
     }
   | BindLoopTransitionBase & {
-      kind: "protocol_history_appended";
-      generation: number;
-      message: BindLoopMessage;
-      provenance: BindLoopMessageOrigin;
-    }
-  | BindLoopTransitionBase & {
       kind: "state_replaced";
       generation: number;
       nextGeneration: number;
@@ -274,13 +268,6 @@ export function applyBindLoopTransition(
       || transition.message.role !== "tool"
       || transition.message.tool_call_id !== transition.toolCallId) {
       throw new Error("bind_loop_tool_result_out_of_order");
-    }
-    next.nonSystemMessageTail = appendBindLoopMessage(previous, transition.message);
-  } else if (transition.kind === "protocol_history_appended") {
-    if (transition.message.role !== "assistant"
-      || !validMessageOrigin(transition.provenance)
-      || !lastAssistantStepIsSettled(previous)) {
-      throw new Error("bind_loop_protocol_history_invalid");
     }
     next.nonSystemMessageTail = appendBindLoopMessage(previous, transition.message);
   } else {

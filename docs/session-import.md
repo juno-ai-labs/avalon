@@ -34,7 +34,8 @@ directory is ready. Channel names stop at the server's 180-character limit.
 There is no transcript preview.
 Available attachments and artifact files are resolved automatically; missing file
 references remain visible in the imported conversation. The source roles stay
-intact; the byline says who imported them. The entered name is the settled
+intact in the visible transcript; the byline says who imported them. The model
+receives imported source text as labeled, overheard context. The entered name is the settled
 Channel title; provider content does not override the name the person chose.
 
 Public links are acquired through the existing Firecrawl client using uncached
@@ -85,6 +86,9 @@ creator identity is also the importer identity for this creation path; its
 authority checks that identity before reading the source checkpoint or accepting
 an update. Other Channel members can read the imported transcript and add their
 own messages without gaining access to the import control.
+Imports created before source checkpoints were introduced have no stable source
+message identities to compare. They remain readable, but have no update control;
+their source can be imported again into a new Channel.
 The Claude Code adapter
 follows the active JSONL parent chain, keeps visible user and assistant text,
 combines consecutive assistant fragments, and omits tool calls, tool results,
@@ -178,8 +182,10 @@ checkpoint of source message identities and their content revisions, separate
 from its canonical transcript cursor. Claude Code supplies a session ID and
 event UUIDs; its consecutive assistant fragments need one stable group identity
 for the visible message. A Claude account export supplies a conversation ID and,
-when present, message IDs; an adapter must derive stable identities for visible
-messages without IDs. A local file path is a way to acquire bytes, not the
+when present, message IDs; visible messages without IDs use positions within
+that identified conversation. An export with no conversation ID cannot be
+imported because two unrelated files could otherwise claim the same source.
+A local file path is a way to acquire bytes, not the
 durable identity of a conversation. The person can select the source again when
 asking for an update.
 
@@ -202,8 +208,9 @@ checkpoint, and idempotency receipt together. Repeating the same snapshot then
 adds no turns, including after an uncertain response. As with initial import,
 these are historical user/assistant messages and do not start a Rally run or
 claim that Rally authored a source reply. The Bind projection has a distinct
-`protocol_history_appended` transition, so the next Rally run reads imported
-assistant turns as source history. Re-import does not reuse the creation-only
+overheard `protocol_user_appended` transition, so the next Rally run reads both
+source roles as labeled context. Revisions identify the newer source version
+without giving provider text instruction authority. Re-import does not reuse the creation-only
 `createPrepared` operation or compare the source against the entire destination
 transcript.
 
@@ -253,6 +260,8 @@ cannot reconstruct original files automatically.
 - `test-workers/conversation-creation.test.ts`: real upload/R2 bytes, role-specific
   attachments, failed reservation cleanup, idempotent creation, explicit re-import
   after Rally turns, source revision, and provider continuation with history.
+- `test-workers/space-routes.test.ts`: rejects a mismatched source before any
+  attachment upload is created.
 - `test-workers/substream-creation-runtime.test.ts`: private-child materialization,
   publication and conflicting replay.
 - `test-workers/workspace-draft-attachment-reservation.test.ts`: existing draft holds
@@ -278,7 +287,10 @@ The update dialog matches that recorded source automatically and displays its
 title without a conversation selector. The import control and update authority
 are limited to the original importer.
 New or revised source turns append after any Rally turns, with replay receipts
-and a Bind history transition for imported assistant replies.
+and a labeled Bind context transition for imported source text. Review fixes
+also keep local cache reads resilient to disappearing files, reject sources
+without a stable conversation ID, validate update shape before file uploads,
+and preserve Claude Code image and document blocks.
 
 **Why:** A file picker missed the chats and tasks people recognize in Claude,
 while a cached title without messages led to a selection that could never import.
@@ -290,7 +302,9 @@ Other Channel members may lack the original source on their Macs, so showing
 them an unusable update control would be misleading.
 Source sessions can also continue after a Rally Channel has received its own
 messages; comparing against the Channel tail would duplicate or reject valid
-source updates. Selecting one conversation and keeping a separate source
+source updates. Existing imports without message identities cannot be safely
+backfilled into a checkpoint. Imported provider text must remain labeled context
+for the model, since Rally did not author it. Selecting one conversation and keeping a separate source
 checkpoint makes both operations explicit and repeatable.
 
 **Considered and rejected:** Automatic polling and the Claude account's
@@ -299,8 +313,8 @@ inspectable, user-selected sources; the Claude Code JSONL file picker remains a
 fallback when discovery misses a session.
 
 **Consequences:** Claude's undocumented cache remains an opportunistic source,
-so a title alone never qualifies for the picker. An existing export-backed Channel
-can update through the dialog when the same conversation is available locally;
+so a title alone never qualifies for the picker. Channels imported before the
+source checkpoint was added remain readable but cannot use the update dialog;
 the export decoder remains available to programmatic callers. The source's
 historical branch is append-only in Rally: deleting or
 reordering prior source messages requires a new Channel, and a revised message

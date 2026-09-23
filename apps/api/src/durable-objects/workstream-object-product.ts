@@ -1181,7 +1181,7 @@ export class WorkstreamObjectProductService {
       throw new ApiError(403, "session_import_update_denied", "Only the original importer can update this channel");
     }
     return this.storage.sql.exec<{ source_message_id: string; source_revision: string }>(
-      `SELECT source_message_id, source_revision FROM imported_session_messages`).toArray()
+      `SELECT source_message_id, source_revision FROM imported_session_messages ORDER BY source_position`).toArray()
       .map((row) => ({ sourceMessageId: row.source_message_id, sourceRevision: row.source_revision }));
   }
 
@@ -1295,6 +1295,17 @@ export class WorkstreamObjectProductService {
         this.storage.sql.exec(`UPDATE workstream SET next_sequence_number = next_sequence_number + ?,
           next_attention_ordinal = next_attention_ordinal + ?, last_people_activity_at = ?, updated_at = ? WHERE id = 1`,
           changes.length, changes.length, now, now);
+        this.storage.sql.exec(`INSERT INTO member_attention
+          (user_id, unread_tracking_start_ordinal, seen_attention_ordinal,
+           manual_unread_from_ordinal, latest_mention_attention_ordinal,
+           last_seen_at, version, updated_at)
+          VALUES (?, ?, ?, NULL, 0, ?, 0, ?)
+          ON CONFLICT(user_id) DO UPDATE SET
+            seen_attention_ordinal = MAX(member_attention.seen_attention_ordinal, excluded.seen_attention_ordinal),
+            manual_unread_from_ordinal = NULL, last_seen_at = excluded.last_seen_at,
+            updated_at = excluded.updated_at`,
+          auth.userId, currentRoot.unread_tracking_start_ordinal,
+          currentRoot.next_attention_ordinal + changes.length - 1, now, now);
         this.storage.sql.exec(`INSERT INTO imported_session_update_receipts
           (operation_id, request_hash, added_count, updated_count, missing_count, committed_at) VALUES (?, ?, ?, ?, 0, ?)`,
           operationId, requestHash, added, updated, now);

@@ -33,6 +33,19 @@ export function SessionImportUpdateDialog({ api, open, onClose, source, workstre
     : source.provider === 'claude_code' ? sourceClaudeSession ?? sourceCodeSession : undefined;
 
   useEffect(() => {
+    if (open) return;
+    setPendingPreview(null);
+    setRequestId(crypto.randomUUID());
+    setFailure(null);
+  }, [open]);
+
+  useEffect(() => {
+    setPendingPreview(null);
+    setRequestId(crypto.randomUUID());
+    setFailure(null);
+  }, [workstreamId, source.provider, source.sessionId, source.url]);
+
+  useEffect(() => {
     if (!open || source.provider !== 'claude_code' || !window.rally) return;
     let active = true;
     void desktopBridge().listLocalClaudeCodeSessions().then((items) => {

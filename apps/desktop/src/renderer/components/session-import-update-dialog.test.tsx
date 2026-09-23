@@ -43,4 +43,30 @@ describe('session import updates', () => {
     expect(readLocalClaudeSession).toHaveBeenCalledWith('original');
     expect(previewSessionImport).toHaveBeenCalledWith({ kind: 'export', provider: 'claude', text: '{"source":"original"}' });
   });
+
+  it('discards a failed preview when the selected Channel changes', async () => {
+    vi.stubGlobal('rally', {});
+    listLocalClaudeSessions.mockResolvedValue([
+      { id: 'first', kind: 'chat', title: 'First', updatedAt: 2, sourceSessionId: 'first' },
+      { id: 'second', kind: 'chat', title: 'Second', updatedAt: 1, sourceSessionId: 'second' },
+    ]);
+    readLocalClaudeSession.mockImplementation(async (id: string) => ({ text: id }));
+    const previewSessionImport = vi.fn().mockImplementation(async (input: { text: string }) => ({
+      source: { provider: 'claude', sessionId: input.text },
+    }));
+    const updateImportedSession = vi.fn().mockRejectedValueOnce(new Error('Update failed')).mockResolvedValue({ added: 1, updated: 0 });
+    const api = { previewSessionImport, updateImportedSession } satisfies Pick<RallyApi, 'previewSessionImport' | 'updateImportedSession'>;
+    const view = render(<SessionImportUpdateDialog api={api} open onClose={vi.fn()}
+      source={{ provider: 'claude', sessionId: 'first', url: null }} workstreamId="first-channel" />);
+    await screen.findByText('First');
+    fireEvent.click(screen.getByRole('button', { name: 'Import updates' }));
+    await screen.findByText('Update failed');
+    view.rerender(<SessionImportUpdateDialog api={api} open onClose={vi.fn()}
+      source={{ provider: 'claude', sessionId: 'second', url: null }} workstreamId="second-channel" />);
+    await screen.findByText('Second');
+    fireEvent.click(screen.getByRole('button', { name: 'Import updates' }));
+    await waitFor(() => expect(updateImportedSession).toHaveBeenCalledTimes(2));
+    expect(previewSessionImport).toHaveBeenCalledWith({ kind: 'export', provider: 'claude', text: 'second' });
+    expect(updateImportedSession.mock.calls[1]?.[0]).toBe('second-channel');
+  });
 });

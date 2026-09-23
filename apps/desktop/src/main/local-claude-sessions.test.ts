@@ -60,7 +60,11 @@ it('uses a complete selected HTTP cache snapshot when IndexedDB has only a title
   await writeFile(join(blobDir, 'list'), Buffer.concat([Buffer.from([0xff, 0x11, 0x02]),
     Buffer.from(compress(Buffer.concat([Buffer.alloc(15), serialize(metadata)])))]));
   const chat = { uuid: id, name: 'Jon Hearty research', updated_at: '2026-09-17T17:53:18Z',
-    chat_messages: [{ uuid: 'first', sender: 'human', text: 'Research this' }] };
+    chat_messages: [{ uuid: 'first', sender: 'human', text: 'Research this' },
+      { uuid: 'second', sender: 'assistant', text: 'Here is the research' }] };
+  await writeFile(join(blobDir, 'shorter-detail'), Buffer.concat([Buffer.from([0xff, 0x11, 0x02]),
+    Buffer.from(compress(Buffer.concat([Buffer.alloc(15), serialize({ product: 'chat', conversationUuid: id,
+      messageCount: 1, tree: { ...chat, chat_messages: chat.chat_messages.slice(0, 1) } })])))]));
   await writeFile(join(root, 'detail_0'), Buffer.concat([
     Buffer.from(`1/0/https://claude.ai/api/organizations/org/chat_conversations/${id}?tree=True`),
     zstdCompressSync(Buffer.from(JSON.stringify(chat))),

@@ -784,8 +784,8 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     for (const transition of settlement.transitions) {
       if (transition.loopId !== input.loopId
         || (transition.kind !== "tool_result_accepted"
-          && (transition.kind !== "protocol_user_appended" && transition.kind !== "protocol_history_appended"
-            || (transition.kind === "protocol_user_appended" && transition.activationInputId !== null)
+          && (transition.kind !== "protocol_user_appended"
+            || transition.activationInputId !== null
             || transition.provenance.originKind !== "derived"
             || !transition.provenance.sourceKind
             || !transition.provenance.sourceId
@@ -798,8 +798,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         );
       }
       const message = structuredClone(transition.message) as ProviderMessage;
-      if (message.role !== (transition.kind === "tool_result_accepted" ? "tool"
-        : transition.kind === "protocol_history_appended" ? "assistant" : "user")) {
+      if (message.role !== "user" && message.role !== "tool") {
         throw new FatalHarnessPortError(
           "run_state_persistence_failed",
           "Settled-step input delivery returned a non-user message",

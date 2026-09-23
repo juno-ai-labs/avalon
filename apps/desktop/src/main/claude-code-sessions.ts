@@ -29,7 +29,8 @@ async function titleFromTranscript(path: string): Promise<string | null> {
     } catch { continue; } // An active writer may leave a partial final line.
     if (value.type === 'custom-title' && typeof value.customTitle === 'string') customTitle = value.customTitle;
     if (value.type === 'ai-title' && typeof value.aiTitle === 'string') generatedTitle = value.aiTitle;
-    if (!firstPrompt && value.type === 'user' && value.isMeta !== true) {
+    if (!firstPrompt && value.type === 'user' && value.isMeta !== true
+      && value.isCompactSummary !== true && value.isSidechain !== true) {
       const message = value.message as { content?: unknown } | undefined;
       const content = message?.content;
       if (typeof content === 'string') firstPrompt = content;
