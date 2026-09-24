@@ -38,3 +38,29 @@ it("reads the window snapshot once while resident and reloads it after eviction"
     else await env.INFERENCE_PRICING_CACHE.put(KEY, original);
   }
 });
+
+it("retries a missing snapshot on the next run instead of retaining the fallback", async () => {
+  const stub = env.SUBSTREAM_AGENTS.getByName(conversationObjectName(
+    "global",
+    asWorkspaceId("00000000-0000-7000-8000-00000000c711"),
+    asWorkstreamId("00000000-0000-7000-8000-00000000c712"),
+    asSubstreamId("00000000-0000-7000-8000-00000000c714"),
+  ));
+  const original = await env.INFERENCE_PRICING_CACHE.get(KEY);
+  const read = () => runInDurableObject(stub, (instance: SubstreamAgent) =>
+    (instance as unknown as { contextWindowTokensByModel(): Promise<Readonly<Record<string, number>>> })
+      .contextWindowTokensByModel());
+  try {
+    await env.INFERENCE_PRICING_CACHE.delete(KEY);
+    expect(await read()).toEqual({});
+    await env.INFERENCE_PRICING_CACHE.put(KEY, JSON.stringify({
+      version: 1,
+      fetchedAtMs: Date.now(),
+      windows: { "test/model": 100 },
+    }));
+    expect(await read()).toEqual({ "test/model": 100 });
+  } finally {
+    if (original === null) await env.INFERENCE_PRICING_CACHE.delete(KEY);
+    else await env.INFERENCE_PRICING_CACHE.put(KEY, original);
+  }
+});

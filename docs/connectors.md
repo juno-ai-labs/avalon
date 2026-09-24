@@ -1351,22 +1351,13 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 Guest-triggered conversational runs also recheck exact conversation admission at
-run-authority boundaries. The connector executor repeats this check after
-credential refresh and immediately before calling the adapter. Remaining an
+run-authority boundaries. The connector executor uses the invocation
+authorization decision through credential preparation and adapter execution;
+see [Agent harness](agent-harness.md). Remaining an
 active workspace guest is insufficient after the addressed share is revoked.
 Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
-
-### 2026-09-23 — Authorize each connector tool invocation once
-
-**What changed:** An active connector keeps its frozen model-visible tool surface between turns without polling its WorkspaceDO row. For each tool call, one live row and run-authority decision precedes receipt replay or execution; the checked row is passed through credential preparation to the provider effect. Direct interrupted-effect recovery still reads authority during preparation. Sidekick creator connector tools likewise check once before preparation, overlapping their D1 membership and WorkspaceDO row reads, and no longer repeat the check after refresh.
-
-**Why:** Repeating the WorkspaceDO read per connector per model turn and then three times for a tool call put cross-object latency on the member's critical path. The post-preparation check narrowed a revocation race but added another D1 and WorkspaceDO hop to every call, including calls with no credential refresh, and could not make authority atomic with the provider effect.
-
-**Considered and rejected:** Keeping a run-wide grant cache would shorten later calls but could authorize a new invocation or receipt replay after revocation. The post-refresh check was removed with the explicit tradeoff that a revocation during an already authorized invocation can precede its external effect.
-
-**Consequences:** A revoked connector can remain in the model's tool list until a tool call, when the invocation boundary denies use. An ordinary connector tool call has one live run-authority and one live WorkspaceDO connection-row decision; receipt replay has the same. An already admitted harness or Sidekick creator call can finish after revocation, including a write, while the next call is denied.
 
 ### 2026-09-22 — Resource grants became a connector primitive
 

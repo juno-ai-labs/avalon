@@ -200,7 +200,7 @@ authorization-check, dynamic-tool-load, and activation-write counts expose
 which operations were actually attempted. `initial_activation_details` retains
 the authorization, preparation, and persistence durations for each requested
 canonical plugin ID, including nested connector-health and durable-write
-durations, so one slow item in the serial activation loop is identifiable. The
+durations, so one slow item among the concurrent activation checks is identifiable. The
 detail is an object with `plugin_0`, `plugin_1`, and later keys so the structured
 logger retains every entry; `plugin_id` inside each entry names the plugin.
 `initial_activation_auth_check_count` is numeric (the logger masks fields named

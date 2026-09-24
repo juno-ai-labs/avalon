@@ -236,7 +236,10 @@ describe("OpenRouter endpoint-average pricing cache", () => {
     });
 
     await inferencePricingWorker.scheduled(controller, {
-      INFERENCE_PRICING_CACHE: createCloudflareTestBinding<KVNamespace>({ put }),
+      INFERENCE_PRICING_CACHE: createCloudflareTestBinding<KVNamespace>({
+        put,
+        get: vi.fn(async () => ({ version: 1, fetchedAtMs: NOW, windows: { "test/model": 100 } })),
+      }),
     });
 
     expect(fetcher).toHaveBeenCalledTimes(EXPECTED_MODEL_IDS.length);

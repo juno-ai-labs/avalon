@@ -36,13 +36,15 @@ Live context size comes only from OpenRouter's returned usage for the last
 completed turn (`prompt_tokens + completion_tokens`); it is never estimated from
 serialized bytes. A compaction fires when that number exceeds
 `COMPACTION_FRACTION` (0.8) of the selected model's advertised window. The Global
-scheduled Worker fetches OpenRouter's `context_length` once a day and writes a
-complete snapshot to the shared KV. Each `SubstreamAgent` reads that snapshot
-once, retains it in object memory for its lifetime, and supplies the windows to
-Bind before the run. It does not fetch OpenRouter's catalog during inference or
-re-read KV on later runs while resident. A missing snapshot, failed KV read, or
-unknown model falls back to 200,000 tokens. The check runs at a tool-batch
-boundary and again after the final reply of a run (`compactTerminalTurn`), so
+scheduled Worker checks the snapshot on its hourly tick. When it is missing or
+at least 24 hours old, the Worker fetches OpenRouter's `context_length` and
+writes a complete snapshot to shared KV. Each `SubstreamAgent` retains a
+successful read in object memory and supplies the windows to Bind before the
+run. It does not fetch OpenRouter's catalog during inference or re-read KV on
+later runs after a successful load. A missing snapshot or failed KV read is
+retried on the next run; the current run or an unknown model falls back to
+200,000 tokens. The check runs at a tool-batch boundary and again after the
+final reply of a run (`compactTerminalTurn`), so
 a run whose *last* turn crosses the
 threshold still leaves a checkpoint behind for the next one. A tool may also
 request a compaction, which Bind flushes at the same boundary with trigger
@@ -306,13 +308,13 @@ results.
 
 ### 2026-09-23 — Move model-window discovery out of inference
 
-**What changed:** The Global scheduled Worker writes one daily OpenRouter context-window snapshot to the existing shared KV. A Channel agent reads it once into Durable Object memory and passes it to Bind; Bind no longer fetches the model catalog on an inference path.
+**What changed:** The Global scheduled Worker's hourly tick seeds a missing context-window snapshot and refreshes one that is at least 24 hours old in the existing shared KV. A Channel agent reads a successful snapshot once into Durable Object memory and passes it to Bind; Bind no longer fetches the model catalog on an inference path. Missing or failed reads retry on the next run.
 
 **Why:** A cold catalog request delayed the first model call even though model windows rarely change. Reusing public-metadata KV and object memory avoids a new authority service or repeated cross-resource reads. A missing snapshot uses the existing 200,000-token fallback; a resident object may use yesterday's window until eviction, which is acceptable for advisory compaction sizing. Provider input limits remain authoritative.
 
 **Considered and rejected:** An isolate-wide hourly cache still makes the first run after isolate eviction wait for OpenRouter. Reading KV on every run would add a cross-resource call after the Channel agent already holds the same advisory data.
 
-**Consequences:** A long-lived object keeps its first snapshot across daily refreshes. Changes to the catalog will reach it after eviction; immediate provider-limit changes can still make an initial request fail before compaction has usage to act on.
+**Consequences:** A long-lived object keeps its first successful snapshot across daily refreshes. A newly deployed empty KV is seeded by the next hourly tick; until then the fallback applies. Changes to the catalog will reach resident objects after eviction; immediate provider-limit changes can still make an initial request fail before compaction has usage to act on.
 
 ### 2026-09-15 — Keep canonical replay separate from model capacity
 
