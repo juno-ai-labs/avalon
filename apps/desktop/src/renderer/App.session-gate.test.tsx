@@ -49,7 +49,7 @@ vi.mock('./screens/onboarding', () => ({
   SignInScreen: () => <div>sign in screen</div>,
 }));
 vi.mock('./components/app-shell', () => ({ AppShell: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));
-vi.mock('./screens/new-workstream', () => ({ NewWorkstreamScreen: () => <div>main organization UI</div> }));
+vi.mock('./screens/new-workstream', () => ({ NewWorkstreamScreen: () => <div>new channel launcher</div> }));
 vi.mock('./screens/workstream', () => ({ WorkstreamScreen: () => <div>workstream</div> }));
 vi.mock('./screens/automation', () => ({ AutomationScreen: () => <div>automation</div> }));
 vi.mock('./screens/workspace-settings', () => ({
@@ -134,7 +134,8 @@ describe('SessionGate identity-first ordering', () => {
     };
     renderGate();
 
-    expect(await screen.findByText('main organization UI')).toBeVisible();
+    // With no Channels the landing waits inside the shell for General.
+    expect(await screen.findByRole('main')).toBeVisible();
     expect(sessionState.getOnboardingState).not.toHaveBeenCalled();
   });
 
@@ -227,7 +228,7 @@ describe('SessionGate identity-first ordering', () => {
   });
 
   it.each([
-    ['/workstreams/new', 'main organization UI'],
+    ['/spaces/00000000-0000-7000-8000-00000000a001/workstreams/new', 'new channel launcher'],
     ['/workstreams/00000000-0000-7000-8000-000000000031', 'workstream'],
   ])('preserves explicit route %s', async (route, destination) => {
     window.history.replaceState({}, '', `/#${route}`);

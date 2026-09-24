@@ -13,7 +13,7 @@ import { ConnectingCardSlot } from './connecting-card';
 import type { AttachmentPreview } from './attachments';
 import { IconButton, TitleSkeleton } from './primitives';
 import { MessageBlock } from './workstream-blocks';
-import { WorkstreamComposer } from './workstream-composer';
+import { type ComposerConversation, WorkstreamComposer } from './workstream-composer';
 
 /**
  * The substream a person is writing the first message of.
@@ -149,10 +149,8 @@ export function SubstreamLaunchSurface({
   // Its own draft key, so a message written for a substream that was never
   // created is not carrying into — or worse, out of — the main conversation's
   // composer. `new` is not a substream id: every real one is a UUID.
-  const attachmentDraft = useFileAttachments(
-    api,
-    workstreamDraftKey(workspaceRegion, workspaceId, parent.id, PENDING_SUBSTREAM_DRAFT_ID),
-  );
+  const draftKey = workstreamDraftKey(workspaceRegion, workspaceId, parent.id, PENDING_SUBSTREAM_DRAFT_ID);
+  const attachmentDraft = useFileAttachments(api, draftKey);
   /**
    * The conversation the composer believes it is writing into.
    *
@@ -162,9 +160,7 @@ export function SubstreamLaunchSurface({
    * participants as people already in this substream, so neither mention would
    * be confirmed and neither person would be added.
    */
-  const pendingChild: WorkstreamDetail = {
-    ...parent,
-    title: 'New breakout',
+  const pendingChild: ComposerConversation = {
     scope: 'personal',
     // Nothing is running in a substream that does not exist, and the composer
     // reads this to decide whether it is steering a run or starting one.
@@ -341,8 +337,7 @@ export function SubstreamLaunchSurface({
           submitLabel="Create breakout"
           substreamId={PENDING_SUBSTREAM_DRAFT_ID}
           uploading={attachmentDraft.uploading}
-          workspaceId={workspaceId}
-          workspaceRegion={workspaceRegion}
+          draftKey={draftKey}
           workstream={pendingChild}
         />
       </div>

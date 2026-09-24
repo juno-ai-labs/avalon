@@ -204,7 +204,6 @@ than stubbed as working.
 | Region + create workspace / invitations / activate | `WorkspacePickerView` |
 | Guided connectors / profile / people journey | Skipped after workspace pick. Profile is Settings → Account; people are Settings → Members; connectors stay on the Mac |
 | `#/` landing | Work-stream list on the Work streams tab |
-| `#/workstreams/new` | Not on iPhone. New work streams start on the Mac |
 | `#/workstreams/:id` | Work stream → substream list → feed |
 | Open, rename, pin, unread, archive, public/private | Work-stream list swipe + context menu + inspector |
 | Participants / resources inspector | Details inspector (people; add participant) |

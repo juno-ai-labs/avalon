@@ -1230,6 +1230,8 @@ export function Sidebar({
   } | null>(null);
   const [pendingChannelMoveNavigation, setPendingChannelMoveNavigation] = useState<{
     index: number;
+    /** The Space the Channel left, whose dashboard is the fallback destination. */
+    spaceId: string;
     token: number;
     workstreamId: string;
   } | null>(null);
@@ -1484,7 +1486,7 @@ export function Sidebar({
   // `className`, and a function arrives at the DOM as its own source text with
   // the link unstyled. It is the same comparison the `returnTo` state below
   // makes, so the two cannot disagree about which route this is.
-  const onNewStreamRoute = location.pathname === '/workstreams/new';
+  const onNewStreamRoute = /^\/spaces\/[^/]+\/workstreams\/new$/u.test(location.pathname);
   const standaloneSidekicks = useMemo(() => (automations ?? []).filter((sidekick) => sidekick.scope !== 'workstream' && sidekick.status === 'active'), [automations]);
   const sidekickShortcutsLoaded = automations !== undefined;
   const resumablePersonalDraft = useMemo(() => (automations ?? [])
@@ -1555,7 +1557,7 @@ export function Sidebar({
     if (!next && (hasMoreWorkstreams || loadingMoreWorkstreams)) return;
     const destination = next
       ? `/workstreams/${encodeURIComponent(next.id)}`
-      : '/workstreams/new';
+      : `/spaces/${encodeURIComponent(pendingChannelMoveNavigation.spaceId)}`;
     owned.destination = destination;
     setPendingChannelMoveNavigation(null);
     void navigate(destination, { replace: true });
@@ -2127,7 +2129,7 @@ export function Sidebar({
     // Decide against the rows as they are drawn before the optimistic cache
     // patch removes the dragged Channel. Moving the open Channel continues
     // downward through the selected Space, falls back upward at the bottom,
-    // and opens the New channel home when that placement was the last one.
+    // and opens the Space's dashboard when that placement was the last one.
     let navigationToken: number | null = null;
     if (sourceSpaceId === selectedSpaceId && routeWorkstreamId === workstreamId) {
       const index = displayedWorkstreams.findIndex((workstream) => workstream.id === workstreamId);
@@ -2136,7 +2138,7 @@ export function Sidebar({
         : displayedWorkstreams[index + 1] ?? displayedWorkstreams[index - 1];
       const destination = next
         ? `/workstreams/${encodeURIComponent(next.id)}`
-        : (selectedSpace?.channelCount ?? 0) <= 1 ? '/workstreams/new' : null;
+        : (selectedSpace?.channelCount ?? 0) <= 1 ? `/spaces/${encodeURIComponent(sourceSpaceId)}` : null;
       navigationToken = channelMoveNavigationGeneration.current + 1;
       channelMoveNavigationGeneration.current = navigationToken;
       channelMoveNavigation.current = {
@@ -2145,7 +2147,7 @@ export function Sidebar({
         token: navigationToken,
       };
       if (destination === null) {
-        setPendingChannelMoveNavigation({ index, token: navigationToken, workstreamId });
+        setPendingChannelMoveNavigation({ index, spaceId: sourceSpaceId, token: navigationToken, workstreamId });
       } else {
         void navigate(destination, { replace: true });
       }

@@ -8,7 +8,7 @@ import { layoutKey } from '../lib/desktop-layout';
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({
   session: { user: { id: 'person' }, workspace: { id: 'org', accessClass: 'member' } },
 }) }));
-const spaces = vi.hoisted(() => ({ data: undefined as { items: { id: string }[] } | undefined }));
+const spaces = vi.hoisted(() => ({ data: undefined as { items: { id: string; systemRole?: string | null }[] } | undefined }));
 vi.mock('../lib/use-space-directories', () => ({ useSpaceDirectories: () => ({ active: spaces }) }));
 
 const socket = vi.hoisted(() => ({ state: 'connecting', sidebarConnect: null as { spacesLive: boolean } | null }));
@@ -142,10 +142,21 @@ describe('default channel landing', () => {
     expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/visited');
   });
 
-  it('opens the composer only for a loaded empty directory', async () => {
+  it('opens General once the Spaces arrive, for a loaded empty directory', async () => {
     directory.data = [];
+    const view = render(<Router />);
+    expect(screen.getByRole('status')).toHaveTextContent('Opening spaces');
+    spaces.data = { items: [{ id: 'team', systemRole: null }, { id: 'general', systemRole: 'general' }] };
+    view.rerender(<Router />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent('/spaces/general');
+  });
+
+  it('says there is nothing to open when an empty directory has no Spaces to fall back to', () => {
+    directory.data = [];
+    socket.sidebarConnect = { spacesLive: false };
     render(<Router />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/new');
+    expect(screen.getByText('No channels yet')).toBeVisible();
+    expect(screen.queryByTestId('destination')).toBeNull();
   });
 
   it('passes over the rows a leaving screen names, whatever their rank', async () => {
@@ -157,10 +168,11 @@ describe('default channel landing', () => {
     expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/next');
   });
 
-  it('opens the composer when every listed row is one to pass over', async () => {
+  it('opens General when every listed row is one to pass over', async () => {
     directory.data = [stream('only', null, '2026-09-05')];
+    spaces.data = { items: [{ id: 'general', systemRole: 'general' }] };
     render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: ['only'] } }} />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/new');
+    expect(await screen.findByTestId('destination')).toHaveTextContent('/spaces/general');
   });
 
   it('asks for the next page when every loaded row is passed over and more exist', async () => {
