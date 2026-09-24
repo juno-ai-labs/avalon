@@ -2,7 +2,7 @@ import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-q
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useDebugEnabled } from './use-debug-enabled';
 import { useWorkspaceSocket } from './workspace-socket';
-import { setCachedWorkstreams, WORKSTREAM_PAGE_SIZE, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { keepPendingWorkstreams, setCachedWorkstreams, WORKSTREAM_PAGE_SIZE, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { WORKSTREAM_STATE_WATERLINES_KEY } from './workstream-state-store';
 import type { WorkstreamAppearance } from '@rally/contracts';
 import type { WorkstreamSummary } from './types';
@@ -130,10 +130,8 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
       nextCursor.current = cursor ?? null;
       setHasMore(cursor != null);
       const merged = mergeWorkstreams([], items);
-      const resident = new Map(
-        (queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [])
-          .map((workstream) => [workstream.id, workstream]),
-      );
+      const current = queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY);
+      const resident = new Map((current ?? []).map((workstream) => [workstream.id, workstream]));
       const visibility = queryClient.getQueryData<Record<string, { visible: boolean }>>(
         WORKSTREAM_STATE_WATERLINES_KEY,
       ) ?? {};
@@ -141,10 +139,15 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
       // this local accumulator while later pages are awaited. Reconcile once
       // more at publication so an archive marker or tombstone that landed in
       // that interval cannot be overwritten by the stale accumulated object.
-      return merged.flatMap((workstream) => {
+      const fetched = merged.flatMap((workstream) => {
         if (visibility[workstream.id]?.visible === false) return [];
-        return [resident.get(workstream.id) ?? workstream];
+        const held = resident.get(workstream.id);
+        // A pending row is this window's stand-in for the row just fetched.
+        return [held && !held.pending ? held : workstream];
       });
+      // Written by the query rather than through `setCachedWorkstreams`, so the
+      // rule that keeps a create in flight on screen is applied here too.
+      return keepPendingWorkstreams(current, fetched)!;
     },
     // Not fetched on mount: the first page arrives unasked with the connect
     // payload, and asking for it as well is the round trip that payload exists

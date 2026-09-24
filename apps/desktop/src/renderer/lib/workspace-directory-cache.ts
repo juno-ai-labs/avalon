@@ -214,7 +214,9 @@ export function mirrorWorkspaceDirectory(
         // The flat list grows with every page the sidebar loads; the row keeps
         // what a fresh subscribe answer would carry, so the next launch paints
         // page one and the live answer replaces it without a visible collapse.
-        workstreams: workstreams.slice(0, WORKSTREAM_PAGE_SIZE),
+        // A pending row is a create in flight in this window only; restored on
+        // the next launch it would be a Channel nothing ever created.
+        workstreams: workstreams.filter((row) => !row.pending).slice(0, WORKSTREAM_PAGE_SIZE),
         automations: queryClient.getQueryData<AutomationSummary[]>(SIDEBAR_LIST_QUERY_KEYS.automations) ?? [],
         spaces: queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY) ?? null,
         inactiveSpaces: queryClient.getQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY) ?? null,

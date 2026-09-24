@@ -3971,6 +3971,21 @@ describe('the sidebar without a recency list', () => {
     expect(screen.getByText('No channels yet')).toBeVisible();
   });
 
+  it('given a channel being created in the selected Space, then it shows dimmed and inert in place of the empty line', () => {
+    const hiring = space();
+    const launching = { ...placedIn(workstream('ws-launch', 'Launch plan', 'running'), hiring.id), pending: true as const };
+    const elsewhere = { ...placedIn(workstream('ws-else', 'Elsewhere', 'running'), '00000000-0000-7000-8000-0000000000ff'), pending: true as const };
+    renderSidebar({ spaces: [hiring], workstreams: [launching, elsewhere] });
+
+    const row = screen.getByLabelText('Creating Launch plan');
+    expect(row).toHaveClass('workstream-row', 'is-pending');
+    expect(row).toHaveAttribute('aria-disabled', 'true');
+    // Nothing to open yet: the Channel has no screen until its create answers.
+    expect(screen.queryByRole('link', { name: /Launch plan/u })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Creating Elsewhere')).not.toBeInTheDocument();
+    expect(screen.queryByText('No channels yet')).not.toBeInTheDocument();
+  });
+
   it('given a member with a channel, when the sidebar is drawn, then it does not claim to be empty', () => {
     const hiring = space();
     renderSidebar({ spaces: [hiring], workstreams: [placedIn(today, hiring.id)] });

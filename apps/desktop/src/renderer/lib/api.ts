@@ -1551,6 +1551,11 @@ export class RallyApi {
   }
 
   async createWorkstream(input: {
+    /**
+     * The id the caller already listed this Channel under. The server creates
+     * it under the same id, or refuses with `workstream_id_unavailable`.
+     */
+    workstreamId?: string;
     title?: string;
     openingMessage: string;
     participantIds: string[];
@@ -1585,6 +1590,7 @@ export class RallyApi {
       method: 'POST',
       headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
       body: {
+        ...(input.workstreamId ? { workstreamId: input.workstreamId } : {}),
         ...(input.title ? { title: input.title } : {}),
         ...(input.spaceIds && input.spaceIds.length > 0 ? { spaceIds: input.spaceIds } : {}),
         openingMessage: input.openingMessage,

@@ -12,7 +12,10 @@ export function backgroundRealtimeWorkstreamIds(
   activeWorkstreamId: string | null,
   workstreams: WorkstreamSummary[] | undefined,
 ): string[] {
-  const candidates = (workstreams ?? []).filter((workstream) => workstream.id !== activeWorkstreamId);
+  // A pending row is a create still in flight: there is no room to connect to.
+  const candidates = (workstreams ?? []).filter((workstream) => (
+    workstream.id !== activeWorkstreamId && !workstream.pending
+  ));
   const recentUnpinned = new Set(candidates
     .filter((workstream) => (workstream.spacePins?.length ?? 0) === 0)
     .sort((left, right) => {

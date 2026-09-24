@@ -46,6 +46,27 @@ function version(commonWaterline: number, viewerWaterline: number, generation = 
 }
 
 describe('applyVersionedWorkstreamState', () => {
+  // The directory lists a new Channel through this path, merged over the row
+  // the create listed early; once the server describes it, it is not pending.
+  it('makes a row listed ahead of its create the server\'s own once its common half applies', () => {
+    const queryClient = new QueryClient();
+    setCachedWorkstreams(queryClient, [summary({ pending: true, title: '' })]);
+    const seed = summary({ title: 'Launch plan' });
+
+    applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(1, 1),
+      common: seed,
+      viewer: seed,
+      seed,
+      visible: true,
+    });
+
+    const [row] = queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [];
+    expect(row).toMatchObject({ title: 'Launch plan' });
+    expect(row?.pending).toBeUndefined();
+  });
+
   it('merges independently ordered common and viewer rows from either socket', () => {
     const queryClient = new QueryClient();
     const seed = summary();

@@ -402,7 +402,9 @@ export function WorkspaceSocketProvider({
       const page = applyDirectoryPage(queryClient, sidebar.workstreams);
       const returned = new Set(page.items.map((workstream) => workstream.id));
       const unaccountedFor = (queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [])
-        .some((workstream) => !returned.has(workstream.id));
+        // A pending row cannot be in any answer yet, so it is not a question
+        // for the reconciling refetch; `setCachedWorkstreams` keeps it.
+        .some((workstream) => !workstream.pending && !returned.has(workstream.id));
       const wholeDirectory = page.nextCursor === null;
       if (wholeDirectory) setCachedWorkstreams(queryClient, () => page.items);
       else mergeCachedWorkstreamPage(queryClient, page.items);

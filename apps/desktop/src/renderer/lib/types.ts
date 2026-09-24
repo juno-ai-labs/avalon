@@ -200,6 +200,12 @@ export interface WorkstreamSummary {
   associativeSubstreamId?: string;
   /** Breakouts under this Channel that currently need this viewer. */
   breakoutAttentionCount?: number;
+  /**
+   * Client only, never sent by the server: this window has asked for this
+   * Channel under its final id and the create has not answered yet. The row
+   * is drawn and cannot be acted on. See `addPendingWorkstream`.
+   */
+  pending?: true;
 }
 
 /**
