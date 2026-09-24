@@ -5643,19 +5643,57 @@ describe("agent harness", () => {
     }) as typeof fetch;
     const plugin = credentialPlugin("connection:restored", "restored", "Restored plugin policy");
     const onActivate = vi.fn(async () => undefined);
+    const reauthorizePlugin = vi.fn(async () => "authorized" as const);
     plugin.onActivate = onActivate;
 
     const outcome = await runHarness({
       ...runInput(fetcher),
       plugins: [plugin],
       activationHints: [plugin.canonicalId],
-      reauthorizePlugin: () => "authorized",
+      preauthorizedActivationHints: [plugin.canonicalId],
+      reauthorizePlugin,
     });
 
     expect(outcome).toMatchObject({ status: "completed", content: "ready" });
     expect(onActivate).not.toHaveBeenCalled();
+    expect(reauthorizePlugin).not.toHaveBeenCalledWith(plugin.canonicalId, "activation");
+    expect(reauthorizePlugin).toHaveBeenCalledWith(plugin.canonicalId, "continuation");
     expect(requestBodies[0]!.tools?.map((tool) => tool.function.name)).toContain("restored_search");
     expect(requestBodies[0]!.messages[0]!.content).toContain("Restored plugin policy");
+  });
+
+  it("checks unvalidated restored plugins together and applies their verdicts in hint order", async () => {
+    const first = credentialPlugin("connection:first", "first", "First plugin policy");
+    const second = credentialPlugin("connection:second", "second", "Second plugin policy");
+    const started: string[] = [];
+    let releaseChecks!: () => void;
+    const checksGate = new Promise<void>((resolve) => { releaseChecks = resolve; });
+    let requestTools: string[] = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { tools?: Array<{ function: { name: string } }> };
+      requestTools = body.tools?.map((tool) => tool.function.name) ?? [];
+      return streamResponse([{ choices: [{ delta: { content: "ready" }, finish_reason: "stop" }] }]);
+    }) as typeof fetch;
+    const run = runHarness({
+      ...runInput(fetcher),
+      plugins: [first, second],
+      activationHints: [first.canonicalId, second.canonicalId],
+      reauthorizePlugin: async (pluginId, occasion) => {
+        if (occasion === "continuation") return "authorized";
+        started.push(pluginId);
+        await checksGate;
+        return pluginId === first.canonicalId ? "authorized" : "denied";
+      },
+    });
+
+    try {
+      await vi.waitFor(() => expect(started).toEqual([first.canonicalId, second.canonicalId]));
+    } finally {
+      releaseChecks();
+    }
+    expect(await run).toMatchObject({ status: "completed", content: "ready" });
+    expect(requestTools).toContain("first_search");
+    expect(requestTools).not.toContain("second_search");
   });
 
   it("leaves a plugin inactive and hides provider details when activation fails", async () => {

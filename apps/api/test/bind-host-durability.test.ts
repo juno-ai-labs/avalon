@@ -909,6 +909,9 @@ describe("Bind host durability boundaries", () => {
     const order: string[] = [];
     const persisted = new Set<string>();
     const prepared = new Set<string>();
+    let releaseChecks!: () => void;
+    const checksGate = new Promise<void>((resolve) => { releaseChecks = resolve; });
+    let checksStarted = 0;
     let signalPersistStarted!: () => void;
     let releasePersistence!: () => void;
     const persistStarted = new Promise<void>((resolve) => { signalPersistStarted = resolve; });
@@ -918,6 +921,8 @@ describe("Bind host durability boundaries", () => {
       ["connection:preload", "connection:revoked", "connection:unavailable", "connection:preload"],
       async (pluginId) => {
         order.push(`reauthorize:${pluginId}`);
+        checksStarted += 1;
+        await checksGate;
         return pluginId === "connection:revoked" ? "denied" : "authorized";
       },
       async (pluginId) => {
@@ -936,6 +941,12 @@ describe("Bind host durability boundaries", () => {
       },
     );
 
+    try {
+      await vi.waitFor(() => expect(checksStarted).toBe(3));
+      expect(persisted.size).toBe(0);
+    } finally {
+      releaseChecks();
+    }
     await persistStarted;
     let finished = false;
     void preparing.then(() => { finished = true; });
@@ -949,11 +960,11 @@ describe("Bind host durability boundaries", () => {
     expect(activationHints.every((pluginId) => persisted.has(pluginId))).toBe(true);
     expect(order).toEqual([
       "reauthorize:connection:preload",
+      "reauthorize:connection:revoked",
+      "reauthorize:connection:unavailable",
       "prepare:connection:preload",
       "persist:start:connection:preload",
       "persist:finish:connection:preload",
-      "reauthorize:connection:revoked",
-      "reauthorize:connection:unavailable",
       "prepare:connection:unavailable",
     ]);
   });
