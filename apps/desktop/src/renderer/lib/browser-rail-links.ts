@@ -4,8 +4,9 @@ import { useUiStore } from './ui-store';
 
 /**
  * Where a clicked web link goes. On the desktop, while a Channel is on screen,
- * an http or https link opens as a tab in the right-rail browser; anywhere else,
- * and for every other scheme, it goes to the system browser as before.
+ * an http or https link opens as a tab in the right-rail browser. Anything else
+ * takes the `openExternal` path it took before, and main's allowlist there,
+ * which admits only web URLs, still decides whether it opens.
  *
  * A Channel's conversation surface registers itself as the host while mounted
  * (`useBrowserRailLinks`); a Sidekick's, which shares the component, does not.
@@ -30,7 +31,7 @@ function webUrl(raw: string): string | null {
   }
 }
 
-/** Opens `url` in the browser rail when one is on screen, else externally. */
+/** Opens `url` in the browser rail when one is on screen, else through `openExternal`. */
 export function openLink(url: string): Promise<void> {
   const web = webUrl(url);
   if (web && host) {
