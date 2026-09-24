@@ -408,6 +408,26 @@ describe('TelemetryReporter', () => {
     });
   });
 
+  it('spools a workspace handshake phase under analytics opt-out', async () => {
+    const { reporter, spool } = await harness({
+      enabled: false,
+      auth: {
+        apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', workspace: true, route: 'global',
+      },
+    });
+    const attemptId = '018f22f2-4c22-7abc-8def-0123456789ab';
+    await reporter.workspaceSocketHandshake({ attemptId, phase: 'subscribe_sent' });
+    const rows = await spool.ready(new Date('2026-08-12T20:00:01.000Z'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.event).toMatchObject({
+      name: 'workspace_socket_handshake',
+      source: 'desktop-renderer',
+      category: 'essential',
+      identityScope: 'workspace-user',
+      properties: { attemptId, phase: 'subscribe_sent' },
+    });
+  });
+
   it('spools correlated renderer phase timings only while diagnostics are enabled', async () => {
     const auth = {
       apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', workspace: true, route: 'global' as const,

@@ -101,6 +101,19 @@ conversation commands sent directly by the composer. WorkspaceDO's explicit
 foreground signal is the sole source for current-client viewer presence; socket
 warmth is not attention.
 
+The singleton socket assigns a UUIDv7 to each connection attempt and reports
+content-free opening phases through the desktop reliability telemetry path.
+Its `subscribe` frame optionally carries that UUID. WorkspaceDO logs acceptance
+with a server connection ID, then an inbound frame before awaiting object
+initialization, subscription receipt, authorization, sidebar
+assembly, feature-flag resolution, and sync send with both IDs. This identifies
+the last completed boundary when an organization shell remains on `Opening
+channels`. The `accepted` log has only the connection ID because the room has
+not received the subscription yet; later logs correlate the two IDs. A
+`frame_received` without `subscribe_received` narrows the stall to initialization
+or frame validation. These
+diagnostics do not change admission, timeout, or retry behavior.
+
 An automation's conversation rides the same broker and the same route kind as
 a work stream's feed, addressed by the automation id as the parent, but not the
 same policy: it is opened by the automation's page, closed when that page
@@ -512,6 +525,17 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-09-23 — Name the first workspace sync boundary
+
+Production showed accepted organization socket upgrades with no completed
+WorkspaceDO message callback while clients remained on `Opening channels`.
+There was no evidence distinguishing a missing client `subscribe` from a room
+callback stalled during initial sync. Add one opaque attempt ID and phase logs
+on both sides of that boundary. The ID is optional on the wire so older
+desktop releases remain valid, and the phase logs exclude ticket and sidebar
+content. A future recovery change should use the observed failing phase rather
+than infer a server fault from an accepted upgrade alone.
 
 ### 2026-09-17 — Foreground recovery reconciles unresolved commands
 
