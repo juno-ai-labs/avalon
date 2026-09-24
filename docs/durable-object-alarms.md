@@ -51,7 +51,10 @@ takes the earliest of both:
   object's own tables. Use these when due times already live in tables with
   their own writers and no separate identity is needed: each outbox's
   `MIN(not_before)`, the oldest activity event plus its retention, an in-memory
-  keep-alive lease. WorkspaceDO's Space cutover is one of these: the
+  keep-alive lease. WorkspaceDO's socket first-frame watch is one too: the
+  earliest instant a socket this instance accepted should have spoken by
+  ([`realtime-sockets.md`](realtime-sockets.md) owns it). WorkspaceDO's Space
+  cutover is another: the
   `space_bootstrap` row's `not_before`, which a fresh migration leaves at the
   epoch on purpose — an Organization whose hierarchy is pending has work due
   immediately, and that is how the fleet migration starts without anybody
