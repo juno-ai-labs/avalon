@@ -962,11 +962,19 @@ deliver after the persistent loop next becomes idle; promotion wakes that same
 loop rather than creating another one. If failure or stop prevents a steer boundary, the input
 falls forward to the next idle activation and is never lost. Multiple inputs
 remain distinct; no later steer overwrites an earlier one.
+
+A human message the addressing classifier says is for the people in the room
+is written straight to the transcript, **unless anything sent before it is still
+queued or preparing**. Then it queues behind as `starts_run = 0`: it never starts
+a run, and it lands directly under the input it waited on, at that input's
+activation or safe step, or at the next idle drain if what was ahead fails. A
+safe step promotes only the steers ahead of the first such message, so a later
+steer never lands above it. The run that answers the input reads it as said to
+the room.
 While the loop is executing, Electron always admits a newly composed message
 as `queue`. Slack and other external producers still send `steer` when they
-mean a safe-step interruption. The pending set is painted as a list attached
-to the top of the composer — slightly inset, overlapping the input — with the
-author's avatar and a hover drag handle. Reorder is a REST `PUT` of the full
+mean a safe-step interruption. The pending set renders in the feed for every
+viewer, each input where it was sent, marked **Unseen**. Reorder is a REST `PUT` of the full
 visible `inputIds` list; the object permutes existing `input_sequence` values
 and fans `loop_input_upserted` to every connected viewer. Prepared content
 stays immutable. Reconnect never infers delivery mode or order from local
@@ -1145,7 +1153,17 @@ substream id on the envelope, which is what tells WorkspaceDO to store it
 beside the Channel directory rather than in it. A background agent is excluded,
 read from the flag on the child's own stored projection: it is a worker this
 object starts rather than a conversation anybody opens, and forwarding one
-would cost a Queue message and a workspace row per step it takes. A Space
+would cost a Queue message and a workspace row per step it takes. The flag is
+only as good as the first projection that carries it, so `initializeDelegatedAgent`
+writes the child's `background_agent` row *before* provisioning it; provision
+publishes the first projection. One exception to the exclusion: when the Channel
+had already forwarded an agent as a breakout (a `substream:<id>:common`
+projection key exists), its common projection still leaves, and WorkspaceDO
+reads `backgroundAgent: true` as "list nothing": it keeps the row as an archived
+tombstone, which every reader skips and which keeps the version fence, and
+deletes its viewer rows. Only a child projection the Channel accepted is
+forwarded; a stale one would otherwise leave under a newer parent version. WorkstreamDO migration 20 sends that retraction once for every
+such agent already stored. A Space
 forwards none of this: its hidden main conversation is its only one.
 WorkstreamDO migration 19 replays every already-stored non-background breakout
 projection through those same per-child keys. Forwarding originally covered
@@ -1691,7 +1709,7 @@ onto `runs.state` forward only.
 | `workstream`, `substream_agent_identity`, `substreams` | Local root/authority, immutable external child identity, and LLM-array context metadata. The root's `workstream_key` is the parent id and `parent_kind` (v39, default `workstream`) says which kind; `origin_type`, `automation_subscription_id`, `automation_run_id`, and `planned_for` are dead columns, never written or projected, kept because the runtime-compat triggers in `workstream-runtime-compat-schema.ts` name them inside released migration hashes. Existing main data uses local context `0`. |
 | `participants`, `member_attention` | Participation and personal read/mention waterlines; active workspace membership remains D1 authority. |
 | `participant_transcript_turns`, `participant_transcript_blocks`, `participant_transcript_attachments`, `participant_transcript_mentions`, `transcript_facts`, `transcript_payloads`, `content_refs` | One provider-neutral semantic order whose canonical turns reference content-addressed payloads plus exact attachment, mention, and large-content joins. Accepted human and assistant content, identity, and order never change. One stable tool turn may advance only its explicit lifecycle from started to terminal; a different turn under the same client id remains an ignored replay. Terminal residual-receipt repair asynchronously prepares the replacement payload, then commits its fact and tool metadata synchronously so alarm/reaper settlement cannot leave a started card behind. Tool UI rows project only as complete assistant-call/tool-result pairs; pending messages have no canonical order and enter Bind only through the persistent loop's delivery transaction. |
-| `substream_loops`, `pending_loop_inputs`, `delivered_loop_inputs`, `assistant_turn_reservations`, `bind_loop_heads`, `bind_loop_state_messages`, `bind_activation_inputs`, `bind_provider_boundaries` | One persistent loop lifecycle and execution fence, server-authoritative prepared input awaiting atomic promotion, minimal delivery replay identity after promotion, exact canonical slots reserved before assistant generation, the current Bind projection, immutable activation receipts, and provider-boundary hashes. `bind_loop_heads` is the only current Bind metadata authority; ordered message rows reference it directly. Pending inputs have neither transcript nor attention order until delivery. |
+| `substream_loops`, `pending_loop_inputs`, `delivered_loop_inputs`, `assistant_turn_reservations`, `bind_loop_heads`, `bind_loop_state_messages`, `bind_activation_inputs`, `bind_provider_boundaries` | One persistent loop lifecycle and execution fence, server-authoritative prepared input awaiting atomic promotion, minimal delivery replay identity after promotion, exact canonical slots reserved before assistant generation, the current Bind projection, immutable activation receipts, and provider-boundary hashes. `bind_loop_heads` is the only current Bind metadata authority; ordered message rows reference it directly. Pending inputs have neither transcript nor attention order until delivery; `starts_run = 0` marks one that lands in order but starts no run. |
 | `runs`, `run_scopes`, `run_memory_contexts`, `run_plugin_activations`, `run_lifecycle_events`, `inference_attempts` | Subordinate execution receipts, frozen authority/context, and provider attempts. A run records restart context and loop provenance but is never the loop identity. |
 | `tool_effects`, `tool_effect_checkpoints`, `attachment_tool_receipts`, `plugin_activation_hints`, `elicitation_requests` | Planned/executed tools, replay fences, resumable activation, and human-input pauses. Each elicitation retains the stable Bind tool slot that its eventual answer must close. |
 | `active_output_turns`, `active_output_chunks`, `active_agent_compaction`, `realtime_state` | Reconnect-safe partial output keyed by an explicit transient `stream_id`, active compaction phase, and the room sequence. Canonical output identity remains the turn's `turn_id`; `active_agent_compaction` is a singleton operational checkpoint and immutable summary history remains below. |
@@ -1829,6 +1847,76 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-09-24 — A message for the room waits behind input queued before it
+
+**What changed:** Schema v68 adds `pending_loop_inputs.starts_run` (default
+`1`) with its own immutability trigger. A human message classified as not
+addressing Rally is admitted as a pending input with `starts_run = 0` when any
+input or preparing reservation sits ahead of it, unless the room is a stopped
+background agent; otherwise it is written straight to the transcript as before.
+Activation, safe-step settlement and the idle drain land the leading
+`starts_run = 0` inputs once nothing is ahead of them, and the first two append
+them to Bind as overheard turns after the input just delivered. A safe step
+promotes only the steers ahead of the first `starts_run = 0` input. Every queued
+message's pill in the feed now reads **Unseen**.
+
+**Why:** In a production breakout one member asked Rally for something while a
+run was going, so it queued; another member replied "Agreed" to it seconds
+later without addressing Rally. The reply went straight to the transcript and
+the request only landed when the run ended 90 seconds later, so the feed showed
+the agreement two rows above what it agreed with, permanently. The old pills
+described delivery mechanics and fit neither kind of queued message; the member
+asked for one word.
+
+**Considered and rejected:** Giving a queued input its transcript sequence at
+admission and delivering it to the model later. The feed would then show the
+request above a reply that never saw it, and transcript order would stop
+matching what the model read, which the gap-fill and the reorder control both
+assume. Leaving the room message out of the run it follows was rejected too:
+it was sent before that run started, and an addition like "include the Series B
+ones too" has to reach it.
+
+**Consequences:** A message for the room can wait, shown to everyone as
+**Unseen**, until the input ahead of it lands, which during a run is up to the
+run's length. A steer sent after it waits one more safe step. The
+`hasInputAhead` check runs before the admission transaction; if the input ahead
+lands in that window the message still queues and lands at the next safe step
+or drain. A queue that stalls for another reason (a withheld tool batch
+awaiting repair) now holds room messages behind it too. A future delivery path
+that removes a pending input without promoting it must leave the loop able to
+find the `starts_run = 0` inputs it exposes, as `nextLoopWorkAt` does today.
+
+### 2026-09-24 — Background agents stop counting as breakouts
+
+**What changed:** A delegated agent writes its `background_agent` row before it
+provisions, so its first directory projection carries `backgroundAgent: true`.
+A Channel still forwards the common projection of an agent it had already
+forwarded as a breakout, and WorkspaceDO archives that row as a tombstone and
+deletes its viewer rows when the flag arrives. A Channel forwards a breakout's
+projection only when it accepted it, not when its version fence rejected it. WorkstreamDO migration 20 replays that retraction once for every
+stored agent with a forwarded breakout key.
+
+**Why:** Provision published the first projection before the agent was marked.
+The Channel forwarded it as a breakout, then held back every later, marked
+projection, so the Organization kept an `idle`, `unseen` row for each agent.
+Those rows counted toward the Channel's badge (5 on a Channel with one visible
+breakout) while the breakout rail, which lists only private-child members, drew
+none of them, so nobody could open or clear them.
+
+**Considered and rejected:** Filtering the badge query by a background-agent
+column in `workspace_breakout_directory`, which needs a WorkspaceDO schema
+migration and keeps rows no surface should hold. Retracting with a new effect
+kind, which widens the parent-effect contract for a one-time cleanup.
+
+**Considered and rejected, in review:** Deleting the row. It dropped the version
+fence, so an unmarked projection the Queue delivered late would recreate it.
+
+**Consequences:** The tombstone stays; any reader of
+`workspace_breakout_directory` must keep filtering `archived_at IS NULL`. A
+leaked agent that projects again sends one Queue message per step; no new agent
+can leak. Rejecting stale forwards also stops a late breakout projection from
+overwriting a newer Organization row, which was possible before this change.
 
 ### 2026-09-23 — Remove repeated regional reads from ordinary conversation operations
 

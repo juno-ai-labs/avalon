@@ -531,6 +531,15 @@ describe('MessageBlock human identity', () => {
     expect(inFlight.querySelector('.attachment-file-card')).toBeInTheDocument();
   });
 
+  it('marks every queued message Unseen, however it will be delivered', () => {
+    for (const deliveryState of ['steer_pending', 'queue_pending'] as const) {
+      const { unmount } = render(<MessageBlock {...actions} currentUserId="user-adam"
+        message={{ ...baseMessage, deliveryState }} />);
+      expect(screen.getByText('Unseen')).toHaveClass('message-delivery-pill');
+      unmount();
+    }
+  });
+
   it('names the signed-in person over their own prompt, like every other turn', () => {
     render(<MessageBlock {...actions} currentUserId="user-adam" message={baseMessage} />);
 

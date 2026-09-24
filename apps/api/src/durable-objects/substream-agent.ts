@@ -2210,13 +2210,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }): Promise<DurableObjectRpcResult> {
     const boot = await this.bootstrapRuntime(input.bootstrap);
     if (boot.status !== 200) return boot;
-    const provision = await this.executeIdentityOperation({
+    // Marked before provision, because provision publishes this conversation's
+    // first directory projection and the parent classifies it by the
+    // `backgroundAgent` flag that projection carries. Marked after, the first
+    // projection said "breakout", the Channel forwarded it, and the
+    // Organization kept an unseen breakout row nobody could open or clear.
+    await this.initializeBackgroundAgent({ executionPrincipal: input.executionPrincipal });
+    return this.executeIdentityOperation({
       workspaceId: input.bootstrap.workspaceId, workstreamId: input.bootstrap.parentId,
       substreamId: input.bootstrap.substreamId ?? "0", operation: "provision", args: [input.provision],
     });
-    if (provision.status !== 200) return provision;
-    await this.initializeBackgroundAgent({ executionPrincipal: input.executionPrincipal });
-    return provision;
   }
 
   async initializeBackgroundAgent(input: { executionPrincipal: WorkstreamWorkflowInput["executionPrincipal"] }) {
@@ -3894,6 +3897,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       "SELECT stopped_at FROM background_agent WHERE id = 1",
     ).toArray()[0]?.stopped_at != null;
     let loop = this.ensurePersistentLoop();
+    // Messages that start no run land first, whatever else holds the loop:
+    // they were waiting only on what was sent ahead of them, not on Rally.
+    if (loop.status === "idle" && this.transcript.hasLeadingInputWithoutRun()) {
+      this.transcript.deliverLeadingInputsWithoutRun({
+        loopId: loop.loop_id,
+        enqueueRegionalEffectsInTransaction: (effects) =>
+          this.product.enqueueRegionalEffectsInTransaction(effects),
+        now,
+      });
+      await this.flushSemanticRealtimeOutboxBestEffort();
+      loop = this.ensurePersistentLoop();
+    }
     // A stopped agent can still recover its active lease to let Bind settle
     // the stop and any tool receipts. Only a new execution is held here.
     if (backgroundStopped && loop.status !== "executing") return null;
@@ -7376,7 +7391,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // it would re-arm at `now` on every alarm, for as long as the question
     // stays open. Admitting the answer arms its own wake.
     if (loop) {
-      if (this.transcript.nextActivationInput(loop.loop_id) !== undefined) return now;
+      if (this.transcript.nextActivationInput(loop.loop_id) !== undefined
+        || this.transcript.hasLeadingInputWithoutRun()) return now;
       // The room then goes quiet with messages still queued only if an open
       // question is waiting for its answer. A newly admitted ordinary message
       // cancels that question and supplies the tool result during promotion.
