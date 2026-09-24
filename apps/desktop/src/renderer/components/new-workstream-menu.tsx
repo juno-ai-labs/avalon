@@ -28,8 +28,11 @@ export function NewWorkstreamMenu({
   tooltipLabel = 'New channel',
   tooltipSide = 'bottom',
   trigger = 'dropdown',
+  disabled = false,
 }: {
   children: ReactElement;
+  /** Context trigger only: leaves the list mounted while no menu opens. */
+  disabled?: boolean;
   canCreateSpace?: boolean;
   lockedSpaceId?: string | null;
   offer?: 'all' | 'channel' | 'space';
@@ -112,10 +115,14 @@ export function NewWorkstreamMenu({
 
   return <>
     {trigger === 'context' ? <ContextMenu.Root>
-      <ContextMenu.Trigger asChild onContextMenu={(event) => {
+      <ContextMenu.Trigger asChild disabled={disabled} onContextMenu={(event) => {
         // Claims the click so the menu stays shut; a row's own menu has
-        // already claimed it the same way.
-        if ((event.target as Element).closest('a, button, input, textarea, [contenteditable="true"]')) event.preventDefault();
+        // already claimed it the same way. A portalled menu or dialog opened
+        // from a row still bubbles here through the React tree, so a target
+        // outside the list's DOM is not its empty space either.
+        const target = event.target as Element;
+        if (!event.currentTarget.contains(target)
+          || target.closest('a, button, input, textarea, [contenteditable="true"]')) event.preventDefault();
       }}>{children}</ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="menu-content new-workstream-menu" collisionPadding={8}>{items}</ContextMenu.Content>

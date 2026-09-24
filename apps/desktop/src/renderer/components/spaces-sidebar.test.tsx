@@ -448,6 +448,8 @@ describe('SpacesSidebar', () => {
     fireEvent.contextMenu(screen.getByRole('link', { name: 'Launch' }));
     expect(await screen.findByRole('menuitem', { name: 'Archive space' })).toBeVisible();
     expect(screen.queryByRole('menuitem', { name: 'Create New Space' })).toBeNull();
+    fireEvent.contextMenu(screen.getByRole('menuitem', { name: 'Archive space' }), { clientX: 70, clientY: 95 });
+    expect(screen.queryByRole('menuitem', { name: 'Create New Space' })).toBeNull();
     fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Archive space' }), { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('menuitem', { name: 'Archive space' })).toBeNull());
 
