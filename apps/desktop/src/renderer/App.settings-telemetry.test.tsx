@@ -102,6 +102,12 @@ function revealWindow(): void {
   });
 }
 
+function surfaceTelemetry(): unknown[] {
+  return reportTelemetryProductIntent.mock.calls
+    .map(([intent]) => intent as { kind: string })
+    .filter((intent) => intent.kind === 'surface_viewed');
+}
+
 describe('settings surface telemetry', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -129,7 +135,7 @@ describe('settings surface telemetry', () => {
     // Mounted, rendered, and nobody has seen it. Reporting here would spend the
     // pending entrypoint on nobody and latch the surface, so the real open
     // would then report nothing at all.
-    expect(reportTelemetryProductIntent).not.toHaveBeenCalled();
+    expect(surfaceTelemetry()).toEqual([]);
     expect(reportTelemetryScreen).not.toHaveBeenCalled();
   });
 
@@ -139,7 +145,7 @@ describe('settings surface telemetry', () => {
 
     revealWindow();
 
-    expect(reportTelemetryProductIntent).toHaveBeenCalledTimes(1);
+    expect(surfaceTelemetry()).toHaveLength(1);
     expect(reportTelemetryProductIntent).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'surface_viewed', surface: 'settings_application' }),
     );
@@ -152,6 +158,6 @@ describe('settings surface telemetry', () => {
     revealWindow();
     revealWindow();
 
-    expect(reportTelemetryProductIntent).toHaveBeenCalledTimes(1);
+    expect(surfaceTelemetry()).toHaveLength(1);
   });
 });
