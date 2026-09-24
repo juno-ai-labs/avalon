@@ -2654,8 +2654,14 @@ export class WorkstreamDO extends ConversationParentDurableObject {
    * for, so a composer shows only the agents started from its own
    * conversation. An agent from before roots were recorded counts in the main
    * conversation.
+   *
+   * The per-conversation map holds only `visibleRoots`: a private Breakout's
+   * id is not the viewer's to learn unless they are a member of it. The total
+   * keeps its earlier Channel-wide meaning for desktop builds that read it.
    */
-  private backgroundAgentCounts(): { backgroundAgentCount: number; backgroundAgentCounts: Record<string, number> } {
+  private backgroundAgentCounts(
+    visibleRoots: ReadonlySet<string>,
+  ): { backgroundAgentCount: number; backgroundAgentCounts: Record<string, number> } {
     const rows = this.parentSql.exec<{ root: string; n: number }>(
       `SELECT COALESCE(json_extract(effect_json, '$.backgroundAgentRootSubstreamId'), '0') AS root, COUNT(*) AS n
          FROM substream_directory
@@ -2666,7 +2672,9 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     ).toArray();
     return {
       backgroundAgentCount: rows.reduce((total, row) => total + row.n, 0),
-      backgroundAgentCounts: Object.fromEntries(rows.map((row) => [row.root, row.n])),
+      backgroundAgentCounts: Object.fromEntries(rows
+        .filter((row) => visibleRoots.has(row.root))
+        .map((row) => [row.root, row.n])),
     };
   }
 
@@ -3235,6 +3243,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     const nextPendingWakeup = row.next_wakeup_due_at && row.next_wakeup_prompt
       ? { dueAt: iso(row.next_wakeup_due_at), promptPreview: promptPreview(row.next_wakeup_prompt) }
       : null;
+    const privateChildren = this.visiblePrivateChildrenForUser(userId);
     return WorkstreamControlMetadataSchema.parse({
       stateVersion: this.stateVersionForUser(row, userId),
       privateChildrenWaterline: this.latestStateRow(`children:${userId}`)?.waterline ?? 0,
@@ -3250,7 +3259,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       titleStatus: row.title_status,
       exactState: row.exact_state,
       harnessStatus: harnessStatus(row.exact_state),
-      ...this.backgroundAgentCounts(),
+      ...this.backgroundAgentCounts(new Set(["0", ...privateChildren.map((child) => child.substreamId)])),
       latestAttentionSequenceNumber: row.latest_attention_ordinal,
       unreadTrackingStartSequenceNumber: row.unread_tracking_start_ordinal,
       lastActivityAt: iso(row.last_activity_at),
@@ -3262,7 +3271,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       systemKind: row.system_kind,
       nextPendingWakeup,
       nextTerminalActionAt: iso(row.next_terminal_action_at),
-      privateChildren: this.visiblePrivateChildrenForUser(userId).map((child) => ({
+      privateChildren: privateChildren.map((child) => ({
         ...child,
         createdAt: iso(child.createdAt),
         updatedAt: iso(child.updatedAt),
