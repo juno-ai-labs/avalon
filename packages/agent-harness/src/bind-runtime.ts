@@ -2850,7 +2850,12 @@ async function createPluginRuntime(
   // the durable boundary. Only IDs the host returns after persistence may be
   // restored into Bind's active surface.
   const requested = input.activationHints ?? [];
+  const preauthorized = new Set(input.preauthorizedActivationHints ?? []);
   const rehydrationStartedAt = Date.now();
+  const checkedIds = [...new Set(requested.map((id) => registry.canonicalizeName(id)))]
+    .filter((id) => eligibleIds.has(id) && !preauthorized.has(id));
+  const checked = await Promise.allSettled(checkedIds.map((id) => reauthorize(id, "activation")));
+  const verdicts = new Map(checkedIds.map((id, index) => [id, checked[index]!] as const));
   const restored = await rehydrateActivation(requested, {
     canonicalizeName: registry.canonicalizeName,
     resolve: async (id) => {
@@ -2858,7 +2863,12 @@ async function createPluginRuntime(
       // Bind's rehydration vocabulary has one drop reason, so a denial and an
       // unverifiable plugin both land on `unreachable`; the host distinguishes
       // them in its own log when it produces the verdict.
-      if (await reauthorize(id, "activation") !== "authorized") return "unreachable";
+      if (!preauthorized.has(id)) {
+        const verdict = verdicts.get(id);
+        if (!verdict) return "unreachable";
+        if (verdict.status === "rejected") throw verdict.reason;
+        if (verdict.value !== "authorized") return "unreachable";
+      }
       try {
         await ensurePluginTools(id);
         return true;

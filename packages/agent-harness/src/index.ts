@@ -3889,6 +3889,8 @@ export interface RunHarnessInput {
   pluginDiscovery?: boolean;
   /** Connector activations already durably persisted by the host. */
   activationHints?: string[];
+  /** Subset checked and persisted by this host immediately before this attempt. */
+  preauthorizedActivationHints?: string[];
   /**
    * Loadable instructions for this run — procedures and reference knowledge the
    * model may pull into its own prompt, the knowledge counterpart of `plugins`.

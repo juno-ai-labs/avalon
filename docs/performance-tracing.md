@@ -212,7 +212,11 @@ fetches the OpenRouter catalog on the inference path.
 `activation_run_write_ms` and `activation_hint_write_ms` divide its two durable
 writes; for credential plugins, `activation_connection_context_ms`,
 `activation_provider_health_ms`, and `activation_health_verdict_ms` divide
-authorization. `before_model_principal_ms` and `before_model_identity_ms`
+authorization. Initial authorization checks overlap across plugins; their
+summed durations may exceed `initial_activations_ms`. Bind's
+`bind_plugin_rehydration_ms` now excludes a second connector authorization
+for IDs this host just checked and persisted, but still includes eligibility
+and any dynamic tool loading. `before_model_principal_ms` and `before_model_identity_ms`
 separate the D1 membership and Channel identity reads; conversation and
 automation authority fields appear only when that path runs. The forced lease
 renewals expose their attempt and persistent-loop parts as
@@ -806,19 +810,25 @@ a Worker exports when its own config names one.
 **What changed:** Bind still reports first-dispatch timing while using the host's
 KV context-window snapshot. The provider-turn heartbeat and run-authority reads
 now overlap, and their individual durations remain visible. Loaded Sidekick
-skills no longer produce a per-turn authority duration.
+skills no longer produce a per-turn authority duration. Initial plugin checks
+now overlap, and Bind's rehydration timer excludes duplicate connector checks
+when Rally passes its current-attempt authorization result.
 
 **Why:** The latency work removed the catalog fetch and redundant cross-object
 checks that the previous breakdown had named. Keeping their old timing labels
 would misdescribe the remaining wait and obscure the benefit of the change.
+The earlier `bind_plugin_rehydration_ms` included a second serial provider
+health walk immediately after Rally's own initial activation checks, so
+its new value must not be compared as though it measures the same work.
 
 **Considered and rejected:** Dropping the diagnostic row would leave no way to
 compare the revised path with the prior one. Retaining catalog fetch subphase
 fields would imply network work that no longer occurs.
 
 **Consequences:** The parent authority duration can overlap the heartbeat and
-its child read durations; these values should not be summed. Catalog source is
-now `provided`, `fallback`, or `skipped` on this path.
+its child read durations; these values should not be summed. Per-plugin initial
+authorization durations can also overlap and should not be added to infer the
+critical path. Catalog source is now `provided`, `fallback`, or `skipped` on this path.
 
 ### 2026-09-23 — Measure the remaining first-dispatch waits
 
