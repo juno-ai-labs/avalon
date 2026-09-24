@@ -2,14 +2,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const openExternal = vi.fn(async () => undefined);
-vi.mock('./platform', () => ({ desktopBridge: () => ({ openExternal }) }));
+const commandEmbeddedBrowser = vi.fn(async () => ({ kind: 'state' }));
+vi.mock('./platform', () => ({ desktopBridge: () => ({ openExternal, commandEmbeddedBrowser }) }));
 
-const { captureLinkClicks, openLink, registerBrowserRailHost } = await import('./browser-rail-links');
+const { renderHook } = await import('@testing-library/react');
+const { captureLinkClicks, openLink, registerBrowserRailHost, useBrowserRailLinks } = await import('./browser-rail-links');
+const { useUiStore } = await import('./ui-store');
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
   openExternal.mockClear();
+  commandEmbeddedBrowser.mockClear();
+  Reflect.deleteProperty(window, 'rally');
   document.body.innerHTML = '';
 });
 
@@ -60,5 +65,22 @@ describe('captureLinkClicks', () => {
     handled.click();
     anchor(`${document.location.origin}/workstreams/1`).click();
     expect(host).not.toHaveBeenCalled();
+  });
+});
+
+describe('useBrowserRailLinks', () => {
+  it('opens the rail on a tab for the link while enabled, and not when disabled', async () => {
+    Object.defineProperty(window, 'rally', { configurable: true, value: {} });
+    const channel = renderHook(() => useBrowserRailLinks(true));
+    await openLink('https://example.com/e');
+    expect(useUiStore.getState()).toMatchObject({ railOpen: true, railVariant: 'browser' });
+    expect(commandEmbeddedBrowser).toHaveBeenCalledWith({ action: 'open', url: 'https://example.com/e' });
+    channel.unmount();
+
+    const sidekick = renderHook(() => useBrowserRailLinks(false));
+    await openLink('https://example.com/f');
+    sidekick.unmount();
+    expect(commandEmbeddedBrowser).toHaveBeenCalledTimes(1);
+    expect(openExternal).toHaveBeenCalledWith('https://example.com/f');
   });
 });
