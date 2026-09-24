@@ -94,8 +94,8 @@ Stream row, no New Automation row, and no Suggestions section: this surface is
 for getting back to work that is already in flight, and the two rows at the
 bottom open the app, where starting something belongs.
 `avalon://workstreams/new` and `avalon://automations/new` are still handled — the
-deep-link vocabulary is public and the sidebar uses the same routes — they simply
-have no emitter here. `createMeetingWindow` still takes a `menu_bar` entrypoint
+deep-link vocabulary is public — they simply have no emitter here, and since a
+Channel is started from a Space neither names, both open the app. `createMeetingWindow` still takes a `menu_bar` entrypoint
 for the same reason its telemetry enum still admits one: retired emitters, not
 retired values.
 

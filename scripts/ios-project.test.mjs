@@ -375,7 +375,7 @@ test("iOS feed kinds and shell cover the Electron conversation and directory", (
   assert.match(read("Rally/App/RootView.swift"), /coordinator\.resolved == nil/);
   const desktopApp = readFileSync(join(repoRoot, "apps/desktop/src/renderer/App.tsx"), "utf8");
   for (const route of [
-    "/workstreams/new",
+    "/spaces/:spaceId/workstreams/new",
     "/workstreams/:id",
     "/spaces/:spaceId",
     "/sidekicks",

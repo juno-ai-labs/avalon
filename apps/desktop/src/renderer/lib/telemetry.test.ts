@@ -47,13 +47,15 @@ describe('renderer semantic telemetry helpers', () => {
 
   it('maps only planned router destinations to stable screen enums', () => {
     expect(telemetryScreenForPath('/')).toBeNull();
-    expect(telemetryScreenForPath('/workstreams/new')).toBe('workspace_home');
+    expect(telemetryScreenForPath('/spaces/space-id/workstreams/new')).toBe('workspace_home');
+    expect(telemetryScreenForPath('/workstreams/new')).toBeNull();
     expect(telemetryScreenForPath('/workstreams/opaque-id')).toBe('workstream');
     expect(telemetryScreenForPath('/settings')).toBe('application_settings');
     expect(telemetryScreenForPath('/notes/private-id')).toBeNull();
     expect(telemetryScreenForPath('/unknown')).toBeNull();
     expect(telemetrySurfaceForPath('/')).toBeNull();
-    expect(telemetrySurfaceForPath('/workstreams/new')).toEqual({ surface: 'workspace_home' });
+    expect(telemetrySurfaceForPath('/spaces/space-id/workstreams/new')).toEqual({ surface: 'workspace_home' });
+    expect(telemetrySurfaceForPath('/workstreams/new')).toBeNull();
   });
 
   it('creates time-ordered UUIDv7 operation identifiers', () => {

@@ -135,23 +135,19 @@ function personalSpaceDirectory(spaceId: ReturnType<typeof asSpaceId>): SpaceDir
   };
 }
 
-function renderScreen(spaces: SpaceDirectory = { waterline: 0, items: [] }): QueryClient {
-  const queryClient = new QueryClient({
-    defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
-  });
-  queryClient.setQueryData(['spaces'], spaces);
-  render(
-    <Tooltip.Provider delayDuration={0}>
-      <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={['/workstreams/new']}>
-          <Routes>
-            <Route element={<NewWorkstreamScreen workspace={workspace} />} path="/workstreams/new" />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>
-    </Tooltip.Provider>,
-  );
-  return queryClient;
+function generalSpaceDirectory(): SpaceDirectory {
+  const [space] = personalSpaceDirectory(GENERAL_SPACE_ID).items;
+  return {
+    waterline: 1,
+    items: [{ ...space!, name: 'General', scope: 'workspace', systemRole: 'general', participants: [] }],
+  };
+}
+
+const GENERAL_SPACE_ID = asSpaceId('00000000-0000-7000-8000-00000000a001');
+
+/** The launcher as the sidebar opens it: in an Organization-wide Space. */
+function renderScreen(): QueryClient {
+  return renderSpaceScreen(GENERAL_SPACE_ID, generalSpaceDirectory());
 }
 
 function renderSpaceScreen(
@@ -173,7 +169,7 @@ function renderSpaceScreen(
         }]}>
           {nextSpaceId && <Link to={`/spaces/${nextSpaceId}/workstreams/new`}>New channel in another space</Link>}
           <Routes>
-            <Route element={<NewWorkstreamScreen spaceId="route" workspace={workspace} />} path="/spaces/:spaceId/workstreams/new" />
+            <Route element={<NewWorkstreamScreen workspace={workspace} />} path="/spaces/:spaceId/workstreams/new" />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>
@@ -264,17 +260,17 @@ describe('New channel home', () => {
     expect(await screen.findByRole('textbox', { name: 'Opening channel message' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'Needs attention' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Suggested work' })).not.toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Add people' })).not.toBeInTheDocument());
-    expect(screen.queryByTitle('Participants are managed by the space')).not.toBeInTheDocument();
-    const modifier = document.querySelector('.participant-modifier');
-    if (!(modifier instanceof HTMLElement)) throw new Error('participant modifier missing');
-    const face = modifier.querySelector('.avatar-stack-item');
-    if (!(face instanceof HTMLElement)) throw new Error('participant face missing');
-    fireEvent.pointerMove(face, { pointerType: 'mouse' });
-    const tooltip = await screen.findByRole('tooltip');
-    expect(tooltip).toHaveTextContent('Participants are managed by the space');
-    expect(tooltip).not.toHaveTextContent('Morgan Ellis');
-    expect(tooltip).not.toHaveTextContent('Samantha Lee');
+    // The roster is the Space's: the bar names everyone in it and offers no way
+    // to add or remove anybody.
+    const bar = screen.getByRole('group', { name: 'Participants:' });
+    await waitFor(() => expect(within(bar).getByText('Samantha Lee')).toBeVisible());
+    expect(within(bar).getByText('Morgan Ellis')).toBeVisible();
+    expect(within(bar).getByText('Managed by the space')).toBeVisible();
+    expect(screen.queryByRole('combobox', { name: 'Search people' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove Samantha Lee' })).not.toBeInTheDocument();
+    // The chip and dialog that used to sit above the composer are gone.
+    expect(screen.queryByRole('button', { name: 'Add people' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Manage participants/u })).not.toBeInTheDocument();
     const composer = screen.getByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Prepare the hiring plan' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
@@ -465,13 +461,16 @@ describe('New channel home', () => {
     expect(screen.getByRole('combobox', { name: 'Search people' })).toBeVisible();
   });
 
-  it('keeps recipient selection above the composer and sends selected people', async () => {
+  it('picks participants in the header and sends selected people', async () => {
     renderScreen();
 
     act(() => screen.getByRole('combobox', { name: 'Search people' }).focus());
     fireEvent.click(await screen.findByRole('option', { name: 'Samantha Lee — samantha@example.com' }));
     expect(screen.getByRole('button', { name: 'Remove Samantha Lee' })).toBeVisible();
-    expect(screen.getByRole('combobox', { name: 'Search people' })).toHaveAttribute('placeholder', 'Add people');
+    expect(within(screen.getByRole('group', { name: 'Participants:' })).getByText('Morgan Ellis')).toBeVisible();
+    // The creator is always in the Channel, so there is no way to remove them.
+    expect(screen.queryByRole('button', { name: 'Remove Morgan Ellis' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Manage participants/u })).not.toBeInTheDocument();
     const composer = screen.getByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: '  Prepare the launch brief  ' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
@@ -484,6 +483,7 @@ describe('New channel home', () => {
       // asserted as present rather than by value so the exact-shape check that
       // proves `modelOverride` is absent keeps working.
       requestId: expect.any(String),
+      spaceIds: [GENERAL_SPACE_ID],
     }));
     const request = api.createWorkstream.mock.calls[0]?.[0];
     expect(request?.operationId).toBe(request?.requestId);
@@ -551,6 +551,7 @@ describe('New channel home', () => {
       participantIds: [],
       operationId: expect.any(String),
       requestId: expect.any(String),
+      spaceIds: [GENERAL_SPACE_ID],
     }));
   });
 
@@ -571,6 +572,7 @@ describe('New channel home', () => {
       operationId: expect.any(String),
       modelOverride: 'openai/gpt-5.6-sol',
       requestId: expect.any(String),
+      spaceIds: [GENERAL_SPACE_ID],
     }));
   });
 
@@ -596,6 +598,7 @@ describe('New channel home', () => {
       operationId: expect.any(String),
       modelOverride: 'x-ai/grok-4.3',
       requestId: expect.any(String),
+      spaceIds: [GENERAL_SPACE_ID],
     }));
   });
 
@@ -618,6 +621,7 @@ describe('New channel home', () => {
       participantIds: [],
       operationId: expect.any(String),
       requestId: expect.any(String),
+      spaceIds: [GENERAL_SPACE_ID],
     }));
   });
 
@@ -643,6 +647,7 @@ describe('New channel home', () => {
       participantIds: [],
       operationId: expect.any(String),
       requestId: expect.any(String),
+      spaceIds: [GENERAL_SPACE_ID],
     }));
   });
 
@@ -665,6 +670,7 @@ describe('New channel home', () => {
       participantIds: [],
       operationId: expect.any(String),
       requestId: expect.any(String),
+      spaceIds: [GENERAL_SPACE_ID],
     });
 
     resolveCreate(createdWorkstream);
@@ -688,6 +694,7 @@ describe('New channel home', () => {
       operationId: expect.any(String),
       attachmentIds: ['resource-notes'],
       requestId: expect.any(String),
+      spaceIds: [GENERAL_SPACE_ID],
     }));
     expect(screen.getByRole('button', { name: 'Composer actions' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeDisabled();
