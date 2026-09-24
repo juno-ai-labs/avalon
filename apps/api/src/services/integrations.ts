@@ -169,6 +169,7 @@ import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { logStructuredEvent, diagnosticErrorCode } from "../observability/logger";
 import {
   createAgentInferenceLogger,
+  createInferenceStartBreakdownReporter,
   logAgentInferencePrepared,
   type AgentInferencePreparationBreakdown,
 } from "./agent-inference-logging";
@@ -3256,6 +3257,36 @@ export async function runWorkstreamHarness(
     occurredAtUtc: new Date().toISOString(),
   }));
   let firstInferenceBreakdownLogged = false;
+  const reportInferenceStart = createInferenceStartBreakdownReporter(
+    env,
+    inferenceStartEligible && input.telemetryRequestReceivedAt !== undefined,
+    (inferenceRequestId) => {
+      const providerRequestHookAt = Date.now();
+      return {
+        fields: {
+          request_id: input.harnessRunId,
+          inference_request_id: inferenceRequestId,
+          operation_id: input.telemetryOperationId,
+          workspace_id: input.workspaceId,
+          workstream_id: input.parentId,
+          substream_id: input.substreamId ?? "0",
+          run_started_at: runStartedAtMs,
+          preparation_finished_at: inferencePreparationFinishedAtMs,
+          provider_request_hook_at: providerRequestHookAt,
+          post_prepared_ms: providerRequestHookAt - inferencePreparationFinishedAtMs,
+          initial_activation_requested_count: requestedActivationCount,
+          initial_activation_tool_load_count: activationToolLoads,
+          initial_activation_write_count: activationWrites,
+          initial_activation_persisted_count: activationHints.length,
+          context_catalog_source: catalogSource ?? "skipped",
+          ...livenessTimings,
+          ...startupDurations,
+        },
+        activationAuthorizationChecks,
+        activationDurations,
+      };
+    },
+  );
   let catalogSource: HarnessStartupTiming["catalogSource"] | undefined;
   try {
     outcome = await runHarness({
@@ -3649,33 +3680,7 @@ export async function runWorkstreamHarness(
     onInferenceRequest: (request) => {
       if (!firstInferenceBreakdownLogged) {
         firstInferenceBreakdownLogged = true;
-        if (inferenceStartEligible && input.telemetryRequestReceivedAt !== undefined) {
-          const providerRequestHookAt = Date.now();
-          logStructuredEvent(env, "info", "agent_inference_start_breakdown", {
-            request_id: input.harnessRunId,
-            inference_request_id: request.inferenceRequestId,
-            operation_id: input.telemetryOperationId,
-            workspace_id: input.workspaceId,
-            workstream_id: input.parentId,
-            substream_id: input.substreamId ?? "0",
-            run_started_at: runStartedAtMs,
-            preparation_finished_at: inferencePreparationFinishedAtMs,
-            provider_request_hook_at: providerRequestHookAt,
-            post_prepared_ms: providerRequestHookAt - inferencePreparationFinishedAtMs,
-            initial_activation_requested_count: requestedActivationCount,
-            initial_activation_authorization_check_count: activationAuthorizationChecks,
-            initial_activation_tool_load_count: activationToolLoads,
-            initial_activation_write_count: activationWrites,
-            initial_activation_persisted_count: activationHints.length,
-            initial_activation_details: [...activationDurations.entries()].map(([pluginId, durations]) => ({
-              plugin_id: pluginId,
-              ...durations,
-            })),
-            context_catalog_source: catalogSource ?? "skipped",
-            ...livenessTimings,
-            ...startupDurations,
-          });
-        }
+        reportInferenceStart(request.inferenceRequestId);
       }
       return suppressInferenceRequestCapture ? undefined : inferenceLogger.onRequest(request);
     },
@@ -6265,6 +6270,19 @@ async function assertRunAuthorityStillValid(
     automationTemplateVersionId: authority.automationTemplateVersionId, triggerType: authority.triggerType };
 }
 
+function recordOptionalTiming<Stage extends string>(
+  onTiming: ((stage: Stage, durationMs: number) => void) | undefined,
+  stage: Stage,
+  startedAt: number,
+): void {
+  // Diagnostics must never change an authority or activation decision.
+  try {
+    onTiming?.(stage, Date.now() - startedAt);
+  } catch {
+    // Keep the underlying operation's outcome.
+  }
+}
+
 async function readRunAuthority(
   env: Env,
   input: WorkstreamWorkflowInput,
@@ -6274,11 +6292,11 @@ async function readRunAuthority(
   const db: D1Database = env.DB;
   let startedAt = Date.now();
   const guest = await assertExecutionPrincipalAuthorized(db, input.workspaceId, input.executionPrincipal);
-  onTiming?.("principal", Date.now() - startedAt);
+  recordOptionalTiming(onTiming, "principal", startedAt);
   startedAt = Date.now();
   const workstream = await createIdentityObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0")
     .identity();
-  onTiming?.("identity", Date.now() - startedAt);
+  recordOptionalTiming(onTiming, "identity", startedAt);
   if (!workstream || workstream.archived_at != null) {
     throw new ConnectorError("unauthorized", "Work stream is no longer active");
   }
@@ -6291,14 +6309,14 @@ async function readRunAuthority(
     const access = await parent.authorizeViewer({ workspaceId: input.workspaceId, parentId: input.parentId,
       userId: input.executionPrincipal.userId, substreamId: asSubstreamId(input.substreamId ?? "0"),
       requireGrantAuthority: true });
-    onTiming?.("conversation", Date.now() - startedAt);
+    recordOptionalTiming(onTiming, "conversation", startedAt);
     if (!access.authorized) throw new ConnectorError("unauthorized", "Shared conversation access has ended");
     if (access.archived) throw new ConnectorError("unauthorized", "Work stream is no longer active");
   } else if (input.substreamId && input.substreamId !== "0" && !input.automationRun) {
     startedAt = Date.now();
     const parent = await conversationParentStub(env, input);
     const authority = await parent.authority({ workspaceId: input.workspaceId, parentId: input.parentId });
-    onTiming?.("conversation", Date.now() - startedAt);
+    recordOptionalTiming(onTiming, "conversation", startedAt);
     if (!authority.exists || authority.archived) throw new ConnectorError("unauthorized", "Work stream is no longer active");
   }
 
@@ -6332,7 +6350,7 @@ async function readRunAuthority(
     automationId: run.automationId,
     runId: run.runId,
   });
-  onTiming?.("automation", Date.now() - startedAt);
+  recordOptionalTiming(onTiming, "automation", startedAt);
   if (!live || live.lifecycle !== "active" || (live.state !== "running" && live.state !== "needs_input")) {
     throw new ConnectorError("unauthorized", "This automation run is no longer running");
   }
@@ -6531,11 +6549,11 @@ async function persistWorkstreamPluginActivation(
     lease,
     { pluginId, toolSurfaceHash: surfaceHash },
   );
-  onTiming?.("run_write", Date.now() - startedAt);
+  recordOptionalTiming(onTiming, "run_write", startedAt);
   startedAt = Date.now();
   await createSchedulingObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0")
     .recordPluginActivation({ pluginId, now: Date.now() });
-  onTiming?.("hint_write", Date.now() - startedAt);
+  recordOptionalTiming(onTiming, "hint_write", startedAt);
 }
 
 async function reauthorizeFrozenPlugin(
@@ -6581,7 +6599,7 @@ async function reauthorizeFrozenPlugin(
       signal,
       ownershipGuard,
     );
-    onTiming?.("connection_context", Date.now() - startedAt);
+    recordOptionalTiming(onTiming, "connection_context", startedAt);
     startedAt = Date.now();
     const health = await withAuthorizedConnection(
       env,
@@ -6592,11 +6610,11 @@ async function reauthorizeFrozenPlugin(
       // returned. The caller's deadline is disposable.
       (authorized) => raceWithSignal(adapter.healthCheck(authorized, signal), signal),
     );
-    onTiming?.("provider_health", Date.now() - startedAt);
+    recordOptionalTiming(onTiming, "provider_health", startedAt);
     await ownershipGuard?.();
     startedAt = Date.now();
     const verdict = await pluginAuthorizationFromHealth(env, input, frozen, health);
-    onTiming?.("health_verdict", Date.now() - startedAt);
+    recordOptionalTiming(onTiming, "health_verdict", startedAt);
     return verdict;
   } catch (error) {
     logPluginAuthorizationFailure(env, input, frozen, error);
