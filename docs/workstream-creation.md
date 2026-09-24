@@ -71,12 +71,14 @@ input. The Channel name travels with that route and is committed only when the
 opening message is sent; participants are chosen in the header's
 **Participants** bar before that request. The creator's own chip leads the bar
 and has no remove control. In a personal Space the bar shows the Space's roster
-read-only and says it is managed by the Space. The composer is keyed by its
-draft identity — which carries the Space it was opened from — and by the
-navigation that opened it, so every opening puts focus in the message box and
-never in the Participants bar, including a second opening of the Space already
-on screen, where nothing else remounts. That key stays stable throughout the
-launch hand-off. The sidebar lists existing work streams without
+read-only and says it is managed by the Space. `NewWorkstreamScreen` remounts
+the whole launcher for every navigation that opens it, because React would
+otherwise keep one instance across a change of Space or a second opening of the
+same one: the people picked for one Channel were sent with the next, and the
+composer's autofocus did not run again. Each opening therefore starts with
+nobody picked and focus in the message box, never in the Participants bar. The
+unsent draft and its attachments are cached by Space, so the remount loses
+nothing typed, and the key stays stable throughout the launch hand-off. The sidebar lists existing work streams without
 a placeholder row for the unsent draft.
 
 ### What moves
@@ -511,7 +513,8 @@ The fallbacks that used to open the Space-less launcher now go elsewhere: an
 empty Organization lands on General's dashboard, a Channel moved out of the last
 placement in a Space opens that Space's dashboard, and the `workstreams/new` and
 `automations/new` deep links open the app. A deep link that changes organization
-parks on an inert `/opening` route instead.
+parks on an inert `/opening` route instead. The launcher renders
+`WorkstreamComposer` (see [`conversation-surfaces.md`](conversation-surfaces.md)).
 
 **Why:** Once the sidebar's creation dialog required a Space (2026-09-20), the
 Space-less launcher was reachable only through fallbacks, so the header's
@@ -522,11 +525,6 @@ two pickers for one list, in two places, depending on how it was opened.
 deep-link handler has no Space directory to find General in, and a fallback
 that opens a composer nobody asked for is the accident the 2026-09-09 entry
 removed.
-
-The launcher also drops its own copy of the mention list and renders
-`WorkstreamComposer`, with the placeholder "Describe what this channel will be
-used for". It had drifted from the feed's: no `@Rally`, no slash commands, no
-confirmation before seating somebody in a personal Space.
 
 **Consequences:** A new way into the launcher has to name a Space. The
 launcher's resting header is 48px, so the header shrinks to the conversation's
