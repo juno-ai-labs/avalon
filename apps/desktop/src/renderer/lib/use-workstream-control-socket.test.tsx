@@ -194,13 +194,17 @@ describe('useWorkstreamControlSocket', () => {
     const queryKey = ['workstream-children', workstreamId];
     const screen = new QueryObserver<WorkstreamChildDirectory>(queryClient, { queryKey, enabled: false });
     const leave = screen.subscribe(() => undefined);
-    act(() => { socket.open(); socket.message(metadata(4, { privateChildren: [child], privateChildrenWaterline: 2 })); });
+    act(() => { socket.open(); socket.message(metadata(4, {
+      privateChildren: [child], privateChildrenWaterline: 2, backgroundAgentCounts: { [child.substreamId]: 1 },
+    })); });
     expect(screen.getCurrentResult().data?.privateChildren).toEqual([child]);
     leave();
     await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000); });
     const returned = new QueryObserver<WorkstreamChildDirectory>(queryClient, { queryKey, enabled: false });
     const leaveAgain = returned.subscribe(() => undefined);
     expect(returned.getCurrentResult().data?.privateChildren).toEqual([child]);
+    // The running count is pushed by the same socket and must survive with it.
+    expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toEqual({ [child.substreamId]: 1 });
     expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
     expect(socket.send.mock.calls.filter(([frame]) => frame !== 'ping')).toEqual([[JSON.stringify({ type: 'subscribe' })]]);
     // The version fence must survive with the roster too.

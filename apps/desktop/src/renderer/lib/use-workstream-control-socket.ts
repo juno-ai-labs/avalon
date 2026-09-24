@@ -239,7 +239,10 @@ export function useWorkstreamControlSocket(
   initialReasonRef.current = initialReason;
   useEffect(() => {
     if (!api || !enabled) return;
-    const releaseData = retainQueryData(queryClient, [['workstream-children', workstreamId]]);
+    const releaseData = retainQueryData(queryClient, [
+      ['workstream-children', workstreamId],
+      ['workstream-background-agents', workstreamId],
+    ]);
     let stopped = false;
     /**
      * The children the local cache was last told to keep. The control
