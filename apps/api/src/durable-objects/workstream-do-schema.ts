@@ -482,4 +482,10 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
   // WorkstreamDO's afterMigrations hook. No schema changes are required: the
   // source projections and the parent outbox already exist.
   statements: ["SELECT 1 AS breakout_projection_replay"],
+}, {
+  version: 20,
+  description: "retract background agents the Organization holds as breakouts",
+  // Like version 19, the receipt is the once-only fence for work done in
+  // WorkstreamDO's afterMigrations hook, and no schema changes are required.
+  statements: ["SELECT 1 AS background_agent_breakout_retraction"],
 }];

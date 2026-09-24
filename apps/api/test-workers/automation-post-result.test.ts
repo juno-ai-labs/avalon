@@ -58,6 +58,7 @@ import {
   deliverChildEffects,
   deliverEffectsToWorkspace,
   deliverParentEffects,
+  pendingChildEffects,
 } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { useOpenRouterDouble, type ProviderCall, type ProviderReply } from "./helpers/openrouter-double";
@@ -1316,6 +1317,13 @@ describe("post_result", () => {
     expect(await child.agentRuntimeInfo()).toMatchObject({ background: true, executionPrincipal: input.executionPrincipal });
     expect(await roomParent().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
       substreamId: address.substreamId, userId: AUTHOR_ID })).toMatchObject({ authorized: false });
+    // Every directory projection the worker queued, its first included, says
+    // it is a background agent, so its Channel never forwards it as a breakout.
+    const projections = (await pendingChildEffects(child))
+      .filter((envelope) => envelope.effect.kind === "directory_common");
+    expect(projections.length).toBeGreaterThan(0);
+    expect(projections.map((envelope) => envelope.effect.kind === "directory_common"
+      && envelope.effect.backgroundAgent === true)).not.toContain(false);
     await runInDurableObject(child, (_instance, state) => {
       expect(state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'agent-message:%'").one().n).toBe(1);
     });
