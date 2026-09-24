@@ -4205,7 +4205,7 @@ describe('alphabetical channels inside a space', () => {
       .toHaveTextContent(`/workstreams/${alpha.id}`));
   });
 
-  it('opens the Channel home when the moved Channel was the selected Space\'s last one', async () => {
+  it('opens the Space it left when the moved Channel was the selected Space\'s last one', async () => {
     renderSidebarAt(alpha.id, [alpha]);
     const transfer = channelTransfer();
 
@@ -4213,7 +4213,7 @@ describe('alphabetical channels inside a space', () => {
     fireEvent.drop(screen.getByRole('link', { name: 'Launch' }), { dataTransfer: transfer });
 
     await waitFor(() => expect(screen.getByRole('status', { name: 'Current route' }))
-      .toHaveTextContent('/workstreams/new'));
+      .toHaveTextContent(`/spaces/${hiring.id}`));
   });
 
   it('restores the moved Channel route when the server refuses the move', async () => {

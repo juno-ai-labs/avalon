@@ -3263,20 +3263,6 @@ pre {
 .onboarding-items > button.is-complete .onboarding-check { background: var(--av-sys-color-brand-base); border-color: var(--av-sys-color-brand-base); }
 .onboarding-items > button.is-complete strong { color: var(--av-sys-color-text-muted); text-decoration: line-through; }
 .onboarding-items > button.is-complete small { opacity: 0.68; }
-.new-workstream-modifiers { display: flex; gap: 6px; margin: 0 auto 8px; max-width: var(--composer-width); }
-.participant-modifier,
-.participant-modifier-add { align-items: center; background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-ref-color-line-2); border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-muted); display: inline-flex; min-height: 34px; }
-.participant-modifier { font-size: 11px; gap: 7px; max-width: 310px; padding: 4px 9px 4px 5px; }
-.participant-modifier-add { justify-content: center; padding: 0; width: 34px; }
-.participant-modifier:hover,
-.participant-modifier-add:hover { background-image: var(--hover-layer); color: var(--av-sys-color-text-subtle); }
-.participant-modifier:focus-visible,
-.participant-modifier-add:focus-visible { border-color: var(--av-sys-color-focus-default); outline: 0; }
-.participant-modifier > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.participant-modifier .avatar-stack .avatar,
-.participant-modifier .avatar-overflow { border-color: var(--av-ref-color-line-1); }
-.participant-modifier:hover .avatar-stack .avatar,
-.participant-modifier:hover .avatar-overflow { border-color: var(--av-ref-color-line-2); }
 .member-picker-list,
 .member-action-list { display: grid; gap: 4px; }
 .member-picker-row,
@@ -6655,7 +6641,7 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
    width change back into the hand-off. */
 @container composer-dock (width < 568px) {
   :is(.workstream-screen, .workstream-launch-screen)
-  :is(.composer-stack, .substream-launch-banner, .new-workstream-modifiers) { max-width: none; }
+  :is(.composer-stack, .substream-launch-banner) { max-width: none; }
 }
 
 /* A card or a rule, out of the same five values.
@@ -7169,8 +7155,8 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
    The capsule below is now every surface's, so the transitions have nothing
    left to travel and the launcher's rules nothing left to say. */
 
-/* Participants are chosen before the work stream exists and are part of the
-   header afterwards, so the row leaves rather than moves. */
+/* The substream banner is only true before the substream exists, so the row
+   leaves rather than moves. */
 .launch-modifiers {
   max-height: 46px;
   overflow: hidden;
@@ -7229,8 +7215,7 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 
 /* Says what pressing enter will do, and offers the one way out that is not
    navigating somewhere else. It rides `.launch-modifiers`, so it leaves on the
-   keystroke that submits rather than staying above a substream being created —
-   the same exit the work-stream launcher's participant row makes. */
+   keystroke that submits rather than staying above a substream being created. */
 .substream-launch-banner {
   align-items: center;
   /* The dock a conversation lays out is `pointer-events: none` so the
@@ -7365,6 +7350,20 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 }
 
 .new-chat-recipient-input-shell > input::placeholder { color: var(--av-sys-color-text-muted); }
+
+/* The creator's chip, and every chip in a personal Space, has no remove
+   control; the padding the control would have taken is given back. */
+.new-chat-recipient-chip:not(:has(> button)) { padding-right: 10px; }
+
+/* Stands where the search field would be when the Space owns the roster. */
+.new-chat-recipient-note {
+  color: var(--av-sys-color-text-muted);
+  flex: 1 0 auto;
+  font-size: 14px;
+  font-weight: 420;
+  line-height: 20px;
+  padding-left: 4px;
+}
 
 .new-chat-close {
   align-items: center;

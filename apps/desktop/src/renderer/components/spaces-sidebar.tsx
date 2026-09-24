@@ -120,7 +120,7 @@ export function SpacesSidebar({
   const scrollRef = useRef<HTMLElement | null>(null);
   useSemanticScroll(scrollRef, scrollStateKey, '[data-space-id]', ready && !loading);
   const revealedRevision = useRef<number | null>(null);
-  const onNewChannelRoute = currentPath === '/workstreams/new';
+  const onNewChannelRoute = /^\/spaces\/[^/]+\/workstreams\/new$/u.test(currentPath);
   const commandRef = useRef<HTMLDivElement | null>(null);
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
   const dragOrderRef = useRef<string[] | null>(null);

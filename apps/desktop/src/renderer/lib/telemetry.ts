@@ -121,7 +121,7 @@ export function telemetrySurfaceForPath(
   resourceType?: 'workstream' | 'note' | 'automation';
   resourceId?: string;
 } | null {
-  if (pathname === '/workstreams/new') return { surface: 'workspace_home' };
+  if (/^\/spaces\/[^/]+\/workstreams\/new$/u.test(pathname)) return { surface: 'workspace_home' };
   if (pathname === '/meeting') return { surface: 'meeting_capture' };
   // `/automations/new` creates the automation and replaces itself with its
   // conversation. Reporting a builder surface for a path that shows one for an
@@ -469,7 +469,9 @@ function shouldReportNetworkError(candidate: DesktopJavascriptErrorCandidate): b
 }
 
 export function telemetryScreenForPath(pathname: string): DesktopTelemetryScreen | null {
-  if (pathname === '/workstreams/new') return 'workspace_home';
+  if (/^\/spaces\/[^/]+\/workstreams\/new$/u.test(pathname)) return 'workspace_home';
+  // A redirect to the landing route, not a Channel whose id is "new".
+  if (pathname === '/workstreams/new') return null;
   if (/^\/workstreams\/[^/]+$/u.test(pathname)) return 'workstream';
   if (pathname === '/settings') return 'application_settings';
   return null;
