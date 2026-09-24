@@ -6,6 +6,7 @@ import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { clearAllDrafts } from '../lib/draft-cache';
+import { WORKSTREAMS_QUERY_KEY } from '../lib/workstreams-cache';
 import { NewWorkstreamScreen } from './new-workstream';
 
 const api = vi.hoisted(() => ({
@@ -296,6 +297,39 @@ describe('New channel home', () => {
     expect(document.querySelector('.title-skeleton-header')).toBeNull();
   });
 
+  it('lists the Channel in its Space on the keystroke under the id it is created with, and takes it back when creation fails', async () => {
+    let fail: (cause: Error) => void = () => undefined;
+    api.createWorkstream.mockReturnValueOnce(new Promise((_resolve, reject) => { fail = reject; }));
+    const spaceId = asSpaceId('00000000-0000-7000-8000-0000000000f2');
+    const queryClient = renderSpaceScreen(spaceId, personalSpaceDirectory(spaceId), undefined, 'Hiring plan');
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
+    fireEvent.change(composer, { target: { value: 'Prepare the hiring plan' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    const listed = () => queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [];
+    expect(listed()).toEqual([
+      expect.objectContaining({ pending: true, title: 'Hiring plan', spaceIds: [spaceId] }),
+    ]);
+    // One id, chosen once: the row the sidebar draws is the Channel the
+    // server is asked to create, not a stand-in for it.
+    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(
+      expect.objectContaining({ workstreamId: listed()[0]!.id }),
+    ));
+    act(() => fail(new Error('offline')));
+    await waitFor(() => expect(listed()).toEqual([]));
+  });
+
+  it('makes the listed Channel the server\'s own when the create answers', async () => {
+    const queryClient = renderScreen();
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
+    fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY))
+      .toEqual([expect.objectContaining({ id: createdWorkstream.workstream.id, title: 'Prepare the launch brief' })]));
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.pending).toBeUndefined();
+  });
+
   it('uses the shared mention, attachment, and dictation controls', async () => {
     renderScreen();
 
@@ -461,6 +495,7 @@ describe('New channel home', () => {
     fireEvent.keyDown(composer, { key: 'Enter' });
 
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
+      workstreamId: expect.any(String),
       openingMessage: 'Prepare the launch brief',
       participantIds: [teammate.id],
       operationId: expect.any(String),
@@ -571,6 +606,7 @@ describe('New channel home', () => {
     fireEvent.keyDown(composer, { key: 'Enter' });
 
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
+      workstreamId: expect.any(String),
       openingMessage: 'Prepare the launch brief',
       participantIds: [],
       operationId: expect.any(String),
@@ -591,6 +627,7 @@ describe('New channel home', () => {
     fireEvent.keyDown(composer, { key: 'Enter' });
 
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
+      workstreamId: expect.any(String),
       openingMessage: 'Prepare the launch brief',
       participantIds: [],
       operationId: expect.any(String),
@@ -617,6 +654,7 @@ describe('New channel home', () => {
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
+      workstreamId: expect.any(String),
       openingMessage: 'Prepare the launch brief',
       participantIds: [],
       operationId: expect.any(String),
@@ -641,6 +679,7 @@ describe('New channel home', () => {
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
+      workstreamId: expect.any(String),
       openingMessage: 'Prepare the launch brief',
       participantIds: [],
       operationId: expect.any(String),
@@ -667,6 +706,7 @@ describe('New channel home', () => {
     fireEvent.keyDown(composer, { key: 'Enter' });
 
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
+      workstreamId: expect.any(String),
       openingMessage: 'Prepare the launch brief',
       participantIds: [],
       operationId: expect.any(String),
@@ -707,6 +747,7 @@ describe('New channel home', () => {
     expect(composer).toHaveValue('');
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledTimes(1));
     expect(api.createWorkstream).toHaveBeenCalledWith({
+      workstreamId: expect.any(String),
       openingMessage: 'Create this once',
       participantIds: [],
       operationId: expect.any(String),
@@ -730,6 +771,7 @@ describe('New channel home', () => {
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Opening channel message' }), { key: 'Enter' });
 
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
+      workstreamId: expect.any(String),
       openingMessage: '',
       participantIds: [],
       operationId: expect.any(String),

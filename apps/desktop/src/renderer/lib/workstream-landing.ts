@@ -68,5 +68,6 @@ export function openWorkstreamId(pathname: string): string | null {
 
 /** Shared by startup warming and the Space-less root route; recency is its only order. */
 export function firstLandingWorkstream(workstreams: WorkstreamSummary[]): WorkstreamSummary | undefined {
-  return [...workstreams].sort(compareWorkstreamRecency)[0];
+  // Never a create still in flight, which has no screen to land on yet.
+  return workstreams.filter((workstream) => !workstream.pending).sort(compareWorkstreamRecency)[0];
 }

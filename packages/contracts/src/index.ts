@@ -1747,6 +1747,13 @@ export const UpdateDigestScheduleRequestSchema = z.object({
 
 export const WorkstreamCreationFieldsSchema = z.object({
   /**
+   * The id the caller already listed this Channel under, so it can show it
+   * before the create returns. Refused `workstream_id_unavailable` if any
+   * conversation has it. Optional: a caller with nobody waiting on screen
+   * leaves the id to the server.
+   */
+  workstreamId: WorkstreamIdSchema.optional(),
+  /**
    * The Spaces this Channel is born in; the API reauthorizes every one of them.
    *
    * A list rather than one id because a Channel belongs to as many Spaces as it
