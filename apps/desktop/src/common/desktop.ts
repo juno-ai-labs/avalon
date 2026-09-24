@@ -460,6 +460,8 @@ export interface RallyDesktopBridge {
   setEmbeddedBrowserBounds: (bounds: EmbeddedBrowserBounds) => Promise<void>;
   setEmbeddedBrowserVisible: (visible: boolean) => Promise<void>;
   onEmbeddedBrowserState: (listener: (state: EmbeddedBrowserState) => void) => () => void;
+  /** A browser shortcut pressed inside a visited page that asks for the address field. */
+  onEmbeddedBrowserFocusAddress: (listener: () => void) => () => void;
   /** Opens, or raises, the window for importing a signed-in Claude or ChatGPT conversation. */
   openBrowserImport: (context: BrowserImportContext) => Promise<void>;
   /** The import window's Spaces, as the main window last offered them. */

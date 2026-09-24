@@ -418,14 +418,15 @@ type ReaderBridge = Pick<RallyDesktopBridge, 'getEmbeddedBrowserState' | 'comman
 export async function readBrowserConversation(
   bridge: ReaderBridge,
   sourceUrl: string,
-  { openIfMissing = false }: { openIfMissing?: boolean } = {},
+  { openIfMissing = false, tabId }: { openIfMissing?: boolean; tabId?: string } = {},
 ): Promise<{ provider: BrowserConversationProvider; text: string }> {
   const target = conversationAt(sourceUrl, '');
   if (!target) throw new Error('Choose a ChatGPT or Claude conversation in Rally’s browser.');
   const state = await bridge.getEmbeddedBrowserState();
   // Import reads the tab the person is looking at when several show the conversation.
   const showing = state.tabs.filter((candidate) => browserConversation(candidate)?.url === target.url);
-  let tab = showing.find((candidate) => candidate.id === state.activeTabId) ?? showing[0];
+  // An explicit tab — the foreground tab Import was pressed on — wins over any other.
+  let tab = showing.find((candidate) => candidate.id === (tabId ?? state.activeTabId)) ?? showing[0];
   let opened: string | null = null;
   if (!tab && openIfMissing) {
     const result = await bridge.commandEmbeddedBrowser({ action: 'open', url: target.url });

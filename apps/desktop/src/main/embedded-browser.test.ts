@@ -144,6 +144,54 @@ describe('the local browser behind the rail and the import window', () => {
     expect(electron.views[1]!.bounds).toEqual({ x: 0, y: 0, width: 0, height: 0 });
   });
 
+  it('reorders tabs, selects the closed tab’s neighbour, and leaves a blank tab after the last close', async () => {
+    const { instance } = browser();
+    for (const url of ['https://a.example/', 'https://b.example/', 'https://c.example/']) await instance.command({ action: 'open', url });
+    const [a, b, c] = instance.state().tabs.map((tab) => tab.id);
+    await instance.command({ action: 'move', tabId: c!, index: 0 });
+    expect(instance.state().tabs.map((tab) => tab.id)).toEqual([c, a, b]);
+    await instance.command({ action: 'select', tabId: a! });
+    await instance.command({ action: 'close', tabId: a! });
+    expect(instance.state().activeTabId).toBe(b);
+    await instance.command({ action: 'close', tabId: b! });
+    await instance.command({ action: 'close', tabId: c! });
+    expect(instance.state().tabs).toEqual([expect.objectContaining({ url: 'about:blank' })]);
+  });
+
+  it('shows a page’s https icon, drops it on navigation, and ignores an unsafe one', async () => {
+    const { instance } = browser();
+    await instance.command({ action: 'open', url: 'https://claude.ai/' });
+    const contents = electron.views[0]!.webContents;
+    contents.emit('page-favicon-updated', {}, ['javascript:alert(1)', 'https://claude.ai/favicon.ico']);
+    expect(instance.state().tabs[0]!.favicon).toBe('https://claude.ai/favicon.ico');
+    contents.emit('did-navigate');
+    expect(instance.state().tabs[0]!.favicon).toBeNull();
+    contents.emit('page-favicon-updated', {}, ['http://claude.ai/favicon.ico']);
+    expect(instance.state().tabs[0]!.favicon).toBeNull();
+  });
+
+  it('acts on a browser shortcut pressed inside the page, and lets other keys through', async () => {
+    const focusAddress = vi.fn();
+    const window = hostWindow();
+    const instance = new EmbeddedBrowser(window as never, 'user-1', () => undefined, focusAddress);
+    await instance.command({ action: 'open', url: 'https://a.example/' });
+    const contents = electron.views[0]!.webContents;
+    const press = (input: Record<string, unknown>) => {
+      const event = { preventDefault: vi.fn() };
+      contents.emit('before-input-event', event, { type: 'keyDown', key: '', code: '', shift: false, alt: false, control: false, meta: false, ...input });
+      return event.preventDefault;
+    };
+    const modifier = process.platform === 'darwin' ? { meta: true } : { control: true };
+    expect(press({ key: 'c', code: 'KeyC', ...modifier })).not.toHaveBeenCalled();
+    expect(press({ key: 't', code: 'KeyT', ...modifier })).toHaveBeenCalled();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(instance.state().tabs).toHaveLength(2);
+    expect(focusAddress).toHaveBeenCalledTimes(1);
+    press({ key: 'w', code: 'KeyW', ...modifier });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(instance.state().tabs).toHaveLength(1);
+  });
+
   it('closes a tab once, selecting the next, and closes every tab on dispose', async () => {
     const { instance, states, window } = browser();
     await instance.command({ action: 'open', url: 'https://a.example/' });

@@ -3,7 +3,7 @@ import type { EmbeddedBrowserCommand, EmbeddedBrowserResult, EmbeddedBrowserStat
 import { browserConversation, loadThroughTab, readBrowserConversation } from './browser-conversation-import';
 
 const tab = (id: string, title: string, url: string): EmbeddedBrowserTab => ({
-  id, title, url, loading: false, canGoBack: false, canGoForward: false,
+  id, title, url, loading: false, canGoBack: false, canGoForward: false, favicon: null,
 });
 
 describe('browser conversation import', () => {

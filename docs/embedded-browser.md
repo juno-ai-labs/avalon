@@ -15,7 +15,7 @@ reusable page surface; the import window is its first dedicated consumer.
 | `apps/desktop/src/main/index.ts` | Account ownership, the per-window browser, IPC admission, and the import window. |
 | `apps/desktop/src/common/browser-import.ts` | The Spaces the main window hands the import window, and the imported Channel id it hands back. |
 | `apps/desktop/src/preload/index.ts` | The named renderer bridge, without general IPC access. |
-| `apps/desktop/src/renderer/components/embedded-browser-view.tsx` | The shared pieces: tab state and commands, native page placement, navigation toolbar, and tab strip. |
+| `apps/desktop/src/renderer/components/embedded-browser-view.tsx` | The shared pieces: tab state and commands, native page placement, navigation toolbar, tab strip, and keyboard shortcuts. |
 | `apps/desktop/src/renderer/components/embedded-browser-rail.tsx` | The right-rail host. |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Places the browser in the existing rail slot. |
 | `apps/desktop/src/renderer/screens/browser-import.tsx` | The import window: toolbar with Import and Close, start page, and the name-and-Space sheet. |
@@ -54,6 +54,22 @@ import, main opens the new Channel in the main window through the same
 deep-link path a menu-bar pick uses, and closes the import window along with
 its tabs. This window is the only way to import; the web host, which has no
 browser, offers no import.
+
+**Tabs.** Both hosts use one tab strip. A tab shows its page's icon (an https
+or image-data icon only), or a spinner while loading, and its title, with the
+title and address as its tooltip; the active tab is Rally's selected pill, as
+in search filters and sidebar rows, not a Chrome tab. A new-tab button follows
+the tabs, tabs shrink to share the strip, and the strip scrolls to keep the
+active tab visible. A middle click or the close button closes a tab, closing
+selects the neighbour to its right (else left), and closing the last tab leaves
+a blank one. Tabs drag to reorder (`move`). The strip is one tab stop: arrows,
+Home and End move between tabs and Delete closes one. `embeddedBrowserShortcut`
+defines the browser shortcuts once — ⌘T, ⌘W, ⌘1–⌘9, ⌃Tab and ⌘⇧[ / ], ⌘L, ⌘R,
+⌘[ / ] — for a key pressed in Rally's controls (the renderer's listener) and
+one pressed inside a page (main's `before-input-event`, which then hands the
+address field focus back to the renderer). In the rail they act only while
+focus is inside the browser, so they never take ⌘W or ⌘T from the rest of Rally.
+Import reads the foreground tab.
 
 Each host window gets its own `EmbeddedBrowser`: its own tabs and placement,
 over the one account partition. Signing in within the import window therefore
@@ -131,7 +147,10 @@ bar and a numbered start page. Each window has its own tabs over the shared
 account partition; browser IPC resolves the calling window. A typed command
 surface covers navigation, page inspection, input, page script, and DevTools
 commands. Browser link and sign-in redirects stay in that browser session
-instead of following the app-window external-link policy.
+instead of following the app-window external-link policy. Both hosts share one
+tab strip in Rally's own style, with drag reordering and browser shortcuts that
+also work from inside a page; a page's popups reuse one tab per tab the person
+opened.
 
 **Why:** A signed-in Chrome session in a Daytona sandbox reached ChatGPT's page
 but its backend conversation calls were challenged; a local browser uses the
