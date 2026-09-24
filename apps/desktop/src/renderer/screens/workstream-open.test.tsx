@@ -198,6 +198,26 @@ describe('socket-first channel open', () => {
     await waitFor(() => expect(locationInTest.search).toBe(''));
   });
 
+  it('counts background agents only in the conversation that started them', async () => {
+    const childId = '00000000-0000-7000-8000-00000000066a';
+    const parent = recoveryBoot();
+    const child = recoveryBoot({ title: 'Private investigation' });
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      cache.setQueryData(['ordered-transcript', workstreamId], parent.transcript);
+      cache.setQueryData(['substream-workstream', workstreamId, childId], child);
+      cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
+      cache.setQueryData(['workstream-children', workstreamId], { privateChildren: [
+        { substreamId: childId, title: child.title, createdByUserId: null, createdAt: child.createdAt, updatedAt: child.updatedAt },
+      ] });
+      cache.setQueryData(['workstream-background-agents', workstreamId], { [childId]: 2 });
+    });
+    await screen.findByRole('textbox', { name: /message/iu });
+    expect(screen.queryByRole('status', { name: /background agents? running/u })).not.toBeInTheDocument();
+    act(() => navigateInTest(`/workstreams/${workstreamId}?substream=${childId}`));
+    expect(await screen.findByRole('status', { name: '2 background agents running' })).toBeInTheDocument();
+  });
+
   it('uses only the selected guest conversation roster despite a cached organization directory', async () => {
     const member = { id: '00000000-0000-7000-8000-000000000661', name: 'Shared person', email: 'shared@example.test', timezone: 'UTC' };
     session.current = { user: member, workspace: { id: '00000000-0000-7000-8000-000000000672', region: 'global', role: null, accessClass: 'guest' } };
