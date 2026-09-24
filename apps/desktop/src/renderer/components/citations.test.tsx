@@ -403,6 +403,42 @@ describe('resource citations', () => {
     expect(document.body).toHaveTextContent('A quarterly chart');
   });
 
+  it('offers no resource menu when the host lists no actions', () => {
+    render(<MarkdownBody citations={context({ actions: () => [] })}>{'![Q3 board deck](resource://board-deck)'}</MarkdownBody>);
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Open Q3 board deck' }));
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('opens the host\'s menu on an audio tile', async () => {
+    const recording: CitationResource = { id: 'standup', title: 'standup.mp3', resourceType: 'generated_file', mimeType: 'audio/mpeg' };
+    const onSelect = vi.fn();
+    render(
+      <MarkdownBody citations={context({
+        resolve: (resourceId) => (resourceId === recording.id ? recording : undefined),
+        actions: () => [{ id: 'attach', label: 'Attach to channel', onSelect }],
+      })}>
+        {'![standup.mp3](resource://standup)'}
+      </MarkdownBody>,
+    );
+    fireEvent.contextMenu(screen.getByText('standup.mp3'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Attach to channel' }));
+    expect(onSelect).toHaveBeenCalledOnce();
+  });
+
+  it('shows a disabled action without running it', async () => {
+    const onSelect = vi.fn();
+    render(
+      <MarkdownBody citations={context({ actions: () => [{ id: 'attach', label: 'Attach to channel', disabled: true, onSelect }] })}>
+        {'See [the deck](resource://board-deck).'}
+      </MarkdownBody>,
+    );
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Open Q3 board deck' }));
+    const item = await screen.findByRole('menuitem', { name: 'Attach to channel' });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(item);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   it('never lets an unknown scheme reach the DOM as a destination', () => {
     render(
       <MarkdownBody citations={context()}>

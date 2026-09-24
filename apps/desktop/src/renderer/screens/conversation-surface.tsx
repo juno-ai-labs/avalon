@@ -30,6 +30,7 @@ import type { SubstreamInitialContext } from '@rally/contracts/substream-creatio
 import type { ClientSession } from '@rally/contracts/client-session';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { useCitations } from '../lib/use-citations';
+import { breakoutResourceActions } from '../lib/breakout-resource-actions';
 import { ApiError, type MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { desktopBridge } from '../lib/platform';
@@ -1308,6 +1309,29 @@ export function ConversationSurface({
     });
     return () => controller.abort();
   }, [id, loadResourceContent, routedDetail?.resources, siteArtifacts, workstreamContext?.id, workstreamContext?.resources]);
+  // Attaching always targets the Channel's main conversation, from any breakout.
+  const attachResource = useMutation({
+    mutationFn: (resource: WorkstreamResource) => api!.attachResource(id, resource.id),
+    onSuccess: (updated) => queryClient.setQueryData(parentDetailQueryKey, updated),
+  });
+  const attachResourceToChannel = attachResource.mutate;
+  // One attach at a time: each answers with the whole Channel detail, so two in
+  // flight could land out of order and drop the other's resource from the cache.
+  const attachPending = attachResource.isPending;
+  // Guests get no Channel context and cannot attach there, so they get no menu.
+  const breakoutResources = substreamId === '0' ? undefined : routedDetail?.resources;
+  const channelResources = parentKind === 'workstream' && workstreamContext?.id === id
+    ? workstreamContext.resources
+    : undefined;
+  // Keyed on what the menu reads, not on the arrays: a socket snapshot replaces
+  // them unchanged, and a new context identity re-renders every citation.
+  const citationActionsIdentity = JSON.stringify([
+    breakoutResources?.map((resource) => [resource.id, resource.direction]),
+    channelResources?.map((resource) => resource.id),
+  ]);
+  const citationActions = useMemo(() => breakoutResources && channelResources
+    ? breakoutResourceActions({ attach: attachResourceToChannel, breakoutResources, channelResources, pending: attachPending })
+    : undefined, [attachPending, attachResourceToChannel, citationActionsIdentity]);
   // Citations resolve against the loaded work stream's resources, and the
   // transcript needs this before the screen has decided it has a work stream to
   // draw at all — hence `routedDetail?`, and hence the hoisted empty array,
@@ -1315,6 +1339,7 @@ export function ConversationSurface({
   // declared after the preview read because it now takes it: the embed card's
   // excerpt is the same derivative the rail's panel shows.
   const citations = useCitations({
+    actions: citationActions,
     loadResourceContent,
     onOpenPreview: setAttachmentPreview,
     onOpenResourceDetails: openResourceDetails,
@@ -1797,15 +1822,6 @@ export function ConversationSurface({
     onSuccess: (updated) => {
       if (!updated) return;
       patchCachedWorkstream(queryClient, updated.id, { title: updated.title, titleStatus: updated.titleStatus, updatedAt: updated.updatedAt });
-    },
-  });
-
-  const attachResource = useMutation({
-    mutationFn: (resource: WorkstreamResource) => api!.attachResource(id, resource.id),
-    onSuccess: (updated) => {
-      queryClient.setQueryData(parentDetailQueryKey, updated);
-      setResourceDialogOpen(false);
-      setResourceSearch('');
     },
   });
 
@@ -2828,7 +2844,12 @@ export function ConversationSurface({
         fetching={availableResources.isFetchingNextPage}
         hasMore={Boolean(availableResources.hasNextPage)}
         loading={availableResources.isLoading}
-        onAttach={(resource) => attachResource.mutate(resource)}
+        onAttach={(resource) => attachResource.mutate(resource, {
+          onSuccess: () => {
+            setResourceDialogOpen(false);
+            setResourceSearch('');
+          },
+        })}
         onLoadMore={() => void availableResources.fetchNextPage()}
         onOpenChange={(open) => {
           setResourceDialogOpen(open);
