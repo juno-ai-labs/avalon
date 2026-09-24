@@ -2322,6 +2322,18 @@ export function Sidebar({
         </div>
         }
 
+        {/* Right-clicking empty space in the channel list offers the header
+            button's channel items, locked to the Space the list shows. Always
+            mounted, so the list is not rebuilt when the Spaces arrive. */}
+        <NewWorkstreamMenu
+          disabled={spaces === undefined || !spacesReady || spacesReadOnly}
+          lockedSpaceId={selectedSpaceId}
+          offer="channel"
+          spaces={placementSpaces}
+          trigger="context"
+          onCreateChannel={createChannelFromSidebar}
+          onCreateSpace={createSpaceFromSidebar}
+        >
         <SidebarScroll
           as="nav"
           aria-label={spaces === undefined ? 'Organization navigation' : 'Channels'}
@@ -2579,6 +2591,7 @@ export function Sidebar({
           </section>
           )}
         </SidebarScroll>
+        </NewWorkstreamMenu>
 
         {/*
           OnboardingChecklist is disabled: it was left over from a demo and
