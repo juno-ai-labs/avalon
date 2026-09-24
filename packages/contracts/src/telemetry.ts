@@ -395,6 +395,26 @@ export const TELEMETRY_EVENTS = {
     priority: "normal",
     regionalRetention: "90-days",
   }),
+  workspace_socket_handshake: event({
+    ...common,
+    name: "workspace_socket_handshake",
+    definition: "A content-free phase of one desktop workspace socket's first directory handshake.",
+    productQuestion: "Did an affected desktop obtain a ticket, open its socket, send subscribe, and apply the first directory?",
+    sources: ["desktop-renderer"],
+    authoritativeSource: "desktop-renderer",
+    category: "essential",
+    identityScopes: ["workspace-user"],
+    properties: deferredZodSchema(() => z.strictObject({
+      attemptId: uuidV7Id,
+      phase: z.enum([
+        "ticket_requested", "ticket_received", "transport_open", "subscribe_sent",
+        "sync_received", "sync_applied", "sync_rejected", "offline_blocked",
+      ]),
+    })),
+    propertyClassifications: { attemptId: "operational", phase: "operational" },
+    priority: "high",
+    regionalRetention: "90-days",
+  }),
   workstream_socket_started: event({
     ...common,
     name: "workstream_socket_started",
