@@ -112,6 +112,23 @@ describe('the local browser behind the rail and the import window', () => {
     expect(electron.views.map((view) => view.webContents.url)).toEqual(['https://claude.ai/', 'https://accounts.google.com/o/oauth2']);
   });
 
+  it('gives each opened tab at most one popup tab, however many times a page opens one', async () => {
+    const { instance } = browser();
+    await instance.command({ action: 'open', url: 'https://ads.example/' });
+    const page = electron.views[0]!.webContents;
+    for (let index = 0; index < 50; index += 1) page.windowOpenHandler!({ url: `https://ads.example/popup/${index}` });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(electron.views).toHaveLength(2);
+    expect(electron.views[1]!.webContents.url).toBe('https://ads.example/popup/49');
+    // The popup's own popups reuse the same tab rather than chaining new ones.
+    electron.views[1]!.webContents.windowOpenHandler!({ url: 'https://ads.example/chained' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(electron.views).toHaveLength(2);
+    expect(electron.views[1]!.webContents.url).toBe('https://ads.example/chained');
+    expect(instance.state().activeTabId).toBe(instance.state().tabs[1]!.id);
+  });
+
   it('places only the active tab, in window points, and only while visible', async () => {
     const { instance } = browser(1.25);
     await instance.command({ action: 'open', url: 'https://a.example/' });
