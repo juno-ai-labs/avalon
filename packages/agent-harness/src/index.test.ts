@@ -1817,6 +1817,35 @@ describe("agent harness", () => {
     expect(uncommittedFetch).not.toHaveBeenCalled();
   });
 
+  it("reports startup waits before provider dispatch without letting diagnostics stop the turn", async () => {
+    const phases: string[] = [];
+    const durations: number[] = [];
+    const fetcher = vi.fn(async () => {
+      expect(phases).toContain("context_catalog:provided");
+      expect(phases).toContain("skill_runtime");
+      expect(phases).toContain("provider_projection_hash");
+      expect(phases).toContain("provider_boundary");
+      expect(phases).toContain("assistant_reservation");
+      expect(phases).toContain("route_plan");
+      expect(phases).toContain("route_preparation");
+      return streamResponse([{
+        choices: [{ delta: { content: "Done" }, finish_reason: "stop" }],
+      }]);
+    }) as typeof fetch;
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      compaction: { contextWindowTokensByModel: { "test/model": 100_000 } },
+      onStartupTiming: ({ phase, durationMs, catalogSource }) => {
+        durations.push(durationMs);
+        phases.push(catalogSource ? `${phase}:${catalogSource}` : phase);
+        if (phase === "plugin_runtime") throw new Error("diagnostic failure");
+      },
+    });
+    expect(outcome.status).toBe("completed");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(durations.every((duration) => duration >= 0)).toBe(true);
+  });
+
   it("resumes one stable loop without reinitializing or resetting model turn identity", async () => {
     let projection: BindLoopProjectionState | null = null;
     const commit = (transition: BindLoopTransition): void => {

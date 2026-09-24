@@ -279,8 +279,14 @@ export async function persistImmutableRunScope(
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId">,
   lease: AttemptLease,
   scope: ImmutableRunScope,
+  onTiming?: (stage: "ownership" | "hash" | "write", durationMs: number) => void,
 ): Promise<{ scopeHash: string; reused: boolean }> {
+  const reportTiming = (stage: "ownership" | "hash" | "write", startedAt: number) => {
+    try { onTiming?.(stage, Date.now() - startedAt); } catch { /* Observational only. */ }
+  };
+  let startedAt = Date.now();
   await assertHarnessAttemptOwned(runs, input.harnessRunId, lease);
+  reportTiming("ownership", startedAt);
   const canonicalScope = {
     executionPrincipal: scope.executionPrincipal,
     eligibleConnectionIds: [...new Set(scope.eligibleConnectionIds)].sort(),
@@ -300,7 +306,10 @@ export async function persistImmutableRunScope(
     memoryContextHash: scope.memoryContextHash ?? null,
     limits: scope.limits,
   };
+  startedAt = Date.now();
   const scopeHash = await sha256Hex(stableJson(canonicalScope));
+  reportTiming("hash", startedAt);
+  startedAt = Date.now();
   const persisted = await runs.persistScope({
     runId: input.harnessRunId,
     attemptId: lease.attemptId,
@@ -318,6 +327,7 @@ export async function persistImmutableRunScope(
     memoryContextHash: canonicalScope.memoryContextHash,
     limitsJson: stableJson(canonicalScope.limits),
   });
+  reportTiming("write", startedAt);
   if (persisted.outcome === "ownership_lost") throw new RunOwnershipLostError();
   // `reused` means the run already has a recorded scope, and it wins. The hash
   // computed just above describes the *current* attempt's build, so on a run
@@ -688,6 +698,7 @@ export class CoalescedRunLiveness {
       leaseSeconds?: number;
       minimumIntervalMs?: number;
       afterHeartbeat?: () => void | Promise<void>;
+      onTiming?: (stage: string, part: "attempt" | "loop", durationMs: number) => void;
     } = {},
   ) {
     this.currentLease = lease;
@@ -701,19 +712,23 @@ export class CoalescedRunLiveness {
     return this.currentLease;
   }
 
-  async pulse(_stage: string, force = false): Promise<void> {
+  async pulse(stage: string, force = false): Promise<void> {
     if (this.controller.signal.aborted) throw this.controller.signal.reason;
     if (!force && Date.now() < this.nextHeartbeatAt) return;
     if (!this.inFlight) {
       this.inFlight = (async () => {
         try {
+          let startedAt = Date.now();
           this.currentLease = await heartbeatHarnessAttempt(
             this.runs,
             this.runId,
             this.currentLease,
             this.options.leaseSeconds ?? 60,
           );
+          try { this.options.onTiming?.(stage, "attempt", Date.now() - startedAt); } catch { /* Observational only. */ }
+          startedAt = Date.now();
           await this.options.afterHeartbeat?.();
+          try { this.options.onTiming?.(stage, "loop", Date.now() - startedAt); } catch { /* Observational only. */ }
           this.nextHeartbeatAt = Date.now() + (this.options.minimumIntervalMs ?? 5_000);
         } catch (error) {
           this.controller.abort(error);
