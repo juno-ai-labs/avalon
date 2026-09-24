@@ -245,6 +245,22 @@ function workstreamInput(): WorkstreamWorkflowInput {
 }
 
 describe("durable run authority revalidation", () => {
+  it("keeps a valid authority decision when diagnostic timing throws", async () => {
+    const database = new AuthorityDatabase(state());
+    const observed: string[] = [];
+    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(
+      database.env,
+      input(),
+      undefined,
+      (stage) => {
+        observed.push(stage);
+        throw new Error("diagnostic unavailable");
+      },
+    );
+    expect(snapshot.automationRunId).toBe(RUN_ID);
+    expect(observed).toEqual(["principal", "identity", "automation"]);
+  });
+
   it("admits a running automation run and re-reads only the automation's consent", async () => {
     const database = new AuthorityDatabase(state());
     const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
