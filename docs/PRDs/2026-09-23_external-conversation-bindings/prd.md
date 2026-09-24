@@ -2,8 +2,9 @@
 
 > Created 2026-09-23.
 >
-> A shared connector conversation can become a Rally Space, and a thread in it
-> can become a Rally Channel, without making Rally a copy of the provider.
+> A shared connector conversation can become a Rally Space, a thread in it can
+> become a Rally Channel, and a reply to a message Rally sent can return to the
+> Sidekick run that sent it, without making Rally a copy of the provider.
 > Companion architecture: [`design.md`](design.md). Discussion record:
 > [`discussion-brief.md`](discussion-brief.md). State: [`state.md`](state.md).
 > Standing contract: [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
@@ -20,8 +21,16 @@ bound thread continue that Channel. Public channels, private channels, and
 group DMs with Rally use this same product model. A one-to-one Rally/user DM
 has a separate routing policy.
 
-The implementation uses connector-neutral conversation bindings. A provider
-adapter describes its conversation hierarchy, identity, membership, and message
+A message a Sidekick run sends through a connector binds its reply thread to
+that run. A reply continues the run with the Sidekick's own instructions,
+tools, and authority, rather than opening an unrelated Agent Channel. A
+Sidekick has a home conversation, the Channel or Breakout it belongs to, and
+can list, read, and post to the conversations it is attached to. A
+multi-step Sidekick, such as one that collects answers at 1 PM and writes an
+agenda at 2 PM, uses its home conversation as the shared record between runs.
+
+All of this uses one connector-neutral binding record. A provider adapter
+describes its conversation hierarchy, identity, membership, and message
 events; Rally owns the Space and Channel identity, access, binding lifecycle,
 and routing. Slack is the first adapter, not a special case in Rally's Space
 model.
@@ -31,11 +40,17 @@ model.
 Today a Slack thread begun with Rally maps to a Rally Channel, but Slack-born
 Channels are placed in General and Rally joins public Slack channels without
 an invitation. A Sidekick's outbound DM for Northstar weekly call prep exposed a
-second ambiguity: a human reply to that message started a separate Rally Agent
-Channel rather than returning to the Sidekick's intended collection context.
-An origin attachment links back to the Slack thread, but it does not route
-future messages. The binding and its destination need to be explicit and
-visible to the ingress before a reply arrives.
+second gap: when Morgan replied "I have an update on the launch checklist." in the DM thread, Rally started
+a separate Agent Channel. The Sidekick that asked never saw the answer, so it
+could not combine it with the other founders' answers into the agenda.
+
+Three things are missing. No record says where a reply to Rally's message
+should go; an origin attachment links back to a Slack thread but does not
+route future messages. A message written into a finished Sidekick run starts a
+generic chat loop that runs as the sender, without the Sidekick's instructions
+or tools, and the Sidekick never learns of it. And a Sidekick run has no tool to
+read or post to the Breakout it was created from, so one run cannot leave work
+for the next.
 
 ## Goals
 
@@ -47,29 +62,42 @@ visible to the ingress before a reply arrives.
    follow the same routing contract while retaining the correct audience.
 4. Rally does not proactively join Slack channels. A Slack membership event or
    an invitation carried by a mention activates the Space binding.
-5. Outbound Rally messages may bind their provider reply thread to a deliberate
-   Rally conversation destination, including the Sidekick-owned run child
-   that sent a request, without posing as an ordinary newly created Slack Agent
-   Channel.
-6. The binding mechanism is usable by another connector with shared rooms and
-   threads without copying Slack-specific routing code.
+5. A message a Sidekick run sends through a connector binds its exact reply
+   thread to that run. A reply reaches the run, not a new Agent Channel.
+6. Input to a Sidekick run, from a Rally user or a bound external thread,
+   continues that run with the Sidekick's instructions, tools, and run-as
+   authority, even after the run has completed.
+7. A Sidekick has one home conversation (a Channel or a Breakout) and can list,
+   read, and post to the conversations it is attached to.
+8. The binding mechanism is usable by another connector with any depth of
+   rooms and threads without copying Slack-specific routing code.
 
 ## Non-goals
 
-1. **A Slack replica — rejected.** Linking does not import all messages,
+1. **A Slack replica: rejected.** Linking does not import all messages,
    mirror edits or deletions, or make Rally a general Slack channel browser.
-2. **Joining or creating provider conversations — rejected for this flow.** The
+2. **Joining or creating provider conversations: rejected for this flow.** The
    workspace bot responds where invited; existing explicit connector tools for
    provider writes retain their own contracts.
-3. **Automatically merging Rally conversations — rejected.** A Slack group DM
+3. **Automatically merging Rally conversations: rejected.** A Slack group DM
    whose participant change produces a new conversation ID does not silently
    merge old Rally content into a new Space.
-4. **A one-to-one DM Space — deferred.** Rally/user DMs need their own rule,
-   particularly for Sidekick outreach. The shared-room hierarchy does not
-   create a Space merely because a personal DM is opened.
-5. **Provider-wide access mirroring — deferred.** A binding does not claim that
+4. **A one-to-one DM Space: deferred.** Rally/user DMs need their own rule.
+   The shared-room hierarchy does not create a Space merely because a personal
+   DM is opened. Outbound Sidekick DMs still bind their reply threads.
+5. **Provider-wide access mirroring: deferred.** A binding does not claim that
    a Slack membership change immediately grants or revokes Rally access. The
    specific access contract must be settled before private shared rooms ship.
+6. **A Sidekick "collection" object: rejected.** The run that sent a request
+   receives its replies, and the home conversation holds what later runs need.
+   Both already exist.
+7. **Routing replies somewhere other than the sending run: rejected for now.**
+   A tool that sends from one place and routes replies to another is possible
+   with the binding record, but no workflow needs it, and it makes the reply
+   path harder to follow.
+8. **Attaching conversations from inside a scheduled run: rejected.** Only
+   authoring (a person, or the Sidekick's authoring conversation) attaches a
+   conversation, so a run cannot widen its own reach.
 
 ## Product behavior
 
@@ -107,28 +135,76 @@ binding to an absent destination. Offline Rally clients can still open the
 Channel after ingress completes; the provider event is not dependent on a
 desktop session.
 
-### Outbound reply threads
+### A Sidekick's home and attached conversations
 
-At 1 PM, the Northstar Sidekick already creates a child SubstreamAgent Durable
-Object under its Sidekick parent. That run child is the collection
-destination. The request sent to each founder establishes an exact provider
-reply-thread binding to the same 1 PM child when delivery returns the DM room
-and root message identities. A founder's thread reply is recorded there as an
-externally attributed turn, without starting another Agent Channel or
-reactivating the completed 1 PM inference. The child remains durable after the
-run ends; this requires a typed, non-activating external append path rather
-than ordinary human-message admission.
+Every Sidekick that belongs to a room has one **home conversation**: the
+Channel Main conversation or the Breakout where it was set up. The home is
+always attached. People, or the Sidekick's authoring conversation, can attach
+further Channels or Breakouts.
 
-At 2 PM, the scheduler creates a different child under the same Sidekick. Its
-parent supplies the matching 1 PM run address for that weekly occurrence; the
-2 PM execution reads the earlier child's messages through Rally's existing
-child-addressed message port and places the attributed answers in its new
-child's opening context before drafting the agenda. The Sidekick parent must
-identify the matching run; sibling history is not automatically in the 2 PM
-child's context. No additional "Sidekick collection"
-object is proposed. If the provider send has no confirmed root identity, Rally
-cannot safely assert that replies were collected; the one-to-one DM policy
-must handle that unconfirmed state explicitly.
+A Sidekick run has four conversation tools:
+
+- **List** the conversations it is attached to, home first.
+- **Read** messages from an attached conversation, a page at a time.
+- **Post** to an attached conversation, defaulting to the home. This replaces
+  today's `sidekick_post_result`, which could post only to the owning Channel's
+  Main conversation.
+- **Attach** a conversation, offered only to authoring, never to a scheduled
+  run.
+
+Reading and posting move content between audiences. A Sidekick may attach
+only to a conversation where that move cannot widen who sees the content, and
+each read or post rechecks it. A conversation archived or made unreachable
+refuses reads and posts with a reason the run can report.
+
+### Continuing a run
+
+**Input to a Sidekick run continues that run.** A person typing in a run's
+feed, a reply that arrives through a bound thread, and an answer to a question
+the run asked all behave the same way. The run reopens if it had completed,
+wakes with the Sidekick's instructions and tools, acts with the Sidekick's
+run-as authority, and completes again when it has nothing left to do. The run
+keeps one identity and one history, so a run can complete more than once.
+
+**Anyone who can reach a run may continue it.** That is any Rally user who can
+post in the run's feed and any sender in a thread bound to the run. Each
+message keeps its sender, so the run knows who said what. A person with only
+view-and-post access to a run can therefore make it act through the run-as
+user's connectors; that is the intended consequence of this rule, not a gap.
+
+A paused or deleted Sidekick does not continue. The input stays in the feed,
+and the sender sees why the run did not respond.
+
+### Outbound reply threads: Northstar weekly call prep
+
+The Northstar Sidekick has two schedule triggers and a home Breakout in the
+investors Space.
+
+1. **1 PM: send.** The Sidekick starts a run. The run DMs Morgan, Casey, and Jules
+   for their Updates and Asks. It may also tag them in the home Breakout; the
+   DM is a proxy for that request. Each successful send binds its exact Slack
+   reply thread to this run.
+2. **Reply.** A founder replies in their DM thread. The reply enters the 1 PM
+   run as that founder's message, and the run continues.
+3. **Forward.** Following its instructions, the continued run posts the
+   founder's answer, with the founder's name and a link to the Slack thread, to
+   the home Breakout. Each reply is forwarded once, even if delivery retries.
+4. **2 PM: read.** The Sidekick starts a second run. It reads the home
+   Breakout, which now holds each founder's answers alongside anything posted
+   there directly.
+5. **2 PM: post.** The run writes the agenda and posts it to the home Breakout,
+   tagging people as its instructions say.
+
+The two runs never need to find each other; both work through the home
+Breakout. A founder who never answers is simply absent from the Breakout when
+the 2 PM run reads it. A reply that arrives after 2 PM still continues the 1 PM
+run and appears in the Breakout, but does not change an agenda already posted.
+A reply outside the bound thread, or to a send whose provider receipt was
+lost, does not reach the run.
+
+The forward in step 3 depends on the model following its instructions. That
+failure is visible: the founder's answer is missing from the Breakout while
+present in the run's feed.
 
 ### Access and lifecycle
 
@@ -154,6 +230,9 @@ does not turn a Space into a message transcript or import a provider room as
 Rally content. The implementation brief's zero-copy connector boundary remains
 in force.
 
+One behavior moves: a Sidekick run is no longer finished for good when it
+completes. Input reopens it, and anyone who can reach it may do so.
+
 ## Key design decisions
 
 1. **Bind by provider identity, not display name.** Duplicate or changed names
@@ -166,6 +245,26 @@ in force.
 4. **Retain Rally history when provider access ends.** Deleting or reassigning
    persisted work because the bot left Slack would make provider state an
    unreviewed authority over Rally content.
+5. **One binding record for rooms and threads.** A room binding and a thread
+   binding differ only in policy: whether a match delivers a message, and
+   whether an unbound child creates a Rally conversation. Separate types, or
+   subclasses, would fix Slack's two levels into the schema; Discord, Teams,
+   GitHub, and email nest to other depths.
+6. **The home Breakout, not a run-to-run handoff, joins the two Northstar runs.**
+   An earlier draft had Rally find the matching 1 PM run and hand a snapshot of
+   its answers to the 2 PM run. That needed a key pairing the two runs, which
+   nothing provides. The home Breakout needs no pairing, keeps the answers
+   visible to people, and works for any multi-step Sidekick. Routing DM replies
+   straight to the Breakout was also rejected: the run that sent a message
+   should receive its replies.
+7. **A reply wakes the run instead of being recorded silently.** An earlier
+   draft appended replies to a finished run without waking its model. The
+   forward in step 3 needs the model, so input continues the run.
+8. **Replace `owning_workstream_id` with an owning substream, and remove
+   `authoringOrigin`.** A full conversation address covers Channels and
+   Breakouts with one field. The Slack-only `authoringOrigin` prompt field was
+   never populated; a home Channel that began in Slack already carries that
+   link as an origin resource.
 
 ## Regional impact
 
@@ -183,6 +282,12 @@ untrusted data. A provider member is not automatically a Rally member. Binding
 creation and message delivery still pass Rally's canonical audience and actor
 admission checks. Private-room policy is an unresolved build gate, not a reason
 to bypass content containment or widen a Space to make placement succeed.
+
+A continued run acts with its run-as user's connectors whoever sent the input,
+including an external sender in a bound thread. A bound thread's reply text is
+untrusted input to that run in the same way an inbound email is. Attached
+conversations are fixed at authoring, so a run cannot widen what it can read
+or post to.
 
 ## Provider configuration
 
@@ -203,6 +308,10 @@ way to select which already-joined shared conversations become linked Spaces.
 New invitations use the new path. A failed migration leaves the old Channel
 reachable and does not create a duplicate session or widen its audience.
 
+Existing Sidekicks move from `owning_workstream_id` to an owning substream of
+(Channel, `"0"`), which keeps today's posting behavior. A Sidekick whose home
+should be a Breakout is changed explicitly.
+
 ## Acceptance
 
 - Inviting Rally to a public channel, private channel, or group DM creates
@@ -216,11 +325,17 @@ reachable and does not create a duplicate session or widen its audience.
   a Space.
 - A private source never becomes Organization-readable solely because its
   member count exceeds the current Slack threshold.
-- The 1 PM Sidekick run's outbound DMs bind their exact reply threads to its
-  child substream. Each founder's reply is appended there once with source and
-  author identity, even after 1 PM inference completes; it does not create a
-  new Agent Channel or run. The 2 PM child reads the matching earlier child.
-  A Sidekick DM without an active binding does not claim to have collected it.
+- Each DM the 1 PM Northstar run sends binds its exact reply thread to that run. A
+  founder's reply continues that run, even after it completed, with the
+  Sidekick's instructions, tools, and run-as authority; it does not create a
+  new Agent Channel or a new run. The continued run posts the attributed answer
+  to the home Breakout once.
+- The 2 PM run reads the home Breakout and posts the agenda there.
+- A message typed into a completed run's feed by any user who can post there
+  continues the run the same way. Input to a paused or deleted Sidekick's run
+  does not start a loop and tells the sender why.
+- A scheduled run cannot attach a conversation, and cannot read or post to a
+  conversation it is not attached to.
 - Removal, archive, disconnect, provider ID change, and retry preserve the
   binding's identity or suspend it without moving messages to another target.
 
@@ -235,16 +350,24 @@ reachable and does not create a duplicate session or widen its audience.
 3. **Rally-side placement:** Is the linked Space a required placement until
    unlinking, or may a user move its Channel away while the thread still routes
    there?
-4. **Late replies and run history:** Should an answer arriving after the 2 PM
-   snapshot remain in the 1 PM run history only, or prompt a revised agenda?
-   The initial behavior records it as late and does not silently revise a
-   posted agenda.
-5. **Provider naming:** Should later provider renames update an untouched Rally
+4. **Provider naming:** Should later provider renames update an untouched Rally
    Space title, or should the initial name always remain independent?
-6. **Unconfirmed outbound delivery:** If the provider accepts an outbound root
+5. **Unconfirmed outbound delivery:** If the provider accepts an outbound root
    message but its response is lost, how can Rally recover that exact root ID
    before routing a reply? Without a provider receipt or a reliable correlation
    event, this is an uncollected state, not a reason to guess.
+6. **When a bound thread stops routing:** A run's state no longer decides this,
+   since input reopens a finished run. What closes an outbound binding, and what
+   does a sender see afterward?
+7. **Audience rule for attaching:** Reading and posting both move content, so
+   the rule may amount to "same audience or narrower in both directions". Is
+   that too strict for a Sidekick whose home is a Breakout inside a wider
+   Channel?
+8. **One-to-one DM fallback:** For a reply outside a bound thread, should Rally
+   start ordinary Agent work, decline it, or ask the person to reply in the
+   original thread?
+9. **Showing a reopened run:** How does the Sidekick's run history show a run
+   that completed, reopened, and completed again?
 
 ## Decision log
 
