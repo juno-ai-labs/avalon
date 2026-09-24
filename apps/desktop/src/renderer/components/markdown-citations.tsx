@@ -583,8 +583,9 @@ const LINK_CELLS: Matrix<LinkArgs> = {
       } else onOpen();
     }} resource={resource} />;
   },
-  // Unchanged: a real anchor, whose click the main process intercepts and sends
-  // to the system browser through its existing allowlist.
+  // A real anchor. On a Channel its click opens in the rail browser
+  // (`captureLinkClicks`); elsewhere the main process sends it to the system
+  // browser through its existing allowlist.
   external: (args) => <a {...args.anchor} rel="noopener noreferrer" target="_blank">{args.label}</a>,
   person: (args) => args.identity(),
   // Not "render as text": this is where `mailto:`, `tel:` and every relative
