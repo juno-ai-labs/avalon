@@ -1,6 +1,6 @@
 import { useContext, useState } from 'react';
 import { MemberPresentationContext } from '../lib/member-presentation';
-import { PersonalAvatar } from './personal-avatar';
+import { PersonalAvatar, personalColor } from './personal-avatar';
 import * as AvatarPrimitive from '@radix-ui/react-avatar';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Select from '@radix-ui/react-select';
@@ -458,6 +458,7 @@ export function AvatarStack({
 }): React.JSX.Element {
   const visible = members.slice(0, limit);
   const overflow = extraCount ?? Math.max(0, members.length - visible.length);
+  const presentations = useContext(MemberPresentationContext);
   const present = new Set(presentUserIds);
   const named = members.map((member) => (
     present.has(member.id) && member.id !== currentUserId
@@ -476,6 +477,7 @@ export function AvatarStack({
         const tooltip = showingPresence
           ? `${member.name} is viewing this workstream.`
           : member.name;
+        const presenceColor = (presentations.get(member.id) ?? member.presentation)?.color;
         const item = (
           <span
             className={clsx(
@@ -483,7 +485,13 @@ export function AvatarStack({
               showingPresence && 'is-present',
             )}
           >
-            {showingPresence && <span aria-hidden="true" className="avatar-presence-ping" />}
+            {showingPresence && (
+              <span
+                aria-hidden="true"
+                className="avatar-presence-ping"
+                style={presenceColor ? { '--avatar-presence-color': personalColor(presenceColor) } as React.CSSProperties : undefined}
+              />
+            )}
             <Avatar member={member} size="small" title={null} />
           </span>
         );
