@@ -255,6 +255,31 @@ conversation has not established them as existing product behavior.
 | A group DM grows and Slack creates a new conversation | A similar participant list is insufficient reason to merge Rally history. |
 | The bot leaves, a room archives, or the connection disconnects | Stop new routing while retaining existing Rally work and its source identity. |
 
+## Follow-up discussion, 2026-09-24
+
+A second session, working from a whiteboard sketch of the Northstar flow, changed
+several directions above. The PRD and design now reflect these; the sections
+above remain the record of the first discussion.
+
+- **One binding record.** Room and thread bindings are the same record over an
+  external path of any depth. They differ only in policy (deliver, spawn).
+- **The home Breakout joins the runs.** The 1 PM run forwards each reply to
+  the Breakout where the Sidekick was set up; the 2 PM run reads that Breakout
+  and posts the agenda there. This replaces the host-prepared snapshot
+  (decision 5 above) and removes the need to pair runs (question 1) or pick an
+  agenda destination (question 6).
+- **A reply wakes the run.** It is not recorded silently (decision 4 above),
+  because the run's model does the forwarding.
+- **Input to a Sidekick run continues that run,** reopening it if completed,
+  with the Sidekick's instructions, tools, and run-as authority.
+- **Anyone who can reach a run may continue it.** This settles question 12:
+  anyone in a bound thread may answer.
+- **A Sidekick's home is an owning substream.** `owning_workstream_id` becomes
+  a full conversation address, and the Slack-only `authoringOrigin` prompt field
+  is removed.
+- **Conversation tools.** Runs can list, read, and post to attached Channels and
+  Breakouts; only authoring can attach.
+
 ## Conversation boundaries
 
 The discussion did **not** authorize implementation, decide every unanswered
