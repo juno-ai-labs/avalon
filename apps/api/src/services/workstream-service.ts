@@ -51,7 +51,6 @@ import {
   wakeupExecutionPrincipal,
   type WorkstreamWakeupRow,
 } from "./workstream-wakeup-service";
-import { requireOpenWorkstreamAuthority } from "./workstream-authority";
 import { ChannelAccessService, publishChannelNarrowing, spaceAccessError } from "./channel-access-service";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 import { WorkstreamObjectCreationService } from "./workstream-object-creation-service";
@@ -158,7 +157,6 @@ async function externalMessageAgent(
   workspaceId: WorkspaceId,
   workstreamId: WorkstreamId,
 ) {
-  await requireOpenWorkstreamAuthority(env);
   return durableObjectStubForWorkspace(
     env,
     env.SUBSTREAM_AGENTS,
@@ -227,9 +225,6 @@ export async function launchWorkstreamHarness(
   ),
   publishEvent: typeof publishWorkstreamEvent = publishWorkstreamEvent,
 ): Promise<string> {
-  // The Durable-Object authority is the only execution arm left; a stack that
-  // has not opened it must refuse here, before the admission writes below.
-  await requireOpenWorkstreamAuthority(env);
   const executionEnv = env;
   const id = await stableActivationRunId(input);
   const at = nowIso();
@@ -557,9 +552,8 @@ export class WorkstreamService {
     private readonly defer?: (promise: Promise<unknown>) => void,
   ) {}
 
-  /** The object client, or a 503 refusal on a stack that never opened the authority. */
+  /** The object client for an existing Channel. */
   private async authoritativeClient(id: string): Promise<WorkstreamObjectClient> {
-    await requireOpenWorkstreamAuthority(this.env);
     return new WorkstreamObjectClient(this.env, this.auth, id);
   }
 
@@ -568,7 +562,6 @@ export class WorkstreamService {
     slackOrigin?: SlackOriginContext,
     slackSearchAuthorization?: SlackSearchAuthorization,
   ) {
-    await requireOpenWorkstreamAuthority(this.env);
     // `input.scope` travels with the rest of the input rather than being read
     // off and re-stated: the connector ingresses decide it from the conversation
     // they read the prompt out of, and a public channel's thread seats no
@@ -625,7 +618,6 @@ export class WorkstreamService {
     idempotencyKey: string;
     audienceScope: Scope;
   }) {
-    await requireOpenWorkstreamAuthority(this.env);
     const originResourceIds = await this.resolveDurableOpportunityOriginResources(input.opportunityId);
     return new WorkstreamObjectCreationService(this.env, this.auth, this.defer).create({
       objective: input.displayPrompt,
@@ -699,7 +691,6 @@ export class WorkstreamService {
 
   async recommendedSidekicks(id: string, substreamId = "0"): Promise<{ items: SidekickAttachment[] }> {
     const conversation = new ConversationService(this.env,this.auth);
-    await requireOpenWorkstreamAuthority(this.env);
     const parent = await conversation.authorizeViewer(id, substreamId);
     if (parent.kind !== "workstream") {
       throw new ApiError(422,"sidekick_attachment_parent_kind_unsupported","Sidekick recommendations belong to workstreams");
@@ -736,7 +727,6 @@ export class WorkstreamService {
   /** One capability/catalog decision for browser controls and person-authorized tools. */
   async sidekickRecommendationOptions(id: string, substreamId = "0"): Promise<SidekickRecommendationOptions> {
     const conversation = new ConversationService(this.env, this.auth);
-    await requireOpenWorkstreamAuthority(this.env);
     const parent = await conversation.authorizeViewer(id, substreamId);
     if (parent.kind !== "workstream") {
       throw new ApiError(422, "sidekick_attachment_parent_kind_unsupported", "Sidekick recommendations belong to workstreams");
@@ -950,7 +940,6 @@ export class WorkstreamService {
    * direct source losing a reader.
    */
   async removeParticipant(id: string, userId: string): Promise<void> {
-    await requireOpenWorkstreamAuthority(this.env);
     const accessLost = await new ChannelAccessService(this.env, this.auth)
       .removeDirectReader(id, userId);
     // The room closes its own sockets for the person it just removed. The

@@ -169,9 +169,6 @@ export interface AzureOpenAIConfig {
   apiKey: string;
 }
 
-/** Shared freshness horizon for OpenRouter catalog-derived metadata. */
-export const OPENROUTER_CATALOG_CACHE_TTL_MS = 60 * 60 * 1_000;
-
 /** Stable product attribution for every Rally OpenRouter request. */
 export const RALLY_OPENROUTER_HTTP_REFERER = "https://rallywith.ai";
 
@@ -3007,6 +3004,8 @@ export interface HarnessToolContext {
   executionPrincipal: ExecutionPrincipal;
   /** Stable per-receipt key for provider APIs that support idempotent writes. */
   providerIdempotencyKey?: string;
+  /** Host-only authorization prepared before receipt lookup; never persisted. */
+  authorizationContext?: unknown;
   signal: AbortSignal;
 }
 
@@ -3120,24 +3119,30 @@ export interface BeforeToolCallInput {
 }
 
 export type BeforeToolCallDecision =
-  | { allowed: true }
+  | { allowed: true; authorizationContext?: unknown }
   | { allowed: false; code: string; message: string };
 
 export type BeforeToolCallHook = (
   input: BeforeToolCallInput,
 ) => BeforeToolCallDecision | void | Promise<BeforeToolCallDecision | void>;
 
-/** Compose host policy hooks in order, stopping at the first explicit rejection. */
+/** Compose host policy hooks in order, stopping at rejection and retaining the last supplied context. */
 export function composeBeforeToolCallHooks(
   ...hooks: Array<BeforeToolCallHook | null | undefined>
 ): BeforeToolCallHook {
   return async (input) => {
+    let authorizationContext: unknown;
     for (const hook of hooks) {
       if (!hook) continue;
       const decision = await hook(input);
       if (decision?.allowed === false) return decision;
+      if (decision?.allowed === true && decision.authorizationContext !== undefined) {
+        authorizationContext = decision.authorizationContext;
+      }
     }
-    return { allowed: true };
+    return authorizationContext === undefined
+      ? { allowed: true }
+      : { allowed: true, authorizationContext };
   };
 }
 
@@ -3773,13 +3778,9 @@ export type PluginAuthorization = "authorized" | "denied" | "indeterminate";
  * the initial preload. It happens a handful of times per run, and the answer
  * has to be current all the way to the provider.
  *
- * `continuation` is the check between model turns, which runs before *every*
- * inference. What it exists to catch is authority the host itself withdrew
- * mid-run: a revoked grant, a removed member, an archived work stream, a
- * connection marked unhealthy — all of which the host knows from its own
- * records. Answering it with a provider round trip per active plugin per turn
- * spends real quota to re-learn something the host already knows, and on a
- * connector whose health check writes it is worse than wasteful.
+ * `continuation` runs before every inference. The host can retain the active
+ * tool surface using frozen run identifiers here; run authority is checked at
+ * the model boundary, and connector grants and health are checked on tool use.
  */
 export type PluginAuthorizationOccasion = "activation" | "continuation";
 
@@ -3890,6 +3891,8 @@ export interface RunHarnessInput {
   pluginDiscovery?: boolean;
   /** Connector activations already durably persisted by the host. */
   activationHints?: string[];
+  /** Subset checked and persisted by this host immediately before this attempt. */
+  preauthorizedActivationHints?: string[];
   /**
    * Loadable instructions for this run — procedures and reference knowledge the
    * model may pull into its own prompt, the knowledge counterpart of `plugins`.

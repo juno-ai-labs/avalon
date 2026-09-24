@@ -21,6 +21,16 @@ workspace-membership middleware. This does not relax mutation checks, socket
 admission, or local socket visibility/revocation. Missing authority remains a
 retryable failure for direct reads and explicit partial status for search/lists.
 
+SubstreamAgent product RPCs reuse a positive session-and-membership observation
+in that conversation object's memory for at most 300 seconds, capped by session
+expiry. The revocation walk clears it when it reaches that object. Direct object
+callers can use cached admission, including for writes, until it expires if the
+walk is delayed; ordinary HTTP requests still pass fresh Worker session admission.
+A Worker-verified role change refreshes the object's cached role. Socket ticket
+admission still reads D1 and existing sockets are closed by the same revocation
+walk. The owning mechanism is documented in
+[`workstream-durable-object.md`](workstream-durable-object.md).
+
 Membership removal/leave use the durable relationship dispatcher as their sole
 immediate producer. The consumer performs revocation and directory synchronization;
 the service does not also publish those effects directly. Dispatch failure leaves

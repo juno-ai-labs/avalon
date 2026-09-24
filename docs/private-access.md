@@ -202,9 +202,8 @@ wording and launch checklist. The content modules in the path table are the
 editable landing/email definitions. Personal outreach, profile research and
 onboarding demos remain separate launch work.
 
-The existing Worker-wide maintenance gate also covers intake and downloads.
-During planned product maintenance or a failed authority read these routes return
-the same maintenance response as other API traffic; no new bypass is introduced.
+Intake and downloads no longer depend on the completed Channel cutover row.
+Their own origin, rate, and credential checks still apply.
 Successful intake responses do not distinguish duplicates, but explicit email
 failures can reveal acknowledgement state during a provider outage. A future
 durable acknowledgement dispatcher can remove that distinction without silently

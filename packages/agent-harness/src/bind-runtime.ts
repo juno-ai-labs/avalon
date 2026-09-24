@@ -63,7 +63,6 @@ import {
   AzureOpenAIClient,
   AzureOpenAIError,
   AzureOpenAIRequestError,
-  OPENROUTER_CATALOG_CACHE_TTL_MS,
   HarnessPluginActivationError,
   OpenRouterClient,
   OpenRouterError,
@@ -221,8 +220,6 @@ export function isAzureBoundModel(modelId: string): boolean {
 const DEFAULT_CATALOG_TOKENS = 2_500;
 const COMPACTION_FRACTION = 0.8;
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000;
-const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
-const OPENROUTER_CATALOG_TIMEOUT_MS = 5_000;
 /**
  * What the model is asked for when a compaction fires.
  *
@@ -334,13 +331,6 @@ type RoutedTurn = {
   attemptCount: number;
 };
 
-type OpenRouterContextCatalog = {
-  expiresAt: number;
-  contextWindowTokensByModel: ReadonlyMap<string, number>;
-};
-
-let openRouterContextCatalog: OpenRouterContextCatalog | null = null;
-let openRouterContextCatalogRequest: Promise<OpenRouterContextCatalog> | null = null;
 const PLUGIN_SEARCH_RESULT_LIMIT = 20;
 
 type RenderedSystemPrompt = {
@@ -1112,9 +1102,17 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       if (await hashBindLoop(state.messages) !== healedHash) throw new Error("checkpoint_host_projection_mismatch");
     } else state.messages.push(...healed.messages);
     startupTiming("projection_validation", stageStartedAt);
-    const contextWindowTokensByModel = input.compaction
-      ? await resolveOpenRouterContextWindows(input, signal, startupTiming)
-      : new Map<string, number>();
+    const catalogStartedAt = Date.now();
+    // The host supplies its cached catalog snapshot. Inference never fetches
+    // OpenRouter metadata; a missing entry retains the established fallback.
+    const contextWindowTokensByModel = new Map<string, number>();
+    for (const [modelId, value] of Object.entries(input.compaction?.contextWindowTokensByModel ?? {})) {
+      if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+        contextWindowTokensByModel.set(modelId, Math.floor(value));
+      }
+    }
+    startupTiming("context_catalog", catalogStartedAt,
+      !input.compaction ? undefined : contextWindowTokensByModel.size > 0 ? "provided" : "fallback");
 
     const selectedContextWindowTokens = (): number => {
       const selectedModel = model ?? input.config.primaryModel;
@@ -1440,20 +1438,26 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       callModel: async (messages, _tools, onOutputProgress) => {
         deadline?.throwIfTimedOut();
         let providerStageStartedAt = Date.now();
-        await runtime.reauthorizeActive();
-        startupTiming("plugin_reauth", providerStageStartedAt);
-        providerStageStartedAt = Date.now();
-        residentSection = await requiredPort(
-          "run_state_persistence_failed",
-          "Resident context render failed",
-          async () => (await input.residentContext?.render()) ?? null,
-        );
+        const [, renderedResidentSection] = await Promise.all([
+          (async () => {
+            const startedAt = Date.now();
+            try {
+              await runtime.reauthorizeActive();
+            } finally {
+              startupTiming("plugin_reauth", startedAt);
+            }
+          })(),
+          requiredPort(
+            "run_state_persistence_failed",
+            "Resident context render failed",
+            async () => (await input.residentContext?.render()) ?? null,
+          ),
+        ]);
+        residentSection = renderedResidentSection;
         const systemPrompt = runtime.renderSystemPrompt(residentSection);
         replaceSystemMessage(messages, systemPrompt.content);
-        // Bind assembles its tool list before entering callModel. Authorization
-        // is deliberately revalidated at this later boundary, so rebuild the
-        // wire surface here to prevent a just-revoked plugin from remaining
-        // visible to the model for one turn.
+        // Bind assembles its tool list before entering callModel. Rebuild it
+        // from the current run-scoped active set after the continuation hook.
         const authorizedTools = runtime.buildWireTools();
         startupTiming("provider_resident_context", providerStageStartedAt);
         providerStageStartedAt = Date.now();
@@ -1479,8 +1483,10 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           throw new Error("bind_loop_system_message_missing");
         }
         providerStageStartedAt = Date.now();
-        const currentSystemHash = await hashBindLoop(bindLoopProjection.systemProjection.message);
-        const preparedSystemHash = await hashBindLoop(preparedSystemMessage);
+        const [currentSystemHash, preparedSystemHash] = await Promise.all([
+          hashBindLoop(bindLoopProjection.systemProjection.message),
+          hashBindLoop(preparedSystemMessage),
+        ]);
         if (currentSystemHash !== preparedSystemHash) {
           await commitBindTransition({
             kind: "system_projection_changed",
@@ -1813,6 +1819,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             ...(effectIntentId ? { effectIntentId } : {}),
             executionPrincipal: input.executionPrincipal,
             ...(providerIdempotencyKey ? { providerIdempotencyKey } : {}),
+            ...(beforeToolCallDecision?.allowed === true && beforeToolCallDecision.authorizationContext !== undefined
+              ? { authorizationContext: beforeToolCallDecision.authorizationContext }
+              : {}),
             signal: toolSignal,
           }), toolSignal);
         } catch (error) {
@@ -2539,115 +2548,6 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
   }
 }
 
-async function resolveOpenRouterContextWindows(
-  input: RunHarnessInput,
-  signal: AbortSignal,
-  onTiming: (phase: HarnessStartupTiming["phase"], startedAt: number,
-    source?: HarnessStartupTiming["catalogSource"]) => void,
-): Promise<Map<string, number>> {
-  const startedAt = Date.now();
-  const resolved = new Map<string, number>();
-  for (const [modelId, value] of Object.entries(input.compaction?.contextWindowTokensByModel ?? {})) {
-    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-      resolved.set(modelId, Math.floor(value));
-    }
-  }
-  const configuredModels = [input.config.primaryModel, ...(input.config.fallbackModels ?? [])];
-  if (configuredModels.every((modelId) => resolved.has(modelId))) {
-    onTiming("context_catalog", startedAt, "provided");
-    return resolved;
-  }
-
-  const fetcher = input.config.fetch ?? globalThis.fetch;
-  let catalogSource: "cache" | "inflight" | "fetch";
-  try {
-    const { catalog, source } = await loadOpenRouterContextCatalog(fetcher, signal, onTiming);
-    catalogSource = source;
-    for (const [modelId, contextWindowTokens] of catalog.contextWindowTokensByModel) {
-      if (!resolved.has(modelId)) resolved.set(modelId, contextWindowTokens);
-    }
-  } catch {
-    // Monad's behavior is intentionally fail-open here: a catalog outage must
-    // not block inference. Models missing from the snapshot use the 200k
-    // fallback window, while compaction still relies on real provider usage.
-    onTiming("context_catalog", startedAt, "fallback");
-    return resolved;
-  }
-  onTiming("context_catalog", startedAt, catalogSource);
-  return resolved;
-}
-
-async function loadOpenRouterContextCatalog(
-  fetcher: typeof globalThis.fetch,
-  signal: AbortSignal,
-  onTiming?: (phase: HarnessStartupTiming["phase"], startedAt: number) => void,
-): Promise<{ catalog: OpenRouterContextCatalog; source: "cache" | "inflight" | "fetch" }> {
-  const now = Date.now();
-  const mayUseSharedCache = fetcher === globalThis.fetch;
-  if (mayUseSharedCache && openRouterContextCatalog && openRouterContextCatalog.expiresAt > now) {
-    return { catalog: openRouterContextCatalog, source: "cache" };
-  }
-  if (mayUseSharedCache && openRouterContextCatalogRequest) {
-    return { catalog: await openRouterContextCatalogRequest, source: "inflight" };
-  }
-
-  const request = (async (): Promise<OpenRouterContextCatalog> => {
-    // Cancellable: this runs inside the bind loop's Workflow step, so a timer
-    // left armed after the catalog answers holds that invocation open. The
-    // deadline covers reading the body as well as the response head.
-    const deadline = combinedDeadline(signal, OPENROUTER_CATALOG_TIMEOUT_MS);
-    const envelope = await (async () => {
-      try {
-        let stageStartedAt = Date.now();
-        const response = await fetcher(OPENROUTER_MODELS_URL, {
-          headers: { accept: "application/json" },
-          signal: deadline.signal,
-        });
-        onTiming?.("context_catalog_response", stageStartedAt);
-        if (!response.ok) throw new Error(`OpenRouter model catalog failed (${response.status})`);
-        stageStartedAt = Date.now();
-        const body = await response.json();
-        onTiming?.("context_catalog_body", stageStartedAt);
-        stageStartedAt = Date.now();
-        const parsed = z.object({ data: z.array(z.unknown()) }).parse(body);
-        onTiming?.("context_catalog_parse", stageStartedAt);
-        return parsed;
-      } finally {
-        deadline.dispose();
-      }
-    })();
-    const entriesStartedAt = Date.now();
-    const values = new Map<string, number>();
-    for (const entry of envelope.data) {
-      const parsed = z.looseObject({
-        id: z.string(),
-        context_length: z.number().nullish(),
-        top_provider: z.looseObject({ context_length: z.number().nullish() }).nullish(),
-      }).safeParse(entry);
-      if (!parsed.success) continue;
-      const contextWindowTokens = parsed.data.context_length
-        ?? parsed.data.top_provider?.context_length
-        ?? null;
-      if (contextWindowTokens && Number.isFinite(contextWindowTokens) && contextWindowTokens > 0) {
-        values.set(parsed.data.id, Math.floor(contextWindowTokens));
-      }
-    }
-    onTiming?.("context_catalog_entries", entriesStartedAt);
-    return {
-      expiresAt: Date.now() + OPENROUTER_CATALOG_CACHE_TTL_MS,
-      contextWindowTokensByModel: values,
-    };
-  })();
-  if (mayUseSharedCache) openRouterContextCatalogRequest = request;
-  try {
-    const catalog = await request;
-    if (mayUseSharedCache) openRouterContextCatalog = catalog;
-    return { catalog, source: "fetch" };
-  } finally {
-    if (mayUseSharedCache) openRouterContextCatalogRequest = null;
-  }
-}
-
 async function createPluginRuntime(
   input: RunHarnessInput,
   startupTiming: (phase: HarnessStartupTiming["phase"], startedAt: number) => void,
@@ -2950,7 +2850,12 @@ async function createPluginRuntime(
   // the durable boundary. Only IDs the host returns after persistence may be
   // restored into Bind's active surface.
   const requested = input.activationHints ?? [];
+  const preauthorized = new Set(input.preauthorizedActivationHints ?? []);
   const rehydrationStartedAt = Date.now();
+  const checkedIds = [...new Set(requested.map((id) => registry.canonicalizeName(id)))]
+    .filter((id) => eligibleIds.has(id) && !preauthorized.has(id));
+  const checked = await Promise.allSettled(checkedIds.map((id) => reauthorize(id, "activation")));
+  const verdicts = new Map(checkedIds.map((id, index) => [id, checked[index]!] as const));
   const restored = await rehydrateActivation(requested, {
     canonicalizeName: registry.canonicalizeName,
     resolve: async (id) => {
@@ -2958,7 +2863,12 @@ async function createPluginRuntime(
       // Bind's rehydration vocabulary has one drop reason, so a denial and an
       // unverifiable plugin both land on `unreachable`; the host distinguishes
       // them in its own log when it produces the verdict.
-      if (await reauthorize(id, "activation") !== "authorized") return "unreachable";
+      if (!preauthorized.has(id)) {
+        const verdict = verdicts.get(id);
+        if (!verdict) return "unreachable";
+        if (verdict.status === "rejected") throw verdict.reason;
+        if (verdict.value !== "authorized") return "unreachable";
+      }
       try {
         await ensurePluginTools(id);
         return true;
@@ -2982,9 +2892,10 @@ async function createPluginRuntime(
   };
 
   const reauthorizeActive = async () => {
-    for (const id of [...active]) {
-      if (registry.isCoreName(id)) continue;
-      if (await reauthorize(id, "continuation") !== "authorized") {
+    const ids = [...active].filter((id) => !registry.isCoreName(id));
+    const verdicts = await Promise.all(ids.map((id) => reauthorize(id, "continuation")));
+    for (const [index, id] of ids.entries()) {
+      if (verdicts[index] !== "authorized") {
         active.delete(id);
         await input.onActivationDropped?.({ name: id, reason: "unreachable" });
       }

@@ -105,7 +105,7 @@ describe("who may continue a Slack work stream", () => {
     stubSlack({ privateChannel: false, members: ["U456"] });
 
     await expect(service(database, instance).processQueuedIngress(WORKSPACE, "event:refused"))
-      .rejects.toMatchObject({ status: 503, code: "workstream_authority_not_open" });
+      .rejects.toMatchObject({ status: 503, code: "workstream_maintenance" });
 
     // The refusal reached the job ledger, and no legacy product row appeared.
     expect(objectDatabase.prepare("SELECT status FROM slack_ingress_jobs WHERE id = 'event:refused'").get())
@@ -129,7 +129,7 @@ describe("who may continue a Slack work stream", () => {
     // ingress resolves on the way to the create, which happens before the
     // refusal, without standing up the whole create pipeline to do it.
     await expect(service(database, instance).processQueuedIngress(WORKSPACE, "event:public-roster"))
-      .rejects.toMatchObject({ status: 503, code: "workstream_authority_not_open" });
+      .rejects.toMatchObject({ status: 503, code: "workstream_maintenance" });
 
     expect(slack.methods).toContain("conversations.members");
     expect(slack.calls.find((call) => call.method === "conversations.members")?.body)
@@ -146,7 +146,7 @@ describe("who may continue a Slack work stream", () => {
     const slack = stubSlack({ privateChannel: true, members });
 
     await expect(service(database, instance).processQueuedIngress(WORKSPACE, "event:big-room"))
-      .rejects.toMatchObject({ status: 503, code: "workstream_authority_not_open" });
+      .rejects.toMatchObject({ status: 503, code: "workstream_maintenance" });
 
     // The listing still happens — the count is what decides the scope.
     expect(slack.methods).toContain("conversations.members");
