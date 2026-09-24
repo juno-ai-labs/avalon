@@ -81,12 +81,12 @@ import { patchCachedWorkstreamAppearance, setCachedWorkstreams } from '../lib/wo
 import { workstreamFeedSourceQueryKey } from '../lib/telemetry';
 import { substreamInitialContextQueryKey } from '../lib/use-workstream-socket';
 import { desktopBridge } from '../lib/platform';
-import { STOPPING_LABEL } from '../components/agent-work-timing';
+import { STOPPED_LABEL, STOPPING_LABEL } from '../components/agent-work-timing';
 import { ConversationOpeningSkeleton, ConversationSurface } from './conversation-surface';
 import { workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
 import { WorkstreamScreen } from './workstream';
-import type { WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { HarnessRunMetadata, HarnessStatus, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 
 const workstreamId = '00000000-0000-7000-8000-000000000650';
 
@@ -1053,10 +1053,55 @@ describe('socket-first channel open', () => {
   // could never see it. Nothing joined the decision to a rendered surface, so
   // the one user-visible thing the change exists for was the part not covered.
   describe('a pending stop is acknowledged above the composer', () => {
-    function stoppingScreen(overrides: Partial<WorkstreamBoot> = {}): void {
-      const boot = recoveryBoot({ harnessStatus: 'running', stopRequested: true, ...overrides });
+    const stoppedRunId = '00000000-0000-7000-8000-000000000660';
+    const run = (status: HarnessRunMetadata['status']): HarnessRunMetadata => ({
+      id: stoppedRunId,
+      origin: 'member',
+      status,
+      startedAt: '2026-08-26T14:00:00.000Z',
+      ...(status === 'running' ? {} : { completedAt: '2026-08-26T14:00:10.000Z' }),
+      createdAt: '2026-08-26T14:00:00.000Z',
+    });
+
+    function stoppingScreen(overrides: Partial<WorkstreamBoot> = {}): QueryClient {
+      const boot = recoveryBoot({
+        harnessStatus: 'running',
+        stopRequested: true,
+        latestHarnessRunId: stoppedRunId,
+        latestHarnessRun: run('running'),
+        ...overrides,
+      });
       const { transcript, ...detail } = boot;
-      renderScreen((queryClient) => {
+      return renderScreen((queryClient) => {
+        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail);
+        queryClient.setQueryData(['ordered-transcript', workstreamId], transcript);
+      });
+    }
+
+    /** Exactly what `applyHarnessStatus` writes: the status, and nothing else. */
+    function statusFrame(queryClient: QueryClient, harnessStatus: HarnessStatus): void {
+      act(() => {
+        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
+          current ? { ...current, harnessStatus, stopRequested: false } : current);
+      });
+    }
+
+    /**
+     * The canonical snapshot behind that frame, with the run row settled.
+     *
+     * `harnessStatus` is `completed` either way, including for a stop:
+     * `settleWorkstreamState` leaves a stopped run's work stream `idle`, and
+     * this client reads `idle` as `completed`. A fixture that says `stopped`
+     * here would be testing a payload the server does not send.
+     */
+    function settle(queryClient: QueryClient, runStatus: 'stopped' | 'completed'): void {
+      const { transcript, ...detail } = recoveryBoot({
+        harnessStatus: 'completed',
+        stopRequested: false,
+        latestHarnessRunId: stoppedRunId,
+        latestHarnessRun: run(runStatus),
+      });
+      act(() => {
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail);
         queryClient.setQueryData(['ordered-transcript', workstreamId], transcript);
       });
@@ -1081,6 +1126,113 @@ describe('socket-first channel open', () => {
       await act(async () => Promise.resolve());
 
       expect(screen.queryByRole('status', { name: STOPPING_LABEL })).not.toBeInTheDocument();
+    });
+
+    // The same argument as the block comment above, one phase later: the
+    // transition function and the indicator are each covered on their own, and
+    // both stayed green through a version of this change whose arming cleared
+    // itself before the settlement arrived — so the row never appeared at all,
+    // and only a running client said so. This is the join.
+    it('holds one region from the request through to the settled line', async () => {
+      const queryClient = stoppingScreen();
+      await act(async () => Promise.resolve());
+      const region = screen.getByRole('status', { name: STOPPING_LABEL });
+      expect(region.closest('.composer-dock')).not.toBeNull();
+      expect(region.closest('.transcript-scroll')).toBeNull();
+
+      // The status frame as a member stop actually sends it. It says
+      // `completed`, not `stopped`, because a stop leaves the work stream
+      // `idle` and this client reads `idle` as `completed` — so at this point
+      // nothing on the client knows yet whether the run stopped or simply
+      // finished. The dock used to go blank here, which is both a gap in the
+      // answer and an unmount of the live region that carries it.
+      statusFrame(queryClient, 'completed');
+      await act(async () => Promise.resolve());
+      expect(screen.getByRole('status', { name: STOPPING_LABEL })).toBe(region);
+
+      // The snapshot behind it carries the run row, which is what says it was
+      // a stop. Same node, new content: a live region inserted together with
+      // its content is not reliably announced, and this row's reader is the
+      // one who cannot see the dock.
+      settle(queryClient, 'stopped');
+      const settled = await screen.findByRole('status', { name: STOPPED_LABEL });
+      expect(settled).toBe(region);
+      expect(settled).toBeVisible();
+      expect(screen.queryByRole('status', { name: STOPPING_LABEL })).not.toBeInTheDocument();
+    });
+
+    // The bug this whole change exists for is the notice outliving the stop
+    // under later messages. The transition cannot express that half: a turn the
+    // addressing classifier reads as human-only leaves every one of its inputs
+    // unchanged, so only a rendered send shows it.
+    it.each([
+      ['accepted', true],
+      ['rejected', false],
+    ] as const)('clears on the next message this reader sends, when it is %s', async (_name, accepted) => {
+      const createMessage = accepted
+        ? vi.fn(async () => ({
+          turnId: 'turn', clientMessageId: 'message',
+          createdAt: '2026-08-26T14:01:00.000Z', deliveryState: 'queued',
+        }))
+        : vi.fn(async () => { throw new Error('send refused'); });
+      retainedSocket.mockReturnValue({
+        activeCompaction: null, activeInferenceDelays: [], createMessage,
+        requestSnapshot: vi.fn(), retryOpening: vi.fn(),
+        sendReady: true, state: 'connected', workspaceSocketState: 'connected',
+      });
+      const queryClient = stoppingScreen();
+      await act(async () => Promise.resolve());
+      statusFrame(queryClient, 'completed');
+      settle(queryClient, 'stopped');
+      await screen.findByRole('status', { name: STOPPED_LABEL });
+
+      const composer = await screen.findByRole('textbox', { name: 'Message the channel' });
+      fireEvent.change(composer, { target: { value: 'thanks, picking this up tomorrow' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      await waitFor(() => expect(createMessage).toHaveBeenCalled());
+
+      if (accepted) {
+        await waitFor(() => expect(screen.queryByRole('status', { name: STOPPED_LABEL })).not.toBeInTheDocument());
+      } else {
+        // The draft comes back and the conversation did not move on, so the
+        // acknowledgement has to survive — and nothing could put it back, the
+        // run being durably stopped by now.
+        await screen.findByText('The message couldn’t be sent. Try again.');
+        expect(screen.getByRole('status', { name: STOPPED_LABEL })).toBeVisible();
+      }
+    });
+
+    it('says nothing to a reader who opens a conversation already stopped', async () => {
+      // The run row is durable and the acknowledgement is not. Somebody who
+      // was not in the room when the stop landed has no button press to have
+      // been answered, and before this change they were shown one under every
+      // later message in the transcript.
+      const { transcript, ...detail } = recoveryBoot({
+        harnessStatus: 'stopped',
+        latestHarnessRunId: stoppedRunId,
+        latestHarnessRun: run('stopped'),
+      });
+      renderScreen((queryClient) => {
+        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail);
+        queryClient.setQueryData(['ordered-transcript', workstreamId], transcript);
+      });
+      await act(async () => Promise.resolve());
+
+      expect(screen.queryByRole('status', { name: STOPPED_LABEL })).not.toBeInTheDocument();
+    });
+
+    it('keeps a run that finished before the stop landed out of the dock', async () => {
+      const queryClient = stoppingScreen();
+      await act(async () => Promise.resolve());
+
+      // Same ambiguous frame, and the run row behind it says the other thing:
+      // the response finished before the stop reached a boundary, so there is
+      // no stop to acknowledge and the region goes rather than settling.
+      statusFrame(queryClient, 'completed');
+      settle(queryClient, 'completed');
+
+      await waitFor(() => expect(screen.queryByRole('status', { name: STOPPING_LABEL })).not.toBeInTheDocument());
+      expect(screen.queryByRole('status', { name: STOPPED_LABEL })).not.toBeInTheDocument();
     });
   });
 

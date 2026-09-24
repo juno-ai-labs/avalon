@@ -1,7 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEVICE_PREFERENCES_STORAGE_KEY } from '../lib/device-preferences';
-import { AgentCompactionIndicator, AgentWorkTiming, RunStoppingIndicator, STOPPING_LABEL } from './agent-work-timing';
+import { AgentCompactionIndicator, AgentWorkTiming, RunStopAcknowledgement, STOPPED_LABEL, STOPPING_LABEL } from './agent-work-timing';
 
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ paused = false, size, speed, state, theme }: { paused?: boolean; size: number; speed?: number; state: string; theme?: string }) => (
@@ -42,7 +42,7 @@ describe('AgentWorkTiming', () => {
   });
 
   it('says a stop is pending in words, marked up as a status, with no number to promise', () => {
-    const { container } = render(<RunStoppingIndicator />);
+    const { container } = render(<RunStopAcknowledgement settled={false} />);
 
     expect(screen.getByText(STOPPING_LABEL)).toBeInTheDocument();
     // The markup only — whether a screen reader announces a freshly inserted
@@ -56,6 +56,31 @@ describe('AgentWorkTiming', () => {
     // No elapsed total. The only number worth printing here is how much longer,
     // which nothing on this side can know, and a count-up beside "stopping"
     // reads as the wait's own length rather than the run's.
+    expect(container.textContent).not.toMatch(/\d/u);
+  });
+
+  it('settles that same line in place once the stop lands', () => {
+    const { container, rerender } = render(<RunStopAcknowledgement settled={false} />);
+    const region = screen.getByRole('status');
+    rerender(<RunStopAcknowledgement settled />);
+    // The same node, not a replacement: a live region inserted together with
+    // its content is not reliably announced, and the reader this row exists
+    // for is the one who cannot see it.
+    expect(screen.getByRole('status')).toBe(region);
+
+    expect(screen.getByText(STOPPED_LABEL)).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveAccessibleName(STOPPED_LABEL);
+    // The stopping row's class without the one that runs its orb: the phase
+    // changes under the reader, the line itself does not move. Nothing is
+    // running any more, so there is no orb at all.
+    const row = container.querySelector('.agent-work-timing');
+    expect(row).not.toHaveClass('agent-work-timing-active');
+    expect(screen.queryByTestId('thinking-orb')).not.toBeInTheDocument();
+    // The mark takes the orb's slot, so the sentence keeps its left edge.
+    expect(container.querySelector('.run-stopped-mark svg')).toHaveAttribute('fill', 'currentColor');
+    // Nothing to retry and nothing to wait for: a stop is something the
+    // reader did, not something that happened to them.
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
     expect(container.textContent).not.toMatch(/\d/u);
   });
 
