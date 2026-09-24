@@ -4551,12 +4551,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   override async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
-    const preInitializationAttachment = readAttachment(socket);
-    if (preInitializationAttachment && !preInitializationAttachment.subscribed) {
-      this.logWorkspaceSocketHandshake(preInitializationAttachment, "frame_received");
+    // Record callback ingress before initialization can stall; parse the
+    // attachment only once because this callback also handles presence frames.
+    const attachment = readAttachment(socket);
+    if (attachment && !attachment.subscribed) {
+      this.logWorkspaceSocketHandshake(attachment, "frame_received");
     }
     await this.initialized;
-    const attachment = readAttachment(socket);
     if (!attachment) {
       this.closeSocket(socket, null, {
         code: 1011,

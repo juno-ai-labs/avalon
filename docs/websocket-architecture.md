@@ -103,16 +103,13 @@ warmth is not attention.
 
 The singleton socket assigns a UUIDv7 to each connection attempt and reports
 content-free opening phases through the desktop reliability telemetry path.
-Its `subscribe` frame optionally carries that UUID. WorkspaceDO logs acceptance
-with a server connection ID, then an inbound frame before awaiting object
-initialization, subscription receipt, authorization, sidebar
-assembly, feature-flag resolution, and sync send with both IDs. This identifies
-the last completed boundary when an organization shell remains on `Opening
-channels`. The `accepted` log has only the connection ID because the room has
-not received the subscription yet; later logs correlate the two IDs. A
+Its `subscribe` frame optionally carries that UUID. WorkspaceDO logs `accepted`
+with a server connection ID, then `frame_received` before initialization,
+`subscribe_received`, `subscribe_authorized`, `sidebar_built`, `flags_resolved`,
+and `sync_sent`. The latter phases carry both IDs. `accepted` has only the
+connection ID because the room has not received the subscription yet; a
 `frame_received` without `subscribe_received` narrows the stall to initialization
-or frame validation. These
-diagnostics do not change admission, timeout, or retry behavior.
+or frame validation.
 
 An automation's conversation rides the same broker and the same route kind as
 a work stream's feed, addressed by the automation id as the parent, but not the
