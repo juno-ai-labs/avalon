@@ -502,6 +502,20 @@ describe('New channel home', () => {
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Opening channel message' })).toHaveFocus());
   });
 
+  // The sidebar's dialog can open the launcher for the Space already on screen.
+  // Nothing remounts for a route that did not change, so the composer's
+  // autofocus never ran and the caret was left wherever the dialog put it.
+  it('focuses the message when the same space launcher is opened again', async () => {
+    renderSpaceScreen(GENERAL_SPACE_ID, generalSpaceDirectory(), GENERAL_SPACE_ID);
+    expect(screen.getByRole('textbox', { name: 'Opening channel message' })).toHaveFocus();
+    const again = screen.getByRole('link', { name: 'New channel in another space' });
+    act(() => again.focus());
+    fireEvent.click(again);
+
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Opening channel message' })).toHaveFocus());
+    expect(screen.queryByRole('combobox', { name: 'Search people' })).not.toHaveFocus();
+  });
+
   it('shows an empty recipient result when the organization has no available members', async () => {
     api.getWorkspaceMembers.mockResolvedValue([currentUser]);
     renderScreen();
