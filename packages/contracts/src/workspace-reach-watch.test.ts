@@ -1,12 +1,17 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE } from "./index";
-import { watchWorkspaceReach, type ReachSocket } from "./workspace-reach-watch";
+import {
+  WORKSPACE_SOCKET_HEARTBEAT_MS,
+  WORKSPACE_SOCKET_PONG_TIMEOUT_MS,
+  watchWorkspaceReach,
+  type ReachSocket,
+  type ReachWatchDiagnostic,
+} from "./workspace-reach-watch";
 
 type Listener = (event: never) => void;
 
 class FakeSocket implements ReachSocket {
-  readyState = 0;
   sent: string[] = [];
   closed = false;
   private listeners = new Map<string, Listener[]>();
@@ -32,6 +37,7 @@ class FakeSocket implements ReachSocket {
   }
 }
 
+/** The subscribe answer, as the server shapes it: the one sync that carries `sidebar`. */
 const subscribeAnswer = {
   type: "workspace_sync",
   eventId: "01920000-0000-7000-8000-000000000001",
@@ -39,6 +45,15 @@ const subscribeAnswer = {
   occurredAt: "2026-09-24T00:00:00.000Z",
   topics: ["workstream_directory"],
   reason: "initial",
+  sidebar: {},
+};
+const broadcast = {
+  type: "workspace_sync",
+  eventId: "01920000-0000-7000-8000-000000000002",
+  waterline: 4,
+  occurredAt: "2026-09-24T00:00:01.000Z",
+  topics: ["activity"],
+  reason: "change",
 };
 const reachChanged = {
   type: "workspace_reach_changed",
@@ -46,36 +61,35 @@ const reachChanged = {
   userIds: ["00000000-0000-7000-8000-00000000e001"],
 };
 
-function harness() {
+function harness(options: { ticket?: () => Promise<{ url: string; ticket: string }>; open?: () => FakeSocket } = {}) {
   const sockets: FakeSocket[] = [];
-  const timers: Array<{ callback: () => void; cleared: boolean }> = [];
   const onStale = vi.fn();
+  const diagnostics: ReachWatchDiagnostic[] = [];
   const stop = watchWorkspaceReach({
-    ticket: async () => ({ url: "wss://api.example/socket/workspaces/w", ticket: "t" }),
-    open: () => {
+    ticket: options.ticket ?? (async () => ({ url: "wss://api.example/socket/workspaces/w", ticket: "t" })),
+    open: options.open ?? (() => {
       const socket = new FakeSocket();
       sockets.push(socket);
       return socket;
-    },
+    }),
     onStale,
-    setTimer: (callback) => {
-      const timer = { callback, cleared: false };
-      timers.push(timer);
-      return timer;
-    },
-    clearTimer: (handle) => { (handle as { cleared: boolean }).cleared = true; },
+    onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
   });
+  /** Let the pending ticket promise settle, then open the newest socket. */
   const opened = async (): Promise<FakeSocket> => {
-    await vi.waitFor(() => expect(sockets.length).toBeGreaterThan(0));
+    await vi.advanceTimersByTimeAsync(0);
     const socket = sockets.at(-1)!;
     socket.emit("open");
     return socket;
   };
-  return { sockets, timers, onStale, stop, opened };
+  return { sockets, onStale, diagnostics, stop, opened };
 }
 
+beforeEach(() => { vi.useFakeTimers(); });
+afterEach(() => { vi.useRealTimers(); });
+
 describe("watchWorkspaceReach", () => {
-  it("subscribes, and reports the first subscribe answer and a reach change", async () => {
+  it("subscribes, and reports the first subscribe answer and a reach change, but not a broadcast", async () => {
     const { onStale, opened } = harness();
     const socket = await opened();
 
@@ -85,7 +99,7 @@ describe("watchWorkspaceReach", () => {
     socket.message(subscribeAnswer);
     expect(onStale).toHaveBeenCalledTimes(1);
 
-    socket.message({ ...subscribeAnswer, reason: "change", topics: ["activity"] });
+    socket.message(broadcast);
     socket.message({ type: "workspace_presence", occurredAt: reachChanged.occurredAt, workstreamId: null, userIds: [] });
     expect(onStale).toHaveBeenCalledTimes(1);
 
@@ -93,63 +107,119 @@ describe("watchWorkspaceReach", () => {
     expect(onStale).toHaveBeenCalledTimes(2);
   });
 
+  it("recognizes a subscribe answer carrying a field this build does not know", async () => {
+    const { onStale, opened } = harness();
+    const socket = await opened();
+    socket.message({ ...subscribeAnswer, sidebar: { somethingNewer: true }, alsoNew: 1 });
+    expect(onStale).toHaveBeenCalledTimes(1);
+  });
+
   it("reports stale after a reconnect, since nothing is replayed across the gap", async () => {
-    const { sockets, timers, onStale, opened } = harness();
+    const { sockets, onStale, diagnostics, opened } = harness();
     const first = await opened();
     first.message(subscribeAnswer);
     first.emit("close", { code: 1006 });
+    expect(diagnostics).toEqual([{ code: "closed", closeCode: 1006 }]);
 
-    timers.filter((timer) => !timer.cleared).at(-1)!.callback();
-    await vi.waitFor(() => expect(sockets).toHaveLength(2));
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(sockets).toHaveLength(2);
     const second = await opened();
     second.message(subscribeAnswer);
     expect(onStale).toHaveBeenCalledTimes(2);
   });
 
+  it("ignores a message from a socket it has already replaced", async () => {
+    const { onStale, opened } = harness();
+    const first = await opened();
+    first.emit("close", { code: 1006 });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await opened();
+
+    first.message(reachChanged);
+    expect(onStale).not.toHaveBeenCalled();
+  });
+
+  it("pings when quiet, and closes and reconnects when the pong does not come", async () => {
+    const { sockets, opened } = harness();
+    const socket = await opened();
+
+    await vi.advanceTimersByTimeAsync(WORKSPACE_SOCKET_HEARTBEAT_MS);
+    expect(socket.sent.at(-1)).toBe("ping");
+    await vi.advanceTimersByTimeAsync(WORKSPACE_SOCKET_PONG_TIMEOUT_MS);
+    expect(socket.closed).toBe(true);
+
+    socket.emit("close", { code: 1006 });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(sockets).toHaveLength(2);
+  });
+
+  it("keeps the socket when the pong arrives", async () => {
+    const { opened } = harness();
+    const socket = await opened();
+    await vi.advanceTimersByTimeAsync(WORKSPACE_SOCKET_HEARTBEAT_MS);
+    socket.message("pong");
+    await vi.advanceTimersByTimeAsync(WORKSPACE_SOCKET_PONG_TIMEOUT_MS);
+    expect(socket.closed).toBe(false);
+  });
+
+  it("names a failed ticket and tries again", async () => {
+    let calls = 0;
+    const failure = new Error("Rally could not issue a ticket");
+    const { sockets, diagnostics } = harness({
+      ticket: async () => {
+        calls += 1;
+        if (calls === 1) throw failure;
+        return { url: "wss://api.example/socket/workspaces/w", ticket: "t" };
+      },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(diagnostics).toEqual([{ code: "ticket_failed", error: failure }]);
+    expect(sockets).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(sockets).toHaveLength(1);
+  });
+
   it("retries when opening the socket throws, rather than stopping for good", async () => {
-    const timers: Array<{ callback: () => void; cleared: boolean }> = [];
-    const opened: FakeSocket[] = [];
     let attempts = 0;
-    watchWorkspaceReach({
-      ticket: async () => ({ url: "wss://api.example/socket/workspaces/w", ticket: "t" }),
+    const sockets: FakeSocket[] = [];
+    const { diagnostics } = harness({
       open: () => {
         attempts += 1;
         if (attempts === 1) throw new SyntaxError("The URL is invalid");
         const socket = new FakeSocket();
-        opened.push(socket);
+        sockets.push(socket);
         return socket;
       },
-      onStale: () => undefined,
-      setTimer: (callback) => {
-        const timer = { callback, cleared: false };
-        timers.push(timer);
-        return timer;
-      },
-      clearTimer: (handle) => { (handle as { cleared: boolean }).cleared = true; },
     });
-    await vi.waitFor(() => expect(timers).toHaveLength(1));
-    expect(opened).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["open_failed"]);
+    expect(sockets).toHaveLength(0);
 
-    timers[0]!.callback();
-    await vi.waitFor(() => expect(opened).toHaveLength(1));
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(sockets).toHaveLength(1);
   });
 
-  it("does not reconnect after the server revokes access", async () => {
-    const { timers, opened } = harness();
+  it("stops, and says so, after the server revokes access", async () => {
+    const { sockets, diagnostics, opened } = harness();
     const socket = await opened();
     socket.message(subscribeAnswer);
-    const before = timers.length;
     socket.emit("close", { code: WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE });
-    expect(timers).toHaveLength(before);
-    expect(timers.every((timer) => timer.cleared)).toBe(true);
+    expect(diagnostics).toEqual([{ code: "stopped", closeCode: WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE }]);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(1);
   });
 
   it("closes the socket and stops reconnecting when stopped", async () => {
-    const { timers, stop, opened } = harness();
+    const { sockets, diagnostics, stop, opened } = harness();
     const socket = await opened();
     stop();
     expect(socket.closed).toBe(true);
     socket.emit("close", { code: 1000 });
-    expect(timers.every((timer) => timer.cleared)).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(1);
+    expect(diagnostics).toEqual([]);
   });
 });

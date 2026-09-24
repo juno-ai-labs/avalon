@@ -22,6 +22,11 @@ import {
   safeParseSocketEvent,
 } from "@rally/contracts";
 import type { TelemetryEventProperties } from '@rally/contracts/telemetry';
+import {
+  WORKSPACE_SOCKET_HEARTBEAT_MS,
+  WORKSPACE_SOCKET_PONG_TIMEOUT_MS,
+  workspaceSocketReconnectDelay,
+} from '@rally/contracts/workspace-reach-watch';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   createContext,
@@ -163,14 +168,8 @@ interface WorkspaceSocketContextValue {
 }
 
 const WorkspaceSocketContext = createContext<WorkspaceSocketContextValue | null>(null);
-const HEARTBEAT_MS = 50_000;
-const PONG_TIMEOUT_MS = 15_000;
 const COMMAND_TIMEOUT_MS = 120_000;
 
-function reconnectDelay(attempt: number): number {
-  const ceiling = Math.min(30_000, 750 * 2 ** Math.min(Math.max(attempt, 0), 6));
-  return Math.floor(ceiling / 2 + Math.random() * ceiling / 2);
-}
 
 function invalidateTopic(
   queryClient: ReturnType<typeof useQueryClient>,
@@ -374,8 +373,8 @@ export function WorkspaceSocketProvider({
           if (stopped || socket !== target || target.readyState !== WebSocket.OPEN) return;
           socketTelemetry.willClose('heartbeat_timeout');
           target.close();
-        }, PONG_TIMEOUT_MS);
-      }, HEARTBEAT_MS);
+        }, WORKSPACE_SOCKET_PONG_TIMEOUT_MS);
+      }, WORKSPACE_SOCKET_HEARTBEAT_MS);
     };
     /**
      * @returns whether the directory still needs a reconciling refetch.
@@ -468,7 +467,7 @@ export function WorkspaceSocketProvider({
       reconnectTimer = window.setTimeout(() => {
         reconnectTimer = null;
         void connect();
-      }, reconnectDelay(attempt));
+      }, workspaceSocketReconnectDelay(attempt));
     };
     const connect = async (): Promise<void> => {
       if (stopped || permanentlyClosed || connecting) return;
