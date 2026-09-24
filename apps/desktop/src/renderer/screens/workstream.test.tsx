@@ -177,6 +177,7 @@ describe('running channel message delivery', () => {
       <MemoryRouter>
         <Tooltip.Provider>
           <WorkstreamComposer
+            draftKey="test-draft"
             attachments={[]}
             fileInputRef={createRef<HTMLInputElement>()}
             members={[]}

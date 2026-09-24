@@ -128,6 +128,7 @@ describe('WorkstreamComposer live dictation', () => {
     render(
       <Tooltip.Provider>
         <WorkstreamComposer
+          draftKey="test-draft"
           api={{ getTranscriptionSocketTicket: vi.fn() }}
           attachments={[]}
           fileInputRef={createRef<HTMLInputElement>()}
@@ -167,6 +168,7 @@ describe('WorkstreamComposer live dictation', () => {
     render(
       <Tooltip.Provider>
         <WorkstreamComposer
+          draftKey="test-draft"
           api={{ getTranscriptionSocketTicket: vi.fn() }}
           attachments={[]}
           fileInputRef={createRef<HTMLInputElement>()}
@@ -202,6 +204,7 @@ describe('WorkstreamComposer live dictation', () => {
     render(
       <Tooltip.Provider>
         <WorkstreamComposer
+          draftKey="test-draft"
           api={{ getTranscriptionSocketTicket: vi.fn() }}
           attachments={[]}
           fileInputRef={createRef<HTMLInputElement>()}
@@ -237,6 +240,7 @@ describe('WorkstreamComposer live dictation', () => {
     render(
       <Tooltip.Provider>
         <WorkstreamComposer
+          draftKey="test-draft"
           api={{ getTranscriptionSocketTicket: vi.fn() }}
           attachments={[]}
           fileInputRef={createRef<HTMLInputElement>()}
@@ -273,6 +277,7 @@ describe('WorkstreamComposer live dictation', () => {
     render(
       <Tooltip.Provider>
         <WorkstreamComposer
+          draftKey="test-draft"
           api={{ getTranscriptionSocketTicket: vi.fn() }}
           attachments={[]}
           fileInputRef={createRef<HTMLInputElement>()}
@@ -309,6 +314,7 @@ describe('WorkstreamComposer live dictation', () => {
     render(
       <Tooltip.Provider>
         <WorkstreamComposer
+          draftKey="test-draft"
           api={{ getTranscriptionSocketTicket: vi.fn() }}
           attachments={[]}
           fileInputRef={createRef<HTMLInputElement>()}
@@ -341,6 +347,7 @@ describe('WorkstreamComposer live dictation', () => {
     render(
       <Tooltip.Provider>
         <WorkstreamComposer
+          draftKey="test-draft"
           api={{ getTranscriptionSocketTicket: vi.fn() }}
           attachments={[]}
           fileInputRef={createRef<HTMLInputElement>()}
@@ -373,6 +380,7 @@ describe('WorkstreamComposer live dictation', () => {
     render(
       <Tooltip.Provider>
         <WorkstreamComposer
+          draftKey="test-draft"
           api={{ getTranscriptionSocketTicket: vi.fn() }}
           attachments={[]}
           fileInputRef={createRef<HTMLInputElement>()}
@@ -414,6 +422,7 @@ describe('WorkstreamComposer live dictation', () => {
     render(
       <Tooltip.Provider>
         <WorkstreamComposer
+          draftKey="test-draft"
           api={{ getTranscriptionSocketTicket: vi.fn() }}
           attachments={[]}
           fileInputRef={createRef<HTMLInputElement>()}
@@ -448,6 +457,7 @@ describe('WorkstreamComposer live dictation', () => {
     render(
       <Tooltip.Provider>
         <WorkstreamComposer
+          draftKey="test-draft"
           api={{ getTranscriptionSocketTicket: vi.fn() }}
           attachments={[]}
           fileInputRef={createRef<HTMLInputElement>()}
@@ -476,6 +486,7 @@ describe('WorkstreamComposer live dictation', () => {
     render(
       <Tooltip.Provider>
         <WorkstreamComposer
+          draftKey="test-draft"
           api={{ getTranscriptionSocketTicket: vi.fn() }}
           attachments={[]}
           error=""

@@ -2712,8 +2712,7 @@ export function ConversationSurface({
             uploading={attachmentDraft.uploading}
             key={conversationAddress}
             workstream={displayedDetail}
-            workspaceId={workspaceId}
-            workspaceRegion={workspaceRegion}
+            draftKey={workstreamDraftKey(workspaceRegion, workspaceId, displayedDetail.id, substreamId)}
             substreamId={substreamId}
           />
         </div>

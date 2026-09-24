@@ -1,7 +1,6 @@
 import { LoaderCircle, Sparkles, Square, UserPlus } from 'lucide-react';
 import { type RefObject, useMemo, useRef, useState } from 'react';
 import type { RallyApi, MentionIdentity } from '../lib/api';
-import { workstreamDraftKey } from '../lib/draft-keys';
 import {
   completeMentionAtCaret,
   mentionsInTrimmedText,
@@ -20,7 +19,6 @@ import { STOPPING_LABEL } from './agent-work-timing';
 import type { AttachmentPreview } from './attachments';
 import { ComposerInput, type ComposerModelControl } from './composer-input';
 import { Avatar, Button, IconButton, Modal } from './primitives';
-import type { RallyRegion } from '../../common/desktop';
 
 /**
  * Someone an `@` can name here. Only people for now: the work stream's
@@ -37,9 +35,19 @@ interface MentionCandidate {
   member?: WorkspaceMember;
 }
 
+/**
+ * What the composer needs to know about the conversation it writes into: who is
+ * in it, whether a mention of somebody outside it needs confirming, and whether
+ * a run is going. A conversation that does not exist yet — a Channel or a
+ * breakout being started — supplies these without being one.
+ */
+export type ComposerConversation = Pick<WorkstreamDetail, 'participants' | 'scope' | 'harnessStatus' | 'stopRequested'>;
+
 interface WorkstreamComposerProps {
   /** What the empty box invites; an automation's conversation asks for its instructions. */
   placeholder?: string;
+  /** Defaults to the placeholder without its ellipsis. */
+  ariaLabel?: string;
   /**
    * The launch surfaces dress this composer as the one they hand off from, so
    * the element the eye follows into the dock is the same element throughout.
@@ -51,9 +59,9 @@ interface WorkstreamComposerProps {
   submitLabel?: string;
   autoFocus?: boolean;
   api?: Pick<RallyApi, 'getTranscriptionSocketTicket'>;
-  workstream: WorkstreamDetail;
-  workspaceId?: string;
-  workspaceRegion?: RallyRegion;
+  workstream: ComposerConversation;
+  /** The key the unsent draft is cached under; see `lib/draft-keys.ts`. */
+  draftKey: string;
   substreamId?: string;
   members: WorkspaceMember[];
   /**
@@ -85,6 +93,8 @@ interface WorkstreamComposerProps {
     deliveryMode?: WorkstreamMessageDeliveryMode,
   ) => Promise<void>;
   onAttach: (files: FileList | File[]) => void;
+  /** Every edit to the draft, for a host that clears its own notice on one. */
+  onDraftChange?: (value: string) => void;
   onOpenAttachment: (preview: AttachmentPreview) => void;
   onRemoveAttachment: (localId: string) => void;
   onRetryAttachment: (localId: string) => void;
@@ -113,14 +123,14 @@ const BASE_COMMANDS: ComposerCommand[] = [
 
 export function WorkstreamComposer({
   placeholder = 'Message the channel…',
+  ariaLabel,
   className,
   footerHint,
   submitLabel = 'Send message',
   autoFocus = false,
   api,
   workstream,
-  workspaceId = 'test-workspace',
-  workspaceRegion = 'global',
+  draftKey,
   substreamId = '0',
   members,
   model,
@@ -132,6 +142,7 @@ export function WorkstreamComposer({
   attachments,
   onSend,
   onAttach,
+  onDraftChange,
   onOpenAttachment,
   onRemoveAttachment,
   onRetryAttachment,
@@ -145,7 +156,7 @@ export function WorkstreamComposer({
     setText,
     mentions: selectedMentions,
     setMentions: setSelectedMentions,
-  } = useDraftText(workstreamDraftKey(workspaceRegion, workspaceId, workstream.id, substreamId));
+  } = useDraftText(draftKey);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [slashDismissed, setSlashDismissed] = useState(false);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingMentionConfirmation | null>(null);
@@ -205,6 +216,7 @@ export function WorkstreamComposer({
     // dotted I does not make a name highlighted here unmatched there.
     setSelectedMentions((current) => rebaseMentionIdentities(text, value, current));
     syncMentionQuery(value);
+    onDraftChange?.(value);
   };
 
   /** What the caret is naming, recomputed as the draft changes. */
@@ -435,7 +447,7 @@ export function WorkstreamComposer({
       <BackgroundAgentActivity count={backgroundAgentCount} />
       <ComposerInput
         api={api}
-        ariaLabel={placeholder.replace(/…$/u, '')}
+        ariaLabel={ariaLabel ?? placeholder.replace(/…$/u, '')}
         attachments={attachments}
         autoFocus={autoFocus}
         {...(className ? { className } : {})}

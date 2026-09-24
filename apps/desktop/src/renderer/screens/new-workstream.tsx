@@ -7,17 +7,9 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { newWorkstreamDraftKey } from '../lib/draft-keys';
 import { optimisticOpeningTranscript } from '../lib/launched-conversation';
-import {
-  completeMentionAtCaret,
-  mentionsInTrimmedText,
-  rebaseMentionIdentities,
-  upsertMentionIdentity,
-} from '../lib/mention-draft';
-import { PERSON_MENTION_TYPE } from '../lib/mention-constants';
 import type { MentionIdentity } from '../lib/api';
 import { holdCreationTraceUntilSendReady, startPerfTrace, type PerfTrace } from '../lib/perf-trace';
-import { useDraftText } from '../lib/use-draft-text';
-import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
+import { mentionOptionId, useMentionNavigation } from '../lib/use-mention-navigation';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { useSpaceDirectories } from '../lib/use-space-directories';
@@ -26,8 +18,8 @@ import type { AgentModelOverride, CreatedWorkstream, Message, MessageAttachment,
 import { AgentWorkTiming } from '../components/agent-work-timing';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
-import { ComposerInput } from '../components/composer-input';
-import { Avatar, Badge, EmptyState, LoadingState, TitleSkeleton } from '../components/primitives';
+import { type ComposerConversation, WorkstreamComposer } from '../components/workstream-composer';
+import { Avatar, EmptyState, LoadingState, TitleSkeleton } from '../components/primitives';
 import { MessageBlock } from '../components/workstream-blocks';
 
 interface CreateWorkstreamInput {
@@ -38,8 +30,6 @@ interface CreateWorkstreamInput {
   openingMessage: string;
   mentions: MentionIdentity[];
   participantIds: string[];
-  /** User-edit generation at submit; programmatic clearing does not advance it. */
-  draftRevision: number;
   /**
    * The submit instant the launch surface has been counting from. Seeded onto
    * the created run so the work timer does not jump at the navigation; the
@@ -149,21 +139,11 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recipientInputRef = useRef<HTMLInputElement>(null);
-  const submittingRef = useRef(false);
-  const draftRevisionRef = useRef(0);
   const workspaceDraftKey = newWorkstreamDraftKey(workspace.region, workspace.id);
   const draftKey = `${workspaceDraftKey}:space:${owningSpaceIds.join(',')}`;
-  const {
-    text: message,
-    setText: setMessage,
-    mentions: selectedMentions,
-    setMentions: setSelectedMentions,
-  } = useDraftText(draftKey);
   const [selectedMembers, setSelectedMembers] = useState<WorkspaceMember[]>([]);
   const [recipientQuery, setRecipientQuery] = useState('');
   const [recipientPickerOpen, setRecipientPickerOpen] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   // Not kept in the draft cache: the draft outlives the session, and a model
   // pinned last week is not a choice anyone would expect to still be in force.
   const [modelOverride, setModelOverride] = useState<AgentModelOverride | null>(null);
@@ -286,24 +266,15 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
         ...(input.modelOverride ? { modelOverride: input.modelOverride } : {}),
       }));
     },
-    onError: (_error, input) => {
+    onError: () => {
       createTrace.current?.end({ outcome: 'failed' });
       createTrace.current = null;
       createStartedAt.current = null;
-      // Back to the launcher with the words still in it. The optimistic turn
-      // stood for a work stream that does not exist, so it cannot stay on
-      // screen next to an error about why.
+      // Back to the launcher. The optimistic turn stood for a work stream that
+      // does not exist, so it cannot stay on screen next to an error about why.
+      // The words come back through the composer, which restores the draft it
+      // cleared when `submit` rejects.
       setLaunching(null);
-      // Restore one coherent submitted snapshot only when no user edit landed
-      // after submit. Text and identity spans must never come from different
-      // draft generations.
-      if (draftRevisionRef.current === input.draftRevision) {
-        setMessage(input.openingMessage);
-        setSelectedMentions(input.mentions);
-      }
-    },
-    onSettled: () => {
-      submittingRef.current = false;
     },
     onSuccess: (created, input) => {
       const selectedParticipants = (members.data ?? [])
@@ -348,24 +319,31 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     },
   });
 
-  const submit = (): void => {
-    const submitted = mentionsInTrimmedText(message, selectedMentions);
-    const openingMessage = submitted.text;
-    const readyAttachments = attachmentDraft.ready;
-    if ((!openingMessage && readyAttachments.length === 0) || attachmentDraft.uploading || submittingRef.current) return;
+  /**
+   * The composer's `onSend`. It has already cleared the draft, and restores it
+   * if this rejects, so every refusal here throws rather than returns.
+   */
+  const submit = async (
+    openingMessage: string,
+    mentions: MentionIdentity[],
+    confirmedParticipantUserIds: string[] = [],
+  ): Promise<void> => {
     // Before the launch state, not after it. The screen below opens optimistically
     // on this keystroke, and a work stream that cannot be created must never be
     // one of the ones that appears to open.
     if (openingMessage.length > MESSAGE_MAX_CHARACTERS) {
       setTooLong(true);
-      return;
+      throw new Error(MESSAGE_TOO_LONG_MESSAGE);
     }
     setTooLong(false);
-    submittingRef.current = true;
-    const participantIds = selectedMembers.map((member) => member.id);
-    const mentions = submitted.mentions;
-    setMessage('');
-    setSelectedMentions([]);
+    const readyAttachments = attachmentDraft.ready;
+    // Somebody named in the opening message is somebody this Channel is for, so
+    // a mention adds them as surely as the Participants bar does.
+    const participantIds = [...new Set([
+      ...selectedMembers.map((member) => member.id),
+      ...mentions.flatMap((mention) => mention.type === 'person' && mention.userId ? [mention.userId] : []),
+      ...confirmedParticipantUserIds,
+    ])].filter((id) => id !== workspace.currentUser.id);
     const createdAt = new Date().toISOString();
     const attachments = readyAttachments.map((attachment) => ({
       id: attachment.resource!.id,
@@ -379,7 +357,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     // below, and a state set in the same commit as the send is what makes the
     // work stream appear to open on the keystroke rather than on the response.
     setLaunching({ attachments, createdAt, openingMessage, startedAt: Date.parse(createdAt) });
-    create.mutate({
+    await create.mutateAsync({
       attachmentIds: readyAttachments.map((attachment) => attachment.resource!.id),
       attachmentLocalIds: readyAttachments.map((attachment) => attachment.localId),
       attachments,
@@ -387,109 +365,25 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       openingMessage,
       mentions,
       participantIds,
-      draftRevision: draftRevisionRef.current,
       startedAt: createdAt,
     });
   };
 
-  // A membership that is not active is one the work-stream endpoints refuse, so
-  // the mention list may not offer it: mentioning one here also adds them to
-  // the create request, which would then fail as a whole.
-  const activeMembers = useMemo(
-    () => (members.data ?? []).filter((member) => (member.status ?? 'active') === 'active'),
-    [members.data],
-  );
-  const mentionCandidates = activeMembers;
-  const mentionLabels = useMemo(() => mentionCandidates.map((member) => member.name), [mentionCandidates]);
-  const visibleCandidates = mentionQuery === null
-    ? []
-    : mentionCandidates.filter((member) => member.name.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 8);
-  const mentionNavigation = useMentionNavigation(
-    visibleCandidates.map((member) => member.id),
-    (index) => {
-      const member = visibleCandidates[index];
-      if (member) insertMention(member);
-    },
-  );
-
-  const updateMessage = (value: string): void => {
-    draftRevisionRef.current += 1;
-    setMessage(value);
-    setSelectedMentions((current) => rebaseMentionIdentities(message, value, current));
-    syncMentionQuery(value);
-  };
-
-  /** What the caret is naming, recomputed as the draft changes. */
-  const syncMentionQuery = (value: string): void => {
-    setMentionQuery(mentionQueryAtCaret(value, textareaRef.current?.selectionStart));
-  };
-
   /**
-   * The caret moved without the draft changing — an arrow key, a click, a drag.
-   * This may only *close* the list: a list that outlives the mention the caret
-   * was in still answers `Enter` and inserts against an `@` the caret has left.
-   * It may not open one, or `Escape` would last exactly until the next arrow
-   * key, and wandering back through an old mention would raise a list nobody
-   * asked for.
+   * The Channel the composer is writing into, before it exists: the people in
+   * the Participants bar, the Space's scope — which decides whether mentioning
+   * somebody outside them asks first — and no run to steer or stop.
    */
-  const refreshOpenMentionQuery = (value: string): void => {
-    setMentionQuery((current) => current === null
-      ? null
-      : mentionQueryAtCaret(value, textareaRef.current?.selectionStart));
+  const pendingChannel: ComposerConversation = {
+    scope: owningSpace?.scope === 'personal' ? 'personal' : 'workspace',
+    harnessStatus: 'completed',
+    stopRequested: false,
+    participants: [
+      { ...workspace.currentUser, role: 'creator' },
+      ...selectedMembers.map((member) => ({ ...member, role: 'explicit' })),
+    ],
   };
 
-  const beginMention = (): void => {
-    const started = draftWithMentionStarted(
-      message,
-      textareaRef.current?.selectionStart,
-      textareaRef.current?.selectionEnd,
-    );
-    draftRevisionRef.current += 1;
-    setMessage(started.value);
-    setMentionQuery('');
-    requestAnimationFrame(() => {
-      const textarea = textareaRef.current;
-      textarea?.focus();
-      // Only while the draft is still the one this opened. A frame is enough
-      // room for a keystroke, and putting the caret back where the `@` went
-      // would drag it out of whatever was typed in the meantime.
-      if (textarea?.value === started.value) textarea.setSelectionRange(started.caret, started.caret);
-    });
-  };
-
-  /** Names the person in both the visible draft and its identity-bearing span. */
-  const insertMention = (member: WorkspaceMember): void => {
-    const textarea = textareaRef.current;
-    const caret = textarea?.selectionStart ?? message.length;
-    const completed = completeMentionAtCaret(message, caret, member.name, textarea?.selectionEnd ?? caret);
-    // The caret has left the mention this list belongs to; there is nothing
-    // here to complete, and `slice(0, -1)` would eat the character before it.
-    if (!completed) {
-      setMentionQuery(null);
-      return;
-    }
-    draftRevisionRef.current += 1;
-    setMessage(completed.text);
-    setSelectedMentions((current) => upsertMentionIdentity(
-      rebaseMentionIdentities(message, completed.text, current),
-      {
-        type: 'person',
-        label: member.name,
-        userId: member.id,
-        connectorType: null,
-        startOffset: completed.startOffset,
-        endOffset: completed.endOffset,
-      },
-    ));
-    if (member.id !== workspace.currentUser.id) {
-      setSelectedMembers((current) => current.some((candidate) => candidate.id === member.id) ? current : [...current, member]);
-    }
-    setMentionQuery(null);
-    requestAnimationFrame(() => {
-      textarea?.focus();
-      textarea?.setSelectionRange(completed.caret, completed.caret);
-    });
-  };
   // Text or files: `submit` accepts a create carrying only attachments, and
   // that turn is a bubble of tiles rather than an empty one.
   const openingTurn: Message | null = launching
@@ -682,76 +576,37 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
           onFocusCapture={() => setRecipientPickerOpen(false)}
           onPointerDown={() => setRecipientPickerOpen(false)}
         >
-          {visibleCandidates.length > 0 && (
-            <div className="mention-popover" id="launch-mention-listbox" role="listbox" aria-label="Mentions">
-              {visibleCandidates.map((member, index) => (
-                <button
-                  aria-label={`${member.name} — ${member.email} — ${PERSON_MENTION_TYPE}`}
-                  aria-selected={index === mentionNavigation.activeIndex}
-                  className={index === mentionNavigation.activeIndex ? 'is-selected' : undefined}
-                  id={mentionOptionId(member.id)}
-                  key={member.id}
-                  onClick={() => insertMention(member)}
-                  onMouseMove={() => mentionNavigation.setActiveIndex(index)}
-                  ref={index === mentionNavigation.activeIndex ? mentionNavigation.activeOptionRef : undefined}
-                  role="option"
-                  type="button"
-                >
-                  <span aria-hidden="true" className="mention-icon">
-                    <Avatar member={member} size="small" />
-                  </span>
-                  <span><strong>{member.name}</strong><small>{member.email}</small></span>
-                  <Badge>{PERSON_MENTION_TYPE}</Badge>
-                </button>
-              ))}
-            </div>
-          )}
-          <ComposerInput
+          {/* The composer every conversation writes with, so the first message
+              gets the same mentions, commands and draft handling as the rest.
+              Keyed by the draft, which carries the Space: switching between
+              Space launchers remounts it and restores initial focus. */}
+          <WorkstreamComposer
             api={api ?? undefined}
             ariaLabel="Opening channel message"
             attachments={attachmentDraft.attachments}
             autoFocus
+            draftKey={draftKey}
             error={(tooLong ? MESSAGE_TOO_LONG_MESSAGE : undefined) ?? create.error?.message ?? attachmentDraft.error}
             fileInputRef={fileInputRef}
             footerHint="Enter to create · Shift+Enter for a new line"
             key={draftKey}
-            layout="message-capsule"
-            maxHeight={220}
+            members={members.data ?? []}
             model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}
-            mentionLabels={mentionLabels}
-            mentionListbox={visibleCandidates.length > 0
-              ? { id: 'launch-mention-listbox', activeOptionId: mentionNavigation.activeOptionId }
-              : undefined}
             onAttach={attachmentDraft.addFiles}
-            onKeyDown={(event) => {
-              if (mentionNavigation.handleKeyDown(event)) return;
-              if (event.key !== 'Escape' || mentionQuery === null) return;
-              event.preventDefault();
-              setMentionQuery(null);
-            }}
-            onMention={beginMention}
+            onDraftChange={() => setTooLong(false)}
             onOpenAttachment={setAttachmentPreview}
             onRemoveAttachment={attachmentDraft.removeAttachment}
             onRetryAttachment={attachmentDraft.retryAttachment}
-            onSelect={() => refreshOpenMentionQuery(message)}
-            onSubmit={submit}
-            // Held back rather than merely hidden: the composer is controlled,
-            // so a keystroke during a suggested-work launch would otherwise
-            // write the empty value it is being shown back over the draft it is
-            // hiding, and lose it.
-            onValueChange={(value) => { updateMessage(value); setTooLong(false); }}
-            placeholder="Describe a task or ask a question…"
-            ref={textareaRef}
-            rows={2}
-            shouldSubmitOnEnter={() => mentionQuery === null}
-            submitDisabled={attachmentDraft.uploading || (!message.trim() && attachmentDraft.ready.length === 0) || launching !== null}
-            submitLabel="Create channel"
+            onSend={submit}
+            onStop={async () => undefined}
+            placeholder="Describe what this channel will be used for"
             // Not a cosmetic state: it is what freezes the attachment tiles and
             // the file input while the files they stand for are already on
             // their way into a message.
-            submitting={launching !== null}
+            sending={launching !== null}
+            submitLabel="Create channel"
             uploading={attachmentDraft.uploading}
-            value={message}
+            workstream={pendingChannel}
           />
         </div>
         {members.error && !launching && <p className="muted-notice">People could not be loaded. You can still create this channel with yourself.</p>}
