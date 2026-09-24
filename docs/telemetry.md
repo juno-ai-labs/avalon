@@ -155,6 +155,19 @@ keep apart from losing the network. A close from the effect's own teardown is no
 is not reported; counting it would put every ordinary navigation in the drop
 rate. The event carries no work-stream ID, URL, close code, or ticket.
 
+The singleton organization socket also emits `workspace_socket_handshake` for
+each connection attempt. Its UUIDv7 `attemptId` joins the content-free desktop
+phases `ticket_requested`, `ticket_received`, `transport_open`,
+`subscribe_sent`, `sync_received`, and `sync_applied`; `offline_blocked` and
+`sync_rejected` identify two early exits. This reliability event is essential,
+so the local spool accepts it even when product analytics are disabled. It
+contains no ticket, URL, organization name, or directory contents. The UUID is
+also sent as the optional `diagnosticAttemptId` on `subscribe`, allowing the
+regional WorkspaceDO's structured `workspace_socket_handshake` logs to join
+the same attempt. Older clients omit it and remain valid. The server phase
+sequence and the pre-subscription `connection_id` join are described in
+[`websocket-architecture.md`](websocket-architecture.md).
+
 Resource telemetry uses successful semantic operations, not generic click
 autocapture. A loaded work stream records open/switch/reopen, visibility, origin,
 and pin state. The API records creation once the work-stream row commits; its
@@ -1921,6 +1934,22 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 
 ## Changelog
+
+### 2026-09-23 — Correlate organization socket opening across desktop and room
+
+An organization could accept an upgrade while its sidebar stayed on
+`Opening channels`, and existing connection-state telemetry could not say
+whether the desktop sent `subscribe` or the room completed its first sync.
+Add content-free, per-attempt desktop phases and matching WorkspaceDO phases,
+joined by an optional UUID on the subscription. Keep the desktop signal in the
+essential reliability class because this incident also affected clients with
+product analytics disabled. This deliberately narrows the earlier decision to
+keep `realtime_socket_state` behind opt-out: that event measures aggregate socket
+churn, while these phases locate a failure that prevents the Organization from
+opening at all. They are attributable and add several rows per attempt, an
+accepted cost for diagnosing an unavailable app. Future handshake changes must
+preserve old-client subscriptions and keep tickets, URLs, and directory data out
+of these signals.
 
 ### 2026-09-18 — Retire regional observability copies after successful cutover
 

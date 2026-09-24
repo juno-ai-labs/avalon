@@ -146,6 +146,17 @@ async function seedOpenAuthority(): Promise<void> {
   await workspace.initializeWorkspace(WORKSPACE_ID, "wnam");
 }
 
+async function enableWorkspaceInfoLogs(stub: DurableObjectStub<WorkspaceDO>): Promise<void> {
+  await runInDurableObject(stub, (instance) => {
+    const target = instance as unknown as { env: Env };
+    target.env = new Proxy(target.env, {
+      get: (current, property, receiver) => property === "LOG_LEVEL"
+        ? "info"
+        : Reflect.get(current, property, receiver),
+    });
+  });
+}
+
 async function seedCreatorProfile(): Promise<void> {
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE users (
@@ -1453,61 +1464,86 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
-  it("keeps a hibernating workspace socket alive across forced eviction", async () => {
-    await seedOpenAuthority();
-    const id = env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID));
-    const stub = env.WORKSPACE_DOS.get(id);
-    const ticketId = "00000000-0000-7000-8000-000000000105";
-    const response = await stub.fetch("https://workspace.test/socket", {
-      headers: {
-        Upgrade: "websocket",
-        "x-rally-workspace-id": WORKSPACE_ID,
-        "x-rally-placement-affinity": "wnam",
-        "x-rally-user-id": USER_ID,
-        "x-rally-session-id": SESSION_ID,
-        "x-rally-socket-ticket-id": ticketId,
-        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
-      },
+  describe("workspace socket handshake logs", () => {
+    let logged: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      logged = vi.spyOn(console, "info").mockImplementation(() => {});
     });
-    if (response.status !== 101) {
-      throw new Error(`workspace socket rejected: ${response.status} ${await response.text()}`);
-    }
-    expect(response.status).toBe(101);
-    await expect(stub.initializeWorkspace(WORKSPACE_ID, "wnam")).resolves.toBeUndefined();
-    const socket = response.webSocket;
-    expect(socket).toBeDefined();
-    socket!.accept();
 
-    const replay = await stub.fetch("https://workspace.test/socket", {
-      headers: {
-        Upgrade: "websocket",
-        "x-rally-workspace-id": WORKSPACE_ID,
-        "x-rally-placement-affinity": "wnam",
-        "x-rally-user-id": USER_ID,
-        "x-rally-session-id": SESSION_ID,
-        "x-rally-socket-ticket-id": ticketId,
-        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
-      },
-    });
-    expect(replay.status).toBe(401);
-    await replay.arrayBuffer();
-
-    try {
-      await evictDurableObject(stub);
-      const pong = nextMessage(socket!);
-      socket!.send("ping");
-      expect((await pong).data).toBe("pong");
-      const snapshot = nextMessageWhileOpen(socket!);
-      socket!.send(JSON.stringify({ type: "future_workspace_event" }));
-      socket!.send(JSON.stringify({ type: "subscribe", afterWaterline: 0, future: true }));
-      expect(JSON.parse(String((await snapshot).data))).toMatchObject({
-        type: "workspace_sync",
-        waterline: 0,
-        reason: "initial",
+    it("keeps a hibernating workspace socket alive across forced eviction", async () => {
+      await seedOpenAuthority();
+      const diagnosticAttemptId = "018f22f2-4c22-7abc-8def-0123456789ab";
+      const id = env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID));
+      const stub = env.WORKSPACE_DOS.get(id);
+      await enableWorkspaceInfoLogs(stub);
+      const ticketId = "00000000-0000-7000-8000-000000000105";
+      const response = await stub.fetch("https://workspace.test/socket", {
+        headers: {
+          Upgrade: "websocket",
+          "x-rally-workspace-id": WORKSPACE_ID,
+          "x-rally-placement-affinity": "wnam",
+          "x-rally-user-id": USER_ID,
+          "x-rally-session-id": SESSION_ID,
+          "x-rally-socket-ticket-id": ticketId,
+          "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        },
       });
-    } finally {
-      socket!.close(1000, "test complete");
-    }
+      if (response.status !== 101) {
+        throw new Error(`workspace socket rejected: ${response.status} ${await response.text()}`);
+      }
+      expect(response.status).toBe(101);
+      await expect(stub.initializeWorkspace(WORKSPACE_ID, "wnam")).resolves.toBeUndefined();
+      const socket = response.webSocket;
+      expect(socket).toBeDefined();
+      socket!.accept();
+
+      const replay = await stub.fetch("https://workspace.test/socket", {
+        headers: {
+          Upgrade: "websocket",
+          "x-rally-workspace-id": WORKSPACE_ID,
+          "x-rally-placement-affinity": "wnam",
+          "x-rally-user-id": USER_ID,
+          "x-rally-session-id": SESSION_ID,
+          "x-rally-socket-ticket-id": ticketId,
+          "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        },
+      });
+      expect(replay.status).toBe(401);
+      await replay.arrayBuffer();
+
+      try {
+        await evictDurableObject(stub);
+        await enableWorkspaceInfoLogs(stub);
+        const pong = nextMessage(socket!);
+        socket!.send("ping");
+        expect((await pong).data).toBe("pong");
+        const snapshot = nextMessageWhileOpen(socket!);
+        socket!.send(JSON.stringify({ type: "future_workspace_event" }));
+        socket!.send(JSON.stringify({ type: "subscribe", afterWaterline: 0, diagnosticAttemptId, future: true }));
+        expect(JSON.parse(String((await snapshot).data))).toMatchObject({
+          type: "workspace_sync",
+          waterline: 0,
+          reason: "initial",
+        });
+        const phases: Record<string, unknown>[] = logged.mock.calls
+          .map(([entry]: unknown[]) => entry as Record<string, unknown>)
+          .filter((entry: Record<string, unknown>) => entry.event === "workspace_socket_handshake");
+        const subscribed = phases.filter((entry) => entry.diagnostic_attempt_id === diagnosticAttemptId);
+        expect(subscribed.map((entry) => entry.phase)).toEqual([
+          "subscribe_received", "subscribe_authorized", "sidebar_built", "flags_resolved", "sync_sent",
+        ]);
+        expect(phases).toContainEqual(expect.objectContaining({
+          phase: "accepted", connection_id: subscribed[0]?.connection_id,
+        }));
+        expect(phases).toContainEqual(expect.objectContaining({
+          phase: "frame_received", connection_id: subscribed[0]?.connection_id,
+        }));
+        expect(phases.filter((entry) => entry.phase === "frame_received")).toHaveLength(1);
+        expect(JSON.stringify(phases)).not.toContain(ticketId);
+      } finally {
+        socket!.close(1000, "test complete");
+      }
+    });
   });
 
   async function openWorkspaceSocket(

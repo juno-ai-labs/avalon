@@ -2236,6 +2236,7 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("subscribe"),
     afterWaterline: z.number().int().nonnegative(),
+    diagnosticAttemptId: IdSchema.optional(),
   }),
   z.strictObject({
     type: z.literal("set_presence"),
