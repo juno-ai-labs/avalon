@@ -121,11 +121,6 @@ export function SpacesSidebar({
   useSemanticScroll(scrollRef, scrollStateKey, '[data-space-id]', ready && !loading);
   const revealedRevision = useRef<number | null>(null);
   const onNewChannelRoute = currentPath === '/workstreams/new';
-  // Right-clicking empty space in the Space list offers only a new Space.
-  const withSpaceListMenu = (list: React.JSX.Element): React.JSX.Element => !readOnly && ready
-    ? <NewWorkstreamMenu canCreateSpace offer="space" trigger="context"
-        onCreateChannel={onCreateChannel} onCreateSpace={onCreateSpace}>{list}</NewWorkstreamMenu>
-    : list;
   const commandRef = useRef<HTMLDivElement | null>(null);
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
   const dragOrderRef = useRef<string[] | null>(null);
@@ -331,7 +326,10 @@ export function SpacesSidebar({
         {!readOnly && ready && spaces.length > 1 && <p className="sr-only" id="spaces-reorder-help">
           Hold Alt and press the Up or Down Arrow key to reorder a space.
         </p>}
-        {withSpaceListMenu(<SidebarScroll
+        {/* Right-clicking empty space in the Space list offers a new Space. */}
+        <NewWorkstreamMenu disabled={readOnly || !ready} offer="space" trigger="context"
+          onCreateChannel={onCreateChannel} onCreateSpace={onCreateSpace}>
+        <SidebarScroll
           as="nav"
           aria-describedby={!readOnly && ready && spaces.length > 1 ? 'spaces-reorder-help' : undefined}
           aria-label="Spaces"
@@ -506,7 +504,8 @@ export function SpacesSidebar({
             ))}
           </>}
           </SidebarList>
-        </SidebarScroll>)}
+        </SidebarScroll>
+        </NewWorkstreamMenu>
         <div className="spaces-sidekick-slot" ref={sidekickSlotRef} />
         <SidebarHorizontalLine className="spaces-sidebar-footer-line" />
         <SidebarCollapseFooter
