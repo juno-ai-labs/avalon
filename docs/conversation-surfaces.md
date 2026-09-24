@@ -780,6 +780,22 @@ activation event without losing the warning; later clears replace that retained 
 
 ## Changelog
 
+### 2026-09-24 — Every queued message reads "Unseen"
+
+**What changed:** A queued message in the feed carries one pill, **Unseen**,
+whether it will steer, wait for the next loop, or wait behind earlier input
+without starting a run. It replaces "Will steer after this response" and
+"Queued for the next loop".
+
+**Why:** The member asked for one word across all queued messages. The old
+labels described delivery mechanics, and a message to the room that queues
+only to keep send order (see `workstream-durable-object.md`) fits neither.
+What every reader needs is that Rally has not read it yet.
+
+**Consequences:** The pill no longer says how a message will be delivered. The
+`steer_pending`/`queue_pending` states still exist for anything that needs the
+distinction.
+
 ### 2026-09-24 — The stop's acknowledgement leaves the feed
 
 **What changed:** `RunStoppedNotice`, the card the transcript column appended

@@ -975,8 +975,8 @@ message that started no run. It lands the moment nothing is ahead of it: in
 the activation or safe-step transaction that delivers the input it waited on,
 directly under that input and ahead of anything the new step writes, or, when
 what was ahead fails or is reordered away while the loop is idle, at the start
-of the next drain, which `nextLoopWorkAt` asks for. The composer shows it in
-the pending list meanwhile, like any queued message.
+of the next drain, which `nextLoopWorkAt` asks for. Meanwhile every viewer sees
+it in the feed where it was sent, marked **Unseen** like any queued message.
 While the loop is executing, Electron always admits a newly composed message
 as `queue`. Slack and other external producers still send `steer` when they
 mean a safe-step interruption. The pending set is painted as a list attached
@@ -1879,8 +1879,8 @@ matching what the model read, which the gap-fill and the reorder control both
 assume. Labelling the queued message in the client was rejected as treating the
 symptom.
 
-**Consequences:** A message for the room can wait in the composer's pending
-list until the input ahead of it lands, which during a run is up to the run's
+**Consequences:** A message for the room can wait, shown to everyone in the
+feed as **Unseen**, until the input ahead of it lands, which during a run is up to the run's
 length. The one-read `hasInputAhead` check runs before the admission
 transaction; if the input ahead lands in that window the message still queues
 and lands at the next safe step or drain. A future delivery path that removes a
