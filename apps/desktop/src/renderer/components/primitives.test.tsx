@@ -3,6 +3,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEVICE_PREFERENCES_STORAGE_KEY } from '../lib/device-preferences';
+import { MemberPresentationContext } from '../lib/member-presentation';
 import { installWindowActivationTracking } from '../lib/window-activation';
 import { AvatarStack, ConnectorMark, DragHint, RallyMark, DropdownSelect, Modal, OpeningState, SegmentedControl, SocketStatusIndicator, StatusDot, Tip, TipGroup } from './primitives';
 
@@ -407,6 +408,24 @@ describe('AvatarStack', () => {
     expect(container.querySelector('.avatar')).toBe(avatar);
     expect(avatar.closest('.avatar-stack-item')).not.toHaveClass('is-present');
     expect(container.querySelector('.avatar-presence-ping')).toBeNull();
+  });
+
+  it('pings in each present member\'s chosen colour', () => {
+    const members = [
+      { id: 'user-violet', name: 'Vi Olet', email: 'vi@rally.test', timezone: 'UTC' },
+      { id: 'user-plain', name: 'Pat Plain', email: 'pat@rally.test', timezone: 'UTC' },
+    ];
+    const profile = { displayName: 'Vi Olet', initials: 'VO', color: 'violet' as const, avatar: 'circle' as const, revision: 1 };
+    const { container } = render(
+      <MemberPresentationContext.Provider value={new Map([['user-violet', profile]])}>
+        <Tooltip.Provider>
+          <AvatarStack members={members} presentUserIds={['user-violet', 'user-plain']} />
+        </Tooltip.Provider>
+      </MemberPresentationContext.Provider>,
+    );
+    const [violet, plain] = [...container.querySelectorAll<HTMLElement>('.avatar-presence-ping')];
+    expect(violet?.style.getPropertyValue('--person-accent')).toBe('var(--av-sys-color-project-violet)');
+    expect(plain?.style.getPropertyValue('--person-accent')).toBe('var(--av-sys-color-success-base)');
   });
 
   it('explains when another participant is viewing the channel', async () => {

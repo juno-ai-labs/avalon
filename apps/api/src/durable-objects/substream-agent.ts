@@ -2214,13 +2214,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }): Promise<DurableObjectRpcResult> {
     const boot = await this.bootstrapRuntime(input.bootstrap);
     if (boot.status !== 200) return boot;
-    const provision = await this.executeIdentityOperation({
+    // Marked before provision, because provision publishes this conversation's
+    // first directory projection and the parent classifies it by the
+    // `backgroundAgent` flag that projection carries. Marked after, the first
+    // projection said "breakout", the Channel forwarded it, and the
+    // Organization kept an unseen breakout row nobody could open or clear.
+    await this.initializeBackgroundAgent({ executionPrincipal: input.executionPrincipal, rootSubstreamId: input.rootSubstreamId });
+    return this.executeIdentityOperation({
       workspaceId: input.bootstrap.workspaceId, workstreamId: input.bootstrap.parentId,
       substreamId: input.bootstrap.substreamId ?? "0", operation: "provision", args: [input.provision],
     });
-    if (provision.status !== 200) return provision;
-    await this.initializeBackgroundAgent({ executionPrincipal: input.executionPrincipal, rootSubstreamId: input.rootSubstreamId });
-    return provision;
   }
 
   async initializeBackgroundAgent(input: {
