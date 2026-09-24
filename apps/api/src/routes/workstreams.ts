@@ -136,21 +136,15 @@ async function recordFailure<T>(
 }
 
 /**
- * The Durable-Object client for one work stream. The object is the only
- * execution arm: a stack that never opened the authority gets the 503 refusal
- * from `requireOpenWorkstreamAuthority` rather than legacy code.
- *
- * The authority read is a D1 round trip on the front of every one of these
- * routes, so a traced caller names it as a step rather than letting it fall
- * into whatever runs next.
+ * The Durable-Object client for one work stream. Ordinary Channel routes go
+ * straight to the object after the completed authority cutover; creation still
+ * reads the D1 generation needed for its receipt.
  */
 async function authoritativeWorkstreamClient(
   c: Context<HonoAppEnv>,
   workstreamId: string,
   traced?: { span: FlowSpan; flow: PerfFlow },
 ): Promise<WorkstreamObjectClient> {
-  if (traced) await traced.span.step("authority.read", () => requireOpenWorkstreamAuthority(c.env));
-  else await requireOpenWorkstreamAuthority(c.env);
   return new WorkstreamObjectClient(
     c.env,
     getAuth(c),
@@ -168,7 +162,6 @@ workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
   // Every row now carries its Spaces, and a build from before the cutover
   // parses this page with a schema that has never heard of them.
   requireCurrentClientContract((name) => c.req.header(name));
-  await requireOpenWorkstreamAuthority(c.env);
   const service = new WorkstreamDirectoryService(c.env, getAuth(c));
   return c.json(WorkstreamPageSchema.parse(await service.list(
     query.limit, query.before, query.includeSystem === "true",
@@ -280,30 +273,25 @@ workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
 // Registered ahead of every `/:id` route so the literal segment is never read
 // as an id, whatever order Hono would otherwise resolve them in.
 workstreamRoutes.post("/batch/preview", zValidator("json", PreviewWorkstreamBatchRequestSchema), async (c) => {
-  await requireOpenWorkstreamAuthority(c.env);
   const result = await new WorkstreamBatchUpdateService(c.env, getAuth(c))
     .preview(c.req.valid("json").filter);
   return c.json(WorkstreamBatchPreviewSchema.parse(result));
 });
 workstreamRoutes.post("/batch", zValidator("json", ApplyWorkstreamBatchRequestSchema), async (c) => {
-  await requireOpenWorkstreamAuthority(c.env);
   const result = await new WorkstreamBatchUpdateService(c.env, getAuth(c))
     .enqueue(c.req.valid("json"));
   return c.json(WorkstreamBatchAcceptedSchema.parse(result), 202);
 });
 workstreamRoutes.put("/pins", zValidator("json", ReorderWorkstreamPinsRequestSchema), async (c) => {
-  await requireOpenWorkstreamAuthority(c.env);
   const { spaceId, workstreamIds } = c.req.valid("json");
   const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).reorderPins(spaceId, workstreamIds);
   return c.json(PinnedWorkstreamsSchema.parse(result));
 });
 workstreamRoutes.put("/:id/pin", zValidator("param", idParam), zValidator("json", z.strictObject({ spaceId: SpaceIdSchema })), async (c) => {
-  await requireOpenWorkstreamAuthority(c.env);
   const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).pin(c.req.valid("param").id, c.req.valid("json").spaceId);
   return c.json(PinnedWorkstreamsSchema.parse(result));
 });
 workstreamRoutes.delete("/:id/pin", zValidator("param", idParam), zValidator("query", z.strictObject({ spaceId: SpaceIdSchema })), async (c) => {
-  await requireOpenWorkstreamAuthority(c.env);
   const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).unpin(c.req.valid("param").id, c.req.valid("query").spaceId);
   return c.json(PinnedWorkstreamsSchema.parse(result));
 });
@@ -378,7 +366,6 @@ workstreamRoutes.post("/:id/participants", zValidator("param", idParam), zValida
  * no reason to be shown the provenance behind it.
  */
 workstreamRoutes.get("/:id/access", zValidator("param", idParam), async (c) => {
-  await requireOpenWorkstreamAuthority(c.env);
   const auth = getAuth(c);
   const workstreamId = c.req.valid("param").id;
   const sources = await new ChannelAccessService(c.env, auth).readSources(workstreamId);
@@ -399,7 +386,6 @@ workstreamRoutes.get("/:id/access", zValidator("param", idParam), async (c) => {
 });
 /** Viewer-visible Space coordinates for a copied Channel or Breakout URL. */
 workstreamRoutes.get("/:id/link-spaces", zValidator("param", idParam), async (c) => {
-  await requireOpenWorkstreamAuthority(c.env);
   const auth = getAuth(c);
   const workstreamId = c.req.valid("param").id;
   await new WorkstreamService(c.env, auth).get(workstreamId);

@@ -21,6 +21,13 @@ workspace-membership middleware. This does not relax mutation checks, socket
 admission, or local socket visibility/revocation. Missing authority remains a
 retryable failure for direct reads and explicit partial status for search/lists.
 
+SubstreamAgent product RPCs reuse a positive session-and-membership observation
+in that conversation object's memory for at most 300 seconds, capped by session
+expiry. The revocation walk clears it when it reaches that object, but a delayed
+walk permits already admitted operations, including writes, until the observation
+expires. Socket ticket admission still reads D1 and existing sockets are closed
+by the same revocation walk.
+
 Membership removal/leave use the durable relationship dispatcher as their sole
 immediate producer. The consumer performs revocation and directory synchronization;
 the service does not also publish those effects directly. Dispatch failure leaves
@@ -452,6 +459,16 @@ would be a way into somebody else's workspace.
   somebody kept access they should have lost.
 
 ## Changelog
+
+### 2026-09-23 — Delivered retractions clear bounded product admission
+
+**What changed:** A SubstreamAgent clears its in-memory product session observation when a revocation reaches it. Positive evidence is otherwise reusable for up to 300 seconds, bounded by the login session's own expiry; socket ticket admission still reads D1.
+
+**Why:** Per-operation D1 reauthorization added regional latency after the Worker had already admitted the request. The chosen five-minute window makes that additional check unnecessary on a warm conversation object.
+
+**Considered and rejected:** Keeping cached admission for the whole socket lifetime would have no fixed bound if queue delivery failed. Persisting it would let an evicted object resume stale authority without checking D1.
+
+**Consequences:** A delayed revocation walk may permit product reads and writes until the cached evidence expires. Delivery shortens that window by clearing the cache alongside socket closure.
 
 ### 2026-09-21 — Artifact serving trusts admitted sessions until retraction
 

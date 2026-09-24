@@ -202,9 +202,8 @@ wording and launch checklist. The content modules in the path table are the
 editable landing/email definitions. Personal outreach, profile research and
 onboarding demos remain separate launch work.
 
-The existing Worker-wide maintenance gate also covers intake and downloads.
-During planned product maintenance or a failed authority read these routes return
-the same maintenance response as other API traffic; no new bypass is introduced.
+Intake and downloads no longer depend on the completed Channel cutover row.
+Their own origin, rate, and credential checks still apply.
 Successful intake responses do not distinguish duplicates, but explicit email
 failures can reveal acknowledgement state during a provider outage. A future
 durable acknowledgement dispatcher can remove that distinction without silently
@@ -313,6 +312,21 @@ related delivery/support investigation is complete. No automatic age-based sweep
 or numerical retention period is configured.
 
 ## Changelog
+
+### 2026-09-23 — Remove the completed Channel cutover gate from acquisition
+
+**What changed:** The API HTTP entrypoint no longer reads the Channel authority
+control row before routing acquisition requests. Acquisition keeps its own
+origin, rate, and credential checks.
+
+**Why:** The one-time Channel migration had completed, yet its regional D1
+lookup delayed unrelated intake and downloads on every request.
+
+**Considered and rejected:** Replacing the row with a new route switch would
+retain a maintenance control without an identified acquisition operation.
+
+**Consequences:** Changing the Channel authority phase does not close the
+acquisition routes. Acquisition failures still follow their own guards.
 
 ### 2026-09-21 — Remove retired acquisition and release deployment coupling
 

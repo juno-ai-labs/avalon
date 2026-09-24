@@ -2,7 +2,7 @@ import { getPath } from 'hono/utils/url';
 import type { Env } from '../env';
 import { MAX_PRIVATE_ACCESS_REQUEST_BYTES, MAX_ACCESS_REQUESTS_PER_IP_PER_HOUR, MAX_ACCESS_EMAILS_PER_HOUR, MAX_DOWNLOAD_STARTS_PER_MINUTE } from './access-request-limits';
 
-/** Runs before the Worker-wide authority read, so rejected traffic cannot spend D1. */
+/** Rejects acquisition traffic before route handling can spend D1. */
 export async function privateAccessEdge(request: Request, env: Env): Promise<Response | null> {
   const url = new URL(request.url);
   // Match Hono's decoding exactly: /%61ccess must not evade the outer guard.
