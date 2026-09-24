@@ -11,8 +11,10 @@ The design adds three primitives and changes one:
    address, for rooms and threads alike.
 2. **Run continuation:** input to a Sidekick run child restores that run's
    context instead of starting a generic loop.
-3. **Conversation tools:** a Sidekick run can list, read, and post to its
-   attached conversations.
+3. **Conversation tools:** a general plugin to list, read, and post to Rally
+   conversations, with a scope per agent. Sidekicks scope it to their
+   attached conversations; Channel and Breakout agents to their own Channel
+   and Breakout.
 4. **Home conversation (changed):** a Sidekick's `owning_workstream_id` becomes
    an owning substream address.
 
@@ -28,6 +30,7 @@ The Mucker flow is these four combined, with no Mucker-specific code.
 | Slack Agent ingress | Verifies event, resolves installation, creates or resumes Channel, writes human message | Normalize the external path and resolve a binding before creating a Channel. |
 | Connector watch registrations (`matchExternalEventDestinations`) | Fan an external event out to Sidekicks and watched resources; a claimed event skips Suggested Work | Candidate home for bindings; see [Reusing watch registrations](#reusing-watch-registrations). |
 | `automation.owning_workstream_id` (`sidekick-do.ts:270`) | The Channel whose Main conversation `sidekick_post_result` posts to | Replace with an owning substream address. |
+| `sidekick_post_result` (`integrations.ts:6243`) | A run's only way to post into a room | Remove; `post_to_conversation` covers it. |
 | `authoringOrigin` (`packages/agent-harness/src/prompts/workstream.ts:32`) | Slack-only prompt section; nothing sets it | Remove. |
 | `sidekick_attachments` per SubstreamAgent | This conversation may load this Sidekick as a skill | Reuse as the one attachment record; add a lookup from the Sidekick side. |
 | `claimPersistentLoopExecution` (`substream-agent.ts:3890`) | Starts a loop for pending input with no `automationRun` | Restore the run's context when the child belongs to a Sidekick run. |
@@ -167,29 +170,42 @@ stops the two directions from drifting apart.
 
 ## Conversation tools
 
-| Tool | Behavior | Offered to |
-| --- | --- | --- |
-| `attach_conversation(address)` | Add an attachment | Config conversation (substream `"0"`) only |
-| `list_conversations` | Attached conversations, home first, with titles and addresses | Config conversation and runs |
-| `read_conversation(address, after?, before?, limit?)` | A page of messages, through `createMessageObjectPort` `messagesAfter`/`messagesBefore` | Config conversation and runs |
-| `post_to_conversation(address?, text)` | Post to an attached conversation, home by default; idempotent on a caller key, plus the run ID in a run | Config conversation and runs |
+The conversation tools are one built-in plugin, not part of the Sidekick
+plugin. The plugin takes a **scope**: a function from the loop's input to the
+set of Rally addresses it may reach and the tools it offers. Adding a new kind
+of agent means adding a scope, not new tools.
 
-The config conversation is where the drafting plugin already loads
-(`integrations.ts:5205`: parent kind `automation`, substream `"0"`, no
-`automationRun`), so all four tools join that plugin. There the loop acts as
-the person talking to it, not the Sidekick's run-as user, and a post has no
-run ID, so its idempotency key is the caller key alone. In a run, list, read,
-and post load only when `automationRun` is present, which run continuation
-guarantees for every wake of a run child.
+| Tool | Behavior |
+| --- | --- |
+| `list_conversations` | The conversations in scope, with titles and addresses; a Sidekick's home first |
+| `read_conversation(address, after?, before?, limit?)` | A page of messages, through `createMessageObjectPort` `messagesAfter`/`messagesBefore` |
+| `post_to_conversation(address?, text)` | Post to a conversation in scope, a Sidekick's home by default; idempotent on a caller key, plus the run ID in a run |
+| `attach_conversation(address)` | Add a Sidekick attachment; offered only in a Sidekick's config conversation |
 
-`post_to_conversation` replaces `post_result`, which is hard-wired to the
-owning Channel's Main conversation and deduplicated on run ID alone
-(`integrations.ts:6243-6311`). A continued run posts more than once, so the
-idempotency key must include a caller key such as the reply's event ID.
+| Loop | Scope | Tools | Acts as |
+| --- | --- | --- | --- |
+| Channel Main or Breakout (`parentKind: workstream`) | Its own conversation and its Channel's Main conversation | list, read | The person it is working for, as today |
+| Sidekick config (`parentKind: automation`, substream `"0"`) | The Sidekick's attachments | attach, list, read, post | The person talking to it |
+| Sidekick run (`parentKind: automation`, `automationRun` present) | The Sidekick's attachments | list, read, post | The Sidekick's run-as user |
 
-Every read and post checks that the address is attached and that the move does
-not widen an audience: reading moves a conversation's content into the run
-child, and posting moves run content into the conversation. Connector watches
+In a Sidekick config conversation the tools load where the drafting plugin
+already loads (`integrations.ts:5205`), and a post has no run ID, so its
+idempotency key is the caller key alone. In a run they load only when
+`automationRun` is present, which run continuation guarantees for every wake
+of a run child. A Channel or Breakout loop does not get post, because it posts
+to its own conversation by replying.
+
+`sidekick_post_result` is removed, not kept beside the new tool. It is
+hard-wired to the owning Channel's Main conversation and deduplicated on run
+ID alone (`integrations.ts:6243-6311`), and a model offered both would not know
+which to use. A continued run posts more than once, so the replacement's
+idempotency key includes a caller key such as the reply's event ID.
+
+Every read and post checks that the address is in scope and that the move does
+not widen an audience: reading moves a conversation's content into the
+reading loop's conversation, and posting moves content the other way. A
+Breakout reading its Channel's Main conversation narrows, since a Breakout's
+audience sits inside its Channel's. Connector watches
 already apply "content may only move into an audience no broader than the one
 it came from" (`docs/connectors.md`); both directions use that rule, at attach
 time and on each call.
