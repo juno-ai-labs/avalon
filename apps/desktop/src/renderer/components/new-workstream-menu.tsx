@@ -10,8 +10,10 @@ type CreationKind = 'channel' | 'space';
 /**
  * The one creation launcher shared by the expanded sidebar, the compact rail
  * and a right-click on the channel list. `trigger="context"` opens the same
- * items at the pointer instead of below a button; `offerSpace={false}` drops
- * "Create New Space" where only channels belong. `lockedSpaceId` is the
+ * items at the pointer instead of below a button, for a right-click on a
+ * list's empty space: a click on a link or button, or on a row with its own
+ * menu, is not empty space. `offer` narrows the items to the channel ones or
+ * the Space one. `lockedSpaceId` is the
  * Space the reader is looking at: both the channel form and the import window
  * start on it and do not offer another.
  */
@@ -19,7 +21,7 @@ export function NewWorkstreamMenu({
   children,
   canCreateSpace = true,
   lockedSpaceId,
-  offerSpace = true,
+  offer = 'all',
   spaces = [],
   onCreateChannel,
   onCreateSpace,
@@ -30,7 +32,7 @@ export function NewWorkstreamMenu({
   children: ReactElement;
   canCreateSpace?: boolean;
   lockedSpaceId?: string | null;
-  offerSpace?: boolean;
+  offer?: 'all' | 'channel' | 'space';
   trigger?: 'dropdown' | 'context';
   tooltipSide?: 'bottom' | 'right';
   spaces?: SpaceSummary[];
@@ -96,19 +98,25 @@ export function NewWorkstreamMenu({
 
   const Item = trigger === 'context' ? ContextMenu.Item : DropdownMenu.Item;
   const items = <>
-    <Item className="menu-item" disabled={selectableSpaces.length === 0} onSelect={() => open('channel')}>Start New Channel</Item>
-    {openBrowserImport && <Item className="menu-item" disabled={selectableSpaces.length === 0} onSelect={() => {
-      void openBrowserImport({
-        spaces: selectableSpaces.map((space) => ({ id: space.id, name: space.name })),
-        ...(spaceLocked ? { spaceLocked } : {}),
-      });
-    }}>Import Channel from Claude or ChatGPT</Item>}
-    {offerSpace && <Item className="menu-item" disabled={!canCreateSpace} onSelect={() => open('space')}>Create New Space</Item>}
+    {offer !== 'space' && <>
+      <Item className="menu-item" disabled={selectableSpaces.length === 0} onSelect={() => open('channel')}>Start New Channel</Item>
+      {openBrowserImport && <Item className="menu-item" disabled={selectableSpaces.length === 0} onSelect={() => {
+        void openBrowserImport({
+          spaces: selectableSpaces.map((space) => ({ id: space.id, name: space.name })),
+          ...(spaceLocked ? { spaceLocked } : {}),
+        });
+      }}>Import Channel from Claude or ChatGPT</Item>}
+    </>}
+    {offer !== 'channel' && <Item className="menu-item" disabled={!canCreateSpace} onSelect={() => open('space')}>Create New Space</Item>}
   </>;
 
   return <>
     {trigger === 'context' ? <ContextMenu.Root>
-      <ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>
+      <ContextMenu.Trigger asChild onContextMenu={(event) => {
+        // Claims the click so the menu stays shut; a row's own menu has
+        // already claimed it the same way.
+        if ((event.target as Element).closest('a, button, input, textarea, [contenteditable="true"]')) event.preventDefault();
+      }}>{children}</ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="menu-content new-workstream-menu" collisionPadding={8}>{items}</ContextMenu.Content>
       </ContextMenu.Portal>
