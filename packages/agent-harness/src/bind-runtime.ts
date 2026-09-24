@@ -75,6 +75,7 @@ import {
   type HarnessEvent,
   type HarnessFailure,
   type HarnessOutcome,
+  type HarnessStartupTiming,
   type HarnessPlugin,
   type HarnessTool,
   type HarnessToolContext,
@@ -615,6 +616,16 @@ async function delayUnlessAborted(ms: number, signal: AbortSignal): Promise<void
 }
 
 export async function runHarnessWithBind(input: RunHarnessInput): Promise<HarnessOutcome> {
+  let firstStartupRequestObserved = false;
+  const startupTiming = (phase: HarnessStartupTiming["phase"], startedAt: number,
+    catalogSource?: HarnessStartupTiming["catalogSource"]) => {
+    if (firstStartupRequestObserved || !input.onStartupTiming) return;
+    try {
+      input.onStartupTiming({ phase, durationMs: Date.now() - startedAt, ...(catalogSource ? { catalogSource } : {}) });
+    } catch {
+      // Timing is observational; it cannot stop a provider turn.
+    }
+  };
   const onTurnWouldEnd = input.onTurnWouldEnd;
   const runMaxIterations = input.config.maxIterations ?? Number.POSITIVE_INFINITY;
   const modelIterationsUsed = input.modelIterationsUsed ?? 0;
@@ -992,15 +1003,20 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         "Bind loop resume requires host settlement of the pending assistant reservation",
       );
     }
-    const runtime = await createPluginRuntime(input);
+    let stageStartedAt = Date.now();
+    const runtime = await createPluginRuntime(input, startupTiming);
+    startupTiming("plugin_runtime", stageStartedAt);
     // The host's resident context is read once here and again before every
     // model call; between those reads it changes only through a compaction,
     // which this runtime performs and so already knows about.
+    stageStartedAt = Date.now();
     let residentSection: string | null = await requiredPort(
       "run_state_persistence_failed",
       "Resident context render failed",
       async () => (await input.residentContext?.render()) ?? null,
     );
+    startupTiming("resident_context", stageStartedAt);
+    stageStartedAt = Date.now();
     const initialSystemPrompt = runtime.renderSystemPrompt(residentSection);
     if (resumeProjection) {
       // The message suffix is immutable and may be long. Share it in-isolate
@@ -1065,8 +1081,12 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     // no model-only inputs so a transcript-aware host can reject a stale
     // execution/head fence rather than infer on an activation that never
     // durably landed.
+    startupTiming("projection_setup", stageStartedAt);
+    stageStartedAt = Date.now();
     await synchronizeActivationInputs();
+    startupTiming("activation_boundary", stageStartedAt);
     if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
+    stageStartedAt = Date.now();
     const seededMessages = projectBindLoopMessages(bindLoopProjection).map((message) =>
       PersistedProviderMessageSchema.parse(structuredClone(message)));
     const healed = validateAndHealMessages(seededMessages);
@@ -1091,8 +1111,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     if (input.checkpoints?.start) {
       if (await hashBindLoop(state.messages) !== healedHash) throw new Error("checkpoint_host_projection_mismatch");
     } else state.messages.push(...healed.messages);
+    startupTiming("projection_validation", stageStartedAt);
     const contextWindowTokensByModel = input.compaction
-      ? await resolveOpenRouterContextWindows(input, signal)
+      ? await resolveOpenRouterContextWindows(input, signal, startupTiming)
       : new Map<string, number>();
 
     const selectedContextWindowTokens = (): number => {
@@ -1418,7 +1439,10 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       },
       callModel: async (messages, _tools, onOutputProgress) => {
         deadline?.throwIfTimedOut();
+        let providerStageStartedAt = Date.now();
         await runtime.reauthorizeActive();
+        startupTiming("plugin_reauth", providerStageStartedAt);
+        providerStageStartedAt = Date.now();
         residentSection = await requiredPort(
           "run_state_persistence_failed",
           "Resident context render failed",
@@ -1431,7 +1455,11 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         // wire surface here to prevent a just-revoked plugin from remaining
         // visible to the model for one turn.
         const authorizedTools = runtime.buildWireTools();
+        startupTiming("provider_resident_context", providerStageStartedAt);
+        providerStageStartedAt = Date.now();
         await requiredPort("run_state_persistence_failed", "Run liveness renewal failed", () => input.onLiveness?.("before_model"));
+        startupTiming("before_model_liveness", providerStageStartedAt);
+        providerStageStartedAt = Date.now();
         const prepared = validateAndHealMessages(messages);
         await input.onTranscriptIssues?.(prepared.issues.map((issue) => ({
           kind: issue.kind,
@@ -1444,11 +1472,13 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             "Bind provider validation changed immutable loop messages",
           );
         }
+        startupTiming("provider_transcript_validation", providerStageStartedAt);
         if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
         const preparedSystemMessage = prepared.messages[0];
         if (!preparedSystemMessage || preparedSystemMessage.role !== "system") {
           throw new Error("bind_loop_system_message_missing");
         }
+        providerStageStartedAt = Date.now();
         const currentSystemHash = await hashBindLoop(bindLoopProjection.systemProjection.message);
         const preparedSystemHash = await hashBindLoop(preparedSystemMessage);
         if (currentSystemHash !== preparedSystemHash) {
@@ -1463,7 +1493,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             ),
           });
         }
+        startupTiming("provider_system_projection", providerStageStartedAt);
         if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
+        providerStageStartedAt = Date.now();
         const boundary = await verifyBindProviderBoundary({
           loopId: input.loopId,
           generation: bindLoopProjection.generation,
@@ -1472,13 +1504,17 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           projectedMessages: projectBindLoopMessages(bindLoopProjection),
           bindMessages: prepared.messages.map(toBindLoopMessage),
         });
+        startupTiming("provider_projection_hash", providerStageStartedAt);
+        providerStageStartedAt = Date.now();
         await requiredPort(
           "run_state_persistence_failed",
           "Bind provider boundary persistence failed",
           () => input.onBindProviderBoundary?.(boundary),
         );
+        startupTiming("provider_boundary", providerStageStartedAt);
         const modelTurnIndex = stableTurnIndex + 1;
         const turnId = `${input.loopId}:turn:${modelTurnIndex}`;
+        providerStageStartedAt = Date.now();
         const reservation = input.onAssistantTurnReserved
           ? await requiredPort(
               "run_state_persistence_failed",
@@ -1491,6 +1527,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
               }),
             )
           : null;
+        startupTiming("assistant_reservation", providerStageStartedAt);
         if (reservation && (!Number.isSafeInteger(reservation.transcriptSequence)
           || reservation.transcriptSequence < 1)) {
           throw new FatalHarnessPortError(
@@ -1499,6 +1536,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           );
         }
         if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
+        providerStageStartedAt = Date.now();
         await commitBindTransition({
           kind: "assistant_reserved",
           loopId: input.loopId,
@@ -1508,6 +1546,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           modelTurnIndex,
           transcriptSequence: reservation?.transcriptSequence ?? null,
         });
+        startupTiming("assistant_transition", providerStageStartedAt);
         stableTurnIndex = modelTurnIndex;
         streamedContent = "";
         const routed = await routeProviderTurn({
@@ -2129,6 +2168,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     /** Let a terminal-turn hook handle an empty assistant stop instead of retrying it as a provider defect. */
     acceptEmptyCompletion?: boolean;
   }): Promise<RoutedTurn> {
+    const routePreparationStartedAt = Date.now();
     let emittedStart = false;
     let currentModel = args.primaryModel ?? args.input.config.primaryModel;
     let streamEventChain = Promise.resolve();
@@ -2178,7 +2218,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       },
     });
     const intendedModel = args.primaryModel ?? args.input.config.primaryModel;
+    let routeStageStartedAt = Date.now();
     const requestMessages = fromOpenAiMessages(args.messages);
+    startupTiming("request_message_conversion", routeStageStartedAt);
     const requestTools = args.tools ?? [];
     const wireTools = toModelToolDefinitions(requestTools);
     const requestPlugins = modelMessagesContainFile(requestMessages)
@@ -2186,9 +2228,12 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       : [];
     const requestedReasoningEffort = args.reasoningEffort ?? args.input.config.reasoningEffort;
     const fallbackModels = args.fallbackModels ?? args.input.config.fallbackModels ?? [];
+    routeStageStartedAt = Date.now();
     const azurePricing = routeIncludesAzureBinding([intendedModel, ...fallbackModels])
       ? await resolveAzureModelPricing([intendedModel, ...fallbackModels])
       : new Map();
+    startupTiming("route_pricing", routeStageStartedAt);
+    routeStageStartedAt = Date.now();
     const plan = routePlan(
       intendedModel,
       fallbackModels,
@@ -2202,6 +2247,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         hasReasoningEffort: requestedReasoningEffort !== undefined,
       },
     );
+    startupTiming("route_plan", routeStageStartedAt);
     const executePlan = () => executeRoutePlan({
       plan,
       completionDefectRetries: args.input.config.completionDefectRetries ?? 2,
@@ -2268,6 +2314,8 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
               : {}),
             ...(trace ?? {}),
           };
+          startupTiming("route_preparation", routePreparationStartedAt);
+          firstStartupRequestObserved = true;
           await args.input.onInferenceRequest?.({
             inferenceRequestId,
             turnId: args.turnId,
@@ -2494,7 +2542,10 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
 async function resolveOpenRouterContextWindows(
   input: RunHarnessInput,
   signal: AbortSignal,
+  onTiming: (phase: HarnessStartupTiming["phase"], startedAt: number,
+    source?: HarnessStartupTiming["catalogSource"]) => void,
 ): Promise<Map<string, number>> {
+  const startedAt = Date.now();
   const resolved = new Map<string, number>();
   for (const [modelId, value] of Object.entries(input.compaction?.contextWindowTokensByModel ?? {})) {
     if (typeof value === "number" && Number.isFinite(value) && value > 0) {
@@ -2502,10 +2553,16 @@ async function resolveOpenRouterContextWindows(
     }
   }
   const configuredModels = [input.config.primaryModel, ...(input.config.fallbackModels ?? [])];
-  if (configuredModels.every((modelId) => resolved.has(modelId))) return resolved;
+  if (configuredModels.every((modelId) => resolved.has(modelId))) {
+    onTiming("context_catalog", startedAt, "provided");
+    return resolved;
+  }
 
+  const fetcher = input.config.fetch ?? globalThis.fetch;
+  let catalogSource: "cache" | "inflight" | "fetch";
   try {
-    const catalog = await loadOpenRouterContextCatalog(input.config.fetch ?? globalThis.fetch, signal);
+    const { catalog, source } = await loadOpenRouterContextCatalog(fetcher, signal, onTiming);
+    catalogSource = source;
     for (const [modelId, contextWindowTokens] of catalog.contextWindowTokensByModel) {
       if (!resolved.has(modelId)) resolved.set(modelId, contextWindowTokens);
     }
@@ -2513,20 +2570,26 @@ async function resolveOpenRouterContextWindows(
     // Monad's behavior is intentionally fail-open here: a catalog outage must
     // not block inference. Models missing from the snapshot use the 200k
     // fallback window, while compaction still relies on real provider usage.
+    onTiming("context_catalog", startedAt, "fallback");
+    return resolved;
   }
+  onTiming("context_catalog", startedAt, catalogSource);
   return resolved;
 }
 
 async function loadOpenRouterContextCatalog(
   fetcher: typeof globalThis.fetch,
   signal: AbortSignal,
-): Promise<OpenRouterContextCatalog> {
+  onTiming?: (phase: HarnessStartupTiming["phase"], startedAt: number) => void,
+): Promise<{ catalog: OpenRouterContextCatalog; source: "cache" | "inflight" | "fetch" }> {
   const now = Date.now();
   const mayUseSharedCache = fetcher === globalThis.fetch;
   if (mayUseSharedCache && openRouterContextCatalog && openRouterContextCatalog.expiresAt > now) {
-    return openRouterContextCatalog;
+    return { catalog: openRouterContextCatalog, source: "cache" };
   }
-  if (mayUseSharedCache && openRouterContextCatalogRequest) return openRouterContextCatalogRequest;
+  if (mayUseSharedCache && openRouterContextCatalogRequest) {
+    return { catalog: await openRouterContextCatalogRequest, source: "inflight" };
+  }
 
   const request = (async (): Promise<OpenRouterContextCatalog> => {
     // Cancellable: this runs inside the bind loop's Workflow step, so a timer
@@ -2535,16 +2598,25 @@ async function loadOpenRouterContextCatalog(
     const deadline = combinedDeadline(signal, OPENROUTER_CATALOG_TIMEOUT_MS);
     const envelope = await (async () => {
       try {
+        let stageStartedAt = Date.now();
         const response = await fetcher(OPENROUTER_MODELS_URL, {
           headers: { accept: "application/json" },
           signal: deadline.signal,
         });
+        onTiming?.("context_catalog_response", stageStartedAt);
         if (!response.ok) throw new Error(`OpenRouter model catalog failed (${response.status})`);
-        return z.object({ data: z.array(z.unknown()) }).parse(await response.json());
+        stageStartedAt = Date.now();
+        const body = await response.json();
+        onTiming?.("context_catalog_body", stageStartedAt);
+        stageStartedAt = Date.now();
+        const parsed = z.object({ data: z.array(z.unknown()) }).parse(body);
+        onTiming?.("context_catalog_parse", stageStartedAt);
+        return parsed;
       } finally {
         deadline.dispose();
       }
     })();
+    const entriesStartedAt = Date.now();
     const values = new Map<string, number>();
     for (const entry of envelope.data) {
       const parsed = z.looseObject({
@@ -2560,6 +2632,7 @@ async function loadOpenRouterContextCatalog(
         values.set(parsed.data.id, Math.floor(contextWindowTokens));
       }
     }
+    onTiming?.("context_catalog_entries", entriesStartedAt);
     return {
       expiresAt: Date.now() + OPENROUTER_CATALOG_CACHE_TTL_MS,
       contextWindowTokensByModel: values,
@@ -2569,7 +2642,7 @@ async function loadOpenRouterContextCatalog(
   try {
     const catalog = await request;
     if (mayUseSharedCache) openRouterContextCatalog = catalog;
-    return catalog;
+    return { catalog, source: "fetch" };
   } finally {
     if (mayUseSharedCache) openRouterContextCatalogRequest = null;
   }
@@ -2577,6 +2650,7 @@ async function loadOpenRouterContextCatalog(
 
 async function createPluginRuntime(
   input: RunHarnessInput,
+  startupTiming: (phase: HarnessStartupTiming["phase"], startedAt: number) => void,
 ): Promise<{
   active: Set<string>;
   renderSystemPrompt: (residentSection?: string | null) => RenderedSystemPrompt;
@@ -2801,6 +2875,7 @@ async function createPluginRuntime(
       ...(input.plugins ?? []).map((plugin) => plugin.canonicalId),
     ],
   );
+  const skillRuntimeStartedAt = Date.now();
   const skills = await createSkillRuntime({
     skills: input.skills ?? [],
     eligiblePlugins: eligiblePluginIds,
@@ -2819,6 +2894,7 @@ async function createPluginRuntime(
     // port. Without it they are computed and discarded.
     ...(input.onSkillWarning ? { onWarn: input.onSkillWarning } : {}),
   });
+  startupTiming("skill_runtime", skillRuntimeStartedAt);
 
   // `load_skill` is always active when the run has any skills at all: a
   // catalog the model can see but not act on is worse than no catalog.
@@ -2874,6 +2950,7 @@ async function createPluginRuntime(
   // the durable boundary. Only IDs the host returns after persistence may be
   // restored into Bind's active surface.
   const requested = input.activationHints ?? [];
+  const rehydrationStartedAt = Date.now();
   const restored = await rehydrateActivation(requested, {
     canonicalizeName: registry.canonicalizeName,
     resolve: async (id) => {
@@ -2892,6 +2969,7 @@ async function createPluginRuntime(
   });
   for (const id of restored.active) active.add(id);
   for (const dropped of restored.dropped) await input.onActivationDropped?.(dropped);
+  startupTiming("plugin_rehydration", rehydrationStartedAt);
 
   const activate = (ids: string[]) => {
     const next = new Set(active);
