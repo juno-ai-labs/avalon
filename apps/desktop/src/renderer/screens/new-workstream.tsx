@@ -121,18 +121,23 @@ function launchedWorkstreamDetail(
   };
 }
 
+/**
+ * The launcher, mounted afresh for every opening.
+ *
+ * Every navigation here is a new Channel: the sidebar's dialog names it and its
+ * Space. React keeps one instance across a change of `:spaceId`, and across a
+ * second opening of the Space already on screen, so without this key the
+ * people picked for one Channel were carried into the next — into a different
+ * Space's Channel, even — and the composer's autofocus never ran again. The
+ * unsent draft and its attachments are cached by Space, so remounting loses
+ * nothing a person typed.
+ */
 export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): React.JSX.Element {
+  return <NewWorkstreamLauncher key={useLocation().key} workspace={workspace} />;
+}
+
+function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.JSX.Element {
   const owningSpaceId = useParams<{ spaceId: string }>().spaceId!;
-  /**
-   * The Spaces this Channel is being started in.
-   *
-   * A list rather than one id because a Channel belongs to as many Spaces as it
-   * was put in, and the creation contract's field is `spaceIds`. Only the
-   * sidebar's creation dialog reaches this screen, and it names one Space — but
-   * a screen that held a single id would have to be rewritten by whoever adds
-   * the second way in.
-   */
-  const owningSpaceIds = [owningSpaceId];
   const { api } = useAppSession();
   const location = useLocation();
   const navigate = useNavigate();
@@ -140,7 +145,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recipientInputRef = useRef<HTMLInputElement>(null);
   const workspaceDraftKey = newWorkstreamDraftKey(workspace.region, workspace.id);
-  const draftKey = `${workspaceDraftKey}:space:${owningSpaceIds.join(',')}`;
+  const draftKey = `${workspaceDraftKey}:space:${owningSpaceId}`;
   const [selectedMembers, setSelectedMembers] = useState<WorkspaceMember[]>([]);
   const [recipientQuery, setRecipientQuery] = useState('');
   const [recipientPickerOpen, setRecipientPickerOpen] = useState(false);
@@ -220,7 +225,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       return;
     }
   }, [location.pathname, returnTo, navigate]);
-  const owningSpace = spaces.data?.items.find((space) => owningSpaceIds.includes(space.id));
+  const owningSpace = spaces.data?.items.find((space) => space.id === owningSpaceId);
   // A personal Space decides who is in its Channels, so the bar shows the
   // Space's own roster and offers no way to change it.
   const participantsManagedBySpace = owningSpace?.scope === 'personal';
@@ -240,6 +245,10 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   // already on screen — so what this spans is the round trip behind it. Held in
   // a ref because the mutation's callbacks each run in their own commit.
   const createTrace = useRef<PerfTrace | null>(null);
+  // Set on the keystroke that starts a create and cleared only by its failure.
+  // A ref rather than `launching`, which a second Enter in the same frame would
+  // read from the render before it was set.
+  const createPending = useRef(false);
   const createStartedAt = useRef<number | null>(null);
   const create = useMutation({
     mutationFn: (input: CreateWorkstreamInput) => {
@@ -258,7 +267,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
         ...(channelName ? { title: channelName } : {}),
         openingMessage: input.openingMessage,
         participantIds: input.participantIds,
-        spaceIds: owningSpaceIds,
+        spaceIds: [owningSpaceId],
         ...(input.mentions.length > 0 ? { mentions: input.mentions } : {}),
         requestId: trace.traceId,
         operationId: trace.traceId,
@@ -267,6 +276,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       }));
     },
     onError: () => {
+      createPending.current = false;
       createTrace.current?.end({ outcome: 'failed' });
       createTrace.current = null;
       createStartedAt.current = null;
@@ -328,6 +338,10 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     mentions: MentionIdentity[],
     confirmedParticipantUserIds: string[] = [],
   ): Promise<void> => {
+    // The composer keeps accepting Enter while it shows the create in flight,
+    // and a second submit would start a second Channel. Throwing hands the new
+    // words back to the draft.
+    if (createPending.current) throw new Error('A channel is already being created');
     // Before the launch state, not after it. The screen below opens optimistically
     // on this keystroke, and a work stream that cannot be created must never be
     // one of the ones that appears to open.
@@ -336,6 +350,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       throw new Error(MESSAGE_TOO_LONG_MESSAGE);
     }
     setTooLong(false);
+    createPending.current = true;
     const readyAttachments = attachmentDraft.ready;
     // Somebody named in the opening message is somebody this Channel is for, so
     // a mention adds them as surely as the Participants bar does.
@@ -576,13 +591,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
           onFocusCapture={() => setRecipientPickerOpen(false)}
           onPointerDown={() => setRecipientPickerOpen(false)}
         >
-          {/* The composer every conversation writes with, so the first message
-              gets the same mentions, commands and draft handling as the rest.
-              Keyed by the navigation as well as the draft: every opening of
-              the launcher, including a second one for the Space already
-              showing, remounts it so its autofocus puts the caret in the
-              message rather than leaving it on the page or the Participants
-              bar. The draft itself is cached, so the remount loses nothing. */}
+          {/* The composer every conversation writes with. */}
           <WorkstreamComposer
             api={api ?? undefined}
             ariaLabel="Opening channel message"
@@ -592,7 +601,6 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
             error={(tooLong ? MESSAGE_TOO_LONG_MESSAGE : undefined) ?? create.error?.message ?? attachmentDraft.error}
             fileInputRef={fileInputRef}
             footerHint="Enter to create · Shift+Enter for a new line"
-            key={`${draftKey}:${location.key}`}
             members={members.data ?? []}
             model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}
             onAttach={attachmentDraft.addFiles}
