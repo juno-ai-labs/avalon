@@ -450,7 +450,19 @@ describe('WorkspaceSocketProvider', () => {
     expect(FakeWebSocket.instances).toHaveLength(1);
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
-    expect(socket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterWaterline: 0 }));
+    const subscribe = JSON.parse(socket.send.mock.calls[0]![0] as string) as {
+      type: string; afterWaterline: number; diagnosticAttemptId: string;
+    };
+    expect(subscribe).toMatchObject({ type: 'subscribe', afterWaterline: 0 });
+    expect(subscribe.diagnosticAttemptId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+    expect(reportTelemetryProductIntent.mock.calls
+      .map(([intent]) => intent)
+      .filter((intent: { kind: string }) => intent.kind === 'workspace_socket_handshake')).toEqual([
+      { kind: 'workspace_socket_handshake', attemptId: subscribe.diagnosticAttemptId, phase: 'ticket_requested' },
+      { kind: 'workspace_socket_handshake', attemptId: subscribe.diagnosticAttemptId, phase: 'ticket_received' },
+      { kind: 'workspace_socket_handshake', attemptId: subscribe.diagnosticAttemptId, phase: 'transport_open' },
+      { kind: 'workspace_socket_handshake', attemptId: subscribe.diagnosticAttemptId, phase: 'subscribe_sent' },
+    ]);
 
     act(() => socket.message({
       type: 'workspace_sync',
@@ -1026,6 +1038,14 @@ describe('WorkspaceSocketProvider', () => {
       .toBeUndefined();
     expect(queryClient.getQueryData(['feature-flags']))
       .toMatchObject({ suggestedWorkEnabled: false });
+    const handshakePhases = reportTelemetryProductIntent.mock.calls
+      .map(([intent]) => intent as { kind: string; phase?: string })
+      .filter((intent) => intent.kind === 'workspace_socket_handshake')
+      .map((intent) => intent.phase);
+    expect(handshakePhases).toEqual([
+      'ticket_requested', 'ticket_received', 'transport_open',
+      'subscribe_sent', 'sync_received', 'sync_applied',
+    ]);
 
     // The point of the payload: the only thing the client said was where it
     // had got to. A directory request here would be the round trip this frame

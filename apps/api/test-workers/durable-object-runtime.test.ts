@@ -1455,8 +1455,18 @@ describe("Durable Objects in the Workers runtime", () => {
 
   it("keeps a hibernating workspace socket alive across forced eviction", async () => {
     await seedOpenAuthority();
+    const logged = vi.spyOn(console, "info").mockImplementation(() => {});
+    const diagnosticAttemptId = "018f22f2-4c22-7abc-8def-0123456789ab";
     const id = env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID));
     const stub = env.WORKSPACE_DOS.get(id);
+    await runInDurableObject(stub, (instance) => {
+      const target = instance as unknown as { env: Env };
+      target.env = new Proxy(target.env, {
+        get: (current, property, receiver) => property === "LOG_LEVEL"
+          ? "info"
+          : Reflect.get(current, property, receiver),
+      });
+    });
     const ticketId = "00000000-0000-7000-8000-000000000105";
     const response = await stub.fetch("https://workspace.test/socket", {
       headers: {
@@ -1494,19 +1504,42 @@ describe("Durable Objects in the Workers runtime", () => {
 
     try {
       await evictDurableObject(stub);
+      await runInDurableObject(stub, (instance) => {
+        const target = instance as unknown as { env: Env };
+        target.env = new Proxy(target.env, {
+          get: (current, property, receiver) => property === "LOG_LEVEL"
+            ? "info"
+            : Reflect.get(current, property, receiver),
+        });
+      });
       const pong = nextMessage(socket!);
       socket!.send("ping");
       expect((await pong).data).toBe("pong");
       const snapshot = nextMessageWhileOpen(socket!);
       socket!.send(JSON.stringify({ type: "future_workspace_event" }));
-      socket!.send(JSON.stringify({ type: "subscribe", afterWaterline: 0, future: true }));
+      socket!.send(JSON.stringify({ type: "subscribe", afterWaterline: 0, diagnosticAttemptId, future: true }));
       expect(JSON.parse(String((await snapshot).data))).toMatchObject({
         type: "workspace_sync",
         waterline: 0,
         reason: "initial",
       });
+      const phases = logged.mock.calls
+        .map(([entry]) => entry as Record<string, unknown>)
+        .filter((entry) => entry.event === "workspace_socket_handshake");
+      const subscribed = phases.filter((entry) => entry.diagnostic_attempt_id === diagnosticAttemptId);
+      expect(subscribed.map((entry) => entry.phase)).toEqual([
+        "subscribe_received", "subscribe_authorized", "sidebar_built", "flags_resolved", "sync_sent",
+      ]);
+      expect(phases).toContainEqual(expect.objectContaining({
+        phase: "accepted", connection_id: subscribed[0]?.connection_id,
+      }));
+      expect(phases).toContainEqual(expect.objectContaining({
+        phase: "frame_received", connection_id: subscribed[0]?.connection_id,
+      }));
+      expect(JSON.stringify(phases)).not.toContain(ticketId);
     } finally {
       socket!.close(1000, "test complete");
+      logged.mockRestore();
     }
   });
 

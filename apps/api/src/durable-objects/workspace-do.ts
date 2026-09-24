@@ -4551,6 +4551,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   override async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
+    const preInitializationAttachment = readAttachment(socket);
+    if (preInitializationAttachment && !preInitializationAttachment.subscribed) {
+      this.logWorkspaceSocketHandshake(preInitializationAttachment, "frame_received");
+    }
     await this.initialized;
     const attachment = readAttachment(socket);
     if (!attachment) {
@@ -4597,6 +4601,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return;
     }
     if (parsed.data.type === "subscribe") {
+      this.logWorkspaceSocketHandshake(attachment, "subscribe_received", parsed.data.diagnosticAttemptId);
       const auth = await this.sessionAuth(attachment);
       if (!auth) {
         this.closeSocket(socket, attachment, {
@@ -4607,7 +4612,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         });
         return;
       }
-      await this.subscribe(socket, attachment, parsed.data.afterWaterline);
+      this.logWorkspaceSocketHandshake(attachment, "subscribe_authorized", parsed.data.diagnosticAttemptId);
+      await this.subscribe(socket, attachment, parsed.data.afterWaterline, parsed.data.diagnosticAttemptId);
       return;
     }
     if (parsed.data.type === "set_presence") {
@@ -11330,6 +11336,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // state that handlers will recover after an isolate wake. Both operations
     // are synchronous, so no client event can interleave between them.
     server.serializeAttachment(attachment);
+    this.logWorkspaceSocketHandshake(attachment, "accepted");
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -12394,6 +12401,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     socket: WebSocket,
     attachment: WorkspaceSocketAttachment,
     afterWaterline: number,
+    diagnosticAttemptId?: string,
   ): Promise<void> {
     const latest = this.latestSyncWaterline();
     const earliest = this.state.storage.sql.exec<{ waterline: number | null }>(
@@ -12406,6 +12414,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // client's per-list comparison makes a resume that missed nothing free to
     // ignore.
     const sidebar = this.sidebarPayload(attachment);
+    this.logWorkspaceSocketHandshake(attachment, "sidebar_built", diagnosticAttemptId);
     let events: WorkspaceSocketSyncEvent[];
     if (afterWaterline === 0) {
       events = [{
@@ -12468,13 +12477,29 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         userId: attachment.userId,
         workspaceId: attachment.workspaceId,
     });
+    this.logWorkspaceSocketHandshake(attachment, "flags_resolved", diagnosticAttemptId);
     for (const event of events) {
       socket.send(JSON.stringify(WorkspaceSocketSyncEventSchema.parse({ ...event, featureFlags })));
     }
+    this.logWorkspaceSocketHandshake(attachment, "sync_sent", diagnosticAttemptId);
     socket.serializeAttachment({
       ...attachment,
       subscribed: true,
       lastWaterline: events.at(-1)?.waterline ?? Math.max(afterWaterline, latest),
+    });
+  }
+
+  private logWorkspaceSocketHandshake(
+    attachment: WorkspaceSocketAttachment,
+    phase: "accepted" | "frame_received" | "subscribe_received" | "subscribe_authorized" | "sidebar_built" | "flags_resolved" | "sync_sent",
+    diagnosticAttemptId?: string,
+  ): void {
+    logInfo(this.env, "workspace_socket_handshake", {
+      phase,
+      workspace_id: attachment.workspaceId,
+      user_id: attachment.userId,
+      connection_id: attachment.connectionId,
+      ...(diagnosticAttemptId ? { diagnostic_attempt_id: diagnosticAttemptId } : {}),
     });
   }
 

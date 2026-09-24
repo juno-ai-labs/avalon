@@ -118,7 +118,8 @@ export type DesktopTelemetrySemanticEventName =
   | 'automation_builder_started'
   | 'automation_opened'
   | 'workstream_resource_action_completed'
-  | 'realtime_socket_state';
+  | 'realtime_socket_state'
+  | 'workspace_socket_handshake';
 
 export type DesktopTelemetrySemanticIntent = {
   [Name in DesktopTelemetrySemanticEventName]: { kind: Name } & TelemetryEventProperties<Name>;
