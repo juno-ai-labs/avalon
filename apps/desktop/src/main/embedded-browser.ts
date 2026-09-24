@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { app, session, WebContentsView, type BrowserWindow, type WebContents } from 'electron';
 import {
+  embeddedBrowserFavicon,
+  embeddedBrowserShortcut,
   embeddedBrowserUrl,
   type EmbeddedBrowserBounds,
+  type EmbeddedBrowserShortcut,
   type EmbeddedBrowserCommand,
   type EmbeddedBrowserResult,
   type EmbeddedBrowserState,
@@ -13,6 +16,7 @@ interface BrowserTab {
   view: WebContentsView;
   /** The tab the person opened that this popup tab belongs to, or null for one they opened. */
   popupOf: string | null;
+  favicon: string | null;
 }
 
 const embeddedBrowserContents = new WeakSet<WebContents>();
@@ -64,6 +68,8 @@ export class EmbeddedBrowser {
     private readonly window: BrowserWindow,
     userId: string,
     private readonly onState: (state: EmbeddedBrowserState) => void,
+    /** Asks the host's controls to focus the address field, for a shortcut pressed inside a page. */
+    private readonly onFocusAddress: () => void = () => undefined,
   ) {
     this.partition = browserPartition(userId);
     this.browserSession = session.fromPartition(this.partition);
@@ -78,7 +84,7 @@ export class EmbeddedBrowser {
   state(): EmbeddedBrowserState {
     return {
       activeTabId: this.activeTabId,
-      tabs: [...this.tabs.values()].map(({ id, view }) => {
+      tabs: [...this.tabs.values()].map(({ id, view, favicon }) => {
         const contents = view.webContents;
         return {
           id,
@@ -87,6 +93,7 @@ export class EmbeddedBrowser {
           loading: contents.isLoading(),
           canGoBack: contents.navigationHistory.canGoBack(),
           canGoForward: contents.navigationHistory.canGoForward(),
+          favicon,
         };
       }),
     };
@@ -151,7 +158,28 @@ export class EmbeddedBrowser {
     const contents = view.webContents;
     this.configureRemoteContents(contents, id);
     contents.on('page-title-updated', () => this.publish());
-    contents.on('did-navigate', () => this.publish());
+    contents.on('did-navigate', () => {
+      // A new document starts without the last one's icon.
+      const tab = this.tabs.get(id);
+      if (tab) tab.favicon = null;
+      this.publish();
+    });
+    contents.on('page-favicon-updated', (_event, favicons: string[]) => {
+      const tab = this.tabs.get(id);
+      if (!tab) return;
+      tab.favicon = favicons.map(embeddedBrowserFavicon).find((icon) => icon !== null) ?? null;
+      this.publish();
+    });
+    contents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown') return;
+      const shortcut = embeddedBrowserShortcut({
+        key: input.key, code: input.code, shift: input.shift, alt: input.alt, control: input.control,
+        command: process.platform === 'darwin' ? input.meta : input.control,
+      });
+      if (!shortcut) return;
+      event.preventDefault();
+      void this.shortcut(shortcut, id).catch(() => undefined);
+    });
     contents.on('did-navigate-in-page', () => this.publish());
     contents.on('did-start-loading', () => this.publish());
     contents.on('did-stop-loading', () => this.publish());
@@ -162,7 +190,7 @@ export class EmbeddedBrowser {
       // that went away on its own still needs it.
       if (this.forget(id)) this.publish();
     });
-    this.tabs.set(id, { id, view, popupOf });
+    this.tabs.set(id, { id, view, popupOf, favicon: null });
     this.window.contentView.addChildView(view);
     this.activeTabId = id;
     this.layout();
@@ -187,10 +215,34 @@ export class EmbeddedBrowser {
     contents.on('will-redirect', preventNonWebNavigation);
   }
 
+  /** A shortcut pressed inside a page, acting on that page's tab. */
+  private async shortcut(shortcut: EmbeddedBrowserShortcut, fromId: string): Promise<void> {
+    const ids = [...this.tabs.keys()];
+    const at = ids.indexOf(fromId);
+    if (shortcut.kind === 'new-tab') {
+      await this.command({ action: 'open' });
+      this.onFocusAddress();
+    } else if (shortcut.kind === 'close-tab') await this.command({ action: 'close', tabId: fromId });
+    else if (shortcut.kind === 'focus-address') this.onFocusAddress();
+    else if (shortcut.kind === 'reload') await this.command({ action: 'reload', tabId: fromId });
+    else if (shortcut.kind === 'back') await this.command({ action: 'back', tabId: fromId });
+    else if (shortcut.kind === 'forward') await this.command({ action: 'forward', tabId: fromId });
+    else if (shortcut.kind === 'next-tab' || shortcut.kind === 'previous-tab') {
+      const next = ids[(at + (shortcut.kind === 'next-tab' ? 1 : ids.length - 1)) % ids.length];
+      if (next) await this.command({ action: 'select', tabId: next });
+    } else if (shortcut.kind === 'tab-at') {
+      const target = shortcut.index === 'last' ? ids.at(-1) : ids[shortcut.index];
+      if (target) await this.command({ action: 'select', tabId: target });
+    }
+  }
+
   /** Drops a tab and picks the next active one; false when it was already gone. */
   private forget(id: string): boolean {
+    const ids = [...this.tabs.keys()];
+    const at = ids.indexOf(id);
     if (!this.tabs.delete(id)) return false;
-    if (this.activeTabId === id) this.activeTabId = this.tabs.keys().next().value ?? null;
+    // As a browser does, the neighbour to the right takes over, else the left.
+    if (this.activeTabId === id) this.activeTabId = ids[at + 1] ?? ids[at - 1] ?? null;
     this.layout();
     return true;
   }
@@ -216,12 +268,23 @@ export class EmbeddedBrowser {
       const tab = this.tab(command.tabId);
       this.forget(tab.id);
       tab.view.webContents.close();
+      // A browser surface always has a page; the last close leaves a blank tab.
+      if (this.tabs.size === 0) await this.open();
       this.publish();
       return { kind: 'state', state: this.state() };
     }
     if (command.action === 'select') {
       this.activeTabId = this.tab(command.tabId).id;
       this.layout();
+      this.publish();
+      return { kind: 'state', state: this.state() };
+    }
+    if (command.action === 'move') {
+      const moving = this.tab(command.tabId);
+      const order = [...this.tabs.values()].filter((tab) => tab.id !== moving.id);
+      order.splice(Math.min(command.index, order.length), 0, moving);
+      this.tabs.clear();
+      for (const tab of order) this.tabs.set(tab.id, tab);
       this.publish();
       return { kind: 'state', state: this.state() };
     }

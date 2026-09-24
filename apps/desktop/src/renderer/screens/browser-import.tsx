@@ -2,7 +2,14 @@ import type { SessionImportPreview } from '@rally/contracts';
 import { X } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { BrowserImportContext } from '../../common/browser-import';
-import { EmbeddedBrowserNavigation, EmbeddedBrowserTabs, useEmbeddedBrowser, useEmbeddedBrowserPlacement } from '../components/embedded-browser-view';
+import {
+  EmbeddedBrowserNavigation,
+  EmbeddedBrowserTabs,
+  focusAddress,
+  useEmbeddedBrowser,
+  useEmbeddedBrowserPlacement,
+  useEmbeddedBrowserShortcuts,
+} from '../components/embedded-browser-view';
 import { Button, DropdownSelect, IconButton, InlineError, Modal } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { browserConversation, readBrowserConversation } from '../lib/browser-conversation-import';
@@ -32,6 +39,8 @@ export function BrowserImportWindow(): React.JSX.Element {
   const bridge = desktopBridge();
   const { state, active, error: browserError, command } = useEmbeddedBrowser();
   const pageRef = useRef<HTMLElement>(null);
+  const addressRef = useRef<HTMLInputElement>(null);
+  useEmbeddedBrowserShortcuts({ state, command, addressRef });
   const nameId = useId();
   const [darwin, setDarwin] = useState(false);
   const [context, setContext] = useState<BrowserImportContext | null>(null);
@@ -67,7 +76,7 @@ export function BrowserImportWindow(): React.JSX.Element {
     setFailure(null);
     const url = conversation.url;
     try {
-      const read = await readBrowserConversation(bridge, url);
+      const read = await readBrowserConversation(bridge, url, { tabId: active?.id });
       const preview = await api.previewSessionImport({ kind: 'export', provider: read.provider, text: read.text, sourceUrl: url });
       const spaces = context?.spaces ?? [];
       setName(preview.title);
@@ -103,15 +112,18 @@ export function BrowserImportWindow(): React.JSX.Element {
   const spaces = context?.spaces ?? [];
   return <div className={darwin ? 'browser-import-window has-overlay-window-controls' : 'browser-import-window'}>
     <header className="browser-import-titlebar window-drag">
-      <EmbeddedBrowserNavigation active={active} command={command} />
+      <EmbeddedBrowserTabs command={command} onNewTab={() => void command({ action: 'open' }).then(() => focusAddress(addressRef))} state={state} />
+      <IconButton label="Close" onClick={() => window.close()}><X size={17} /></IconButton>
+    </header>
+    <div className="browser-import-toolbar">
+      <EmbeddedBrowserNavigation active={active} addressRef={addressRef} command={command} />
+      {/* Import reads the foreground tab — the one this window is showing. */}
       <Button className="button-primary" disabled={!conversation || !api || reading}
         onClick={() => void beginImport()}
         title={conversation ? `Import “${conversation.title}”` : 'Open a Claude or ChatGPT chat to import it'}>
         {reading ? 'Reading…' : 'Import'}
       </Button>
-      <IconButton label="Close" onClick={() => window.close()}><X size={17} /></IconButton>
-    </header>
-    {state.tabs.length > 1 && <EmbeddedBrowserTabs className="browser-import-tabs" command={command} state={state} />}
+    </div>
     {(failure ?? browserError) && <div className="browser-import-banner" role="alert">{failure ?? browserError}</div>}
     <main className="browser-import-page" ref={pageRef}>
       {starting && <section aria-labelledby={`${nameId}-start`} className="browser-import-start">

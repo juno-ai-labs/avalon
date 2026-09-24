@@ -484,6 +484,9 @@ const browserBridge: RallyDesktopBridge = {
   onEmbeddedBrowserState() {
     return () => undefined;
   },
+  onEmbeddedBrowserFocusAddress() {
+    return () => undefined;
+  },
   async openBrowserImport() {
     throw new Error('The import browser needs the Rally desktop application.');
   },
