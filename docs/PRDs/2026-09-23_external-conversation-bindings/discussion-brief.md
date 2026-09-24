@@ -277,7 +277,11 @@ above remain the record of the first discussion.
 - **A Sidekick's home is an owning substream.** `owning_workstream_id` becomes
   a full conversation address, and the Slack-only `authoringOrigin` prompt field
   is removed.
-- **Conversation tools.** Runs can list, read, and post to attached Channels and
+- **Conversation tools are general.** Any Rally agent can be given list, read,
+  and post with a scope; a Channel or Breakout agent can read its own Channel
+  and Breakout. `sidekick_post_result` is removed so it is not confused with
+  the post tool.
+- **Sidekick scope.** Runs can list, read, and post to attached Channels and
   Breakouts. The Sidekick's config conversation (substream `"0"`) has all
   four tools, and is the only place that can attach.
 
