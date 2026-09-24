@@ -104,6 +104,34 @@ describe("watchWorkspaceReach", () => {
     expect(onStale).toHaveBeenCalledTimes(1);
   });
 
+  it("retries when opening the socket throws, rather than stopping for good", async () => {
+    const timers: Array<{ callback: () => void; cleared: boolean }> = [];
+    const opened: FakeSocket[] = [];
+    let attempts = 0;
+    watchWorkspaceReach({
+      ticket: async () => ({ url: "wss://api.example/socket/workspaces/w", ticket: "t" }),
+      open: () => {
+        attempts += 1;
+        if (attempts === 1) throw new SyntaxError("The URL is invalid");
+        const socket = new FakeSocket();
+        opened.push(socket);
+        return socket;
+      },
+      onStale: () => undefined,
+      setTimer: (callback) => {
+        const timer = { callback, cleared: false };
+        timers.push(timer);
+        return timer;
+      },
+      clearTimer: (handle) => { (handle as { cleared: boolean }).cleared = true; },
+    });
+    await vi.waitFor(() => expect(timers).toHaveLength(1));
+    expect(opened).toHaveLength(0);
+
+    timers[0]!.callback();
+    await vi.waitFor(() => expect(opened).toHaveLength(1));
+  });
+
   it("does not reconnect after the server revokes access", async () => {
     const { timers, opened } = harness();
     const socket = await opened();
