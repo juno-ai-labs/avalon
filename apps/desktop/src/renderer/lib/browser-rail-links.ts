@@ -1,12 +1,14 @@
+import { useEffect } from 'react';
 import { desktopBridge } from './platform';
+import { useUiStore } from './ui-store';
 
 /**
  * Where a clicked web link goes. On the desktop, while a Channel is on screen,
  * an http or https link opens as a tab in the right-rail browser; anywhere else,
  * and for every other scheme, it goes to the system browser as before.
  *
- * The conversation surface registers itself as the host while mounted, since it
- * is the only screen that draws the browser rail.
+ * A Channel's conversation surface registers itself as the host while mounted
+ * (`useBrowserRailLinks`); a Sidekick's, which shares the component, does not.
  */
 type BrowserRailHost = (url: string) => void;
 
@@ -59,4 +61,26 @@ export function captureLinkClicks(root: Document): () => void {
     root.removeEventListener('click', onClick);
     root.removeEventListener('auxclick', onClick);
   };
+}
+
+/**
+ * Makes the mounted screen the rail host while `enabled`, on the desktop only:
+ * the web host has no local browser and keeps opening new tabs.
+ */
+export function useBrowserRailLinks(enabled: boolean): void {
+  useEffect(() => {
+    if (!enabled || !window.rally) return;
+    const unregister = registerBrowserRailHost((url) => {
+      const ui = useUiStore.getState();
+      ui.setRailWidth(Math.max(ui.railWidth, 600));
+      ui.openRail('browser');
+      // A page that fails to load says so in its own tab.
+      void desktopBridge().commandEmbeddedBrowser({ action: 'open', url }).catch(() => undefined);
+    });
+    const release = captureLinkClicks(document);
+    return () => {
+      release();
+      unregister();
+    };
+  }, [enabled]);
 }

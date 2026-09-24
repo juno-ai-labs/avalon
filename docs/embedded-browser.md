@@ -26,8 +26,9 @@ reusable page surface; the import window is its first dedicated consumer.
 A web link clicked on a Channel opens the existing right rail with its
 browser variant, as a new tab on that address. The Channel header has no
 button of its own for the browser. `renderer/lib/browser-rail-links.ts` holds
-the one decision: while a conversation surface is mounted on the desktop, it
-registers itself as the rail host, and `openLink` sends an http or https URL
+the one decision: while a Channel's conversation surface is mounted on the
+desktop, it registers itself as the rail host (`useBrowserRailLinks`; a
+Sidekick's surface shares the component but does not register), and `openLink` sends an http or https URL
 there; any other scheme, and any link clicked where no Channel is on screen,
 still goes to the system browser. Anchors reach it through one document
 listener (`captureLinkClicks`), which leaves alone a click a component already
@@ -157,7 +158,8 @@ cover the conversation.
 **What changed:** The Channel header's *Open browser* button is gone. A web
 link clicked on a Channel (a message anchor, a citation, a search link result,
 a resource's *Open source*) opens as a rail tab. `openLink` is the one routing
-decision; the conversation surface registers as its host while mounted.
+decision; a Channel's conversation surface registers as its host while
+mounted.
 
 **Why:** The browser was a place a person had to choose to go to; links are
 how people actually arrive at a page. Opening them beside the conversation
