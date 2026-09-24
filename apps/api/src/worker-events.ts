@@ -39,7 +39,6 @@ import { readTelemetryOperationalSnapshot } from "./telemetry/operations";
 import {
   acceptsNewWorkstreamWork,
   readWorkstreamAuthorityControl,
-  workstreamMaintenanceResponse,
 } from "./services/workstream-authority";
 
 async function processCrashTelemetry(env: Env): Promise<void> {
@@ -131,11 +130,6 @@ export default {
     // `env_contract_failed` log, which the probe writes on its own path.
     if (new URL(request.url).pathname !== "/health" && assertEnvContractOrLog(env)) {
       return misconfiguredResponse(request, env);
-    }
-    const url = new URL(request.url);
-    if (url.pathname !== "/health") {
-      const authority = await readWorkstreamAuthorityControl(env);
-      if (!acceptsNewWorkstreamWork(authority)) return workstreamMaintenanceResponse(authority);
     }
     return app.fetch(request, env, context);
   },
