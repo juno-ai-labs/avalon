@@ -311,7 +311,9 @@ leaving it changeable, which the product owner turned down.
 
 **Consequences:** A right-click on a row still opens that row's menu, and one on
 any other link or button opens nothing. The plus menus are unchanged and still
-offer every Space.
+offer every Space. Main reuses an open import window, so the window moves an
+open sheet's Space into whatever the new context offers, and a locked context
+never submits a Space it no longer holds.
 
 ### 2026-09-24 — Import only through Rally's browser, copying every file
 
