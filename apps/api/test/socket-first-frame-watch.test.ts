@@ -2,71 +2,70 @@ import { describe, expect, it } from "vitest";
 
 import {
   firstFrameDeadline,
-  missedFirstFrame,
   nextFirstFrameDeadline,
   socketsMissedWhileInstanceSilent,
+  type FirstFrameWatchedSocket,
 } from "../src/durable-objects/socket-first-frame-watch";
 
 const DEADLINE_MS = 1_000;
-const STARTED = Date.parse("2026-09-24T06:00:00.000Z");
+const at = (time: string): number => Date.parse(`2026-09-24T${time}Z`);
 
-function socket(connectedAt: string, overrides: { subscribed?: boolean; firstFrameReported?: boolean } = {}) {
-  return { connectedAt, subscribed: false, firstFrameReported: false, ...overrides };
+function socket(connectedAt: string, overrides: Partial<FirstFrameWatchedSocket> = {}): FirstFrameWatchedSocket {
+  return {
+    connectedAt: `2026-09-24T${connectedAt}Z`,
+    subscribed: false,
+    firstFrameReported: false,
+    lastAutoResponseAt: null,
+    ...overrides,
+  };
 }
 
 describe("socket first-frame watch", () => {
-  it("watches a silent socket this instance accepted", () => {
-    const silent = socket("2026-09-24T06:00:10.000Z");
-    const due = Date.parse("2026-09-24T06:00:11.000Z");
-    expect(firstFrameDeadline(silent, DEADLINE_MS, STARTED)).toBe(due);
-    expect(missedFirstFrame(silent, due - 1, DEADLINE_MS, STARTED)).toBe(false);
-    expect(missedFirstFrame(silent, due, DEADLINE_MS, STARTED)).toBe(true);
-  });
-
-  it("stops watching once the socket sends anything", () => {
-    expect(firstFrameDeadline(socket("2026-09-24T06:00:10.000Z", { firstFrameReported: true }), DEADLINE_MS, STARTED))
-      .toBeNull();
-    expect(firstFrameDeadline(socket("2026-09-24T06:00:10.000Z", { subscribed: true }), DEADLINE_MS, STARTED))
-      .toBeNull();
-  });
-
-  // A fresh instance that counted the silent sockets it inherited would reset
-  // itself again on every alarm.
-  it("ignores sockets an earlier instance accepted", () => {
-    const inherited = socket("2026-09-24T05:59:59.999Z");
-    expect(firstFrameDeadline(inherited, DEADLINE_MS, STARTED)).toBeNull();
-    expect(missedFirstFrame(inherited, STARTED + 60 * 60_000, DEADLINE_MS, STARTED)).toBe(false);
-  });
-
-  it("ignores an attachment whose accept time does not parse", () => {
-    expect(firstFrameDeadline(socket("not a time"), DEADLINE_MS, STARTED)).toBeNull();
+  it("gives a silent socket a deadline, and none once it speaks", () => {
+    expect(firstFrameDeadline(socket("06:00:10.000"), DEADLINE_MS)).toBe(at("06:00:11.000"));
+    expect(firstFrameDeadline(socket("06:00:10.000", { firstFrameReported: true }), DEADLINE_MS)).toBeNull();
+    expect(firstFrameDeadline(socket("06:00:10.000", { subscribed: true }), DEADLINE_MS)).toBeNull();
+    expect(firstFrameDeadline({ ...socket("06:00:10.000"), connectedAt: "not a time" }, DEADLINE_MS)).toBeNull();
   });
 
   it("wakes on the earliest deadline", () => {
     expect(nextFirstFrameDeadline([
-      socket("2026-09-24T06:00:20.000Z"),
-      socket("2026-09-24T06:00:05.000Z"),
-      socket("2026-09-24T06:00:01.000Z", { subscribed: true }),
-    ], DEADLINE_MS, STARTED)).toBe(Date.parse("2026-09-24T06:00:06.000Z"));
-    expect(nextFirstFrameDeadline([], DEADLINE_MS, STARTED)).toBeNull();
+      socket("06:00:20.000"),
+      socket("06:00:05.000"),
+      socket("06:00:01.000", { subscribed: true }),
+    ], DEADLINE_MS)).toBe(at("06:00:06.000"));
+    expect(nextFirstFrameDeadline([], DEADLINE_MS)).toBeNull();
   });
 
-  describe("while the instance is silent", () => {
-    const silent = socket("2026-09-24T06:00:10.000Z");
-    const late = Date.parse("2026-09-24T06:05:00.000Z");
+  describe("resetting only an object that hears no socket", () => {
+    const silent = socket("06:00:10.000");
+    const late = at("06:05:00.000");
+    const missed = (sockets: FirstFrameWatchedSocket[], lastSocketEventAt: number | null = null) =>
+      socketsMissedWhileInstanceSilent(sockets, late, DEADLINE_MS, lastSocketEventAt);
 
-    it("counts a missed socket when nothing has been heard since it was accepted", () => {
-      expect(socketsMissedWhileInstanceSilent([silent], late, DEADLINE_MS, STARTED, null)).toEqual([silent]);
-      expect(socketsMissedWhileInstanceSilent(
-        [silent], late, DEADLINE_MS, STARTED, Date.parse("2026-09-24T06:00:09.999Z"),
-      )).toEqual([silent]);
+    it("counts a silent socket past its deadline when nothing has been heard since", () => {
+      expect(missed([silent])).toEqual([silent]);
+      expect(socketsMissedWhileInstanceSilent([silent], at("06:00:10.999"), DEADLINE_MS, null)).toEqual([]);
     });
 
-    // One client choosing never to speak must not reset everyone else.
-    it("ignores a missed socket once any socket has been heard from since", () => {
-      expect(socketsMissedWhileInstanceSilent(
-        [silent], late, DEADLINE_MS, STARTED, Date.parse("2026-09-24T06:00:10.001Z"),
-      )).toEqual([]);
+    // Each signal on its own is enough to say the object still hears sockets,
+    // and evidence from before the silent socket was accepted says nothing.
+    it("ignores it once this instance has run a socket callback since", () => {
+      expect(missed([silent], at("06:00:10.001"))).toEqual([]);
+      expect(missed([silent], at("06:00:10.000"))).toEqual([silent]);
+    });
+
+    it("ignores it once the runtime has answered any socket's ping since", () => {
+      const idle = socket("05:00:00.000", { subscribed: true, lastAutoResponseAt: at("06:00:40.000") });
+      const stale = socket("05:00:00.000", { subscribed: true, lastAutoResponseAt: at("06:00:09.000") });
+      expect(missed([silent, idle])).toEqual([]);
+      expect(missed([socket("06:00:10.000", { lastAutoResponseAt: at("06:00:10.000") })])).toEqual([]);
+      expect(missed([silent, stale])).toEqual([silent]);
+    });
+
+    it("ignores it once a socket accepted after it has spoken", () => {
+      expect(missed([silent, socket("06:00:30.000", { firstFrameReported: true })])).toEqual([]);
+      expect(missed([silent, socket("06:00:05.000", { subscribed: true })])).toEqual([silent]);
     });
   });
 });

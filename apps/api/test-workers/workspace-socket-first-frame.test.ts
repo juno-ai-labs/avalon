@@ -28,6 +28,7 @@ let ticketSeq = 0;
 /** The private members this suite drives, named once rather than cast at each use. */
 interface WatchSurface {
   socketFirstFrameDeadlineMs: number;
+  lastSocketEventAt: number | null;
   nextDerivedAlarmCandidates(): readonly number[];
 }
 
@@ -168,14 +169,15 @@ describe("WorkspaceDO first-frame watch", () => {
     }));
   });
 
-  // One client controls whether its own socket speaks. While any other client
-  // is heard from, a silent socket is that client's doing, not the instance's.
-  it("does not reset for one silent client while another socket is heard from", async () => {
+  // The three signals that say the object still hears sockets, each isolated:
+  // one silent client must not reset everyone else, whichever way the others
+  // are being heard from.
+  it("does not reset while the runtime answers another socket's ping", async () => {
     const silent = await openSilentSocket();
-    let silentClosed = false;
-    silent.addEventListener("close", () => { silentClosed = true; });
-    const active = await openSilentSocket();
-    await subscribe(active);
+    const idle = await openSilentSocket();
+    const pong = new Promise<MessageEvent>((resolve) => idle.addEventListener("message", resolve, { once: true }));
+    idle.send("ping");
+    expect((await pong).data).toBe("pong");
     const before = await currentInstance();
     await setDeadline(0);
 
@@ -183,8 +185,52 @@ describe("WorkspaceDO first-frame watch", () => {
 
     expect(await currentInstance()).toBe(before);
     expect(resetLogged()).toBe(false);
-    expect(silentClosed).toBe(false);
+    idle.close(1000, "done");
+    silent.close(1000, "done");
+  });
+
+  it("does not reset after a hibernation wake when a later socket has spoken", async () => {
+    const silent = await openSilentSocket();
+    const active = await openSilentSocket();
+    await subscribe(active);
+    const before = await currentInstance();
+    await setDeadline(0);
+    // What a hibernation wake forgets.
+    await runInDurableObject(workspace(), (instance: WorkspaceDO) => {
+      watch(instance).lastSocketEventAt = null;
+    });
+
+    await runDurableObjectAlarm(workspace());
+
+    expect(await currentInstance()).toBe(before);
+    expect(resetLogged()).toBe(false);
     active.close(1000, "done");
+    silent.close(1000, "done");
+  });
+
+  it("does not reset when this instance has run a socket callback since", async () => {
+    const earlier = await openSilentSocket();
+    await subscribe(earlier);
+    const silent = await openSilentSocket();
+    const before = await currentInstance();
+    // A close from a socket accepted before the silent one: no later socket
+    // spoke and no ping was answered, so only the callback itself counts.
+    earlier.close(1000, "done");
+    await vi.waitFor(async () => {
+      const heard = await runInDurableObject(workspace(), (instance: WorkspaceDO, state) => {
+        const [server] = state.getWebSockets().filter((socket) =>
+          !(socket.deserializeAttachment() as { subscribed: boolean }).subscribed);
+        const { connectedAt } = server!.deserializeAttachment() as { connectedAt: string };
+        return (watch(instance).lastSocketEventAt ?? 0) > Date.parse(connectedAt);
+      });
+      expect(heard).toBe(true);
+    });
+    await setDeadline(0);
+
+    await runDurableObjectAlarm(workspace());
+
+    expect(await currentInstance()).toBe(before);
+    expect(resetLogged()).toBe(false);
     silent.close(1000, "done");
   });
 
