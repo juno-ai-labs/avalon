@@ -299,6 +299,48 @@ async function seedRoom(): Promise<void> {
   });
 }
 
+/**
+ * A ready private Breakout of the room with only the author in it, made the way
+ * creation makes one. Membership is what lets the author's socket see its id.
+ */
+async function seedPrivateBreakout(title: string): Promise<SubstreamId> {
+  const parent = roomParent();
+  const operationId = crypto.randomUUID();
+  const recipe = {
+    policy: { revision: "test-empty-v1", strategy: { id: "empty", version: 1 }, config: {} },
+    capture: "none" as const,
+    parts: [],
+  };
+  const reserved = await parent.beginPrivateChildPreparation({
+    workspaceId: WORKSPACE_ID, parentId: ROOM_ID, operationId, creatorUserId: AUTHOR_ID, title,
+    sourceSubstreamId: "0" as const, sourceThroughTurnId: null, recipe,
+    membershipInitializer: { plugin: { id: "creator-only", version: 1 }, config: {}, memberUserIds: [AUTHOR_ID] },
+  });
+  const hash = "0".repeat(64);
+  await parent.savePreparedPrivateChildContext({
+    workspaceId: WORKSPACE_ID, parentId: ROOM_ID, operationId,
+    preparedContext: { schemaVersion: 1, recipe, recipeHash: hash, capture: null, captureHash: null, parts: [], contentHash: hash },
+  });
+  await parent.claimPrivateChildConfirmation({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID, operationId, actorUserId: AUTHOR_ID });
+  await bootstrapConversationChildRuntime(TEST_ENV, WORKSPACE_ID, "workstream", ROOM_ID, reserved.substreamId);
+  await provisionWorkstreamObject(TEST_ENV, {
+    workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, substreamId: reserved.substreamId,
+    title, objective: "", scope: "personal", createdByUserId: AUTHOR_ID,
+    participantUserIds: [AUTHOR_ID], harnessStatus: "idle", titleStatus: "settled", emailAddress: null,
+    emailRouteStatus: null, systemKind: null, modelOverride: null, now: Date.now(),
+  });
+  const breakout = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+    conversationObjectName("global", WORKSPACE_ID, ROOM_ID, reserved.substreamId)));
+  await breakout.installPreparedSubstreamContext({
+    workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, substreamId: reserved.substreamId, operationId,
+  });
+  await parent.setPrivateChildTerminalStatus({
+    workspaceId: WORKSPACE_ID, parentId: ROOM_ID, operationId, status: "ready", errorCode: null,
+  });
+  await deliverChildEffects(TEST_ENV, breakout);
+  return reserved.substreamId;
+}
+
 /** The room's automation, drafted and applied, its sidebar row in the workspace. */
 async function seedRoomAutomation(): Promise<void> {
   const created = await createAutomation(TEST_ENV, {
@@ -1226,14 +1268,7 @@ describe("post_result", () => {
   it("counts a Breakout's workers, and the workers they start, only in that Breakout", async () => {
     let release = () => {};
     heldBackgroundModel = new Promise<void>((resolve) => { release = resolve; });
-    const breakoutId = asSubstreamId(crypto.randomUUID());
-    await roomParent().reserveChild({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: breakoutId,
-      kind: "child", createdByUserId: AUTHOR_ID, authorityGeneration: 1 });
-    await bootstrapConversationChildRuntime(TEST_ENV, WORKSPACE_ID, "workstream", ROOM_ID, breakoutId);
-    await provisionWorkstreamObject(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, substreamId: breakoutId,
-      title: "Side question", objective: "", scope: "personal", createdByUserId: AUTHOR_ID,
-      participantUserIds: [AUTHOR_ID], harnessStatus: "idle", titleStatus: "settled", emailAddress: null,
-      emailRouteStatus: null, systemKind: null, modelOverride: null, now: Date.now() });
+    const breakoutId = await seedPrivateBreakout("Side question");
     const startFrom = async (substreamId: SubstreamId, backgroundAgent: boolean) => {
       const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
         parentKind: "workstream", parentId: ROOM_ID, substreamId, loopId: `workstream:${ROOM_ID}:substream:${substreamId}:loop`,
@@ -1272,6 +1307,11 @@ describe("post_result", () => {
       const frame = JSON.parse(String((await metadata).data));
       expect(frame.metadata.backgroundAgentCounts).toEqual({ [breakoutId]: 2 });
       expect(frame.metadata.backgroundAgentCount).toBe(2);
+      // Someone outside the Breakout never learns its id from the counts.
+      const outsider = await runInDurableObject(roomParent(), (instance) => (instance as unknown as {
+        metadataForUser(userId: string): { backgroundAgentCounts?: Record<string, number> } | null;
+      }).metadataForUser(crypto.randomUUID()));
+      expect(outsider?.backgroundAgentCounts).toEqual({});
       // Stopped rather than finished: a finished worker notifies its starter,
       // whose run would outlive the test.
       for (const agent of [nested, worker]) await agent.stub.stopOwnedAgent();
