@@ -175,9 +175,13 @@ Every surface with a composer renders the same one, dressed the same way: the
 message capsule, keyed on `:is(.workstream-screen, .workstream-launch-screen)
 .workstream-composer.is-message-capsule` — one 44px pill on a 22px corner, a
 42px-tall field, the plus in the left column and the send or dictation control
-in the right. `ComposerInput` takes `layout: 'message-capsule'` on all four
-surfaces (the conversation, the new-substream dock, a workspace-level new chat
-and a project-owned one), and no surface states a treatment of its own. Wrapped
+in the right. `ComposerInput` takes `layout: 'message-capsule'` on every
+surface, and no surface states a treatment of its own. Every surface also draws
+it through the same host, `WorkstreamComposer`: the conversation, the
+new-breakout dock and the new-Channel launcher. The host reads only a
+`ComposerConversation` — participants, scope, run status and stop state — plus
+a `draftKey`, so a conversation that does not exist yet supplies those rather
+than a whole `WorkstreamDetail`. Wrapped
 text and staged attachments span the controls' own grid row, so the reserve at
 the foot of the field is what holds the two apart: the 28px control, the 7px of
 row padding under it, and 4px of air between the last line and the top of the
@@ -779,6 +783,24 @@ alongside its socket sequence, so revisiting a conversation can resume after the
 activation event without losing the warning; later clears replace that retained set.
 
 ## Changelog
+
+### 2026-09-24 — One composer host on every surface
+
+**What changed:** `WorkstreamComposer` takes a `ComposerConversation` (the four
+fields it reads) and a `draftKey` instead of a `WorkstreamDetail` and the ids it
+built a key from, and gains `ariaLabel` and `onDraftChange`. The new-Channel
+launcher now renders it instead of wrapping `ComposerInput` in its own mention
+list; the new-breakout dock stops spreading its parent into a fake detail.
+
+**Why:** Only the capsule was shared. The launcher's hand-rolled mention list
+had drifted: no `@Rally`, no slash commands, no personal-scope confirmation.
+The host needed a real conversation only for four fields and a key, which is
+what stopped the launcher from using it.
+
+**Consequences:** A new surface with a composer renders `WorkstreamComposer`
+and describes its conversation in those four fields. A field the host starts
+reading has to be added to `ComposerConversation`, which every caller then
+supplies.
 
 ### 2026-09-24 — The stop's acknowledgement leaves the feed
 

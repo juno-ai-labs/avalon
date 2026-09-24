@@ -96,14 +96,17 @@ Nothing here is bespoke motion: `prefers-reduced-motion` is cut globally by the
 `*, *::before, *::after` kill-switch block in `app.css`, which flattens every
 duration *and every delay* to a single 0.001ms iteration.
 
-The composer's `@` control opens the same inline mention list the work-stream
-and automation composers use — the workspace's members, walked with the arrow
-keys and taken with `Enter` — rather than the participant dialog it used to
-raise. Picking someone both writes their name into the opening message and adds
-them to the work stream about to be created, because `POST /workstreams` carries
-participant ids and no mention spans: a name that only reached the text would
-arrive with nobody attached to it. A person mentioned this way appears in the
-Participants bar, which is where they are removed.
+The composer is `WorkstreamComposer`, the one a Channel's own feed uses, so
+the opening message gets the same `@` list (Rally and the Organization's
+members), slash commands and draft handling as every message after it. It is
+handed a `ComposerConversation` standing for the Channel about to exist: the
+Participants bar's people, the Space's scope, and no run. Mentioning a person
+seats them in the Channel: `submit` unions the mentioned people into the
+request's `participantIds`, because a name that only reached the text would
+arrive with nobody attached to it. In a personal Space the composer first asks
+**Add participant?** for anybody outside the bar, as it does in a feed. The
+composer clears the draft on submit and restores it if `submit` rejects, so the
+too-long refusal and a failed create both throw rather than return.
 
 ### What the optimistic surface shows
 
@@ -518,9 +521,16 @@ deep-link handler has no Space directory to find General in, and a fallback
 that opens a composer nobody asked for is the accident the 2026-09-09 entry
 removed.
 
+The launcher also drops its own copy of the mention list and renders
+`WorkstreamComposer`, with the placeholder "Describe what this channel will be
+used for". It had drifted from the feed's: no `@Rally`, no slash commands, no
+confirmation before seating somebody in a personal Space.
+
 **Consequences:** A new way into the launcher has to name a Space. The
 launcher's resting header is 48px, so the header shrinks to the conversation's
-44px row at the swap, as the Space-less launcher's always did.
+44px row at the swap, as the Space-less launcher's always did. A mentioned
+person is seated at submit rather than drawn into the Participants bar while
+typing; deleting the mention is how to leave them out.
 
 ### 2026-09-21 — Direct Channel participants need not join its Spaces
 
