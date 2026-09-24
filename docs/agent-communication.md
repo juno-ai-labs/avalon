@@ -185,7 +185,9 @@ with the agent's root conversation beside the flag. The conversation parent
 counts running background substreams, including nested workers, grouped by
 root, and sends the counts with control metadata as `backgroundAgentCounts`.
 A composer shows only its own conversation's count, so agents a Breakout starts
-never appear in Main or in a sibling Breakout. An agent from before roots were
+never appear in Main or in a sibling Breakout. Each viewer's map holds only Main
+and the private Breakouts they belong to, the same set as `privateChildren`, so
+a Breakout's id never reaches someone outside it. An agent from before roots were
 recorded counts in Main. `backgroundAgentCount`, the Channel total, stays on
 the frame for desktop builds that predate the split. The desktop holds the
 counts only while that connection is available and renders a singular or
@@ -287,8 +289,9 @@ owned Sidekick contact. Complete desktop behavior remains an implementation gate
 
 **What changed:** Each background agent records its root conversation
 (conversation migration 68) and carries it in its directory projection. The
-Channel sends running counts per root conversation, and the composer reads the
-one for the conversation it belongs to.
+Channel sends running counts per root conversation, limited to the ones the
+viewer can see, and the composer reads the one for the conversation it belongs
+to.
 
 **Why:** The Channel sent one total, and every conversation's composer drew
 it, so two agents started from a Breakout read as "2 background agents
