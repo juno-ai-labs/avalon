@@ -97,9 +97,10 @@ export const WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS: readonly string[] = [
   // page asks it rather than re-deriving the question from participation.
   //
   // No index beside the primary key. Every read of this table starts from a
-  // `(workstream_id, substream_id)` the page has already chosen, and the only
-  // delete is the per-envelope one the projection itself performs when a
-  // person stops being an active member. `workspace_workstream_viewers` has no
+  // `(workstream_id, substream_id)` the page has already chosen, and both
+  // deletes are per-envelope ones the projection itself performs: when a
+  // person stops being an active member, and when the conversation turns out
+  // to be a background agent. `workspace_workstream_viewers` has no
   // user-id index either, and there is no sweep for one to serve: an index
   // here would be a write on every viewer projection buying nothing, and a
   // comment claiming a sweep that somebody would later quote as evidence one
@@ -239,6 +240,21 @@ export class WorkspaceBreakoutStorage {
     if (!projectionSupersedes(envelope, current, "workspace_breakout_projection_version_conflict")) {
       return false;
     }
+    // A background agent is not a breakout. Its Channel forwards one only to
+    // withdraw a row it published before the agent was marked. The row is kept
+    // as an archived tombstone rather than deleted: every reader lists only
+    // unarchived rows, and keeping it keeps the version fence, so an older
+    // unmarked projection the Queue delivers late cannot bring it back. Its
+    // viewer rows go; one that arrives late joins an archived row and lists
+    // nothing.
+    const tombstone = effect.backgroundAgent === true;
+    if (tombstone) {
+      this.storage.sql.exec(
+        `DELETE FROM workspace_breakout_viewers WHERE workstream_id = ? AND substream_id = ?`,
+        envelope.parentId,
+        envelope.substreamId,
+      );
+    }
     // A schema-57 Organization can receive the migration-63 tables while its
     // cleanup still holds later migrations. Keep the once-only replay retryable
     // through that interval, then persist appearance once migration 69 lands.
@@ -285,7 +301,7 @@ export class WorkspaceBreakoutStorage {
       effect.createdByUserId ?? null,
       epochMilliseconds(effect.lastActivityAt) ?? now,
       epochMilliseconds(effect.completedAt),
-      epochMilliseconds(effect.archivedAt),
+      tombstone ? epochMilliseconds(effect.archivedAt) ?? now : epochMilliseconds(effect.archivedAt),
       effect.latestAttentionOrdinal ?? 0,
       effect.unreadTrackingStartOrdinal ?? 0,
       epochMilliseconds(effect.createdAt ?? effect.lastActivityAt) ?? now,

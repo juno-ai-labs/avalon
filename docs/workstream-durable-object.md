@@ -1145,7 +1145,17 @@ substream id on the envelope, which is what tells WorkspaceDO to store it
 beside the Channel directory rather than in it. A background agent is excluded,
 read from the flag on the child's own stored projection: it is a worker this
 object starts rather than a conversation anybody opens, and forwarding one
-would cost a Queue message and a workspace row per step it takes. A Space
+would cost a Queue message and a workspace row per step it takes. The flag is
+only as good as the first projection that carries it, so `initializeDelegatedAgent`
+writes the child's `background_agent` row *before* provisioning it; provision
+publishes the first projection. One exception to the exclusion: when the Channel
+had already forwarded an agent as a breakout (a `substream:<id>:common`
+projection key exists), its common projection still leaves, and WorkspaceDO
+reads `backgroundAgent: true` as "list nothing": it keeps the row as an archived
+tombstone, which every reader skips and which keeps the version fence, and
+deletes its viewer rows. Only a child projection the Channel accepted is
+forwarded; a stale one would otherwise leave under a newer parent version. WorkstreamDO migration 20 sends that retraction once for every
+such agent already stored. A Space
 forwards none of this: its hidden main conversation is its only one.
 WorkstreamDO migration 19 replays every already-stored non-background breakout
 projection through those same per-child keys. Forwarding originally covered
@@ -1829,6 +1839,37 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-09-24 — Background agents stop counting as breakouts
+
+**What changed:** A delegated agent writes its `background_agent` row before it
+provisions, so its first directory projection carries `backgroundAgent: true`.
+A Channel still forwards the common projection of an agent it had already
+forwarded as a breakout, and WorkspaceDO archives that row as a tombstone and
+deletes its viewer rows when the flag arrives. A Channel forwards a breakout's
+projection only when it accepted it, not when its version fence rejected it. WorkstreamDO migration 20 replays that retraction once for every
+stored agent with a forwarded breakout key.
+
+**Why:** Provision published the first projection before the agent was marked.
+The Channel forwarded it as a breakout, then held back every later, marked
+projection, so the Organization kept an `idle`, `unseen` row for each agent.
+Those rows counted toward the Channel's badge (5 on a Channel with one visible
+breakout) while the breakout rail, which lists only private-child members, drew
+none of them, so nobody could open or clear them.
+
+**Considered and rejected:** Filtering the badge query by a background-agent
+column in `workspace_breakout_directory`, which needs a WorkspaceDO schema
+migration and keeps rows no surface should hold. Retracting with a new effect
+kind, which widens the parent-effect contract for a one-time cleanup.
+
+**Considered and rejected, in review:** Deleting the row. It dropped the version
+fence, so an unmarked projection the Queue delivered late would recreate it.
+
+**Consequences:** The tombstone stays; any reader of
+`workspace_breakout_directory` must keep filtering `archived_at IS NULL`. A
+leaked agent that projects again sends one Queue message per step; no new agent
+can leak. Rejecting stale forwards also stops a late breakout projection from
+overwriting a newer Organization row, which was possible before this change.
 
 ### 2026-09-23 — Remove repeated regional reads from ordinary conversation operations
 
