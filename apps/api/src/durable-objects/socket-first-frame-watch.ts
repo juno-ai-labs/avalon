@@ -1,28 +1,7 @@
 /**
- * Notice a Durable Object that accepts sockets but never hears from them.
- *
- * Every desktop client sends its first frame (`subscribe`) the moment its
- * socket opens. Production has shown an object that kept accepting upgrades
- * for hours while delivering no `webSocketMessage`, no `webSocketClose`, and no
- * ping auto-response, cleared only by a restart (see `docs/realtime-sockets.md`,
- * "An instance that stops hearing its sockets").
- *
- * A socket that missed its first frame is not enough on its own, because one
- * client controls it: any member could open a socket, never speak, and reset
- * the whole Organization every deadline; and a connection that drops without a
- * FIN right after the upgrade looks the same. So a missed socket only counts
- * when the object has heard from no socket at all since accepting it. Three
- * signals say it has, and the first two survive hibernation, which resets any
- * in-memory state:
- *
- * - the runtime answered some socket's `ping` after the silent one was
- *   accepted (idle desktops ping every 50 s, and the stuck object answered
- *   none);
- * - some socket accepted after the silent one has since sent a frame;
- * - this instance ran a socket callback after the silent one was accepted.
- *
- * While any other client is connected, no single client can make all three
- * false.
+ * Notice a Durable Object that accepts sockets but never hears from them. The
+ * rules, and the incident behind them, are in `docs/realtime-sockets.md`, "An
+ * instance that stops hearing its sockets".
  */
 
 /** What the watch reads about one socket. */
