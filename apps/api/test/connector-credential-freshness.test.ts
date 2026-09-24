@@ -10,15 +10,9 @@ import {
   withProviderReauthorization,
   type ConnectorConnectionContext,
 } from "@rally/connectors";
-import type { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { encryptString } from "../src/lib/crypto";
-import {
-  seedWorkstreamObjectRoot,
-  testSubstreamAgentsBinding,
-  testWorkstreamObjectStore,
-} from "./helpers/durable-authority";
 import { __connectionServiceTesting } from "../src/services/connection-service";
 import { withAuthorizedConnection } from "../src/services/connector-connection-access";
 import type { CredentialRefreshAdapter } from "../src/services/connector-credential-refresh";
@@ -45,12 +39,6 @@ import { ObjectPortError } from "../src/runtime/object-port";
 const STALE_TOKEN = "stale-access-token";
 const FRESH_TOKEN = "rotated-access-token";
 const EXPIRED_AT = "2020-01-01T00:00:00.000Z";
-
-const openStores: DatabaseSync[] = [];
-
-afterEach(() => {
-  while (openStores.length > 0) openStores.pop()?.close();
-});
 
 describe("the credential door", () => {
   it("writes the rotated credential for a row the database believes is broken, and heals nothing", async () => {
@@ -701,59 +689,15 @@ describe("provider writes", () => {
   });
 });
 
-describe("revalidation between model turns", () => {
-  it("answers from Avalon's own records without calling the provider", async () => {
-    // `reauthorizeActive` runs before every inference, so a provider round trip
-    // here costs one call per active plugin per turn. Everything this check
-    // exists to catch — a revoked grant, a removed member, an archived work
-    // stream, a connection marked unhealthy — is already in D1.
-    const statements: string[] = [];
-    const database = createTestD1Database({
-      prepare(sql: string) {
-        statements.push(sql.replace(/\s+/gu, " ").trim().slice(0, 60));
-        return {
-          bind() { return this; },
-          async first() {
-            if (sql.includes("FROM workspace_members")) return { status: "active" };
-            if (sql.includes("FROM connector_connections")) {
-              return {
-                id: FROZEN.connectionId,
-                workspace_id: FROZEN.workspaceId,
-                connector_type: "granola",
-                scope: "personal",
-                owner_user_id: OWNER,
-                granted_scopes_json: JSON.stringify(["granola.personal.read"]),
-                encrypted_credentials: "ciphertext",
-                credential_iv: "iv",
-                cursor_json: "{}",
-                config_json: "{}",
-                status: "healthy",
-              };
-            }
-            return null;
-          },
-          async run() { return { success: true, meta: { changes: 1 } }; },
-        };
-      },
-    });
-    const fetcher = vi.fn(async () => new Response("{}"));
-    // The archive gate is the work stream's own authority, not a row in D1.
-    const objectStore = testWorkstreamObjectStore();
-    openStores.push(objectStore);
-    seedWorkstreamObjectRoot(objectStore, {
-      workstreamId: "2e9f476e-8502-4b18-81ac-b89a75a0708e",
-      workspaceId: FROZEN.workspaceId,
-    });
+describe("active connector continuation", () => {
+  it("keeps the frozen tool surface without a cross-resource read", async () => {
+    const remoteRead = vi.fn(() => { throw new Error("Continuation must not read remote authority"); });
 
     await expect(__integrationTesting.reauthorizeFrozenPlugin(
       {
-        DB: database,
-        SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
-        AVALON_REGION: "global",
-        CONNECTOR_CREDENTIALS_KEY: "k",
-        CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
-        TWITTER_API_IO_API_KEY: "k",
-        fetch: fetcher,
+        DB: { prepare: remoteRead },
+        SUBSTREAM_AGENTS: { get: remoteRead },
+        fetch: remoteRead,
       } as never,
       {
         workspaceId: FROZEN.workspaceId,
@@ -767,63 +711,18 @@ describe("revalidation between model turns", () => {
       "continuation",
     )).resolves.toBe("authorized");
 
-    expect(fetcher).not.toHaveBeenCalled();
-    // Nothing was decrypted either: the credentials are not needed to answer.
-    expect(statements.some((sql) => sql.includes("encrypted_credentials = ?"))).toBe(false);
+    expect(remoteRead).not.toHaveBeenCalled();
   });
 });
 
-describe("continuation revalidation respects its deadline", () => {
-  it("does not answer authorized when the deadline fires while D1 is answering", async () => {
+describe("connector continuation respects its deadline", () => {
+  it("does not answer authorized when the deadline fires during the ownership guard", async () => {
     const controller = new AbortController();
-    const database = createTestD1Database({
-      prepare(sql: string) {
-        return {
-          bind() { return this; },
-          async first() {
-            if (sql.includes("FROM workspace_members")) return { status: "active" };
-            if (sql.includes("FROM connector_connections")) {
-              // Every authority check passes, and the deadline lands while the
-              // last of them is being answered — after the branch's own first
-              // check has already gone by.
-              controller.abort();
-              return {
-                id: FROZEN.connectionId,
-                workspace_id: FROZEN.workspaceId,
-                connector_type: "granola",
-                scope: "personal",
-                owner_user_id: OWNER,
-                granted_scopes_json: JSON.stringify(["granola.personal.read"]),
-                encrypted_credentials: "ciphertext",
-                credential_iv: "iv",
-                cursor_json: "{}",
-                config_json: "{}",
-                status: "healthy",
-              };
-            }
-            return null;
-          },
-          async run() { return { success: true, meta: { changes: 1 } }; },
-        };
-      },
-    });
-
-    // The work stream's archive gate is its object's, so the run has to reach a
-    // live one: without it this branch would answer `indeterminate` because the
-    // authority read failed, and the deadline it exists to prove would go
-    // unexercised.
-    const objectStore = testWorkstreamObjectStore();
-    openStores.push(objectStore);
-    seedWorkstreamObjectRoot(objectStore, {
-      workstreamId: "2e9f476e-8502-4b18-81ac-b89a75a0708e",
-      workspaceId: FROZEN.workspaceId,
-    });
+    let guardCalls = 0;
 
     await expect(__integrationTesting.reauthorizeFrozenPlugin(
       {
-        DB: database,
-        SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
-        AVALON_REGION: "global",
+        DB: { prepare() { throw new Error("Continuation must not read the database"); } },
       } as never,
       {
         workspaceId: FROZEN.workspaceId,
@@ -835,7 +734,12 @@ describe("continuation revalidation respects its deadline", () => {
       FROZEN as never,
       controller.signal,
       "continuation",
+      async () => {
+        guardCalls += 1;
+        if (guardCalls === 2) controller.abort();
+      },
     )).resolves.toBe("indeterminate");
+    expect(guardCalls).toBe(2);
   });
 
   it("does not answer authorized once the run has been aborted", async () => {

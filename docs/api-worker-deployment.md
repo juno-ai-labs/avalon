@@ -26,7 +26,7 @@ and [Versions and gradual deployments](https://developers.cloudflare.com/workers
 | --- | --- | --- |
 | Ashby ingress | `src/ashby-ingress-worker.ts`, `wrangler.ashby.global.jsonc` | Dedicated public connector domain; opaque regional lookup and exact signed-byte forwarding. |
 | Telemetry delivery | `src/telemetry-delivery-worker.ts`, `wrangler.telemetry.global.jsonc` | Global-only destination adapters for already approved telemetry, crash, and profile rows; PostHog is the first adapter. |
-| Inference pricing | `src/inference-pricing-worker.ts`, `wrangler.pricing.global.jsonc` | Hourly OpenRouter endpoint-price averages written to the shared regional KV namespace. |
+| Inference metadata | `src/inference-pricing-worker.ts`, `wrangler.pricing.global.jsonc` | Hourly OpenRouter endpoint-price averages and a model-window snapshot seeded when missing and refreshed after 24 hours in shared regional KV. |
 | Contracts | `src/services/document-processing-contract.ts`, `src/services/terminal/provider-rpc-contract.ts`, `src/telemetry/telemetry-delivery-contract.ts` | Typed RPC inputs and outputs imported by caller and callee. |
 | Rollout | `.github/workflows/deploy-api.yml` | Profiles, version upload, migration ordering, promotion, health, and retained evidence. |
 
@@ -71,6 +71,12 @@ that always returns 404. `workers_dev` and preview URLs remain disabled and no
 route points at the services; the handler satisfies deployment validation but
 does not create a product or operator HTTP surface.
 
+The completed Channel authority cutover no longer puts a D1 phase lookup in
+front of every HTTP request or ordinary Channel route. Channel creation still
+reads D1 because it needs the authority generation for its durable creation
+receipt. Socket ticket admission, object bootstrap, and background work retain
+the reads that use the current generation or phase.
+
 Document RPC transfers bounded `Uint8Array` values and typed results. Existing
 source limits stay below Cloudflare RPC's serialized payload limit. Terminal RPC
 passes the already parsed regional provider configuration, including the
@@ -113,9 +119,10 @@ logic consumes.
   version that binds to or calls them. A service change remains compatible with
   the previous API until the regional API promotion is healthy.
 
-- The Global pricing Worker is the only OpenRouter pricing-cache writer. API
-  inference in configured deployments reads the shared public-metadata KV and never
-  refreshes provider pricing inline.
+- The Global metadata Worker is the only OpenRouter pricing and model-window
+  cache writer. API inference reads the shared public-metadata KV and never
+  refreshes either catalog inline. Each resident Channel agent retains its
+  model-window snapshot in memory after one KV read.
 
 - Every successful version is tagged with the immutable Git SHA that passed the
   workflow's complete verification matrix.
@@ -150,6 +157,9 @@ selected product regions.
 - A failed pricing cron leaves every prior valid per-model KV record usable. A
   missing or malformed record makes Bind omit that Azure candidate rather than
   send an unpriced request.
+
+- A failed model-window refresh leaves the previous snapshot usable. Missing
+  or malformed metadata uses the harness's 200,000-token compaction window.
 
 - Cloudflare Versions cannot apply Durable Object migrations or update a
   Container image. A Wrangler-config or Crash Symbolicator change therefore
@@ -275,9 +285,41 @@ Terminal, or Global telemetry-destination operation adds a Worker invocation
 and subrequest, while ordinary API requests no longer initialize those provider
 libraries. That cost is bounded to the capability that uses it and is visible
 as a platform invocation.
-The pricing graph runs once per hour in Global and performs sixteen OpenRouter
-catalog reads plus sixteen small KV writes; inference performs only the KV reads
-for Azure-bound models in its route plan.
+The metadata graph runs pricing once per hour in Global and performs sixteen
+OpenRouter catalog reads plus sixteen small KV writes. The hourly tick reads one
+context-window KV snapshot and fetches the model catalog only when that snapshot
+is missing or at least 24 hours old. Inference performs the pricing KV reads
+for Azure-bound models in its route plan; each
+resident Channel agent reads the window snapshot once.
+
+### 2026-09-23 — Move stable metadata and obsolete cutover checks off request reads
+
+**What changed:** The existing Global scheduled metadata Worker's hourly tick
+seeds a missing OpenRouter context-window snapshot and refreshes it after 24
+hours in shared KV. The Channel agent retains a successful read in object memory
+for its lifetime and retries missing or failed reads on the next run. The
+top-level HTTP handler and ordinary Channel service and route paths no longer read the
+completed cutover row. Creation retains its generation read.
+
+**Why:** The old cold catalog fetch delayed first inference and repeated work
+after Worker isolate eviction. Reusing the existing scheduled Worker and KV
+keeps a separate metadata service out of the request path. A stale window may
+delay or advance advisory compaction until the object is evicted; the provider
+still enforces its actual input limit. The one-time DO cutover has already
+completed, so rereading its phase on every HTTP request and again within
+Channel services charged the member for a completed migration check.
+
+**Considered and rejected:** A new Worker and KV namespace would add deployment
+and operations work for metadata the existing Global scheduler and namespace
+already serve. An additional deployment switch for ordinary Channel routes
+would recreate a maintenance control with no identified operation that needs it.
+
+**Consequences:** One hourly trigger handles pricing and a due context-window
+refresh. The metadata Worker remains the only writer; inference must tolerate a
+missing snapshot until the next hourly tick or a failed refresh. Changing the
+D1 phase alone no longer closes every HTTP route. Generation and phase consumers at creation,
+socket admission, and background boundaries still read D1 where that value
+drives the operation.
 
 ### 2026-09-14 — Configurable deployment isolation
 

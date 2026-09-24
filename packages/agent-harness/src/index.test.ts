@@ -4365,18 +4365,11 @@ describe("agent harness", () => {
         usage: { prompt_tokens: 82, completion_tokens: 4 },
       }]),
     ];
-    const fetcher = vi.fn(async (request: RequestInfo | URL) => {
-      if (String(request) === "https://openrouter.ai/api/v1/models") {
-        return Response.json({
-          data: [{ id: "test/model", context_length: 100 }],
-        });
-      }
-      return responses.shift()!;
-    }) as typeof fetch;
+    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
     const persist = vi.fn();
     const outcome = await runHarness({
       ...runInput(fetcher),
-      compaction: { persist },
+      compaction: { persist, contextWindowTokensByModel: { "test/model": 100 } },
     });
 
     expect(outcome).toMatchObject({
@@ -4386,7 +4379,7 @@ describe("agent harness", () => {
       stats: { turns: 1, inputTokens: 163, outputTokens: 5 },
     });
     expect(persist).toHaveBeenCalledTimes(1);
-    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
 
@@ -4548,8 +4541,12 @@ describe("agent harness", () => {
       requests.push(JSON.parse(String(init?.body)) as typeof requests[number]);
       return responses.shift()!;
     }) as typeof fetch;
-    const execute = vi.fn(async () => ({ output: { ok: true }, summary: "Generated" }));
-    const beforeToolCall = vi.fn(async () => ({ allowed: true as const }));
+    const execute = vi.fn(async (...args: [unknown, HarnessToolContext]) => {
+      expect(args).toHaveLength(2);
+      return { output: { ok: true }, summary: "Generated" };
+    });
+    const authorizationContext = { authorizedRow: "first-boundary-result" };
+    const beforeToolCall = vi.fn(async () => ({ allowed: true as const, authorizationContext }));
     const events: HarnessEvent[] = [];
     const schema = {
       type: "object",
@@ -4568,7 +4565,7 @@ describe("agent harness", () => {
           idempotency: "safe", inputSchema: schema },
         execute,
       }])],
-      beforeToolCall,
+      beforeToolCall: composeBeforeToolCallHooks(beforeToolCall, () => ({ allowed: true })),
       onEvent: (event) => { events.push(event); },
     });
     expect(outcome).toMatchObject({ status: "completed", content: "done" });
@@ -4585,6 +4582,7 @@ describe("agent harness", () => {
     expect(modelSchema.safeParse({ query: "draw", brand_kit_id: null, clear: null }).success).toBe(true);
     expect(modelSchema.safeParse({ query: null }).success).toBe(false);
     expect(execute).toHaveBeenCalledWith({ query: "draw", clear: null }, expect.anything());
+    expect(execute.mock.calls[0]?.[1]).toMatchObject({ authorizationContext });
     expect(beforeToolCall).toHaveBeenCalledWith(expect.objectContaining({
       inputHash: await canonicalToolInputHash({ query: "draw", clear: null }),
     }));
@@ -4845,6 +4843,17 @@ describe("agent harness", () => {
       error: expect.stringContaining("at least one resource field must be updated"),
     });
     expect(result.error).not.toContain("after accepting its arguments");
+  });
+
+  it("preserves falsey authorization contexts through hook composition", async () => {
+    const input = {} as Parameters<ReturnType<typeof composeBeforeToolCallHooks>>[0];
+    for (const authorizationContext of [false, 0, "", null]) {
+      const hook = composeBeforeToolCallHooks(
+        () => ({ allowed: true, authorizationContext }),
+        () => ({ allowed: true }),
+      );
+      expect(await hook(input)).toEqual({ allowed: true, authorizationContext });
+    }
   });
 
   it("keeps blocked write tools visible while rejecting them before durable or provider work", async () => {
@@ -5645,19 +5654,57 @@ describe("agent harness", () => {
     }) as typeof fetch;
     const plugin = credentialPlugin("connection:restored", "restored", "Restored plugin policy");
     const onActivate = vi.fn(async () => undefined);
+    const reauthorizePlugin = vi.fn(async () => "authorized" as const);
     plugin.onActivate = onActivate;
 
     const outcome = await runHarness({
       ...runInput(fetcher),
       plugins: [plugin],
       activationHints: [plugin.canonicalId],
-      reauthorizePlugin: () => "authorized",
+      preauthorizedActivationHints: [plugin.canonicalId],
+      reauthorizePlugin,
     });
 
     expect(outcome).toMatchObject({ status: "completed", content: "ready" });
     expect(onActivate).not.toHaveBeenCalled();
+    expect(reauthorizePlugin).not.toHaveBeenCalledWith(plugin.canonicalId, "activation");
+    expect(reauthorizePlugin).toHaveBeenCalledWith(plugin.canonicalId, "continuation");
     expect(requestBodies[0]!.tools?.map((tool) => tool.function.name)).toContain("restored_search");
     expect(requestBodies[0]!.messages[0]!.content).toContain("Restored plugin policy");
+  });
+
+  it("checks unvalidated restored plugins together and applies their verdicts in hint order", async () => {
+    const first = credentialPlugin("connection:first", "first", "First plugin policy");
+    const second = credentialPlugin("connection:second", "second", "Second plugin policy");
+    const started: string[] = [];
+    let releaseChecks!: () => void;
+    const checksGate = new Promise<void>((resolve) => { releaseChecks = resolve; });
+    let requestTools: string[] = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { tools?: Array<{ function: { name: string } }> };
+      requestTools = body.tools?.map((tool) => tool.function.name) ?? [];
+      return streamResponse([{ choices: [{ delta: { content: "ready" }, finish_reason: "stop" }] }]);
+    }) as typeof fetch;
+    const run = runHarness({
+      ...runInput(fetcher),
+      plugins: [first, second],
+      activationHints: [first.canonicalId, second.canonicalId],
+      reauthorizePlugin: async (pluginId, occasion) => {
+        if (occasion === "continuation") return "authorized";
+        started.push(pluginId);
+        await checksGate;
+        return pluginId === first.canonicalId ? "authorized" : "denied";
+      },
+    });
+
+    try {
+      await vi.waitFor(() => expect(started).toEqual([first.canonicalId, second.canonicalId]));
+    } finally {
+      releaseChecks();
+    }
+    expect(await run).toMatchObject({ status: "completed", content: "ready" });
+    expect(requestTools).toContain("first_search");
+    expect(requestTools).not.toContain("second_search");
   });
 
   it("leaves a plugin inactive and hides provider details when activation fails", async () => {

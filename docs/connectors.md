@@ -185,6 +185,14 @@ Every adapter entry point that authenticates to a provider — `executeTool`, `h
 
 `withAuthorizedConnection` in `apps/api/src/services/connector-connection-access.ts` is the one door that produces one, and ESLint pins the import that mints the brand to that module. Around the operation it owns the three duties that used to be stacked by hand at each call site: refreshing through `ensureFreshConnectorCredentials`, persisting credentials the adapter rotated in place, and marking a connection `needs_reconnect` when the provider refuses the authorization. Stacking them by hand is what produced the defect this design replaces — `load_plugin` revalidation and resource hydration each reached a provider with a credential nobody had refreshed, and a Granola personal connection, whose MCP access token is the shortest-lived credential Rally holds, became unloadable a few minutes after it was connected while the connections screen still showed it healthy.
 
+For a harness connector tool, one live run-authority and connection-row check runs before looking up a completed receipt or starting execution. Its validated row is carried through that invocation's credential preparation and provider effect. A completed receipt needs the same initial check, while an interrupted attempt that bypasses the ordinary before-tool hook falls back to a fresh read during preparation. Active tool listings between model turns use their frozen activation scope and do not read the connection row. A revocation during an already authorized invocation may allow that invocation to finish; the next tool call checks current authority again.
+
+The Sidekick creator's connector tools make the same invocation-scoped tradeoff:
+the first membership and connection-row reads run together before credential
+preparation, and a refresh does not trigger a second authorization read before
+the provider effect. Revocation during that invocation may let it finish; the
+next creator tool checks again.
+
 The claim is scoped to adapter entry points. A few host paths need only a fresh token rather than a connection to hand an adapter — `slack-agent-service.ts`, `slack-unfurl-refresh.ts`, and `slack-notification-service.ts` each call `ensureFreshConnectorCredentials` directly to read a bot token — and the brand correctly does not apply to them. They get freshness, but not the mid-call recovery below, because they are not making a call an adapter would recover.
 
 Rotation is available to every connection a person has not disabled. The coordinator's lease claim, its credential reload, and the write that stores a rotated credential all admit any row except `disabled`, so a connection this database believes is broken is refreshed and rotated exactly like one it believes is fine, and the provider gets to say whether the belief was still true. A refresh the provider honours also clears the belief: the same write sets the row back to `healthy` and drops its `error_json`, because a provider that just accepted the refresh token has answered the question the status was guessing at. See the section below for why.
@@ -1343,8 +1351,9 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 Guest-triggered conversational runs also recheck exact conversation admission at
-run-authority boundaries. The connector executor repeats this check after
-credential refresh and immediately before calling the adapter. Remaining an
+run-authority boundaries. The connector executor uses the invocation
+authorization decision through credential preparation and adapter execution;
+see [Agent harness](agent-harness.md). Remaining an
 active workspace guest is insufficient after the addressed share is revoked.
 Workspace-principal automation runs retain their separate lifecycle authority.
 

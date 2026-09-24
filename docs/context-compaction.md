@@ -26,6 +26,7 @@ weeks ago.
 | [`packages/agent-harness/src/prompts/compaction.ts`](../packages/agent-harness/src/prompts/compaction.ts) | Pure checkpoint content renderer shared by live application and API replay. |
 | `@juno-ai/bind` (`loop/tool-loop.ts`) | Calls `needsCompaction` after a turn and `applyCompaction` at a batch boundary, then swaps in whatever transcript it is given. Bind holds no opinion about that transcript's shape. |
 | [`apps/api/src/services/integrations.ts`](../apps/api/src/services/integrations.ts) | Durability and replay: the atomic `onBindCompaction` commit, `loadWorkstreamContextCompaction`, `PersistedCompactionMessagesSchema`, and the run assembly that prepends a stored checkpoint to the fenced transcript. |
+| [`apps/api/src/services/openrouter-context-windows.ts`](../apps/api/src/services/openrouter-context-windows.ts) | Daily OpenRouter window snapshot in the shared public-metadata KV. `SubstreamAgent` reads it once into object memory and supplies it to Bind. |
 | [`apps/api/src/services/workstream-resource-inventory.ts`](../apps/api/src/services/workstream-resource-inventory.ts) | Fixed-order authorized totals and natural-language attachment-kind groups appended to a live checkpoint. |
 | [`apps/api/src/durable-objects/workstream-object-schema.ts`](../apps/api/src/durable-objects/workstream-object-schema.ts) | Principal-scoped `transcript_compaction_checkpoints`, the reconnect-only `active_agent_compaction` singleton, plus the monotonic local resource-inventory revision and relationship triggers. |
 
@@ -34,11 +35,17 @@ weeks ago.
 Live context size comes only from OpenRouter's returned usage for the last
 completed turn (`prompt_tokens + completion_tokens`); it is never estimated from
 serialized bytes. A compaction fires when that number exceeds
-`COMPACTION_FRACTION` (0.8) of the selected model's advertised window, resolved
-from the OpenRouter model catalog (`context_length`, cached for an hour behind a
-five-second fetch) and falling back to 200,000 tokens when the catalog is
-unavailable. The check runs at a tool-batch boundary and again after the final
-reply of a run (`compactTerminalTurn`), so a run whose *last* turn crosses the
+`COMPACTION_FRACTION` (0.8) of the selected model's advertised window. The Global
+scheduled Worker checks the snapshot on its hourly tick. When it is missing or
+at least 24 hours old, the Worker fetches OpenRouter's `context_length` and
+writes a complete snapshot to shared KV. Each `SubstreamAgent` retains a
+successful read in object memory and supplies the windows to Bind before the
+run. It does not fetch OpenRouter's catalog during inference or re-read KV on
+later runs after a successful load. A missing snapshot or failed KV read is
+retried on the next run; the current run or an unknown model falls back to
+200,000 tokens. The check runs at a tool-batch boundary and again after the
+final reply of a run (`compactTerminalTurn`), so
+a run whose *last* turn crosses the
 threshold still leaves a checkpoint behind for the next one. A tool may also
 request a compaction, which Bind flushes at the same boundary with trigger
 `manual` rather than `auto`.
@@ -231,7 +238,7 @@ activity indicator. Scheduling, receipts, and everything else about the run stay
 
 | Condition | Behavior |
 | --- | --- |
-| Model catalog unavailable | 200,000-token window assumed; compaction still runs on real usage. |
+| KV snapshot unavailable or missing the selected model | 200,000-token window assumed; compaction still runs on real usage. The resident object keeps that result until eviction. |
 | Catalog window larger than the endpoint's own input limit | Nothing here notices. The run is sized against the catalog, the request goes out, and the endpoint refuses it. That refusal now fails the run as `context_length_exceeded` rather than as Rally's own defect, which is what makes this condition visible at all — see [`agent-harness.md`](agent-harness.md#failure-modes-and-limits). It fired on 2026-09-17 against an Azure deployment accepting 922,000 tokens for a model the catalog reports at 1,050,000; the sizing is unfixed, and fixing it means the deployment's limit has to reach this decision. |
 | Threshold crossed with nothing beneath the system prompt | `context_limit_exceeded` — there is nothing to summarize. |
 | Empty summary completion | Treated as a completion defect and retried by the route plan; a persistent one fails the run rather than storing an empty checkpoint. |
@@ -241,8 +248,8 @@ activity indicator. Scheduling, receipts, and everything else about the run stay
 | Repeated compactions in one long work stream | Each checkpoint summarizes the previous one, but explicitly omits its generated inventory appendix. The prompt asks for the remaining checkpoint content to be carried forward, which slows but does not eliminate decay. |
 | Initial or authorization-invalidated replay exceeds the selected model window | The provider can reject the first request; no returned usage exists to trigger automatic compaction. The canonical transcript remains intact. |
 
-Numbers: threshold 0.8 of the window; catalog TTL one hour, fetch timeout five
-seconds; default window 200,000 tokens; one latest stored checkpoint per work
+Numbers: threshold 0.8 of the window; daily catalog refresh; default window
+200,000 tokens; one latest stored checkpoint per work
 stream and execution principal.
 
 ## Testing
@@ -298,6 +305,16 @@ results.
   every routed model.
 
 ## Changelog
+
+### 2026-09-23 — Move model-window discovery out of inference
+
+**What changed:** The Global scheduled Worker's hourly tick seeds a missing context-window snapshot and refreshes one that is at least 24 hours old in the existing shared KV. A Channel agent reads a successful snapshot once into Durable Object memory and passes it to Bind; Bind no longer fetches the model catalog on an inference path. Missing or failed reads retry on the next run.
+
+**Why:** A cold catalog request delayed the first model call even though model windows rarely change. Reusing public-metadata KV and object memory avoids a new authority service or repeated cross-resource reads. A missing snapshot uses the existing 200,000-token fallback; a resident object may use yesterday's window until eviction, which is acceptable for advisory compaction sizing. Provider input limits remain authoritative.
+
+**Considered and rejected:** An isolate-wide hourly cache still makes the first run after isolate eviction wait for OpenRouter. Reading KV on every run would add a cross-resource call after the Channel agent already holds the same advisory data.
+
+**Consequences:** A long-lived object keeps its first successful snapshot across daily refreshes. A newly deployed empty KV is seeded by the next hourly tick; until then the fallback applies. Changes to the catalog will reach resident objects after eviction; immediate provider-limit changes can still make an initial request fail before compaction has usage to act on.
 
 ### 2026-09-15 — Keep canonical replay separate from model capacity
 

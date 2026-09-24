@@ -183,9 +183,8 @@ concurrently. Use each field to identify the slow dependency, never add them
 together.
 
 `initial_run_authority_ms` names the membership, identity, parent, and optional
-automation authority read that starts the run. Bind repeats Sidekick and run
-authority immediately before each provider request in its `before_model`
-liveness callback. That later fence occurs after `agent_inference_prepared`; its
+automation authority read that starts the run. Bind repeats run authority immediately before each provider request in its
+`before_model` liveness callback; loaded Sidekick skills keep the run snapshot. That later fence occurs after `agent_inference_prepared`; its
 wait remains in `request_to_inference_start_ms`, not this initial-authority
 field or `total_ms`.
 
@@ -201,20 +200,23 @@ authorization-check, dynamic-tool-load, and activation-write counts expose
 which operations were actually attempted. `initial_activation_details` retains
 the authorization, preparation, and persistence durations for each requested
 canonical plugin ID, including nested connector-health and durable-write
-durations, so one slow item in the serial activation loop is identifiable. The
+durations, so one slow item among the concurrent activation checks is identifiable. The
 detail is an object with `plugin_0`, `plugin_1`, and later keys so the structured
 logger retains every entry; `plugin_id` inside each entry names the plugin.
 `initial_activation_auth_check_count` is numeric (the logger masks fields named
-`authorization`). The catalog source (`provided`, `cache`, `inflight`, `fetch`,
-or `fallback`) comes from the catalog loader's actual branch. For a shared
-inflight request, fetch subphase timings belong to the caller that started it;
-the joining caller still records its full catalog wait.
+`authorization`). The catalog source is `provided` when the host's KV snapshot has windows,
+`fallback` when it is empty, and `skipped` without compaction. Bind no longer
+fetches the OpenRouter catalog on the inference path.
 `tool_surface_hash_ms` precedes scope persistence; `scope_ownership_ms`,
 `scope_hash_ms`, and `scope_write_ms` divide that persistence call.
 `activation_run_write_ms` and `activation_hint_write_ms` divide its two durable
 writes; for credential plugins, `activation_connection_context_ms`,
 `activation_provider_health_ms`, and `activation_health_verdict_ms` divide
-authorization. `before_model_principal_ms` and `before_model_identity_ms`
+authorization. Initial authorization checks overlap across plugins; their
+summed durations may exceed `initial_activations_ms`. Bind's
+`bind_plugin_rehydration_ms` now excludes a second connector authorization
+for IDs this host just checked and persisted, but still includes eligibility
+and any dynamic tool loading. `before_model_principal_ms` and `before_model_identity_ms`
 separate the D1 membership and Channel identity reads; conversation and
 automation authority fields appear only when that path runs. The forced lease
 renewals expose their attempt and persistent-loop parts as
@@ -228,10 +230,8 @@ render and transcript validation, system projection and provider-input hash,
 `before_model` callback, provider-boundary write, assistant reservation and Bind
 transition, request-message conversion, route pricing and planning, and route
 preparation. `bind_plugin_reauth_ms` uses a short key because the logger masks
-keys containing `authorization`. `context_catalog_source`
-is `provided`, `cache`, `inflight`, `fetch`, `fallback`, or `skipped`; a catalog
-fetch also exposes response, body, envelope parse, and per-model entry parse
-durations. The row is emitted synchronously
+keys containing `authorization`. `context_catalog_source` records the supplied
+snapshot or fallback; catalog fetch subphase fields are no longer emitted. The row is emitted synchronously
 at the first provider-request hook, with no telemetry await. It is diagnostic:
 loader durations can overlap their waits, and any unaccounted portion of
 `post_prepared_ms` is work between named awaited stages, not proof of one
@@ -804,6 +804,31 @@ destination is account configuration; the **attachment is per Worker**, through
 a Worker exports when its own config names one.
 
 ## Changelog
+
+### 2026-09-23 — Keep first-dispatch timing accurate after removing repeated checks
+
+**What changed:** Bind still reports first-dispatch timing while using the host's
+KV context-window snapshot. The provider-turn heartbeat and run-authority reads
+now overlap, and their individual durations remain visible. Loaded Sidekick
+skills no longer produce a per-turn authority duration. Initial plugin checks
+now overlap, and Bind's rehydration timer excludes duplicate connector checks
+when Rally passes its current-attempt authorization result.
+
+**Why:** The latency work removed the catalog fetch and redundant cross-object
+checks that the previous breakdown had named. Keeping their old timing labels
+would misdescribe the remaining wait and obscure the benefit of the change.
+The earlier `bind_plugin_rehydration_ms` included a second serial provider
+health walk immediately after Rally's own initial activation checks, so
+its new value must not be compared as though it measures the same work.
+
+**Considered and rejected:** Dropping the diagnostic row would leave no way to
+compare the revised path with the prior one. Retaining catalog fetch subphase
+fields would imply network work that no longer occurs.
+
+**Consequences:** The parent authority duration can overlap the heartbeat and
+its child read durations; these values should not be summed. Per-plugin initial
+authorization durations can also overlap and should not be added to infer the
+critical path. Catalog source is now `provided`, `fallback`, or `skipped` on this path.
 
 ### 2026-09-23 — Measure the remaining first-dispatch waits
 

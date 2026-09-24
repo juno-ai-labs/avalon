@@ -10,7 +10,7 @@ import { logStructuredEvent, logWarn } from "../observability/logger";
 import { ObjectPortError } from "../runtime/object-port";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { issueSocketTicket, WORKSTREAM_SOCKET_TICKET_TTL_SECONDS } from "./socket-service";
-import { requireOpenWorkstreamAuthority, requireWorkstreamIngress } from "./workstream-authority";
+import { requireWorkstreamIngress } from "./workstream-authority";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 
 export interface ResolvedConversationParent {
@@ -117,15 +117,13 @@ export class ConversationService {
   }
 
   /**
-   * The object client for one of the parent's conversations, or a 503 on a
-   * stack that never opened the authority.
+   * The object client for one of the parent's conversations.
    *
    * Defaults to the main conversation, which is what every work-stream-level
    * route wants. A substream is named explicitly and authorized as itself:
    * `authorizeViewer` checks that child's membership, not just the parent's.
    */
   async client(parentId: string, traced = false, substreamId = "0"): Promise<WorkstreamObjectClient> {
-    await requireOpenWorkstreamAuthority(this.env);
     const parent = await this.authorizeViewer(parentId, substreamId);
     // The kind travels with the request. It is already resolved here — the
     // authorization above needed it — and the conversation refuses one that
@@ -138,7 +136,6 @@ export class ConversationService {
 
   /** A client for a write, refused outright when the conversation is archived. */
   async writableClient(parentId: string, substreamId = "0"): Promise<WorkstreamObjectClient> {
-    await requireOpenWorkstreamAuthority(this.env);
     const parent = await this.authorizeViewer(parentId, substreamId);
     if (parent.archived) {
       throw new ApiError(409, "conversation_parent_archived", "This conversation belongs to something that is archived");

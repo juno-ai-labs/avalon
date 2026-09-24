@@ -58,6 +58,7 @@ import {
 } from "@rally/contracts";
 
 import type { AuthContext, Env } from "../src/env";
+import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import {
   capturedProviderRequests,
   installProviderCapture,
@@ -242,7 +243,7 @@ beforeEach(async () => {
   // never a slow query.
 }, 30_000);
 
-function agentStub(): DurableObjectStub {
+function agentStub(): DurableObjectStub<SubstreamAgent> {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
     conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
   ));
@@ -3206,8 +3207,8 @@ describe("a member's message travels the whole pipeline", () => {
           return Response.json({ documentId: "guest-created-document", title: "Shared draft" });
         }
         if (url === "https://oauth2.googleapis.com/token") {
-          // Revoke while credentials are being refreshed, after the initial
-          // connector check but before the provider's document write.
+          // Revocation during refresh lands after this call's authorization
+          // boundary. The call can finish; the next call must be refused.
           expect(await parent.removePrivateChildParticipant({ ...participantRequest, operationId: "child-participant-remove" }))
             .toMatchObject({ outcome: "removed" });
           return Response.json({ access_token: "refreshed-fixture-access", expires_in: 3600, token_type: "Bearer" });
@@ -3215,16 +3216,27 @@ describe("a member's message travels the whole pipeline", () => {
         throw new Error(`Unexpected guest provider call: ${url}`);
       };
       try {
-        const executeWrite = () => __integrationTesting.executeAuthorizedConnectorTool(connectorEnv, guestToolInput,
-          frozen, "docs.create_document", "docs.write", { title: "Shared draft" }, new AbortController().signal);
+        const executeWrite = async () => {
+          const row = await __integrationTesting.assertFrozenConnectionAuthorized(
+            connectorEnv, guestToolInput, frozen, "docs.write",
+          );
+          return __integrationTesting.executeAuthorizedConnectorTool(connectorEnv, guestToolInput,
+            frozen, "docs.create_document", "docs.write", { title: "Shared draft" }, new AbortController().signal,
+            undefined, undefined, undefined, { frozen, capability: "docs.write", row });
+        };
         expect(await executeWrite()).toMatchObject({ output: { documentId: "guest-created-document" } });
         expect(providerCalls).toEqual(["https://docs.googleapis.com/v1/documents"]);
         const expired = await encryptString(JSON.stringify({ ...freshCredentials, expiresAt: "2000-01-01T00:00:00.000Z" }), credentialKey, connectorId);
         await runInDurableObject(workspace, (_instance, state) => {
           state.storage.sql.exec("UPDATE connector_connections SET encrypted_credentials=?,credential_iv=? WHERE id=?", expired.ciphertext, expired.iv, connectorId);
         });
+        await expect(executeWrite()).resolves.toMatchObject({ output: { documentId: "guest-created-document" } });
+        expect(providerCalls).toEqual([
+          "https://docs.googleapis.com/v1/documents",
+          "https://oauth2.googleapis.com/token",
+          "https://docs.googleapis.com/v1/documents",
+        ]);
         await expect(executeWrite()).rejects.toThrow("Shared conversation access has ended");
-        expect(providerCalls).toEqual(["https://docs.googleapis.com/v1/documents", "https://oauth2.googleapis.com/token"]);
       } finally {
         globalThis.fetch = originalFetch;
       }
@@ -4509,7 +4521,7 @@ describe("a member's message travels the whole pipeline", () => {
     socket.close(1000, "done");
   });
 
-  it("a revoked session cannot write into the work stream", async () => {
+  it("uses a cached product session until revocation reaches the room, then refuses writes", async () => {
     const stub = agentStub();
     await initializeWorkstream(stub, "first message");
     await env.DB.prepare(
@@ -4520,7 +4532,7 @@ describe("a member's message travels the whole pipeline", () => {
       operation: "create_message",
       auth: AUTH,
       input: {
-        text: "should not land",
+        text: "already admitted",
         clientMessageId: "pipeline-revoked-1",
         mentions: [],
         confirmedParticipantUserIds: [],
@@ -4528,14 +4540,45 @@ describe("a member's message travels the whole pipeline", () => {
       },
     });
 
-    expect(attempt.status).toBe(401);
-    await runInDurableObject(stub, (_instance, state) => {
-      const copies = state.storage.sql.exec<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM participant_transcript_turns
-          WHERE client_message_id = 'pipeline-revoked-1'`,
-      ).toArray()[0]!;
-      expect(copies.n).toBe(0);
+    expect(attempt.status).toBe(200);
+    await stub.revokeSocketAccess({
+      reason: "session_revoked",
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      sessionId: SESSION_ID,
     });
+    const denied = await product(stub, {
+      operation: "create_message",
+      auth: AUTH,
+      input: {
+        text: "should not land",
+        clientMessageId: "pipeline-revoked-2",
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+      },
+    });
+    expect(denied.status).toBe(401);
+  });
+
+  it("refreshes cached product admission when the Worker presents a changed member role", async () => {
+    const stub = agentStub();
+    await initializeWorkstream(stub, "first message");
+    await env.DB.prepare("UPDATE workspace_members SET role = 'admin' WHERE workspace_id = ? AND user_id = ?")
+      .bind(WORKSPACE_ID, USER_ID).run();
+
+    const promoted = await product(stub, {
+      operation: "create_message",
+      auth: { ...AUTH, role: "admin" },
+      input: {
+        text: "after promotion",
+        clientMessageId: "pipeline-role-change-1",
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+      },
+    });
+    expect(promoted.status).toBe(200);
   });
 
   it("fails an observable streamed response without retry and replaces its partial overlay with the reserved error turn", async () => {
