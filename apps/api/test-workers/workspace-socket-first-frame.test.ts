@@ -13,7 +13,7 @@
 
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 
@@ -122,13 +122,27 @@ describe("WorkspaceDO first-frame watch", () => {
     const socket = await openSilentSocket();
     const socketClosed = closed(socket);
     const before = await currentInstance();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    await expect(runInDurableObject(workspace(), (instance: WorkspaceDO) => {
-      watch(instance).resetIfSocketsMissedFirstFrame(
-        Date.now() + WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS,
-        WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS,
-      );
-    })).rejects.toThrow();
+    try {
+      await expect(runInDurableObject(workspace(), (instance: WorkspaceDO) => {
+        watch(instance).resetIfSocketsMissedFirstFrame(
+          Date.now() + WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS,
+          WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS,
+        );
+      })).rejects.toThrow();
+      // The reset is the signal an operator watches for, so it must be logged
+      // before the abort ends the invocation.
+      expect(errors).toHaveBeenCalledWith(expect.objectContaining({
+        level: "error",
+        event: "workspace_socket_first_frame_missed",
+        workspace_id: WORKSPACE_ID,
+        missed_sockets: 1,
+        open_sockets: 1,
+      }));
+    } finally {
+      errors.mockRestore();
+    }
 
     expect((await socketClosed).code).toBe(1006);
     expect(await currentInstance()).not.toBe(before);
