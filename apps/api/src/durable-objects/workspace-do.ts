@@ -147,7 +147,7 @@ import {
   type WorkspacePlacementAffinity,
 } from "../lib/durable-object-namespace";
 import { withDurableObjectSelf } from "../lib/durable-object-self";
-import { missedFirstFrame, nextFirstFrameDeadline } from "./socket-first-frame-watch";
+import { nextFirstFrameDeadline, socketsMissedWhileInstanceSilent } from "./socket-first-frame-watch";
 import { parseRpcInput } from "../lib/rpc-input";
 import { uuidV7 } from "../lib/uuid-v7";
 import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observability/logger";
@@ -4305,6 +4305,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** This object's own `WORKSPACE_DOS` name; see {@link selfObjectName}. */
   private readonly searchPublications = new Map<string, Promise<void>>();
   private objectName: string | null = null;
+  /**
+   * When this instance last ran any socket callback. The first-frame watch
+   * resets only an instance that has heard nothing since a silent socket was
+   * accepted; see `socket-first-frame-watch.ts`.
+   */
+  private lastSocketEventAt: number | null = null;
+  /**
+   * `WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS`, held per instance so a runtime
+   * test can shorten it and drive the real accept and alarm paths.
+   */
+  private socketFirstFrameDeadlineMs = WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS;
   /** Content-free phase timings for the alarm invocation currently running. */
   private workspaceAlarmInstrumentation: WorkspaceAlarmInstrumentation | null = null;
 
@@ -4581,6 +4592,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   override async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
     // Record callback ingress before initialization can stall; parse the
     // attachment only once because this callback also handles presence frames.
+    this.lastSocketEventAt = Date.now();
     const attachment = readAttachment(socket);
     if (attachment && !attachment.subscribed && !attachment.firstFrameReported) {
       socket.serializeAttachment({ ...attachment, firstFrameReported: true } satisfies WorkspaceSocketAttachment);
@@ -4753,10 +4765,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   override webSocketClose(socket: WebSocket): void {
+    this.lastSocketEventAt = Date.now();
     if (contributesPresence(readAttachment(socket))) this.broadcastPresence(socket);
   }
 
   override webSocketError(socket: WebSocket): void {
+    this.lastSocketEventAt = Date.now();
     // The client reconnects with a new one-time ticket when it still has work;
     // everyone else must stop seeing the failed connection immediately.
     if (contributesPresence(readAttachment(socket))) this.broadcastPresence(socket);
@@ -4914,7 +4928,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const authorization = this.state.storage.sql.exec<{ due: number | null }>('SELECT MIN(not_before) AS due FROM authorization_delivery').one().due;
     const firstFrame = nextFirstFrameDeadline(
       this.watchedSocketAttachments(),
-      WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS,
+      this.socketFirstFrameDeadlineMs,
       this.instanceStartedAt(),
     );
     return [
@@ -4939,8 +4953,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Reset this instance when sockets it accepted have stayed silent past the
-   * first-frame deadline.
+   * Reset this instance when it has stopped receiving socket events: a socket
+   * it accepted has stayed silent past the first-frame deadline, and no socket
+   * at all has been heard from since.
    *
    * The alarm is the one path still running when this matters: an instance
    * that has stopped receiving socket events still runs alarms, RPC, and
@@ -4950,21 +4965,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * gate breaks before a close frame could leave. Clients reconnect on their
    * own, and the ones that were silent had already given up.
    */
-  private resetIfSocketsMissedFirstFrame(now: number, deadlineMs: number): void {
-    const instanceStartedAt = this.instanceStartedAt();
+  private resetIfSocketsMissedFirstFrame(now: number): void {
     const sockets = this.state.getWebSockets();
-    const missed = sockets.flatMap((socket) => {
-      const attachment = readAttachment(socket);
-      return attachment && missedFirstFrame(attachment, now, deadlineMs, instanceStartedAt)
-        ? [{ socket, connectedAt: Date.parse(attachment.connectedAt) }]
-        : [];
-    });
+    const missed = socketsMissedWhileInstanceSilent(
+      sockets.flatMap((socket) => readAttachment(socket) ?? []),
+      now,
+      this.socketFirstFrameDeadlineMs,
+      this.instanceStartedAt(),
+      this.lastSocketEventAt,
+    );
     if (missed.length === 0) return;
     logError(this.env, "workspace_socket_first_frame_missed", {
       workspace_id: this.workspaceId(),
       missed_sockets: missed.length,
       open_sockets: sockets.length,
-      oldest_silent_ms: now - Math.min(...missed.map((entry) => entry.connectedAt)),
+      oldest_silent_ms: now - Math.min(...missed.map((socket) => Date.parse(socket.connectedAt))),
+      last_socket_event_ms: this.lastSocketEventAt === null ? null : now - this.lastSocketEventAt,
       instance_age_ms: this.instanceAgeMs(),
     });
     this.state.abort("workspace_socket_first_frame_missed");
@@ -4979,7 +4995,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * first, since it ends the invocation when it trips.
    */
   protected override async runDueAlarmWork(now: number): Promise<void> {
-    this.resetIfSocketsMissedFirstFrame(now, WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS);
+    this.resetIfSocketsMissedFirstFrame(now);
     const workspaceId = this.workspaceId();
     if (workspaceId) {
       try { await flushSearchAuthorizationPush(this.state.storage.sql, this.env, workspaceId); }
@@ -11420,9 +11436,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.logWorkspaceSocketHandshake(attachment, "accepted");
     // The first-frame watch runs on the alarm, and a quiet workspace may have
     // none armed. Lowering-only, so a sooner wake reason keeps its slot.
-    await this.ensureAlarmNoLaterThan(
-      Date.parse(attachment.connectedAt) + WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS,
-    );
+    await this.ensureAlarmNoLaterThan(Date.parse(attachment.connectedAt) + this.socketFirstFrameDeadlineMs);
     return new Response(null, { status: 101, webSocket: client });
   }
 

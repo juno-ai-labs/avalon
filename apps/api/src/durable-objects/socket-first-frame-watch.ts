@@ -11,6 +11,13 @@
  * (see `docs/realtime-sockets.md`, "An instance that stops hearing its
  * sockets").
  *
+ * A silent socket alone is not enough, because one client controls it: any
+ * member could open a socket, never speak, and reset the whole Organization
+ * every deadline. So a socket only counts if the instance has received no
+ * socket event from *anyone* since accepting it. That is what the production
+ * failure looks like, and while any other client is connected (subscribing,
+ * changing focus, closing), no single client can make it true.
+ *
  * Only sockets accepted by *this* instance count. A restart that inherits a
  * silent socket from the instance it replaced has not been shown to be stuck,
  * and counting that socket would reset the object again on every alarm.
@@ -62,4 +69,23 @@ export function missedFirstFrame(
 ): boolean {
   const deadline = firstFrameDeadline(socket, deadlineMs, instanceStartedAt);
   return deadline !== null && deadline <= now;
+}
+
+/**
+ * The sockets whose first-frame deadline has passed with the instance hearing
+ * nothing from any socket since they were accepted. Non-empty means the
+ * instance has stopped receiving socket events.
+ *
+ * `lastSocketEventAt` is when this instance last ran a socket callback of any
+ * kind, or `null` if it never has.
+ */
+export function socketsMissedWhileInstanceSilent<T extends FirstFrameWatchedSocket>(
+  sockets: readonly T[],
+  now: number,
+  deadlineMs: number,
+  instanceStartedAt: number,
+  lastSocketEventAt: number | null,
+): T[] {
+  return sockets.filter((socket) => missedFirstFrame(socket, now, deadlineMs, instanceStartedAt)
+    && (lastSocketEventAt === null || lastSocketEventAt < Date.parse(socket.connectedAt)));
 }
