@@ -44,6 +44,8 @@ export const ConversationInitializationSchema = z.discriminatedUnion("kind", [
 export type ConversationInitialization = z.infer<typeof ConversationInitializationSchema>;
 
 export const SessionSourceSchema = z.strictObject({
+  // `claude_code` names Channels imported from local Claude Code files before
+  // importing moved to Rally's browser; it is kept so their provenance reads.
   provider: z.enum(["chatgpt", "claude", "claude_code"]),
   url: HttpsUrlSchema.nullable(),
   sessionId: z.string().min(1).optional(),
@@ -59,10 +61,10 @@ export const ImportedMessageProvenanceSchema = z.strictObject({
 });
 export type ImportedMessageProvenance = z.infer<typeof ImportedMessageProvenanceSchema>;
 
-export const SessionImportPreviewRequestSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("link"), url: HttpsUrlSchema }),
-  z.strictObject({ kind: z.literal("export"), provider: z.enum(["chatgpt", "claude", "claude_code"]), text: z.string().min(1) }),
-]);
+/** A conversation Rally's browser read from the provider's page, signed in or shared. */
+export const SessionImportPreviewRequestSchema = z.strictObject({
+  kind: z.literal("export"), provider: z.enum(["chatgpt", "claude"]), text: z.string().min(1), sourceUrl: HttpsUrlSchema,
+});
 export const SessionImportPreviewSchema = z.strictObject({
   title: z.string().min(1),
   source: SessionSourceSchema,

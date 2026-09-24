@@ -16,6 +16,8 @@ import type {
 import type { MessageExportResult } from '../common/message-export';
 import type { DesktopReleaseChannel } from '../common/release-channels';
 import type { DesktopRealtimeSocketEvent } from '../common/realtime-socket';
+import type { EmbeddedBrowserResult, EmbeddedBrowserState } from '../common/embedded-browser';
+import type { BrowserImportContext } from '../common/browser-import';
 import {
   REALTIME_SOCKET_IPC_CHANNELS,
   parseRealtimeSocketEvent,
@@ -42,6 +44,13 @@ function parseDeepLinkErrorNotice(raw: unknown): DesktopDeepLinkErrorNotice | nu
 }
 const applicationForegroundListeners = new Set<(foregrounded: boolean) => void>();
 const realtimeSocketListeners = new Set<(event: DesktopRealtimeSocketEvent) => void>();
+const embeddedBrowserListeners = new Set<(state: EmbeddedBrowserState) => void>();
+
+ipcRenderer.on('embedded-browser:state', (_event, raw: unknown) => {
+  if (!raw || typeof raw !== 'object' || !('tabs' in raw) || !Array.isArray(raw.tabs)) return;
+  const state = raw as EmbeddedBrowserState;
+  for (const listener of embeddedBrowserListeners) listener(state);
+});
 
 ipcRenderer.on(REALTIME_SOCKET_IPC_CHANNELS.event, (_event, rawEvent: unknown) => {
   const parsed = parseRealtimeSocketEvent(rawEvent);
@@ -106,10 +115,6 @@ ipcRenderer.on('deep-link-error:changed', (_event, rawNotice: unknown) => {
 });
 
 const bridge: RallyDesktopBridge = {
-  listLocalClaudeSessions: () => ipcRenderer.invoke('session-import:local-claude-list') as ReturnType<RallyDesktopBridge['listLocalClaudeSessions']>,
-  readLocalClaudeSession: (id) => ipcRenderer.invoke('session-import:local-claude-read', id) as ReturnType<RallyDesktopBridge['readLocalClaudeSession']>,
-  listLocalClaudeCodeSessions: () => ipcRenderer.invoke('session-import:local-claude-code-list') as Promise<Array<{ id: string; title: string; project: string; updatedAt: number }>>,
-  readLocalClaudeCodeSession: (id) => ipcRenderer.invoke('session-import:local-claude-code-read', id) as Promise<string>,
   getRuntimeConfig: () => ipcRenderer.invoke('runtime:get-config') as Promise<RuntimeConfig>,
   getApplicationForegroundState: () => ipcRenderer.invoke('application:foreground-get') as Promise<boolean>,
   onApplicationForegroundChanged: (listener) => {
@@ -177,6 +182,27 @@ const bridge: RallyDesktopBridge = {
   showDefinitionForSelection: () => ipcRenderer.invoke('system:show-definition') as Promise<void>,
   shareText: (text) => ipcRenderer.invoke('system:share-text', text) as Promise<void>,
   setConversationDetailsOpen: (input) => ipcRenderer.invoke('window:set-conversation-details', input) as Promise<void>,
+  getEmbeddedBrowserState: () => ipcRenderer.invoke('embedded-browser:state') as Promise<EmbeddedBrowserState>,
+  commandEmbeddedBrowser: (command) => ipcRenderer.invoke('embedded-browser:command', command) as Promise<EmbeddedBrowserResult>,
+  setEmbeddedBrowserBounds: (bounds) => ipcRenderer.invoke('embedded-browser:bounds', bounds) as Promise<void>,
+  setEmbeddedBrowserVisible: (visible) => ipcRenderer.invoke('embedded-browser:visible', visible) as Promise<void>,
+  onEmbeddedBrowserFocusAddress: (listener) => {
+    const handler = (): void => listener();
+    ipcRenderer.on('embedded-browser:focus-address', handler);
+    return () => ipcRenderer.removeListener('embedded-browser:focus-address', handler);
+  },
+  onEmbeddedBrowserState: (listener) => {
+    embeddedBrowserListeners.add(listener);
+    return () => embeddedBrowserListeners.delete(listener);
+  },
+  openBrowserImport: (context) => ipcRenderer.invoke('browser-import:open', context) as Promise<void>,
+  getBrowserImportContext: () => ipcRenderer.invoke('browser-import:context') as Promise<BrowserImportContext | null>,
+  onBrowserImportContextChanged: (listener) => {
+    const handler = (): void => listener();
+    ipcRenderer.on('browser-import:context-changed', handler);
+    return () => ipcRenderer.removeListener('browser-import:context-changed', handler);
+  },
+  completeBrowserImport: (workstreamId) => ipcRenderer.invoke('browser-import:imported', workstreamId) as Promise<void>,
   exportMessage: (request) => ipcRenderer.invoke('message-export:save', request) as Promise<MessageExportResult>,
   connectCanva: (operationId) => ipcRenderer.invoke('canva:connect', operationId) as Promise<{ url: string; attemptId: string }>,
   openExternal: (url) => ipcRenderer.invoke('system:open-external', url) as Promise<void>,

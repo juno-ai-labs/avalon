@@ -3,7 +3,7 @@ import { create } from 'zustand';
 /** The general channel context rail remains retired; artifact reading uses the slot directly. */
 export const CONTEXT_SIDEBAR_ENABLED = false;
 
-export type RailVariant = 'context';
+export type RailVariant = 'context' | 'browser';
 /** The panel occupying the right sidebar slot. */
 export interface RailInspector {
   type: 'resource' | 'connection' | 'task' | 'run';

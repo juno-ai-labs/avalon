@@ -208,10 +208,6 @@ async function browserOnboardingSession(
 let browserSidekicksWindow: Window | null = null;
 
 const browserBridge: RallyDesktopBridge = {
-  async listLocalClaudeSessions() { return []; },
-  async readLocalClaudeSession() { throw new Error('Local Claude sessions are available in the desktop app.'); },
-  async listLocalClaudeCodeSessions() { return []; },
-  async readLocalClaudeCodeSession() { throw new Error('Local Claude Code sessions are available in the desktop app.'); },
   async getRuntimeConfig() {
     return {
       appVersion: 'development',
@@ -477,6 +473,30 @@ const browserBridge: RallyDesktopBridge = {
     // A browser tab cannot resize its own top-level window. The attached rail
     // still opens inside the viewport, which is the browser-safe fallback.
   },
+  async getEmbeddedBrowserState() {
+    return { tabs: [], activeTabId: null };
+  },
+  async commandEmbeddedBrowser() {
+    throw new Error('The embedded browser needs the Rally desktop application.');
+  },
+  async setEmbeddedBrowserBounds() {},
+  async setEmbeddedBrowserVisible() {},
+  onEmbeddedBrowserState() {
+    return () => undefined;
+  },
+  onEmbeddedBrowserFocusAddress() {
+    return () => undefined;
+  },
+  async openBrowserImport() {
+    throw new Error('The import browser needs the Rally desktop application.');
+  },
+  async getBrowserImportContext() {
+    return null;
+  },
+  onBrowserImportContextChanged() {
+    return () => undefined;
+  },
+  async completeBrowserImport() {},
   async exportMessage() {
     // Rendering a card and choosing where it goes are both main-process work.
     // A browser has neither, and the buttons that call this are hidden there.

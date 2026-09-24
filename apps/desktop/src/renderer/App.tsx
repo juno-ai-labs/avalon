@@ -46,6 +46,7 @@ import { NewWorkstreamScreen } from './screens/new-workstream';
 import { BootScreen, InvitationOnboarding, RegionOnboarding, SignInScreen } from './screens/onboarding';
 import { SpaceDashboardScreen } from './screens/space-dashboard';
 import { SidekicksWindow, SidekicksWindowRedirect } from './screens/sidekicks-library';
+import { BrowserImportWindow } from './screens/browser-import';
 import { WorkspaceSettingsScreen } from './screens/workspace-settings';
 import { WorkstreamScreen } from './screens/workstream';
 import { WorkstreamLandingScreen } from './screens/workstream-landing';
@@ -219,7 +220,7 @@ function WorkspaceApp(): React.JSX.Element {
   }, [signOut, signOutIfCredentialCleared, surrenderActiveWorkspace, workspace.error]);
 
   const surface = new URLSearchParams(window.location.search).get('surface');
-  const mainSurface = surface !== 'settings' && surface !== 'sidekicks';
+  const mainSurface = surface !== 'settings' && surface !== 'sidekicks' && surface !== 'browser-import';
   // A window that closes on Escape has to do it before its screen exists, too.
   // `Opening workspace…` and the service-setup error are the states a person is
   // most stuck in, and until the profile lands neither Settings nor Sidekicks
@@ -239,7 +240,10 @@ function WorkspaceApp(): React.JSX.Element {
     enabled: (surface === 'sidekicks' || surface === 'settings') && !workspace.data,
   });
   const scope = `${session!.user.email}:${desktopWorkspaceIdentityKey(session!.workspace!.region, session!.workspace!.id)}`;
-  const content = workspace.error
+  // The import window needs the session's API and nothing from the profile
+  // read, so its browser opens without waiting on that round trip.
+  const content = surface === 'browser-import' ? <BrowserImportWindow />
+    : workspace.error
     ? <ServiceSetupState error={workspace.error} onRetry={() => void workspace.refetch()} />
     : workspace.data ? <WorkspaceAppContent workspace={workspace.data} />
       : <LoadingState label="Opening organization…" />;
