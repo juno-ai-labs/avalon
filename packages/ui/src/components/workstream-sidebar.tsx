@@ -352,8 +352,8 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
         {onOpenResource && <ResourceSection label="Resources" resources={workstream.resources.filter((item) => item.direction !== 'artifact')} onOpen={onOpenResource} />}
         <section aria-label="Channel participants" className="workstream-context-section" data-layout-id="section:participants">
           <SidebarHorizontalLine />
-          <h2>Participants</h2>
-          <Tip describesTrigger={false} label="Participants" side="right">
+          <h2>Channel participants</h2>
+          <Tip describesTrigger={false} label="Channel participants" side="right">
             <SidebarRow className="workstream-context-row" aria-label="Manage channel participants" aria-description={workstream.participants.map((person) => person.name).join(', ')} type="button" onClick={onParticipants}>
               {workstream.participants.length ? <AvatarStack members={workstream.participants} limit={compact ? 2 : 4} presentUserIds={presentUserIds} showTooltip={false} /> : <UserPlus aria-hidden="true" size={18} />}
             </SidebarRow>
