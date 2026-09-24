@@ -116,6 +116,7 @@ import {
   ConversationParentDurableObject,
   type ConversationParentIdentity,
   type DirectoryCommonEffect,
+  type DirectoryProjectionKind,
 } from "./conversation-parent-object";
 import {
   conversationObjectName,
@@ -392,6 +393,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
           if (this.role.kind !== "workstream") return;
           if (applied.includes(17)) this.retireGrantDirectoryDeliveries();
           if (applied.includes(19)) this.replayStoredBreakoutDirectoryProjections();
+          if (applied.includes(20)) this.retractLeakedBackgroundAgentBreakouts();
         },
       }));
       await this.armNextAlarm();
@@ -2698,15 +2700,63 @@ export class WorkstreamDO extends ConversationParentDurableObject {
    *
    * A Space says no on its own account. Its hidden main conversation is the
    * only conversation it has, and the PRD gives it no breakout surface at all.
+   *
+   * One exception: a background agent's common projection still leaves when
+   * this Channel once forwarded that agent as a breakout. Until the child
+   * marked itself before provisioning, its first projection went out without
+   * the flag and left an unseen row in the Organization that counted toward
+   * the Channel's badge and that no surface could open or clear. Carrying the
+   * flag up is what lets the Organization drop that row. Only such an agent
+   * pays a Queue message per step, and no new agent can become one.
    */
-  protected override forwardsChildProjection(substreamId: string): boolean {
+  protected override forwardsChildProjection(substreamId: string, kind: DirectoryProjectionKind): boolean {
     if (!this.role.forwardsFeedEffects) return false;
     if (substreamId === "0") return false;
+    if (!this.isBackgroundAgentChild(substreamId)) return true;
+    return kind === "directory_common" && this.forwardedAsBreakout(substreamId);
+  }
+
+  private isBackgroundAgentChild(substreamId: string): boolean {
     return first(this.parentSql.exec<{ one: number }>(
       `SELECT 1 AS one FROM substream_directory
         WHERE substream_id = ? AND json_extract(effect_json, '$.backgroundAgent') = 1`,
       substreamId,
-    )) === null;
+    )) !== null;
+  }
+
+  private forwardedAsBreakout(substreamId: string): boolean {
+    return first(this.parentSql.exec<{ one: number }>(
+      `SELECT 1 AS one FROM projection_keys WHERE projection_key = ?`,
+      `substream:${substreamId}:common`,
+    )) !== null;
+  }
+
+  /**
+   * Send the Organization the background-agent flag for every agent this
+   * Channel forwarded as a breakout before the flag was known.
+   *
+   * The live path above covers an agent that projects again, but most of them
+   * finished long ago and never will. WorkstreamDO migration 20 calls this
+   * once across the fleet, the same way migration 19 replayed quiet
+   * breakouts.
+   */
+  private retractLeakedBackgroundAgentBreakouts(now = Date.now()): void {
+    for (const row of this.parentSql.exec<{ substream_id: string; effect_json: string }>(
+      `SELECT directory.substream_id, directory.effect_json
+         FROM substream_directory directory
+         JOIN projection_keys forwarded
+           ON forwarded.projection_key = 'substream:' || directory.substream_id || ':common'
+        WHERE directory.substream_id <> '0'
+          AND json_extract(directory.effect_json, '$.backgroundAgent') = 1
+        ORDER BY directory.substream_id`,
+    ).toArray()) {
+      this.enqueueProjection(
+        `substream:${row.substream_id}:common`,
+        WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(row.effect_json)),
+        now,
+        row.substream_id,
+      );
+    }
   }
 
   /**
