@@ -78,7 +78,7 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
 - `packages/ui/src/components/workstream-sidebar.tsx` owns the Channel rail's
   navigation language. Its main conversation and Breakout rows use the same
   icon-and-title hover card as the Space and Channel hierarchy, while New
-  breakout, Participants, and the expand/collapse control use concise control
+  breakout, Channel participants, and the expand/collapse control use concise control
   tooltips.
 - `apps/desktop/src/renderer/lib/window-activation.ts` answers the one question
   every one of those surfaces has to ask before it opens: whether the hover or
