@@ -5,7 +5,7 @@ import type { AttachmentPreview } from '../components/attachments';
 import type { CitationContext, CitationPreview, CitationResource } from '../components/markdown-citations';
 import { ApiError } from './api';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from './resource-preview';
-import { desktopBridge } from './platform';
+import { openLink } from './browser-rail-links';
 import type { WorkstreamResource } from './types';
 
 /**
@@ -261,7 +261,7 @@ export function useCitations({ actions, loadResourceContent, onOpenPreview, onOp
 
   const open = useCallback((target: CitationTarget): void => {
     if (target.scheme === 'external') {
-      void desktopBridge().openExternal(target.url);
+      void openLink(target.url);
       return;
     }
     // An identity names somebody, not something openable, and an unknown target

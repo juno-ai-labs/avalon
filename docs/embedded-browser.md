@@ -17,12 +17,29 @@ reusable page surface; the import window is its first dedicated consumer.
 | `apps/desktop/src/preload/index.ts` | The named renderer bridge, without general IPC access. |
 | `apps/desktop/src/renderer/components/embedded-browser-view.tsx` | The shared pieces: tab state and commands, native page placement, navigation toolbar, tab strip, and keyboard shortcuts. |
 | `apps/desktop/src/renderer/components/embedded-browser-rail.tsx` | The right-rail host. |
+| `apps/desktop/src/renderer/lib/browser-rail-links.ts` | Sends web links to the rail while a Channel is on screen, else to the system browser. |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Places the browser in the existing rail slot. |
 | `apps/desktop/src/renderer/screens/browser-import.tsx` | The import window: toolbar with Import and Close, start page, and the name-and-Space sheet. |
 
 ## How it works
 
-The Channel header opens the existing right rail with its browser variant.
+A web link clicked on a Channel opens the existing right rail with its
+browser variant, as a new tab on that address. The Channel header has no
+button of its own for the browser. `renderer/lib/browser-rail-links.ts` holds
+the one decision: while a Channel's conversation surface is mounted on the
+desktop, it registers itself as the rail host (`useBrowserRailLinks`; a
+Sidekick's surface shares the component but does not register), and `openLink`
+sends an http or https URL there. Any other scheme, and any link clicked where
+no Channel is on screen, takes the `openExternal` path it took before, where
+main's allowlist still admits only web URLs. Anchors reach it through one
+document listener (`captureLinkClicks`), which leaves alone a click a component
+already handled and Rally's own same-origin routes; citations, search link results and
+a resource's *Open source* call `openLink` directly. A link opened while an artifact
+panel holds the rail covers it rather than closing it: the panel's saved
+layout is left alone, and closing the browser returns to the panel. Sign-in and connector
+authorization keep calling `openExternal`, since their callbacks return to the
+app through the system browser. Links inside an artifact's own view are
+decided by the artifact surface and still leave for the system browser.
 The renderer creates a blank tab on first use, measures the page rectangle, and
 sends its CSS-pixel bounds to main. Main converts them using the Rally window's
 zoom factor before placing the active tab's native `WebContentsView`. Closing
@@ -138,6 +155,26 @@ check that the guest page starts exactly below the rail toolbar and does not
 cover the conversation.
 
 ## Changelog
+
+### 2026-09-24 — Open web links in the rail instead of from a header button
+
+**What changed:** The Channel header's *Open browser* button is gone. A web
+link clicked on a Channel (a message anchor, a citation, a search link result,
+a resource's *Open source*) opens as a rail tab. `openLink` is the one routing
+decision; a Channel's conversation surface registers as its host while
+mounted.
+
+**Why:** The browser was a place a person had to choose to go to; links are
+how people actually arrive at a page. Opening them beside the conversation
+keeps the Channel in view.
+
+**Considered and rejected:** Routing in main through the main window's
+`setWindowOpenHandler`. Main cannot tell whether a Channel, and so a rail, is
+on screen, and would need a new IPC event to ask; the renderer already knows.
+
+**Consequences:** Only screens that draw the rail register a host; any new one
+must register too, or its links keep going to the system browser. Sign-in and
+authorization flows must keep calling `openExternal`, not `openLink`.
 
 ### 2026-09-24 — Put a local browser in Rally, and import through it
 

@@ -1,3 +1,4 @@
+import { openLink } from '../lib/browser-rail-links';
 import { desktopBridge } from '../lib/platform';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -621,7 +622,7 @@ function InspectorDetail({
         )}
         {sourceActions && (
           <div className="inspector-detail-actions">
-            {resource.canonicalUrl && <Button onClick={() => void desktopBridge().openExternal(resource.canonicalUrl!)}><ExternalLink size={14} /> Open source</Button>}
+            {resource.canonicalUrl && <Button onClick={() => void openLink(resource.canonicalUrl!)}><ExternalLink size={14} /> Open source</Button>}
             {refreshable && onRefreshResource && (
               <Button
                 disabled={refreshingResourceId === resource.id}
