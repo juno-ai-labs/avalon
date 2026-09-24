@@ -385,8 +385,12 @@ async function persistInitialPluginActivations(
   prepare?: (pluginId: string) => boolean | Promise<boolean>,
 ): Promise<string[]> {
   const activationHints: string[] = [];
-  for (const pluginId of [...new Set(requestedPluginIds)].sort()) {
-    if (await reauthorize(pluginId) !== "authorized") continue;
+  const pluginIds = [...new Set(requestedPluginIds)].sort();
+  // Connector checks can wait on different D1 rows and provider health calls.
+  // Settle them together, then keep preparation and durable writes ordered.
+  const authorization = await Promise.all(pluginIds.map((pluginId) => reauthorize(pluginId)));
+  for (const [index, pluginId] of pluginIds.entries()) {
+    if (authorization[index] !== "authorized") continue;
     if (prepare && !(await prepare(pluginId))) continue;
     await persist(pluginId);
     activationHints.push(pluginId);
@@ -3471,6 +3475,7 @@ export async function runWorkstreamHarness(
       corePlugins: harnessTools.corePlugins,
       plugins: harnessTools.plugins,
       activationHints,
+      preauthorizedActivationHints: activationHints,
       includeWebSearch: false,
       signal: harnessSignal,
       reauthorizePlugin: async (pluginId, occasion) => {
