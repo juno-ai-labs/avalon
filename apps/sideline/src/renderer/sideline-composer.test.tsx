@@ -66,7 +66,7 @@ describe("Sideline shared composer", () => {
   it("says so when a refreshed catalog no longer lists the chosen destination", () => {
     const html = render(card({ workstreamId: "00000000-0000-7000-8000-00000000d005" }));
 
-    expect(html).toContain("Priya is no longer in this destination. Choose another.");
+    expect(html).toContain('role="status">Priya is no longer in this destination. Choose another.');
     expect(html).not.toContain("This participant has no eligible destination.");
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Send/su);
   });
@@ -74,7 +74,7 @@ describe("Sideline shared composer", () => {
   it("says so when a refreshed catalog no longer lists the chosen participant", () => {
     const html = render(card({ representedUserId: "00000000-0000-7000-8000-00000000d006" }));
 
-    expect(html).toContain("This participant is no longer available. Choose another.");
+    expect(html).toContain('role="status">This participant is no longer available. Choose another.');
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Send/su);
   });
 
