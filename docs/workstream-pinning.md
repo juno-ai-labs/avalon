@@ -102,11 +102,12 @@ screen goes when what it was showing is no longer there to show: an archived
 work stream, note, or project, a deleted automation or archived draft, a work
 stream the reader left, one they marked unread, the not-found screen's way out,
 the end of onboarding, and the main window's hand-off to the Sidekicks window.
-Only a workspace with nothing in it lands on the composer. The composer is
-otherwise reached by an explicit New action alone: the sidebar's New buttons,
-a project's plus, and the `workstreams/new` and `automations/new` deep links,
-which are create intents even though the second no longer has a builder to open.
-The macOS status menu no longer offers one — see [`menu-bar.md`](menu-bar.md).
+A workspace with nothing in it lands on General's dashboard, or on an empty
+state for a guest, who has no Space directory. The composer is reached by the
+sidebar's creation dialog alone, which names the Space the Channel starts in.
+The `workstreams/new` and `automations/new` deep links name no Space, so they
+open the app rather than a composer. The macOS status menu no longer offers
+one — see [`menu-bar.md`](menu-bar.md).
 
 `useOpenFirstWorkstream` is the one way a screen leaves. It always replaces the
 history entry, so Back cannot return to a screen the API refuses, and it names
@@ -155,11 +156,11 @@ what changes the list and asks again. If the socket is what is down, nothing
 changes the list and the landing keeps its opening state; the sidebar is
 rendered around it and stays usable, which is the way out.
 
-Telemetry still names `/workstreams/new` the `workspace_home` surface. The
-name dates from when the composer was the home; after this change it is the
-New action, and a funnel keyed on that surface reads the leaves above as
-`workstream` views instead. The mapping is left alone rather than migrated,
-but the reading changes meaning at this change.
+Telemetry names the Space launcher, `/spaces/:spaceId/workstreams/new`, the
+`workspace_home` surface. The name dates from when a Space-less composer was
+the home; it is now the New action, and a funnel keyed on that surface reads
+the leaves above as `workstream` views instead. The name is left alone rather
+than migrated, but the reading changed meaning twice.
 
 The one deliberate exception is the inert composer route a cross-workspace deep
 link parks on while its resource action resolves. Landing there would open and

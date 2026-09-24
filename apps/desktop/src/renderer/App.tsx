@@ -312,13 +312,20 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
         <AppShell workspace={workspace}>
           <Routes>
             <Route element={<WorkstreamLandingScreen />} path="/" />
-            <Route element={<NewWorkstreamScreen workspace={workspace} />} path="/workstreams/new" />
+            {/* Inert: a deep link that changes organization parks here while
+                its destination resolves, rather than on the landing route,
+                which would open an unrelated conversation first. */}
+            <Route element={<LoadingState label="Opening…" />} path="/opening" />
             <Route element={<SpaceDashboardScreen workspace={workspace} />} path="/spaces/:spaceId" />
-            <Route element={<NewWorkstreamScreen workspace={workspace} spaceId="route" />} path="/spaces/:spaceId/workstreams/new" />
+            <Route element={<NewWorkstreamScreen workspace={workspace} />} path="/spaces/:spaceId/workstreams/new" />
             {/* Projects are gone and their ids mean nothing here; the landing
                 route picks whatever this person should be looking at instead of
                 a dead screen naming an object that no longer exists. */}
             <Route element={<Navigate replace to="/" />} path="/projects/*" />
+            {/* The Space-less launcher is gone: every Channel is started from a
+                Space. Without this, a stale link would open as a Channel whose
+                id is "new". */}
+            <Route element={<Navigate replace to="/" />} path="/workstreams/new" />
             <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
             <Route element={<AutomationScreen />} path="/automations/:id" />
             <Route element={<SidekicksWindowRedirect />} path="/sidekicks" />

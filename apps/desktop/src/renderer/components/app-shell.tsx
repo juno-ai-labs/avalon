@@ -531,7 +531,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   useEffect(() => {
     const path = location.pathname;
     if (!/^\/spaces\/[^/]+$/.test(path)
-      && (!/^\/workstreams\/[^/]+$/.test(path) || path === '/workstreams/new')) return;
+      && !/^\/workstreams\/[^/]+$/.test(path)) return;
     const breakout = new URLSearchParams(location.search).get('substream');
     writeLayout(layoutKey(workspace.id, workspace.currentUser.id, 'last-route'),
       path.startsWith('/workstreams/') && breakout

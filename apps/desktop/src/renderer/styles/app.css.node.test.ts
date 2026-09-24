@@ -273,15 +273,15 @@ describe('composer width', () => {
   });
 
   /**
-   * The two rows a launcher stacks over its field — the substream banner and
-   * the participant chips — are centred siblings of the stack rather than
-   * children of it, so each states the measure for itself. That is how the
+   * The row a launcher stacks over its field — the substream banner — is a
+   * centred sibling of the stack rather than a child of it, so it states the
+   * measure for itself. That is how the
    * launcher's old 690px came to be written out three times, and how its field
    * came to be a different width from the one the same draft landed in a
    * keystroke later.
    */
   it('gives the rows above the field the same measure', () => {
-    for (const selector of ['.substream-launch-banner', '.new-workstream-modifiers']) {
+    for (const selector of ['.substream-launch-banner']) {
       expect(rule(selector)).toContain('max-width: var(--composer-width);');
     }
 
@@ -342,7 +342,7 @@ describe('composer width', () => {
     // And the rows above the field come with it, or they stop lining up on the
     // one width where the field is not the box it was centred in.
     const narrow = stylesheet.match(/@container composer-dock \([^)]*\) \{([\s\S]*?)\n\}/u)?.[1];
-    for (const selector of ['.composer-stack', '.substream-launch-banner', '.new-workstream-modifiers']) {
+    for (const selector of ['.composer-stack', '.substream-launch-banner']) {
       expect(narrow).toContain(selector);
     }
     expect(narrow).toContain('max-width: none;');

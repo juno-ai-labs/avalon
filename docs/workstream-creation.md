@@ -40,13 +40,13 @@ the response.
 The component renders one tree in both states, a three-row grid of header, body,
 and composer dock:
 
-- **Not launching** — the header and body rows are empty and the dock carries
-  the participant row above the composer. The retired Welcome back dashboard,
+- **Not launching** — the header is the **Participants** bar, the body row is
+  empty, and the dock carries only the composer. The retired Welcome back dashboard,
   attention list, and suggested-work shelf no longer sit between opening Rally
   and starting a work stream.
 - **Launching** — the root additionally carries `workstream-screen`, the header
-  is 44px around a title skeleton, the body holds a transcript, and the
-  participant row collapses. 44px because that is the row the conversation this
+  is 44px around the Channel name (or a title skeleton), and the body holds a
+  transcript. The Participants bar leaves with the resting state. 44px because that is the row the conversation this
   becomes actually uses: `.grokbot-workstream-header`, which every conversation
   renders, takes the screen's header track down from the base 55px. The header
   takes that height on the frame the class lands rather than growing into it;
@@ -63,15 +63,19 @@ the hand-off, per
 [`conversation-surfaces.md`](conversation-surfaces.md).
 
 The sidebar's plus first collects the required Space and Channel name in the
-standard creation dialog, then opens the existing launcher without creating a
-Channel. The launcher starts with focus in the opening-message text input. The
-Channel name travels with that route and is committed only when the opening
-message is sent; participants are still selected in the launcher before that
-request. The composer is keyed by its draft identity — which
-carries the Space it was opened from — so switching between Space launchers also
-restores initial focus; that key stays stable throughout the launch hand-off. The sidebar lists existing work streams without a
-placeholder row for the unsent draft. Recipient selection remains available
-when the person chooses the recipient field.
+standard creation dialog, then opens the launcher at
+`/spaces/:spaceId/workstreams/new` without creating a Channel. That is the only
+route to the launcher: there is no Space-less one, because every Channel is
+started from a Space. The launcher starts with focus in the opening-message text
+input. The Channel name travels with that route and is committed only when the
+opening message is sent; participants are chosen in the header's
+**Participants** bar before that request. The creator's own chip leads the bar
+and has no remove control. In a personal Space the bar shows the Space's roster
+read-only and says it is managed by the Space. The composer is keyed by its
+draft identity — which carries the Space it was opened from — so switching
+between Space launchers also restores initial focus; that key stays stable
+throughout the launch hand-off. The sidebar lists existing work streams without
+a placeholder row for the unsent draft.
 
 ### What moves
 
@@ -98,19 +102,8 @@ keys and taken with `Enter` — rather than the participant dialog it used to
 raise. Picking someone both writes their name into the opening message and adds
 them to the work stream about to be created, because `POST /workstreams` carries
 participant ids and no mention spans: a name that only reached the text would
-arrive with nobody attached to it. The dialog is still one click away on the
-participant row above the composer, and remains the place a participant is
-removed. A personal Space's row is not that picker: it is a label whose
-tooltip says participants are managed by the Space, and the faces in it do
-not open their own name tooltips — two tooltips on the same hover is the
-native-`title` problem `AvatarStack` exists to avoid.
-
-The participant picker sends initial focus to its first available member, or to
-Done when there are no available members. This keeps keyboard entry on the
-dialog's task instead of focusing the header's Close control and opening its
-tooltip as a side effect. The native checkboxes remain the interactive controls;
-the fixed 16px indicators at the end of each row are only their visual treatment
-and mirror the native input's keyboard-visible focus.
+arrive with nobody attached to it. A person mentioned this way appears in the
+Participants bar, which is where they are removed.
 
 ### What the optimistic surface shows
 
@@ -219,7 +212,7 @@ Space if this is the first thing that ever needed it.
 **A Channel created without a named Space is therefore born Organization-wide**,
 whatever scope the caller asked for: General is Organization-wide, its source
 unions into the birth audience, and a source only ever widens. That is true of
-the top-level composer, of a connector ingress that resolved a personal scope,
+a connector ingress that resolved a personal scope,
 of session import, of `createFromOpportunity`, and of the demo seeder — which
 refuses a pack room declared `personal` by name rather than seeding it
 Organization-wide ([`demo-workspaces.md`](demo-workspaces.md)). A Channel that
@@ -502,6 +495,32 @@ see
   to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-09-24 — Participants are picked in the header, and every launcher has a Space
+
+**What changed:** The Space-less `/workstreams/new` launcher is gone; the path
+now redirects to `/`. The Space launcher's header carries the **Participants**
+bar that only the Space-less launcher used to show, and the participant chip,
+**Add people** button and **Add people** dialog above the composer are deleted.
+The fallbacks that used to open the Space-less launcher now go elsewhere: an
+empty Organization lands on General's dashboard, a Channel moved out of the last
+placement in a Space opens that Space's dashboard, and the `workstreams/new` and
+`automations/new` deep links open the app. A deep link that changes organization
+parks on an inert `/opening` route instead.
+
+**Why:** Once the sidebar's creation dialog required a Space (2026-09-20), the
+Space-less launcher was reachable only through fallbacks, so the header's
+recipient bar people remembered effectively disappeared. The launcher then had
+two pickers for one list, in two places, depending on how it was opened.
+
+**Considered and rejected:** Routing the fallbacks to General's launcher. The
+deep-link handler has no Space directory to find General in, and a fallback
+that opens a composer nobody asked for is the accident the 2026-09-09 entry
+removed.
+
+**Consequences:** A new way into the launcher has to name a Space. The
+launcher's resting header is 48px, so the header shrinks to the conversation's
+44px row at the swap, as the Space-less launcher's always did.
 
 ### 2026-09-21 — Direct Channel participants need not join its Spaces
 

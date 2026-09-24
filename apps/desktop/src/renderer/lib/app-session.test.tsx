@@ -1237,7 +1237,8 @@ describe('single-platform desktop identity routing', () => {
     }));
     expect(await screen.findByText('global:Organization A')).toBeVisible();
     await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections'));
-    expect(window.location.hash).toBe('#/workstreams/new');
+    // The inert route the organization change parks on, not the landing route.
+    expect(window.location.hash).toBe('#/opening');
   });
 
   it.each([
@@ -1255,11 +1256,12 @@ describe('single-platform desktop identity routing', () => {
     {
       name: 'automation',
       url: 'rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/automations/new',
-      // Lands where drafting happens now that the builder is gone. What this
-      // case is really about is the workspace activation before the hop, which
-      // is unchanged: the link still addresses a workspace, and that workspace
-      // is still activated before anything navigates.
-      assertDestination: async () => expect(window.location.hash).toBe('#/workstreams/new'),
+      // Opens the app: the builder is gone, and a conversation is started from
+      // a Space the link does not name. What this case is really about is the
+      // workspace activation before the hop, which is unchanged: the link still
+      // addresses a workspace, and that workspace is activated before anything
+      // navigates.
+      assertDestination: async () => expect(window.location.hash).toBe('#/'),
     },
     {
       name: 'connector result',
@@ -1679,10 +1681,11 @@ describe('single-platform desktop identity routing', () => {
     await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections'));
 
     // The builder this link used to open is gone: an automation is drafted by
-    // asking for one in a work stream, so the link lands where that happens.
-    // The link itself keeps working — somebody's bookmark should not 404.
+    // asking for one in a Channel, which starts from a Space the link does not
+    // name, so it opens the app. The link keeps working — somebody's bookmark
+    // should not 404.
     await dispatchDeepLink('rallywithai://automations/new');
-    await waitFor(() => expect(window.location.hash).toBe('#/workstreams/new'));
+    await waitFor(() => expect(window.location.hash).toBe('#/'));
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
   });
 
@@ -1903,7 +1906,7 @@ describe('single-platform desktop identity routing', () => {
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
   });
 
-  it('opens the new channel screen, which is how the menu bar starts one', async () => {
+  it('opens the app for a new-channel link, which names no Space to start in', async () => {
     bridge.getSession.mockResolvedValueOnce({
       ...globalIdentitySession,
       workspace: {
@@ -1920,7 +1923,7 @@ describe('single-platform desktop identity routing', () => {
 
     // `/new` has to be read before the identifier branch, which would otherwise
     // measure it against the UUID pattern and reject it.
-    await waitFor(() => expect(window.location.hash).toBe('#/workstreams/new'));
+    await waitFor(() => expect(window.location.hash).toBe('#/'));
     expect(consumeSurfaceEntrypoint()).toBe('menu_bar');
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
   });
