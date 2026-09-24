@@ -692,7 +692,8 @@ pre {
 .avatar-presence-ping {
   animation: avatar-presence-ping 10s cubic-bezier(0, 0, .2, 1) infinite;
   animation-delay: 420ms;
-  background: color-mix(in srgb, var(--av-sys-color-success-base) 35%, transparent);
+  /* The member's chosen colour, or success green; `AvatarStack` always sets it. */
+  background: color-mix(in srgb, var(--person-accent) 35%, transparent);
   border-radius: var(--av-sys-size-radius-pill);
   inset: 0;
   opacity: 0;
