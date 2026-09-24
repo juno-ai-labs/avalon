@@ -4,6 +4,7 @@ import {
   firstFrameDeadline,
   missedFirstFrame,
   nextFirstFrameDeadline,
+  socketsMissedWhileInstanceSilent,
 } from "../src/durable-objects/socket-first-frame-watch";
 
 const DEADLINE_MS = 1_000;
@@ -48,5 +49,24 @@ describe("socket first-frame watch", () => {
       socket("2026-09-24T06:00:01.000Z", { subscribed: true }),
     ], DEADLINE_MS, STARTED)).toBe(Date.parse("2026-09-24T06:00:06.000Z"));
     expect(nextFirstFrameDeadline([], DEADLINE_MS, STARTED)).toBeNull();
+  });
+
+  describe("while the instance is silent", () => {
+    const silent = socket("2026-09-24T06:00:10.000Z");
+    const late = Date.parse("2026-09-24T06:05:00.000Z");
+
+    it("counts a missed socket when nothing has been heard since it was accepted", () => {
+      expect(socketsMissedWhileInstanceSilent([silent], late, DEADLINE_MS, STARTED, null)).toEqual([silent]);
+      expect(socketsMissedWhileInstanceSilent(
+        [silent], late, DEADLINE_MS, STARTED, Date.parse("2026-09-24T06:00:09.999Z"),
+      )).toEqual([silent]);
+    });
+
+    // One client choosing never to speak must not reset everyone else.
+    it("ignores a missed socket once any socket has been heard from since", () => {
+      expect(socketsMissedWhileInstanceSilent(
+        [silent], late, DEADLINE_MS, STARTED, Date.parse("2026-09-24T06:00:10.001Z"),
+      )).toEqual([]);
+    });
   });
 });
