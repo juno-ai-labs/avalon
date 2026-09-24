@@ -7,6 +7,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { httpHostname, useHostFavicon } from '../lib/host-favicon';
 
 import { AttachmentMediaTile } from './attachments';
+import { type ResourceAction, ResourceActionMenu } from './resource-action-menu';
 import { isVideoAttachment } from '../lib/attachment-media';
 
 /**
@@ -74,6 +75,11 @@ export interface CitationContext {
    * stream behind it has no route to read.
    */
   preview?: (resourceId: string) => Promise<CitationPreview> | undefined;
+  /**
+   * What the right-click menu on a resolved resource offers. The host owns the
+   * list, so a surface with nothing to offer omits it and keeps no menu.
+   */
+  actions?: (resourceId: string) => readonly ResourceAction[] | undefined;
 }
 
 /**
@@ -176,23 +182,32 @@ export type ResourceKindInput = Pick<CitationResource, 'mimeType' | 'resourceTyp
 export { resourceIconType, ResourceIcon } from '@rally/ui/components/resource-icon';
 import { ResourceIcon, resourceIconType } from '@rally/ui/components/resource-icon';
 
+/** The host's actions for a resource, or none on a still, which nobody can click. */
+function useResourceActions(resourceId: string): readonly ResourceAction[] | undefined {
+  const { citations, still } = useCitationRender();
+  return still ? undefined : citations?.actions?.(resourceId);
+}
+
 /** A reference inside a sentence: icon, the model's words, and a click. */
 function ResourceChip({ label, resource, onOpen }: {
   label: React.ReactNode;
   resource: CitationResource;
   onOpen: React.MouseEventHandler<HTMLButtonElement>;
 }): React.JSX.Element {
+  const actions = useResourceActions(resource.id);
   return (
-    <button
-      aria-label={`Open ${resource.title}`}
-      className="citation-chip"
-      data-resource-type={resource.resourceType}
-      onClick={onOpen}
-      type="button"
-    >
-      <span aria-hidden="true" className="citation-chip-icon"><ResourceIcon resource={resource} /></span>
-      <span className="citation-chip-label">{label}</span>
-    </button>
+    <ResourceActionMenu actions={actions}>
+      <button
+        aria-label={`Open ${resource.title}`}
+        className="citation-chip"
+        data-resource-type={resource.resourceType}
+        onClick={onOpen}
+        type="button"
+      >
+        <span aria-hidden="true" className="citation-chip-icon"><ResourceIcon resource={resource} /></span>
+        <span className="citation-chip-label">{label}</span>
+      </button>
+    </ResourceActionMenu>
   );
 }
 
@@ -219,6 +234,7 @@ export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview,
 }): React.JSX.Element {
   const kind = resourceIconType(resource);
   const isImage = kind === 'image' && !still;
+  const actions = useResourceActions(resource.id);
   const [excerpt, setExcerpt] = useState<{ for: string; src?: string; open?: boolean }>({ for: '' });
   useEffect(() => {
     const request = isImage ? preview?.(resource.id) : undefined;
@@ -261,45 +277,47 @@ export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview,
   // re-runs; matching on the id keeps the old resource's text off the new one.
   const settled = excerpt.for === resource.id ? excerpt : { for: resource.id };
   return (
-    <button
-      aria-label={`Open ${resource.title}`}
-      className={`citation-card ${isImage ? 'is-image' : 'is-file'}`}
-      data-resource-type={resource.resourceType}
-      onClick={(event) => onPreview ? onPreview(event.currentTarget) : onOpen()}
-      style={isImage ? {
-        aspectRatio: '1',
-        width: grouped ? '100%' : 'var(--attachment-media-size)',
-      } : undefined}
-      type="button"
-    >
-      {isImage && settled.open && <span aria-hidden="true" className="citation-card-preview-skeleton" />}
-      {isImage && settled.src && (
-        <img
-          alt=""
-          aria-hidden="true"
-          className="citation-card-image-preview"
-          loading="lazy"
-          onError={() => {
-            // MIME metadata can be stale and valid image bytes can still be
-            // corrupt. A decode failure returns to the ordinary empty card
-            // instead of leaving Chromium's broken-image rendering behind.
-            setExcerpt((current) => current.for === resource.id && current.src === settled.src
-              ? { for: resource.id }
-              : current);
-          }}
-          src={settled.src}
-        />
-      )}
-      {!isImage && (
-        <>
-          <span aria-hidden="true" className="citation-card-badge"><ResourceIcon resource={resource} /></span>
-          <span className="citation-card-text">
-            <strong className="citation-card-title">{label}</strong>
-            <small className="citation-card-kind">{resourceKindLabel(resource)}</small>
-          </span>
-        </>
-      )}
-    </button>
+    <ResourceActionMenu actions={actions}>
+      <button
+        aria-label={`Open ${resource.title}`}
+        className={`citation-card ${isImage ? 'is-image' : 'is-file'}`}
+        data-resource-type={resource.resourceType}
+        onClick={(event) => onPreview ? onPreview(event.currentTarget) : onOpen()}
+        style={isImage ? {
+          aspectRatio: '1',
+          width: grouped ? '100%' : 'var(--attachment-media-size)',
+        } : undefined}
+        type="button"
+      >
+        {isImage && settled.open && <span aria-hidden="true" className="citation-card-preview-skeleton" />}
+        {isImage && settled.src && (
+          <img
+            alt=""
+            aria-hidden="true"
+            className="citation-card-image-preview"
+            loading="lazy"
+            onError={() => {
+              // MIME metadata can be stale and valid image bytes can still be
+              // corrupt. A decode failure returns to the ordinary empty card
+              // instead of leaving Chromium's broken-image rendering behind.
+              setExcerpt((current) => current.for === resource.id && current.src === settled.src
+                ? { for: resource.id }
+                : current);
+            }}
+            src={settled.src}
+          />
+        )}
+        {!isImage && (
+          <>
+            <span aria-hidden="true" className="citation-card-badge"><ResourceIcon resource={resource} /></span>
+            <span className="citation-card-text">
+              <strong className="citation-card-title">{label}</strong>
+              <small className="citation-card-kind">{resourceKindLabel(resource)}</small>
+            </span>
+          </>
+        )}
+      </button>
+    </ResourceActionMenu>
   );
 }
 
@@ -336,9 +354,10 @@ function CitationFileEmbed({ resource, children }: { resource: CitationResource;
   const { citations, still } = useCitationRender();
   const loader = citations?.loadContent;
   const loadContent = useMemo(() => loader ? (signal?: AbortSignal) => loader(resource.id, signal) : undefined, [loader, resource.id]);
+  const actions = useResourceActions(resource.id);
   if (!still && (resourceIconType(resource) === 'audio' || isVideoAttachment(resource.mimeType ?? '', resource.title))) {
-    return <AttachmentMediaTile name={resource.title} mimeType={resource.mimeType} loadContent={loadContent}
-      onOpen={(focus) => citations?.openPreview ? citations.openPreview(resource.id, focus) : citations?.open({ scheme: 'resource', resourceId: resource.id })} />;
+    return <ResourceActionMenu actions={actions}><span style={{ display: 'contents' }}><AttachmentMediaTile name={resource.title} mimeType={resource.mimeType} loadContent={loadContent}
+      onOpen={(focus) => citations?.openPreview ? citations.openPreview(resource.id, focus) : citations?.open({ scheme: 'resource', resourceId: resource.id })} /></span></ResourceActionMenu>;
   }
   return <span className="citation-file-attachment">{children}</span>;
 }

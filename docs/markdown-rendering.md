@@ -27,6 +27,7 @@ one of them silently missed the others; the changelog records what that cost.
 | `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, the reference patterns every reader of raw `[^label]` text shares (`footnoteReferencePattern`, and `openFootnoteReferencePattern` for one still arriving), the image-syntax announcement scan, and the plain-text message rewrite that transactional email, Slack, and Apple push delivery send instead. |
 | `packages/contracts/src/markdown-code.ts` | Which lines of a markdown string are code, which `splitStreamingMarkdown` and the citation rewrite both read rather than each deciding. See [`markdown-code.md`](markdown-code.md). |
 | `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
+| `apps/desktop/src/renderer/components/resource-action-menu.tsx`, `lib/breakout-resource-actions.ts` | The right-click menu a resource can wear, drawn from a host-supplied list, and the one list supplied today: **Attach to channel** on a Breakout's artifacts. |
 | `packages/ui/src/styles/app.css` | The `.markdown-body` group: every element style markdown gets, and the `--markdown-*` paint properties each of those rules reads instead of a token. Also the one surface that re-points them — `.human-message-bubble .markdown-body`, which restates the whole group, and the highlighter's `syntax` roles with it, as percentages of the bubble's own ink. Also the host overrides: `.note-detail-article` and `.meeting-notes-body` (heading scale), the compact resource embed and intrinsic image treatment, and `.inspector-detail-document` (sizes the body and the host width to the rail, and restyles no markdown element). |
 | `apps/desktop/src/renderer/styles/app.css.node.test.ts` | The stylesheet guards: the list markers Tailwind's preflight removes, and the assertion that no host restyles a markdown element. |
 | `apps/desktop/src/renderer/components/markdown-renderer.node.test.ts` | The guards that `react-markdown` stays mounted in one place, and that it and `remark-gfm` stay pinned to exact versions. |
@@ -406,6 +407,14 @@ a chip dressed from a wider lookup opens a panel saying the resource "may have
 been removed" — of something that exists and that the reader may be entitled to
 see. Label text says less and says nothing false. The wider lookup returns with
 the rail's fetch-by-id detail, and the two have to land together.
+
+**A resolved chip, embed card or media tile can carry a right-click menu.** The
+citation context's optional `actions` lists what it offers per resource; with no
+list, and always on a still, the element renders untouched. Today only a
+Breakout fills it, with **Attach to channel** on its generated artifacts
+(`lib/breakout-resource-actions.ts`); the
+[changelog](#2026-09-24--a-resource-citation-can-carry-a-hosts-right-click-menu)
+has why.
 
 A citation rendered into a **still** — the saved card — keeps numbered pills
 instead of asterisks or icons, so they identify entries in its trailing source
@@ -900,6 +909,38 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-09-24 — A resource citation can carry a host's right-click menu
+
+**What changed:** `CitationContext` gained an optional `actions`, and the chip,
+the embed card and the audio/video tile wrap themselves in the new generic
+`ResourceActionMenu` when it returns anything. The conversation surface fills it
+in a Breakout with one item, **Attach to channel**, for the Breakout's generated
+artifacts; everywhere else it is absent and nothing changes.
+
+**Why:** Work done in a Breakout stayed there: a site or document it produced
+could be shared with the Channel only by re-creating it in Main. The server
+already had the primitive — attaching an existing resource to Main, where the
+new link grants the Channel's readers without touching the Breakout's — so the
+missing piece was a way to reach it from the artifact. The menu is a list the
+host supplies rather than an attach button baked into the card, so the next
+per-resource action is an entry in a list, not another renderer change.
+
+**Considered and rejected:** Copying the artifact into Main, which would fork
+one resource into two that drift apart on the next version. A new server route
+for "promote to Channel", which would duplicate the attach path and its checks.
+Hiding the item once the Channel holds the artifact, which leaves a right-click
+that does nothing and says nothing; it stays, disabled.
+
+**What a future change has to respect:** the action list is keyed on what it
+reads (resource ids and directions), not on the arrays, because a socket
+snapshot replaces those unchanged and a new context identity re-renders every
+citation on screen. Attaches run one at a time, with every item disabled while
+one is in flight: each answers with the whole Channel detail, and two landing
+out of order would drop one resource from the cache until the socket repaired
+it. Radix's trigger prevents the event's default, which is what keeps the
+message body's copy/speak menu from opening underneath; a wrapper that stops
+doing so reopens that. A still never shows a menu.
 
 ### 2026-09-19 — A web source's footnote marker is the site's favicon
 

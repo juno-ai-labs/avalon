@@ -53,7 +53,9 @@ function documentVerdict(error: unknown): boolean {
   return error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
 }
 
-export function useCitations({ loadResourceContent, onOpenPreview, onOpenResourceDetails, resources }: {
+export function useCitations({ actions, loadResourceContent, onOpenPreview, onOpenResourceDetails, resources }: {
+  /** The host's right-click actions for a cited resource; absent offers none. */
+  actions?: CitationContext['actions'];
   /**
    * The preview route, or absent on a surface that has none. It is the same
    * read the rail's detail makes, deliberately: the embed card's excerpt and
@@ -268,5 +270,6 @@ export function useCitations({ loadResourceContent, onOpenPreview, onOpenResourc
     openPreview(target.resourceId, document.activeElement instanceof HTMLElement ? document.activeElement : document.body);
   }, [openPreview]);
 
-  return useMemo(() => ({ open, openPreview, preview, resolve, loadContent }), [open, openPreview, preview, resolve, loadContent]);
+  return useMemo(() => ({ open, openPreview, preview, resolve, loadContent, ...(actions ? { actions } : {}) }),
+    [actions, open, openPreview, preview, resolve, loadContent]);
 }
