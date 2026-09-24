@@ -32,6 +32,7 @@ import { useCollaborationSession } from '../lib/collaboration-session';
 import { useCitations } from '../lib/use-citations';
 import { ApiError, type MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
+import { captureLinkClicks, registerBrowserRailHost } from '../lib/browser-rail-links';
 import { desktopBridge } from '../lib/platform';
 import { refreshPoppedOutArtifacts } from '../lib/popped-out-artifacts';
 import { layoutKey, readArtifactPanel, writeLayout } from '../lib/desktop-layout';
@@ -1093,6 +1094,22 @@ export function ConversationSurface({
       setRailScope(null);
     };
   }, [artifactPanelKey, closeRail, id, inspect, setRailScope]);
+  // Web links open beside the conversation in the rail browser rather than in
+  // the system browser. The web host has no local browser and keeps new tabs.
+  useEffect(() => {
+    if (!window.rally) return;
+    const unregister = registerBrowserRailHost((url) => {
+      setRailWidth(Math.max(useUiStore.getState().railWidth, 600));
+      openRail('browser');
+      // A page that fails to load says so in its own tab.
+      void desktopBridge().commandEmbeddedBrowser({ action: 'open', url }).catch(() => undefined);
+    });
+    const release = captureLinkClicks(document);
+    return () => {
+      release();
+      unregister();
+    };
+  }, [openRail, setRailWidth]);
 
   useLayoutEffect(() => {
     activeConversationAddressRef.current = conversationAddress;
