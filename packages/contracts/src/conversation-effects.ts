@@ -28,11 +28,7 @@ export const WorkstreamDirectoryCommonEffectSchema = z.strictObject({
   kind: z.literal("directory_common"),
   /** Internal classification for a parent's aggregate running-agent count. */
   backgroundAgent: z.boolean().optional(),
-  /**
-   * The conversation a background agent works for: where a person started the
-   * work, however many agents deep. The parent counts running agents per this
-   * conversation. Absent on an agent started before it was recorded.
-   */
+  /** The conversation a background agent works for; absent on one started before it was recorded. */
   backgroundAgentRootSubstreamId: SubstreamIdSchema.optional(),
   appearance: WorkstreamAppearanceSchema.optional(),
   title: ShortTextSchema,

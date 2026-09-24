@@ -187,7 +187,9 @@ root, and sends the counts with control metadata as `backgroundAgentCounts`.
 A composer shows only its own conversation's count, so agents a Breakout starts
 never appear in Main or in a sibling Breakout. Each viewer's map holds only Main
 and the private Breakouts they belong to, the same set as `privateChildren`, so
-a Breakout's id never reaches someone outside it. An agent from before roots were
+a Breakout's id never reaches someone outside it. Archiving a Breakout does not
+stop the workers rooted in it: they finish as usual, counted only in the total,
+since no composer shows an archived Breakout. An agent from before roots were
 recorded counts in Main. `backgroundAgentCount`, the Channel total, stays on
 the frame for desktop builds that predate the split. The desktop holds the
 counts only while that connection is available and renders a singular or
