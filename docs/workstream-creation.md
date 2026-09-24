@@ -72,9 +72,11 @@ opening message is sent; participants are chosen in the header's
 **Participants** bar before that request. The creator's own chip leads the bar
 and has no remove control. In a personal Space the bar shows the Space's roster
 read-only and says it is managed by the Space. The composer is keyed by its
-draft identity — which carries the Space it was opened from — so switching
-between Space launchers also restores initial focus; that key stays stable
-throughout the launch hand-off. The sidebar lists existing work streams without
+draft identity — which carries the Space it was opened from — and by the
+navigation that opened it, so every opening puts focus in the message box and
+never in the Participants bar, including a second opening of the Space already
+on screen, where nothing else remounts. That key stays stable throughout the
+launch hand-off. The sidebar lists existing work streams without
 a placeholder row for the unsent draft.
 
 ### What moves
