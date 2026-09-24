@@ -22,6 +22,21 @@ describe('parseTelemetryProductIntent', () => {
     expect(parseTelemetryProductIntent({ ...socketIntent })).toEqual(socketIntent);
   });
 
+  it('accepts only content-free workspace handshake phases with a UUIDv7 attempt', () => {
+    const intent = {
+      kind: 'workspace_socket_handshake',
+      attemptId: '018f22f2-4c22-7abc-8def-0123456789ab',
+      phase: 'subscribe_sent',
+    };
+    expect(parseTelemetryProductIntent(intent)).toEqual(intent);
+    expect(() => parseTelemetryProductIntent({ ...intent, phase: 'waiting' }))
+      .toThrow('Invalid telemetry intent');
+    expect(() => parseTelemetryProductIntent({ ...intent, attemptId: 'not-a-uuid' }))
+      .toThrow('Invalid telemetry intent');
+    expect(() => parseTelemetryProductIntent({ ...intent, url: 'wss://secret' }))
+      .toThrow('Invalid telemetry intent');
+  });
+
   it('admits correlated feed paint and socket start intents with only registered fields', () => {
     const operationId = '018f22f2-4c22-7abc-8def-0123456789ab';
     const socketLeaseId = '018f22f2-4c22-7abc-8def-0123456789ac';
