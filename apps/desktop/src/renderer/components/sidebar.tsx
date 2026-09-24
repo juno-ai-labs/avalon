@@ -2120,13 +2120,12 @@ export function Sidebar({
   }, [navigate, onCreateSpace]);
 
   // Right-clicking empty space in the channel list offers the same creation
-  // items as the header's button, minus the Space one. A row with its own
-  // menu claims the click first; any other link or button is not empty space.
+  // items as the header's button, minus the Space one.
   const channelListMenu = spaces !== undefined && spacesReady && !spacesReadOnly;
   const withChannelListMenu = (list: React.JSX.Element): React.JSX.Element => channelListMenu
     ? <NewWorkstreamMenu
         lockedSpaceId={selectedSpaceId}
-        offerSpace={false}
+        offer="channel"
         spaces={placementSpaces}
         trigger="context"
         onCreateChannel={createChannelFromSidebar}
@@ -2341,9 +2340,6 @@ export function Sidebar({
           as="nav"
           aria-label={spaces === undefined ? 'Organization navigation' : 'Channels'}
           onClick={() => setSidebarOpen(false)}
-          onContextMenu={channelListMenu ? (event: React.MouseEvent) => {
-            if ((event.target as Element).closest('a, button, input, textarea, [contenteditable="true"]')) event.preventDefault();
-          } : undefined}
           onScroll={loadMoreWhenNearBottom}
           scrollRef={scrollRef}
         >
