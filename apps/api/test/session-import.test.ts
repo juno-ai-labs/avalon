@@ -1,7 +1,32 @@
 import { describe, it, expect } from "vitest";
-import { parseSessionExport, previewSessionImport, sessionShareUrl } from "../src/services/session-import";
+import { parseSessionExport, previewSessionImport, sessionShareUrl, sessionSourceUrlProvider } from "../src/services/session-import";
 
 describe("shared session import", () => {
+  it('keeps the private ChatGPT conversation URL with an authenticated export preview', async () => {
+    const url = 'https://chatgpt.com/c/6ab43c03-6b2c-83e8-9eba-f1c51fa1e7a0';
+    const result = await previewSessionImport({ kind: 'export', provider: 'chatgpt', sourceUrl: url,
+      text: JSON.stringify({ conversation_id: url.split('/').at(-1), title: 'Selected chat', current_node: 'm1', mapping: {
+        m1: { id: 'm1', parent: null, message: { id: 'm1', author: { role: 'user' }, content: { content_type: 'text', parts: ['Hello'] } } },
+      } }),
+    }, {});
+    expect(result.source).toMatchObject({ provider: 'chatgpt', sessionId: url.split('/').at(-1), url });
+    expect(result.content.messages).toHaveLength(1);
+    expect(sessionSourceUrlProvider(url, result.source.sessionId!)).toBe('chatgpt');
+    expect(() => sessionSourceUrlProvider(url, 'another-conversation')).toThrow('Use a ChatGPT or Claude public share link');
+  });
+  it('accepts one selected Codex task with stable visible message IDs', () => {
+    const result = parseSessionExport('codex', JSON.stringify({
+      id: '01a0cb17-2d26-7463-9ea1-3505300c3aa6', title: 'A Codex task', messages: [
+        { role: 'user', text: 'Question', sourceMessageId: 'user-1' },
+        { role: 'assistant', text: 'Answer', sourceMessageId: 'assistant-1' },
+      ],
+    }));
+    expect(result.source).toEqual({ provider: 'codex', url: null, sessionId: '01a0cb17-2d26-7463-9ea1-3505300c3aa6' });
+    expect(result.content.messages).toEqual([
+      { role: 'user', text: 'Question', sourceMessageId: 'user-1' },
+      { role: 'assistant', text: 'Answer', sourceMessageId: 'assistant-1' },
+    ]);
+  });
   it("follows the selected ChatGPT branch and drops hidden, thinking and tool turns", () => {
     const message = (role: string, value: string, extra = {}) => ({ author: { role }, content: { content_type: "text", parts: [value] }, ...extra });
     const content = parseSessionExport("chatgpt", JSON.stringify({ title: "Branch", current_node: "b", mapping: {
@@ -9,7 +34,7 @@ describe("shared session import", () => {
       discarded: { parent: "a", message: message("assistant", "Old answer") },
       thinking: { parent: "a", message: message("assistant", "Private", { channel: "analysis" }) },
       tool: { parent: "thinking", message: message("tool", "Tool result") },
-      b: { parent: "tool", message: message("assistant", "Selected answer") },
+      b: { parent: "tool", message: message("assistant", "Selected answer \uE200cite\uE202turn0view0\uE201") },
     } }));
     expect(content.content.messages).toEqual([{ role: "user", text: "Question", sourceMessageId: "position:0" }, { role: "assistant", text: "Selected answer", sourceMessageId: "position:3" }]);
   });

@@ -61,7 +61,7 @@ describe('sidebar creation menu', () => {
     renderMenu();
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
       'Start New Channel',
-      'Import Channel from Claude or ChatGPT',
+      'Import Channel',
       'Create New Space',
     ]);
   });
@@ -142,8 +142,8 @@ describe('sidebar creation menu', () => {
 
   it('collects the required import fields', async () => {
     const callbacks = renderMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Import Channel from Claude or ChatGPT' }));
-    const dialog = screen.getByRole('dialog', { name: 'Import channel from Claude or ChatGPT' });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Import Channel' }));
+    const dialog = screen.getByRole('dialog', { name: 'Import channel' });
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Research' } });
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'URL' }), { target: { value: 'https://chatgpt.com/share/example' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
@@ -156,23 +156,23 @@ describe('sidebar creation menu', () => {
   it('offers local Claude chats without a data-export source', () => {
     vi.stubGlobal('rally', {});
     renderMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Import Channel from Claude or ChatGPT' }));
-    const dialog = screen.getByRole('dialog', { name: 'Import channel from Claude or ChatGPT' });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Import Channel' }));
+    const dialog = screen.getByRole('dialog', { name: 'Import channel' });
     expect(within(dialog).getByRole('combobox', { name: 'Source' })).toHaveTextContent('Claude chats on this Mac');
     expect(within(dialog).getByRole('combobox', { name: 'Source' })).not.toHaveTextContent('Claude data export');
   });
 
   it('hides Mac-only Claude chats in the browser host', () => {
     renderMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Import Channel from Claude or ChatGPT' }));
-    const dialog = screen.getByRole('dialog', { name: 'Import channel from Claude or ChatGPT' });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Import Channel' }));
+    const dialog = screen.getByRole('dialog', { name: 'Import channel' });
     expect(within(dialog).getByRole('combobox', { name: 'Source' })).not.toHaveTextContent('Claude chats on this Mac');
   });
 
   it('passes a selected Claude Code JSONL file to the import decoder', async () => {
     const callbacks = renderMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Import Channel from Claude or ChatGPT' }));
-    const dialog = screen.getByRole('dialog', { name: 'Import channel from Claude or ChatGPT' });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Import Channel' }));
+    const dialog = screen.getByRole('dialog', { name: 'Import channel' });
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Code history' } });
     fireEvent.change(within(dialog).getByRole('combobox', { name: 'Source' }), { target: { value: 'claude_code' } });
     const line = JSON.stringify({ type: 'user', message: { role: 'user', content: 'Fix this' } });
@@ -197,8 +197,8 @@ describe('sidebar creation menu', () => {
     const readLocalClaudeCodeSession = vi.fn(async (id: string) => id.endsWith('second.jsonl') ? selected : 'wrong source');
     vi.stubGlobal('rally', { listLocalClaudeCodeSessions, readLocalClaudeCodeSession });
     const callbacks = renderMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Import Channel from Claude or ChatGPT' }));
-    const dialog = screen.getByRole('dialog', { name: 'Import channel from Claude or ChatGPT' });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Import Channel' }));
+    const dialog = screen.getByRole('dialog', { name: 'Import channel' });
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Chosen code' } });
     fireEvent.change(within(dialog).getByRole('combobox', { name: 'Source' }), { target: { value: 'claude_code' } });
     const conversation = await within(dialog).findByRole('combobox', { name: 'Conversation' });
@@ -233,8 +233,8 @@ describe('sidebar creation menu', () => {
     });
     vi.stubGlobal('rally', { listLocalClaudeSessions, readLocalClaudeSession, onApplicationForegroundChanged });
     const callbacks = renderMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Import Channel from Claude or ChatGPT' }));
-    const dialog = screen.getByRole('dialog', { name: 'Import channel from Claude or ChatGPT' });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Import Channel' }));
+    const dialog = screen.getByRole('dialog', { name: 'Import channel' });
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Navigation' } });
     fireEvent.change(within(dialog).getByRole('combobox', { name: 'Source' }), { target: { value: 'claude_local' } });
     const conversation = await within(dialog).findByRole('combobox', { name: 'Conversation' });
@@ -273,8 +273,8 @@ describe('sidebar creation menu', () => {
         return () => { foregroundChanged = undefined; };
       } });
     renderMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Import Channel from Claude or ChatGPT' }));
-    const dialog = screen.getByRole('dialog', { name: 'Import channel from Claude or ChatGPT' });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Import Channel' }));
+    const dialog = screen.getByRole('dialog', { name: 'Import channel' });
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Navigation' } });
     fireEvent.change(within(dialog).getByRole('combobox', { name: 'Source' }), { target: { value: 'claude_local' } });
     const conversation = await within(dialog).findByRole('combobox', { name: 'Conversation' });
@@ -292,8 +292,8 @@ describe('sidebar creation menu', () => {
       onCreateSpace: vi.fn(async () => undefined),
       onImportChannel,
     });
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Import Channel from Claude or ChatGPT' }));
-    const dialog = screen.getByRole('dialog', { name: 'Import channel from Claude or ChatGPT' });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Import Channel' }));
+    const dialog = screen.getByRole('dialog', { name: 'Import channel' });
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Research' } });
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'URL' }), { target: { value: 'https://claude.ai/share/example' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));

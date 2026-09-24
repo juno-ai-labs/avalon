@@ -45,6 +45,7 @@ the source credentials, memory, authoring conversation, or run history.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/main/index.ts` | Window creation, sandbox and `contextIsolation` flags, navigation denial, IPC handler registration. |
+| `apps/desktop/src/main/embedded-browser.ts` | Isolated web contents for the local right-rail browser; its lifecycle and command boundary are documented in [`embedded-browser.md`](embedded-browser.md). |
 | `apps/sideline/src/main/index.ts`, `apps/sideline/src/preload/index.ts` | The internal represented-messaging host, encrypted operator session, dedicated OAuth target, sender-confined IPC, and narrow renderer bridge. The relationship and audit boundary is documented in [`impersonation.md`](impersonation.md). |
 | `apps/desktop/src/preload/index.ts` | The whole renderer-facing API. Nothing else crosses. |
 | `apps/desktop/src/common/realtime-socket-validation.ts`, `apps/desktop/src/main/realtime-socket-ipc.ts` | Shared broker channel/event validation and the conversation-window socket IPC boundary. |
@@ -111,8 +112,10 @@ same as desktop.
   string with no scripting, no session, and no network of its own. That balance
   holds only while the window stays this small: give it any further UI and its
   privileges should be narrowed to the channels it actually uses first.
-- Navigation and popup creation are denied by default; OAuth opens in the system
-  browser.
+- App-window navigation and popup creation are denied by default; Rally's own
+  OAuth opens in the system browser. The embedded browser's isolated web
+  contents handle website links and redirects within their own session, with
+  non-web destinations rejected.
 - A strict Content Security Policy allows bundled content and the configured
   regional API only.
 - Markdown treats model, member, email, and attachment text as untrusted.

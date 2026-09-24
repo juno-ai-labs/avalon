@@ -1,6 +1,7 @@
 import { ShareConversationButton, ShareConversationDialog } from "../components/scope-sharing-panel";
 import { ConversationHeader } from '@rally/ui/components/conversation-header';
 import { IconCloudDownload } from '@tabler/icons-react';
+import { Globe2 } from 'lucide-react';
 
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -121,6 +122,22 @@ const workstreamSidebarFailureCopy: Record<WorkstreamSidebarFailure, { title: st
   archive_workstream: { title: 'The channel couldn’t be archived', copy: 'The channel couldn’t be archived. Try again.' },
   archive_substream: { title: 'The breakout couldn’t be archived', copy: 'The breakout couldn’t be archived. Try again.' },
 };
+
+function BrowserRailButton({ openRail }: { openRail: (variant: 'browser') => void }): React.JSX.Element | null {
+  const railOpen = useUiStore((state) => state.railOpen);
+  const railVariant = useUiStore((state) => state.railVariant);
+  const closeRail = useUiStore((state) => state.closeRail);
+  const setRailWidth = useUiStore((state) => state.setRailWidth);
+  if (!window.rally) return null;
+  const showing = railOpen && railVariant === 'browser';
+  return <IconButton aria-pressed={showing} label={showing ? 'Close browser' : 'Open browser'} onClick={() => {
+    if (showing) closeRail();
+    else {
+      setRailWidth(Math.max(useUiStore.getState().railWidth, 600));
+      openRail('browser');
+    }
+  }}><Globe2 aria-hidden="true" size={18} /></IconButton>;
+}
 
 export function WorkstreamHeader({ workspaceTarget, spaceId, onCopyLinkFailure, ...props }: Omit<React.ComponentProps<typeof ConversationHeader>,
   'onShowNavigation' | 'onCopyLink' | 'onCopyEmail' | 'onCopyId'> & { workspaceTarget: WorkspaceTarget | null; spaceId: string | null; onCopyLinkFailure?: () => void }): React.JSX.Element {
@@ -606,6 +623,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       renderHeader={(context) => (
         <WorkstreamHeader
           actions={api && session?.workspace ? <>
+            <BrowserRailButton openRail={context.openRail} />
             {selectedSubstreamId === '0' && importedSource.data && <IconButton label="Import updates" onClick={() => setImportUpdateOpen(true)}><IconCloudDownload aria-hidden="true" size={18} stroke={1.8} /></IconButton>}
             <ShareConversationButton api={api} workspaceId={session.workspace.id}
               parentId={id} substreamId={selectedSubstreamId} />

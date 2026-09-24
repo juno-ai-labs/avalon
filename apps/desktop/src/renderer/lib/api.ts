@@ -1536,7 +1536,7 @@ export class RallyApi {
     return result.workstream.id;
   }
 
-  async importedSessionSource(workstreamId: string): Promise<{ provider: 'chatgpt' | 'claude' | 'claude_code'; sessionId: string; url: string | null } | null> {
+  async importedSessionSource(workstreamId: string): Promise<{ provider: 'chatgpt' | 'claude' | 'claude_code' | 'codex'; sessionId: string; url: string | null } | null> {
     const result = await this.request(`/workstreams/${workstreamId}/import/source`, {
       schema: z.strictObject({ source: z.strictObject({ provider: z.enum(['chatgpt', 'claude', 'claude_code']),
         sessionId: z.string(), url: z.string().nullable() }).nullable() }),
