@@ -155,7 +155,7 @@ export function BrowserImportWindow(): React.JSX.Element {
       <form className="space-create-form" onSubmit={(event) => { event.preventDefault(); void createChannel(); }}>
         <label className="form-field">
           <span>Space</span>
-          <DropdownSelect ariaLabel="Space" disabled={saving} onValueChange={(value) => { setSpaceId(value); renewRequest(); }}
+          <DropdownSelect ariaLabel="Space" disabled={saving || context?.spaceLocked === true} onValueChange={(value) => { setSpaceId(value); renewRequest(); }}
             options={spaces.map((space) => ({ label: space.name, value: space.id }))} value={spaceId} />
         </label>
         <label className="form-field" htmlFor={nameId}>
