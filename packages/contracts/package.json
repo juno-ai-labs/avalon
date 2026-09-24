@@ -19,6 +19,7 @@
     "./http-headers": "./src/http-headers.ts",
     "./realtime-transcription": "./src/realtime-transcription.ts",
     "./socket-tickets": "./src/socket-tickets.ts",
+    "./workspace-reach-watch": "./src/workspace-reach-watch.ts",
     "./telemetry": "./src/telemetry.ts",
     "./workspace-target": "./src/workspace-target.ts",
     "./workstream-links": "./src/workstream-links.ts",

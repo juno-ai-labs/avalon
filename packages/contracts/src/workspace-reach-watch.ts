@@ -3,11 +3,8 @@ import {
   WorkspaceSocketSyncEventSchema,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
-  safeParseSocketEvent,
-} from "@rally/contracts";
-
-/** The origin Sideline's workspace socket presents; the Worker's `ALLOWED_ORIGINS` must admit it. */
-export const SIDELINE_SOCKET_ORIGIN = "app://sideline";
+} from "./index";
+import { safeParseSocketEvent } from "./socket-events";
 
 // The Rally desktop's workspace-socket heartbeat and reconnect numbers
 // (`apps/desktop/src/renderer/lib/workspace-socket.tsx`), reused rather than
@@ -34,9 +31,9 @@ export interface ReachWatchDependencies {
   ticket(): Promise<{ url: string; ticket: string }>;
   open(url: string, ticket: string): ReachSocket;
   /**
-   * The catalog may no longer match the server: somebody it lists joined or
-   * left a Channel or Breakout, or the socket reconnected after a gap in which
-   * that could have happened unheard.
+   * The host's list may no longer match the server: somebody it shows joined
+   * or left a Channel or Breakout, or the socket reconnected after a gap in
+   * which that could have happened unheard.
    */
   onStale(): void;
   setTimer?: (callback: () => void, ms: number) => unknown;
@@ -44,18 +41,20 @@ export interface ReachWatchDependencies {
 }
 
 /**
- * Hold one workspace socket for the signed-in operator and report when the
- * catalog went stale.
+ * Hold one workspace socket and report when a list drawn from membership went
+ * stale.
  *
- * Listens for `workspace_reach_changed`, which WorkspaceDO sends only for the
- * operator and the people they may act as, and ignores everything else the
- * socket carries. It subscribes because an unsubscribed socket is how the
- * server marks one it has stopped serving; the sidebar in the answer is
- * discarded.
+ * For a host that has no workspace socket of its own — Sideline, and the lite
+ * browser client — and needs only to hear that somebody it shows joined or
+ * left a Channel or Breakout. Listens for `workspace_reach_changed`, which
+ * WorkspaceDO sends only for the socket's own user and the people they may act
+ * as, and ignores everything else the socket carries. It subscribes because an
+ * unsubscribed socket is how the server marks one it has stopped serving; the
+ * sidebar in the answer is discarded.
  *
  * Nothing is replayed across a reconnect, so every subscribe answer after the
- * first reports the catalog stale. The first is skipped because the renderer
- * loads the catalog when the session starts.
+ * first reports stale. The first is skipped because the host reads its list
+ * when it starts.
  *
  * @returns stop, which closes the socket and cancels any reconnect.
  */
@@ -141,8 +140,8 @@ export function watchWorkspaceReach(dependencies: ReachWatchDependencies): () =>
       if (socket !== next) return;
       socket = null;
       clearHeartbeat();
-      // The server ended this operator's access or session. The session
-      // refresh path owns sign-out; reconnecting would only be refused again.
+      // The server ended this user's access or session. The host's session
+      // path owns sign-out; reconnecting would only be refused again.
       if (event.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE
         || event.code === WORKSPACE_SOCKET_SESSION_INACTIVE_CODE) return;
       scheduleReconnect();

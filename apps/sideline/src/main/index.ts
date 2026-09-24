@@ -33,7 +33,7 @@ import { z } from "zod";
 import { sidelineHttpOutcome, type SidelineSendResult, type SidelineSession } from "../common/bridge";
 import { initializeSidelineUpdater, sidelineUpdateMenuItem } from "./updater";
 import { sidelineHttpSend, sidelineHttpSendResponse } from "./send-request";
-import { SIDELINE_SOCKET_ORIGIN, watchWorkspaceReach } from "./reach-watch";
+import { watchWorkspaceReach } from "@rally/contracts/workspace-reach-watch";
 
 const API_BASE_URL = (
   process.env.VITE_API_GLOBAL_URL ?? (app.isPackaged ? "https://api.rallywith.ai" : "http://127.0.0.1:8787")
@@ -41,6 +41,8 @@ const API_BASE_URL = (
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const VISUAL_STATE = app.isPackaged ? undefined : process.env.SIDELINE_VISUAL_STATE;
 const SESSION_FILE = "sideline-session.bin";
+/** The origin Sideline's workspace socket presents; the Worker's `ALLOWED_ORIGINS` must admit it. */
+const SIDELINE_SOCKET_ORIGIN = "app://sideline";
 const SocketTicketSchema = z.object({ url: WebSocketUrlSchema, ticket: z.string().min(1) });
 let mainWindow: BrowserWindow | null = null;
 let session: Session | null = null;

@@ -16,7 +16,7 @@ basis.
 | `apps/api/src/routes/sideline.ts` | The authenticated catalog and new-message HTTP boundary. |
 | `apps/api/src/services/demo-preparation.ts` | Creates the complete ordered relationship set for the people seated by one demo operation. |
 | `apps/sideline/` | Narrow Electron host: Google sign-in, encrypted operator session, typed IPC, card state, and native handoff to Rally. |
-| `apps/sideline/src/main/reach-watch.ts` | Holds the operator's workspace socket and reports the catalog stale on a `workspace_reach_changed` event or a reconnect. |
+| `packages/contracts/src/workspace-reach-watch.ts` | Holds a workspace socket for a host without one of its own and reports stale on a `workspace_reach_changed` event or a reconnect. Sideline's main process uses it for the operator's catalog. |
 | `apps/sideline/scripts/stamp-release.mjs` | Replans on a moved `main` tip before stamping and emits the final commit and API gate. |
 | `.github/workflows/release-sideline-macos.yml` | Frozen-commit verification, Developer ID signing, Apple notarization, artifact retention, and R2 publication. |
 | `packages/contracts/src/impersonation.ts` | Relationship, catalog, and send wire contracts. |
@@ -255,8 +255,9 @@ set. Naming the conversation in the event would disclose a membership that the
 receiver might not be able to list.
 
 **Consequences:** The event is a platform signal about a person, not a Sideline
-endpoint. Any client may listen for it, and the Rally desktop currently
-ignores it. It is not durable, so listeners must reread on reconnect.
+endpoint: the Rally desktop and the lite browser client refresh a guest's
+navigation on it too ([`realtime-sockets.md`](realtime-sockets.md)). It is not
+durable, so listeners must reread on reconnect.
 `ALLOWED_ORIGINS` must admit `app://sideline`. Scope changes, new public
 Channels, and relationship changes still wait for the next reread. Nudging on
 them means raising the same event at their own writers.
