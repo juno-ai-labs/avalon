@@ -58,7 +58,8 @@ function sourceFile(value: unknown, kind: ConversationFile["kind"]): Conversatio
     : bytes ? { kind: "inline", encoding: "base64", data: bytes }
     : url.startsWith('https://') ? { kind: "remote", url }
     : { kind: "unavailable", reference: url || text(file['id']) || text(file['asset_pointer']) || name,
-      reason: "The export does not contain downloadable file bytes." } };
+      // A reader that declined to copy a file says why; otherwise it had no bytes.
+      reason: text(file['rally_unavailable_reason']) || "The export does not contain downloadable file bytes." } };
 }
 
 function sourceFiles(value: unknown, kind: ConversationFile["kind"]): ConversationFile[] {
@@ -201,14 +202,14 @@ function chatGptMessages(value: unknown): SubstreamContent["messages"] {
     // A sandbox: link names a file ChatGPT wrote in its code sandbox. The
     // reader copies it; the dead link then reads as its label beside the file.
     const copied = new Map(array(metadata['rally_sandbox_files']).map(object)
-      .filter((file) => text(file['link']) && text(file['inline_base64'])).map((file) => [text(file['link']), file]));
+      .filter((file) => text(file['link'])).map((file) => [text(file['link']), file]));
     const linked = new Set<string>();
     const body = chatGptVisibleText(parts.join("\n\n"), metadata).replace(/\[([^\]]*)\]\((sandbox:[^)\s]+)\)/gu, (whole, label: string, link: string) => {
       if (!linked.has(link)) {
         linked.add(link);
         const file = copied.get(link);
-        files.push(file ? sourceFile(file, kind) : { name: link.split('/').at(-1) || 'Sandbox file', mimeType: 'application/octet-stream', kind,
-          source: { kind: 'unavailable', reference: link, reason: 'ChatGPT did not return this sandbox file. Download it from the conversation instead.' } });
+        files.push(file && text(file['inline_base64']) ? sourceFile(file, kind) : { name: text(file?.['name']) || link.split('/').at(-1) || 'Sandbox file', mimeType: 'application/octet-stream', kind,
+          source: { kind: 'unavailable', reference: link, reason: text(file?.['rally_unavailable_reason']) || 'ChatGPT did not return this sandbox file. Download it from the conversation instead.' } });
       }
       return label || whole;
     });
