@@ -16,6 +16,7 @@ import {
 import type { RallyApi } from '../lib/api';
 import { workstreamRecencyAt } from '../lib/format';
 import { MemberPresentationContext } from '../lib/member-presentation';
+import { conversationDirectoryQueryKey } from '../lib/conversation-directory';
 import { desktopBridge } from '../lib/platform';
 import { layoutKey, writeLayout } from '../lib/desktop-layout';
 import { uuidV7 } from '../lib/telemetry';
@@ -451,12 +452,22 @@ export function associativeSpacesForSidebar(directory: SharedNavigationDirectory
   })) ?? [];
 }
 
-/** Build the guest Channel rail from canonical grants and enrich it with live socket state. */
+/**
+ * The Channel rail: the member directory's rows, then every Channel the
+ * conversation directory adds, each drawn from live socket state where there
+ * is some.
+ *
+ * A guest's rail is the conversation directory alone. A member's is the member
+ * directory plus any Channel they reach only through its conversations, which
+ * opens on the first conversation it lists rather than on Main.
+ */
 export function associativeWorkstreamsForSidebar(
   directory: SharedNavigationDirectory | undefined,
   workstreams: readonly WorkstreamSummary[] | undefined,
+  includeMemberDirectory = false,
 ): WorkstreamSummary[] {
-  if (!directory || !workstreams) return [];
+  if (!workstreams) return [];
+  if (!directory) return includeMemberDirectory ? [...workstreams] : [];
   const live = new Map(workstreams.map((item) => [item.id, item]));
   const placements = new Map<string, string[]>();
   for (const space of directory.spaces) {
@@ -466,10 +477,12 @@ export function associativeWorkstreamsForSidebar(
       placements.set(workstreamId, current);
     }
   }
-  return directory.workstreams.flatMap((metadata) => {
+  const associative = directory.workstreams.flatMap((metadata) => {
     const first = metadata.conversations.find((item) => !item.archived) ?? metadata.conversations[0];
     if (!first) return [];
     const workstream = live.get(metadata.parentId);
+    // A member row the member directory already lists stays as it is.
+    if (includeMemberDirectory && workstream) return [];
     return [{
       ...(workstream ?? {
         id: metadata.parentId,
@@ -494,6 +507,7 @@ export function associativeWorkstreamsForSidebar(
       spaceIds: placements.get(metadata.parentId) ?? [],
     }];
   });
+  return includeMemberDirectory ? [...workstreams, ...associative] : associative;
 }
 
 export function AppShell({ workspace, children }: AppShellProps): React.JSX.Element {
@@ -625,20 +639,27 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const socketSpacesReady = useSpacesReady();
   const guestSession = session?.workspace?.accessClass === 'guest';
   const associativeNavigation = useQuery({
-    queryKey: ['shared-navigation', workspace.id],
+    queryKey: conversationDirectoryQueryKey(workspace.id),
     queryFn: ({ signal }) => api!.getSharedNavigationDirectory(signal),
-    enabled: guestSession && Boolean(api),
+    enabled: Boolean(api),
     refetchOnWindowFocus: 'always',
   });
   const associativeSpaces = useMemo(
     () => associativeSpacesForSidebar(associativeNavigation.data),
     [associativeNavigation.data],
   );
-  const sidebarWorkstreams = useMemo(() => {
-    if (!guestSession) return workstreams.data ?? [];
-    return associativeWorkstreamsForSidebar(associativeNavigation.data, workstreams.data);
-  }, [associativeNavigation.data, guestSession, workstreams.data]);
-  const visibleSpaces = guestSession ? associativeSpaces : spaces.data?.items ?? [];
+  const sidebarWorkstreams = useMemo(
+    () => associativeWorkstreamsForSidebar(associativeNavigation.data, workstreams.data, !guestSession),
+    [associativeNavigation.data, guestSession, workstreams.data],
+  );
+  const visibleSpaces = useMemo(() => {
+    if (guestSession) return associativeSpaces;
+    // A member also sees the Spaces a conversation-only Channel sits in, as
+    // the placement the guest rail gives it, where the member rail has none.
+    const memberSpaces = spaces.data?.items ?? [];
+    const listed = new Set(memberSpaces.map((space) => space.id));
+    return [...memberSpaces, ...associativeSpaces.filter((space) => !listed.has(space.id))];
+  }, [associativeSpaces, guestSession, spaces.data?.items]);
   const visibleInactiveSpaces = guestSession ? [] : inactiveSpaces.data?.items ?? [];
   const spacesReady = guestSession ? !associativeNavigation.isPending : socketSpacesReady;
   const ordering = usePersonalOrder();

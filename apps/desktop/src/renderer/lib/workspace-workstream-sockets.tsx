@@ -2,6 +2,7 @@ import { useMemo, type PropsWithChildren } from 'react';
 import { useLocation } from 'react-router-dom';
 import type { WorkstreamSummary } from './types';
 import type { WorkstreamSocketApi } from './use-workstream-socket';
+import { conversationScopedChannelIds, useConversationDirectory } from './conversation-directory';
 import { useCachedWorkstreams } from './use-workstreams-query';
 import { firstLandingWorkstream, openWorkstreamId, skippedWorkstreamIds } from './workstream-landing';
 import { WorkstreamSocketPool } from './workstream-socket-pool';
@@ -37,7 +38,11 @@ export function WorkspaceWorkstreamSockets({ api, enabled = true, children }: Pr
 }>): React.JSX.Element {
   const location = useLocation();
   const workstreams = useCachedWorkstreams();
-  const activeWorkstreamId = enabled ? openWorkstreamId(location.pathname) : null;
+  // Every socket here is a Channel's Main. A Channel reached only through some
+  // of its conversations has no Main this person may open, so it is not held.
+  const conversationScoped = conversationScopedChannelIds(useConversationDirectory());
+  const openId = enabled ? openWorkstreamId(location.pathname) : null;
+  const activeWorkstreamId = openId !== null && conversationScoped.has(openId) ? null : openId;
   const backgroundIds = useMemo(() => {
     if (!enabled) return [];
     const selected = backgroundRealtimeWorkstreamIds(activeWorkstreamId, workstreams);

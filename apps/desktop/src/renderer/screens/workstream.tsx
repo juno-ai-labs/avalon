@@ -9,8 +9,8 @@ import { useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
 import type { WorkspaceTarget } from '@rally/contracts/workspace-target';
 import { conversationNeedsViewer, type HarnessStatus } from '@rally/contracts';
-import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
 import { useCollaborationSession } from '../lib/collaboration-session';
+import { mainOmitted, useConversationDirectory } from '../lib/conversation-directory';
 
 import { desktopBridge } from '../lib/platform';
 import { layoutKey } from '../lib/desktop-layout';
@@ -173,10 +173,16 @@ export function WorkstreamScreen(): React.JSX.Element {
   const openFirstWorkstream = useOpenFirstWorkstream();
   const selectedSubstreamId = searchParams.get('substream') || '0';
   const guest = session?.workspace?.accessClass === 'guest';
+  const conversationDirectory = useConversationDirectory();
+  const directoryEntry = conversationDirectory?.workstreams.find((item) => item.parentId === id);
+  // Scoped to the conversations the directory lists: always for a guest, whose
+  // every Channel comes from it, and for a member whose entry leaves Main out —
+  // somebody who is in a breakout of a Channel they cannot otherwise read.
+  const conversationScoped = guest || Boolean(directoryEntry && mainOmitted(directoryEntry));
   // Parent chrome remains live even on a direct link into a child. Reuse the
   // retained Main connection rather than deriving its inventory from the child.
-  // A guest child grant proves nothing about Main; keep that host scoped to its child.
-  const mainConnection = useRetainedWorkstreamSocket(api, id, Boolean(api && id && (!guest || selectedSubstreamId === '0')), 'workstream', '0');
+  // A child grant proves nothing about Main; keep that host scoped to its child.
+  const mainConnection = useRetainedWorkstreamSocket(api, id, Boolean(api && id && (!conversationScoped || selectedSubstreamId === '0')), 'workstream', '0');
   const parent = useQuery<WorkstreamDetail | undefined>({
     queryKey: ['workstream', id], queryFn: async () => undefined, enabled: false,
   });
@@ -194,13 +200,8 @@ export function WorkstreamScreen(): React.JSX.Element {
   const children = useQuery<WorkstreamChildDirectory | undefined>({
     queryKey: ['workstream-children', id], queryFn: async () => undefined, enabled: false,
   });
-  const sharedNavigation = useQuery<SharedNavigationDirectory | undefined>({
-    queryKey: ['shared-navigation', session?.workspace?.id], queryFn: async () => undefined, enabled: false,
-  });
-  const sharedParent = guest
-    ? sharedNavigation.data?.workstreams.find((item) => item.parentId === id)
-    : undefined;
-  const linkSpaceIds = parent.data?.spaceIds ?? sharedNavigation.data?.spaces
+  const sharedParent = conversationScoped ? directoryEntry : undefined;
+  const linkSpaceIds = parent.data?.spaceIds ?? conversationDirectory?.spaces
     .filter((space) => space.workstreamIds.includes(id))
     .sort((a, b) => Number(a.scope === 'personal') - Number(b.scope === 'personal') || a.id.localeCompare(b.id))
     .map((space) => space.id) ?? [];
@@ -322,7 +323,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const restoredBreakout: unknown = location.state && typeof location.state === 'object'
     && 'restoredBreakout' in location.state ? location.state.restoredBreakout : null;
   useEffect(() => {
-    if (!children.data && !(guest && sharedNavigation.data)) return;
+    if (!children.data && !(conversationScoped && conversationDirectory)) return;
     const ids = new Set<string>((directoryChildren ?? []).map((child) => child.substreamId));
     if ((previousChildren.current.parentId === id && previousChildren.current.ids.has(selectedSubstreamId)
       || restoredBreakout === selectedSubstreamId) && !ids.has(selectedSubstreamId)) {
@@ -333,7 +334,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       }, { replace: true });
     }
     previousChildren.current = { parentId: id, ids };
-  }, [children.data, sharedNavigation.data, guest, id, selectedSubstreamId, restoredBreakout, setSearchParams]);
+  }, [children.data, conversationDirectory, conversationScoped, id, selectedSubstreamId, restoredBreakout, setSearchParams]);
   const routeRef = useRef({ id, selectedSubstreamId, visit: 0 });
   routeRef.current = { id, selectedSubstreamId, visit: routeRef.current.visit + Number(routeRef.current.id !== id || routeRef.current.selectedSubstreamId !== selectedSubstreamId) };
   const reportParentAction = (workstream: WorkstreamSummary, action: 'rename' | 'archive' | 'make_public'): void => {
@@ -377,8 +378,8 @@ export function WorkstreamScreen(): React.JSX.Element {
     setSubstreamPending(true);
     setSubstreamMenuFailure(null);
     try {
-      // Match header renaming: guest Main is conversation-scoped authority.
-      if (target.substreamId === '0' && !guest) {
+      // Match header renaming: a conversation-scoped Main is its own authority.
+      if (target.substreamId === '0' && !conversationScoped) {
         const updated = await api.renameWorkstream(target.parentId, title);
         patchCachedWorkstream(queryClient, target.parentId, { title: updated.title, titleStatus: updated.titleStatus, updatedAt: updated.updatedAt });
         reportParentAction(updated, 'rename');
@@ -574,8 +575,8 @@ export function WorkstreamScreen(): React.JSX.Element {
     <ConversationSurface
       parentId={id}
       parentKind="workstream"
-      workstreamContext={guest ? undefined : parent.data}
-      sidebarScope={guest ? 'conversation' : 'workstream'}
+      workstreamContext={conversationScoped ? undefined : parent.data}
+      sidebarScope={conversationScoped ? 'conversation' : 'workstream'}
       onStartSubstream={startCreation}
       substreamLaunch={creation?.parentId === id ? {
         throughTurnId: creation.throughTurnId,
@@ -587,7 +588,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       renderSidebar={(context) => (
         <WorkstreamSidebar
           scrollStateKey={layoutKey(session?.workspace?.id ?? 'unbound', session?.user.id ?? 'unbound', `channel-context-scroll:${id}`)}
-          mainVisible={!guest || selectedSubstreamId === '0'}
+          mainVisible={!conversationScoped || selectedSubstreamId === '0'}
           onSidekickMenuOpen={context.loadSidekickOptions}
           onRefreshSidekicks={context.refreshSidekicks}
           addSidekick={<SidekickPicker workstreamId={context.detail.id} substreamId={selectedSubstreamId} />}
@@ -604,13 +605,13 @@ export function WorkstreamScreen(): React.JSX.Element {
           onNewSubstream={() => startCreation(null)}
           onOpenArtifact={context.openArtifact}
           onFocusTranscript={context.focusTranscript}
-          mainActions={(guest ? selectedSubstreamId === '0' : parent.data) ? {
-            onMakePublic: guest || parent.data?.systemKind ? undefined : makePublic,
+          mainActions={(conversationScoped ? selectedSubstreamId === '0' : parent.data) ? {
+            onMakePublic: conversationScoped || parent.data?.systemKind ? undefined : makePublic,
             publicDisabled: parent.data?.scope === 'workspace' || substreamPending,
             onShare: (target) => setSharingSubstream(target.substreamId),
             onCopyLink: session?.workspace ? copyRowLink : undefined,
             onRename: (target) => { ++menuOperation.current; setRenameTarget({ ...target, parentId: id }); setRenameTitle(target.title); setSubstreamMenuFailure(null); },
-            onArchive: guest ? undefined : (target) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuFailure(null); },
+            onArchive: conversationScoped ? undefined : (target) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuFailure(null); },
           } : undefined}
           substreamActions={{
             onShare: (target) => setSharingSubstream(target.substreamId),
@@ -634,7 +635,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           onAddParticipant={context.openParticipantDialog}
           onOpenRail={context.openRail}
           onRename={context.rename}
-          onAppearanceChange={guest ? undefined : selectedSubstreamId === '0'
+          onAppearanceChange={conversationScoped ? undefined : selectedSubstreamId === '0'
             ? mainConnection.setAppearance
             : context.setAppearance}
           presentUserIds={context.presentUserIds}

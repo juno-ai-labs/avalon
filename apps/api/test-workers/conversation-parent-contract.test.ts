@@ -53,6 +53,7 @@ import { seedParticipantMessage } from './helpers/substream-fixture';
 import { ConversationService } from "../src/services/conversation-service";
 import { WorkstreamService } from "../src/services/workstream-service";
 import { SubstreamCreationService } from "../src/services/substream-creation-service";
+import { readWorkspaceRelationship } from "../src/services/workspace-relationship-service";
 import { SocketService, verifySocketTicket } from "../src/services/socket-service";
 import {
   bootstrapConversationChildRuntime,
@@ -948,9 +949,10 @@ describe("conversation parent contract", () => {
     });
     expect(removedFromParent.status).toBe(200);
     await deliverChildEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID));
+    // Leaving Main is not leaving the breakout: its roster is its own.
     expect(await parent.authorizeViewer({
       ...viewer(PERSONAL_ROOM_ID, PARTICIPANT_ID), substreamId: reserved.substreamId,
-    })).toMatchObject({ authorized: false });
+    })).toMatchObject({ authorized: true });
     await parent.removePrivateChildParticipant({
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, substreamId: reserved.substreamId,
       actorUserId: AUTHOR_ID, userId: PARTICIPANT_ID, operationId: "private-child-remove-participant",
@@ -1072,21 +1074,39 @@ describe("conversation parent contract", () => {
     }
   });
 
-  it("says what to do when somebody is not in the work stream the substream belongs to", async () => {
-    // The refusal a real add hits first, and the reason it is worth naming:
-    // unmapped, the parent's error reached the dialog as an anonymous 500, so
-    // the only way to learn that a substream member must already be in the
-    // work stream was to read the Worker's log.
+  it("seats somebody who cannot read the work stream in its substream, and only there", async () => {
+    // A breakout's roster is its own. The person added reads the breakout, is
+    // listed it by the conversation directory, and gains neither Main nor a
+    // sibling breakout.
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
-    const substreamId = await seedPrivateChild(PERSONAL_ROOM_ID, "Private branch", "refusal-child");
+    const parent = roomParent(PERSONAL_ROOM_ID);
+    const substreamId = await seedPrivateChild(PERSONAL_ROOM_ID, "Private branch", "outsider-child");
+    const siblingId = await seedPrivateChild(PERSONAL_ROOM_ID, "Sibling branch", "outsider-sibling");
     await expect(new SubstreamCreationService(TEST_ENV, AUTH).changeParticipant(
       PERSONAL_ROOM_ID, substreamId,
-      { userId: MEMBER_ID, operationId: "refusal-child-add" }, true,
-    )).rejects.toMatchObject({
-      status: 409,
-      code: "substream_member_needs_workstream_access",
-      message: "Add this person to the work stream before adding them to a substream.",
-    });
+      { userId: MEMBER_ID, operationId: "outsider-child-add" }, true,
+    )).resolves.toMatchObject({ outcome: "added" });
+    const viewer = (substream?: string) => parent.authorizeViewer({ workspaceId: WORKSPACE_ID,
+      parentId: PERSONAL_ROOM_ID, userId: MEMBER_ID, ...(substream ? { substreamId: asSubstreamId(substream) } : {}) });
+    expect(await viewer(substreamId)).toMatchObject({ authorized: true });
+    expect(await viewer()).toMatchObject({ authorized: false });
+    expect(await viewer(siblingId)).toMatchObject({ authorized: false });
+    const relationship = await readWorkspaceRelationship(env.DB, WORKSPACE_ID, MEMBER_ID);
+    const listed = await parent.readSharedWorkstream({ workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID,
+      userId: MEMBER_ID, membershipIncarnation: relationship!.incarnation });
+    expect(listed?.conversations.map((conversation) => conversation.substreamId)).toEqual([substreamId]);
+    // Search, artifacts and attachments ask the same question through the
+    // canonical access check, and get the same answer.
+    const access = createAccessContext(TEST_ENV, { ...AUTH, userId: MEMBER_ID });
+    const address = { kind: "conversation" as const, workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID };
+    expect(await access.check({ ...address, substreamId: asSubstreamId(substreamId) })).toMatchObject({ status: "allowed" });
+    expect(await access.check({ ...address, substreamId: asSubstreamId("0") })).toMatchObject({ status: "denied" });
+    expect(await access.check({ ...address, substreamId: asSubstreamId(siblingId) })).toMatchObject({ status: "denied" });
+    // Their own membership is authority enough to manage the roster.
+    await expect(new SubstreamCreationService(TEST_ENV, { ...AUTH, userId: MEMBER_ID }).changeParticipant(
+      PERSONAL_ROOM_ID, substreamId,
+      { userId: PARTICIPANT_ID, operationId: "outsider-adds-participant" }, true,
+    )).resolves.toMatchObject({ outcome: "added" });
   });
 
   it("renames a substream through the conversation that owns its title", async () => {
