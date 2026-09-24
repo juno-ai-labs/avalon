@@ -2119,20 +2119,6 @@ export function Sidebar({
     void navigate(`/spaces/${created.id}`);
   }, [navigate, onCreateSpace]);
 
-  // Right-clicking empty space in the channel list offers the same creation
-  // items as the header's button, minus the Space one.
-  const channelListMenu = spaces !== undefined && spacesReady && !spacesReadOnly;
-  const withChannelListMenu = (list: React.JSX.Element): React.JSX.Element => channelListMenu
-    ? <NewWorkstreamMenu
-        lockedSpaceId={selectedSpaceId}
-        offer="channel"
-        spaces={placementSpaces}
-        trigger="context"
-        onCreateChannel={createChannelFromSidebar}
-        onCreateSpace={createSpaceFromSidebar}
-      >{list}</NewWorkstreamMenu>
-    : list;
-
   const moveChannelFromSelectedSpace = useCallback((
     sourceSpaceId: string,
     targetSpaceId: string,
@@ -2336,7 +2322,19 @@ export function Sidebar({
         </div>
         }
 
-        {withChannelListMenu(<SidebarScroll
+        {/* Right-clicking empty space in the channel list offers the header
+            button's channel items, locked to the Space the list shows. Always
+            mounted, so the list is not rebuilt when the Spaces arrive. */}
+        <NewWorkstreamMenu
+          disabled={spaces === undefined || !spacesReady || spacesReadOnly}
+          lockedSpaceId={selectedSpaceId}
+          offer="channel"
+          spaces={placementSpaces}
+          trigger="context"
+          onCreateChannel={createChannelFromSidebar}
+          onCreateSpace={createSpaceFromSidebar}
+        >
+        <SidebarScroll
           as="nav"
           aria-label={spaces === undefined ? 'Organization navigation' : 'Channels'}
           onClick={() => setSidebarOpen(false)}
@@ -2592,7 +2590,8 @@ export function Sidebar({
 
           </section>
           )}
-        </SidebarScroll>)}
+        </SidebarScroll>
+        </NewWorkstreamMenu>
 
         {/*
           OnboardingChecklist is disabled: it was left over from a demo and
