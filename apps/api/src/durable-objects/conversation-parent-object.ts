@@ -170,6 +170,7 @@ export interface ConversationParentIdentity {
 
 export type DirectoryCommonEffect = Extract<ConversationEffect, { kind: "directory_common" }>;
 export type DirectoryUserEffect = Extract<ConversationEffect, { kind: "directory_user" }>;
+export type DirectoryProjectionKind = DirectoryCommonEffect["kind"] | DirectoryUserEffect["kind"];
 
 interface ProjectionKeyRow extends Record<string, SqlStorageValue> {
   next_version: number;
@@ -299,8 +300,9 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
    *
    * Nothing but a Channel answers yes, which is why the default is no.
    */
-  protected forwardsChildProjection(substreamId: string): boolean {
+  protected forwardsChildProjection(substreamId: string, kind: DirectoryProjectionKind): boolean {
     void substreamId;
+    void kind;
     return false;
   }
 
@@ -524,7 +526,7 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
         // numbered independently of the parent's aggregate and of every other
         // child's. Read after the upsert above, because that is what decided
         // whether this child is one whose projection leaves at all.
-        } else if (this.forwardsChildProjection(substreamId)) {
+        } else if (this.forwardsChildProjection(substreamId, "directory_common")) {
           this.enqueueProjection(
             `substream:${substreamId}:common`, envelope.effect, now, substreamId,
           );
@@ -537,7 +539,7 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
           const aggregate = this.aggregateUser(envelope.effect.userId);
           this.onChildUserAggregate(substreamId, envelope.effect.userId, aggregate, envelope, now);
           if (forwards) this.enqueueProjection(`user:${envelope.effect.userId}`, aggregate, now);
-        } else if (this.forwardsChildProjection(substreamId)) {
+        } else if (this.forwardsChildProjection(substreamId, "directory_user")) {
           this.enqueueProjection(
             `substream:${substreamId}:user:${envelope.effect.userId}`,
             envelope.effect,
