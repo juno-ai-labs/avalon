@@ -266,6 +266,22 @@ describe('associative guest navigation', () => {
     ]);
   });
 
+  it('adds a member\'s breakout-only Channel after their own, and leaves a Channel they already list alone', () => {
+    const own = summary('completed', '00000000-0000-7000-8000-0000000000f9');
+    expect(associativeWorkstreamsForSidebar(directory, [own], true)).toEqual([
+      own,
+      expect.objectContaining({
+        id: workstreamId,
+        title: 'Launch plan',
+        associativeSubstreamId: directory.workstreams[0]!.conversations[0]!.substreamId,
+        spaceIds: [directory.spaces[0]!.id],
+      }),
+    ]);
+    const listed = summary('completed');
+    expect(associativeWorkstreamsForSidebar(directory, [listed], true)).toEqual([listed]);
+    expect(associativeWorkstreamsForSidebar(undefined, [listed], true)).toEqual([listed]);
+  });
+
   it('synthesizes the Channel ancestor when only one Breakout is shared', () => {
     expect(associativeWorkstreamsForSidebar(directory, [])).toEqual([
       expect.objectContaining({
