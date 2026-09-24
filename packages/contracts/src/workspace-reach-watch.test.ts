@@ -1,7 +1,7 @@
-import { WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
 
-import { watchWorkspaceReach, type ReachSocket } from "./reach-watch";
+import { WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE } from "./index";
+import { watchWorkspaceReach, type ReachSocket } from "./workspace-reach-watch";
 
 type Listener = (event: never) => void;
 

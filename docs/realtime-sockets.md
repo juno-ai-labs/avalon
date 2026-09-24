@@ -354,8 +354,14 @@ or holds an active impersonation relationship to them. It is not a
 `workspace_sync` topic, because the topic enum is closed and a new value would
 fail every older desktop's subscribe answer; an unknown event `type` is ignored
 instead. It is not on the waterline or replayed, so a listener rereads on
-reconnect. Sideline is the listener today, and the Rally desktop ignores it
-([`impersonation.md`](impersonation.md)).
+reconnect. Three clients listen. The desktop's own workspace socket rereads the
+guest navigation (`shared-navigation`) on it: a member's Channel rows and Space
+pages already move on the same flip, but a guest is sent no Space snapshot, so
+without it a guest's new grant waited for window focus. Hosts with no workspace
+socket of their own — Sideline ([`impersonation.md`](impersonation.md)) and the
+lite browser client ([`browser-client.md`](browser-client.md)) — hold one
+through `watchWorkspaceReach` in `@rally/contracts/workspace-reach-watch`, which
+subscribes, discards the sidebar, and reports only this event and reconnects.
 
 The directory page in that payload deliberately excludes system work streams.
 Debug enabled is rare and engineers only, and the server does not hold the

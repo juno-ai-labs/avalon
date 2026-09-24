@@ -8,6 +8,7 @@ import {
   WorkspaceWorkstreamRecencyEventSchema,
   WorkspaceFeatureFlagsEventSchema,
   WorkspacePresenceEventSchema,
+  WorkspaceReachChangedEventSchema,
   WorkspaceSocketSyncEventSchema,
   WorkspaceWorkstreamPageEventSchema,
   WorkspaceWorkstreamStateEventSchema,
@@ -686,6 +687,15 @@ export function WorkspaceSocketProvider({
             void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
             return;
           }
+          const reachChanged = safeParseSocketEvent(WorkspaceReachChangedEventSchema, decoded);
+          if (reachChanged.success) {
+            // This person joined or left a Channel or Breakout. A member's
+            // sidebar already moved: the Channel row and the Space pages are
+            // pushed on the same flip. A guest's is the associative read,
+            // which no Space snapshot reaches, so it is read again here.
+            void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
+            return;
+          }
           const spaceConversations = safeParseSocketEvent(
             WorkspaceSpaceConversationsEventSchema, decoded,
           );
@@ -744,6 +754,7 @@ export function WorkspaceSocketProvider({
               ['workspace_sidebar_list', 'sidebar list', sidebarList],
               ['workspace_space_snapshot', 'space snapshot', spaceSnapshot],
               ['space_conversations_changed', 'space conversations nudge', spaceConversations],
+              ['workspace_reach_changed', 'reach change', reachChanged],
             ],
           );
         });
