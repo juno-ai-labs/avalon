@@ -2651,13 +2651,8 @@ export class WorkstreamDO extends ConversationParentDurableObject {
 
   /**
    * Running background agents, in total and by the conversation each works
-   * for, so a composer shows only the agents started from its own
-   * conversation. An agent from before roots were recorded counts in the main
-   * conversation.
-   *
-   * The per-conversation map holds only `visibleRoots`: a private Breakout's
-   * id is not the viewer's to learn unless they are a member of it. The total
-   * keeps its earlier Channel-wide meaning for desktop builds that read it.
+   * for. The map holds only `visibleRoots`: a private Breakout's id is not the
+   * viewer's to learn unless they are a member of it.
    */
   private backgroundAgentCounts(
     visibleRoots: ReadonlySet<string>,
@@ -2692,7 +2687,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
    *
    * A background agent is excluded because it is not a conversation anybody
    * opens: it is a worker this object starts, counted in the Channel's
-   * `backgroundAgentCount` and drawn nowhere as a row. Forwarding those would
+   * `backgroundAgentCounts` and drawn nowhere as a row. Forwarding those would
    * put one Queue message and one workspace row on every step a worker takes.
    * The flag is read back from the child's own stored projection, which the
    * caller has just upserted, so a common effect is classified by the payload
