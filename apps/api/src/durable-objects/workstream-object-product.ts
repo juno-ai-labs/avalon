@@ -4583,7 +4583,13 @@ export class WorkstreamObjectProductService {
     // sent before it is still queued for Rally. Written straight away it would
     // take a transcript sequence ahead of that input, and a reply would read
     // above the message it answers. It queues behind instead, and starts no run.
-    const waitsForInputAhead = !shouldInvoke && this.loops.hasInputAhead(preparation.input_sequence);
+    // Not behind a stopped background agent: its queue does not move until
+    // someone resumes it, and the room should not wait on that.
+    const waitsForInputAhead = !shouldInvoke
+      && this.storage.sql.exec<{ stopped: number }>(
+        "SELECT COUNT(*) AS stopped FROM background_agent WHERE stopped_at IS NOT NULL",
+      ).one().stopped === 0
+      && this.loops.hasInputAhead(preparation.input_sequence);
     const now = preparation.created_at;
     const messageId = preparation.input_id;
     const transcriptMessage = await this.transcript.prepareParticipantMessage({

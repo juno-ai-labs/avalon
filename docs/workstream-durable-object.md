@@ -964,27 +964,17 @@ falls forward to the next idle activation and is never lost. Multiple inputs
 remain distinct; no later steer overwrites an earlier one.
 
 A human message the addressing classifier says is for the people in the room
-is normally written straight to the transcript. **Not while anything sent
-before it is still queued or preparing:** it would take a transcript sequence
-ahead of that input and read above it for good, so a reply lands over the
-request it answers. It is admitted instead as a pending input with
-`starts_run = 0`, in the same queue and the same arrival order. Such an input
-is never a steer and never an activation candidate, and it never touches Bind
-itself; the next input's gap-fill appends it as an overheard turn, like any
-message that started no run. It lands the moment nothing is ahead of it: in
-the activation or safe-step transaction that delivers the input it waited on,
-directly under that input and ahead of anything the new step writes, or, when
-what was ahead fails or is reordered away while the loop is idle, at the start
-of the next drain, which `nextLoopWorkAt` asks for. A steer behind a waiting
-one of these is held until it has landed: a safe step promotes only the steers
-ahead of the first, so `[steer A, room B, steer C]` reads A, B, then C at the
-next step, never A, C, B. Meanwhile every viewer sees
-it in the feed where it was sent, marked **Unseen** like any queued message.
+is written straight to the transcript, **unless anything sent before it is still
+queued or preparing**. Then it queues behind as `starts_run = 0`: it never starts
+a run, and it lands directly under the input it waited on, at that input's
+activation or safe step, or at the next idle drain if what was ahead fails. A
+safe step promotes only the steers ahead of the first such message, so a later
+steer never lands above it. The run that answers the input reads it as said to
+the room.
 While the loop is executing, Electron always admits a newly composed message
 as `queue`. Slack and other external producers still send `steer` when they
-mean a safe-step interruption. The pending set is painted as a list attached
-to the top of the composer — slightly inset, overlapping the input — with the
-author's avatar and a hover drag handle. Reorder is a REST `PUT` of the full
+mean a safe-step interruption. The pending set renders in the feed for every
+viewer, each input where it was sent, marked **Unseen**. Reorder is a REST `PUT` of the full
 visible `inputIds` list; the object permutes existing `input_sequence` values
 and fans `loop_input_upserted` to every connected viewer. Prepared content
 stays immutable. Reconnect never infers delivery mode or order from local
@@ -1861,34 +1851,42 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 ### 2026-09-24 — A message for the room waits behind input queued before it
 
 **What changed:** Schema v68 adds `pending_loop_inputs.starts_run` (default
-`1`) and recreates the prepared-fields trigger to cover it. A human message
-classified as not addressing Rally is admitted as a pending input with
-`starts_run = 0` when any input or preparing reservation sits ahead of it in
-the queue, and is otherwise written straight to the transcript as before.
-Activation, safe-step settlement and the idle drain each land the leading
-`starts_run = 0` inputs once nothing is ahead of them; none of them starts a
-run or appends to Bind.
+`1`) with its own immutability trigger. A human message classified as not
+addressing Rally is admitted as a pending input with `starts_run = 0` when any
+input or preparing reservation sits ahead of it, unless the room is a stopped
+background agent; otherwise it is written straight to the transcript as before.
+Activation, safe-step settlement and the idle drain land the leading
+`starts_run = 0` inputs once nothing is ahead of them, and the first two append
+them to Bind as overheard turns after the input just delivered. A safe step
+promotes only the steers ahead of the first `starts_run = 0` input. Every queued
+message's pill in the feed now reads **Unseen**.
 
 **Why:** In a production breakout one member asked Rally for something while a
 run was going, so it queued; another member replied "Agreed" to it seconds
 later without addressing Rally. The reply went straight to the transcript and
 the request only landed when the run ended 90 seconds later, so the feed showed
-the agreement two rows above what it agreed with, permanently.
+the agreement two rows above what it agreed with, permanently. The old pills
+described delivery mechanics and fit neither kind of queued message; the member
+asked for one word.
 
 **Considered and rejected:** Giving a queued input its transcript sequence at
 admission and delivering it to the model later. The feed would then show the
 request above a reply that never saw it, and transcript order would stop
 matching what the model read, which the gap-fill and the reorder control both
-assume. Labelling the queued message in the client was rejected as treating the
-symptom.
+assume. Leaving the room message out of the run it follows was rejected too:
+it was sent before that run started, and an addition like "include the Series B
+ones too" has to reach it.
 
-**Consequences:** A message for the room can wait, shown to everyone in the
-feed as **Unseen**, until the input ahead of it lands, which during a run is up to the run's
-length. The one-read `hasInputAhead` check runs before the admission
-transaction; if the input ahead lands in that window the message still queues
-and lands at the next safe step or drain. A future delivery path that removes a
-pending input without promoting it must leave the loop able to find the
-`starts_run = 0` inputs it exposes, as `nextLoopWorkAt` does today.
+**Consequences:** A message for the room can wait, shown to everyone as
+**Unseen**, until the input ahead of it lands, which during a run is up to the
+run's length. A steer sent after it waits one more safe step. The
+`hasInputAhead` check runs before the admission transaction; if the input ahead
+lands in that window the message still queues and lands at the next safe step
+or drain. A queue that stalls for another reason (a withheld tool batch
+awaiting repair) now holds room messages behind it too. A future delivery path
+that removes a pending input without promoting it must leave the loop able to
+find the `starts_run = 0` inputs it exposes, as `nextLoopWorkAt` does today.
+
 ### 2026-09-24 — Background agents stop counting as breakouts
 
 **What changed:** A delegated agent writes its `background_agent` row before it
