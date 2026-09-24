@@ -3783,6 +3783,20 @@ export type PluginAuthorization = "authorized" | "denied" | "indeterminate";
  */
 export type PluginAuthorizationOccasion = "activation" | "continuation";
 
+/** Synchronous, best-effort diagnostics for the first provider-bound turn. */
+export interface HarnessStartupTiming {
+  phase: "plugin_runtime" | "skill_runtime" | "plugin_rehydration" | "resident_context"
+    | "projection_setup" | "activation_boundary" | "projection_validation"
+    | "context_catalog" | "context_catalog_response" | "context_catalog_body"
+    | "context_catalog_parse" | "context_catalog_entries"
+    | "plugin_reauth" | "provider_resident_context" | "before_model_liveness"
+    | "provider_transcript_validation" | "provider_system_projection" | "provider_projection_hash"
+    | "provider_boundary" | "assistant_reservation" | "assistant_transition"
+    | "request_message_conversion" | "route_pricing" | "route_plan" | "route_preparation";
+  durationMs: number;
+  catalogSource?: "provided" | "cache" | "inflight" | "fetch" | "fallback";
+}
+
 export interface RunHarnessInput {
   /** Optional settled checkpoint capture, using the same runtime and Bind loop as production. */
   checkpoints?: RallyCheckpointPort;
@@ -3956,6 +3970,8 @@ export interface RunHarnessInput {
   onInferenceDelay?: (event: { inferenceRequestId: string; turnId: string; active: boolean }) => void | Promise<void>;
   /** Receives the complete provider request body immediately before dispatch. */
   onInferenceRequest?: (request: InferenceRequestEvent) => void | Promise<void>;
+  /** Observational only; a failing listener must not affect model execution. */
+  onStartupTiming?: (timing: HarnessStartupTiming) => void;
   onInferenceAttempt?: (attempt: InferenceAttemptEvent) => void | Promise<void>;
   onTranscriptIssues?: (issues: Array<{ kind: string; index?: number; healed?: boolean }>) => void | Promise<void>;
   /**

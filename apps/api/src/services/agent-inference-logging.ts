@@ -4,13 +4,44 @@ import type {
 } from "@rally/agent-harness";
 import type { Env } from "../env";
 import { runtimeDeferral, type WorkDeferral } from "../lib/defer";
-import { logStructuredEvent } from "../observability/logger";
+import { logStructuredEvent, type LogFields } from "../observability/logger";
 import {
   captureStreamingInferenceAttempt,
   captureStreamingInferenceRequest,
 } from "./inference-lakehouse";
 
 type AgentInferenceSource = "workstream" | "inline_child";
+
+/** One diagnostic for the first provider request of an eligible durable attempt. */
+export function createInferenceStartBreakdownReporter(
+  env: Env,
+  eligible: boolean,
+  snapshot: (inferenceRequestId: string) => {
+    fields: LogFields;
+    activationAuthorizationChecks: number;
+    activationDurations: ReadonlyMap<string, Record<string, number>>;
+  },
+): (inferenceRequestId: string) => void {
+  let observed = false;
+  return (inferenceRequestId) => {
+    if (observed) return;
+    observed = true;
+    if (!eligible) return;
+    const { fields, activationAuthorizationChecks, activationDurations } = snapshot(inferenceRequestId);
+    logStructuredEvent(env, "info", "agent_inference_start_breakdown", {
+      ...fields,
+      initial_activation_auth_check_count: activationAuthorizationChecks,
+      // The structured logger truncates arrays at 50. Numeric object keys
+      // retain every plugin and avoid treating a plugin ID as a sensitive key.
+      initial_activation_details: Object.fromEntries(
+        [...activationDurations].map(([pluginId, durations], index) => [
+          `plugin_${index}`,
+          { plugin_id: pluginId, ...durations },
+        ]),
+      ),
+    });
+  };
+}
 
 export interface AgentInferenceLogContext {
   workspaceId: string;
