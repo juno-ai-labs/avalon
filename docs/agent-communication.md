@@ -91,7 +91,7 @@ not a substitute for those durable message attachments. Model-facing tools keep
 the existing composed-message and attachment limits, also enforced at admission.
 
 Conversation migration 60 stores the background principal and a stop timestamp.
-Migration 68 adds the root conversation: the first conversation up the
+Migration 69 adds the root conversation: the first conversation up the
 delegation chain that nobody delegated. `start_agent` sets it to the starter's
 own conversation, or to the starter's root when the starter is itself a
 background agent.
@@ -290,7 +290,7 @@ owned Sidekick contact. Complete desktop behavior remains an implementation gate
 ### 2026-09-24 — Count background agents in the conversation that started them
 
 **What changed:** Each background agent records its root conversation
-(conversation migration 68) and carries it in its directory projection. The
+(conversation migration 69) and carries it in its directory projection. The
 Channel sends running counts per root conversation, limited to the ones the
 viewer can see, and the composer reads the one for the conversation it belongs
 to.

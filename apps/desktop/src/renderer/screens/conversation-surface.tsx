@@ -505,10 +505,22 @@ export function manualElicitationResponse(
   return { answer: customResponse, customResponse };
 }
 
+/**
+ * The sentence a refusal carries, when the server wrote one for the person in
+ * front of it: a 4xx with a code, whose message the route chose. Anything else
+ * — a network failure, a 5xx, a body with no error — keeps the caller's
+ * generic sentence rather than a status line.
+ */
+export function refusalMessage(error: unknown): string | undefined {
+  return error instanceof ApiError && error.status >= 400 && error.status < 500 && error.code
+    ? error.message : undefined;
+}
+
 export function AddParticipantDialog({
   current,
   privateSubstream = false,
   failure,
+  failureMessage,
   members,
   open,
   pending,
@@ -521,6 +533,8 @@ export function AddParticipantDialog({
   current: WorkspaceMember[];
   privateSubstream?: boolean;
   failure?: 'add' | 'remove' | undefined;
+  /** The server's own sentence for a refusal, shown in place of the generic one. */
+  failureMessage?: string | undefined;
   members: WorkspaceMember[];
   open: boolean;
   pending: boolean;
@@ -548,9 +562,9 @@ export function AddParticipantDialog({
       open={open}
       title="Add a participant"
     >
-      {failure ? <InlineError>{failure === 'add'
+      {failure ? <InlineError>{failureMessage ?? (failure === 'add'
         ? 'That participant couldn’t be added.'
-        : 'That participant couldn’t be removed.'}</InlineError> : null}
+        : 'That participant couldn’t be removed.')}</InlineError> : null}
       {sharing}
       <div className="member-action-list">
         {listed.map((member) => {
@@ -2787,6 +2801,7 @@ export function ConversationSurface({
         privateSubstream={participantDialogSubstreamId !== '0'}
         current={participantDialogSubstreamId === '0' && renderSidebar ? sidebarDetail.participants : displayedDetail.participants}
         failure={addParticipant.error ? 'add' : removeParticipant.error ? 'remove' : undefined}
+        failureMessage={refusalMessage(addParticipant.error ?? removeParticipant.error)}
         members={visibleMembers}
         onAdd={(member) => {
           removeParticipant.reset();

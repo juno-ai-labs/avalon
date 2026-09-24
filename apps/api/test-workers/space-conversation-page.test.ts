@@ -612,6 +612,26 @@ describe("space dashboard conversation page", () => {
     expect((await page(spaceId, MEMBER)).items).toEqual([]);
   });
 
+  it("given a breakout in a Channel this viewer cannot see, then that Channel is a conversation-directory candidate for them alone", async () => {
+    await openChannelObject(PRIVATE_CHANNEL);
+    await publishChannel(PRIVATE_CHANNEL, [
+      channelCommonEffect("Private Channel", { scope: "personal" }),
+      viewerEffect(OWNER),
+    ]);
+    await publishBreakout(PRIVATE_CHANNEL, BREAKOUT_ONE, [
+      breakoutCommonEffect("Offer letter"),
+      viewerEffect(OWNER) as ConversationEffect,
+      viewerEffect(MEMBER) as ConversationEffect,
+    ]);
+    const candidates = (userId: UserId) => workspace().listScopeGrantCandidates({
+      workspaceId: WORKSPACE_ID, userId, membershipIncarnation: userId,
+    });
+    // The member reaches the Channel only through its breakout. The owner
+    // already sees the Channel, so the member directory lists it for them.
+    expect(await candidates(MEMBER)).toEqual([PRIVATE_CHANNEL]);
+    expect(await candidates(OWNER)).toEqual([]);
+  });
+
   it("given a breakout whose viewer row is not listable, when that person reads the page, then it is absent", async () => {
     const spaceId = await reserve("Hiring");
     await openChannelObject(CHANNEL_A);
