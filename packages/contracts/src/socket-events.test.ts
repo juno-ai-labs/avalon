@@ -25,6 +25,13 @@ describe("socket event compatibility", () => {
     expect(safeParseSocketEvent(ClientSocketEventSchema, { type: "subscribe", afterSequence: 0, future: true }).success).toBe(true);
     expect(safeParseSocketEvent(WorkspaceSocketClientEventSchema, { type: "subscribe", afterWaterline: 0, future: true }).success).toBe(true);
   });
+  it("accepts old and correlated workspace subscriptions while rejecting malformed attempt IDs", () => {
+    const subscribe = { type: "subscribe", afterWaterline: 0 };
+    const diagnosticAttemptId = "018f22f2-4c22-7abc-8def-0123456789ab";
+    expect(WorkspaceSocketClientEventSchema.safeParse(subscribe).success).toBe(true);
+    expect(WorkspaceSocketClientEventSchema.safeParse({ ...subscribe, diagnosticAttemptId }).success).toBe(true);
+    expect(WorkspaceSocketClientEventSchema.safeParse({ ...subscribe, diagnosticAttemptId: "not-a-uuid" }).success).toBe(false);
+  });
   it("handles additive fields inside ordinary union members", () => {
     const union = z.strictObject({ row: z.union([z.strictObject({ first: z.string() }), z.strictObject({ second: z.number() })]) });
     expect(safeParseSocketEvent(union, { row: { second: 2, extra: true } })).toEqual({ success: true, data: { row: { second: 2 } } });

@@ -20,6 +20,7 @@ import {
   type WorkspaceWorkstreamPageEvent,
   safeParseSocketEvent,
 } from "@rally/contracts";
+import type { TelemetryEventProperties } from '@rally/contracts/telemetry';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   createContext,
@@ -46,7 +47,7 @@ import {
   spaceConversationsQueryKey,
 } from './sidebar-list-store';
 import { realtimeSocketTelemetry } from './socket-telemetry';
-import { uuidV7 } from './telemetry';
+import { reportTelemetryProductIntent, uuidV7 } from './telemetry';
 import type { WorkstreamSummary } from './types';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { hydrateWorkspaceDirectory, mirrorWorkspaceDirectory } from './workspace-directory-cache';
@@ -300,6 +301,10 @@ export function WorkspaceSocketProvider({
     let connecting = false;
     let attempt = 0;
     const socketTelemetry = realtimeSocketTelemetry('workspace');
+    const reportHandshake = (
+      attemptId: string,
+      phase: TelemetryEventProperties<'workspace_socket_handshake'>['phase'],
+    ): void => reportTelemetryProductIntent({ kind: 'workspace_socket_handshake', attemptId, phase });
     const isOffline = (): boolean => navigator.onLine === false;
     let lastWaterline = -1;
     let presenceRevision = 0;
@@ -467,7 +472,9 @@ export function WorkspaceSocketProvider({
     const connect = async (): Promise<void> => {
       if (stopped || permanentlyClosed || connecting) return;
       if (socket?.readyState === WebSocket.CONNECTING || socket?.readyState === WebSocket.OPEN) return;
+      const diagnosticAttemptId = uuidV7();
       if (navigator.onLine === false) {
+        reportHandshake(diagnosticAttemptId, 'offline_blocked');
         setState('unavailable');
         return;
       }
@@ -477,21 +484,28 @@ export function WorkspaceSocketProvider({
       const ticketAbort = new AbortController();
       activeTicketAbort = ticketAbort;
       try {
+        reportHandshake(diagnosticAttemptId, 'ticket_requested');
         const ticket = await api.getWorkspaceSocketTicket(ticketAbort.signal);
         if (stopped) return;
+        reportHandshake(diagnosticAttemptId, 'ticket_received');
         // The offline handler normally aborts an in-flight ticket. This closes
         // the narrower race where the ticket settles just before that handler:
         // never dial after the network transition, and keep it distinct from a
         // transport failure.
         if (isOffline()) {
+          reportHandshake(diagnosticAttemptId, 'offline_blocked');
           socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'offline' });
           setState('unavailable');
           return;
         }
         const next = new WebSocket(ticket.url, ticket.protocols);
         socket = next;
+        let firstSyncObserved = false;
+        let firstSidebarApplied = false;
+        let syncRejectionReported = false;
         next.addEventListener('open', () => {
           if (stopped || socket !== next) return;
+          reportHandshake(diagnosticAttemptId, 'transport_open');
           socketTelemetry.connected(attempt);
           attempt = 0;
           // A new transport has not inherited the prior one's Space snapshot.
@@ -502,7 +516,9 @@ export function WorkspaceSocketProvider({
           next.send(JSON.stringify({
             type: 'subscribe',
             afterWaterline: Math.max(0, lastWaterline),
+            diagnosticAttemptId,
           }));
+          reportHandshake(diagnosticAttemptId, 'subscribe_sent');
           // No directory invalidation here: subscribing is answered with the
           // whole sidebar, so a reconnect reconverges from that payload rather
           // than from a refetch the client has to ask for.
@@ -523,6 +539,10 @@ export function WorkspaceSocketProvider({
           }
           const sync = safeParseSocketEvent(WorkspaceSocketSyncEventSchema, decoded);
           if (sync.success) {
+            if (!firstSyncObserved) {
+              firstSyncObserved = true;
+              reportHandshake(diagnosticAttemptId, 'sync_received');
+            }
             if (!subscribed) {
               subscribed = true;
               sendPresence();
@@ -537,6 +557,10 @@ export function WorkspaceSocketProvider({
             const directoryNeedsReconciling = sync.data.sidebar
               ? applyConnectedSidebar(sync.data.sidebar)
               : false;
+            if (sync.data.sidebar && !firstSidebarApplied) {
+              firstSidebarApplied = true;
+              reportHandshake(diagnosticAttemptId, 'sync_applied');
+            }
             if (sync.data.waterline <= lastWaterline) return;
             lastWaterline = sync.data.waterline;
             setTopicWaterlines((current) => {
@@ -694,6 +718,11 @@ export function WorkspaceSocketProvider({
           // The message's own `type` is what picks the schema that should have
           // read it; `describeZodIssues` then names the field it rejected,
           // which is schema shape rather than the message's data.
+          if (!syncRejectionReported && typeof decoded === 'object' && decoded !== null
+            && 'type' in decoded && decoded.type === 'workspace_sync') {
+            syncRejectionReported = true;
+            reportHandshake(diagnosticAttemptId, 'sync_rejected');
+          }
           reportSocketContractSkew(
             typeof decoded === 'object' && decoded !== null && 'type' in decoded
               ? (decoded as { type: unknown }).type
@@ -767,10 +796,12 @@ export function WorkspaceSocketProvider({
         });
       } catch (error) {
         if (!stopped) {
+          const offline = isOffline();
+          if (offline) reportHandshake(diagnosticAttemptId, 'offline_blocked');
           socketTelemetry.disconnected({
             attempts: attempt,
-            retrying: !isOffline(),
-            cause: isOffline()
+            retrying: !offline,
+            cause: offline
               ? 'offline'
               : isSocketTicketRequestTimeoutError(error) ? 'ticket_timeout' : 'ticket_failed',
           });

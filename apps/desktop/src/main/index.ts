@@ -391,6 +391,11 @@ async function reportTelemetryProductIntent(
   if (operation) await telemetryBreadcrumbs?.add(operation).catch(() => undefined);
   if (!telemetryReporter) return;
   switch (intent.kind) {
+    case 'workspace_socket_handshake':
+      await telemetryReporter.workspaceSocketHandshake(
+        { attemptId: intent.attemptId, phase: intent.phase }, windowContext,
+      );
+      return;
     case 'onboarding_region_selected':
       await telemetryReporter.onboardingRegionSelected(intent.selectedRegion, intent.entrypoint, windowContext);
       return;

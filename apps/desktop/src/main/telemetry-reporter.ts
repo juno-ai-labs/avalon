@@ -5,6 +5,7 @@ import {
   type TelemetryCategory,
   type TelemetryEnvelope,
   type TelemetryEventName,
+  type TelemetryEventProperties,
   type TelemetryIdentityScope,
   type TelemetryMenuBarAction,
   type TelemetrySource,
@@ -149,6 +150,17 @@ export class TelemetryReporter {
 
   async desktopSession(state: 'started' | 'ended', continuouslyEligible: boolean): Promise<void> {
     await this.capture('desktop_session', 'desktop-main', 'installation', { state, continuouslyEligible });
+  }
+
+  workspaceSocketHandshake(
+    properties: TelemetryEventProperties<'workspace_socket_handshake'>,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.capture('workspace_socket_handshake', 'desktop-renderer', 'workspace-user', properties, {
+      authenticated: null,
+      anonymous: null,
+      windowContext,
+    }).then(() => undefined);
   }
 
   crashUploadState(
