@@ -39,8 +39,9 @@ The WorkspaceDO index supplies candidates only, and it is one of two sources:
 a Channel where this person may list a Breakout but cannot see the Channel
 itself is a candidate too, read from `workspace_breakout_viewers`. That is how
 a member seated in a legacy Breakout of a Channel they cannot read finds it;
-the parent's `canReadConversation` then admits the Breakout alone. Directory reads admit each candidate
-at its canonical parent concurrently and preserve ordering. A final relationship
+the parent's `canReadConversation` then admits the Breakout alone.
+Directory reads admit each candidate at its canonical parent concurrently and
+preserve ordering. A final relationship
 incarnation/revision check fences the combined response. For hierarchical navigation,
 a child-only share names its Channel so the browser can place the authorized Breakout
 under the right container, while Main, sibling Breakouts, Main participants and Main
