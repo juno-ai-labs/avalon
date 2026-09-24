@@ -246,7 +246,10 @@ export function useWorkstreamControlSocket(
   initialReasonRef.current = initialReason;
   useEffect(() => {
     if (!api || !enabled) return;
-    const releaseData = retainQueryData(queryClient, [['workstream-children', workstreamId]]);
+    const releaseData = retainQueryData(queryClient, [
+      ['workstream-children', workstreamId],
+      ['workstream-background-agents', workstreamId],
+    ]);
     let stopped = false;
     /**
      * The children the local cache was last told to keep. The control
@@ -317,7 +320,7 @@ export function useWorkstreamControlSocket(
       if (directories.some(([, directory]) => directory?.workstreams.some((item) => item.parentId === workstreamId))) {
         void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
       }
-      queryClient.setQueryData(['workstream-background-agents', workstreamId], metadata.backgroundAgentCount ?? null);
+      queryClient.setQueryData(['workstream-background-agents', workstreamId], metadata.backgroundAgentCounts ?? null);
       const state = metadataState(metadata);
       const applied = applyVersionedWorkstreamState(queryClient, {
         workstreamId,

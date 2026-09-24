@@ -24,7 +24,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 68;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 69;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3381,6 +3381,11 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
            SELECT RAISE(ABORT, 'pending_loop_input_prepared_fields_are_immutable');
          END`,
     ],
+  },
+  {
+    version: 69,
+    description: "record which conversation a background agent works for",
+    statements: [`ALTER TABLE background_agent ADD COLUMN root_substream_id TEXT`],
   },
 ];
 

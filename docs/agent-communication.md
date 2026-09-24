@@ -16,7 +16,7 @@ and UI work is tracked in the [implementation plan](PRDs/2026-09-14_uninterrupte
 | `apps/api/src/services/agent-communication-plugin.ts` | Model tools and coordination guidance. |
 | `apps/api/src/services/agent-message-content.ts` | Durable sender/reply content, rendered consistently on admission and context rebuild. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Independent execution, durable message admission and background stop gate. |
-| `apps/api/src/durable-objects/workstream-do.ts` | Owned archive stops and aggregate background count from child projections. |
+| `apps/api/src/durable-objects/workstream-do.ts` | Owned archive stops and per-conversation background counts from child projections. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Ephemeral count updates and clearing unavailable state. |
 | `apps/desktop/src/renderer/components/workstream-composer.tsx` | Ordinary message entry and a noninteractive background count. |
 | `apps/desktop/src/renderer/components/background-agent-activity.tsx` | Retained count label, composer-edge reveal, shimmer and fading number wheel. |
@@ -91,6 +91,10 @@ not a substitute for those durable message attachments. Model-facing tools keep
 the existing composed-message and attachment limits, also enforced at admission.
 
 Conversation migration 60 stores the background principal and a stop timestamp.
+Migration 69 adds the root conversation: the first conversation up the
+delegation chain that nobody delegated. `start_agent` sets it to the starter's
+own conversation, or to the starter's root when the starter is itself a
+background agent.
 Stopping also requests the existing active-execution stop. The timestamp holds
 pending work when the loop is idle; a newly accepted continuation clears it in
 the same transaction that admits the message.
@@ -176,11 +180,20 @@ at once. `list_agents` returns each teammate's `agentId`, name, description
 and execution status; the status says whether a teammate is still running
 without resuming it, and its reply is still the thing to wait for.
 
-Background identity travels in the existing child common-state projection.
-The conversation parent counts running background substreams, including nested
-workers under that parent, and sends the count with control metadata. The
-desktop holds it only while that connection is available and renders a singular
-or plural line above the composer. It exposes no worker inspection or direct
+Background identity travels in the existing child common-state projection,
+with the agent's root conversation beside the flag. The conversation parent
+counts running background substreams, including nested workers, grouped by
+root, and sends the counts with control metadata as `backgroundAgentCounts`.
+A composer shows only its own conversation's count, so agents a Breakout starts
+never appear in Main or in a sibling Breakout. Each viewer's map holds only Main
+and the private Breakouts they belong to, the same set as `privateChildren`, so
+a Breakout's id never reaches someone outside it. Archiving a Breakout does not
+stop the workers rooted in it: they finish as usual, counted only in the total,
+since no composer shows an archived Breakout. An agent from before roots were
+recorded counts in Main. `backgroundAgentCount`, the Channel total, stays on
+the frame for desktop builds that predate the split. The desktop holds the
+counts only while that connection is available and renders a singular or
+plural line above the composer. It exposes no worker inspection or direct
 chat. The count shimmers subtly, emerges from behind the composer, and retreats
 behind it when work ends or the count becomes unavailable. Count changes roll
 vertically with fading digits. Reduced-motion preferences disable these effects.
@@ -273,6 +286,26 @@ stop/replay/continuation, a worker reply to the foreground, and independently
 owned Sidekick contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
+
+### 2026-09-24 — Count background agents in the conversation that started them
+
+**What changed:** Each background agent records its root conversation
+(conversation migration 69) and carries it in its directory projection. The
+Channel sends running counts per root conversation, limited to the ones the
+viewer can see, and the composer reads the one for the conversation it belongs
+to.
+
+**Why:** The Channel sent one total, and every conversation's composer drew
+it, so two agents started from a Breakout read as "2 background agents
+running" in Main and in every other Breakout too. The root, not the direct
+starter, is what gets counted: a worker's own conversation is never opened, so
+a nested worker counted against it would show nowhere. This matches how
+Terminal resolves which sandbox a worker uses. Resolving the root through the
+Organization's `agent_delegations` on each metadata read was rejected: it adds
+a cross-object call to every control frame, while the root never changes after
+start and costs one column. Agents started before this change have no root and
+count in Main until they end; backfilling them was not worth it for workers
+that finish in minutes.
 
 ### 2026-09-19 — Ending the turn is the wait, the tools say so, and a silent completion is reported
 

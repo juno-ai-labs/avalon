@@ -194,13 +194,17 @@ describe('useWorkstreamControlSocket', () => {
     const queryKey = ['workstream-children', workstreamId];
     const screen = new QueryObserver<WorkstreamChildDirectory>(queryClient, { queryKey, enabled: false });
     const leave = screen.subscribe(() => undefined);
-    act(() => { socket.open(); socket.message(metadata(4, { privateChildren: [child], privateChildrenWaterline: 2 })); });
+    act(() => { socket.open(); socket.message(metadata(4, {
+      privateChildren: [child], privateChildrenWaterline: 2, backgroundAgentCounts: { [child.substreamId]: 1 },
+    })); });
     expect(screen.getCurrentResult().data?.privateChildren).toEqual([child]);
     leave();
     await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000); });
     const returned = new QueryObserver<WorkstreamChildDirectory>(queryClient, { queryKey, enabled: false });
     const leaveAgain = returned.subscribe(() => undefined);
     expect(returned.getCurrentResult().data?.privateChildren).toEqual([child]);
+    // The running count is pushed by the same socket and must survive with it.
+    expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toEqual({ [child.substreamId]: 1 });
     expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
     expect(socket.send.mock.calls.filter(([frame]) => frame !== 'ping')).toEqual([[JSON.stringify({ type: 'subscribe' })]]);
     // The version fence must survive with the roster too.
@@ -376,8 +380,8 @@ describe('useWorkstreamControlSocket', () => {
     await flushPromises();
     const first = FakeWebSocket.instances[0]!;
     act(() => first.open());
-    act(() => first.message(metadata(1, { backgroundAgentCount: 2 })));
-    expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toBe(2);
+    act(() => first.message(metadata(1, { backgroundAgentCounts: { [asSubstreamId('0')]: 2 } })));
+    expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toEqual({ '0': 2 });
     act(() => first.close(1012));
     expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toBeNull();
     await act(async () => {
@@ -408,8 +412,8 @@ describe('useWorkstreamControlSocket', () => {
     const second = FakeWebSocket.instances[1]!;
     act(() => second.open());
     expect(second.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe' }));
-    act(() => second.message(metadata(2, { backgroundAgentCount: 1 })));
-    expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toBe(1);
+    act(() => second.message(metadata(2, { backgroundAgentCounts: { [asSubstreamId('0')]: 1 } })));
+    expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toEqual({ '0': 1 });
     cancelWorkstreamFeedOpen(workstreamId, 100);
   });
 
@@ -506,8 +510,8 @@ describe('useWorkstreamControlSocket', () => {
     await flushPromises();
     const first = FakeWebSocket.instances[0]!;
     act(() => first.open());
-    act(() => first.message(metadata(1, { backgroundAgentCount: 2 })));
-    expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toBe(2);
+    act(() => first.message(metadata(1, { backgroundAgentCounts: { [asSubstreamId('0')]: 2 } })));
+    expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toEqual({ '0': 2 });
     act(() => first.close(1012));
     expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toBeNull();
     await act(async () => { await vi.runOnlyPendingTimersAsync(); });
