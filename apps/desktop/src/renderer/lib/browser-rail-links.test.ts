@@ -36,9 +36,10 @@ describe('openLink', () => {
     expect(openExternal).not.toHaveBeenCalled();
   });
 
-  it('keeps other schemes, and every link without a host, external', async () => {
+  it('leaves other schemes, and every link without a host, on the openExternal path', async () => {
     const host = vi.fn();
     const unregister = registerBrowserRailHost(host);
+    cleanups.push(unregister);
     await openLink('mailto:someone@example.com');
     unregister();
     await openLink('https://example.com/b');
@@ -68,18 +69,30 @@ describe('captureLinkClicks', () => {
   });
 });
 
+/** Mounts the hook; the returned unmount also runs in `afterEach` if a test fails first. */
+function mountHost(enabled: boolean): () => void {
+  const hook = renderHook(() => useBrowserRailLinks(enabled));
+  let mounted = true;
+  const unmount = (): void => {
+    if (mounted) hook.unmount();
+    mounted = false;
+  };
+  cleanups.push(unmount);
+  return unmount;
+}
+
 describe('useBrowserRailLinks', () => {
   it('opens the rail on a tab for the link while enabled, and not when disabled', async () => {
     Object.defineProperty(window, 'rally', { configurable: true, value: {} });
-    const channel = renderHook(() => useBrowserRailLinks(true));
+    const unmountChannel = mountHost(true);
     await openLink('https://example.com/e');
     expect(useUiStore.getState()).toMatchObject({ railOpen: true, railVariant: 'browser' });
     expect(commandEmbeddedBrowser).toHaveBeenCalledWith({ action: 'open', url: 'https://example.com/e' });
-    channel.unmount();
+    unmountChannel();
 
-    const sidekick = renderHook(() => useBrowserRailLinks(false));
+    const unmountSidekick = mountHost(false);
     await openLink('https://example.com/f');
-    sidekick.unmount();
+    unmountSidekick();
     expect(commandEmbeddedBrowser).toHaveBeenCalledTimes(1);
     expect(openExternal).toHaveBeenCalledWith('https://example.com/f');
   });
