@@ -98,9 +98,6 @@ for the next.
 8. **Attaching conversations from inside a run: rejected.** Only the
    Sidekick's config conversation (its substream `"0"`) attaches a
    conversation, so a run cannot widen its own reach.
-9. **Reading and posting from the config conversation: deferred.** For now
-   the config conversation gets the attach tool only. Giving it list, read, or
-   post can follow when a setup flow needs it.
 
 ## Product behavior
 
@@ -150,9 +147,9 @@ The tools split between the two kinds of Sidekick conversation:
 | Tool | Config conversation (`"0"`) | Run |
 | --- | --- | --- |
 | **Attach** a conversation | Yes | No |
-| **List** attached conversations, home first | No | Yes |
-| **Read** messages from an attached conversation, a page at a time | No | Yes |
-| **Post** to an attached conversation, defaulting to the home | No | Yes |
+| **List** attached conversations, home first | Yes | Yes |
+| **Read** messages from an attached conversation, a page at a time | Yes | Yes |
+| **Post** to an attached conversation, defaulting to the home | Yes | Yes |
 
 Post replaces today's `sidekick_post_result`, which could post only to the
 owning Channel's Main conversation.
@@ -339,8 +336,8 @@ should be a Breakout is changed explicitly.
 - A message typed into a completed run's feed by any user who can post there
   continues the run the same way. Input to a paused or deleted Sidekick's run
   does not start a loop and tells the sender why.
-- Only the Sidekick's config conversation offers the attach tool, and it
-  offers no other conversation tool. A run cannot attach a conversation, and
+- The Sidekick's config conversation offers all four conversation tools. A
+  run offers list, read, and post; it cannot attach a conversation, and
   cannot read or post to a conversation it is not attached to.
 - Removal, archive, disconnect, provider ID change, and retry preserve the
   binding's identity or suspend it without moving messages to another target.
