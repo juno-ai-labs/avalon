@@ -1827,6 +1827,7 @@ describe("agent harness", () => {
       expect(phases).toContain("provider_boundary");
       expect(phases).toContain("assistant_reservation");
       expect(phases).toContain("route_plan");
+      expect(phases).toContain("plugin_reauth");
       expect(phases).toContain("route_preparation");
       return streamResponse([{
         choices: [{ delta: { content: "Done" }, finish_reason: "stop" }],

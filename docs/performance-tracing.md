@@ -227,7 +227,8 @@ activation boundary, active-plugin reauthorization, provider resident-context
 render and transcript validation, system projection and provider-input hash,
 `before_model` callback, provider-boundary write, assistant reservation and Bind
 transition, request-message conversion, route pricing and planning, and route
-preparation. `context_catalog_source`
+preparation. `bind_plugin_reauth_ms` uses a short key because the logger masks
+keys containing `authorization`. `context_catalog_source`
 is `provided`, `cache`, `inflight`, `fetch`, `fallback`, or `skipped`; a catalog
 fetch also exposes response, body, envelope parse, and per-model entry parse
 durations. The row is emitted synchronously
