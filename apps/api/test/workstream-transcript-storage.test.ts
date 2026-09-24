@@ -1887,7 +1887,12 @@ describe("canonical ordered work-stream transcript", () => {
     });
 
     expect(settled.removedInputIds).toEqual([steerA.inputId, roomB.inputId]);
-    expect(settled.transitions.map((transition) => transition.message.content)).toEqual(["Steer A @Ada"]);
+    // The step that answers A reads B after it, as something said to the room.
+    const appended = settled.transitions.map((transition) => JSON.stringify(transition.message.content));
+    expect(appended).toHaveLength(2);
+    expect(appended[0]).toContain("Steer A @Ada");
+    expect(appended[1]).toContain("Room B @Ada");
+    expect(appended[1]).toContain("SAID TO THE ROOM");
     expect(sql.exec<{ input_id: string }>(`SELECT input_id FROM pending_loop_inputs`).toArray())
       .toEqual([{ input_id: steerC.inputId }]);
     expect(sql.exec<{ turn_id: string }>(
@@ -1896,6 +1901,14 @@ describe("canonical ordered work-stream transcript", () => {
       steerA.inputId,
       roomB.inputId,
     ).toArray().map((row) => row.turn_id)).toEqual([steerA.inputId, roomB.inputId]);
+    // Directly under A: nothing lands between them.
+    expect(sql.exec<{ gap: number }>(
+      `SELECT b.transcript_sequence - a.transcript_sequence AS gap
+         FROM participant_transcript_turns AS a, participant_transcript_turns AS b
+        WHERE a.turn_id = ? AND b.turn_id = ?`,
+      steerA.inputId,
+      roomB.inputId,
+    ).one().gap).toBe(1);
   });
 
   it("atomically closes a withheld elicitation tool call before promoting its answer", async () => {

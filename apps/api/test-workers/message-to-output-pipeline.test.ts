@@ -2237,29 +2237,23 @@ describe("a member's message travels the whole pipeline", () => {
         message.role === "user" ? [JSON.stringify(message.content)] : [];
       const requests = await capturedProviderRequests(stub);
       const texts = (requests.at(-1)!.body.messages as Array<{ role?: unknown; content?: unknown }>).flatMap(userTexts);
-      expect(texts.some((text) => text.includes("please summarize what we agreed"))).toBe(true);
-      // Sent after the question, so the question's own run never saw it.
-      expect(texts.some((text) => text.includes("sounds good"))).toBe(false);
+      // Sent before the question's run started, so that run reads it: after
+      // the question, and as something said to the room, not a request.
+      const questionIndex = texts.findIndex((text) => text.includes("please summarize what we agreed"));
+      const asideIndex = texts.findIndex((text) => text.includes("sounds good"));
+      expect(questionIndex).toBeGreaterThanOrEqual(0);
+      expect(asideIndex).toBeGreaterThan(questionIndex);
+      expect(texts[asideIndex]).toContain("SAID TO THE ROOM, NOT TO RALLY");
+      expect(texts[questionIndex]).not.toContain("SAID TO THE ROOM");
 
-      const landed = await runInDurableObject(stub, (_instance, state) => ({
-        gap: state.storage.sql.exec<{ gap: number }>(
+      expect(await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ gap: number }>(
           `SELECT aside.transcript_sequence - question.transcript_sequence AS gap
              FROM participant_transcript_turns AS question, participant_transcript_turns AS aside
             WHERE question.turn_id = ? AND aside.turn_id = ?`,
           questionTurnId,
           asideTurnId,
-        ).one().gap,
-        projectedThrough: state.storage.sql.exec<{ transcript_projected_through: number }>(
-          `SELECT transcript_projected_through FROM substream_loops WHERE id = 1`,
-        ).one().transcript_projected_through,
-        asideSequence: state.storage.sql.exec<{ transcript_sequence: number }>(
-          `SELECT transcript_sequence FROM participant_transcript_turns WHERE turn_id = ?`,
-          asideTurnId,
-        ).one().transcript_sequence,
-      }));
-      expect(landed.gap).toBe(1);
-      // Above the mark, so the next input's gap-fill still owes it to the model.
-      expect(landed.asideSequence).toBeGreaterThan(landed.projectedThrough);
+        ).one().gap)).toBe(1);
       const follow = await product(stub, {
         operation: "create_message",
         auth: AUTH,
@@ -2277,14 +2271,9 @@ describe("a member's message travels the whole pipeline", () => {
       await settledRunForTrigger(stub, (follow.body.turn as { turnId: string }).turnId);
       const later = ((await capturedProviderRequests(stub)).at(-1)!.body.messages as Array<{ role?: unknown; content?: unknown }>)
         .flatMap(userTexts);
+      // Once each: the gap-fill skips the aside by its provenance.
       expect(later.filter((text) => text.includes("please summarize what we agreed"))).toHaveLength(1);
       expect(later.filter((text) => text.includes("sounds good"))).toHaveLength(1);
-      const questionIndex = later.findIndex((text) => text.includes("please summarize what we agreed"));
-      const asideIndex = later.findIndex((text) => text.includes("sounds good"));
-      expect(asideIndex).toBeGreaterThan(questionIndex);
-      // Rendered as what it is: something said to the room, not a request.
-      expect(later[asideIndex]).toContain("SAID TO THE ROOM, NOT TO RALLY");
-      expect(later[questionIndex]).not.toContain("SAID TO THE ROOM");
     } finally {
       await restoreProviderFetch(stub);
     }
