@@ -33,7 +33,7 @@ describe('Electron telemetry wiring', () => {
       'parent && !parent.isDestroyed() && parent.isVisible() && !parent.isMinimized()',
     );
     expect(source).toContain(
-      'availableRendererWindows([mainWindow, settingsWindow, sidekicksWindow, deepLinkErrorWindow])',
+      'availableRendererWindows([mainWindow, settingsWindow, sidekicksWindow, deepLinkErrorWindow, browserImportWindow])',
     );
     expect(beforeQuitHandler).toBeDefined();
     expect(beforeQuitHandler).toContain('applicationIsQuitting = true');

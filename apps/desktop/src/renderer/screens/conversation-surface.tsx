@@ -106,6 +106,7 @@ import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-fe
 import { ConnectorConnectionsProvider } from '../components/connector-mentions';
 import { WorkstreamComposer } from '../components/workstream-composer';
 import { useRailExitFade } from '../components/rail-surface';
+import { EmbeddedBrowserRail } from '../components/embedded-browser-rail';
 
 /**
  * The cache key for one resource's version history.
@@ -996,6 +997,7 @@ export function ConversationSurface({
   const inspector = useUiStore((state) => state.inspector);
   const openRail = useUiStore((state) => state.openRail);
   const storeRailOpen = useUiStore((state) => state.railOpen);
+  const railVariant = useUiStore((state) => state.railVariant);
   const railWidth = useUiStore((state) => state.railWidth);
   const railScope = useUiStore((state) => state.railScope);
   const setRailLeaving = useUiStore((state) => state.setRailLeaving);
@@ -1316,13 +1318,13 @@ export function ConversationSurface({
   // from laying out, or starting a fade for, a panel belonging to the stream
   // just left; every path that opens the rail writes the store, and each is
   // honoured from the moment the scope names this stream.
-  const railOpen = Boolean(artifactSidebar) && storeRailOpen && railScope === id;
+  const railOpen = (railVariant === 'browser' || Boolean(artifactSidebar)) && storeRailOpen && railScope === id;
   useEffect(() => {
     if (restoredPanelKey.current !== artifactPanelKey) return;
-    writeLayout(artifactPanelKey, railOpen && artifactSidebar
+    writeLayout(artifactPanelKey, railOpen && railVariant === 'context' && artifactSidebar
       ? JSON.stringify({ resourceId: artifactSidebar.resourceId,
         workstreamScoped: artifactSidebar.workstreamScoped === true }) : null);
-  }, [artifactPanelKey, artifactSidebar, railOpen]);
+  }, [artifactPanelKey, artifactSidebar, railOpen, railVariant]);
   // A route switch is not a sidebar hand-off: scope the fade to the work stream
   // so the previous stream's inspector never dissolves over the arriving feed.
   const railLeaving = useRailExitFade(railOpen, id);
@@ -2759,7 +2761,14 @@ export function ConversationSurface({
         onRefreshSidekicks={refreshSidekicks}
       />}
 
-      {artifactSidebarResource && (railOpen || railLeaving) && <ArtifactSidebar
+      {railVariant === 'browser' && (railOpen || railLeaving) && window.rally && <EmbeddedBrowserRail
+        leaving={railLeaving}
+        onClose={closeRail}
+        onResize={setRailWidth}
+        width={railWidth}
+      />}
+
+      {railVariant === 'context' && artifactSidebarResource && (railOpen || railLeaving) && <ArtifactSidebar
         leaving={railLeaving}
         {...(api ? { loadResourceContent } : {})}
         onClose={closeRail}

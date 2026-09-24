@@ -10,91 +10,110 @@ choice. Importing a prior assistant answer never claims Rally executed it.
 | File | Responsibility |
 | --- | --- |
 | `packages/contracts/src/substream-content.ts` | Source content/files, resolved prepared conversations, initialization modes and import provenance. |
-| `apps/api/src/lib/firecrawl.ts` | Shared Firecrawl client, including uncached source capture. |
 | `apps/api/src/services/session-import.ts` | Provider envelope decoding and visible message/file extraction. |
 | `apps/api/src/services/session-import-files.ts` | Constrained file retrieval, unavailable outcomes, upload reconciliation and trusted attribution. |
 | `apps/api/src/services/resource-service.ts` | Existing verified upload, staged R2 cleanup and resource creation. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Shared materialization, preparation receipts, file reservations, root/child publication. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Source-message checkpoint and update receipts owned by the Channel authority. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Canonical fact preparation for ordered conversations. |
-| `apps/desktop/src/main/claude-code-sessions.ts` | Read-only local Claude Code session listing and exact selected-file read. |
-| `apps/desktop/src/main/local-claude-sessions.ts` | Claude desktop chat catalog, selected cached chat snapshots, and Cowork metadata-to-JSONL discovery. |
+| `apps/desktop/src/renderer/lib/browser-conversation-import.ts` | The readers that run inside a ChatGPT or claude.ai page: own and shared conversations, and their files. |
+| `apps/desktop/src/renderer/screens/browser-import.tsx` | The import window: Import, and the name-and-Space sheet. |
 | `packages/agent-harness/src/evaluation.ts` | Scenario/checkpoint evaluation using the production Rally runtime. |
-| `apps/desktop/src/renderer/components/new-workstream-menu.tsx`, `session-import-update-dialog.tsx` | Separate session selection, import, and explicit update controls. |
+| `apps/desktop/src/renderer/components/new-workstream-menu.tsx`, `session-import-update-dialog.tsx` | The menu item that opens the import window, and the explicit update control. |
 
 ## How it works
 
-The sidebar's single plus menu offers **Start New Channel**, **Import Channel
-from Claude or ChatGPT**, and **Create New Space**. The import dialog requires
-a Space, a Channel name, and a source. Sources are a shared conversation URL,
-Claude chats and Cowork tasks found on this Mac, or one local Claude Code session
-JSONL file. **Create** imports one selected conversation in one action. Only Spaces
-the person may edit are offered, and the launcher stays disabled until the Space
-directory is ready. Channel names stop at the server's 180-character limit.
-There is no transcript preview.
-Available attachments and artifact files are resolved automatically; missing file
+Every import goes through Rally's own browser. The sidebar's plus menu offers
+**Start New Channel**, **Import Channel from Claude or ChatGPT**, and **Create
+New Space**; the import item opens the [import window](embedded-browser.md),
+and only the desktop host, which has that browser, offers it. The person opens
+a conversation in the window — their own, signed in, or a shared link — and
+clicks Import. A sheet asks for the Space and a Channel name, prefilled with the
+conversation's title; only Spaces the person may edit are offered, and names
+stop at the server's 180-character limit. There is no transcript preview.
+Available attachments and artifact files are copied automatically; missing file
 references remain visible in the imported conversation. The source roles stay
 intact in the visible transcript; the byline says who imported them. The model
-receives imported source text as labeled, overheard context. The entered name is the settled
-Channel title; provider content does not override the name the person chose.
+receives imported source text as labeled, overheard context. The entered name
+is the settled Channel title.
 
-Public links are acquired through the existing Firecrawl client using uncached
-`rawHtml` output, with main-content filtering and base64-image removal disabled.
-ChatGPT share HTML carries a reference table; Claude's public snapshot endpoint
-returns JSON through the same acquisition primitive. Markdown is not a transcript:
-it can contain only navigation even when the embedded conversation is present.
-The service requires a successful source status and the expected final URL before
-decoding; a successful scraper envelope can still contain a block or login page.
-`FIRECRAWL_API_KEY` must be configured in the API environment.
+Rally does not read conversations from the Mac's files or fetch shared links
+server-side. People are asked to open a shared link in the import window
+instead, where it reads the same way as their own conversations.
 
-Claude chat, Cowork, and Claude Code use different storage. Claude Desktop's
-Chromium IndexedDB contains a cached chat catalog and sometimes a complete
-conversation snapshot; its HTTP cache can hold other complete chat responses.
-These are opportunistic local copies, not a durable account export. The picker
-lists only catalog chats with a complete local snapshot in IndexedDB or the HTTP
-cache. Selecting one reads the newest observed copy. A title cached without its
-messages is omitted; reopening the chat in Claude can make it available. The desktop cache is read-only and no
-account credentials or cookies are copied. Cowork stores separate `local_*.json`
-metadata and a nested `.claude/projects/<project>/<cliSessionId>.jsonl` transcript.
-Its metadata supplies the familiar title only when its JSONL exists; the JSONL is read only for the
-selected task. Cowork JSONL uses the Claude Code event adapter, with the CLI
-session ID as the stable re-import identity. Imported attribution says Claude
-for both Cowork and Claude Code because the shared event provider does not
-record which desktop surface produced the transcript. Local Claude Code sessions write
-JSONL under `~/.claude/projects/<project>/`. The Claude app also shows cloud
-Code sessions; they may have no matching local JSONL file, and this picker does
-not import them. The import and update dialogs use selected local Claude chats;
-the backend decoder still accepts account exports from programmatic callers.
-The desktop lists local Claude Code session files on demand under the configured
-Claude Code data directory. The person chooses one conversation from a dropdown;
-menu labels show recognizable titles, shortening long ones through the middle
-and showing a readable update date only when titles repeat. The selected title
-is shown only in the dropdown; no second title line appears below it. The Claude chat list refreshes when its source is selected and
-when Rally regains focus after the person visits Claude. A selected conversation
-is reread at that point before it can be imported. Internal
-file paths and session IDs never appear in the picker.
-The main process reads only that selected transcript for import. A JSONL file
-picker remains available when Claude Code discovery misses a session. A public
-share URL identifies one conversation.
-The update dialog resolves the Channel's recorded source identity automatically
-and shows its title as read-only text. It offers no conversation dropdown:
-another conversation would fail the source-identity check. If the original
-Claude Code transcript is missing from local discovery, the person can choose
-its file; the same identity check applies.
-Only the person who imported the Channel sees the update action. The Channel's
-creator identity is also the importer identity for this creation path; its
-authority checks that identity before reading the source checkpoint or accepting
-an update. Other Channel members can read the imported transcript and add their
-own messages without gaining access to the import control.
-Imports created before source checkpoints were introduced have no stable source
-message identities to compare. They remain readable, but have no update control;
-their source can be imported again into a new Channel.
-The Claude Code adapter
-follows the active JSONL parent chain, keeps visible user and assistant text,
-combines consecutive assistant fragments, and omits tool calls, tool results,
-thinking, compaction and sidechain events. It uses the transcript's latest custom
-title, then its latest generated title, when available.
-It does not read session credentials, project files or tool-result sidecars.
+`lib/browser-conversation-import.ts` owns the readers. Each runs inside the
+visited page, in its own origin and session, and recognizes one route:
+
+| Route | Read |
+| --- | --- |
+| `chatgpt.com/c/<id>` | ChatGPT's conversation endpoint, with the access token from the page's same-origin `/api/auth/session`. A cookie-only request can return a guest 404 even when the page is signed in. |
+| `chatgpt.com/share/<id>` | The same conversation JSON from the anonymous share route, `/backend-anon/share/<id>`; its files come from the anonymous counterparts of the routes below, addressed by the share. Works signed out. |
+| `claude.ai/chat/<id>` | The conversation from the organization named by the page's `lastActiveOrg` cookie, falling back to each organization the account lists. The response holds every edited branch, so the reader keeps only the path from `current_leaf_message_uuid` back through `parent_message_uuid` — the conversation the person sees. |
+| `claude.ai/share/<id>` | The share's snapshot from claude.ai's `chat_snapshots` endpoint. |
+
+A failure the reader recognizes returns its own message as a value, because
+Electron replaces an error thrown by page script with a generic one. The readers
+are page script held in template literals, so a backslash must be doubled to
+reach the page; a test parses each generated script.
+
+**Files are copied, not linked.** The conversation names its files; the reader
+fetches their bytes while the page is signed in and hands them to the decoder
+beside the reference they belong to:
+
+- ChatGPT uploads and generated images come from ChatGPT's file download, only
+  for messages the transcript shows — a code run's working files are skipped.
+  A signed download link on another origin is fetched without cookies: it needs
+  none, and the browser refuses a cross-origin read that sends them.
+  A file ChatGPT wrote in its code sandbox, offered as a `sandbox:` link, comes
+  from the same download ChatGPT's link uses; the dead link then reads as its
+  label beside the attached file.
+- A shared claude.ai conversation hides its attachments from viewers: the
+  snapshot reports a file count and no files, and imports a notice saying so.
+  Opening the person's own conversation instead imports them.
+- claude.ai uploads come from the conversation's file sandbox, where claude.ai
+  keeps each upload's original, accepted only when its size is the recorded one.
+  A chat without a sandbox falls back to a PDF's original link, then an image's
+  full-size preview, named for its real format.
+- A published claude.ai Artifact is copied at its current version — claude.ai
+  serves no other — once, where the conversation first shows it. Its own files
+  are listed by claude.ai and served from the Artifact's host, which the page may
+  not read, so they are loaded through the tab's DevTools network loader with the
+  tab's session. That is the one place a credential leaves the page: the
+  Artifact's short-lived, per-Artifact asset token passes through the import
+  window's renderer to address those files. The Artifact type's shared runtime
+  is not copied. Without its files, a card imports as the Artifact's link.
+- Files Claude wrote with its file tool, visuals it drew, and a Research report
+  import as files; a write the tool refused, and drafts written into an
+  Artifact's publishing folder, do not.
+
+Anything the reader cannot fetch, or declines as larger than the attachment
+limit, stays an unavailable reference that the import reports on the message.
+
+The decoders drop what the providers show only as process: thinking, reasoning
+recaps, tool calls and results, ChatGPT agent progress notes (the `commentary`
+channel, shown only in its collapsed work log), and claude.ai's `token_budget`
+blocks. ChatGPT link and citation markers become the Markdown their
+`content_references` give, and claude.ai web citations become an inline
+`([host](url))` after the span they support. A ChatGPT Deep Research report,
+which the page shows in an embedded frame, is a complete message in the tool
+result's widget state and imports as an assistant message where it appears.
+A titled file is named with the extension its type opens with.
+
+The API accepts a private or shared route as the source URL, a private one only
+when its id equals the decoded conversation's. The source URL and conversation
+ID are recorded so source updates can reread them and preserve Rally messages
+added to the Channel: the update dialog reads a tab already showing the
+conversation, or opens one on the recorded URL in the main window's browser,
+reads it, and closes it. Website sign-in lives in the account partition, so
+that read works once the person has signed in anywhere in Rally's browser.
+Only the person who imported the Channel sees the update action, and only for a
+source the browser can open again. The Channel's creator identity is also the
+importer identity for this creation path; its authority checks that identity
+before reading the source checkpoint or accepting an update. Other Channel
+members can read the imported transcript and add their own messages without
+gaining access to the import control. Imports created before source checkpoints
+were introduced, and Channels imported from local Claude Code files before
+importing moved to the browser, remain readable but have no update control.
 
 There are three separate boundaries:
 
@@ -156,8 +175,8 @@ This provides an executable eval seam, not a scheduler or scoring database.
   remain recoverable under the same preparation identity.
 - Source request identity is hashed separately from materialized importer snapshots.
   The preparation receipt freezes materialized content across retries.
-- One unchanged form attempt retains its create identity after an uncertain
-  response; changing its name, Space, or URL starts a new identity. Placement
+- One unchanged import attempt retains its create identity after an uncertain
+  response; reading the conversation again starts a new identity. Placement
   is creation semantics and stays out of the imported-content identity hash.
 - Uploaded user files and assistant artifact bytes use the existing resource authority.
 - Unavailable files remain readable references, never fake downloadable resources.
@@ -179,15 +198,9 @@ updates to its recorded source session, not a new bulk import.
 Re-import is an explicit action on the Channel created from a source. It does
 not require automatic polling. The Channel keeps a source identity and a
 checkpoint of source message identities and their content revisions, separate
-from its canonical transcript cursor. Claude Code supplies a session ID and
-event UUIDs; its consecutive assistant fragments need one stable group identity
-for the visible message. A Claude account export supplies a conversation ID and,
-when present, message IDs; visible messages without IDs use positions within
-that identified conversation. An export with no conversation ID cannot be
-imported because two unrelated files could otherwise claim the same source.
-A local file path is a way to acquire bytes, not the
-durable identity of a conversation. The person can select the source again when
-asking for an update.
+from its canonical transcript cursor. Each provider supplies a conversation ID
+and message IDs; a visible message without an ID uses its position within that
+identified conversation.
 
 The importer compares the new source snapshot with that source checkpoint,
 never with the Channel's last turn. An unchanged source message is a no-op; a
@@ -215,15 +228,12 @@ without giving provider text instruction authority. Re-import does not reuse the
 transcript.
 
 The source freezes during submission. Resolved content and request identity are retained
-for retries after an uncertain response; editing the URL, selecting another file or
-conversation starts a new request. The decoding API continues to support JSON/JSONL
-exports for programmatic callers.
+for retries after an uncertain response; reading the conversation again starts a new request.
 
 Source files are inline UTF-8/base64, recognized HTTPS downloads, or explicitly
 unavailable references. Known Claude image/document blocks (including plain-text
-document sources), artifact documents and
-full-content Write/artifacts tool payloads preserve file content without importing
-the tool invocation. ChatGPT exports preserve attachment descriptors and image
+document sources), artifact documents and full-content `artifacts` tool payloads
+preserve file content without importing the tool invocation. ChatGPT exports preserve attachment descriptors and image
 references. Final tool-authored image outputs become assistant artifact turns;
 hidden/intermediate copies, tool-directed calls, thoughts, reasoning recaps and
 model-editable context are omitted. Unknown visible content still fails closed.
@@ -233,28 +243,34 @@ references without bytes remain unavailable.
 
 ## Failure modes and limits
 
-Provider share formats are not stable APIs. Firecrawl fetched the tested ChatGPT
-share that Cloudflare Browser Run blocked, and fetched Claude snapshot JSON. This
-is not a guarantee that every future share is accessible. Claude Code URLs require
-login and remain unsupported by the URL-only dialog.
-Expired/private file URLs, absent export bytes and unsupported download origins
-remain unavailable and are recorded in the imported transcript.
+Each reader depends on its provider's unofficial web API and page format, and
+fails with the provider's name when one changes; the decoders fail closed on
+unknown visible content rather than omitting it. Sign-in, CAPTCHAs, and provider
+policy can still prevent a read. Expired or refused file downloads and
+unsupported origins remain unavailable and are recorded in the imported
+transcript.
 
-Downloads refuse redirects and use the existing workspace `MAX_ATTACHMENT_BYTES`
-policy while streaming. File uploads retain the same policy. Prepared histories
-have no additional guessed size ceiling, but HTTP, memory, SQLite and provider
-context limits still apply. Full canonical replay is paged but assembled in memory;
-An oversized first provider request can fail before automatic compaction is available. A source export containing multiple
-conversations must be split before import.
+The reader downloads each file only up to `MAX_BROWSER_IMPORT_FILE_BYTES`, the
+same 25,000,000 bytes as the upload limit (`MAX_ATTACHMENT_BYTES` in
+`wrangler.global.jsonc`; keep them equal). It checks a size the provider reports
+before downloading, a declared length before reading, and the body as it
+arrives; a larger file imports as unavailable, saying so. The total across one
+conversation's files is not separately bounded: each file is within the limit,
+but a conversation with many large files is held in memory together. Prepared histories have
+no additional guessed size ceiling, but HTTP, memory, SQLite and provider
+context limits still apply. Full canonical replay is paged but assembled in
+memory; an oversized first provider request can fail before automatic
+compaction is available.
 
-HTML/code artifacts remain stored files; importing does not launch a site. Exports
-that contain only patches, inaccessible sandbox paths or proprietary artifact state
-cannot reconstruct original files automatically.
+HTML/code artifacts remain stored files; importing does not launch a site.
 
 ## Testing
 
-- `test/session-import.test.ts`: provider branches, one-record JSONL, visible-format
-  refusal, attachment-only messages, embedded artifacts and extracted-text labeling.
+- `test/session-import.test.ts`: provider branches, private and shared source
+  URLs, visible-format refusal, attachment-only messages, copied uploads and
+  Artifacts, sandbox files, Deep Research reports, citations and extracted-text labeling.
+- `apps/desktop/src/renderer/lib/browser-conversation-import.test.ts`: route
+  recognition, reads through a tab, and that each generated page script parses.
 - `test/session-import-files.test.ts`: constrained origins, redirect refusal,
   frozen download bytes and the existing file size policy.
 - `test-workers/conversation-creation.test.ts`: real upload/R2 bytes, role-specific
@@ -268,11 +284,42 @@ cannot reconstruct original files automatically.
   and canonical projection release.
 - `packages/agent-harness/src/evaluation.test.ts`: production runtime from an initial
   scenario and serialized tool-settled checkpoint, with no repeated write after fork.
-- Desktop menu/launcher/transcript tests cover navigation and attribution. Real
-  Electron visual QA covers session selection and update controls
-  using a fixture API; backend lifecycle tests provide storage/execution evidence.
+- Desktop menu/launcher/transcript tests cover navigation and attribution.
+  Readers are verified against real signed-in and shared conversations in a real
+  Electron window: DOM tests cannot prove what a provider's page returns.
 
 ## Changelog
+
+### 2026-09-24 — Import only through Rally's browser, copying every file
+
+**What changed:** Importing moved into a browser window. It reads the ChatGPT or
+claude.ai conversation the person has open, signed in or shared, and copies its
+files: uploads, generated images and sandbox files, drawn visuals, Research
+reports, and published claude.ai Artifacts at their current version. The local
+Claude, Claude Code, and Codex readers, the export-file picker, and the
+server-side Firecrawl share fetch were removed, along with the `codex` and
+link-preview request shapes. Updates reread the recorded URL through the browser.
+
+**Why:** Local stores held only what each app happened to cache — titles
+without messages, cloud sessions without files — and shared links fetched
+server-side were blocked or challenged. The browser reads the same data the
+provider's own page shows, with the person's own sign-in. Checking real
+conversations against their pages found dropped Deep Research reports, agent
+progress notes imported as turns, lost uploads and Artifacts, and a claude.ai
+block type that failed whole imports; each is covered by a test.
+
+**Considered and rejected:** Keeping the local pickers behind a second menu
+item, which leaves two answers to one question. Linking Artifacts and uploads
+instead of copying them, which leaves the Channel depending on the provider.
+Copying an Artifact's files from the tool calls that wrote them, which imports
+drafts the conversation later edited. Scraping the page's DOM, which is
+virtualized and would silently omit earlier turns.
+
+**Consequences:** Every reader depends on a provider's unofficial web API.
+Artifact copies pass a short-lived asset token through the import window's
+renderer. Channels imported from local Claude Code files keep their
+`claude_code` provenance but cannot be updated. Each downloaded file is held to
+the attachment upload limit; the total for one conversation is not.
 
 ### 2026-09-23 — Import local Claude sessions and update their source history
 

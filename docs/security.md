@@ -45,6 +45,7 @@ the source credentials, memory, authoring conversation, or run history.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/main/index.ts` | Window creation, sandbox and `contextIsolation` flags, navigation denial, IPC handler registration. |
+| `apps/desktop/src/main/embedded-browser.ts` | Isolated web contents for the local browser in the right rail and the import window; its lifecycle and command boundary are documented in [`embedded-browser.md`](embedded-browser.md). |
 | `apps/sideline/src/main/index.ts`, `apps/sideline/src/preload/index.ts` | The internal represented-messaging host, encrypted operator session, dedicated OAuth target, sender-confined IPC, and narrow renderer bridge. The relationship and audit boundary is documented in [`impersonation.md`](impersonation.md). |
 | `apps/desktop/src/preload/index.ts` | The whole renderer-facing API. Nothing else crosses. |
 | `apps/desktop/src/common/realtime-socket-validation.ts`, `apps/desktop/src/main/realtime-socket-ipc.ts` | Shared broker channel/event validation and the conversation-window socket IPC boundary. |
@@ -111,8 +112,17 @@ same as desktop.
   string with no scripting, no session, and no network of its own. That balance
   holds only while the window stays this small: give it any further UI and its
   privileges should be narrowed to the channels it actually uses first.
-- Navigation and popup creation are denied by default; OAuth opens in the system
-  browser.
+- App-window navigation and popup creation are denied by default; Rally's own
+  OAuth opens in the system browser. The embedded browser's isolated web
+  contents handle website links and redirects within their own session, with
+  non-web destinations rejected.
+- The main window and the import window may drive their own browser tabs,
+  including page script and DevTools commands; no other window may. Those
+  commands act with the person's website sign-ins, so a script injected into
+  either renderer would reach every site signed in there. The conversation
+  readers keep provider credentials inside the visited page, with one exception:
+  copying a claude.ai Artifact passes that Artifact's short-lived asset token
+  through the import window's renderer. See [`session-import.md`](session-import.md).
 - A strict Content Security Policy allows bundled content and the configured
   regional API only.
 - Markdown treats model, member, email, and attachment text as untrusted.
@@ -1030,6 +1040,33 @@ regional Web Lock so an older renewal cannot replace a later login cookie.
 [Browser client](browser-client.md) owns these host-specific boundaries.
 
 ## Changelog
+
+### 2026-09-24 — Two Rally windows may drive a signed-in local browser
+
+**What changed:** The desktop hosts account-partitioned web pages in the main
+window's right rail and in an import window. Each of those two windows may send
+its own browser typed commands — navigation, input, page script, and DevTools
+commands — and no other window may. Visited pages get no preload, Node, or
+permissions. Conversation readers run as page script inside the provider's page
+and keep its credentials there, except a claude.ai Artifact's short-lived
+asset token, which passes through the import window's renderer. Each file a
+reader downloads is held to the attachment upload limit.
+
+**Why:** Importing a conversation, with its files, needs the provider's own
+data read with the person's own sign-in. Local app caches and server-side share
+fetches were partial or challenged, and a remote sandboxed browser was
+challenged too.
+
+**Considered and rejected:** A narrower per-provider read command in main,
+which would move provider formats into the main process and still need page
+script and DevTools for Artifact files. Letting every Rally window drive the
+browser, which widens the set of renderers whose compromise reaches signed-in
+sites. Relaying the Artifact through main to keep its token out of the renderer;
+the token is scoped to one Artifact and expires within the hour.
+
+**Consequences:** Script injected into the main or import renderer would reach
+every site signed in there, so both stay under the renderer isolation rules
+above. `embeddedBrowserHost` in main is the one place that admits a window.
 
 ### 2026-09-21 — Sideline uses the desktop isolation boundary without participant credentials
 

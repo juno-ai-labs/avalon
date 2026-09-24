@@ -49,7 +49,6 @@ function renderSidebar(props: Partial<React.ComponentProps<typeof SpacesSidebar>
           onOpenSearch={vi.fn()}
           onCreateChannel={vi.fn(async () => undefined)}
           onCreateSpace={vi.fn(async () => undefined)}
-          onImportChannel={vi.fn(async () => undefined)}
           onOrderPreviewChange={vi.fn()}
           onReorder={vi.fn(async () => undefined)}
           onRetry={vi.fn()}
@@ -473,7 +472,6 @@ describe('SpacesSidebar', () => {
       constrained: false,
       onCreateChannel: vi.fn(async () => undefined),
       onCreateSpace: vi.fn(async () => undefined),
-      onImportChannel: vi.fn(async () => undefined),
       onOrderPreviewChange: vi.fn(),
       onOpenSearch: vi.fn(),
       onReorder: vi.fn(async () => undefined),
