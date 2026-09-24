@@ -2,79 +2,62 @@
  * Notice a Durable Object that accepts sockets but never hears from them.
  *
  * Every desktop client sends its first frame (`subscribe`) the moment its
- * socket opens. A socket this instance accepted that has still sent nothing
- * long after that is either a client that died in the few milliseconds between
- * open and send, or an instance whose hibernatable WebSocket events have
- * stopped arriving. Production has shown the second: the Juno Labs WorkspaceDO
- * kept accepting upgrades for hours while running no `webSocketMessage`, no
- * `webSocketClose`, and no ping auto-response, and only a restart cleared it
- * (see `docs/realtime-sockets.md`, "An instance that stops hearing its
- * sockets").
+ * socket opens. Production has shown an object that kept accepting upgrades
+ * for hours while delivering no `webSocketMessage`, no `webSocketClose`, and no
+ * ping auto-response, cleared only by a restart (see `docs/realtime-sockets.md`,
+ * "An instance that stops hearing its sockets").
  *
- * A silent socket alone is not enough, because one client controls it: any
- * member could open a socket, never speak, and reset the whole Organization
- * every deadline. So a socket only counts if the instance has received no
- * socket event from *anyone* since accepting it. That is what the production
- * failure looks like, and while any other client is connected (subscribing,
- * changing focus, closing), no single client can make it true.
+ * A socket that missed its first frame is not enough on its own, because one
+ * client controls it: any member could open a socket, never speak, and reset
+ * the whole Organization every deadline; and a connection that drops without a
+ * FIN right after the upgrade looks the same. So a missed socket only counts
+ * when the object has heard from no socket at all since accepting it. Three
+ * signals say it has, and the first two survive hibernation, which resets any
+ * in-memory state:
  *
- * Only sockets accepted by *this* instance count. A restart that inherits a
- * silent socket from the instance it replaced has not been shown to be stuck,
- * and counting that socket would reset the object again on every alarm.
+ * - the runtime answered some socket's `ping` after the silent one was
+ *   accepted (idle desktops ping every 50 s, and the stuck object answered
+ *   none);
+ * - some socket accepted after the silent one has since sent a frame;
+ * - this instance ran a socket callback after the silent one was accepted.
+ *
+ * While any other client is connected, no single client can make all three
+ * false.
  */
 
-/** What the watch reads from one socket's attachment. */
+/** What the watch reads about one socket. */
 export interface FirstFrameWatchedSocket {
   connectedAt: string;
   subscribed: boolean;
   firstFrameReported: boolean;
+  /** When the runtime last answered this socket's `ping`, or `null` if never. */
+  lastAutoResponseAt: number | null;
 }
 
-/**
- * The instant by which this socket should have sent its first frame, or `null`
- * when it is not being watched: it already sent one, or an earlier instance
- * accepted it.
- */
-export function firstFrameDeadline(
-  socket: FirstFrameWatchedSocket,
-  deadlineMs: number,
-  instanceStartedAt: number,
-): number | null {
+/** The instant by which this socket should have sent its first frame, or `null` once it has. */
+export function firstFrameDeadline(socket: FirstFrameWatchedSocket, deadlineMs: number): number | null {
   if (socket.subscribed || socket.firstFrameReported) return null;
   const connectedAt = Date.parse(socket.connectedAt);
-  if (!Number.isFinite(connectedAt) || connectedAt < instanceStartedAt) return null;
-  return connectedAt + deadlineMs;
+  return Number.isFinite(connectedAt) ? connectedAt + deadlineMs : null;
 }
 
 /** The earliest first-frame deadline among these sockets, for the alarm to wake on. */
 export function nextFirstFrameDeadline(
   sockets: readonly FirstFrameWatchedSocket[],
   deadlineMs: number,
-  instanceStartedAt: number,
 ): number | null {
   let earliest: number | null = null;
   for (const socket of sockets) {
-    const deadline = firstFrameDeadline(socket, deadlineMs, instanceStartedAt);
+    const deadline = firstFrameDeadline(socket, deadlineMs);
     if (deadline !== null && (earliest === null || deadline < earliest)) earliest = deadline;
   }
   return earliest;
 }
 
-/** Whether this socket's first-frame deadline has passed. */
-export function missedFirstFrame(
-  socket: FirstFrameWatchedSocket,
-  now: number,
-  deadlineMs: number,
-  instanceStartedAt: number,
-): boolean {
-  const deadline = firstFrameDeadline(socket, deadlineMs, instanceStartedAt);
-  return deadline !== null && deadline <= now;
-}
-
 /**
- * The sockets whose first-frame deadline has passed with the instance hearing
- * nothing from any socket since they were accepted. Non-empty means the
- * instance has stopped receiving socket events.
+ * The sockets whose first-frame deadline has passed with the object hearing
+ * from no socket since they were accepted. Non-empty means the object has
+ * stopped receiving socket events.
  *
  * `lastSocketEventAt` is when this instance last ran a socket callback of any
  * kind, or `null` if it never has.
@@ -83,9 +66,18 @@ export function socketsMissedWhileInstanceSilent<T extends FirstFrameWatchedSock
   sockets: readonly T[],
   now: number,
   deadlineMs: number,
-  instanceStartedAt: number,
   lastSocketEventAt: number | null,
 ): T[] {
-  return sockets.filter((socket) => missedFirstFrame(socket, now, deadlineMs, instanceStartedAt)
-    && (lastSocketEventAt === null || lastSocketEventAt < Date.parse(socket.connectedAt)));
+  const heardFromSince = (acceptedAt: number): boolean =>
+    (lastSocketEventAt !== null && lastSocketEventAt > acceptedAt)
+    || sockets.some((other) =>
+      // At or after, for both: the clock is millisecond-grained, and a ping
+      // answered or a frame sent by a socket accepted in the same millisecond
+      // was still heard no earlier than the silent socket's accept.
+      (other.lastAutoResponseAt !== null && other.lastAutoResponseAt >= acceptedAt)
+      || ((other.subscribed || other.firstFrameReported) && Date.parse(other.connectedAt) >= acceptedAt));
+  return sockets.filter((socket) => {
+    const deadline = firstFrameDeadline(socket, deadlineMs);
+    return deadline !== null && deadline <= now && !heardFromSince(Date.parse(socket.connectedAt));
+  });
 }
