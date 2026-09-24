@@ -3789,7 +3789,7 @@ export interface HarnessStartupTiming {
     | "projection_setup" | "activation_boundary" | "projection_validation"
     | "context_catalog" | "context_catalog_response" | "context_catalog_body"
     | "context_catalog_parse" | "context_catalog_entries"
-    | "plugin_reauthorization" | "provider_resident_context" | "before_model_liveness"
+    | "plugin_reauth" | "provider_resident_context" | "before_model_liveness"
     | "provider_transcript_validation" | "provider_system_projection" | "provider_projection_hash"
     | "provider_boundary" | "assistant_reservation" | "assistant_transition"
     | "request_message_conversion" | "route_pricing" | "route_plan" | "route_preparation";

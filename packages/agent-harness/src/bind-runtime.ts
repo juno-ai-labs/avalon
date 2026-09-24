@@ -1441,7 +1441,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         deadline?.throwIfTimedOut();
         let providerStageStartedAt = Date.now();
         await runtime.reauthorizeActive();
-        startupTiming("plugin_reauthorization", providerStageStartedAt);
+        startupTiming("plugin_reauth", providerStageStartedAt);
         providerStageStartedAt = Date.now();
         residentSection = await requiredPort(
           "run_state_persistence_failed",

@@ -81,6 +81,7 @@ describe("agent inference logging", () => {
           initial_activation_requested_count: 60,
           initial_activation_persisted_count: 60,
           scope_persist_ms: 42,
+          bind_plugin_reauth_ms: 17,
         },
         activationAuthorizationChecks: 60,
         activationDurations,
@@ -102,6 +103,7 @@ describe("agent inference logging", () => {
         initial_activation_requested_count: 60,
         initial_activation_persisted_count: 60,
         scope_persist_ms: 42,
+        bind_plugin_reauth_ms: 17,
       });
       expect(Object.keys(rows[0]?.initial_activation_details as object)).toHaveLength(60);
       expect(rows[0]?.initial_activation_details).toMatchObject({
