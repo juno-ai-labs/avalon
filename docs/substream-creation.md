@@ -325,6 +325,11 @@ socket tickets. A durable, versioned delivery mirrors archive state into the chi
 Membership and transcript are retained; the same API accepts `archived: false`
 to restore them. Restoration is API-only; the app has no restore control and its confirmation says so. The UI returns an archived conversation's viewer to Main, including when another member archives it.
 
+A generated artifact cited in a child can be linked into Main from its
+right-click menu (**Attach to channel**). The child keeps its own link, so both
+audiences can open it; [markdown rendering](markdown-rendering.md#citations)
+owns the menu.
+
 Mentions and participant-added notifications leave the parent with their child
 address. Delivery uses the existing Slack/email pipeline, rechecks current
 membership and archive state, and links to that child. Child activity stays out

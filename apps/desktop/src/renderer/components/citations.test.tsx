@@ -403,6 +403,26 @@ describe('resource citations', () => {
     expect(document.body).toHaveTextContent('A quarterly chart');
   });
 
+  it('offers no resource menu when the host lists no actions', () => {
+    render(<MarkdownBody citations={context({ actions: () => [] })}>{'![Q3 board deck](resource://board-deck)'}</MarkdownBody>);
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Open Q3 board deck' }));
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('shows a disabled action without running it', async () => {
+    const onSelect = vi.fn();
+    render(
+      <MarkdownBody citations={context({ actions: () => [{ id: 'attach', label: 'Attach to channel', disabled: true, onSelect }] })}>
+        {'See [the deck](resource://board-deck).'}
+      </MarkdownBody>,
+    );
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Open Q3 board deck' }));
+    const item = await screen.findByRole('menuitem', { name: 'Attach to channel' });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(item);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   it('never lets an unknown scheme reach the DOM as a destination', () => {
     render(
       <MarkdownBody citations={context()}>
