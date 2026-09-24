@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { createExecutionContext } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
 import worker from "../src/index";
@@ -65,6 +66,17 @@ const revocation = AccessRevocationMessageSchema.parse({
   sessionId: null,
   target: { scope: "workspace" },
   occurredAt: "2026-08-22T12:00:00.000Z",
+});
+
+it("routes HTTP without reading the completed Channel cutover row", async () => {
+  // D1 has no schema in this fixture. The retired global gate returned 503
+  // before Hono could reach its authentication middleware.
+  const response = await worker.fetch(
+    new Request("https://api.rallywith.ai/no-such-route"),
+    contractComplete,
+    createExecutionContext(),
+  );
+  expect(response.status).toBe(401);
 });
 
 describe("dispatching a queue batch", () => {

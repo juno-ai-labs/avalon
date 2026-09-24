@@ -123,7 +123,7 @@ test('private RPC Workers register Cloudflare-required inert fetch handlers', as
   }
 });
 
-test('the Global pricing Worker refreshes the shared regional KV on an hourly cron', async () => {
+test('the Global catalog Worker refreshes prices hourly and context windows daily', async () => {
   const [pricingConfig, pricingEntrypoint, globalConfig] = await Promise.all([
     readFile(pricingConfigPath, 'utf8'),
     readFile(pricingEntrypointPath, 'utf8'),
@@ -136,10 +136,11 @@ test('the Global pricing Worker refreshes the shared regional KV on an hourly cr
   assert.match(pricingConfig, /"name": "avalon-api-inference-pricing-global"/u);
   assert.match(pricingConfig, /"main": "src\/inference-pricing-worker\.ts"/u);
   assert.match(pricingConfig, /"workers_dev": false/u);
-  assert.match(pricingConfig, /"crons": \["0 \* \* \* \*"\]/u);
+  assert.match(pricingConfig, /"crons": \["0 \* \* \* \*", "0 0 \* \* \*"\]/u);
   assert.ok(pricingKv?.groups?.id, 'the pricing Worker must bind the shared pricing KV');
   assert.match(globalConfig, new RegExp(`INFERENCE_PRICING_CACHE", "id": "${pricingKv.groups.id}"`, 'u'));
   assert.match(pricingEntrypoint, /async scheduled\([\s\S]+await refreshOpenRouterPricingCache\(env\)/u);
+  assert.match(pricingEntrypoint, /async scheduled\([\s\S]+await refreshOpenRouterContextWindows\(env\)/u);
 });
 
 test('profiles and uploads every Global service before promotion', async () => {

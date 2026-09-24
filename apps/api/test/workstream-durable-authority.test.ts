@@ -1,10 +1,8 @@
-import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AuthContext, Env } from "../src/env";
-import { activateWorkstreamLoop } from "../src/services/integrations";
-import { ConversationService } from "../src/services/conversation-service";
+import type { AuthContext } from "../src/env";
 import { launchWorkstreamHarness, WorkstreamService } from "../src/services/workstream-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -54,22 +52,9 @@ function seed(database: DatabaseSync): void {
   `);
 }
 
-/**
- * The pre-Durable-Object execution arms are gone. Production opened the
- * authority in both regions and a local stack reaches the same state with
- * `pnpm db:open-authority`; a stack that skipped that step is unsupported, and
- * the product surface has to refuse loudly rather than run code that no longer
- * exists.
- */
-describe("a stack that never opened the durable-object authority", () => {
-  const refusal = { status: 503, code: "workstream_authority_not_open" };
-
-  function legacyEnv(): {
-    database: DatabaseSync;
-    env: Env;
-    /** Objects the runtime SQL port opened — none, if the refusal held. */
-    objectStores: Map<string, DatabaseSync>;
-  } {
+/** Creation still needs the regional generation and refuses an unopened stack. */
+describe("creation before the durable-object authority opens", () => {
+  it("refuses before opening an object", async () => {
     const database = preRetirementProductSqliteDatabase();
     databases.push(database);
     seed(database);
@@ -79,89 +64,14 @@ describe("a stack that never opened the durable-object authority", () => {
       AVALON_REGION: "global",
       SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
     });
-    return { database, env, objectStores };
-  }
 
-  it("refuses every product call with the same 503, naming the fix", async () => {
-    const { env } = legacyEnv();
-    const service = new WorkstreamService(env, auth);
-    const elicitationId = "00000000-0000-7000-8000-0000000000e1";
-    const calls: Array<Promise<unknown>> = [
-      service.get(workstreamId),
-      service.update(workstreamId, { title: "Renamed" }),
-      service.markUnread(workstreamId),
-      // A read is acknowledged through the conversation that was read rather
-      // than through the work stream, so the fence has to hold on that path
-      // too. It holds before the parent is asked anything, which is why no
-      // object is opened below.
-      new ConversationService(env, auth).client(workstreamId, false, "0"),
-      new ConversationService(env, auth).client(
-        workstreamId,
-        false,
-        "00000000-0000-7000-8000-0000000000c1",
-      ),
-      service.createMessage(workstreamId, {
-        text: "hello",
-        clientMessageId: "client-1",
-        mentions: [],
-        confirmedParticipantUserIds: [],
-        attachmentIds: [],
-      }),
-      service.addParticipant(workstreamId, memberId),
-      service.removeParticipant(workstreamId, memberId),
-      service.attachResource(workstreamId, "00000000-0000-7000-8000-0000000000f1"),
-      service.detachResource(workstreamId, "00000000-0000-7000-8000-0000000000f1"),
-      service.answerElicitation(workstreamId, elicitationId, { answer: "yes" }),
-      service.create({
-        openingMessage: "Start",
-        clientMessageId: "client-2",
-        mentions: [],
-        participantUserIds: [],
-        attachmentIds: [],
-      } as never),
-      service.createFromOpportunity({
-        opportunityId: "00000000-0000-7000-8000-0000000000a1",
-        version: 1,
-        audienceScope: "workspace",
-        displayPrompt: "Prompt",
-        executionPrompt: "Prompt",
-        displayPromptHash: "hash",
-        executionPromptHash: "hash",
-        idempotencyKey: "key",
-      }),
-    ];
-    for (const call of calls) {
-      await expect(call).rejects.toMatchObject(refusal);
-    }
-  });
-
-  it("refuses a run launch before writing any admission row", async () => {
-    // The admission row lives in the work-stream object since migration 0090
-    // dropped the D1 copy; an untouched store map is the proof no object was
-    // ever opened, let alone written.
-    const { env, objectStores } = legacyEnv();
-
-    await expect(launchWorkstreamHarness(env, {
-      workspaceId,
-      workstreamId,
-      triggerMessageId: null,
-      origin: "scheduled_wakeup",
-      executionPrincipal: { type: "user", userId: memberId },
-      scheduledWakeupId: "00000000-0000-7000-8000-0000000000e0",
-    })).rejects.toMatchObject(refusal);
-    await expect(activateWorkstreamLoop(env, {
-      region: "global",
-      workspaceId,
-      parentKind: "workstream",
-      parentId: workstreamId,
-      loopId: `workstream:${workstreamId}:substream:0:loop`,
-      harnessRunId: asHarnessRunId("00000000-0000-7000-8000-0000000000b1"),
-      triggerMessageId: null,
-      activityId: null,
-      executionPrincipal: { type: "user", userId: memberId },
-      reason: "test",
-    })).rejects.toMatchObject(refusal);
-
+    await expect(new WorkstreamService(env, auth).create({
+      openingMessage: "Start",
+      clientMessageId: "client-2",
+      mentions: [],
+      participantUserIds: [],
+      attachmentIds: [],
+    } as never)).rejects.toMatchObject({ status: 503, code: "workstream_maintenance" });
     expect(objectStores.size).toBe(0);
   });
 });

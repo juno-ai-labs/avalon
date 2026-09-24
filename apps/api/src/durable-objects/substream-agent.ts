@@ -131,6 +131,7 @@ import { canonicalExternalResultText } from "../services/external-result-deliver
 import { SlackAgentService } from "../services/slack-agent-service";
 import { refreshWorkstreamDescription } from "../services/workstream-description-service";
 import { refreshWorkstreamName } from "../services/workstream-naming-service";
+import { loadOpenRouterContextWindows } from "../services/openrouter-context-windows";
 import {
   objectOwnsWorkstreamAuthorities,
   withLocalWorkstreamAuthorities,
@@ -934,6 +935,8 @@ export function harnessErrorFrames(error: unknown): string | null {
   return frames.length > 0 ? frames.slice(0, 6).join("\n") : null;
 }
 
+const PRODUCT_SESSION_AUTH_MAX_AGE_MS = 300_000;
+
 export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly recentEvents: ServerSocketEvent[] = [];
@@ -949,8 +952,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private socketSnapshotRevision = 0;
   /** Latest delivered retraction prevents an older in-flight preparation from reappearing. */
   private latestSocketRevocationAt = 0;
+  /** Product RPC session evidence only; socket admission still reads D1 live. */
+  private readonly productSessionAdmissions = new Map<string, {
+    auth: AuthContext;
+    validUntil: number;
+  }>();
+  private productSessionAdmissionRevision = 0;
   /** Avoid a durable-outbox point read on every high-frequency token frame. */
   private semanticRealtimePending = false;
+  /** One KV read per object lifetime, shared by concurrent runs on this object. */
+  private contextWindowSnapshot: Promise<Readonly<Record<string, number>>> | null = null;
   /**
    * Not `readonly`, and not assigned in the constructor body: the store applies
    * this object's schema when it is constructed, and reporting a failed
@@ -3345,9 +3356,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         message: "Work stream not found",
       }, 404);
     }
-    // Two principals, two verifications. A login session is re-verified against
-    // its `sessions` row, which is what makes a revoked or expired login stop
-    // working mid-flight. A connector principal has no `sessions` row to check
+    // Two principals, two verifications. A login session is checked against
+    // its `sessions` row and then reused for at most five minutes in this
+    // object, bounded by session expiry and cleared by delivered revocation.
+    // A connector principal has no `sessions` row to check
     // — its standing authority is the connector link, which the Worker verified
     // on the very message being delivered — so the object re-checks the D1 fact
     // that *is* its to check: current active membership in this workspace, in
@@ -3361,7 +3373,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const nonSessionPrincipal = request.auth.principal !== undefined;
     const current = nonSessionPrincipal
       ? await span.step("workstream.room.connector_auth", () => this.connectorPrincipalAuth(request.auth))
-      : await span.step("workstream.room.session_auth", () => this.socketAuth({
+      : await span.step("workstream.room.session_auth", () => this.productSessionAuth({
         workspaceId: request.auth.workspaceId,
         userId: request.auth.userId,
         sessionId: request.auth.sessionId,
@@ -4937,6 +4949,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return loop;
     };
     return {
+      contextWindowTokensByModel: () => this.contextWindowTokensByModel(),
       assignSidekickSkillNames: (sources) => {
         fence();
         return this.state.storage.transactionSync(() => {
@@ -5118,6 +5131,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         });
       },
     };
+  }
+
+  private contextWindowTokensByModel(): Promise<Readonly<Record<string, number>>> {
+    this.contextWindowSnapshot ??= loadOpenRouterContextWindows(this.env).catch(() => ({}));
+    return this.contextWindowSnapshot;
   }
 
   private async settlePersistentLoopStep(
@@ -6553,6 +6571,30 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return (await this.socketAdmissionAuth(attachment))?.auth ?? null;
   }
 
+  private async productSessionAuth(
+    identity: Pick<SocketAttachment, "sessionId" | "userId" | "workspaceId">,
+  ): Promise<AuthContext | null> {
+    const key = JSON.stringify([identity.workspaceId, identity.userId, identity.sessionId]);
+    const now = Date.now();
+    const cached = this.productSessionAdmissions.get(key);
+    if (cached && cached.validUntil > now) return cached.auth;
+    if (cached) this.productSessionAdmissions.delete(key);
+    const revision = this.productSessionAdmissionRevision;
+    const admission = await this.socketAdmissionAuth(identity);
+    if (!admission) return null;
+    const validUntil = Math.min(now + PRODUCT_SESSION_AUTH_MAX_AGE_MS, admission.sessionExpiresAt ?? Number.POSITIVE_INFINITY);
+    if (validUntil <= Date.now()) return null;
+    // A queued revocation may have arrived while D1 was answering. Do not
+    // install an older observation into this object's future requests.
+    if (revision === this.productSessionAdmissionRevision) {
+      for (const [entryKey, entry] of this.productSessionAdmissions) {
+        if (entry.validUntil <= now) this.productSessionAdmissions.delete(entryKey);
+      }
+      this.productSessionAdmissions.set(key, { auth: admission.auth, validUntil });
+    }
+    return admission.auth;
+  }
+
   /** Content-free operator inventory, including retired conversations. */
   async meetingRetirementInventory(resourceIds: string[] = []) {
     await this.storageReady;
@@ -7968,6 +8010,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async revokeSocketAccess(revocation: SocketAccessRevocation): Promise<void> {
     await this.initialized;
     const request = SocketAccessRevocationSchema.parse(revocation);
+    this.productSessionAdmissionRevision += 1;
+    this.productSessionAdmissions.clear();
     // Keep the newest retraction per reader even when no socket or preparation
     // exists yet. An older deferred preparation may be suspended in its D1
     // authorization query and must not recreate access after this call.
