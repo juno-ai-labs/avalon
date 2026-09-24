@@ -7,6 +7,8 @@ import { z } from 'zod';
  */
 export const BrowserImportContextSchema = z.strictObject({
   spaces: z.array(z.strictObject({ id: z.string().min(1), name: z.string() })),
+  /** Opened from one Space's channel list: import there and offer no other. */
+  spaceLocked: z.boolean().optional(),
 });
 export type BrowserImportContext = z.infer<typeof BrowserImportContextSchema>;
 
