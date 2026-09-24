@@ -8,7 +8,7 @@ import {
   isSharedNotionIngress,
 } from "./lib/notion-ingress";
 import { apiOperationTelemetry } from "./middleware/api-operation-telemetry";
-import { requireAuth, requireIdentityAuth } from "./middleware/auth";
+import { requireAuth, requireIdentityAuth, requireWorkspaceAuth } from "./middleware/auth";
 import { errorHandler, notFoundHandler } from "./middleware/errors";
 import { requestContext, securityMiddleware } from "./middleware/request-context";
 import { workspaceRealtimeInvalidation } from "./middleware/workspace-realtime";
@@ -38,7 +38,7 @@ import { speechRoutes } from "./routes/speech";
 import { authenticatedTelemetryRoutes, publicTelemetryRoutes } from "./routes/telemetry";
 import { telemetryOperatorRoutes } from './routes/telemetry-operations';
 import { workOpportunityRoutes } from "./routes/work-opportunities";
-import { workspaceRoutes } from "./routes/workspace";
+import { workspaceRoutes, workspaceSocketTicket } from "./routes/workspace";
 import { workspaceMembershipRoutes } from "./routes/workspace-membership";
 import { workspaceOperatorRoutes } from './routes/workspace-operations';
 import { workstreamRoutes } from "./routes/workstreams";
@@ -154,6 +154,8 @@ export function createApp(): Hono<HonoAppEnv> {
   // order for protected routes, so `requireAuth` reuses this identity result.
   identityApi.use("*", requireIdentityAuth);
   identityApi.route("/onboarding", onboardingRoutes);
+  // Before the member-only `/workspace` routes, so a guest reaches it too.
+  identityApi.get("/workspace/socket", requireWorkspaceAuth, workspaceSocketTicket);
   identityApi.route("/conversations", conversationRoutes);
   identityApi.route("/sharing", sharingRoutes);
   identityApi.route("/resources", resourceRoutes);
