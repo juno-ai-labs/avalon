@@ -169,10 +169,17 @@ stops the two directions from drifting apart.
 
 | Tool | Behavior | Offered to |
 | --- | --- | --- |
-| `list_conversations` | Attached conversations, home first, with titles and addresses | Runs and authoring |
-| `read_conversation(address, after?, before?, limit?)` | A page of messages, through `createMessageObjectPort` `messagesAfter`/`messagesBefore` | Runs and authoring |
-| `post_to_conversation(address?, text)` | Post to an attached conversation, home by default; idempotent on run ID and a caller key | Runs and authoring |
-| `attach_conversation(address)` | Add an attachment | Authoring only |
+| `attach_conversation(address)` | Add an attachment | Config conversation (substream `"0"`) only |
+| `list_conversations` | Attached conversations, home first, with titles and addresses | Runs only |
+| `read_conversation(address, after?, before?, limit?)` | A page of messages, through `createMessageObjectPort` `messagesAfter`/`messagesBefore` | Runs only |
+| `post_to_conversation(address?, text)` | Post to an attached conversation, home by default; idempotent on run ID and a caller key | Runs only |
+
+The config conversation is where the drafting plugin already loads
+(`integrations.ts:5205`: parent kind `automation`, substream `"0"`, no
+`automationRun`), so `attach_conversation` joins that plugin. The run tools
+load only when `automationRun` is present, which run continuation guarantees
+for every wake of a run child. The config conversation gets no list, read, or
+post for now.
 
 `post_to_conversation` replaces `post_result`, which is hard-wired to the
 owning Channel's Main conversation and deduplicated on run ID alone
