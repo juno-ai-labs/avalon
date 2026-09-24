@@ -115,6 +115,20 @@ describe("shared session import", () => {
     ] }));
     expect(result.content.messages[0]!.text).toBe('Found it. ([x.com](https://x.com/a)) ([x.com](https://x.com/b))');
   });
+  it('reports a file the reader declined as too large, with its reason', () => {
+    const tooLarge = "The file is larger than Rally's 25 MB attachment limit.";
+    const result = parseSessionExport('chatgpt', JSON.stringify({ current_node: 'a', mapping: {
+      u: { parent: null, message: { id: 'u', author: { role: 'user' }, content: { content_type: 'text', parts: ['Video'] },
+        metadata: { attachments: [{ id: 'file_1', name: 'big.mp4', mime_type: 'video/mp4', rally_unavailable_reason: tooLarge }] } } },
+      a: { parent: 'u', message: { id: 'a', author: { role: 'assistant' }, content: { content_type: 'text', parts: ['[Get it](sandbox:/mnt/data/big.csv)'] },
+        metadata: { rally_sandbox_files: [{ link: 'sandbox:/mnt/data/big.csv', name: 'big.csv', rally_unavailable_reason: tooLarge }] } } },
+    } }));
+    expect(result.content.messages.map((message) => message.files?.[0]?.source)).toEqual([
+      expect.objectContaining({ kind: 'unavailable', reason: tooLarge }),
+      expect.objectContaining({ kind: 'unavailable', reason: tooLarge }),
+    ]);
+    expect(result.content.messages[1]!.files?.[0]?.name).toBe('big.csv');
+  });
   it('names a copied Claude upload preview for its own format', () => {
     const result = parseSessionExport('claude', JSON.stringify({ uuid: 'c4', name: 'Bug', chat_messages: [
       { uuid: 'h1', sender: 'human', content: [{ type: 'text', text: 'See the screenshot' }], files: [
