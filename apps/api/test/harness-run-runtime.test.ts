@@ -447,6 +447,36 @@ describe("durable harness attempt runtime", () => {
     expect(heartbeatLoop).toHaveBeenCalledTimes(2);
   });
 
+  it("attributes a joined heartbeat wait to the joining stage", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.runs, input(RUN_ONE), {
+      attemptId: "attempt-coalesced-heartbeat",
+      owner: "owner-coalesced-heartbeat",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+    let enterLoop!: () => void;
+    let releaseLoop!: () => void;
+    const loopEntered = new Promise<void>((resolve) => { enterLoop = resolve; });
+    const loopBlocked = new Promise<void>((resolve) => { releaseLoop = resolve; });
+    const timings: string[] = [];
+    const liveness = new CoalescedRunLiveness(sqlite.runs, RUN_ONE, claim.lease, {
+      afterHeartbeat: async () => { enterLoop(); await loopBlocked; },
+      onTiming: (stage, part) => { timings.push(`${stage}:${part}`); },
+    });
+
+    const first = liveness.pulse("run_start", true);
+    await loopEntered;
+    const joined = liveness.pulse("before_model", true);
+    releaseLoop();
+    await Promise.all([first, joined]);
+
+    expect(timings).toContain("run_start:attempt");
+    expect(timings).toContain("run_start:loop");
+    expect(timings).toContain("before_model:coalesced");
+    expect(timings).not.toContain("before_model:attempt");
+  });
+
   it("keeps the workstream running while a superseding interactive turn is pending", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);

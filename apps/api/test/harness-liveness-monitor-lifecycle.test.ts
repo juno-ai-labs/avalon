@@ -19,7 +19,7 @@ function section(start: string, end: string): string {
 function expectOrdered(source: string, markers: readonly string[]): void {
   let previousIndex = -1;
   for (const marker of markers) {
-    const markerIndex = source.indexOf(marker);
+    const markerIndex = source.indexOf(marker, previousIndex + 1);
     expect(markerIndex, `missing lifecycle marker: ${marker}`).toBeGreaterThan(previousIndex);
     previousIndex = markerIndex;
   }
@@ -73,9 +73,9 @@ describe("harness liveness-monitor lifetime", () => {
       "await projectModelProtocolTranscript(",
       "await promptPreparation.get()",
       "await toolsPreparation.get()",
-      "await persistImmutableRunScope(",
-      "await persistInitialPluginActivations(",
-      "await liveness.pulse(\"inference_start\", true);",
+      'await measureStartup("scope_persist_ms", async () => persistImmutableRunScope(',
+      'await measureStartup("initial_activations_ms", () => persistInitialPluginActivations(',
+      'await measureStartup("inference_start_heartbeat_ms", () => liveness.pulse("inference_start", true));',
       "const livenessMonitor = liveness.startMonitor(5_000);",
       "try {\n    outcome = await runHarness({",
       "} finally {",
