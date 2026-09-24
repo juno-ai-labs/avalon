@@ -164,12 +164,9 @@ so the local spool accepts it even when product analytics are disabled. It
 contains no ticket, URL, organization name, or directory contents. The UUID is
 also sent as the optional `diagnosticAttemptId` on `subscribe`, allowing the
 regional WorkspaceDO's structured `workspace_socket_handshake` logs to join
-the same attempt. Older clients omit it and remain valid. Compare the last
-desktop phase with the server's `accepted`, `frame_received`, `subscribe_received`,
-`subscribe_authorized`, `sidebar_built`, `flags_resolved`, and `sync_sent`
-phases to locate a stall; absence of a later phase alone is not proof of its
-cause. Server `connection_id` joins its `accepted` entry, which precedes
-`subscribe`, with later entries for the same socket.
+the same attempt. Older clients omit it and remain valid. The server phase
+sequence and the pre-subscription `connection_id` join are described in
+[`websocket-architecture.md`](websocket-architecture.md).
 
 Resource telemetry uses successful semantic operations, not generic click
 autocapture. A loaded work stream records open/switch/reopen, visibility, origin,
@@ -1946,9 +1943,13 @@ whether the desktop sent `subscribe` or the room completed its first sync.
 Add content-free, per-attempt desktop phases and matching WorkspaceDO phases,
 joined by an optional UUID on the subscription. Keep the desktop signal in the
 essential reliability class because this incident also affected clients with
-product analytics disabled; retain the existing opt-out behavior for aggregate
-socket-churn telemetry. Future handshake changes must preserve old-client
-subscriptions and keep tickets, URLs, and directory data out of these signals.
+product analytics disabled. This deliberately narrows the earlier decision to
+keep `realtime_socket_state` behind opt-out: that event measures aggregate socket
+churn, while these phases locate a failure that prevents the Organization from
+opening at all. They are attributable and add several rows per attempt, an
+accepted cost for diagnosing an unavailable app. Future handshake changes must
+preserve old-client subscriptions and keep tickets, URLs, and directory data out
+of these signals.
 
 ### 2026-09-18 — Retire regional observability copies after successful cutover
 

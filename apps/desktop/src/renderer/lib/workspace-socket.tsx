@@ -493,6 +493,7 @@ export function WorkspaceSocketProvider({
         // never dial after the network transition, and keep it distinct from a
         // transport failure.
         if (isOffline()) {
+          reportHandshake(diagnosticAttemptId, 'offline_blocked');
           socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'offline' });
           setState('unavailable');
           return;
@@ -717,7 +718,7 @@ export function WorkspaceSocketProvider({
           // The message's own `type` is what picks the schema that should have
           // read it; `describeZodIssues` then names the field it rejected,
           // which is schema shape rather than the message's data.
-          if (!sync.success && !syncRejectionReported && typeof decoded === 'object' && decoded !== null
+          if (!syncRejectionReported && typeof decoded === 'object' && decoded !== null
             && 'type' in decoded && decoded.type === 'workspace_sync') {
             syncRejectionReported = true;
             reportHandshake(diagnosticAttemptId, 'sync_rejected');
@@ -795,10 +796,12 @@ export function WorkspaceSocketProvider({
         });
       } catch (error) {
         if (!stopped) {
+          const offline = isOffline();
+          if (offline) reportHandshake(diagnosticAttemptId, 'offline_blocked');
           socketTelemetry.disconnected({
             attempts: attempt,
-            retrying: !isOffline(),
-            cause: isOffline()
+            retrying: !offline,
+            cause: offline
               ? 'offline'
               : isSocketTicketRequestTimeoutError(error) ? 'ticket_timeout' : 'ticket_failed',
           });
