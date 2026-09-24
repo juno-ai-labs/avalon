@@ -6,12 +6,11 @@ import { beforeEach, expect, it } from 'vitest';
 import worker from '../src/worker-events';
 
 beforeEach(async () => { await reset(); });
-it('refuses anonymous traffic with the real rate binding before the authority database read', async () => {
+it('refuses anonymous traffic with the real rate binding before intake database work', async () => {
   const key = crypto.randomUUID();
   await env.ACCESS_EDGE_RATE_LIMITER!.limit({ key });
   await env.ACCESS_EDGE_RATE_LIMITER!.limit({ key });
-  // D1 deliberately has no authority schema. Reaching it fails, rather than a
-  // mocked database claiming it was not used. The platform limiter is real.
+  // D1 deliberately has no schema. The platform limiter is real.
   const response = await worker.fetch(new Request('https://api.rallywith.ai/access/requests', {
     method: 'POST', headers: { origin: 'https://rallywith.ai', 'cf-connecting-ip': key, 'content-type': 'application/json' },
     body: JSON.stringify({ email: 'unused@example.com' }),

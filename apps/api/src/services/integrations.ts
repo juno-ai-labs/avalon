@@ -33,7 +33,6 @@ import {
   BUILT_IN_SKILLS,
   RequestElicitationInputSchema,
   classifyAddressing,
-  composeBeforeToolCallHooks,
   canonicalToolInputHash,
   createTextDeltaBatcher,
   memberSafeHarnessFailureMessage,
@@ -283,7 +282,6 @@ import { workstreamRunLimits } from "./workstream-run-policy";
 import { TERMINAL_PLUGIN_ID } from "./terminal/contract";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
 import type { WorkstreamRuntimeResourceAttacher } from "./workstream-object-client";
-import { requireOpenWorkstreamAuthority } from "./workstream-authority";
 
 const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
 const WORKSTREAM_PROMPT_VERSION = "workstream-v6-explicit-execution-authority";
@@ -2304,7 +2302,6 @@ async function executeAutomationCreatorConnectorTool(
     signal,
   );
   return withAuthorizedConnection(env, { connection, adapter, signal }, async (authorized) => {
-    await assertAutomationCreatorConnectionAuthorized(env, input, frozen, capability);
     const effectivePrincipal = authorized.scope === "workspace"
       ? { type: "workspace" as const, workspaceId: input.workspaceId }
       : { type: "user" as const, userId: input.userId };
@@ -2358,16 +2355,19 @@ async function assertAutomationCreatorConnectionAuthorized(
   if (frozen.workspaceId !== input.workspaceId || frozen.pluginId !== `connection:${frozen.connectionId}`) {
     throw new ConnectorError("unauthorized", "Connector is outside this automation-creator scope");
   }
-  await assertExecutionPrincipalAuthorized(env.DB, input.workspaceId, {
-    type: "user",
-    userId: input.userId,
-  });
-  const row = await env.DB.prepare(
+  const rowRead = env.DB.prepare(
     `SELECT id, workspace_id, connector_type, scope, owner_user_id, model_plugin_id,
             granted_scopes_json, encrypted_credentials, credential_iv, cursor_json, config_json, status
        FROM connector_connections
       WHERE id = ? AND workspace_id = ?`,
   ).bind(frozen.connectionId, input.workspaceId).first<Record<string, unknown>>();
+  const [, row] = await Promise.all([
+    assertExecutionPrincipalAuthorized(env.DB, input.workspaceId, {
+      type: "user",
+      userId: input.userId,
+    }),
+    rowRead,
+  ]);
   if (
     !row || row.status === "disabled" || row.connector_type !== frozen.connectorType ||
     row.scope !== frozen.scope || String(row.model_plugin_id ?? "") !== frozen.modelPluginId ||
@@ -2386,9 +2386,6 @@ async function assertAutomationCreatorConnectionAuthorized(
 }
 
 export async function activateWorkstreamLoop(env: Env, input: WorkstreamWorkflowInput): Promise<string> {
-  // Durable-Object dispatch is the only execution arm; a stack that has not
-  // opened the authority is refused rather than routed to retired legacy code.
-  await requireOpenWorkstreamAuthority(env);
   const substreamId = input.substreamId ?? asSubstreamId("0");
   const executionReceiptId = `substream-agent:${substreamId}:${input.harnessRunId}`;
   const agent = await durableObjectStubForWorkspace(
@@ -2530,6 +2527,7 @@ export async function runWorkstreamHarness(
     runtimeResourceAttacher?: WorkstreamRuntimeResourceAttacher;
     /** Object-local authority for the one persistent loop of this substream. */
     persistentLoop?: {
+      contextWindowTokensByModel(): Promise<Readonly<Record<string, number>>>;
       readSidekickSkills(): SidekickSkillSnapshot | null;
       assignSidekickSkillNames(sources: SidekickSkillSnapshot["sources"]): Map<string, string>;
       attachedSidekickIds(): string[];
@@ -2688,14 +2686,6 @@ export async function runWorkstreamHarness(
   if (!storedSidekickSkills) runtime?.persistentLoop?.saveSidekickSkills(sidekickSnapshot);
   const sidekickCatalog = sidekickSkillCatalog(sidekickSnapshot.sources,
     runtime?.persistentLoop?.assignSidekickSkillNames(sidekickSnapshot.sources));
-  const assertSidekickAuthority = async (): Promise<void> => {
-    const active = sidekickSnapshot.sources.filter((source) => sidekickSnapshot.activeRefs.includes(sidekickSkillRef(source.id)));
-    if (active.length === 0) return;
-    const authorized = await resolveSidekickSkills(env, input, principalIsGuest, active.map((source) => source.id));
-    if (active.some((source) => !authorized.some((current) => current.id === source.id))) {
-      throw new ApiError(403, "sidekick_access_changed", "A Sidekick is no longer available to this execution");
-    }
-  };
   const streamId = input.harnessRunId;
   if (!runtime?.lease) throw Object.assign(new Error("The durable Bind attempt lease was not supplied"), {
     code: "run_ownership_lost",
@@ -2706,6 +2696,8 @@ export async function runWorkstreamHarness(
     workspaceId: input.workspaceId,
     workstreamId: input.parentId,
   }));
+  const contextWindowPreparation = new Preparation(() =>
+    runtime?.persistentLoop?.contextWindowTokensByModel() ?? Promise.resolve({}));
   const attachmentGroundingPreparation = new Preparation(async () => {
     const guard = new AttachmentGroundingGuard();
     const receipts = await createToolReceiptObjectPort(
@@ -2728,6 +2720,7 @@ export async function runWorkstreamHarness(
     return guard;
   });
   modelRoutingPreparation.get();
+  contextWindowPreparation.get();
   attachmentGroundingPreparation.get();
   const livenessTimings: Record<string, number> = {};
   const liveness = new CoalescedRunLiveness(runs, input.harnessRunId, attemptLease, {
@@ -3437,6 +3430,7 @@ export async function runWorkstreamHarness(
         runtime?.persistentLoop?.activateSidekickSkill(ref);
       },
       compaction: {
+          contextWindowTokensByModel: await contextWindowPreparation.get(),
           prepare: async () => {
             await liveness.pulse("compaction_prepare", true);
             await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
@@ -3539,11 +3533,7 @@ export async function runWorkstreamHarness(
       if (attachmentNudge) return attachmentNudge;
       return null;
     },
-    beforeToolCall: composeBeforeToolCallHooks(
-      async ({ pluginId, toolName }) => {
-        await liveness.pulse("before_tool", true);
-        await assertSidekickAuthority();
-        await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
+    beforeToolCall: async ({ pluginId, toolName }) => {
         const policy = toolPolicyForCall(pluginId, toolName, harnessTools);
         if (!policy) throw new ConnectorError("unauthorized", "Plugin tool is outside this run scope");
         const frozen = harnessTools.frozenConnections.get(pluginId);
@@ -3554,11 +3544,23 @@ export async function runWorkstreamHarness(
           ) {
             throw new ConnectorError("unauthorized", "Plugin is outside this run scope");
           }
-          return;
+          if (policy.mode === "read") await liveness.pulse("before_tool", true);
+          else await Promise.all([
+            liveness.pulse("before_tool", true),
+            assertRunAuthorityStillValid(env, input, runAuthoritySnapshot),
+          ]);
+          return { allowed: true };
         }
-        await assertFrozenConnectionAuthorized(env, input, frozen, policy.capability);
-      },
-    ),
+        const [, , row] = await Promise.all([
+          liveness.pulse("before_tool", true),
+          assertRunAuthorityStillValid(env, input, runAuthoritySnapshot),
+          assertFrozenConnectionAuthorized(env, input, frozen, policy.capability, false),
+        ]);
+        return {
+          allowed: true,
+          authorizationContext: { frozen, capability: policy.capability, row } satisfies PreparedConnectorAuthorization,
+        };
+    },
     onInferenceDelay: (event) => emit({
       type: "inference_delay_changed",
       ...event,
@@ -3708,29 +3710,33 @@ export async function runWorkstreamHarness(
       });
     },
     onLiveness: async (stage) => {
-      const stageStartedAt = Date.now();
-      await liveness.pulse(stage, stage === "before_model" || stage === "after_tool");
-      if (stage === "before_model" && !firstInferenceBreakdownLogged) {
-        startupDurations.before_model_heartbeat_ms = Date.now() - stageStartedAt;
-      }
       // Renewal must remain available while Bind settles an in-flight step
       // after archive or stop. New model work is authorized here; new tool
       // work is independently authorized by beforeToolCall above. Treating
       // archive as a renewal failure masks Bind's durable stop transition.
       if (stage === "before_model") {
         const authorityStartedAt = Date.now();
-        await assertSidekickAuthority();
+        await Promise.all([
+          liveness.pulse(stage, true).then(() => {
+            if (!firstInferenceBreakdownLogged) {
+              startupDurations.before_model_heartbeat_ms = Date.now() - authorityStartedAt;
+            }
+          }),
+          (async () => {
+            const runAuthorityStartedAt = Date.now();
+            await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot, (name, durationMs) => {
+              if (!firstInferenceBreakdownLogged) startupDurations[`before_model_${name}_ms`] = durationMs;
+            });
+            if (!firstInferenceBreakdownLogged) {
+              startupDurations.before_model_run_authority_ms = Date.now() - runAuthorityStartedAt;
+            }
+          })(),
+        ]);
         if (!firstInferenceBreakdownLogged) {
-          startupDurations.before_model_sidekick_authority_ms = Date.now() - authorityStartedAt;
-        }
-        const runAuthorityStartedAt = Date.now();
-        await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot, (name, durationMs) => {
-          if (!firstInferenceBreakdownLogged) startupDurations[`before_model_${name}_ms`] = durationMs;
-        });
-        if (!firstInferenceBreakdownLogged) {
-          startupDurations.before_model_run_authority_ms = Date.now() - runAuthorityStartedAt;
           startupDurations.before_model_authority_ms = Date.now() - authorityStartedAt;
         }
+      } else {
+        await liveness.pulse(stage, stage === "after_tool");
       }
     },
     findCompletedToolResult: async (toolCallId, inputHash, policyIdentity) => {
@@ -5513,6 +5519,7 @@ async function loadHarnessTools(
           context.providerIdempotencyKey,
           undefined,
           context.effectIntentId,
+          context.authorizationContext,
         ),
       };
       const expanded = includeStaticInputValidator ? expandPages(tool, shortWireName, connectionId) : [tool];
@@ -6105,6 +6112,12 @@ function toolSurfaceJson(
   });
 }
 
+type PreparedConnectorAuthorization = {
+  frozen: FrozenConnectorPlugin;
+  capability: string;
+  row: Record<string, unknown>;
+};
+
 async function executeAuthorizedConnectorTool(
   env: Env,
   input: WorkstreamWorkflowInput,
@@ -6116,8 +6129,13 @@ async function executeAuthorizedConnectorTool(
   providerIdempotencyKey?: string,
   ownershipGuard?: () => Promise<void>,
   effectIntentId?: string,
+  authorizationContext?: unknown,
 ) {
   await ownershipGuard?.();
+  const prepared = authorizationContext as PreparedConnectorAuthorization | undefined;
+  const preparedRow = prepared?.frozen === frozen && prepared.capability === capability
+    ? prepared.row
+    : undefined;
   const { connection, adapter } = await loadAuthorizedConnectionContext(
     env,
     input,
@@ -6125,12 +6143,9 @@ async function executeAuthorizedConnectorTool(
     capability,
     signal,
     ownershipGuard,
+    preparedRow,
   );
   return withAuthorizedConnection(env, { connection, adapter, signal }, async (authorized) => {
-    await ownershipGuard?.();
-    // Membership, ownership, grants, and stored health are checked again after
-    // credentials are available and immediately before external execution.
-    await assertFrozenConnectionAuthorized(env, input, frozen, capability);
     await ownershipGuard?.();
     const effectivePrincipal = authorized.scope === "workspace"
       ? { type: "workspace" as const, workspaceId: input.workspaceId }
@@ -6173,9 +6188,10 @@ async function loadAuthorizedConnectionContext(
   capability: string | undefined,
   signal: AbortSignal,
   ownershipGuard?: () => Promise<void>,
+  preparedRow?: Record<string, unknown>,
 ): Promise<{ connection: ConnectorConnectionContext; adapter: ResolvedConnectorAdapter }> {
   await ownershipGuard?.();
-  const row = await assertFrozenConnectionAuthorized(env, input, frozen, capability);
+  const row = preparedRow ?? await assertFrozenConnectionAuthorized(env, input, frozen, capability);
   let credentials: Record<string, unknown> = {};
   if (typeof row.encrypted_credentials === "string" && typeof row.credential_iv === "string") {
     credentials = JSON.parse(await decryptVersionedConnectorCredentials(env, {
@@ -6208,17 +6224,20 @@ async function assertFrozenConnectionAuthorized(
   input: WorkstreamWorkflowInput,
   frozen: FrozenConnectorPlugin,
   capability?: string,
+  verifyRunAuthority = true,
 ): Promise<Record<string, unknown>> {
   if (frozen.workspaceId !== input.workspaceId || frozen.pluginId !== `connection:${frozen.connectionId}`) {
     throw new ConnectorError("unauthorized", "Connector is outside this immutable run scope");
   }
-  await assertRunAuthorityStillValid(env, input, frozen.runAuthoritySnapshot);
-  const row = await env.DB.prepare(
+  const rowRead = env.DB.prepare(
     `SELECT id, workspace_id, connector_type, scope, owner_user_id, granted_scopes_json,
             encrypted_credentials, credential_iv, cursor_json, config_json, status
        FROM connector_connections
       WHERE id = ? AND workspace_id = ?`,
   ).bind(frozen.connectionId, input.workspaceId).first<Record<string, unknown>>();
+  const row = verifyRunAuthority
+    ? (await Promise.all([assertRunAuthorityStillValid(env, input, frozen.runAuthoritySnapshot), rowRead]))[1]
+    : await rowRead;
   if (
     !row || row.status === "disabled" || row.connector_type !== frozen.connectorType ||
     row.scope !== frozen.scope || (row.owner_user_id == null ? null : String(row.owner_user_id)) !== frozen.ownerUserId
@@ -6290,13 +6309,20 @@ async function readRunAuthority(
   onTiming?: (name: "principal" | "identity" | "conversation" | "automation", durationMs: number) => void,
 ): Promise<RunAuthoritySnapshot & { principalIsGuest: boolean }> {
   const db: D1Database = env.DB;
-  let startedAt = Date.now();
-  const guest = await assertExecutionPrincipalAuthorized(db, input.workspaceId, input.executionPrincipal);
-  recordOptionalTiming(onTiming, "principal", startedAt);
-  startedAt = Date.now();
-  const workstream = await createIdentityObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0")
-    .identity();
-  recordOptionalTiming(onTiming, "identity", startedAt);
+  const principalStartedAt = Date.now();
+  const identityStartedAt = Date.now();
+  const [guest, workstream] = await Promise.all([
+    assertExecutionPrincipalAuthorized(db, input.workspaceId, input.executionPrincipal).then((result) => {
+      recordOptionalTiming(onTiming, "principal", principalStartedAt);
+      return result;
+    }),
+    createIdentityObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0")
+      .identity().then((result) => {
+        recordOptionalTiming(onTiming, "identity", identityStartedAt);
+        return result;
+      }),
+  ]);
+  let startedAt: number;
   if (!workstream || workstream.archived_at != null) {
     throw new ConnectorError("unauthorized", "Work stream is no longer active");
   }
@@ -6568,26 +6594,16 @@ async function reauthorizeFrozenPlugin(
   try {
     await ownershipGuard?.();
     if (occasion === "continuation") {
-      // The caller's deadline still bounds this branch. Without it a cancelled
-      // or timed-out run would answer `authorized` from records it read after
-      // the run stopped being allowed to proceed, and the disposable deadline
-      // wrapped around this call would bound nothing.
       signal.throwIfAborted();
-      // Between turns, authority is exactly what Avalon's own records say: the
-      // principal, the work stream, the automation authority, the connection's
-      // identity, scope, owner, grants, and stored health. This check runs
-      // before every inference, so re-asking the provider would spend a round
-      // trip per active plugin per turn — up to eight rounds a run — to
-      // rediscover something already known here, and would decrypt credentials
-      // nothing is about to use. A provider that has since refused the
-      // credential still surfaces on the next tool call, which recovers.
-      await assertFrozenConnectionAuthorized(env, input, frozen);
-      // Again after the reads, not only before them. A deadline that fires
-      // while D1 is answering would otherwise leave the one check already
-      // passed, and this branch would report `authorized` for a run that had
-      // stopped being allowed to proceed.
+      // The tool surface was frozen at activation. Model turns keep it visible
+      // without a WorkspaceDO connection read; each tool use rechecks the live
+      // row and the model boundary checks run authority once per turn.
+      if (frozen.workspaceId !== input.workspaceId || frozen.pluginId !== `connection:${frozen.connectionId}`) {
+        throw new ConnectorError("unauthorized", "Connector is outside this immutable run scope");
+      }
       signal.throwIfAborted();
       await ownershipGuard?.();
+      signal.throwIfAborted();
       return "authorized";
     }
     let startedAt = Date.now();
@@ -8612,6 +8628,7 @@ async function recordToolAudit(
 
 export const __integrationTesting = {
   executeAuthorizedConnectorTool,
+  assertFrozenConnectionAuthorized,
   prePaginationTool,
   connectorToolSurfaceHash,
   createToolEffectIntents,

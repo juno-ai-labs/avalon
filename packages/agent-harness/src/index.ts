@@ -169,9 +169,6 @@ export interface AzureOpenAIConfig {
   apiKey: string;
 }
 
-/** Shared freshness horizon for OpenRouter catalog-derived metadata. */
-export const OPENROUTER_CATALOG_CACHE_TTL_MS = 60 * 60 * 1_000;
-
 /** Stable product attribution for every Rally OpenRouter request. */
 export const RALLY_OPENROUTER_HTTP_REFERER = "https://rallywith.ai";
 
@@ -3007,6 +3004,8 @@ export interface HarnessToolContext {
   executionPrincipal: ExecutionPrincipal;
   /** Stable per-receipt key for provider APIs that support idempotent writes. */
   providerIdempotencyKey?: string;
+  /** Host-only authorization prepared before receipt lookup; never persisted. */
+  authorizationContext?: unknown;
   signal: AbortSignal;
 }
 
@@ -3120,7 +3119,7 @@ export interface BeforeToolCallInput {
 }
 
 export type BeforeToolCallDecision =
-  | { allowed: true }
+  | { allowed: true; authorizationContext?: unknown }
   | { allowed: false; code: string; message: string };
 
 export type BeforeToolCallHook = (

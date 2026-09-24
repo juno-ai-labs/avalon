@@ -122,17 +122,3 @@ export async function requireWorkstreamIngress(
   }
   return control;
 }
-
-export function workstreamMaintenanceResponse(control: WorkstreamAuthorityControl): Response {
-  return Response.json({
-    error: "workstream_maintenance",
-    phase: control.phase,
-    generation: control.generation,
-  }, {
-    status: 503,
-    headers: {
-      "Retry-After": "30",
-      "Cache-Control": "no-store",
-    },
-  });
-}
