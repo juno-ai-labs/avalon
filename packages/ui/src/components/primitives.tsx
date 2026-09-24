@@ -489,7 +489,7 @@ export function AvatarStack({
               <span
                 aria-hidden="true"
                 className="avatar-presence-ping"
-                style={presenceColor ? { '--avatar-presence-color': personalColor(presenceColor) } as React.CSSProperties : undefined}
+                style={{ '--person-accent': presenceColor ? personalColor(presenceColor) : 'var(--av-sys-color-success-base)' } as React.CSSProperties}
               />
             )}
             <Avatar member={member} size="small" title={null} />
