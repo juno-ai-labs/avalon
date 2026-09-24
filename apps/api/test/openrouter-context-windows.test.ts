@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { inferencePricingWorker } from "../src/inference-pricing-worker";
 import {
   loadOpenRouterContextWindows,
   refreshOpenRouterContextWindows,
+  refreshOpenRouterContextWindowsIfDue,
 } from "../src/services/openrouter-context-windows";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 
@@ -54,21 +54,18 @@ describe("OpenRouter context window snapshot", () => {
     expect(await loadOpenRouterContextWindows(env)).toEqual({});
   });
 
-  it("refreshes context windows on the daily cron", async () => {
+  it("seeds a missing snapshot and refreshes it after 24 hours", async () => {
+    let stored: unknown = null;
+    const get = vi.fn(async () => stored);
     const put = vi.fn();
     const fetcher = vi.fn<typeof fetch>(async () => Response.json({ data: [{ id: "test/model", context_length: 100 }] }));
-    vi.stubGlobal("fetch", fetcher);
-    try {
-      await inferencePricingWorker.scheduled(createCloudflareTestBinding<ScheduledController>({
-        cron: "0 0 * * *",
-        scheduledTime: NOW,
-        noRetry: vi.fn(),
-      }), { INFERENCE_PRICING_CACHE: createCloudflareTestBinding<KVNamespace>({ put }) });
-      expect(fetcher).toHaveBeenCalledOnce();
-      expect(put).toHaveBeenCalledOnce();
-      expect(put.mock.calls[0]?.[0]).toBe(KEY);
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    put.mockImplementation(async (_key: string, value: string) => { stored = JSON.parse(value) as unknown; });
+    const env = { INFERENCE_PRICING_CACHE: createCloudflareTestBinding<KVNamespace>({ get, put }) };
+    await refreshOpenRouterContextWindowsIfDue(env, { fetch: fetcher, now: () => NOW });
+    await refreshOpenRouterContextWindowsIfDue(env, { fetch: fetcher, now: () => NOW + 60 * 60 * 1000 });
+    await refreshOpenRouterContextWindowsIfDue(env, { fetch: fetcher, now: () => NOW + 24 * 60 * 60 * 1000 });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(put).toHaveBeenCalledTimes(2);
+    expect(put.mock.calls[0]?.[0]).toBe(KEY);
   });
 });

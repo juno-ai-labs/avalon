@@ -960,7 +960,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private productSessionAdmissionRevision = 0;
   /** Avoid a durable-outbox point read on every high-frequency token frame. */
   private semanticRealtimePending = false;
-  /** One KV read per object lifetime, shared by concurrent runs on this object. */
+  /** One successful KV read per object lifetime, shared by concurrent runs. */
   private contextWindowSnapshot: Promise<Readonly<Record<string, number>>> | null = null;
   /**
    * Not `readonly`, and not assigned in the constructor body: the store applies
@@ -3377,7 +3377,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         workspaceId: request.auth.workspaceId,
         userId: request.auth.userId,
         sessionId: request.auth.sessionId,
-      }));
+      }, request.auth.role));
     if (!current || current.role !== request.auth.role || current.region !== request.auth.region) {
       const refusal = request.auth.principal === "impersonation"
         ? "impersonation_member_revoked"
@@ -5134,8 +5134,21 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   private contextWindowTokensByModel(): Promise<Readonly<Record<string, number>>> {
-    this.contextWindowSnapshot ??= loadOpenRouterContextWindows(this.env).catch(() => ({}));
-    return this.contextWindowSnapshot;
+    if (this.contextWindowSnapshot) return this.contextWindowSnapshot;
+    const loading = loadOpenRouterContextWindows(this.env).then((windows) => {
+      if (Object.keys(windows).length === 0 && this.contextWindowSnapshot === loading) {
+        this.contextWindowSnapshot = null;
+      }
+      return windows;
+    }, (error: unknown) => {
+      if (this.contextWindowSnapshot === loading) this.contextWindowSnapshot = null;
+      logWarn(this.env, "context_window_snapshot_read_failed", {
+        reason: diagnosticErrorCode(error, "context_window_kv_read_failed"),
+      });
+      return {};
+    });
+    this.contextWindowSnapshot = loading;
+    return loading;
   }
 
   private async settlePersistentLoopStep(
@@ -6573,22 +6586,24 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   private async productSessionAuth(
     identity: Pick<SocketAttachment, "sessionId" | "userId" | "workspaceId">,
+    expectedRole: AuthContext["role"],
   ): Promise<AuthContext | null> {
     const key = JSON.stringify([identity.workspaceId, identity.userId, identity.sessionId]);
     const now = Date.now();
     const cached = this.productSessionAdmissions.get(key);
-    if (cached && cached.validUntil > now) return cached.auth;
+    if (cached && cached.validUntil > now && cached.auth.role === expectedRole) return cached.auth;
     if (cached) this.productSessionAdmissions.delete(key);
     const revision = this.productSessionAdmissionRevision;
     const admission = await this.socketAdmissionAuth(identity);
     if (!admission) return null;
-    const validUntil = Math.min(now + PRODUCT_SESSION_AUTH_MAX_AGE_MS, admission.sessionExpiresAt ?? Number.POSITIVE_INFINITY);
-    if (validUntil <= Date.now()) return null;
+    const observedAt = Date.now();
+    const validUntil = Math.min(observedAt + PRODUCT_SESSION_AUTH_MAX_AGE_MS, admission.sessionExpiresAt ?? Number.POSITIVE_INFINITY);
+    if (validUntil <= observedAt) return null;
     // A queued revocation may have arrived while D1 was answering. Do not
     // install an older observation into this object's future requests.
     if (revision === this.productSessionAdmissionRevision) {
       for (const [entryKey, entry] of this.productSessionAdmissions) {
-        if (entry.validUntil <= now) this.productSessionAdmissions.delete(entryKey);
+        if (entry.validUntil <= observedAt) this.productSessionAdmissions.delete(entryKey);
       }
       this.productSessionAdmissions.set(key, { auth: admission.auth, validUntil });
     }

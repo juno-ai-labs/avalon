@@ -4565,7 +4565,7 @@ describe("agent harness", () => {
           idempotency: "safe", inputSchema: schema },
         execute,
       }])],
-      beforeToolCall,
+      beforeToolCall: composeBeforeToolCallHooks(beforeToolCall, () => ({ allowed: true })),
       onEvent: (event) => { events.push(event); },
     });
     expect(outcome).toMatchObject({ status: "completed", content: "done" });
@@ -4843,6 +4843,17 @@ describe("agent harness", () => {
       error: expect.stringContaining("at least one resource field must be updated"),
     });
     expect(result.error).not.toContain("after accepting its arguments");
+  });
+
+  it("preserves falsey authorization contexts through hook composition", async () => {
+    const input = {} as Parameters<ReturnType<typeof composeBeforeToolCallHooks>>[0];
+    for (const authorizationContext of [false, 0, "", null]) {
+      const hook = composeBeforeToolCallHooks(
+        () => ({ allowed: true, authorizationContext }),
+        () => ({ allowed: true }),
+      );
+      expect(await hook(input)).toEqual({ allowed: true, authorizationContext });
+    }
   });
 
   it("keeps blocked write tools visible while rejecting them before durable or provider work", async () => {

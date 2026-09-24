@@ -313,21 +313,6 @@ or numerical retention period is configured.
 
 ## Changelog
 
-### 2026-09-23 — Remove the completed Channel cutover gate from acquisition
-
-**What changed:** The API HTTP entrypoint no longer reads the Channel authority
-control row before routing acquisition requests. Acquisition keeps its own
-origin, rate, and credential checks.
-
-**Why:** The one-time Channel migration had completed, yet its regional D1
-lookup delayed unrelated intake and downloads on every request.
-
-**Considered and rejected:** Replacing the row with a new route switch would
-retain a maintenance control without an identified acquisition operation.
-
-**Consequences:** Changing the Channel authority phase does not close the
-acquisition routes. Acquisition failures still follow their own guards.
-
 ### 2026-09-21 — Remove retired acquisition and release deployment coupling
 
 **What changed:** Deleted the unused landing-page intake and Turnstile client,

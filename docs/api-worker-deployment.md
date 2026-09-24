@@ -26,7 +26,7 @@ and [Versions and gradual deployments](https://developers.cloudflare.com/workers
 | --- | --- | --- |
 | Ashby ingress | `src/ashby-ingress-worker.ts`, `wrangler.ashby.global.jsonc` | Dedicated public connector domain; opaque regional lookup and exact signed-byte forwarding. |
 | Telemetry delivery | `src/telemetry-delivery-worker.ts`, `wrangler.telemetry.global.jsonc` | Global-only destination adapters for already approved telemetry, crash, and profile rows; PostHog is the first adapter. |
-| Inference metadata | `src/inference-pricing-worker.ts`, `wrangler.pricing.global.jsonc` | Hourly OpenRouter endpoint-price averages and a daily model-window snapshot written to the shared regional KV namespace. |
+| Inference metadata | `src/inference-pricing-worker.ts`, `wrangler.pricing.global.jsonc` | Hourly OpenRouter endpoint-price averages and a model-window snapshot seeded when missing and refreshed after 24 hours in shared regional KV. |
 | Contracts | `src/services/document-processing-contract.ts`, `src/services/terminal/provider-rpc-contract.ts`, `src/telemetry/telemetry-delivery-contract.ts` | Typed RPC inputs and outputs imported by caller and callee. |
 | Rollout | `.github/workflows/deploy-api.yml` | Profiles, version upload, migration ordering, promotion, health, and retained evidence. |
 
@@ -158,7 +158,7 @@ selected product regions.
   missing or malformed record makes Bind omit that Azure candidate rather than
   send an unpriced request.
 
-- A failed daily model-window cron leaves the previous snapshot usable. Missing
+- A failed model-window refresh leaves the previous snapshot usable. Missing
   or malformed metadata uses the harness's 200,000-token compaction window.
 
 - Cloudflare Versions cannot apply Durable Object migrations or update a
@@ -286,17 +286,19 @@ and subrequest, while ordinary API requests no longer initialize those provider
 libraries. That cost is bounded to the capability that uses it and is visible
 as a platform invocation.
 The metadata graph runs pricing once per hour in Global and performs sixteen
-OpenRouter catalog reads plus sixteen small KV writes. A second daily cron
-fetches the model catalog once and writes one context-window snapshot. Inference
-performs the pricing KV reads for Azure-bound models in its route plan; each
+OpenRouter catalog reads plus sixteen small KV writes. The hourly tick reads one
+context-window KV snapshot and fetches the model catalog only when that snapshot
+is missing or at least 24 hours old. Inference performs the pricing KV reads
+for Azure-bound models in its route plan; each
 resident Channel agent reads the window snapshot once.
 
 ### 2026-09-23 — Move stable metadata and obsolete cutover checks off request reads
 
-**What changed:** The existing Global scheduled metadata Worker now refreshes a
-single OpenRouter context-window snapshot daily in the shared KV. The Channel
-agent reads it once into object memory for its lifetime. The top-level HTTP
-handler and ordinary Channel service and route paths no longer read the
+**What changed:** The existing Global scheduled metadata Worker's hourly tick
+seeds a missing OpenRouter context-window snapshot and refreshes it after 24
+hours in shared KV. The Channel agent retains a successful read in object memory
+for its lifetime and retries missing or failed reads on the next run. The
+top-level HTTP handler and ordinary Channel service and route paths no longer read the
 completed cutover row. Creation retains its generation read.
 
 **Why:** The old cold catalog fetch delayed first inference and repeated work
@@ -312,10 +314,10 @@ and operations work for metadata the existing Global scheduler and namespace
 already serve. An additional deployment switch for ordinary Channel routes
 would recreate a maintenance control with no identified operation that needs it.
 
-**Consequences:** The daily trigger and hourly pricing trigger deploy together.
-The metadata Worker remains the only writer; inference must tolerate a missing
-snapshot during rollout or a failed daily refresh. Changing the D1 phase alone
-no longer closes every HTTP route. Generation and phase consumers at creation,
+**Consequences:** One hourly trigger handles pricing and a due context-window
+refresh. The metadata Worker remains the only writer; inference must tolerate a
+missing snapshot until the next hourly tick or a failed refresh. Changing the
+D1 phase alone no longer closes every HTTP route. Generation and phase consumers at creation,
 socket admission, and background boundaries still read D1 where that value
 drives the operation.
 

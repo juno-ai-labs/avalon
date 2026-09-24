@@ -1819,7 +1819,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             ...(effectIntentId ? { effectIntentId } : {}),
             executionPrincipal: input.executionPrincipal,
             ...(providerIdempotencyKey ? { providerIdempotencyKey } : {}),
-            ...(beforeToolCallDecision?.allowed === true && beforeToolCallDecision.authorizationContext
+            ...(beforeToolCallDecision?.allowed === true && beforeToolCallDecision.authorizationContext !== undefined
               ? { authorizationContext: beforeToolCallDecision.authorizationContext }
               : {}),
             signal: toolSignal,
