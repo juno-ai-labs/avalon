@@ -3828,7 +3828,22 @@ export class WorkstreamTranscriptStorage {
     insertPreparedTranscriptFact(this.sql, fact, now);
   }
 
+  /**
+   * The steers a safe step may promote: those ahead of the first queued
+   * message that starts no run. That message was sent before any steer behind
+   * it, and it lands only after this step's promotions, so a steer past it
+   * would be read — by the room and by the model — before it.
+   */
   private pendingSteersForCommit(): PendingLoopInputRow[] {
+    const steers: PendingLoopInputRow[] = [];
+    for (const pending of this.visibleSteersAndInputsWithoutRun()) {
+      if (pending.starts_run === 0) break;
+      steers.push(pending);
+    }
+    return steers;
+  }
+
+  private visibleSteersAndInputsWithoutRun(): PendingLoopInputRow[] {
     return this.sql.exec<PendingLoopInputRow>(
       `SELECT input_id, loop_id, input_sequence, prepared_turn_id,
               admitted_after_transcript_sequence, mode, actor, author_user_id,
@@ -3839,7 +3854,7 @@ export class WorkstreamTranscriptStorage {
               prepared_payload_byte_length, bind_payload_json, provenance_json, authorization_json,
               attachments_json, mentions_json, starts_run, created_at, updated_at
          FROM pending_loop_inputs
-        WHERE mode = 'steer' AND starts_run = 1
+        WHERE (mode = 'steer' OR starts_run = 0)
           AND NOT EXISTS (
             SELECT 1 FROM pending_loop_input_mailbox preparing
              WHERE preparing.loop_id = pending_loop_inputs.loop_id
