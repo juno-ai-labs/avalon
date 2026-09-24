@@ -1321,6 +1321,13 @@ channels". The state it describes is a brand-new Organization: **Spaces →
 General → No channels**, and without it nothing under that, which reads as a
 sidebar that has stopped talking rather than one that is empty.
 
+**A member's rail adds the same bounded hierarchy for any Channel they reach
+only through its conversations** — a Breakout of a Channel they cannot read —
+after the member directory's own Channels, and it lists the Spaces those
+Channels sit in beside the member Space directory. Such a Channel opens on its
+first listed conversation and never on Main, and the Channel socket pool does
+not hold its Main.
+
 **Both guest hosts get the bounded read-only hierarchy.** Neither guest is
 handed the member Space directory. They use `/sharing/navigation` to draw Space,
 Channel and Breakout rails from canonically admitted Channels only. Selecting a

@@ -308,8 +308,11 @@ where the decision is being made.
 ### Membership, rename, archive and notifications
 
 The child title-bar facepile opens its participant dialog. Adding grants explicit
-child membership after checking parent access; removal and self-removal use the
-same authority, and the final participant cannot leave. Confirming a mention of
+child membership to any active workspace member, whether or not they can read the
+work stream; the actor's own active child membership is the authority. Removal
+and self-removal use the same authority, and the final participant cannot leave.
+Leaving Main does not leave a child. A refusal shows the route's own sentence in
+the dialog rather than a generic one. Confirming a mention of
 somebody outside the child adds them through that API before sending.
 
 A child row's context menu offers **Rename** and **Archive substream**.
@@ -372,9 +375,16 @@ the first model context without becoming executable historical work.
 
 ## Invariants
 
-- Parent visibility **and** explicit child membership are required. Parent
-  participants cannot enumerate or open someone else's private child; adding a
-  child member does not grant parent or sibling access.
+- **Explicit child membership alone admits a child.** Parent visibility is
+  neither required nor enough: parent participants cannot enumerate or open
+  someone else's private child, and adding a child member does not grant Main
+  or sibling access. `WorkstreamDO.canReadConversation` is the one predicate for
+  one conversation, under either authority, and discovery asks it too.
+- **A child member who cannot read Main still finds the child.** WorkspaceDO
+  names the Channel as a conversation-directory candidate from its Breakout
+  viewer rows, `/sharing/navigation` releases only the conversations the
+  predicate above admits, and the desktop draws that Channel the way it draws a
+  guest's: its name and those conversations, never Main.
 - One operation pins one capture, recipe, child ID and membership receipt.
   Replanning a retry would silently change the context that operation froze.
 - Context installation writes no live transcript turn, pending input or run.
@@ -412,10 +422,10 @@ the first model context without becoming executable historical work.
   with — before the first submit there is nothing to release, and after a failed
   one the cancellation is what releases it.
 - **A mention nobody can be seated for is refused before anything is created.**
-  Confirmation asks the seating's own two questions first — active workspace
-  membership, then whether this work stream admits them — because the answer
-  arrives as a sentence about the message ("add this person to the work stream
-  first"), and a sentence about the message should not cost a substream.
+  Confirmation asks the seating's own question first — active workspace
+  membership — because the answer arrives as a sentence about the message, and
+  a sentence about the message should not cost a substream. Whether the person
+  can read the work stream is not asked: a substream seats them on its own.
 - **A substream's model pin is its own row's, written once.** Confirmation
   writes it onto the child and never onto the parent, and a retry of a
   confirmation that already reached `ready` replays its answer rather than
@@ -562,6 +572,34 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-24 — A Breakout's roster is its own
+
+**What changed:** Adding somebody to a legacy Breakout no longer requires that
+they can read its Channel, and reading the Breakout no longer requires it
+either: the parent's viewer check, its add/remove/archive checks, the creation
+mention preflight and `AuthorizationService` all decide a Breakout from its own
+membership. `WorkstreamDO.canReadConversation` is the one predicate for one
+conversation under either authority. WorkspaceDO adds Channels reached only
+through a Breakout to the conversation-directory candidates, and the desktop
+fetches `/sharing/navigation` for members as well as guests: a Channel whose
+entry omits Main is conversation-scoped, whoever is looking. The participant
+dialog shows the route's refusal sentence.
+
+**Why:** A person could not add colleagues to a Breakout of a personal Channel
+they were not in, and the dialog said only "That participant couldn't be
+added." The grant model already let a direct child grant stand without Main;
+the legacy roster was the one path that still tied a Breakout to its Channel.
+Making the legacy path match, rather than migrating the Channel to grants on
+first add, kept the change to the checks that already existed.
+
+**What a future change has to respect:** removing someone from Main leaves
+their Breakout memberships in place; that is intended, and the Breakout's own
+roster is where they are removed. Discovery comes from the same predicate as
+admission, so a surface that lists conversations must ask
+`canReadConversation`, not infer from Main. Being conversation-scoped is decided
+by the directory entry, not by the guest access class, which remains only a
+permission fact.
 
 ### 2026-09-21 — Breakouts carry their own chosen identity
 

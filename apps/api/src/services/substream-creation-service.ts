@@ -4,7 +4,6 @@ import { asSubstreamId, asUserId, asWorkstreamId, type AgentModelOverride } from
 import { PrivateChildPreparationOperationSchema, type PrivateChildPreparationOperation } from "@rally/contracts/conversation-parent";
 import type { SubstreamCreationResult, SubstreamOpeningMessage } from "@rally/contracts/substream-creation";
 import type { AuthContext, Env } from "../env";
-import type { WorkstreamDO } from "../durable-objects/workstream-do";
 import { conversationObjectName, workstreamDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { ApiError } from "../lib/api-error";
@@ -231,13 +230,10 @@ export class SubstreamCreationService {
     if (operation.status !== "confirming" || !operation.preparedContext) {
       throw new ApiError(409, "substream_context_not_prepared", "Prepare the starting context first.");
     }
-    // Before anything is created. Seating somebody the parent will not admit is
-    // refused by the parent, and that refusal used to land after the child had
-    // been provisioned — leaving a substream behind for a message the person
-    // was told to fix. The check is the parent's own, asked one question
-    // earlier: mentioning a colleague who is not on this work stream is a
-    // mistake to answer with an empty composer, not with an empty substream.
-    await span.step("substream.create.participants.preflight", () => this.assertParticipantsAdmitted(parent, parentId, opening));
+    // Before anything is created. A seating refusal that lands after the child
+    // has been provisioned leaves a substream behind for a message the person
+    // was told to fix, so the seating's own question is asked one step early.
+    await span.step("substream.create.participants.preflight", () => this.assertParticipantsAdmitted(opening));
     // A child created with an instruction is named from it, exactly as a work
     // stream is: the first line stands while the naming pass runs, and
     // `naming` is what puts the skeleton in its header. A child created
@@ -284,38 +280,20 @@ export class SubstreamCreationService {
   }
 
   /**
-   * Refuse an opening whose mentions name somebody this work stream would not
-   * admit, while refusing still costs nothing.
+   * Refuse an opening whose mentions name somebody who cannot be seated, while
+   * refusing still costs nothing.
    *
-   * The parent answers the same question at the seating itself, so this is not
-   * the authority — it is the same authority asked before the child exists.
-   * A race between the two (somebody removed from the work stream in between)
-   * still fails at the seating, where the turn is already durable and a retry
-   * completes it.
+   * The seating asks one question, active workspace membership, so this asks
+   * it first. A breakout does not require its members to read the work stream,
+   * so there is no second question about the parent.
    */
-  private async assertParticipantsAdmitted(
-    parent: DurableObjectStub<WorkstreamDO>,
-    parentId: string,
-    opening: SubstreamOpeningMessage | null,
-  ): Promise<void> {
+  private async assertParticipantsAdmitted(opening: SubstreamOpeningMessage | null): Promise<void> {
     for (const userId of opening?.confirmedParticipantUserIds ?? []) {
-      // The seating's two gates, in its own order and with its own words:
-      // active workspace membership, then whether this work stream admits
-      // them. A workspace-scoped parent admits anybody, so the second refuses
-      // only for a personal one — which is exactly where a composer offering
-      // the whole roster can name somebody who cannot be seated.
       const member = await this.env.DB.prepare(
         `SELECT status FROM workspace_members WHERE workspace_id = ? AND user_id = ?`,
       ).bind(this.auth.workspaceId, userId).first<{ status: string }>();
       if (member?.status !== "active") {
         throw new ApiError(404, "workspace_member_not_found", "Workspace member not found.");
-      }
-      const admitted = await parent.authorizeViewer({
-        workspaceId: this.auth.workspaceId, parentId, userId: asUserId(userId),
-      });
-      if (!admitted.authorized) {
-        throw new ApiError(409, "substream_member_needs_workstream_access",
-          "Add this person to the work stream before adding them to a substream.");
       }
     }
   }
@@ -424,9 +402,8 @@ export class SubstreamCreationService {
       if (error.message.includes("participant_migration_pending")) {
         throw new ApiError(409,"participant_migration_pending","Participant access is being upgraded. Try again shortly.");
       }
-      if (error.message.includes("private_child_member_not_admitted_to_parent")) {
-        throw new ApiError(409, "substream_member_needs_workstream_access",
-          "Add this person to the work stream before adding them to a substream.");
+      if (error.message.includes("workstream_archived")) {
+        throw new ApiError(409, "substream_parent_unavailable", "Restore the work stream before changing this substream.");
       }
       if (error.message.includes("private_child_last_participant")) {
         throw new ApiError(409, "substream_last_participant", "A substream keeps at least one participant.");
