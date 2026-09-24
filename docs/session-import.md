@@ -86,8 +86,8 @@ beside the reference they belong to:
   import as files; a write the tool refused, and drafts written into an
   Artifact's publishing folder, do not.
 
-Anything the reader cannot fetch stays an unavailable reference that the import
-reports on the message.
+Anything the reader cannot fetch, or declines as larger than the attachment
+limit, stays an unavailable reference that the import reports on the message.
 
 The decoders drop what the providers show only as process: thinking, reasoning
 recaps, tool calls and results, ChatGPT agent progress notes (the `commentary`
@@ -250,11 +250,13 @@ policy can still prevent a read. Expired or refused file downloads and
 unsupported origins remain unavailable and are recorded in the imported
 transcript.
 
-The reader copies uploads of any size; Rally's upload applies the workspace
-`MAX_ATTACHMENT_BYTES` policy and records a larger file as unavailable. No
-smaller limit is set on what the browser downloads first — a very large upload
-travels through the browser and the preview request before that rejection.
-Whether to cap it, and at what size, is not yet decided. Prepared histories have
+The reader downloads each file only up to `MAX_BROWSER_IMPORT_FILE_BYTES`, the
+same 25,000,000 bytes as the upload limit (`MAX_ATTACHMENT_BYTES` in
+`wrangler.global.jsonc`; keep them equal). It checks a size the provider reports
+before downloading, a declared length before reading, and the body as it
+arrives; a larger file imports as unavailable, saying so. The total across one
+conversation's files is not separately bounded: each file is within the limit,
+but a conversation with many large files is held in memory together. Prepared histories have
 no additional guessed size ceiling, but HTTP, memory, SQLite and provider
 context limits still apply. Full canonical replay is paged but assembled in
 memory; an oversized first provider request can fail before automatic
@@ -316,8 +318,8 @@ virtualized and would silently omit earlier turns.
 **Consequences:** Every reader depends on a provider's unofficial web API.
 Artifact copies pass a short-lived asset token through the import window's
 renderer. Channels imported from local Claude Code files keep their
-`claude_code` provenance but cannot be updated. Whether to cap how large an
-upload the browser downloads is open.
+`claude_code` provenance but cannot be updated. Each downloaded file is held to
+the attachment upload limit; the total for one conversation is not.
 
 ### 2026-09-23 — Import local Claude sessions and update their source history
 

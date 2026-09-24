@@ -1041,6 +1041,33 @@ regional Web Lock so an older renewal cannot replace a later login cookie.
 
 ## Changelog
 
+### 2026-09-24 — Two Rally windows may drive a signed-in local browser
+
+**What changed:** The desktop hosts account-partitioned web pages in the main
+window's right rail and in an import window. Each of those two windows may send
+its own browser typed commands — navigation, input, page script, and DevTools
+commands — and no other window may. Visited pages get no preload, Node, or
+permissions. Conversation readers run as page script inside the provider's page
+and keep its credentials there, except a claude.ai Artifact's short-lived
+asset token, which passes through the import window's renderer. Each file a
+reader downloads is held to the attachment upload limit.
+
+**Why:** Importing a conversation, with its files, needs the provider's own
+data read with the person's own sign-in. Local app caches and server-side share
+fetches were partial or challenged, and a remote sandboxed browser was
+challenged too.
+
+**Considered and rejected:** A narrower per-provider read command in main,
+which would move provider formats into the main process and still need page
+script and DevTools for Artifact files. Letting every Rally window drive the
+browser, which widens the set of renderers whose compromise reaches signed-in
+sites. Relaying the Artifact through main to keep its token out of the renderer;
+the token is scoped to one Artifact and expires within the hour.
+
+**Consequences:** Script injected into the main or import renderer would reach
+every site signed in there, so both stay under the renderer isolation rules
+above. `embeddedBrowserHost` in main is the one place that admits a window.
+
 ### 2026-09-21 — Sideline uses the desktop isolation boundary without participant credentials
 
 **What changed:** The new Sideline Electron host has a dedicated OAuth callback,

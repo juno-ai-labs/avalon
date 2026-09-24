@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EmbeddedBrowserCommand, EmbeddedBrowserResult, EmbeddedBrowserState, EmbeddedBrowserTab } from '../../common/embedded-browser';
-import { browserConversation, readBrowserConversation } from './browser-conversation-import';
+import { browserConversation, loadThroughTab, readBrowserConversation } from './browser-conversation-import';
 
 const tab = (id: string, title: string, url: string): EmbeddedBrowserTab => ({
   id, title, url, loading: false, canGoBack: false, canGoForward: false,
@@ -49,6 +49,22 @@ describe('browser conversation import', () => {
       expect(expression).toContain(url.includes('/share/') ? (url.includes('chatgpt') ? '/backend-anon/share/' : '/api/chat_snapshots/')
         : url.includes('chatgpt') ? String.raw`/\]\((sandbox:[^)\s]+)\)/g` : 'wiggle/download-file');
     }
+  });
+
+  it('stops loading a file through the tab once it passes the byte budget, and closes the stream', async () => {
+    const chunks = [btoa('12345'), btoa('67890'), btoa('abcde')];
+    const commandEmbeddedBrowser = vi.fn(async (command: EmbeddedBrowserCommand): Promise<EmbeddedBrowserResult> => {
+      if (command.action !== 'cdp') return { kind: 'value', value: null };
+      if (command.method === 'Network.loadNetworkResource') return { kind: 'value', value: { resource: { success: true, httpStatusCode: 200, stream: 's1' } } };
+      if (command.method === 'IO.read') return { kind: 'value', value: { data: chunks.shift(), base64Encoded: true, eof: chunks.length === 0 } };
+      return { kind: 'value', value: {} };
+    });
+    const bridge = { getEmbeddedBrowserState: vi.fn(), commandEmbeddedBrowser };
+    await expect(loadThroughTab(bridge, 't', 'f', 'https://x.frame.claudeusercontent.com/_f/v/a.html', 8)).resolves.toBeNull();
+    expect(commandEmbeddedBrowser.mock.calls.filter(([command]) => command.action === 'cdp' && command.method === 'IO.read')).toHaveLength(2);
+    expect(commandEmbeddedBrowser).toHaveBeenLastCalledWith({ action: 'cdp', tabId: 't', method: 'IO.close', params: { handle: 's1' } });
+    chunks.splice(0, chunks.length, btoa('12345'));
+    await expect(loadThroughTab(bridge, 't', 'f', 'https://x.frame.claudeusercontent.com/_f/v/a.html', 8)).resolves.toBe(btoa('12345'));
   });
 
   it('reads the tab the person is looking at when several show the conversation', async () => {

@@ -1,0 +1,144 @@
+import { EventEmitter } from 'node:events';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const electron = vi.hoisted(() => ({
+  sessions: new Map<string, {
+    setUserAgent: ReturnType<typeof vi.fn>;
+    setPermissionRequestHandler: ReturnType<typeof vi.fn>;
+    setPermissionCheckHandler: ReturnType<typeof vi.fn>;
+  }>(),
+  views: [] as Array<{ options: { webPreferences: Record<string, unknown> }; webContents: FakeContents; bounds: unknown }>,
+}));
+
+class FakeContents extends EventEmitter {
+  url = 'about:blank';
+  destroyed = false;
+  windowOpenHandler: ((details: { url: string }) => { action: string }) | null = null;
+  navigationHistory = { canGoBack: () => false, canGoForward: () => false, goBack: vi.fn(), goForward: vi.fn() };
+  setUserAgent = vi.fn();
+  setWindowOpenHandler = vi.fn((handler: (details: { url: string }) => { action: string }) => { this.windowOpenHandler = handler; });
+  loadURL = vi.fn(async (url: string) => { this.url = url; });
+  getURL = (): string => this.url;
+  getTitle = (): string => '';
+  isLoading = (): boolean => false;
+  isDestroyed = (): boolean => this.destroyed;
+  close = vi.fn(() => { this.destroyed = true; this.emit('destroyed'); });
+}
+
+vi.mock('electron', () => ({
+  app: { getLocale: () => 'en-US' },
+  session: {
+    fromPartition: (partition: string) => {
+      const existing = electron.sessions.get(partition);
+      if (existing) return existing;
+      const created = { setUserAgent: vi.fn(), setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() };
+      electron.sessions.set(partition, created);
+      return created;
+    },
+  },
+  WebContentsView: class {
+    webContents = new FakeContents();
+    bounds: unknown = null;
+    constructor(public options: { webPreferences: Record<string, unknown> }) { electron.views.push(this); }
+    setBounds(bounds: unknown): void { this.bounds = bounds; }
+  },
+}));
+
+const { EmbeddedBrowser, isEmbeddedBrowserWebContents } = await import('./embedded-browser');
+
+function hostWindow(zoom = 1) {
+  const window = Object.assign(new EventEmitter(), {
+    getContentSize: () => [1000, 800],
+    isDestroyed: () => false,
+    webContents: { getZoomFactor: () => zoom },
+    contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
+  });
+  return window;
+}
+
+function browser(zoom = 1, userId = 'user-1') {
+  const window = hostWindow(zoom);
+  const states: unknown[] = [];
+  const instance = new EmbeddedBrowser(window as never, userId, (state) => states.push(state));
+  return { instance, window, states };
+}
+
+describe('the local browser behind the rail and the import window', () => {
+  beforeEach(() => {
+    electron.sessions.clear();
+    electron.views.length = 0;
+  });
+
+  it('gives visited pages no preload or Node, in a sandbox, in the signed-in user’s own partition', async () => {
+    const { instance } = browser();
+    await instance.command({ action: 'open', url: 'https://chatgpt.com/' });
+    const preferences = electron.views[0]!.options.webPreferences;
+    expect(preferences).toMatchObject({ partition: 'persist:rally-browser-user-1', sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true });
+    expect(preferences).not.toHaveProperty('preload');
+    expect(isEmbeddedBrowserWebContents(electron.views[0]!.webContents as never)).toBe(true);
+    browser(1, 'user-2');
+    expect([...electron.sessions.keys()]).toEqual(['persist:rally-browser-user-1', 'persist:rally-browser-user-2']);
+  });
+
+  it('refuses every permission a site asks for', () => {
+    browser();
+    const partition = electron.sessions.get('persist:rally-browser-user-1')!;
+    const callback = vi.fn();
+    (partition.setPermissionRequestHandler.mock.calls[0]![0] as (c: unknown, p: string, cb: (granted: boolean) => void) => void)(null, 'media', callback);
+    expect(callback).toHaveBeenCalledWith(false);
+    expect((partition.setPermissionCheckHandler.mock.calls[0]![0] as () => boolean)()).toBe(false);
+  });
+
+  it('opens and navigates only to web pages, and fences a page’s own navigation the same way', async () => {
+    const { instance } = browser();
+    await expect(instance.command({ action: 'open', url: 'file:///etc/passwd' })).rejects.toThrow('Only HTTP and HTTPS');
+    await instance.command({ action: 'open' });
+    await expect(instance.command({ action: 'navigate', url: 'javascript:alert(1)' })).rejects.toThrow('Only HTTP and HTTPS');
+    const contents = electron.views[0]!.webContents;
+    for (const [event, url, blocked] of [['will-navigate', 'file:///tmp/x', true], ['will-redirect', 'rally://workstreams/1', true], ['will-navigate', 'https://claude.ai/login', false]] as const) {
+      const preventDefault = vi.fn();
+      contents.emit(event, { preventDefault }, url);
+      expect(preventDefault).toHaveBeenCalledTimes(blocked ? 1 : 0);
+    }
+  });
+
+  it('opens a website’s popup as another tab and never as a native window', async () => {
+    const { instance } = browser();
+    await instance.command({ action: 'open', url: 'https://claude.ai/' });
+    const handler = electron.views[0]!.webContents.windowOpenHandler!;
+    expect(handler({ url: 'https://accounts.google.com/o/oauth2' })).toEqual({ action: 'deny' });
+    expect(handler({ url: 'javascript:alert(1)' })).toEqual({ action: 'deny' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(electron.views.map((view) => view.webContents.url)).toEqual(['https://claude.ai/', 'https://accounts.google.com/o/oauth2']);
+  });
+
+  it('places only the active tab, in window points, and only while visible', async () => {
+    const { instance } = browser(1.25);
+    await instance.command({ action: 'open', url: 'https://a.example/' });
+    await instance.command({ action: 'open', url: 'https://b.example/' });
+    instance.setBounds({ x: 10, y: 40, width: 400, height: 300 });
+    expect(electron.views.map((view) => view.bounds)).toEqual([
+      { x: 0, y: 0, width: 0, height: 0 }, { x: 0, y: 0, width: 0, height: 0 },
+    ]);
+    instance.setVisible(true);
+    expect(electron.views[1]!.bounds).toEqual({ x: 13, y: 50, width: 500, height: 375 });
+    expect(electron.views[0]!.bounds).toEqual({ x: 0, y: 0, width: 0, height: 0 });
+    instance.setVisible(false);
+    expect(electron.views[1]!.bounds).toEqual({ x: 0, y: 0, width: 0, height: 0 });
+  });
+
+  it('closes a tab once, selecting the next, and closes every tab on dispose', async () => {
+    const { instance, states, window } = browser();
+    await instance.command({ action: 'open', url: 'https://a.example/' });
+    await instance.command({ action: 'open', url: 'https://b.example/' });
+    const [first, second] = instance.state().tabs;
+    const published = states.length;
+    const result = await instance.command({ action: 'close', tabId: second!.id });
+    expect(result).toEqual({ kind: 'state', state: expect.objectContaining({ activeTabId: first!.id, tabs: [expect.objectContaining({ id: first!.id })] }) });
+    expect(states.length - published).toBe(1);
+    expect(window.contentView.removeChildView).toHaveBeenCalledTimes(1);
+    instance.dispose();
+    expect(electron.views[0]!.webContents.close).toHaveBeenCalled();
+    await expect(instance.command({ action: 'open' })).rejects.toThrow('Browser is closed');
+  });
+});

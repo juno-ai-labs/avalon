@@ -64,6 +64,44 @@ function inPage(body: string): string {
 }
 
 /**
+ * Bytes of one file the reader downloads from a provider before it is imported.
+ *
+ * Bounds: one file held in the import window's memory, then again as base64
+ *   and across IPC, before the API's upload sees it.
+ * Without it: a shared conversation holding a 1 GB video makes the reader hold
+ *   ~1.3 GB before the API rejects the file, which can exhaust the renderer.
+ *   Checked 2026-09-24: the API enforces its limit only after the bytes arrive.
+ * Value: Rally's attachment upload limit, `MAX_ATTACHMENT_BYTES` in
+ *   `apps/api/wrangler.global.jsonc` (25,000,000), chosen by the team on
+ *   2026-09-24 so that no file the upload would accept is skipped. Keep the two
+ *   equal.
+ * Trips: the file is not downloaded and imports as unavailable, saying why.
+ */
+export const MAX_BROWSER_IMPORT_FILE_BYTES = 25_000_000;
+
+/** The unavailable reason a skipped file carries into the import. */
+const TOO_LARGE_REASON = `The file is larger than Rally's ${MAX_BROWSER_IMPORT_FILE_BYTES / 1_000_000} MB attachment limit.`;
+
+/**
+ * Page-script helpers that hold a download to the file budget: a size the
+ * provider reports is checked before downloading, a declared length before
+ * reading the body, and the body's own size after.
+ */
+const CAPPED_READS = `
+    const maxFileBytes = ${MAX_BROWSER_IMPORT_FILE_BYTES};
+    const tooLarge = ${JSON.stringify(TOO_LARGE_REASON)};
+    const within = (size) => !(typeof size === 'number' && size > maxFileBytes);
+    const readCapped = async (response) => {
+      if (!within(Number(response.headers.get('content-length')) || undefined)) {
+        await response.body?.cancel().catch(() => undefined);
+        return null;
+      }
+      const blob = await response.blob();
+      return within(blob.size) ? blob : null;
+    };
+`;
+
+/**
  * A file the page may not fetch itself — another origin that does not allow
  * it — loaded instead with the tab's own session through DevTools' network
  * loader, which is not subject to the page's CORS rules.
@@ -76,7 +114,7 @@ interface CrossOriginFile {
   url: string;
 }
 
-async function loadThroughTab(bridge: ReaderBridge, tabId: string, frameId: string, url: string): Promise<string | null> {
+export async function loadThroughTab(bridge: ReaderBridge, tabId: string, frameId: string, url: string, maxBytes: number): Promise<string | null> {
   const loaded = await bridge.commandEmbeddedBrowser({ action: 'cdp', tabId, method: 'Network.loadNetworkResource',
     params: { frameId, url, options: { disableCache: false, includeCredentials: true } } });
   const resource = loaded.kind === 'value' ? (loaded.value as { resource?: { success?: boolean; httpStatusCode?: number; stream?: string } }).resource : undefined;
@@ -91,6 +129,7 @@ async function loadThroughTab(bridge: ReaderBridge, tabId: string, frameId: stri
       // Decode each chunk on its own: base64 chunks cannot be concatenated.
       if (value.base64Encoded) binary += atob(data);
       else for (const byte of new TextEncoder().encode(data)) binary += String.fromCharCode(byte);
+      if (binary.length > maxBytes) return null;
       done = value.eof !== false;
     }
   } finally {
@@ -107,7 +146,7 @@ async function attachCrossOriginFiles(bridge: ReaderBridge, tabId: string, text:
   if (!frameId) return text;
   const byOwner = new Map<string, Array<{ path: string; content_type: string; inline_base64: string }>>();
   for (const file of files) {
-    const bytes = await loadThroughTab(bridge, tabId, frameId, file.url).catch(() => null);
+    const bytes = await loadThroughTab(bridge, tabId, frameId, file.url, MAX_BROWSER_IMPORT_FILE_BYTES).catch(() => null);
     if (bytes !== null) byOwner.set(file.owner, [...(byOwner.get(file.owner) ?? []), { path: file.path, content_type: file.contentType, inline_base64: bytes }]);
   }
   const data = JSON.parse(text) as { chat_messages?: Array<{ content?: Array<{ display_content?: Record<string, unknown> }> }> };
@@ -154,7 +193,7 @@ function chatGptReader(conversation: BrowserConversation): string {
     }
     // A signed download link on another origin needs no cookies, and the
     // browser refuses a cross-origin read that sends them.
-    const sameOrigin = (url) => new URL(url, location.href).origin === location.origin;
+    const sameOrigin = (url) => new URL(url, location.href).origin === location.origin;${CAPPED_READS}
     const fileRoute = ${routes.file};
     const sandboxRoute = ${routes.sandbox};
     const response = await fetch(${routes.conversation}, { credentials: 'include', headers });
@@ -192,11 +231,14 @@ function chatGptReader(conversation: BrowserConversation): string {
       try {
         const link = await fetch(fileRoute(id), { credentials: 'include', headers });
         if (!link.ok) return;
-        const { download_url: downloadUrl, mime_type: mimeType } = await link.json();
+        const { download_url: downloadUrl, mime_type: mimeType, file_size_bytes: fileSize } = await link.json();
         if (typeof downloadUrl !== 'string') return;
+        const skip = () => { for (const target of targets) target.rally_unavailable_reason = tooLarge; };
+        if (!within(fileSize)) return skip();
         const file = await fetch(downloadUrl, { credentials: sameOrigin(downloadUrl) ? 'include' : 'omit' });
         if (!file.ok) return;
-        const blob = await file.blob();
+        const blob = await readCapped(file);
+        if (!blob) return skip();
         const bytes = await base64(blob);
         for (const target of targets) {
           target.inline_base64 = bytes;
@@ -217,12 +259,15 @@ function chatGptReader(conversation: BrowserConversation): string {
         try {
           const meta = await fetch(sandboxRoute(message.id, link.slice('sandbox:'.length)), { credentials: 'include', headers });
           if (!meta.ok) return null;
-          const { download_url: downloadUrl, file_name: fileName, mime_type: mimeType } = await meta.json();
+          const { download_url: downloadUrl, file_name: fileName, mime_type: mimeType, file_size_bytes: fileSize } = await meta.json();
           if (typeof downloadUrl !== 'string') return null;
+          const name = String(fileName ?? link).split('/').pop();
+          if (!within(fileSize)) return { link, name, rally_unavailable_reason: tooLarge };
           const file = await fetch(downloadUrl, { credentials: sameOrigin(downloadUrl) ? 'include' : 'omit' });
           if (!file.ok) return null;
-          const blob = await file.blob();
-          return { link, name: String(fileName ?? link).split('/').pop(), mime_type: mimeType || blob.type || undefined, inline_base64: await base64(blob) };
+          const blob = await readCapped(file);
+          if (!blob) return { link, name, rally_unavailable_reason: tooLarge };
+          return { link, name, mime_type: mimeType || blob.type || undefined, inline_base64: await base64(blob) };
         } catch { return null; }
       }))).filter(Boolean);
     }
@@ -292,16 +337,18 @@ function claudeReader(conversation: BrowserConversation): string {
     const typeOf = (name) => types[String(name).split('.').pop().toLowerCase()] ?? '';
     const sandbox = (file) => typeof file.path === 'string' && file.path.startsWith('/mnt/user-data/uploads/') ? file.path
       : '/mnt/user-data/uploads/' + String(file.file_name ?? '').replace(/[^A-Za-z0-9._-]/g, '_');
+${CAPPED_READS}
     const take = async (url, expectedSize) => {
       const response = await fetch(url, { credentials: 'include' }).catch(() => null);
       if (!response?.ok) return null;
-      const blob = await response.blob();
-      return expectedSize === undefined || blob.size === expectedSize ? blob : null;
+      const blob = await readCapped(response);
+      return blob && (expectedSize === undefined || blob.size === expectedSize) ? blob : null;
     };
     await Promise.all(data.chat_messages.flatMap((message) => [...(message.files ?? []), ...(message.files_v2 ?? [])]).map(async (file) => {
       if (!file?.file_name || file.inline_base64) return;
       try {
         const size = typeof file.size_bytes === 'number' ? file.size_bytes : undefined;
+        if (!within(size)) { file.rally_unavailable_reason = tooLarge; return; }
         let blob = await take('/api/organizations/' + encodeURIComponent(organization) + '/conversations/' + id
           + '/wiggle/download-file?path=' + encodeURIComponent(sandbox(file)), size);
         let name = file.file_name;
@@ -337,7 +384,7 @@ function claudeReader(conversation: BrowserConversation): string {
       }).then((response) => response.ok ? response.json() : null).catch(() => null);
       if (typeof manifest?.ver !== 'string' || typeof manifest?.assetToken !== 'string') continue;
       for (const file of manifest.files ?? []) {
-        if (file?.src || typeof file?.path !== 'string') continue;
+        if (file?.src || typeof file?.path !== 'string' || !within(file.size)) continue;
         files.push({ owner: artifact, path: file.path, contentType: typeof file.contentType === 'string' ? file.contentType : '',
           url: 'https://' + artifact + '.frame.claudeusercontent.com/_f/' + encodeURIComponent(manifest.ver) + '/'
             + file.path.split('/').map(encodeURIComponent).join('/') + '?__frame_t=' + encodeURIComponent(manifest.assetToken) });
