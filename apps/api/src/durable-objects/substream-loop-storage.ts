@@ -312,6 +312,24 @@ export class SubstreamLoopStorage {
     ))?.ahead === 1;
   }
 
+  /**
+   * Whether the head of the visible queue starts no run. One flag off one row:
+   * `nextLoopWorkAt` asks on every alarm re-arm, and `pendingInputs` would read
+   * every queued payload to answer it.
+   */
+  visibleHeadStartsNoRun(): boolean {
+    return first(this.sql.exec<{ starts_run: number }>(
+      `SELECT starts_run FROM pending_loop_inputs
+        WHERE NOT EXISTS (
+            SELECT 1 FROM pending_loop_input_mailbox preparing
+             WHERE preparing.loop_id = pending_loop_inputs.loop_id
+               AND preparing.state = 'preparing'
+               AND preparing.input_sequence < pending_loop_inputs.input_sequence
+          )
+        ORDER BY input_sequence LIMIT 1`,
+    ))?.starts_run === 0;
+  }
+
   pendingInputs(): PendingLoopInputRow[] {
     return this.sql.exec<PendingLoopInputRow>(
       `SELECT ${INPUT_COLUMNS} FROM pending_loop_inputs
