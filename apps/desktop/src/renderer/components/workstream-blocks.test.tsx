@@ -1746,6 +1746,22 @@ describe('MessageBlock text context menu', () => {
     });
   });
 
+  it('opens a cited resource\'s own menu over the message menu', async () => {
+    const onSelect = vi.fn();
+    const site = { id: 'market-map', title: 'Market map', resourceType: 'generated_site' };
+    const citations = {
+      open: vi.fn(),
+      resolve: (resourceId: string) => (resourceId === site.id ? site : undefined),
+      actions: () => [{ id: 'attach-to-channel', label: 'Attach to channel', onSelect }],
+    };
+    render(<MessageBlock {...actions} citations={citations}
+      message={{ ...agent, text: 'Updated the site.\n\n![Market map](resource://market-map)\n' }} />);
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Open Market map' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Attach to channel' }));
+    expect(onSelect).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('menuitem', { name: /^Copy$/ })).toBeNull();
+  });
+
   it('copies the stored markdown source from assistant and human bodies', async () => {
     const { container, rerender } = render(<MessageBlock {...actions} message={agent} />);
     await openBodyMenu(container.querySelector('.agent-message .markdown-body')!);
