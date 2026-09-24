@@ -39,7 +39,7 @@ export function ConversationHeader({
   presentUserIds?: readonly string[];
   currentUserId?: string | null;
   onCopyLink?: () => void; onCopyEmail?: () => void; onCopyId?: () => void;
-  onShowNavigation: () => void; railOpen?: boolean; railVariant?: 'context'; onCloseRail?: () => void;
+  onShowNavigation: () => void; railOpen?: boolean; railVariant?: 'context' | 'browser'; onCloseRail?: () => void;
   contextEnabled?: boolean; actions?: React.ReactNode;
 }): React.JSX.Element {
   // The right sidebar holds one panel at a time, so every control that opens it

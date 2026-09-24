@@ -1,6 +1,7 @@
 import { ShareConversationButton, ShareConversationDialog } from "../components/scope-sharing-panel";
 import { ConversationHeader } from '@rally/ui/components/conversation-header';
 import { IconCloudDownload } from '@tabler/icons-react';
+import { Globe2 } from 'lucide-react';
 
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -22,7 +23,7 @@ import type { WorkstreamChildDirectory } from '../lib/use-workstream-control-soc
 import type { WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
 import { Button, IconButton, InlineError, Modal } from '../components/primitives';
-import { SessionImportUpdateDialog } from '../components/session-import-update-dialog';
+import { SessionImportUpdateDialog, importedSourceUpdatable } from '../components/session-import-update-dialog';
 
 import { useCachedWorkstreamAppearance } from '../lib/use-workstreams-query';
 import { launchedSubstreamDetail, optimisticOpeningTranscript } from '../lib/launched-conversation';
@@ -121,6 +122,22 @@ const workstreamSidebarFailureCopy: Record<WorkstreamSidebarFailure, { title: st
   archive_workstream: { title: 'The channel couldn’t be archived', copy: 'The channel couldn’t be archived. Try again.' },
   archive_substream: { title: 'The breakout couldn’t be archived', copy: 'The breakout couldn’t be archived. Try again.' },
 };
+
+function BrowserRailButton({ openRail }: { openRail: (variant: 'browser') => void }): React.JSX.Element | null {
+  const railOpen = useUiStore((state) => state.railOpen);
+  const railVariant = useUiStore((state) => state.railVariant);
+  const closeRail = useUiStore((state) => state.closeRail);
+  const setRailWidth = useUiStore((state) => state.setRailWidth);
+  if (!window.rally) return null;
+  const showing = railOpen && railVariant === 'browser';
+  return <IconButton aria-pressed={showing} label={showing ? 'Close browser' : 'Open browser'} onClick={() => {
+    if (showing) closeRail();
+    else {
+      setRailWidth(Math.max(useUiStore.getState().railWidth, 600));
+      openRail('browser');
+    }
+  }}><Globe2 aria-hidden="true" size={18} /></IconButton>;
+}
 
 export function WorkstreamHeader({ workspaceTarget, spaceId, onCopyLinkFailure, ...props }: Omit<React.ComponentProps<typeof ConversationHeader>,
   'onShowNavigation' | 'onCopyLink' | 'onCopyEmail' | 'onCopyId'> & { workspaceTarget: WorkspaceTarget | null; spaceId: string | null; onCopyLinkFailure?: () => void }): React.JSX.Element {
@@ -552,7 +569,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   return (
     <>
     {api && session?.workspace && sharingSubstream !== null && <ShareConversationDialog api={api} workspaceId={session.workspace.id} parentId={id} substreamId={sharingSubstream} open onOpenChange={(open) => { if (!open) setSharingSubstream(null); }} />}
-    {api && importedSource.data && <SessionImportUpdateDialog key={id} api={api} open={importUpdateOpen}
+    {api && importedSourceUpdatable(importedSource.data) && <SessionImportUpdateDialog key={id} api={api} open={importUpdateOpen}
       onClose={() => setImportUpdateOpen(false)} source={importedSource.data} workstreamId={id} />}
     <ConversationSurface
       parentId={id}
@@ -606,7 +623,8 @@ export function WorkstreamScreen(): React.JSX.Element {
       renderHeader={(context) => (
         <WorkstreamHeader
           actions={api && session?.workspace ? <>
-            {selectedSubstreamId === '0' && importedSource.data && <IconButton label="Import updates" onClick={() => setImportUpdateOpen(true)}><IconCloudDownload aria-hidden="true" size={18} stroke={1.8} /></IconButton>}
+            <BrowserRailButton openRail={context.openRail} />
+            {selectedSubstreamId === '0' && importedSourceUpdatable(importedSource.data) && <IconButton label="Import updates" onClick={() => setImportUpdateOpen(true)}><IconCloudDownload aria-hidden="true" size={18} stroke={1.8} /></IconButton>}
             <ShareConversationButton api={api} workspaceId={session.workspace.id}
               parentId={id} substreamId={selectedSubstreamId} />
           </> : null}

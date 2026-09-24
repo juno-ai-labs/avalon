@@ -1,8 +1,6 @@
 import { SessionImportPreviewSchema, type SessionImportPreviewRequestSchema, type SessionImportPreview, type SubstreamContent, type ConversationFile } from "@rally/contracts";
 import { z } from "zod";
 import { describeZodIssues } from "@rally/contracts/zod-diagnostics";
-import type { Env } from "../env";
-import { FirecrawlClient, FirecrawlError } from "../lib/firecrawl";
 import { ApiError } from "../lib/api-error";
 
 const object = (value: unknown): Record<string, unknown> =>
@@ -30,48 +28,38 @@ export function sessionShareUrl(value: string) {
   return { provider, url } as const;
 }
 
-/** Decode only the JSON reference table used by the observed ChatGPT share loader.
- * No script execution or arbitrary object constructors. Cyclic input fails closed.
- */
-function chatGptHtmlData(html: string): unknown {
-  const match = /streamController\.enqueue\(("(?:[^"\\]|\\.)*")\)/.exec(html);
-  if (!match?.[1]) throw new Error("Share page has no conversation data");
-  const table = z.array(z.unknown()).parse(JSON.parse(JSON.parse(match[1]) as string));
-  const active = new Set<number>();
-  const memo = new Map<number, unknown>();
-  const decode = (index: number): unknown => {
-    if (index < 0) return null;
-    if (!Number.isInteger(index) || index >= table.length || active.has(index)) throw new Error("Invalid share reference");
-    if (memo.has(index)) return memo.get(index);
-    active.add(index);
-    const value = table[index];
-    const result: unknown = Array.isArray(value) ? value.map((item: unknown) => decode(z.number().parse(item)))
-      : value !== null && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([key, reference]) => {
-        if (!/^_\d+$/.test(key)) throw new Error("Invalid share key");
-        return [z.string().parse(decode(Number(key.slice(1)))), decode(z.number().parse(reference))];
-      })) : value;
-    active.delete(index);
-    memo.set(index, result);
-    return result;
-  };
-  // Decode the conversation itself, avoiding unrelated loader extensions.
-  const dataKey = table.indexOf("linear_conversation");
-  const entry = table.findIndex((value) => Object.hasOwn(object(value), `_${dataKey}`));
-  if (entry < 0) throw new Error("Share page has no transcript");
-  return decode(entry);
+/** Private browser URLs are provenance only; the API never fetches them. */
+export function sessionSourceUrlProvider(value: string, sessionId: string): 'chatgpt' | 'claude' {
+  const url = new URL(value);
+  const privateRoute = url.protocol === 'https:' && !url.username && !url.password && !url.port && !url.search && !url.hash
+    ? /^\/(c|chat)\/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\/?$/iu.exec(url.pathname) : null;
+  const privateProvider = privateRoute && url.hostname === 'chatgpt.com' && privateRoute[1] === 'c' ? 'chatgpt'
+    : privateRoute && url.hostname === 'claude.ai' && privateRoute[1] === 'chat' ? 'claude' : null;
+  if (privateProvider && privateRoute?.[2] === sessionId) return privateProvider;
+  if (privateProvider) {
+    throw new ApiError(422, 'invalid_session_source', 'The sourceUrl names a different conversation than the decoded text');
+  }
+  return sessionShareUrl(value).provider;
 }
 
 function sourceFile(value: unknown, kind: ConversationFile["kind"]): ConversationFile {
   const file = object(value);
-  const name = text(file['file_name']) || text(file['filename']) || text(file['name']) || text(file['title']) || "Imported file";
+  // A reader that copied different bytes than the named file — a preview in
+  // another format — names the copy for what it is.
+  const extracted = text(file['extracted_content']);
+  const name = (!extracted && text(file['inline_base64']) && text(file['inline_name']))
+    || text(file['file_name']) || text(file['filename']) || text(file['name']) || text(file['title']) || "Imported file";
   const mimeType = text(file['mime_type']) || text(file['file_type']) || text(file['content_type']) || "application/octet-stream";
   const url = text(file['download_url']) || text(file['url']);
-  const extracted = text(file['extracted_content']);
-  return { name: extracted ? `${name} (extracted text).txt` : name, mimeType: extracted ? "text/plain" : mimeType, kind, source:
+  // Bytes a signed-in browser reader fetched on the person's behalf.
+  const bytes = text(file['inline_base64']);
+  return { name: extracted ? `${name} (extracted text).txt` : withExtension(name, mimeType), mimeType: extracted ? "text/plain" : mimeType, kind, source:
     extracted ? { kind: "inline", encoding: "utf8", data: extracted }
+    : bytes ? { kind: "inline", encoding: "base64", data: bytes }
     : url.startsWith('https://') ? { kind: "remote", url }
     : { kind: "unavailable", reference: url || text(file['id']) || text(file['asset_pointer']) || name,
-      reason: "The export does not contain downloadable file bytes." } };
+      // A reader that declined to copy a file says why; otherwise it had no bytes.
+      reason: text(file['rally_unavailable_reason']) || "The export does not contain downloadable file bytes." } };
 }
 
 function sourceFiles(value: unknown, kind: ConversationFile["kind"]): ConversationFile[] {
@@ -111,6 +99,45 @@ function visibleMessage(role: "user" | "assistant", body: string, files: Convers
     ...(sourceMessageId ? { sourceMessageId } : {}) }] : [];
 }
 
+/** `sediment://file_…` and `file-service://file-…` both end in the file's id; a share adds a query. */
+function chatGptAssetFileId(pointer: unknown): string {
+  return text(pointer).replace(/^[a-z-]+:\/\//u, '').split('?')[0]!;
+}
+
+/**
+ * ChatGPT marks links and citations inline with private-use delimiters
+ * (U+E200 … U+E201) and describes each one in `content_references`. A marker
+ * with a written form — a link's `[label](url)` — becomes that text; anything
+ * else, such as a citation whose sources live elsewhere in the response, is
+ * dropped rather than shown as control characters.
+ */
+function chatGptVisibleText(value: string, metadata: Record<string, unknown>): string {
+  let result = value;
+  for (const reference of array(metadata['content_references'])) {
+    const marker = text(object(reference)['matched_text']);
+    if (marker.startsWith('\uE200')) result = result.split(marker).join(text(object(reference)['alt']));
+  }
+  return result.replace(/\uE200[^\uE201]*\uE201/gu, '').trim();
+}
+
+/**
+ * A ChatGPT app can render its answer in a widget instead of a turn. Deep
+ * Research does: its finished report is a complete assistant message stored
+ * in the tool result's widget state, and the page shows it in an embedded
+ * frame. That report is the answer the person asked for, so it imports as an
+ * assistant message where the widget appears.
+ */
+function chatGptWidgetReport(message: Record<string, unknown>): SubstreamContent["messages"] | null {
+  const state = text(object(object(message['metadata'])['chatgpt_sdk'])['widget_state']);
+  if (!state) return null;
+  let widget: unknown;
+  try { widget = JSON.parse(state); } catch { return null; }
+  const report = object(object(widget)['report_message']);
+  const parts = array(object(report['content'])['parts']).filter((part): part is string => typeof part === 'string');
+  const body = chatGptVisibleText(parts.join("\n\n"), object(report['metadata']));
+  return body ? visibleMessage("assistant", body, [], text(report['id']) || text(message['id'])) : null;
+}
+
 function chatGptMessages(value: unknown): SubstreamContent["messages"] {
   const conversation = object(value);
   let nodes: unknown[];
@@ -134,11 +161,15 @@ function chatGptMessages(value: unknown): SubstreamContent["messages"] {
   return nodes.flatMap((node, index) => {
     const message = object(object(node)['message']);
     const sourceMessageId = text(message['id']) || text(object(node)['id']) || `position:${index}`;
+    const report = chatGptWidgetReport(message);
+    if (report) return report;
     const sourceRole = object(message['author'])['role'];
     const role = sourceRole === "tool" && message['channel'] === "final" ? "assistant" : sourceRole;
     const metadata = object(message['metadata']);
     if ((role !== "user" && role !== "assistant") || metadata['is_visually_hidden_from_conversation'] === true
-      || message['channel'] === "analysis" || message['channel'] === "summary"
+      // `commentary` is an agent's progress narration, shown only inside the
+      // collapsed work log with its tool steps — not a turn of the conversation.
+      || message['channel'] === "analysis" || message['channel'] === "summary" || message['channel'] === "commentary"
       || (message['recipient'] != null && message['recipient'] !== "all")) return [];
     const content = object(message['content']);
     if (["model_editable_context", "thoughts", "reasoning_recap"].includes(text(content['content_type']))) return [];
@@ -151,7 +182,11 @@ function chatGptMessages(value: unknown): SubstreamContent["messages"] {
       }, "artifact")), sourceMessageId);
     }
     const kind = role === "user" ? "attachment" : "artifact";
-    const files = array(metadata['attachments']).flatMap((file) => sourceFiles(file, kind));
+    const attachments = array(metadata['attachments']);
+    const files = attachments.flatMap((file) => sourceFiles(file, kind));
+    // An uploaded image is listed as an attachment and again as the part that
+    // displays it; the attachment carries its name, so it stands for both.
+    const attached = new Set(attachments.map((file) => text(object(file)['id'])).filter(Boolean));
     if (content['content_type'] !== "text" && content['content_type'] !== "multimodal_text") {
       throw new Error("Unsupported ChatGPT content.content_type");
     }
@@ -159,161 +194,181 @@ function chatGptMessages(value: unknown): SubstreamContent["messages"] {
     const parts: string[] = [];
     for (const part of content['parts']) {
       if (typeof part === "string") parts.push(part);
-      else if (object(part)['content_type'] === "image_asset_pointer") files.push(sourceFile(part, kind));
+      else if (object(part)['content_type'] === "image_asset_pointer") {
+        if (!attached.has(chatGptAssetFileId(object(part)['asset_pointer']))) files.push(sourceFile(part, kind));
+      }
       else throw new Error("Unsupported ChatGPT visible content part");
     }
-    return visibleMessage(role, parts.join("\n\n"), files, sourceMessageId);
+    // A sandbox: link names a file ChatGPT wrote in its code sandbox. The
+    // reader copies it; the dead link then reads as its label beside the file.
+    const copied = new Map(array(metadata['rally_sandbox_files']).map(object)
+      .filter((file) => text(file['link'])).map((file) => [text(file['link']), file]));
+    const linked = new Set<string>();
+    const body = chatGptVisibleText(parts.join("\n\n"), metadata).replace(/\[([^\]]*)\]\((sandbox:[^)\s]+)\)/gu, (whole, label: string, link: string) => {
+      if (!linked.has(link)) {
+        linked.add(link);
+        const file = copied.get(link);
+        files.push(file && text(file['inline_base64']) ? sourceFile(file, kind) : { name: text(file?.['name']) || link.split('/').at(-1) || 'Sandbox file', mimeType: 'application/octet-stream', kind,
+          source: { kind: 'unavailable', reference: link, reason: text(file?.['rally_unavailable_reason']) || 'ChatGPT did not return this sandbox file. Download it from the conversation instead.' } });
+      }
+      return label || whole;
+    });
+    return visibleMessage(role, body, files, sourceMessageId);
   });
 }
 
+/**
+ * claude.ai marks the span each web source supports and shows the source as a
+ * chip after it. The chip becomes an inline `([host](url))` link after that
+ * span, the form ChatGPT's own references take.
+ */
+const CLAUDE_FILE_TYPES: Record<string, string> = {
+  md: 'text/markdown', html: 'text/html', htm: 'text/html', json: 'application/json', svg: 'image/svg+xml',
+  csv: 'text/csv', js: 'text/javascript', ts: 'text/plain', py: 'text/x-python', css: 'text/css',
+};
+
+/** Only types that name one extension; plain text could be anything. */
+const TYPE_EXTENSIONS: Record<string, string> = {
+  'text/markdown': '.md', 'text/html': '.html', 'application/json': '.json', 'image/svg+xml': '.svg',
+  'text/csv': '.csv', 'text/javascript': '.js', 'text/x-python': '.py', 'text/css': '.css',
+  'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'image/gif': '.gif', 'application/pdf': '.pdf',
+};
+
+/** A titled file — a generated image, a report — is named so it opens as its type. */
+function withExtension(name: string, mimeType: string): string {
+  return /\.[a-z0-9]{1,5}$/iu.test(name) ? name : `${name}${TYPE_EXTENSIONS[mimeType] ?? ''}`;
+}
+
+function claudeFileType(path: string): string {
+  return CLAUDE_FILE_TYPES[path.split('.').at(-1)?.toLowerCase() ?? ''] ?? 'text/plain';
+}
+
+function claudeCitedText(value: string, citations: unknown[]): string {
+  const links = citations.flatMap((raw) => {
+    const citation = object(raw);
+    const end = citation['end_index'];
+    const url = text(citation['url']);
+    if (typeof end !== 'number' || !Number.isInteger(end) || end < 0 || end > value.length || !url.startsWith('https://')) return [];
+    try { return [{ end, link: ` ([${new URL(url).hostname.replace(/^www\./u, '')}](${url}))` }]; } catch { return []; }
+  });
+  // Several sources can support one span; each distinct link appears once,
+  // in the order claude.ai listed them.
+  const byEnd = new Map<number, string[]>();
+  for (const { end, link } of links) {
+    const at = byEnd.get(end) ?? [];
+    if (!at.includes(link)) at.push(link);
+    byEnd.set(end, at);
+  }
+  let result = value;
+  for (const end of [...byEnd.keys()].sort((a, b) => b - a)) result = result.slice(0, end) + byEnd.get(end)!.join('') + result.slice(end);
+  return result;
+}
+
 function claudeMessages(value: unknown): SubstreamContent["messages"] {
-  const data = object(value);
-  const messages = Array.isArray(value) ? value : Array.isArray(data['chat_messages']) ? data['chat_messages']
-    : Object.hasOwn(data, 'message') ? [data] : null;
-  if (!messages) throw new Error("Expected Claude chat_messages or Code message records");
+  const messages = object(value)['chat_messages'];
+  if (!Array.isArray(messages)) throw new Error("Expected Claude chat_messages");
+  // An Artifact imports once, where the conversation first shows it: its
+  // files are its current version, not the version a later card republished.
+  const published = new Set<string>();
   return messages.flatMap((value, index) => {
-    const event = object(value);
-    if (event['isCompactSummary'] === true || event['isMeta'] === true) return [];
-    const message = Object.hasOwn(event, 'message') ? object(event['message']) : event;
-    const sender = message['sender'] ?? message['role'];
+    const message = object(value);
+    const sender = message['sender'];
     const role = sender === "human" ? "user" : sender;
     if (role !== "user" && role !== "assistant") return [];
     const kind = role === "user" ? "attachment" : "artifact";
-    const files = [...array(message['attachments']), ...array(message['files'])].flatMap((file) => sourceFiles(file, kind));
+    // claude.ai lists uploads in `files` and, for newer ones, `files_v2`; an
+    // upload in both is one file.
+    const listed = [...array(message['files']), ...array(message['files_v2'])];
+    const uploads = listed.filter((file, index) => {
+      const id = text(object(file)['file_uuid']) || text(object(file)['uuid']);
+      return !id || listed.findIndex((other) => (text(object(other)['file_uuid']) || text(object(other)['uuid'])) === id) === index;
+    });
+    const files = [...array(message['attachments']), ...uploads].flatMap((file) => sourceFiles(file, kind));
     if (message['truncated'] === true) throw new Error("Claude message is truncated");
     const reportedFiles = typeof message['file_count'] === "number" ? message['file_count'] : 0;
     if (reportedFiles > files.length) files.push({ name: "Hidden shared attachments", mimeType: "application/octet-stream", kind,
       source: { kind: "unavailable", reference: text(message['uuid']) || "hidden-attachments", reason: "The shared conversation hides attachment contents." } });
     const content = message['content'];
     const parts: string[] = [];
+    const failed = new Set(array(content).map(object).filter((part) => part['type'] === 'tool_result' && part['is_error'] === true)
+      .map((part) => text(part['tool_use_id'])));
     if (typeof content === "string") parts.push(content);
     else if (Array.isArray(content)) for (const raw of content) {
       const part = object(raw);
+      // claude.ai shows a published Artifact as a card on the tool step that
+      // published it. The browser reader copies the Artifact's current files
+      // onto that card; they import as the reply's files, once per Artifact.
+      // Without them — a public share, or a copy that failed — the card's
+      // link stands in so the reply does not silently lose what it made.
+      const card = object(part['display_content']);
+      const link = part['type'] === 'tool_result' && card['type'] === 'file' ? text(card['published_url']) : '';
+      if (link.startsWith('https://') && !published.has(link)) {
+        published.add(link);
+        const copies = array(card['rally_files']).map(object).filter((file) => text(file['path']) && text(file['inline_base64']));
+        for (const file of copies) files.push({ name: text(file['path']).split('/').at(-1)!, kind: 'artifact',
+          mimeType: text(file['content_type']) || claudeFileType(text(file['path'])),
+          source: { kind: 'inline', encoding: 'base64', data: text(file['inline_base64']) } });
+        if (!copies.length) parts.push(`[${(text(card['title']) || 'Claude artifact').replace(/[[\]]/gu, '')}](${link})`);
+        continue;
+      }
       if (part['type'] === 'text') {
         if (typeof part['text'] !== 'string') throw new Error("Expected Claude text block text");
-        parts.push(part['text']);
+        parts.push(claudeCitedText(part['text'], array(part['citations'])));
       } else if (part['type'] === 'image' || part['type'] === 'document') {
         files.push(claudeContentFile(part, kind));
       } else if (part['type'] === 'artifact') {
         if (typeof part['content'] !== 'string') files.push(sourceFile(part, 'artifact'));
         else files.push({ name: text(part['title']) || 'Claude artifact', mimeType: text(part['mime_type']) || 'text/plain', kind: 'artifact',
           source: { kind: 'inline', encoding: 'utf8', data: part['content'] } });
-      } else if (part['type'] === 'tool_use' && ['Write', 'artifacts'].includes(text(part['name']))) {
+      } else if (part['type'] === 'tool_use' && text(part['name']) === 'artifacts') {
         const artifact = object(part['input']);
         const path = text(artifact['file_path']);
-        const name = path.split('/').at(-1) || text(artifact['title']) || text(artifact['id']) || 'Claude artifact';
-        files.push({ name, mimeType: text(artifact['type']) || 'text/plain', kind: 'artifact',
+        const mimeType = text(artifact['type']) || 'text/plain';
+        const titled = text(artifact['title']) || text(artifact['id']) || 'Claude artifact';
+        // A titled artifact has no file name; give it the extension its type
+        // opens with. A Research report's sources are cited inside it.
+        const name = path.split('/').at(-1) || withExtension(titled, mimeType);
+        files.push({ name, mimeType, kind: 'artifact',
           source: typeof artifact['content'] === 'string'
-            ? { kind: 'inline', encoding: 'utf8', data: artifact['content'] }
+            ? { kind: 'inline', encoding: 'utf8', data: claudeCitedText(artifact['content'], array(artifact['md_citations'])) }
             : { kind: 'unavailable', reference: path || text(artifact['id']) || name,
                 reason: 'This artifact event does not contain a complete file. Add the original file instead.' } });
-      } else if (!['tool_use', 'tool_result', 'thinking', 'redacted_thinking'].includes(text(part['type']))) {
+      } else if (part['type'] === 'tool_use' && text(part['name']) === 'create_file' && !failed.has(text(part['id']))) {
+        // claude.ai's file tool: the document a person asked for, shown as the
+        // tool step's code. A write the tool refused created nothing, and a
+        // file written into an Artifact's publishing folder is a draft of that
+        // Artifact, which imports as its published link instead.
+        const input = object(part['input']);
+        const path = text(input['path']);
+        if (typeof input['file_text'] === 'string' && path && !path.startsWith('/mnt/user-data/outputs/artifacts/')) files.push({ name: path.split('/').at(-1) || 'Claude file',
+          mimeType: claudeFileType(path), kind: 'artifact', source: { kind: 'inline', encoding: 'utf8', data: input['file_text'] } });
+      } else if (part['type'] === 'tool_use' && text(part['name']).endsWith(':show_widget') && !failed.has(text(part['id']))) {
+        // A visual drawn in the conversation. It is kept as a file, never run.
+        const input = object(part['input']);
+        const code = text(input['widget_code']);
+        const svg = code.trimStart().startsWith('<svg');
+        if (code) files.push({ name: `${text(input['title']) || 'Claude visual'}.${svg ? 'svg' : 'html'}`,
+          mimeType: svg ? 'image/svg+xml' : 'text/html', kind: 'artifact', source: { kind: 'inline', encoding: 'utf8', data: code } });
+      } else if (!['tool_use', 'tool_result', 'thinking', 'redacted_thinking', 'token_budget'].includes(text(part['type']))) {
         throw new Error("Unsupported Claude content block type");
       }
     }
     else if (typeof message['text'] === 'string') parts.push(message['text']);
     else throw new Error("Expected Claude visible message content");
-    return visibleMessage(role, parts.join("\n\n"), files,
-      text(message['uuid']) || text(message['id']) || text(event['uuid']) || `position:${index}`);
+    return visibleMessage(role, parts.join("\n\n").trim(), files,
+      text(message['uuid']) || `position:${index}`);
   });
 }
 
-function claudeCodeMessages(value: unknown): SubstreamContent["messages"] {
-  const events = Array.isArray(value) ? value : [value];
-  if (!events.every((event) => object(event)['type'] !== undefined)) throw new Error("Expected Claude Code JSONL events");
-  const byUuid = new Map(events.flatMap((event): [string, unknown][] => {
-    const uuid = text(object(event)['uuid']);
-    return uuid ? [[uuid, event]] : [];
-  }));
-  const lastPrompt = [...events].reverse().find((event) => object(event)['type'] === 'last-prompt');
-  let leaf = text(object(lastPrompt)['leafUuid'])
-    || text(object([...events].reverse().find((event) => {
-      const row = object(event);
-      return row['isSidechain'] !== true && row['uuid'] && (row['type'] === 'user' || row['type'] === 'assistant');
-    }))['uuid']);
-  let selected = events;
-  if (leaf) {
-    const active: unknown[] = [];
-    const visited = new Set<string>();
-    while (leaf) {
-      if (visited.has(leaf)) throw new Error("Claude Code session has a cyclic conversation branch");
-      visited.add(leaf);
-      const event = byUuid.get(leaf);
-      if (!event) throw new Error("Claude Code session has an incomplete conversation branch");
-      active.push(event);
-      leaf = text(object(event)['parentUuid']);
-    }
-    selected = active.reverse();
-  }
-  const messages: SubstreamContent["messages"] = [];
-  const seen = new Set<string>();
-  for (const raw of selected) {
-    const event = object(raw);
-    if (event['type'] !== 'user' && event['type'] !== 'assistant') continue;
-    if (event['isSidechain'] === true || event['isMeta'] === true || event['isCompactSummary'] === true) continue;
-    const uuid = text(event['uuid']);
-    if (uuid && seen.has(uuid)) continue;
-    if (uuid) seen.add(uuid);
-    const message = object(event['message']);
-    const content = message['content'];
-    const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : array(content);
-    const visible = blocks.filter((block) => object(block)['type'] === 'text');
-    if (visible.some((block) => typeof object(block)['text'] !== 'string')) throw new Error("Expected Claude Code text block text");
-    const unsupported = blocks.find((block) => !['text', 'image', 'document', 'thinking', 'redacted_thinking', 'tool_use', 'tool_result', 'fallback'].includes(text(object(block)['type'])));
-    if (unsupported) throw new Error("Unsupported Claude Code content block type");
-    const body = visible.map((block) => text(object(block)['text'])).filter(Boolean).join("\n\n").trim();
-    const role = event['type'] as 'user' | 'assistant';
-    const files = blocks.flatMap((block) => {
-      const part = object(block);
-      return part['type'] === 'image' || part['type'] === 'document'
-        ? [claudeContentFile(part, role === 'user' ? 'attachment' : 'artifact')] : [];
-    });
-    if (!body && !files.length) continue;
-    const previous = messages.at(-1);
-    if (role === 'assistant' && previous?.role === 'assistant') {
-      previous.text = [previous.text, body].filter(Boolean).join('\n\n');
-      if (files.length) previous.files = [...(previous.files ?? []), ...files];
-    } else messages.push({ role, text: body, ...(files.length ? { files } : {}), sourceMessageId: uuid || `position:${messages.length}` });
-  }
-  return messages;
-}
 
-export function parseSessionExport(provider: "chatgpt" | "claude" | "claude_code", input: string, sourceUrl: string | null = null): SessionImportPreview {
+export function parseSessionExport(provider: "chatgpt" | "claude", input: string, sourceUrl: string | null = null): SessionImportPreview {
   try {
-    let value: unknown;
-    if (provider === "chatgpt" && input.trimStart().startsWith("<")) value = chatGptHtmlData(input);
-    else {
-      try { value = JSON.parse(input) as unknown; }
-      catch {
-        const lines = input.split(/\r?\n/);
-        value = lines.flatMap((line, index) => {
-          if (!line.trim()) return [];
-          try { return [JSON.parse(line) as unknown]; }
-          catch (error) {
-            // The active Claude Code writer can be partway through its final
-            // JSONL record. Complete lines must still parse or the source is bad.
-            if (provider === 'claude_code' && index === lines.length - 1 && !input.endsWith('\n')) return [];
-            throw error;
-          }
-        });
-      }
-    }
-    if (Array.isArray(value) && (provider === "chatgpt" || value.some((entry) => Array.isArray(object(entry)["chat_messages"])))) {
-      if (value.length !== 1) throw new Error("Choose one conversation from the export");
-      value = value[0];
-    }
+    const value: unknown = JSON.parse(input);
     const data = object(value);
-    const messages = provider === "chatgpt" ? chatGptMessages(value)
-      : provider === "claude_code" ? claudeCodeMessages(value) : claudeMessages(value);
-    const codeEvents = provider === "claude_code" ? array(value).map(object) : [];
-    const codeTitle = [...codeEvents].reverse().find((event) => event['type'] === 'custom-title' && text(event['customTitle']))?.['customTitle']
-      || [...codeEvents].reverse().find((event) => event['type'] === 'ai-title' && text(event['aiTitle']))?.['aiTitle'];
-    const sourceSessionId = provider === 'claude_code'
-      ? codeEvents.map((event) => text(event['sessionId'])).find(Boolean)
-        || text(codeEvents.find((event) => text(event['uuid']))?.['uuid'])
-      : text(data['uuid']) || text(data['conversation_id']) || text(data['id']) || sourceUrl;
+    const messages = provider === "chatgpt" ? chatGptMessages(value) : claudeMessages(value);
+    const sourceSessionId = text(data['uuid']) || text(data['conversation_id']) || text(data['id']) || sourceUrl;
     return SessionImportPreviewSchema.parse({
-      title: text(data['title']) || text(data['snapshot_name']) || text(data['name']) || text(codeTitle) || `Imported ${provider === "chatgpt" ? "ChatGPT" : provider === "claude_code" ? "Claude Code" : "Claude"} conversation`,
+      title: text(data['title']) || text(data['snapshot_name']) || text(data['name']) || `Imported ${provider === "chatgpt" ? "ChatGPT" : "Claude"} conversation`,
       source: { provider, url: sourceUrl, ...(sourceSessionId ? { sessionId: sourceSessionId } : {}) }, content: { messages },
     });
   } catch (error) {
@@ -323,24 +378,11 @@ export function parseSessionExport(provider: "chatgpt" | "claude" | "claude_code
   }
 }
 
-export async function previewSessionImport(input: z.infer<typeof SessionImportPreviewRequestSchema>, env: Pick<Env, "FIRECRAWL_API_KEY">, fetcher: typeof fetch = fetch) {
-  if (input.kind === "export") return parseSessionExport(input.provider, input.text);
-  const { provider, url } = sessionShareUrl(input.url);
-  if (!env.FIRECRAWL_API_KEY) throw new ApiError(503, "session_import_unavailable", "Conversation importing is not configured.");
-  const endpoint = provider === "claude"
-    ? `https://claude.ai/api/chat_snapshots/${url.pathname.split('/').at(-1)}?rendering_mode=messages&render_all_tools=true`
-    : url.href;
-  let source: Awaited<ReturnType<FirecrawlClient["scrapeSource"]>>;
-  try {
-    source = await new FirecrawlClient({ apiKey: env.FIRECRAWL_API_KEY, fetch: fetcher }).scrapeSource(endpoint);
-  } catch (error) {
-    if (error instanceof FirecrawlError && error.kind === "parse") throw new ApiError(502, "invalid_session_source", error.message);
-    throw new ApiError(422, "session_unavailable", "The provider could not return this shared conversation. Check that the link is public and try again.");
+/** The browser read the conversation; the API decodes it and checks its source. */
+export async function previewSessionImport(input: z.infer<typeof SessionImportPreviewRequestSchema>) {
+  const preview = parseSessionExport(input.provider, input.text, input.sourceUrl);
+  if (sessionSourceUrlProvider(input.sourceUrl, preview.source.sessionId ?? '') !== input.provider) {
+    throw new ApiError(422, 'invalid_session_source', 'The sourceUrl does not belong to the stated provider');
   }
-  // Firecrawl can report API success for a block or login page. Require a
-  // successful source response at the expected destination before decoding.
-  if (source.statusCode !== 200 || !source.url || source.url !== endpoint) {
-    throw new ApiError(422, "session_unavailable", "The provider did not return the public shared conversation.");
-  }
-  return parseSessionExport(provider, source.body, url.href);
+  return preview;
 }
