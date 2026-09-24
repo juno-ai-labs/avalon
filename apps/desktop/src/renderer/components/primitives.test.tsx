@@ -424,8 +424,8 @@ describe('AvatarStack', () => {
       </MemberPresentationContext.Provider>,
     );
     const [violet, plain] = [...container.querySelectorAll<HTMLElement>('.avatar-presence-ping')];
-    expect(violet?.style.getPropertyValue('--avatar-presence-color')).toBe('var(--av-sys-color-project-violet)');
-    expect(plain?.style.getPropertyValue('--avatar-presence-color')).toBe('');
+    expect(violet?.style.getPropertyValue('--person-accent')).toBe('var(--av-sys-color-project-violet)');
+    expect(plain?.style.getPropertyValue('--person-accent')).toBe('var(--av-sys-color-success-base)');
   });
 
   it('explains when another participant is viewing the channel', async () => {
