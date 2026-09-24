@@ -241,24 +241,19 @@ export class WorkspaceBreakoutStorage {
       return false;
     }
     // A background agent is not a breakout. Its Channel forwards one only to
-    // withdraw a row it published before the agent was marked, so the answer
-    // is to hold no row for it, and no viewer rows that would count it.
-    // Deleting drops the version fence, so an unmarked projection still in the
-    // Queue could put the row back. None is sent any more: the child marks
-    // itself before its first projection. Only an agent started in the
-    // minutes around the deploy of that change could race this.
-    if (effect.backgroundAgent === true) {
+    // withdraw a row it published before the agent was marked. The row is kept
+    // as an archived tombstone rather than deleted: every reader lists only
+    // unarchived rows, and keeping it keeps the version fence, so an older
+    // unmarked projection the Queue delivers late cannot bring it back. Its
+    // viewer rows go; one that arrives late joins an archived row and lists
+    // nothing.
+    const tombstone = effect.backgroundAgent === true;
+    if (tombstone) {
       this.storage.sql.exec(
         `DELETE FROM workspace_breakout_viewers WHERE workstream_id = ? AND substream_id = ?`,
         envelope.parentId,
         envelope.substreamId,
       );
-      return this.storage.sql.exec<{ substream_id: string } & Record<string, SqlStorageValue>>(
-        `DELETE FROM workspace_breakout_directory
-          WHERE workstream_id = ? AND substream_id = ? RETURNING substream_id`,
-        envelope.parentId,
-        envelope.substreamId,
-      ).toArray().length === 1;
     }
     // A schema-57 Organization can receive the migration-63 tables while its
     // cleanup still holds later migrations. Keep the once-only replay retryable
@@ -306,7 +301,7 @@ export class WorkspaceBreakoutStorage {
       effect.createdByUserId ?? null,
       epochMilliseconds(effect.lastActivityAt) ?? now,
       epochMilliseconds(effect.completedAt),
-      epochMilliseconds(effect.archivedAt),
+      tombstone ? epochMilliseconds(effect.archivedAt) ?? now : epochMilliseconds(effect.archivedAt),
       effect.latestAttentionOrdinal ?? 0,
       effect.unreadTrackingStartOrdinal ?? 0,
       epochMilliseconds(effect.createdAt ?? effect.lastActivityAt) ?? now,

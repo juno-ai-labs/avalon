@@ -1325,8 +1325,49 @@ describe("space dashboard conversation page", () => {
       viewerEffect(OWNER, { unseen: true }) as ConversationEffect,
     ], 2);
 
-    expect(await breakoutRows()).toMatchObject({ rows: [] });
+    await expect(inspect(`SELECT substream_id FROM workspace_breakout_directory WHERE archived_at IS NULL`))
+      .resolves.toMatchObject({ rows: [] });
     await expect(inspect("SELECT user_id FROM workspace_breakout_viewers"))
+      .resolves.toMatchObject({ rows: [] });
+    expect((await connectViewer(OWNER)).initialChannelCounts).toEqual([0]);
+  });
+
+  it("given a stale unmarked projection after the marked one, when the Channel receives it, then it is not forwarded", async () => {
+    await openChannelObject(CHANNEL_A);
+    await publishBreakout(CHANNEL_A, BREAKOUT_TWO, [breakoutCommonEffect("Worker", { state: "idle" })]);
+    await publishBreakout(CHANNEL_A, BREAKOUT_TWO, [
+      { ...breakoutCommonEffect("Worker", { state: "completed" }), backgroundAgent: true },
+    ], 3);
+    const forwardedVersion = () => runInDurableObject(channelObject(CHANNEL_A), (_instance, state) => (
+      state.storage.sql.exec<{ next_version: number }>(
+        "SELECT next_version FROM projection_keys WHERE projection_key = ?",
+        `substream:${BREAKOUT_TWO}:common`,
+      ).one().next_version
+    ));
+    const before = await forwardedVersion();
+
+    // Forwarded, it would reach the Organization under a newer parent version
+    // and put back the row the marked projection withdrew.
+    await publishBreakout(CHANNEL_A, BREAKOUT_TWO, [breakoutCommonEffect("Worker", { state: "idle" })], 2);
+
+    expect(await forwardedVersion()).toBe(before);
+  });
+
+  it("given the withdrawal applied before the leaked row, when the Queue reorders them, then the agent still does not count", async () => {
+    await openChannelObject(CHANNEL_A);
+    await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
+
+    // The Queue promises no order, so the Channel's withdrawal (its version 2)
+    // can land before the leaked row it withdraws (its version 1).
+    await publishBreakoutProjection(CHANNEL_A, BREAKOUT_TWO, [
+      { ...breakoutCommonEffect("Worker", { state: "completed" }), backgroundAgent: true },
+    ], 2);
+    await publishBreakoutProjection(CHANNEL_A, BREAKOUT_TWO, [
+      breakoutCommonEffect("Worker", { state: "idle" }),
+      viewerEffect(OWNER, { unseen: true }) as ConversationEffect,
+    ], 1);
+
+    await expect(inspect(`SELECT substream_id FROM workspace_breakout_directory WHERE archived_at IS NULL`))
       .resolves.toMatchObject({ rows: [] });
     expect((await connectViewer(OWNER)).initialChannelCounts).toEqual([0]);
   });
@@ -1362,9 +1403,8 @@ describe("space dashboard conversation page", () => {
 
     await deliverParentEffects(env, channelObject(CHANNEL_A));
 
-    expect(await breakoutRows()).toMatchObject({
-      rows: [{ workstream_id: CHANNEL_A, substream_id: BREAKOUT_ONE, title: "Pricing" }],
-    });
+    await expect(inspect(`SELECT substream_id FROM workspace_breakout_directory WHERE archived_at IS NULL`))
+      .resolves.toMatchObject({ rows: [{ substream_id: BREAKOUT_ONE }] });
     expect((await connectViewer(OWNER)).initialChannelCounts).toEqual([1]);
   });
 });

@@ -1044,9 +1044,10 @@ and forwarding one would put a Queue message and a workspace row on every step
 it takes. The flag is read back from the child's own stored projection, which
 the apply has just written, so a common effect is classified by the payload
 that arrived with it. An agent marks itself before its first projection, and an
-agent a Channel had already forwarded is retracted: WorkspaceDO deletes the
-breakout's rows when a projection flagged `backgroundAgent` arrives, so it never
-counts toward the Channel's badge.
+agent a Channel had already forwarded is retracted: WorkspaceDO archives the
+breakout's row as a tombstone and deletes its viewer rows when a projection
+flagged `backgroundAgent` arrives, so it never counts toward the Channel's
+badge.
 [`workstream-durable-object.md`](workstream-durable-object.md) has the detail.
 
 WorkspaceDO stores them in **two new tables beside the Channel ones**,

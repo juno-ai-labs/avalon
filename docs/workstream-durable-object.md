@@ -1151,8 +1151,10 @@ writes the child's `background_agent` row *before* provisioning it; provision
 publishes the first projection. One exception to the exclusion: when the Channel
 had already forwarded an agent as a breakout (a `substream:<id>:common`
 projection key exists), its common projection still leaves, and WorkspaceDO
-reads `backgroundAgent: true` as "hold no row" and deletes the breakout and its
-viewer rows. WorkstreamDO migration 20 sends that retraction once for every
+reads `backgroundAgent: true` as "list nothing": it keeps the row as an archived
+tombstone, which every reader skips and which keeps the version fence, and
+deletes its viewer rows. Only a child projection the Channel accepted is
+forwarded; a stale one would otherwise leave under a newer parent version. WorkstreamDO migration 20 sends that retraction once for every
 such agent already stored. A Space
 forwards none of this: its hidden main conversation is its only one.
 WorkstreamDO migration 19 replays every already-stored non-background breakout
@@ -1843,8 +1845,9 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 **What changed:** A delegated agent writes its `background_agent` row before it
 provisions, so its first directory projection carries `backgroundAgent: true`.
 A Channel still forwards the common projection of an agent it had already
-forwarded as a breakout, and WorkspaceDO deletes that breakout's rows when the
-flag arrives. WorkstreamDO migration 20 replays that retraction once for every
+forwarded as a breakout, and WorkspaceDO archives that row as a tombstone and
+deletes its viewer rows when the flag arrives. A Channel forwards a breakout's
+projection only when it accepted it, not when its version fence rejected it. WorkstreamDO migration 20 replays that retraction once for every
 stored agent with a forwarded breakout key.
 
 **Why:** Provision published the first projection before the agent was marked.
@@ -1859,10 +1862,14 @@ column in `workspace_breakout_directory`, which needs a WorkspaceDO schema
 migration and keeps rows no surface should hold. Retracting with a new effect
 kind, which widens the parent-effect contract for a one-time cleanup.
 
-**Consequences:** The retraction deletes the row, so it has no version fence
-left; an unmarked projection still in the Queue could put it back. Only an
-agent started around the deploy of this change could do that. A leaked agent
-that projects again sends one Queue message per step; no new agent can leak.
+**Considered and rejected, in review:** Deleting the row. It dropped the version
+fence, so an unmarked projection the Queue delivered late would recreate it.
+
+**Consequences:** The tombstone stays; any reader of
+`workspace_breakout_directory` must keep filtering `archived_at IS NULL`. A
+leaked agent that projects again sends one Queue message per step; no new agent
+can leak. Rejecting stale forwards also stops a late breakout projection from
+overwriting a newer Organization row, which was possible before this change.
 
 ### 2026-09-23 — Remove repeated regional reads from ordinary conversation operations
 

@@ -515,9 +515,8 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
 
       const forwards = this.forwardsChildEffect(substreamId, envelope.effect);
       if (envelope.effect.kind === "directory_common") {
-        if (this.upsertChildProjection("common", substreamId, null, envelope, now)) {
-          this.onChildCommonProjection(substreamId, envelope.effect, now);
-        }
+        const accepted = this.upsertChildProjection("common", substreamId, null, envelope, now);
+        if (accepted) this.onChildCommonProjection(substreamId, envelope.effect, now);
         if (this.aggregatesChildProjection(substreamId)) {
           const aggregate = this.aggregateCommon();
           this.onChildCommonAggregate(substreamId, aggregate, envelope, now);
@@ -525,21 +524,23 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
         // The child's own payload, under a key of its own, so its versions are
         // numbered independently of the parent's aggregate and of every other
         // child's. Read after the upsert above, because that is what decided
-        // whether this child is one whose projection leaves at all.
-        } else if (this.forwardsChildProjection(substreamId, "directory_common")) {
+        // whether this child is one whose projection leaves at all. Only an
+        // accepted payload leaves: a stale one forwarded here would reach the
+        // Organization under a newer parent version and overwrite the row the
+        // child has since moved past.
+        } else if (accepted && this.forwardsChildProjection(substreamId, "directory_common")) {
           this.enqueueProjection(
             `substream:${substreamId}:common`, envelope.effect, now, substreamId,
           );
         }
       } else if (envelope.effect.kind === "directory_user") {
-        if (this.upsertChildProjection("user", substreamId, envelope.effect.userId, envelope, now)) {
-          this.onChildUserProjection(substreamId, envelope.effect.userId, now);
-        }
+        const accepted = this.upsertChildProjection("user", substreamId, envelope.effect.userId, envelope, now);
+        if (accepted) this.onChildUserProjection(substreamId, envelope.effect.userId, now);
         if (this.aggregatesChildProjection(substreamId)) {
           const aggregate = this.aggregateUser(envelope.effect.userId);
           this.onChildUserAggregate(substreamId, envelope.effect.userId, aggregate, envelope, now);
           if (forwards) this.enqueueProjection(`user:${envelope.effect.userId}`, aggregate, now);
-        } else if (this.forwardsChildProjection(substreamId, "directory_user")) {
+        } else if (accepted && this.forwardsChildProjection(substreamId, "directory_user")) {
           this.enqueueProjection(
             `substream:${substreamId}:user:${envelope.effect.userId}`,
             envelope.effect,
