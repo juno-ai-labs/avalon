@@ -54,7 +54,9 @@ request: a browser sets no headers on one, so `Authorization` is unavailable. So
 admission is split in two.
 
 1. **Issue.** The desktop calls
-   `GET /workspace/socket` for workspace sync/commands,
+   `GET /workspace/socket` for workspace sync/commands (members and guests: it
+   is mounted with the workspace-relationship check, not the member-only
+   `requireAuth`, because WorkspaceDO shapes a guest's socket itself),
    `GET /workstreams/:id/control-socket` for aggregate metadata,
    `GET /conversations/:parentId/substreams/:substreamId/socket` for the feed
    of a work stream's or an automation's conversation, or
@@ -824,6 +826,10 @@ closed topic enum would make every older desktop reject, including its
 subscribe answer. Naming the conversation, which would disclose a membership
 the receiver might not be able to list. Polling, which adds a timer number
 nobody set and still lags.
+
+The workspace socket ticket was member-only, so no guest client could open the
+socket this event rides on; it now admits guests, whose socket WorkspaceDO
+already withholds Space state from.
 
 **Consequences:** The event is a nudge. It is not durable, so a listener
 rereads on every subscribe answer, the first included, because its opening read
