@@ -816,7 +816,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         // resource action resolves; the default landing would open an unrelated
         // conversation before the deep-link destination arrives.
         if (entered.workspaceChanged) {
-          window.location.hash = '/workstreams/new';
+          window.location.hash = '/opening';
         }
         await action(entered.api);
       };
@@ -899,7 +899,9 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         if (!requireActiveWorkspace('Sign in before starting a channel.')) return;
         setDeepLinkError(null);
         markSurfaceEntrypoint(navigation.entrypoint);
-        window.location.hash = '/workstreams/new';
+        // A Channel is started from a Space, which this link does not name, so
+        // it opens the app; the sidebar's plus asks for the Space.
+        window.location.hash = '/';
         return;
       }
       if (intent.kind === 'space') {
@@ -939,8 +941,9 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         const openAutomation = (): void => {
           setDeepLinkError(null);
           markSurfaceEntrypoint(navigation.entrypoint);
-          // The builder this used to open is gone; drafting is a conversation.
-          window.location.hash = '/workstreams/new';
+          // The builder this used to open is gone; drafting is a conversation,
+          // and a conversation is started from a Space this link does not name.
+          window.location.hash = '/';
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openAutomation);
         else if (requireActiveWorkspace('Sign in before creating an automation.')) openAutomation();

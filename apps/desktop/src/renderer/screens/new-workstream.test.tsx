@@ -6,7 +6,6 @@ import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { clearAllDrafts } from '../lib/draft-cache';
-import { mentionOptionCopy } from '../test/mention-option-copy';
 import { NewWorkstreamScreen } from './new-workstream';
 
 const api = vi.hoisted(() => ({
@@ -135,23 +134,19 @@ function personalSpaceDirectory(spaceId: ReturnType<typeof asSpaceId>): SpaceDir
   };
 }
 
-function renderScreen(spaces: SpaceDirectory = { waterline: 0, items: [] }): QueryClient {
-  const queryClient = new QueryClient({
-    defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
-  });
-  queryClient.setQueryData(['spaces'], spaces);
-  render(
-    <Tooltip.Provider delayDuration={0}>
-      <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={['/workstreams/new']}>
-          <Routes>
-            <Route element={<NewWorkstreamScreen workspace={workspace} />} path="/workstreams/new" />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>
-    </Tooltip.Provider>,
-  );
-  return queryClient;
+function generalSpaceDirectory(): SpaceDirectory {
+  const [space] = personalSpaceDirectory(GENERAL_SPACE_ID).items;
+  return {
+    waterline: 1,
+    items: [{ ...space!, name: 'General', scope: 'workspace', systemRole: 'general', participants: [] }],
+  };
+}
+
+const GENERAL_SPACE_ID = asSpaceId('00000000-0000-7000-8000-00000000a001');
+
+/** The launcher as the sidebar opens it: in an Organization-wide Space. */
+function renderScreen(): QueryClient {
+  return renderSpaceScreen(GENERAL_SPACE_ID, generalSpaceDirectory());
 }
 
 function renderSpaceScreen(
@@ -173,7 +168,7 @@ function renderSpaceScreen(
         }]}>
           {nextSpaceId && <Link to={`/spaces/${nextSpaceId}/workstreams/new`}>New channel in another space</Link>}
           <Routes>
-            <Route element={<NewWorkstreamScreen spaceId="route" workspace={workspace} />} path="/spaces/:spaceId/workstreams/new" />
+            <Route element={<NewWorkstreamScreen workspace={workspace} />} path="/spaces/:spaceId/workstreams/new" />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>
@@ -264,17 +259,17 @@ describe('New channel home', () => {
     expect(await screen.findByRole('textbox', { name: 'Opening channel message' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'Needs attention' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Suggested work' })).not.toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Add people' })).not.toBeInTheDocument());
-    expect(screen.queryByTitle('Participants are managed by the space')).not.toBeInTheDocument();
-    const modifier = document.querySelector('.participant-modifier');
-    if (!(modifier instanceof HTMLElement)) throw new Error('participant modifier missing');
-    const face = modifier.querySelector('.avatar-stack-item');
-    if (!(face instanceof HTMLElement)) throw new Error('participant face missing');
-    fireEvent.pointerMove(face, { pointerType: 'mouse' });
-    const tooltip = await screen.findByRole('tooltip');
-    expect(tooltip).toHaveTextContent('Participants are managed by the space');
-    expect(tooltip).not.toHaveTextContent('Adam Juhasz');
-    expect(tooltip).not.toHaveTextContent('Samantha Lee');
+    // The roster is the Space's: the bar names everyone in it and offers no way
+    // to add or remove anybody.
+    const bar = screen.getByRole('group', { name: 'Participants:' });
+    await waitFor(() => expect(within(bar).getByText('Samantha Lee')).toBeVisible());
+    expect(within(bar).getByText('Adam Juhasz')).toBeVisible();
+    expect(within(bar).getByText('Managed by the space')).toBeVisible();
+    expect(screen.queryByRole('combobox', { name: 'Search people' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove Samantha Lee' })).not.toBeInTheDocument();
+    // The chip and dialog that used to sit above the composer are gone.
+    expect(screen.queryByRole('button', { name: 'Add people' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Manage participants/u })).not.toBeInTheDocument();
     const composer = screen.getByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Prepare the hiring plan' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
@@ -321,41 +316,28 @@ describe('New channel home', () => {
     expect(screen.queryByRole('dialog', { name: 'Add people' })).not.toBeInTheDocument();
   });
 
-  it('walks the mention list and submits the identity behind the person Enter picks', async () => {
+  it('uses the conversation composer and seats the person a mention names', async () => {
     const queryClient = renderScreen();
     const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
+    expect(composer).toHaveAttribute('placeholder', 'Describe what this channel will be used for');
 
     fireEvent.focus(composer);
-    fireEvent.change(composer, { target: { value: 'ask @' } });
+    fireEvent.change(composer, { target: { value: 'ask @Sam' } });
 
+    // The same list a Channel's own composer opens: Rally alongside the people.
     const listbox = await screen.findByRole('listbox', { name: 'Mentions' });
-    const options = within(listbox).getAllByRole('option');
-    const firstOption = options[0];
-    if (!firstOption) throw new Error('Expected at least one mention option');
-    await within(firstOption).findByText('AJ');
-    expect(options.map(mentionOptionCopy)).toEqual([
-      { badge: 'Person', description: 'adam@example.com', label: 'Adam Juhasz' },
-      { badge: 'Person', description: 'samantha@example.com', label: 'Samantha Lee' },
-    ]);
-    expect(options[0]).toHaveAccessibleName('Adam Juhasz — adam@example.com — Person');
-    expect(options[1]).toHaveAccessibleName('Samantha Lee — samantha@example.com — Person');
-    expect(options.map((option) => option.getAttribute('aria-selected'))).toEqual(['true', 'false']);
-
-    fireEvent.keyDown(composer, { key: 'ArrowDown' });
-    expect(within(listbox).getAllByRole('option').map((option) => option.getAttribute('aria-selected'))).toEqual(['false', 'true']);
-
+    expect(composer).toHaveAttribute('aria-controls', 'workstream-mention-listbox');
+    expect(within(listbox).getAllByRole('option')).toHaveLength(1);
     fireEvent.keyDown(composer, { key: 'Enter' });
-
     await waitFor(() => expect(composer).toHaveValue('ask @Samantha Lee '));
     expect(screen.queryByRole('listbox', { name: 'Mentions' })).not.toBeInTheDocument();
-    // A mention is also an audience decision, so the person is seated before
-    // the work stream exists and the identity travels with the visible text.
-    expect(screen.getByRole('button', { name: 'Remove Samantha Lee' })).toBeVisible();
+
+    // A mention is also an audience decision: nobody picked Samantha in the
+    // Participants bar, and the request seats her anyway.
     fireEvent.keyDown(composer, { key: 'Enter' });
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(expect.objectContaining({
       openingMessage: 'ask @Samantha Lee',
       participantIds: [teammate.id],
-      operationId: expect.any(String),
       mentions: [{
         type: 'person',
         label: 'Samantha Lee',
@@ -376,7 +358,14 @@ describe('New channel home', () => {
       }] }] }] }));
   });
 
-  it('keeps a non-active membership out of both the mention list and the dialog', async () => {
+  it('offers slash commands, which the launcher used to lack', async () => {
+    renderScreen();
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
+    fireEvent.change(composer, { target: { value: '/' } });
+    expect(await screen.findByRole('listbox', { name: 'Composer commands' })).toBeVisible();
+  });
+
+  it('keeps a non-active membership out of both the mention list and the participant search', async () => {
     api.getWorkspaceMembers.mockResolvedValue([
       currentUser,
       { ...teammate, status: 'invited' },
@@ -384,25 +373,17 @@ describe('New channel home', () => {
     ]);
     renderScreen();
     const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
-
-    fireEvent.focus(composer);
-    fireEvent.change(composer, { target: { value: 'ask @' } });
+    await waitFor(() => expect(api.getWorkspaceMembers).toHaveBeenCalled());
 
     // Picking someone here puts them in the create request, and the work-stream
     // endpoints refuse a membership that is not active.
-    const listbox = await screen.findByRole('listbox', { name: 'Mentions' });
-    const options = within(listbox).getAllByRole('option');
-    const firstOption = options[0];
-    if (!firstOption) throw new Error('Expected at least one mention option');
-    await within(firstOption).findByText('AJ');
-    expect(options.map(mentionOptionCopy)).toEqual([
-      { badge: 'Person', description: 'adam@example.com', label: 'Adam Juhasz' },
-      { badge: 'Person', description: 'rae@example.com', label: 'Rae Okafor' },
-    ]);
-    expect(options[0]).toHaveAccessibleName('Adam Juhasz — adam@example.com — Person');
-    expect(options[1]).toHaveAccessibleName('Rae Okafor — rae@example.com — Person');
+    fireEvent.focus(composer);
+    fireEvent.change(composer, { target: { value: 'ask @Rae' } });
+    expect(await within(await screen.findByRole('listbox', { name: 'Mentions' })).findAllByRole('option')).toHaveLength(1);
+    fireEvent.change(composer, { target: { value: 'ask @Sam' } });
+    await waitFor(() => expect(screen.queryByRole('listbox', { name: 'Mentions' })).not.toBeInTheDocument());
 
-    fireEvent.keyDown(composer, { key: 'Escape' });
+    fireEvent.change(composer, { target: { value: '' } });
     const peopleSearch = screen.getByRole('combobox', { name: 'Search people' });
     fireEvent.focus(peopleSearch);
     expect(screen.queryByRole('option', { name: 'Samantha Lee — samantha@example.com' })).not.toBeInTheDocument();
@@ -441,7 +422,7 @@ describe('New channel home', () => {
     // Focus stays in the draft, so this is the only thing that tells a screen
     // reader which row Enter would take.
     expect(composer).toHaveAttribute('aria-activedescendant', options[0]!.id);
-    expect(composer).toHaveAttribute('aria-controls', 'launch-mention-listbox');
+    expect(composer).toHaveAttribute('aria-controls', 'workstream-mention-listbox');
 
     fireEvent.keyDown(composer, { key: 'ArrowDown' });
     expect(composer).toHaveAttribute('aria-activedescendant', within(listbox).getAllByRole('option')[1]!.id);
@@ -465,13 +446,16 @@ describe('New channel home', () => {
     expect(screen.getByRole('combobox', { name: 'Search people' })).toBeVisible();
   });
 
-  it('keeps recipient selection above the composer and sends selected people', async () => {
+  it('picks participants in the header and sends selected people', async () => {
     renderScreen();
 
     act(() => screen.getByRole('combobox', { name: 'Search people' }).focus());
     fireEvent.click(await screen.findByRole('option', { name: 'Samantha Lee — samantha@example.com' }));
     expect(screen.getByRole('button', { name: 'Remove Samantha Lee' })).toBeVisible();
-    expect(screen.getByRole('combobox', { name: 'Search people' })).toHaveAttribute('placeholder', 'Add people');
+    expect(within(screen.getByRole('group', { name: 'Participants:' })).getByText('Adam Juhasz')).toBeVisible();
+    // The creator is always in the Channel, so there is no way to remove them.
+    expect(screen.queryByRole('button', { name: 'Remove Adam Juhasz' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Manage participants/u })).not.toBeInTheDocument();
     const composer = screen.getByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: '  Prepare the launch brief  ' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
@@ -484,6 +468,7 @@ describe('New channel home', () => {
       // asserted as present rather than by value so the exact-shape check that
       // proves `modelOverride` is absent keeps working.
       requestId: expect.any(String),
+      spaceIds: [GENERAL_SPACE_ID],
     }));
     const request = api.createWorkstream.mock.calls[0]?.[0];
     expect(request?.operationId).toBe(request?.requestId);
@@ -515,6 +500,45 @@ describe('New channel home', () => {
     fireEvent.click(nextSpace);
 
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Opening channel message' })).toHaveFocus());
+  });
+
+  // The sidebar's dialog can open the launcher for the Space already on screen.
+  // Nothing remounts for a route that did not change, so the composer's
+  // autofocus never ran and the caret was left wherever the dialog put it.
+  it('focuses the message when the same space launcher is opened again', async () => {
+    renderSpaceScreen(GENERAL_SPACE_ID, generalSpaceDirectory(), GENERAL_SPACE_ID);
+    expect(screen.getByRole('textbox', { name: 'Opening channel message' })).toHaveFocus();
+    const again = screen.getByRole('link', { name: 'New channel in another space' });
+    act(() => again.focus());
+    fireEvent.click(again);
+
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Opening channel message' })).toHaveFocus());
+    expect(screen.queryByRole('combobox', { name: 'Search people' })).not.toHaveFocus();
+  });
+
+  // One instance of the screen used to serve every `:spaceId`, so the people
+  // picked for a Channel in one Space were sent with the next one, in another.
+  it('starts each opening with no one picked, even in another Organization-wide space', async () => {
+    const otherId = asSpaceId('00000000-0000-7000-8000-00000000a002');
+    const [general] = generalSpaceDirectory().items;
+    renderSpaceScreen(GENERAL_SPACE_ID, {
+      waterline: 1,
+      items: [general!, { ...general!, id: otherId, name: 'Launch', systemRole: null }],
+    }, otherId);
+    act(() => screen.getByRole('combobox', { name: 'Search people' }).focus());
+    fireEvent.click(await screen.findByRole('option', { name: 'Samantha Lee — samantha@example.com' }));
+    expect(screen.getByRole('button', { name: 'Remove Samantha Lee' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('link', { name: 'New channel in another space' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove Samantha Lee' })).not.toBeInTheDocument());
+    const composer = screen.getByRole('textbox', { name: 'Opening channel message' });
+    fireEvent.change(composer, { target: { value: 'Plan the launch' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(expect.objectContaining({
+      participantIds: [],
+      spaceIds: [otherId],
+    })));
   });
 
   it('shows an empty recipient result when the organization has no available members', async () => {
@@ -551,6 +575,7 @@ describe('New channel home', () => {
       participantIds: [],
       operationId: expect.any(String),
       requestId: expect.any(String),
+      spaceIds: [GENERAL_SPACE_ID],
     }));
   });
 
@@ -571,6 +596,7 @@ describe('New channel home', () => {
       operationId: expect.any(String),
       modelOverride: 'openai/gpt-5.6-sol',
       requestId: expect.any(String),
+      spaceIds: [GENERAL_SPACE_ID],
     }));
   });
 
@@ -596,6 +622,7 @@ describe('New channel home', () => {
       operationId: expect.any(String),
       modelOverride: 'x-ai/grok-4.3',
       requestId: expect.any(String),
+      spaceIds: [GENERAL_SPACE_ID],
     }));
   });
 
@@ -618,6 +645,7 @@ describe('New channel home', () => {
       participantIds: [],
       operationId: expect.any(String),
       requestId: expect.any(String),
+      spaceIds: [GENERAL_SPACE_ID],
     }));
   });
 
@@ -643,7 +671,25 @@ describe('New channel home', () => {
       participantIds: [],
       operationId: expect.any(String),
       requestId: expect.any(String),
+      spaceIds: [GENERAL_SPACE_ID],
     }));
+  });
+
+  // The composer keeps taking Enter while it shows the create in flight, so a
+  // new draft sent then would start a second Channel. The words stay put.
+  it('refuses a second create while the first is pending and keeps the new draft', async () => {
+    api.createWorkstream.mockReturnValue(new Promise(() => undefined));
+    renderScreen();
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
+    fireEvent.change(composer, { target: { value: 'First' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await screen.findByRole('status', { name: 'Rally is working' });
+
+    fireEvent.change(composer, { target: { value: 'Second' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(composer).toHaveValue('Second'));
+    expect(api.createWorkstream).toHaveBeenCalledTimes(1);
   });
 
   it('clears the submitted message before the create request settles and blocks duplicate submission', async () => {
@@ -665,6 +711,7 @@ describe('New channel home', () => {
       participantIds: [],
       operationId: expect.any(String),
       requestId: expect.any(String),
+      spaceIds: [GENERAL_SPACE_ID],
     });
 
     resolveCreate(createdWorkstream);
@@ -688,6 +735,7 @@ describe('New channel home', () => {
       operationId: expect.any(String),
       attachmentIds: ['resource-notes'],
       requestId: expect.any(String),
+      spaceIds: [GENERAL_SPACE_ID],
     }));
     expect(screen.getByRole('button', { name: 'Composer actions' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeDisabled();
@@ -889,8 +937,8 @@ describe('New channel home', () => {
     renderScreen();
 
     const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
-    fireEvent.change(composer, { target: { value: 'ask @' } });
-    fireEvent.keyDown(composer, { key: 'ArrowDown' });
+    fireEvent.change(composer, { target: { value: 'ask @Sam' } });
+    await screen.findByRole('listbox', { name: 'Mentions' });
     fireEvent.keyDown(composer, { key: 'Enter' });
     await waitFor(() => expect(composer).toHaveValue('ask @Samantha Lee '));
     fireEvent.keyDown(composer, { key: 'Enter' });
