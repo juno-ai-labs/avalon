@@ -19,6 +19,7 @@ import type {
 } from './realtime-socket';
 import type { DesktopSettingsSection } from './settings';
 import type { ThemeChoice } from './themes';
+import type { EmbeddedBrowserBounds, EmbeddedBrowserCommand, EmbeddedBrowserResult, EmbeddedBrowserState } from './embedded-browser';
 
 export type RallyRegion = Region;
 
@@ -364,6 +365,8 @@ export interface RallyDesktopBridge {
   readLocalClaudeSession: (id: string) => Promise<{ provider: 'claude' | 'claude_code'; text: string }>;
   listLocalClaudeCodeSessions: () => Promise<Array<{ id: string; title: string; project: string; updatedAt: number }>>;
   readLocalClaudeCodeSession: (id: string) => Promise<string>;
+  listLocalCodexSessions: () => Promise<Array<{ id: string; title: string; updatedAt: number }>>;
+  readLocalCodexSession: (id: string) => Promise<string>;
   getRuntimeConfig: () => Promise<RuntimeConfig>;
   /** Whether any Rally window currently owns application focus. */
   getApplicationForegroundState: () => Promise<boolean>;
@@ -456,6 +459,12 @@ export interface RallyDesktopBridge {
   /** Let the main conversation rail borrow desktop space instead of narrowing
    * the feed whenever the display has room for it. */
   setConversationDetailsOpen: (input: { open: boolean; width: number }) => Promise<void>;
+  /** Local Chromium browser; visited pages never receive the Rally preload. */
+  getEmbeddedBrowserState: () => Promise<EmbeddedBrowserState>;
+  commandEmbeddedBrowser: (command: EmbeddedBrowserCommand) => Promise<EmbeddedBrowserResult>;
+  setEmbeddedBrowserBounds: (bounds: EmbeddedBrowserBounds) => Promise<void>;
+  setEmbeddedBrowserVisible: (visible: boolean) => Promise<void>;
+  onEmbeddedBrowserState: (listener: (state: EmbeddedBrowserState) => void) => () => void;
   /**
    * Renders one of Rally's messages as a picture or a PDF and offers to save
    * it. Resolves with `saved: false` when the person dismissed the dialog, and

@@ -212,6 +212,8 @@ const browserBridge: RallyDesktopBridge = {
   async readLocalClaudeSession() { throw new Error('Local Claude sessions are available in the desktop app.'); },
   async listLocalClaudeCodeSessions() { return []; },
   async readLocalClaudeCodeSession() { throw new Error('Local Claude Code sessions are available in the desktop app.'); },
+  async listLocalCodexSessions() { return []; },
+  async readLocalCodexSession() { throw new Error('Local Codex sessions are available in the desktop app.'); },
   async getRuntimeConfig() {
     return {
       appVersion: 'development',
@@ -476,6 +478,17 @@ const browserBridge: RallyDesktopBridge = {
   async setConversationDetailsOpen() {
     // A browser tab cannot resize its own top-level window. The attached rail
     // still opens inside the viewport, which is the browser-safe fallback.
+  },
+  async getEmbeddedBrowserState() {
+    return { tabs: [], activeTabId: null };
+  },
+  async commandEmbeddedBrowser() {
+    throw new Error('The embedded browser needs the Rally desktop application.');
+  },
+  async setEmbeddedBrowserBounds() {},
+  async setEmbeddedBrowserVisible() {},
+  onEmbeddedBrowserState() {
+    return () => undefined;
   },
   async exportMessage() {
     // Rendering a card and choosing where it goes are both main-process work.

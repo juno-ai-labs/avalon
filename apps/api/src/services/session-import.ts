@@ -1,4 +1,4 @@
-import { SessionImportPreviewSchema, type SessionImportPreviewRequestSchema, type SessionImportPreview, type SubstreamContent, type ConversationFile } from "@rally/contracts";
+import { SessionImportPreviewSchema, SubstreamContentSchema, type SessionImportPreviewRequestSchema, type SessionImportPreview, type SubstreamContent, type ConversationFile } from "@rally/contracts";
 import { z } from "zod";
 import { describeZodIssues } from "@rally/contracts/zod-diagnostics";
 import type { Env } from "../env";
@@ -28,6 +28,15 @@ export function sessionShareUrl(value: string) {
   url.hash = "";
   url.pathname = url.pathname.replace(/\/$/, "");
   return { provider, url } as const;
+}
+
+/** Private browser URLs are provenance only; the API never fetches them. */
+export function sessionSourceUrlProvider(value: string, sessionId: string): 'chatgpt' | 'claude' {
+  const url = new URL(value);
+  if (url.protocol === 'https:' && url.hostname === 'chatgpt.com' && !url.username && !url.password && !url.port
+    && !url.search && !url.hash && /^\/c\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\/?$/iu.test(url.pathname)
+    && url.pathname.split('/')[2] === sessionId) return 'chatgpt';
+  return sessionShareUrl(value).provider;
 }
 
 /** Decode only the JSON reference table used by the observed ChatGPT share loader.
@@ -162,7 +171,10 @@ function chatGptMessages(value: unknown): SubstreamContent["messages"] {
       else if (object(part)['content_type'] === "image_asset_pointer") files.push(sourceFile(part, kind));
       else throw new Error("Unsupported ChatGPT visible content part");
     }
-    return visibleMessage(role, parts.join("\n\n"), files, sourceMessageId);
+    // ChatGPT's plain-text parts can contain internal citation anchors whose
+    // targets live elsewhere in the page response. Do not show their control
+    // characters as prose in Rally's transcript.
+    return visibleMessage(role, parts.join("\n\n").replace(/\uE200cite\uE202[^\uE201]*\uE201/gu, '').trim(), files, sourceMessageId);
   });
 }
 
@@ -278,7 +290,7 @@ function claudeCodeMessages(value: unknown): SubstreamContent["messages"] {
   return messages;
 }
 
-export function parseSessionExport(provider: "chatgpt" | "claude" | "claude_code", input: string, sourceUrl: string | null = null): SessionImportPreview {
+export function parseSessionExport(provider: "chatgpt" | "claude" | "claude_code" | "codex", input: string, sourceUrl: string | null = null): SessionImportPreview {
   try {
     let value: unknown;
     if (provider === "chatgpt" && input.trimStart().startsWith("<")) value = chatGptHtmlData(input);
@@ -304,7 +316,8 @@ export function parseSessionExport(provider: "chatgpt" | "claude" | "claude_code
     }
     const data = object(value);
     const messages = provider === "chatgpt" ? chatGptMessages(value)
-      : provider === "claude_code" ? claudeCodeMessages(value) : claudeMessages(value);
+      : provider === "claude_code" ? claudeCodeMessages(value)
+        : provider === "codex" ? SubstreamContentSchema.parse({ messages: data['messages'] }).messages : claudeMessages(value);
     const codeEvents = provider === "claude_code" ? array(value).map(object) : [];
     const codeTitle = [...codeEvents].reverse().find((event) => event['type'] === 'custom-title' && text(event['customTitle']))?.['customTitle']
       || [...codeEvents].reverse().find((event) => event['type'] === 'ai-title' && text(event['aiTitle']))?.['aiTitle'];
@@ -313,7 +326,7 @@ export function parseSessionExport(provider: "chatgpt" | "claude" | "claude_code
         || text(codeEvents.find((event) => text(event['uuid']))?.['uuid'])
       : text(data['uuid']) || text(data['conversation_id']) || text(data['id']) || sourceUrl;
     return SessionImportPreviewSchema.parse({
-      title: text(data['title']) || text(data['snapshot_name']) || text(data['name']) || text(codeTitle) || `Imported ${provider === "chatgpt" ? "ChatGPT" : provider === "claude_code" ? "Claude Code" : "Claude"} conversation`,
+      title: text(data['title']) || text(data['snapshot_name']) || text(data['name']) || text(codeTitle) || `Imported ${provider === "chatgpt" ? "ChatGPT" : provider === "claude_code" ? "Claude Code" : provider === 'codex' ? 'Codex' : "Claude"} conversation`,
       source: { provider, url: sourceUrl, ...(sourceSessionId ? { sessionId: sourceSessionId } : {}) }, content: { messages },
     });
   } catch (error) {
@@ -324,7 +337,13 @@ export function parseSessionExport(provider: "chatgpt" | "claude" | "claude_code
 }
 
 export async function previewSessionImport(input: z.infer<typeof SessionImportPreviewRequestSchema>, env: Pick<Env, "FIRECRAWL_API_KEY">, fetcher: typeof fetch = fetch) {
-  if (input.kind === "export") return parseSessionExport(input.provider, input.text);
+  if (input.kind === "export") {
+    const preview = parseSessionExport(input.provider, input.text, input.sourceUrl);
+    if (input.sourceUrl && sessionSourceUrlProvider(input.sourceUrl, preview.source.sessionId ?? '') !== input.provider) {
+      throw new ApiError(422, 'invalid_session_source', 'The source does not match the provider');
+    }
+    return preview;
+  }
   const { provider, url } = sessionShareUrl(input.url);
   if (!env.FIRECRAWL_API_KEY) throw new ApiError(503, "session_import_unavailable", "Conversation importing is not configured.");
   const endpoint = provider === "claude"

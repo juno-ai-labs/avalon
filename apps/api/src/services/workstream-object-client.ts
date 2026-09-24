@@ -314,7 +314,7 @@ export class WorkstreamObjectClient {
     return CreatedMessageSchema.parse(await this.request({ operation: "create_message", input }));
   }
 
-  async importedSessionSource(): Promise<{ provider: "chatgpt" | "claude" | "claude_code"; sessionId: string; url: string | null } | null> {
+  async importedSessionSource(): Promise<{ provider: "chatgpt" | "claude" | "claude_code" | "codex"; sessionId: string; url: string | null } | null> {
     return z.strictObject({ source: z.strictObject({ provider: z.enum(["chatgpt", "claude", "claude_code"]),
       sessionId: z.string(), url: z.string().nullable() }).nullable() }).parse(
       await this.request({ operation: "import_source_get" })).source;
