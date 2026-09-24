@@ -83,7 +83,15 @@ export class AgentCommunicationService {
 
   async start(args: StartAgentInput, context: HarnessToolContext): Promise<StartAgentResult> {
     const source = await this.conversation(this.senderId);
-    if ((await source.agentRuntimeInfo())?.status === "stopped") throw new AgentCommunicationError("agent_origin_stopped");
+    const origin = await source.agentRuntimeInfo();
+    if (origin?.status === "stopped") throw new AgentCommunicationError("agent_origin_stopped");
+    // A worker started by a worker works for the conversation its starter
+    // works for; the composer there is the one that counts it. A starter from
+    // before roots were recorded has none, and its workers count in the main
+    // conversation, as every legacy agent does.
+    const rootSubstreamId = asSubstreamId(origin?.background
+      ? origin.rootSubstreamId ?? "0"
+      : this.input.substreamId ?? "0");
     await this.validateAttachments(args.attachmentIds);
     const id = await this.messageId(context);
     const childId = agentIdForAddress({ parentKind: this.input.parentKind, parentId: this.input.parentId, substreamId: asSubstreamId(id) });
@@ -107,7 +115,7 @@ export class AgentCommunicationService {
       participantUserIds: this.input.executionPrincipal.type === "user" ? [this.input.executionPrincipal.userId] : [],
       harnessStatus: "idle", titleStatus: "settled", emailAddress: null, emailRouteStatus: null,
       systemKind: null, modelOverride: identity.model_override, now: Date.now(),
-    }, executionPrincipal: this.input.executionPrincipal });
+    }, executionPrincipal: this.input.executionPrincipal, rootSubstreamId });
     if (initialized.status !== 200) {
       const body = rpcResultBody(initialized);
       const code = body && typeof body === "object" && "error" in body && typeof body.error === "string"
