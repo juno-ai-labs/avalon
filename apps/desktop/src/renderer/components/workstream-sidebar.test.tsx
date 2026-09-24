@@ -295,7 +295,7 @@ describe('WorkstreamSidebar', () => {
 
     const participants = screen.getByRole('button', { name: 'Manage channel participants' });
     fireEvent.focus(participants);
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Participants');
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Channel participants');
     expect(participants).toHaveAttribute('aria-description', 'Ada Lovelace');
     expect(participants).not.toHaveAttribute('aria-describedby');
     expect(participants.querySelector('.avatar-stack-item')).not.toHaveAttribute('data-state');

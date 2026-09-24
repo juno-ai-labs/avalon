@@ -8,6 +8,7 @@ import { WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
 import type { DesktopSession } from '../../common/desktop';
 import type { ElicitationData, HarnessRunMetadata, Message, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
+import { ApiError } from '../lib/api';
 import {
   AddParticipantDialog,
   AddResourceDialog,
@@ -30,7 +31,7 @@ import {
   railChildrenWithAttention,
   workspaceMemberFromSession,
 } from './workstream';
-import { conversationActivityRow, conversationShowsStoppingRow, NO_STOP_ACKNOWLEDGEMENT, nextStopAcknowledgement } from './conversation-surface';
+import { conversationActivityRow, conversationShowsStoppingRow, NO_STOP_ACKNOWLEDGEMENT, nextStopAcknowledgement, refusalMessage } from './conversation-surface';
 import { JumpToLatestButton } from '../components/conversation-follow';
 import { WorkstreamComposer } from '../components/workstream-composer';
 
@@ -1263,6 +1264,34 @@ describe('AddParticipantDialog', () => {
     expect(screen.getByText('That participant couldn’t be added.')).toBeTruthy();
     // The list stays usable: the refusal is about one attempt, not the dialog.
     expect(screen.getByRole('button', { name: /Adam/u })).toBeTruthy();
+  });
+
+  it('says the server\'s own reason for a refusal when it gave one', () => {
+    const refusal = new ApiError('This substream is archived. Restore it before changing who is in it.', 409, 'substream_archived');
+    render(
+      <Tooltip.Provider>
+        <AddParticipantDialog
+          current={[]}
+          failure="add"
+          failureMessage={refusalMessage(refusal)}
+          members={[member('member-1', 'Adam', 'active')]}
+          onAdd={vi.fn()}
+          onRemove={vi.fn()}
+          onOpenChange={vi.fn()}
+          open
+          pending={false}
+        />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByText('This substream is archived. Restore it before changing who is in it.')).toBeTruthy();
+    expect(screen.queryByText('That participant couldn’t be added.')).toBeNull();
+  });
+
+  it('keeps the generic sentence for a failure the server did not word', () => {
+    expect(refusalMessage(new ApiError('Request failed with status 409', 409))).toBeUndefined();
+    expect(refusalMessage(new ApiError('Upstream exploded', 502, 'internal_error'))).toBeUndefined();
+    expect(refusalMessage(new Error('offline'))).toBeUndefined();
   });
 
   it('offers only active memberships, because the endpoint refuses the rest', () => {

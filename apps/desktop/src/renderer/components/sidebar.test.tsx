@@ -1829,6 +1829,55 @@ describe('Sidebar channel markers', () => {
     );
   });
 
+  describe('from empty list space', () => {
+    const openBrowserImport = vi.fn(async () => undefined);
+    beforeEach(() => vi.stubGlobal('rally', { openBrowserImport }));
+    afterEach(() => vi.unstubAllGlobals());
+
+    it('offers channel creation locked to the selected Space from empty list space', async () => {
+      const hiring = space();
+      const target = placedIn(workstream('empty-area', 'Quarterly planning', 'completed'), hiring.id);
+      render(
+        <MemoryRouter>
+          <Tooltip.Provider>
+            <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()}
+              spaces={[general(), hiring]} workspace={workspace} workstreams={[target]} />
+          </Tooltip.Provider>
+        </MemoryRouter>,
+      );
+      fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+
+      // A row keeps its own menu.
+      fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+      expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
+      expect(screen.queryByRole('menuitem', { name: 'Start New Channel' })).toBeNull();
+      // Its items sit in a portal, which React still bubbles through the list.
+      fireEvent.contextMenu(screen.getByRole('menuitem', { name: 'Rename' }), { clientX: 130, clientY: 95 });
+      expect(screen.queryByRole('menuitem', { name: 'Start New Channel' })).toBeNull();
+      fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Rename' }), { key: 'Escape' });
+      await waitFor(() => expect(screen.queryByRole('menuitem', { name: 'Rename' })).toBeNull());
+
+      fireEvent.contextMenu(screen.getByRole('navigation', { name: 'Channels' }), { clientX: 120, clientY: 300 });
+      await screen.findByRole('menuitem', { name: 'Start New Channel' });
+      expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+        'Start New Channel',
+        'Import Channel from Claude or ChatGPT',
+      ]);
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Import Channel from Claude or ChatGPT' }));
+      expect(openBrowserImport).toHaveBeenCalledWith({
+        spaces: [{ id: hiring.id, name: 'Hiring' }],
+        spaceLocked: true,
+      });
+
+      fireEvent.contextMenu(screen.getByRole('navigation', { name: 'Channels' }), { clientX: 120, clientY: 300 });
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Start New Channel' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Start a new channel' });
+      const picker = within(dialog).getByRole('combobox', { name: 'Space' });
+      expect(picker).toHaveTextContent('Hiring');
+      expect(picker).toBeDisabled();
+    });
+  });
+
   it('shows the current and other existing placements as checked choices', async () => {
     const hiring = space();
     const launch = space('00000000-0000-7000-8000-0000000000f5', 'Launch');

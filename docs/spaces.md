@@ -1043,7 +1043,12 @@ Channel starts — counted in `backgroundAgentCount`, drawn nowhere as a row —
 and forwarding one would put a Queue message and a workspace row on every step
 it takes. The flag is read back from the child's own stored projection, which
 the apply has just written, so a common effect is classified by the payload
-that arrived with it.
+that arrived with it. An agent marks itself before its first projection, and an
+agent a Channel had already forwarded is retracted: WorkspaceDO archives the
+breakout's row as a tombstone and deletes its viewer rows when a projection
+flagged `backgroundAgent` arrives, so it never counts toward the Channel's
+badge.
+[`workstream-durable-object.md`](workstream-durable-object.md) has the detail.
 
 WorkspaceDO stores them in **two new tables beside the Channel ones**,
 `workspace_breakout_directory` and `workspace_breakout_viewers`, keyed by
@@ -1320,6 +1325,13 @@ section of its own so it does not land against the last Space's own "No
 channels". The state it describes is a brand-new Organization: **Spaces →
 General → No channels**, and without it nothing under that, which reads as a
 sidebar that has stopped talking rather than one that is empty.
+
+**A member's rail adds the same bounded hierarchy for any Channel they reach
+only through its conversations** — a Breakout of a Channel they cannot read —
+after the member directory's own Channels, and it lists the Spaces those
+Channels sit in beside the member Space directory. Such a Channel opens on its
+first listed conversation and never on Main, and the Channel socket pool does
+not hold its Main.
 
 **Both guest hosts get the bounded read-only hierarchy.** Neither guest is
 handed the member Space directory. They use `/sharing/navigation` to draw Space,

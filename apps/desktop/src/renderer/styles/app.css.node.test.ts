@@ -1454,7 +1454,7 @@ describe('channel participant presence', () => {
     expect(ping).toContain('animation: avatar-presence-ping 10s cubic-bezier(0, 0, .2, 1) infinite;');
     expect(ping).toContain('animation-delay: 420ms;');
     expect(ping).toContain('background: color-mix(');
-    expect(ping).toContain('var(--av-sys-color-success-base)');
+    expect(ping).toContain('var(--person-accent) 35%');
     expect(ping).toContain('inset: 0;');
     expect(ping).toContain('opacity: 0;');
     expect(ping).toContain('transform: scale(1);');

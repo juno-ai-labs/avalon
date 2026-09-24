@@ -255,6 +255,26 @@ that is expected and does not block local work.
 serves port 8794. Set the API's `BROWSER_APP_ORIGIN` to the exact local browser
 origin (for example `http://localhost:8794`) and use that same hostname in Chrome.
 The host uses the local Global service binding; the regional API must be running.
+
+The `dev` script passes `--local-upstream localhost:8794`. Without it, `wrangler
+dev` takes its upstream from the production Custom Domain route in
+`apps/browser/wrangler.jsonc` (`app.rallywith.ai`) and rewrites each request's
+URL and `Origin` to that host. The Worker forwards the request unchanged, so the
+API's browser adapter compares `https://app.rallywith.ai` with
+`BROWSER_APP_ORIGIN` and refuses every non-GET call, sign-in included, with 403
+`browser_origin_required` ("Reload Rally before trying again"). The Worker's own
+socket `Origin` check survives the rewrite, because URL and header move together;
+only the comparison with a configured origin fails. Keep the flag's port equal to
+`--port`.
+
+A fresh local database also needs `pnpm db:open-authority` (§2) before a
+selected workspace can load: until it runs, the seeded workspace's Durable
+Object has no identity and `/sharing/navigation` returns 500
+`workspace_object_identity_mismatch`. Email sign-in needs
+`EMAIL_LOGIN_POLICY_JSON` as well as `BROWSER_APP_ORIGIN`; development sends no
+email, so a local-only policy such as
+`{"otpDigits":1,"ttlSeconds":600,"maxFailedAttempts":null}` lets a script try
+each code.
 JSON settings from older generated double-quoted `.dev.vars` files are decoded
 before `env:sync` rewrites them into single-quoted dotenv values.
 

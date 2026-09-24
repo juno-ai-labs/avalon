@@ -105,8 +105,10 @@ observation is shared within one authorization batch. Each batch gathers convers
 its requests and resource locations before loading a parent, preserving one parent
 RPC across multiple substreams. A mixed response carries migrated scope decisions
 alongside legacy facts; each conversation uses its own authority. Canonical checks reload facts. Search instead reuses a subject-and-resource decision from the regional projection.
-For member reads, a work stream's main SubstreamAgent owns its scope and roster.
-WorkstreamDO adds its canonical private-child membership and ready-state facts.
+For member reads, a work stream's main SubstreamAgent owns its scope and roster,
+which decide Main alone. WorkstreamDO adds its canonical private-child membership
+and ready-state facts, which decide a Breakout alone: a Breakout member need not
+read Main, and reading Main does not admit a Breakout.
 An automation supplies its own scope, author, executor and child registry; an
 owning work stream's canonical roster supplies inherited access. Archived work
 streams remain readable. Deleted automations are absent.
