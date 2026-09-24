@@ -51,6 +51,16 @@ describe('browser conversation import', () => {
     }
   });
 
+  it('reads the tab the person is looking at when several show the conversation', async () => {
+    const url = 'https://chatgpt.com/c/6ab43c03-6b2c-83e8-9eba-f1c51fa1e7a0';
+    const background = tab('00000000-0000-7000-8000-000000000001', 'Chat', url);
+    const active = tab('00000000-0000-7000-8000-000000000002', 'Chat', url);
+    const commandEmbeddedBrowser = vi.fn(async (): Promise<EmbeddedBrowserResult> => ({ kind: 'value', value: { text: '{}' } }));
+    const bridge = { getEmbeddedBrowserState: vi.fn().mockResolvedValue({ activeTabId: active.id, tabs: [background, active] }), commandEmbeddedBrowser };
+    await readBrowserConversation(bridge, url);
+    expect(commandEmbeddedBrowser).toHaveBeenCalledWith(expect.objectContaining({ action: 'evaluate', tabId: active.id }));
+  });
+
   it('opens a closed source for the read and closes that tab afterwards', async () => {
     const url = 'https://claude.ai/chat/4f2b7c1e-9a3d-4e8b-b1c2-0d9e8f7a6b5c';
     const existing = tab('00000000-0000-7000-8000-000000000001', 'New tab', 'about:blank');

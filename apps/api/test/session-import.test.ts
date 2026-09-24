@@ -12,7 +12,7 @@ describe("shared session import", () => {
     expect(result.source).toMatchObject({ provider: 'chatgpt', sessionId: url.split('/').at(-1), url });
     expect(result.content.messages).toHaveLength(1);
     expect(sessionSourceUrlProvider(url, result.source.sessionId!)).toBe('chatgpt');
-    expect(() => sessionSourceUrlProvider(url, 'another-conversation')).toThrow('Use a ChatGPT or Claude public share link');
+    expect(() => sessionSourceUrlProvider(url, 'another-conversation')).toThrow('The sourceUrl names a different conversation than the decoded text');
   });
   it('keeps the private Claude conversation URL with an authenticated export preview', async () => {
     const id = '4f2b7c1e-9a3d-4e8b-b1c2-0d9e8f7a6b5c';
@@ -25,7 +25,7 @@ describe("shared session import", () => {
     });
     expect(result.source).toMatchObject({ provider: 'claude', sessionId: id, url });
     expect(result.content.messages).toHaveLength(2);
-    expect(() => sessionSourceUrlProvider(url, 'another-conversation')).toThrow('Use a ChatGPT or Claude public share link');
+    expect(() => sessionSourceUrlProvider(url, 'another-conversation')).toThrow('The sourceUrl names a different conversation than the decoded text');
     expect(() => sessionSourceUrlProvider(`https://chatgpt.com/chat/${id}`, id)).toThrow('Use a ChatGPT or Claude public share link');
   });
   it('writes ChatGPT inline links as links and keeps one copy of a fetched uploaded image', () => {
@@ -99,6 +99,21 @@ describe("shared session import", () => {
     ] }));
     expect(result.content.messages[1]).toEqual({ role: 'assistant', sourceMessageId: 'a1',
       text: '[Nav Options](https://claude.ai/code/artifact/a1)\n\nColumns work. ([example.com](https://www.example.com/columns)) Pinning helps.' });
+  });
+  it('keeps claude.ai uploads listed only in files_v2, once when also in files', () => {
+    const upload = (uuid: string, name: string) => ({ file_uuid: uuid, file_name: name, file_kind: 'blob', inline_base64: 'UEs=', mime_type: 'application/zip' });
+    const result = parseSessionExport('claude', JSON.stringify({ uuid: 'c', chat_messages: [
+      { uuid: 'h1', sender: 'human', content: [{ type: 'text', text: 'Files' }], files: [upload('f1', 'one.zip')], files_v2: [upload('f1', 'one.zip'), upload('f2', 'two.zip')] },
+    ] }));
+    expect(result.content.messages[0]!.files?.map((file) => file.name)).toEqual(['one.zip', 'two.zip']);
+  });
+  it('writes each distinct claude.ai source once where several support one span', () => {
+    const result = parseSessionExport('claude', JSON.stringify({ uuid: 'c', chat_messages: [
+      { uuid: 'a1', sender: 'assistant', content: [{ type: 'text', text: 'Found it.', citations: [
+        { url: 'https://x.com/a', end_index: 9 }, { url: 'https://x.com/b', end_index: 9 }, { url: 'https://x.com/a', end_index: 9 },
+      ] }] },
+    ] }));
+    expect(result.content.messages[0]!.text).toBe('Found it. ([x.com](https://x.com/a)) ([x.com](https://x.com/b))');
   });
   it('names a copied Claude upload preview for its own format', () => {
     const result = parseSessionExport('claude', JSON.stringify({ uuid: 'c4', name: 'Bug', chat_messages: [

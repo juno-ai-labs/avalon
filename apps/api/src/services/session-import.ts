@@ -33,9 +33,11 @@ export function sessionSourceUrlProvider(value: string, sessionId: string): 'cha
   const url = new URL(value);
   const privateRoute = url.protocol === 'https:' && !url.username && !url.password && !url.port && !url.search && !url.hash
     ? /^\/(c|chat)\/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\/?$/iu.exec(url.pathname) : null;
-  if (privateRoute?.[2] === sessionId) {
-    if (url.hostname === 'chatgpt.com' && privateRoute[1] === 'c') return 'chatgpt';
-    if (url.hostname === 'claude.ai' && privateRoute[1] === 'chat') return 'claude';
+  const privateProvider = privateRoute && url.hostname === 'chatgpt.com' && privateRoute[1] === 'c' ? 'chatgpt'
+    : privateRoute && url.hostname === 'claude.ai' && privateRoute[1] === 'chat' ? 'claude' : null;
+  if (privateProvider && privateRoute?.[2] === sessionId) return privateProvider;
+  if (privateProvider) {
+    throw new ApiError(422, 'invalid_session_source', 'The sourceUrl names a different conversation than the decoded text');
   }
   return sessionShareUrl(value).provider;
 }
@@ -44,11 +46,11 @@ function sourceFile(value: unknown, kind: ConversationFile["kind"]): Conversatio
   const file = object(value);
   // A reader that copied different bytes than the named file — a preview in
   // another format — names the copy for what it is.
-  const name = (text(file['inline_base64']) && text(file['inline_name']))
+  const extracted = text(file['extracted_content']);
+  const name = (!extracted && text(file['inline_base64']) && text(file['inline_name']))
     || text(file['file_name']) || text(file['filename']) || text(file['name']) || text(file['title']) || "Imported file";
   const mimeType = text(file['mime_type']) || text(file['file_type']) || text(file['content_type']) || "application/octet-stream";
   const url = text(file['download_url']) || text(file['url']);
-  const extracted = text(file['extracted_content']);
   // Bytes a signed-in browser reader fetched on the person's behalf.
   const bytes = text(file['inline_base64']);
   return { name: extracted ? `${name} (extracted text).txt` : withExtension(name, mimeType), mimeType: extracted ? "text/plain" : mimeType, kind, source:
@@ -247,9 +249,17 @@ function claudeCitedText(value: string, citations: unknown[]): string {
     const url = text(citation['url']);
     if (typeof end !== 'number' || !Number.isInteger(end) || end < 0 || end > value.length || !url.startsWith('https://')) return [];
     try { return [{ end, link: ` ([${new URL(url).hostname.replace(/^www\./u, '')}](${url}))` }]; } catch { return []; }
-  }).sort((a, b) => b.end - a.end);
+  });
+  // Several sources can support one span; each distinct link appears once,
+  // in the order claude.ai listed them.
+  const byEnd = new Map<number, string[]>();
+  for (const { end, link } of links) {
+    const at = byEnd.get(end) ?? [];
+    if (!at.includes(link)) at.push(link);
+    byEnd.set(end, at);
+  }
   let result = value;
-  for (const { end, link } of links) result = result.slice(0, end) + link + result.slice(end);
+  for (const end of [...byEnd.keys()].sort((a, b) => b - a)) result = result.slice(0, end) + byEnd.get(end)!.join('') + result.slice(end);
   return result;
 }
 
@@ -265,7 +275,14 @@ function claudeMessages(value: unknown): SubstreamContent["messages"] {
     const role = sender === "human" ? "user" : sender;
     if (role !== "user" && role !== "assistant") return [];
     const kind = role === "user" ? "attachment" : "artifact";
-    const files = [...array(message['attachments']), ...array(message['files'])].flatMap((file) => sourceFiles(file, kind));
+    // claude.ai lists uploads in `files` and, for newer ones, `files_v2`; an
+    // upload in both is one file.
+    const listed = [...array(message['files']), ...array(message['files_v2'])];
+    const uploads = listed.filter((file, index) => {
+      const id = text(object(file)['file_uuid']) || text(object(file)['uuid']);
+      return !id || listed.findIndex((other) => (text(object(other)['file_uuid']) || text(object(other)['uuid'])) === id) === index;
+    });
+    const files = [...array(message['attachments']), ...uploads].flatMap((file) => sourceFiles(file, kind));
     if (message['truncated'] === true) throw new Error("Claude message is truncated");
     const reportedFiles = typeof message['file_count'] === "number" ? message['file_count'] : 0;
     if (reportedFiles > files.length) files.push({ name: "Hidden shared attachments", mimeType: "application/octet-stream", kind,
@@ -364,7 +381,7 @@ export function parseSessionExport(provider: "chatgpt" | "claude", input: string
 export async function previewSessionImport(input: z.infer<typeof SessionImportPreviewRequestSchema>) {
   const preview = parseSessionExport(input.provider, input.text, input.sourceUrl);
   if (sessionSourceUrlProvider(input.sourceUrl, preview.source.sessionId ?? '') !== input.provider) {
-    throw new ApiError(422, 'invalid_session_source', 'The source does not match the provider');
+    throw new ApiError(422, 'invalid_session_source', 'The sourceUrl does not belong to the stated provider');
   }
   return preview;
 }

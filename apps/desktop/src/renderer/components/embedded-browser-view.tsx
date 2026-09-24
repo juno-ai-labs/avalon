@@ -136,9 +136,18 @@ export function EmbeddedBrowserTabs({ state, command, className }: {
   className?: string;
 }): React.JSX.Element {
   return <div aria-label="Browser tabs" className={className ? `embedded-browser-tabs ${className}` : 'embedded-browser-tabs'} role="tablist">
-    {state.tabs.map((tab) => <div className="embedded-browser-tab" key={tab.id}>
+    {state.tabs.map((tab, index) => <div className="embedded-browser-tab" key={tab.id}>
+      {/* One tab stop for the strip; the arrows move between tabs, as a tablist does. */}
       <button aria-selected={tab.id === state.activeTabId} className="embedded-browser-tab-select"
-        onClick={() => void command({ action: 'select', tabId: tab.id })} role="tab" title={tab.title} type="button">
+        onClick={() => void command({ action: 'select', tabId: tab.id })}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+          event.preventDefault();
+          const next = (index + (event.key === 'ArrowRight' ? 1 : state.tabs.length - 1)) % state.tabs.length;
+          void command({ action: 'select', tabId: state.tabs[next]!.id });
+          event.currentTarget.closest('[role="tablist"]')?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+        }}
+        role="tab" tabIndex={tab.id === state.activeTabId ? 0 : -1} title={tab.title} type="button">
         <Globe2 aria-hidden="true" size={14} />
         <span>{tab.title}</span>
       </button>
