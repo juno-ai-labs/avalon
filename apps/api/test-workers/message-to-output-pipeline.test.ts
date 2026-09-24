@@ -124,6 +124,7 @@ const ASIDE_MODEL = "pipeline-aside/primary";
 const ASIDE_WINDOW_MODEL = "pipeline-aside-window/primary";
 const ASIDE_ELICITATION_MODEL = "pipeline-aside-elicitation/primary";
 const ASIDE_BACKLOG_MODEL = "pipeline-aside-backlog/primary";
+const ASIDE_BEHIND_QUEUE_MODEL = "pipeline-aside-behind-queue/primary";
 
 /**
  * What the polls below wait for is alarm delivery and the drain finishing under
@@ -1876,6 +1877,176 @@ describe("a member's message travels the whole pipeline", () => {
     }
   });
 
+  it("lands an aside sent behind a queued question under that question, without a run", async () => {
+    // The production report: one person asks Rally for something while a run
+    // is going, so it queues; a second person answers the first ("sounds good")
+    // without addressing Rally. Written straight to the transcript, the reply
+    // took a sequence ahead of the queued question and read above it forever.
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [
+          [{ choices: [{ delta: { content: "answering the first" }, finish_reason: "stop" }] }],
+          [{ choices: [{ delta: { content: "here is the summary" }, finish_reason: "stop" }] }],
+        ],
+        { primaryModel: ASIDE_BEHIND_QUEUE_MODEL, fallbackModels: [], gateFirstCall: true },
+      );
+      // Two people, or every message is aimed at Rally and none is an aside.
+      const opened = await initializeWorkstream(
+        stub,
+        "first message",
+        ASIDE_BEHIND_QUEUE_MODEL,
+        [OTHER_USER_ID],
+      );
+      await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ status: string }>(
+          `SELECT status FROM substream_loops WHERE id = 1`,
+        ).toArray()[0]?.status ?? "absent"), {
+        timeout: RUN_SETTLE_TIMEOUT_MS,
+        interval: 25,
+        message: "the opening run never took the loop",
+      }).toBe("executing");
+
+      const send = (text: string, clientMessageId: string) => product(stub, {
+        operation: "create_message",
+        auth: AUTH,
+        input: { text, clientMessageId, mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] },
+      });
+      const question = await send("please summarize what we agreed", "pipeline-behind-queue-1");
+      const aside = await send("sounds good", "pipeline-behind-queue-2");
+      expect([question.body.deliveryState, aside.body.deliveryState]).toEqual(["pending", "pending"]);
+      const questionTurnId = (question.body.turn as { turnId: string }).turnId;
+      const asideTurnId = (aside.body.turn as { turnId: string }).turnId;
+
+      await openProviderGate(stub);
+      await settledRun(stub, opened.body.harnessRunId as string);
+      await settledRunForTrigger(stub, questionTurnId);
+
+      const landed = await runInDurableObject(stub, (_instance, state) => ({
+        order: state.storage.sql.exec<{ turn_id: string }>(
+          `SELECT turn_id FROM participant_transcript_turns
+            WHERE turn_id IN (?, ?) ORDER BY transcript_sequence`,
+          questionTurnId,
+          asideTurnId,
+        ).toArray().map((row) => row.turn_id),
+        // Directly under the question: nothing the question's run wrote sits
+        // between them.
+        gap: state.storage.sql.exec<{ gap: number }>(
+          `SELECT aside.transcript_sequence - question.transcript_sequence AS gap
+             FROM participant_transcript_turns AS question, participant_transcript_turns AS aside
+            WHERE question.turn_id = ? AND aside.turn_id = ?`,
+          questionTurnId,
+          asideTurnId,
+        ).one().gap,
+        pending: state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM pending_loop_inputs`,
+        ).one().count,
+        asideRuns: state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM runs
+            WHERE json_extract(execution_context_json, '$.triggerMessageId') = ?`,
+          asideTurnId,
+        ).one().count,
+      }));
+      expect(landed).toEqual({ order: [questionTurnId, asideTurnId], gap: 1, pending: 0, asideRuns: 0 });
+    } finally {
+      await openProviderGate(stub).catch(() => undefined);
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it("lands an aside on an idle loop when the admission it waited behind fails", async () => {
+    // An aside waits only on what was sent ahead of it. When that fails instead
+    // of landing, nothing will ever activate the loop on the aside's behalf —
+    // it starts no run — so the idle loop has to land it by itself.
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [[{ choices: [{ delta: { content: "looked into it" }, finish_reason: "stop" }] }]],
+        { primaryModel: ASIDE_BEHIND_QUEUE_MODEL, fallbackModels: [] },
+      );
+      const opened = await initializeWorkstream(
+        stub,
+        "please look into this",
+        ASIDE_BEHIND_QUEUE_MODEL,
+        [OTHER_USER_ID],
+      );
+      await settledRun(stub, opened.body.harnessRunId as string);
+      await waitForLoopRelease(stub);
+      const runsBefore = await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM runs`).one().count);
+
+      // Mentions someone outside the workspace, so preparation refuses it once
+      // the held read is released; until then it is `preparing`, ahead of the aside.
+      const gate = await runInDurableObject(stub, (instance) => holdFirstWorkspaceRead(
+        (instance as unknown as { product: WorkstreamObjectProductService }).product as unknown as { env: Env },
+      ));
+      void product(stub, {
+        operation: "create_message",
+        auth: AUTH,
+        input: {
+          text: "Stranger please check this",
+          clientMessageId: "pipeline-aside-orphan-1",
+          mentions: [{
+            type: "person",
+            label: "Stranger",
+            userId: "00000000-0000-7000-8000-00000000beef",
+            connectorType: null,
+            startOffset: 0,
+            endOffset: 8,
+          }],
+          confirmedParticipantUserIds: [],
+          attachmentIds: [],
+        },
+      }).catch(() => undefined);
+      await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM pending_loop_input_mailbox WHERE state = 'preparing'`,
+        ).one().count), {
+        timeout: SUBSCRIPTION_SETTLE_TIMEOUT_MS,
+        interval: 25,
+        message: "the doomed admission never reserved its mailbox row",
+      }).toBe(1);
+
+      const aside = await product(stub, {
+        operation: "create_message",
+        auth: AUTH,
+        input: {
+          text: "sounds good",
+          clientMessageId: "pipeline-aside-orphan-2",
+          mentions: [],
+          confirmedParticipantUserIds: [],
+          attachmentIds: [],
+        },
+      });
+      expect(aside.body.deliveryState).toBe("pending");
+      const asideTurnId = (aside.body.turn as { turnId: string }).turnId;
+
+      gate.open = true;
+      // No forced alarm: the failed admission's own settlement is the only
+      // thing that can bring the loop back to the aside.
+      await expect.poll(() => runInDurableObject(stub, (_instance, state) => ({
+        canonical: state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE turn_id = ?`,
+          asideTurnId,
+        ).one().count,
+        pending: state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM pending_loop_inputs`,
+        ).one().count,
+      })), {
+        timeout: RUN_SETTLE_TIMEOUT_MS,
+        interval: 50,
+        message: "the aside was stranded behind a failed admission",
+      }).toEqual({ canonical: 1, pending: 0 });
+      expect(await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM runs`).one().count))
+        .toBe(runsBefore);
+    } finally {
+      await restoreProviderFetch(stub);
+    }
+  });
+
   it("carries a message that started no run to the model on the next run", async () => {
     const stub = agentStub();
     try {
@@ -1979,14 +2150,14 @@ describe("a member's message travels the whole pipeline", () => {
     }
   });
 
-  it("carries an aside written between a question's admission and its activation", async () => {
-    // The window the first version missed. A question is admitted — its
-    // mailbox row records the transcript high-water at that instant — and
-    // somebody talks before the alarm activates it. The aside sits above the
-    // admission fence; the question's own turn is allocated at activation,
-    // above the aside. Scanning to the fence skipped the aside, and marking the
-    // question's turn then buried it. Both are reachable in any room where an
-    // activation's alarm takes longer than a person's next message.
+  it("keeps an aside written between a question's admission and its activation behind the question", async () => {
+    // A question is admitted and somebody talks before the alarm activates it.
+    // The aside used to be written at once, above the question's admission
+    // fence and below the turn the question took at activation — so the room
+    // read the reply above what it replied to, and the first version of the
+    // gap-fill, scanning only to that fence, lost the aside from the model
+    // entirely. Now the aside queues behind the question and lands directly
+    // under it; the model reads it once, after the question, as an aside.
     const stub = agentStub();
     try {
       await installScriptedProvider(
@@ -2041,18 +2212,15 @@ describe("a member's message travels the whole pipeline", () => {
       });
       expect(aside.status).toBe(200);
       const asideTurnId = (aside.body.turn as { turnId: string }).turnId;
-      const before = await runInDurableObject(stub, (_instance, state) => ({
-        pending: state.storage.sql.exec<{ admitted_after_transcript_sequence: number }>(
-          `SELECT admitted_after_transcript_sequence FROM pending_loop_inputs`,
-        ).toArray(),
-        asideSequence: state.storage.sql.exec<{ transcript_sequence: number }>(
-          `SELECT transcript_sequence FROM participant_transcript_turns WHERE turn_id = ?`,
-          asideTurnId,
-        ).one().transcript_sequence,
-      }));
-      // The question is still waiting, and the aside landed above its fence.
-      expect(before.pending).toHaveLength(1);
-      expect(before.asideSequence).toBeGreaterThan(before.pending[0]!.admitted_after_transcript_sequence);
+      expect(aside.body.deliveryState).toBe("pending");
+      // Both wait, in the order they were sent; only the question starts a run.
+      expect(await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ prepared_turn_id: string; starts_run: number }>(
+          `SELECT prepared_turn_id, starts_run FROM pending_loop_inputs ORDER BY input_sequence`,
+        ).toArray().map((row) => ({ ...row })))).toEqual([
+        { prepared_turn_id: questionTurnId, starts_run: 1 },
+        { prepared_turn_id: asideTurnId, starts_run: 0 },
+      ]);
 
       await runInDurableObject(stub, async (instance, state) => {
         const target = instance as unknown as {
@@ -2069,20 +2237,29 @@ describe("a member's message travels the whole pipeline", () => {
         message.role === "user" ? [JSON.stringify(message.content)] : [];
       const requests = await capturedProviderRequests(stub);
       const texts = (requests.at(-1)!.body.messages as Array<{ role?: unknown; content?: unknown }>).flatMap(userTexts);
-      const asideIndex = texts.findIndex((text) => text.includes("sounds good"));
-      const questionIndex = texts.findIndex((text) => text.includes("please summarize what we agreed"));
-      expect(asideIndex, "the aside in the admission window never reached the model").toBeGreaterThanOrEqual(0);
-      expect(questionIndex).toBeGreaterThan(asideIndex);
-      // Rendered as what it is: something said to the room, not a request.
-      expect(texts[asideIndex]).toContain("SAID TO THE ROOM, NOT TO RALLY");
-      expect(texts[questionIndex]).not.toContain("SAID TO THE ROOM");
+      expect(texts.some((text) => text.includes("please summarize what we agreed"))).toBe(true);
+      // Sent after the question, so the question's own run never saw it.
+      expect(texts.some((text) => text.includes("sounds good"))).toBe(false);
 
-      // The mark stopped at the aside. The question, above it, is skipped by
-      // its provenance on the next scan rather than appended twice.
-      expect(await runInDurableObject(stub, (_instance, state) =>
-        state.storage.sql.exec<{ transcript_projected_through: number }>(
+      const landed = await runInDurableObject(stub, (_instance, state) => ({
+        gap: state.storage.sql.exec<{ gap: number }>(
+          `SELECT aside.transcript_sequence - question.transcript_sequence AS gap
+             FROM participant_transcript_turns AS question, participant_transcript_turns AS aside
+            WHERE question.turn_id = ? AND aside.turn_id = ?`,
+          questionTurnId,
+          asideTurnId,
+        ).one().gap,
+        projectedThrough: state.storage.sql.exec<{ transcript_projected_through: number }>(
           `SELECT transcript_projected_through FROM substream_loops WHERE id = 1`,
-        ).one().transcript_projected_through)).toBe(before.asideSequence);
+        ).one().transcript_projected_through,
+        asideSequence: state.storage.sql.exec<{ transcript_sequence: number }>(
+          `SELECT transcript_sequence FROM participant_transcript_turns WHERE turn_id = ?`,
+          asideTurnId,
+        ).one().transcript_sequence,
+      }));
+      expect(landed.gap).toBe(1);
+      // Above the mark, so the next input's gap-fill still owes it to the model.
+      expect(landed.asideSequence).toBeGreaterThan(landed.projectedThrough);
       const follow = await product(stub, {
         operation: "create_message",
         auth: AUTH,
@@ -2102,6 +2279,12 @@ describe("a member's message travels the whole pipeline", () => {
         .flatMap(userTexts);
       expect(later.filter((text) => text.includes("please summarize what we agreed"))).toHaveLength(1);
       expect(later.filter((text) => text.includes("sounds good"))).toHaveLength(1);
+      const questionIndex = later.findIndex((text) => text.includes("please summarize what we agreed"));
+      const asideIndex = later.findIndex((text) => text.includes("sounds good"));
+      expect(asideIndex).toBeGreaterThan(questionIndex);
+      // Rendered as what it is: something said to the room, not a request.
+      expect(later[asideIndex]).toContain("SAID TO THE ROOM, NOT TO RALLY");
+      expect(later[questionIndex]).not.toContain("SAID TO THE ROOM");
     } finally {
       await restoreProviderFetch(stub);
     }

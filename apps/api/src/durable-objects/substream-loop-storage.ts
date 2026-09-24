@@ -92,6 +92,12 @@ export interface PendingLoopInputRow extends Record<string, SqlStorageValue> {
   authorization_json: string;
   attachments_json: string;
   mentions_json: string;
+  /**
+   * `0` for a message nobody addressed to Rally that was sent while an input
+   * was still queued ahead of it. It waits so the room reads in send order,
+   * lands the moment nothing is ahead of it, and never starts a run.
+   */
+  starts_run: 0 | 1;
   created_at: number;
   updated_at: number;
 }
@@ -172,6 +178,8 @@ export interface PreparedReservedLoopInput {
   authorizationJson: string;
   attachmentsJson: string;
   mentionsJson: string;
+  /** Defaults to true; see `PendingLoopInputRow.starts_run`. */
+  startsRun?: boolean;
   now: number;
 }
 
@@ -193,7 +201,7 @@ const INPUT_COLUMNS = `input_id, loop_id, input_sequence, prepared_turn_id,
   prepared_fact_id, prepared_payload_audience, prepared_payload_media_type,
   prepared_payload_json, prepared_payload_sha256,
   prepared_payload_byte_length, bind_payload_json, provenance_json, authorization_json,
-  attachments_json, mentions_json, created_at, updated_at`;
+  attachments_json, mentions_json, starts_run, created_at, updated_at`;
 const DELIVERED_INPUT_COLUMNS = `input_id, loop_id, input_sequence,
   delivered_turn_id, delivered_attention_ordinal, delivered_at`;
 const PREPARATION_COLUMNS = `input_id, loop_id, input_sequence,
@@ -284,6 +292,24 @@ export class SubstreamLoopStorage {
       `SELECT ${PREPARATION_COLUMNS} FROM pending_loop_input_mailbox
         WHERE state = 'preparing' ORDER BY input_sequence LIMIT 1`,
     ));
+  }
+
+  /**
+   * Whether anything admitted before `inputSequence` has yet to land: a queued
+   * input, or a reservation still being prepared. A message that starts no run
+   * waits behind either, or it would be read before what was sent ahead of it.
+   */
+  hasInputAhead(inputSequence: number): boolean {
+    return first(this.sql.exec<{ ahead: number }>(
+      `SELECT EXISTS (
+          SELECT 1 FROM pending_loop_inputs WHERE input_sequence < ?
+        ) OR EXISTS (
+          SELECT 1 FROM pending_loop_input_mailbox
+           WHERE state = 'preparing' AND input_sequence < ?
+        ) AS ahead`,
+      inputSequence,
+      inputSequence,
+    ))?.ahead === 1;
   }
 
   pendingInputs(): PendingLoopInputRow[] {
@@ -1121,8 +1147,8 @@ export class SubstreamLoopStorage {
           prepared_payload_audience, prepared_payload_media_type,
           prepared_payload_sha256, prepared_payload_byte_length,
           bind_payload_json, provenance_json, authorization_json, attachments_json, mentions_json,
-          created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          starts_run, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.inputId, loopId, inputSequence, input.preparedTurnId,
       admittedAfter, input.mode, input.actor, input.authorUserId, input.authorNameSnapshot,
       input.authorAvatarUrlSnapshot, input.clientMessageId, input.externalActorJson,
@@ -1131,7 +1157,8 @@ export class SubstreamLoopStorage {
       input.preparedPayloadMediaType, input.preparedPayloadSha256,
       input.preparedPayloadByteLength, input.bindPayloadJson,
       input.provenanceJson, input.authorizationJson,
-      input.attachmentsJson, input.mentionsJson, input.now, input.now,
+      input.attachmentsJson, input.mentionsJson, input.startsRun === false ? 0 : 1,
+      input.now, input.now,
     );
   }
 
@@ -1161,6 +1188,7 @@ export class SubstreamLoopStorage {
       [existing.authorization_json, input.authorizationJson],
       [existing.attachments_json, input.attachmentsJson],
       [existing.mentions_json, input.mentionsJson],
+      [existing.starts_run, input.startsRun === false ? 0 : 1],
     ];
     if (pairs.some(([actual, wanted]) => actual !== wanted)) {
       throw new Error("substream_loop_input_replay_mismatch");
