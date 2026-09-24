@@ -201,7 +201,14 @@ authorization-check, dynamic-tool-load, and activation-write counts expose
 which operations were actually attempted. `initial_activation_details` retains
 the authorization, preparation, and persistence durations for each requested
 canonical plugin ID, including nested connector-health and durable-write
-durations, so one slow item in the serial activation loop is identifiable.
+durations, so one slow item in the serial activation loop is identifiable. The
+detail is an object with `plugin_0`, `plugin_1`, and later keys so the structured
+logger retains every entry; `plugin_id` inside each entry names the plugin.
+`initial_activation_auth_check_count` is numeric (the logger masks fields named
+`authorization`). The catalog source (`provided`, `cache`, `inflight`, `fetch`,
+or `fallback`) comes from the catalog loader's actual branch. For a shared
+inflight request, fetch subphase timings belong to the caller that started it;
+the joining caller still records its full catalog wait.
 `tool_surface_hash_ms` precedes scope persistence; `scope_ownership_ms`,
 `scope_hash_ms`, and `scope_write_ms` divide that persistence call.
 `activation_run_write_ms` and `activation_hint_write_ms` divide its two durable
@@ -212,6 +219,8 @@ separate the D1 membership and Channel identity reads; conversation and
 automation authority fields appear only when that path runs. The forced lease
 renewals expose their attempt and persistent-loop parts as
 `liveness_inference_start_*_ms` and `liveness_before_model_*_ms`.
+When a stage joins an already running renewal, its `*_coalesced_ms` field
+records that wait instead of attributing the underlying attempt to both stages.
 `bind_*_ms` fields time plugin runtime creation, resident-context render,
 skill setup and restored-plugin activation, projection setup and validation,
 activation boundary, active-plugin reauthorization, provider resident-context
@@ -814,7 +823,9 @@ existing IDs and leaves authorization and durable ordering unchanged.
 **Consequences:** The row applies to the first provider request of the first
 durable attempt. Its durations are observational wall-clock deltas; workerd's
 clock behavior and overlapping loaders prevent treating their sum as an exact
-partition of the user-visible request.
+partition of the user-visible request. Per-plugin detail uses an object rather
+than an array because the structured logger truncates arrays after 50 entries;
+optional timing callbacks cannot change authority or activation outcomes.
 
 ### 2026-09-18 — Resolve aggregate inference preparation tails into dependency timings
 

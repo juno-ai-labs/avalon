@@ -2315,6 +2315,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             ...(trace ?? {}),
           };
           startupTiming("route_preparation", routePreparationStartedAt);
+          firstStartupRequestObserved = true;
           await args.input.onInferenceRequest?.({
             inferenceRequestId,
             turnId: args.turnId,
@@ -2327,7 +2328,6 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             cursor,
             payload,
           });
-          firstStartupRequestObserved = true;
           const handleDelta = async (delta: string) => {
             textStream.observe(delta);
             await requiredPort("run_state_persistence_failed", "Run liveness renewal failed", () => args.input.onLiveness?.("during_stream"));
@@ -2559,11 +2559,10 @@ async function resolveOpenRouterContextWindows(
   }
 
   const fetcher = input.config.fetch ?? globalThis.fetch;
-  const catalogSource = fetcher === globalThis.fetch && openRouterContextCatalog?.expiresAt
-    && openRouterContextCatalog.expiresAt > Date.now()
-    ? "cache" : fetcher === globalThis.fetch && openRouterContextCatalogRequest ? "inflight" : "fetch";
+  let catalogSource: "cache" | "inflight" | "fetch";
   try {
-    const catalog = await loadOpenRouterContextCatalog(fetcher, signal, onTiming);
+    const { catalog, source } = await loadOpenRouterContextCatalog(fetcher, signal, onTiming);
+    catalogSource = source;
     for (const [modelId, contextWindowTokens] of catalog.contextWindowTokensByModel) {
       if (!resolved.has(modelId)) resolved.set(modelId, contextWindowTokens);
     }
@@ -2582,13 +2581,15 @@ async function loadOpenRouterContextCatalog(
   fetcher: typeof globalThis.fetch,
   signal: AbortSignal,
   onTiming?: (phase: HarnessStartupTiming["phase"], startedAt: number) => void,
-): Promise<OpenRouterContextCatalog> {
+): Promise<{ catalog: OpenRouterContextCatalog; source: "cache" | "inflight" | "fetch" }> {
   const now = Date.now();
   const mayUseSharedCache = fetcher === globalThis.fetch;
   if (mayUseSharedCache && openRouterContextCatalog && openRouterContextCatalog.expiresAt > now) {
-    return openRouterContextCatalog;
+    return { catalog: openRouterContextCatalog, source: "cache" };
   }
-  if (mayUseSharedCache && openRouterContextCatalogRequest) return openRouterContextCatalogRequest;
+  if (mayUseSharedCache && openRouterContextCatalogRequest) {
+    return { catalog: await openRouterContextCatalogRequest, source: "inflight" };
+  }
 
   const request = (async (): Promise<OpenRouterContextCatalog> => {
     // Cancellable: this runs inside the bind loop's Workflow step, so a timer
@@ -2641,7 +2642,7 @@ async function loadOpenRouterContextCatalog(
   try {
     const catalog = await request;
     if (mayUseSharedCache) openRouterContextCatalog = catalog;
-    return catalog;
+    return { catalog, source: "fetch" };
   } finally {
     if (mayUseSharedCache) openRouterContextCatalogRequest = null;
   }

@@ -698,7 +698,7 @@ export class CoalescedRunLiveness {
       leaseSeconds?: number;
       minimumIntervalMs?: number;
       afterHeartbeat?: () => void | Promise<void>;
-      onTiming?: (stage: string, part: "attempt" | "loop", durationMs: number) => void;
+      onTiming?: (stage: string, part: "attempt" | "loop" | "coalesced", durationMs: number) => void;
     } = {},
   ) {
     this.currentLease = lease;
@@ -715,29 +715,38 @@ export class CoalescedRunLiveness {
   async pulse(stage: string, force = false): Promise<void> {
     if (this.controller.signal.aborted) throw this.controller.signal.reason;
     if (!force && Date.now() < this.nextHeartbeatAt) return;
-    if (!this.inFlight) {
-      this.inFlight = (async () => {
-        try {
-          let startedAt = Date.now();
-          this.currentLease = await heartbeatHarnessAttempt(
-            this.runs,
-            this.runId,
-            this.currentLease,
-            this.options.leaseSeconds ?? 60,
-          );
-          try { this.options.onTiming?.(stage, "attempt", Date.now() - startedAt); } catch { /* Observational only. */ }
-          startedAt = Date.now();
-          await this.options.afterHeartbeat?.();
-          try { this.options.onTiming?.(stage, "loop", Date.now() - startedAt); } catch { /* Observational only. */ }
-          this.nextHeartbeatAt = Date.now() + (this.options.minimumIntervalMs ?? 5_000);
-        } catch (error) {
-          this.controller.abort(error);
-          throw error;
-        } finally {
-          this.inFlight = null;
-        }
-      })();
+    if (this.inFlight) {
+      const startedAt = Date.now();
+      try {
+        await this.inFlight;
+      } finally {
+        // This caller waited for another stage's renewal; do not attribute
+        // the underlying attempt and loop work to the joining stage.
+        try { this.options.onTiming?.(stage, "coalesced", Date.now() - startedAt); } catch { /* Observational only. */ }
+      }
+      return;
     }
+    this.inFlight = (async () => {
+      try {
+        let startedAt = Date.now();
+        this.currentLease = await heartbeatHarnessAttempt(
+          this.runs,
+          this.runId,
+          this.currentLease,
+          this.options.leaseSeconds ?? 60,
+        );
+        try { this.options.onTiming?.(stage, "attempt", Date.now() - startedAt); } catch { /* Observational only. */ }
+        startedAt = Date.now();
+        await this.options.afterHeartbeat?.();
+        try { this.options.onTiming?.(stage, "loop", Date.now() - startedAt); } catch { /* Observational only. */ }
+        this.nextHeartbeatAt = Date.now() + (this.options.minimumIntervalMs ?? 5_000);
+      } catch (error) {
+        this.controller.abort(error);
+        throw error;
+      } finally {
+        this.inFlight = null;
+      }
+    })();
     await this.inFlight;
   }
 

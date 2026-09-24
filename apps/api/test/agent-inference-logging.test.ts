@@ -4,6 +4,7 @@ import type { InferenceRequestEvent } from "@rally/agent-harness";
 import type { Env } from "../src/env";
 import {
   createAgentInferenceLogger,
+  createInferenceStartBreakdownReporter,
   logAgentInferencePrepared,
 } from "../src/services/agent-inference-logging";
 import { createCloudflareTestBinding, createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
@@ -61,6 +62,56 @@ const request = {
 } satisfies InferenceRequestEvent;
 
 describe("agent inference logging", () => {
+  it("records only the first eligible provider request with complete plugin timings", () => {
+    const { env } = fixture();
+    env.LOG_LEVEL = "info";
+    const logged = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      const activationDurations = new Map(
+        Array.from({ length: 60 }, (_, index) => [
+          `plugin-${index}`,
+          { authorize_ms: index, persist_ms: index + 1 },
+        ] as const),
+      );
+      const report = createInferenceStartBreakdownReporter(env, true, (inferenceRequestId) => ({
+        fields: {
+          request_id: "run-1",
+          inference_request_id: inferenceRequestId,
+          operation_id: "operation-1",
+          initial_activation_requested_count: 60,
+          initial_activation_persisted_count: 60,
+          scope_persist_ms: 42,
+        },
+        activationAuthorizationChecks: 60,
+        activationDurations,
+      }));
+      report("inference-1");
+      report("inference-2");
+      createInferenceStartBreakdownReporter(env, false, () => {
+        throw new Error("ineligible attempt must not take a snapshot");
+      })("inference-3");
+
+      const rows = logged.mock.calls.map(([entry]) => entry as Record<string, unknown>)
+        .filter((entry) => entry.event === "agent_inference_start_breakdown");
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        request_id: "run-1",
+        inference_request_id: "inference-1",
+        operation_id: "operation-1",
+        initial_activation_auth_check_count: 60,
+        initial_activation_requested_count: 60,
+        initial_activation_persisted_count: 60,
+        scope_persist_ms: 42,
+      });
+      expect(Object.keys(rows[0]?.initial_activation_details as object)).toHaveLength(60);
+      expect(rows[0]?.initial_activation_details).toMatchObject({
+        plugin_59: { plugin_id: "plugin-59", authorize_ms: 59, persist_ms: 60 },
+      });
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
   it("records preparation phases only for a first attempt and marks clock skew", () => {
     const { env } = fixture();
     env.LOG_LEVEL = "info";
