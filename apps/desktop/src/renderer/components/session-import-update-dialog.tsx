@@ -3,9 +3,10 @@ import type { SessionImportPreview } from '@rally/contracts';
 import type { RallyApi } from '../lib/api';
 import { desktopBridge } from '../lib/platform';
 import { Button, InlineError, Modal } from './primitives';
+import { isChatGptConversationUrl, readChatGptBrowserConversation } from '../lib/chatgpt-browser-import';
 
 export interface ImportedSource {
-  provider: 'chatgpt' | 'claude' | 'claude_code';
+  provider: 'chatgpt' | 'claude' | 'claude_code' | 'codex';
   sessionId: string;
   url: string | null;
 }
@@ -19,6 +20,7 @@ export function SessionImportUpdateDialog({ api, open, onClose, source, workstre
 }): React.JSX.Element {
   const [sessions, setSessions] = useState<Array<{ id: string; title: string; project: string; updatedAt: number }>>([]);
   const [claudeSessions, setClaudeSessions] = useState<Array<{ id: string; kind: 'chat' | 'cowork'; title: string; updatedAt: number; sourceSessionId: string }>>([]);
+  const [codexSessions, setCodexSessions] = useState<Array<{ id: string; title: string; updatedAt: number }>>([]);
   const [claudeSessionsLoaded, setClaudeSessionsLoaded] = useState(false);
   const [fileText, setFileText] = useState('');
   const [useFile, setUseFile] = useState(false);
@@ -29,8 +31,10 @@ export function SessionImportUpdateDialog({ api, open, onClose, source, workstre
   const readRevision = useRef(0);
   const sourceClaudeSession = claudeSessions.find((session) => session.sourceSessionId === source.sessionId);
   const sourceCodeSession = sessions.find((session) => session.id.endsWith(`/${source.sessionId}.jsonl`));
+  const sourceCodexSession = codexSessions.find((session) => session.id === source.sessionId);
   const sourceSession = source.provider === 'claude' ? sourceClaudeSession
-    : source.provider === 'claude_code' ? sourceClaudeSession ?? sourceCodeSession : undefined;
+    : source.provider === 'claude_code' ? sourceClaudeSession ?? sourceCodeSession
+      : source.provider === 'codex' ? sourceCodexSession : undefined;
 
   useEffect(() => {
     if (open) return;
@@ -55,6 +59,20 @@ export function SessionImportUpdateDialog({ api, open, onClose, source, workstre
       if (active) setFailure(error instanceof Error ? error.message : 'Local sessions could not be listed. Choose the JSONL file instead.');
     });
     return () => { active = false; };
+  }, [open, source.provider, source.sessionId]);
+
+  useEffect(() => {
+    if (!open || source.provider !== 'codex' || !window.rally) return;
+    let active = true;
+    void desktopBridge().listLocalCodexSessions().then((items) => {
+      if (active) setCodexSessions(items);
+    }).catch(() => { if (active) setCodexSessions([]); });
+    const unsubscribe = desktopBridge().onApplicationForegroundChanged((foregrounded) => {
+      if (foregrounded) void desktopBridge().listLocalCodexSessions().then((items) => {
+        if (active) setCodexSessions(items);
+      }).catch(() => { if (active) setCodexSessions([]); });
+    });
+    return () => { active = false; unsubscribe(); };
   }, [open, source.provider, source.sessionId]);
 
   useEffect(() => {
@@ -89,9 +107,13 @@ export function SessionImportUpdateDialog({ api, open, onClose, source, workstre
       if (!preview) {
         const text = source.provider === 'claude_code' && useFile ? fileText
           : sourceClaudeSession ? (await desktopBridge().readLocalClaudeSession(sourceClaudeSession.id)).text
-            : sourceCodeSession ? await desktopBridge().readLocalClaudeCodeSession(sourceCodeSession.id) : '';
-        const input = source.url
-          ? { kind: 'link' as const, url: source.url }
+            : sourceCodeSession ? await desktopBridge().readLocalClaudeCodeSession(sourceCodeSession.id)
+              : sourceCodexSession ? await desktopBridge().readLocalCodexSession(sourceCodexSession.id) : '';
+        const browserText = isChatGptConversationUrl(source.url)
+          ? await readChatGptBrowserConversation(desktopBridge(), source.url!) : null;
+        const input = browserText
+          ? { kind: 'export' as const, provider: 'chatgpt' as const, text: browserText, sourceUrl: source.url! }
+          : source.url ? { kind: 'link' as const, url: source.url }
           : { kind: 'export' as const, provider: source.provider, text };
         preview = await api.previewSessionImport(input);
         if (preview.source.provider !== source.provider || preview.source.sessionId !== source.sessionId) {
@@ -113,7 +135,8 @@ export function SessionImportUpdateDialog({ api, open, onClose, source, workstre
   };
 
   const canSubmit = Boolean(source.url || (source.provider === 'claude' && sourceClaudeSession)
-    || (source.provider === 'claude_code' && (useFile ? fileText : sourceSession)));
+    || (source.provider === 'claude_code' && (useFile ? fileText : sourceSession))
+    || (source.provider === 'codex' && sourceCodexSession));
   return <Modal
     footer={<>
       <Button disabled={saving} onClick={onClose}>Cancel</Button>
@@ -125,13 +148,17 @@ export function SessionImportUpdateDialog({ api, open, onClose, source, workstre
     open={open}
     title="Import source updates"
   >
-    {source.url ? <p>Read the shared conversation again and add new messages to this channel.</p> : <>
+    {source.url ? <p>{isChatGptConversationUrl(source.url)
+      ? 'Read this ChatGPT conversation again in Rally’s browser and add its updates to this channel.'
+      : 'Read the shared conversation again and add new messages to this channel.'}</p> : <>
       {sourceSession && <div className="form-field">
         <span>Conversation</span>
         <div className="session-import-source-title" title={sourceSession.title}>{sourceSession.title}</div>
       </div>}
       {source.provider === 'claude' && claudeSessionsLoaded && !sourceClaudeSession
         && <p>Open the source conversation in Claude, then return to Rally to refresh it.</p>}
+      {source.provider === 'codex' && !sourceCodexSession
+        && <p>This Codex task is unavailable on this Mac.</p>}
       {source.provider === 'claude_code' && <label className="form-field">
         <span>{sourceSession ? 'Or choose the conversation file' : 'Choose the conversation file'}</span>
         <input accept=".jsonl,.json,application/json"

@@ -19,6 +19,7 @@ choice. Importing a prior assistant answer never claims Rally executed it.
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Canonical fact preparation for ordered conversations. |
 | `apps/desktop/src/main/claude-code-sessions.ts` | Read-only local Claude Code session listing and exact selected-file read. |
 | `apps/desktop/src/main/local-claude-sessions.ts` | Claude desktop chat catalog, selected cached chat snapshots, and Cowork metadata-to-JSONL discovery. |
+| `apps/desktop/src/main/local-codex-sessions.ts` | Read-only Codex task catalog and selected visible JSONL extraction. |
 | `packages/agent-harness/src/evaluation.ts` | Scenario/checkpoint evaluation using the production Rally runtime. |
 | `apps/desktop/src/renderer/components/new-workstream-menu.tsx`, `session-import-update-dialog.tsx` | Separate session selection, import, and explicit update controls. |
 
@@ -76,6 +77,29 @@ file paths and session IDs never appear in the picker.
 The main process reads only that selected transcript for import. A JSONL file
 picker remains available when Claude Code discovery misses a session. A public
 share URL identifies one conversation.
+Codex tasks use a separate local store: `~/.codex/state_5.sqlite` indexes titles,
+recency and JSONL paths in `~/.codex/sessions/` or `~/.codex/archived_sessions/`.
+The desktop lists top-level tasks from the index and reads the selected file
+only after path validation. Completed user and assistant items become imported
+messages with their Codex item IDs as re-import identities. Tool calls, results,
+reasoning, and incomplete in-flight items stay out of the imported conversation.
+An older transcript without completed-item events uses visible response messages
+and their positions. Local image references have no portable bytes in the JSONL;
+the imported transcript records them as unavailable attachments. ChatGPT Chat
+and Work titles in the desktop's cloud catalog have no local transcript behind
+them; they are not shown as importable local sessions. ChatGPT public share links
+remain available. A private ChatGPT conversation open in Rally's browser also
+appears as a named choice in the import dialog. The desktop reads the chosen
+tab's same-origin `/api/auth/session` access token inside that tab and uses it
+for ChatGPT's conversation endpoint. The token does not leave the tab; the full
+selected conversation JSON goes through the existing ChatGPT active-branch
+decoder and API import boundary. Internal ChatGPT citation anchors are removed
+from visible text because their target references do not travel in the plain
+conversation parts. A cookie-only endpoint request can return a
+guest 404 even when the page is signed in. The source URL and conversation ID
+are recorded so source updates can reread the same open tab and preserve Rally
+messages added to the Channel. If that tab is closed, open the source
+conversation in Rally's browser again before importing updates.
 The update dialog resolves the Channel's recorded source identity automatically
 and shows its title as read-only text. It offers no conversation dropdown:
 another conversation would fail the source-identity check. If the original
@@ -271,8 +295,52 @@ cannot reconstruct original files automatically.
 - Desktop menu/launcher/transcript tests cover navigation and attribution. Real
   Electron visual QA covers session selection and update controls
   using a fixture API; backend lifecycle tests provide storage/execution evidence.
+- `apps/desktop/src/main/local-codex-sessions.test.ts` covers the local index,
+  selected JSONL read, completed-item filtering, and subagent exclusion.
 
 ## Changelog
+
+### 2026-09-23 — Import the selected signed-in ChatGPT browser conversation
+
+**What changed:** The import dialog lists open ChatGPT conversation tabs and
+reads only the selected tab. It passes the full conversation response to the
+existing decoder, removes internal citation anchors from displayed text, and
+records the private source URL for exact re-import.
+
+**Why:** The desktop's cloud catalog has titles without transcripts. In a live
+signed-in Electron tab, ChatGPT's conversation endpoint returned the complete
+mapping when called with the page session's access token; cookies alone yielded
+a misleading guest response. This lets the source stay visible and selectable
+without scraping a virtualized DOM or publishing a share link.
+
+**Considered and rejected:** Importing the visible DOM. The observed page had
+five rendered turns while the conversation response had 39 source nodes, so a
+DOM scrape could silently omit the beginning of a conversation.
+
+**Consequences:** The page token stays within the embedded tab. A source update
+needs that conversation open in Rally's browser. ChatGPT's internal endpoint is
+unofficial and may change; decoder validation rejects incomplete responses.
+
+### 2026-09-23 — Import selected local Codex tasks
+
+**What changed:** The desktop adds a Codex task picker backed by the read-only
+local task index. Selection extracts completed visible messages from that task's
+JSONL into the existing prepared conversation and source checkpoint flow.
+
+**Why:** Codex persists full local JSONL transcripts, while the adjacent ChatGPT
+Chat and Work catalog on this Mac contains titles without local message bodies.
+Listing only readable tasks avoids presenting a conversation that fails on selection.
+
+**Considered and rejected:** Treating ChatGPT and Work catalog rows as importable
+transcripts, or copying app credentials to call a private account API. Both would
+make the local picker depend on data the Mac does not actually store as readable
+history. Scanning every JSONL to render the picker was also rejected because the
+index already provides title and recency without reading large transcripts.
+
+**Consequences:** Codex updates use the same explicit re-import checkpoint as
+Claude. In-flight item updates become available after Codex completes them.
+Unavailable local images are recorded as references rather than silently dropped.
+
 
 ### 2026-09-23 — Import local Claude sessions and update their source history
 

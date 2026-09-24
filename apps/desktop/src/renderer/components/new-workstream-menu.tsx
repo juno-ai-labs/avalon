@@ -5,14 +5,16 @@ import { useEffect, useId, useMemo, useRef, useState, type ReactElement } from '
 import { Button, DropdownSelect, InlineError, Modal, Tip } from './primitives';
 import { desktopBridge } from '../lib/platform';
 import { claudeCodeSessionOption } from './session-import-picker-labels';
+import { chatGptBrowserConversation, readChatGptBrowserConversation } from '../lib/chatgpt-browser-import';
+import type { EmbeddedBrowserTab } from '../../common/embedded-browser';
 
 type CreationKind = 'channel' | 'import' | 'space';
-type ImportSource = 'link' | 'claude_local' | 'claude_code';
+type ImportSource = 'link' | 'chatgpt_browser' | 'claude_local' | 'claude_code' | 'codex';
 export type ChannelImportInput = {
   clientMessageId: string;
   name: string;
   spaceId: string;
-  source: { kind: 'link'; url: string } | { kind: 'export'; provider: 'claude' | 'claude_code'; text: string };
+  source: { kind: 'link'; url: string } | { kind: 'export'; provider: 'chatgpt' | 'claude' | 'claude_code' | 'codex'; text: string; sourceUrl?: string };
 };
 
 /** The one creation launcher shared by the expanded sidebar and compact rail. */
@@ -42,11 +44,14 @@ export function NewWorkstreamMenu({
   const [url, setUrl] = useState('');
   const [importSource, setImportSource] = useState<ImportSource>('link');
   const [fileText, setFileText] = useState('');
-  const [localSessions, setLocalSessions] = useState<Array<{ id: string; title: string; project: string; updatedAt: number }>>([]);
+  const [browserTabs, setBrowserTabs] = useState<EmbeddedBrowserTab[]>([]);
+  const [browserTabId, setBrowserTabId] = useState('');
+  const [localSessions, setLocalSessions] = useState<Array<{ id: string; title: string; updatedAt: number }>>([]);
   const [claudeSessions, setClaudeSessions] = useState<Array<{ id: string; kind: 'chat' | 'cowork'; title: string; updatedAt: number; sourceSessionId: string }>>([]);
   const [localProvider, setLocalProvider] = useState<'claude' | 'claude_code'>('claude');
   const [localSessionId, setLocalSessionId] = useState('');
   const selectedClaudeId = useRef('');
+  const selectedCodexId = useRef('');
   const fileReadRevision = useRef(0);
   const [importRequestId, setImportRequestId] = useState(() => crypto.randomUUID());
   const [saving, setSaving] = useState(false);
@@ -56,6 +61,25 @@ export function NewWorkstreamMenu({
     [spaces],
   );
   const selectedClaudeSession = claudeSessions.find((session) => session.id === localSessionId);
+  const chatGptTabs = browserTabs.filter((tab) => chatGptBrowserConversation(tab));
+  const selectedBrowserTab = chatGptTabs.find((tab) => tab.id === browserTabId);
+
+  useEffect(() => {
+    if (kind !== 'import' || importSource !== 'chatgpt_browser' || !window.rally) return;
+    let active = true;
+    const refresh = (): void => {
+      void desktopBridge().getEmbeddedBrowserState().then((next) => {
+        if (!active) return;
+        const tabs = next.tabs.filter((tab) => chatGptBrowserConversation(tab));
+        setBrowserTabs(tabs);
+        setBrowserTabId((id) => tabs.some((tab) => tab.id === id) ? id
+          : tabs.some((tab) => tab.id === next.activeTabId) ? next.activeTabId! : tabs[0]?.id ?? '');
+      }).catch(() => { if (active) setFailure('Browser conversations could not be listed.'); });
+    };
+    refresh();
+    const unsubscribe = desktopBridge().onEmbeddedBrowserState(refresh);
+    return () => { active = false; unsubscribe(); };
+  }, [kind, importSource]);
 
   useEffect(() => {
     if (kind === null || kind === 'space') return;
@@ -66,14 +90,38 @@ export function NewWorkstreamMenu({
   }, [kind, selectableSpaces, spaceId]);
 
   useEffect(() => {
-    if (kind !== 'import' || importSource !== 'claude_code' || !window.rally) return;
+    if (kind !== 'import' || (importSource !== 'claude_code' && importSource !== 'codex') || !window.rally) return;
     let active = true;
-    void desktopBridge().listLocalClaudeCodeSessions().then((sessions) => {
-      if (active) setLocalSessions(sessions);
-    }).catch((error: unknown) => {
-      if (active) setFailure(error instanceof Error ? error.message : 'Local sessions could not be listed. Choose a JSONL file instead.');
-    });
-    return () => { active = false; };
+    const refresh = (reread = false): void => {
+      const list = importSource === 'codex' ? desktopBridge().listLocalCodexSessions() : desktopBridge().listLocalClaudeCodeSessions();
+      void list.then((sessions) => {
+        if (!active) return;
+        setLocalSessions(sessions);
+        const id = selectedCodexId.current;
+        if (importSource !== 'codex' || !id) return;
+        if (!sessions.some((session) => session.id === id)) {
+          selectedCodexId.current = '';
+          setLocalSessionId('');
+          setFileText('');
+          fileReadRevision.current += 1;
+        } else if (reread) {
+          const revision = ++fileReadRevision.current;
+          setFileText('');
+          void desktopBridge().readLocalCodexSession(id).then((text) => {
+            if (!active || revision !== fileReadRevision.current || selectedCodexId.current !== id) return;
+            setFileText(text);
+            setImportRequestId(crypto.randomUUID());
+          }).catch(() => { if (active && revision === fileReadRevision.current) setFailure('The selected Codex task could not be read.'); });
+        }
+      }).catch((error: unknown) => {
+        if (active) setFailure(error instanceof Error ? error.message : 'Local conversations could not be listed.');
+      });
+    };
+    refresh();
+    const unsubscribe = importSource === 'codex' ? desktopBridge().onApplicationForegroundChanged((foregrounded) => {
+      if (foregrounded) refresh(true);
+    }) : () => {};
+    return () => { active = false; unsubscribe(); };
   }, [kind, importSource]);
 
   useEffect(() => {
@@ -129,11 +177,14 @@ export function NewWorkstreamMenu({
     setUrl('');
     setImportSource('link');
     setFileText('');
+    setBrowserTabs([]);
+    setBrowserTabId('');
     fileReadRevision.current += 1;
     setLocalSessions([]);
     setClaudeSessions([]);
     setLocalSessionId('');
     selectedClaudeId.current = '';
+    selectedCodexId.current = '';
     setImportRequestId(crypto.randomUUID());
     setFailure(null);
   };
@@ -146,20 +197,26 @@ export function NewWorkstreamMenu({
   const valid = Boolean(name.trim())
     && (kind === 'space' ? canCreateSpace : selectedSpaceExists)
     && (kind !== 'import' || (importSource === 'link' ? Boolean(url.trim())
-      : Boolean(fileText)));
+      : importSource === 'chatgpt_browser' ? Boolean(selectedBrowserTab) : Boolean(fileText)));
   const submit = async (): Promise<void> => {
     if (!kind || !valid || saving) return;
     setSaving(true);
     setFailure(null);
     try {
       if (kind === 'channel') await onCreateChannel({ name: name.trim(), spaceId });
-      else if (kind === 'import') await onImportChannel({
+      else if (kind === 'import') {
+        const browserSource = selectedBrowserTab && chatGptBrowserConversation(selectedBrowserTab);
+        const browserText = importSource === 'chatgpt_browser' && browserSource
+          ? await readChatGptBrowserConversation(desktopBridge(), browserSource.url) : null;
+        await onImportChannel({
         clientMessageId: importRequestId,
         name: name.trim(),
         spaceId,
         source: importSource === 'link' ? { kind: 'link', url: url.trim() }
-          : { kind: 'export', provider: importSource === 'claude_local' ? localProvider : importSource, text: fileText },
+          : browserText && browserSource ? { kind: 'export', provider: 'chatgpt', text: browserText, sourceUrl: browserSource.url }
+            : { kind: 'export', provider: importSource === 'claude_local' ? localProvider : importSource as 'claude_code' | 'codex', text: fileText },
       });
+      }
       else await onCreateSpace(name.trim());
       setSaving(false);
       close();
@@ -176,7 +233,7 @@ export function NewWorkstreamMenu({
   const title = kind === 'channel'
     ? 'Start a new channel'
     : kind === 'import'
-      ? 'Import channel from Claude or ChatGPT'
+      ? 'Import channel'
       : 'Create a new space';
 
   return <>
@@ -187,7 +244,7 @@ export function NewWorkstreamMenu({
       <DropdownMenu.Portal>
         <DropdownMenu.Content className="menu-content new-workstream-menu" align="start" sideOffset={6}>
           <DropdownMenu.Item className="menu-item" disabled={selectableSpaces.length === 0} onSelect={() => open('channel')}>Start New Channel</DropdownMenu.Item>
-          <DropdownMenu.Item className="menu-item" disabled={selectableSpaces.length === 0} onSelect={() => open('import')}>Import Channel from Claude or ChatGPT</DropdownMenu.Item>
+          <DropdownMenu.Item className="menu-item" disabled={selectableSpaces.length === 0} onSelect={() => open('import')}>Import Channel</DropdownMenu.Item>
           <DropdownMenu.Item className="menu-item" disabled={!canCreateSpace} onSelect={() => open('space')}>Create New Space</DropdownMenu.Item>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
@@ -226,11 +283,14 @@ export function NewWorkstreamMenu({
             setClaudeSessions([]);
             setLocalSessionId('');
             selectedClaudeId.current = '';
+            selectedCodexId.current = '';
             setImportRequestId(crypto.randomUUID());
           }} value={importSource}>
             <option value="link">Shared conversation link</option>
+            {window.rally && <option value="chatgpt_browser">ChatGPT chats in browser</option>}
             {window.rally && <option value="claude_local">Claude chats on this Mac</option>}
             <option value="claude_code">Claude Code on this Mac</option>
+            {window.rally && <option value="codex">Codex tasks on this Mac</option>}
           </select>
         </label>}
         {kind === 'import' && (importSource === 'link' ? <label className="form-field">
@@ -240,6 +300,19 @@ export function NewWorkstreamMenu({
             setImportRequestId(crypto.randomUUID());
           }} required type="url" value={url} />
         </label> : <>
+          {importSource === 'chatgpt_browser' && <>
+            <label className="form-field">
+              <span>Conversation</span>
+              <select aria-label="Conversation" className="session-import-select" disabled={saving} onChange={(event) => {
+                setBrowserTabId(event.target.value);
+                setImportRequestId(crypto.randomUUID());
+              }} title={selectedBrowserTab?.title} value={browserTabId}>
+                <option value="">Select a ChatGPT conversation</option>
+                {chatGptTabs.map((tab) => <option key={tab.id} title={tab.title} value={tab.id}>{tab.title}</option>)}
+              </select>
+            </label>
+            {chatGptTabs.length === 0 && <small>Open a conversation in Rally’s browser to import it.</small>}
+          </>}
           {importSource === 'claude_local' && <>
             <label className="form-field">
               <span>Conversation</span>
@@ -268,17 +341,19 @@ export function NewWorkstreamMenu({
             </label>
             <small>Claude saves only some chats locally. If the desired chat isn’t shown, open it in the Claude app again</small>
           </>}
-          {importSource === 'claude_code' && localSessions.length > 0 && <label className="form-field">
+          {(importSource === 'claude_code' || importSource === 'codex') && localSessions.length > 0 && <label className="form-field">
             <span>Conversation</span>
             <select aria-label="Conversation" className="session-import-select" disabled={saving} title={localSessions.find((session) => session.id === localSessionId)?.title} onChange={(event) => {
               const id = event.target.value;
               setLocalSessionId(id);
+              selectedCodexId.current = importSource === 'codex' ? id : '';
               setFileText('');
               const revision = ++fileReadRevision.current;
               setImportRequestId(crypto.randomUUID());
               setFailure(null);
               if (!id) return;
-              void desktopBridge().readLocalClaudeCodeSession(id).then((text) => {
+              const read = importSource === 'codex' ? desktopBridge().readLocalCodexSession(id) : desktopBridge().readLocalClaudeCodeSession(id);
+              void read.then((text) => {
                 if (revision === fileReadRevision.current) setFileText(text);
               }).catch((error: unknown) => {
                 if (revision === fileReadRevision.current) setFailure(error instanceof Error ? error.message : 'The session could not be read.');

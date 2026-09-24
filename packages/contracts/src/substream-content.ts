@@ -44,7 +44,7 @@ export const ConversationInitializationSchema = z.discriminatedUnion("kind", [
 export type ConversationInitialization = z.infer<typeof ConversationInitializationSchema>;
 
 export const SessionSourceSchema = z.strictObject({
-  provider: z.enum(["chatgpt", "claude", "claude_code"]),
+  provider: z.enum(["chatgpt", "claude", "claude_code", "codex"]),
   url: HttpsUrlSchema.nullable(),
   sessionId: z.string().min(1).optional(),
 });
@@ -61,7 +61,7 @@ export type ImportedMessageProvenance = z.infer<typeof ImportedMessageProvenance
 
 export const SessionImportPreviewRequestSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("link"), url: HttpsUrlSchema }),
-  z.strictObject({ kind: z.literal("export"), provider: z.enum(["chatgpt", "claude", "claude_code"]), text: z.string().min(1) }),
+  z.strictObject({ kind: z.literal("export"), provider: z.enum(["chatgpt", "claude", "claude_code", "codex"]), text: z.string().min(1), sourceUrl: HttpsUrlSchema.optional() }),
 ]);
 export const SessionImportPreviewSchema = z.strictObject({
   title: z.string().min(1),
@@ -80,7 +80,7 @@ export const SessionImportUpdateRequestSchema = SessionImportPreviewSchema.exten
 });
 export const SessionImportSourceResponseSchema = z.strictObject({
   source: z.strictObject({
-    provider: z.enum(["chatgpt", "claude", "claude_code"]),
+    provider: z.enum(["chatgpt", "claude", "claude_code", "codex"]),
     sessionId: z.string().min(1),
     url: HttpsUrlSchema.nullable(),
   }).nullable(),

@@ -715,6 +715,7 @@ export function ArtifactSidebar({
 
 const railTitle: Record<RailVariant, string> = {
   context: 'Channel',
+  browser: 'Browser',
 };
 
 export function InspectorRail(props: InspectorRailProps): React.JSX.Element | null {

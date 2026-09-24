@@ -2,6 +2,9 @@ import { startCanvaConnection } from './canva-loopback';
 import { boundsWithoutConversationDetails, clampWindowBounds, readMainWindowState, writeMainWindowState } from './main-window-state';
 import { listLocalClaudeCodeSessions, readLocalClaudeCodeSession } from './claude-code-sessions';
 import { listLocalClaudeSessions, readLocalClaudeSession } from './local-claude-sessions';
+import { listLocalCodexSessions, readLocalCodexSession } from './local-codex-sessions';
+import { EmbeddedBrowser, isEmbeddedBrowserWebContents } from './embedded-browser';
+import { EmbeddedBrowserBoundsSchema, EmbeddedBrowserCommandSchema, type EmbeddedBrowserCommand } from '../common/embedded-browser';
 import {
   ActivateWorkspaceRequestSchema,
   ClientFeatureFlagsSchema,
@@ -836,6 +839,7 @@ function flagSessionIdentity(userId: string, apiBaseUrl: string): string {
 
 function broadcastSessionChanged(value: WireSession | null): void {
   closeArtifactWindowsOutsideSession(value?.workspace?.id ?? null, value?.user.id ?? null);
+  closeEmbeddedBrowsersOutsideUser(value?.user.id ?? null);
   if (value) desktopPush.sessionChanged();
   const exposed = value ? publicSession(value) : null;
   for (const window of rallyWindows()) window.webContents.send('session:changed', exposed);
@@ -2895,6 +2899,29 @@ function closeArtifactWindowsOutsideSession(workspaceId: string | null, userId: 
   if (closed) saveArtifactWindowStates();
 }
 const artifactViews = new WeakMap<ArtifactViewHandle, WebContentsView>();
+const embeddedBrowsers = new Map<BrowserWindow, { userId: string; browser: EmbeddedBrowser }>();
+
+function closeEmbeddedBrowsersOutsideUser(userId: string | null): void {
+  for (const [window, entry] of embeddedBrowsers) {
+    if (entry.userId === userId && !window.isDestroyed()) continue;
+    entry.browser.dispose();
+    embeddedBrowsers.delete(window);
+  }
+}
+
+function embeddedBrowserFor(window: BrowserWindow): EmbeddedBrowser {
+  const userId = inMemorySession?.user.id;
+  if (!userId) throw new Error('Sign in to use the browser');
+  const previous = embeddedBrowsers.get(window);
+  if (previous?.userId === userId) return previous.browser;
+  previous?.browser.dispose();
+  const browser = new EmbeddedBrowser(window, userId, (state) => {
+    if (!window.isDestroyed()) window.webContents.send('embedded-browser:state', state);
+  });
+  embeddedBrowsers.set(window, { userId, browser });
+  window.once('closed', () => embeddedBrowsers.delete(window));
+  return browser;
+}
 
 /**
  * The domain artifacts are served from, as this build was configured.
@@ -3252,6 +3279,24 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     return runtimeConfig();
   });
+  ipcMain.handle('embedded-browser:state', (event) => {
+    assertMainWindowIpcSender(event);
+    return embeddedBrowserFor(mainWindow!).state();
+  });
+  ipcMain.handle('embedded-browser:command', async (event, raw: unknown) => {
+    assertMainWindowIpcSender(event);
+    const command = EmbeddedBrowserCommandSchema.parse(raw) as EmbeddedBrowserCommand;
+    return await embeddedBrowserFor(mainWindow!).command(command);
+  });
+  ipcMain.handle('embedded-browser:bounds', (event, raw: unknown) => {
+    assertMainWindowIpcSender(event);
+    embeddedBrowserFor(mainWindow!).setBounds(EmbeddedBrowserBoundsSchema.parse(raw));
+  });
+  ipcMain.handle('embedded-browser:visible', (event, raw: unknown) => {
+    assertMainWindowIpcSender(event);
+    if (typeof raw !== 'boolean') throw new Error('Browser visibility must be a boolean');
+    embeddedBrowserFor(mainWindow!).setVisible(raw);
+  });
   ipcMain.handle('session-import:local-claude-code-list', (event) => {
     assertMainWindowIpcSender(event);
     return listLocalClaudeCodeSessions();
@@ -3269,6 +3314,15 @@ function registerIpc(): void {
     assertMainWindowIpcSender(event);
     if (typeof id !== 'string') throw new Error('Invalid local session selection');
     return readLocalClaudeCodeSession(id);
+  });
+  ipcMain.handle('session-import:local-codex-list', (event) => {
+    assertMainWindowIpcSender(event);
+    return listLocalCodexSessions();
+  });
+  ipcMain.handle('session-import:local-codex-read', (event, id: unknown) => {
+    assertMainWindowIpcSender(event);
+    if (typeof id !== 'string') throw new Error('Invalid local session selection');
+    return readLocalCodexSession(id);
   });
   ipcMain.handle('application:foreground-get', (event) => {
     assertTrustedIpcSender(event);
@@ -3777,6 +3831,9 @@ function hardenWebContents(contents: WebContents): void {
   });
 
   const preventUntrustedNavigation = (event: Electron.Event, url: string): void => {
+    // Browser pages own their web navigation; sending it through the app-window
+    // fence opens sign-in redirects in the system browser instead.
+    if (isEmbeddedBrowserWebContents(contents)) return;
     // Artifact surfaces are never decided here. What a model-authored page may
     // do with a URL turns on transient user activation, which this broad fence
     // knows nothing about, and on the artifact's own origin, which it does not

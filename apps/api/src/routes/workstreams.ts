@@ -1,7 +1,7 @@
 import { workstreamImportHash } from "../durable-objects/workstream-import-hash";
 import { prepareSessionImport, resolveSessionImportFiles } from "../services/session-import-files";
 import { SessionImportPreviewSchema, SessionImportPreviewRequestSchema, SessionImportRequestSchema, SessionImportUpdateRequestSchema, SessionImportSourceResponseSchema, SessionImportUpdateResponseSchema } from "@rally/contracts";
-import { previewSessionImport, sessionShareUrl } from "../services/session-import";
+import { previewSessionImport, sessionSourceUrlProvider } from "../services/session-import";
 import { SidekickAttachmentsSchema } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono, type Context } from "hono";
@@ -182,7 +182,7 @@ workstreamRoutes.post("/import", zValidator("json", SessionImportRequestSchema),
   if (!body.source.sessionId || body.content.messages.some((message) => !message.sourceMessageId)) {
     throw new ApiError(422, "session_import_identity_missing", "Preview the selected conversation again before importing it");
   }
-  if (body.source.url && sessionShareUrl(body.source.url).provider !== body.source.provider) {
+  if (body.source.url && sessionSourceUrlProvider(body.source.url, body.source.sessionId) !== body.source.provider) {
     throw new ApiError(422, "invalid_session_source", "The source does not match the provider");
   }
   const conversation = await prepareSessionImport(c.env, getAuth(c), body, body.clientMessageId);
@@ -210,7 +210,7 @@ workstreamRoutes.post("/:id/import/update", zValidator("param", idParam),
     if (!body.source.sessionId || body.content.messages.some((message) => !message.sourceMessageId)) {
       throw new ApiError(422, "session_import_identity_missing", "Preview the selected conversation again before updating it");
     }
-    if (body.source.url && sessionShareUrl(body.source.url).provider !== body.source.provider) {
+    if (body.source.url && sessionSourceUrlProvider(body.source.url, body.source.sessionId) !== body.source.provider) {
       throw new ApiError(422, "invalid_session_source", "The source does not match the provider");
     }
     const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
