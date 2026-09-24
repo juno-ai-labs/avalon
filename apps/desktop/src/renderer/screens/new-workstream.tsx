@@ -578,8 +578,11 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
         >
           {/* The composer every conversation writes with, so the first message
               gets the same mentions, commands and draft handling as the rest.
-              Keyed by the draft, which carries the Space: switching between
-              Space launchers remounts it and restores initial focus. */}
+              Keyed by the navigation as well as the draft: every opening of
+              the launcher, including a second one for the Space already
+              showing, remounts it so its autofocus puts the caret in the
+              message rather than leaving it on the page or the Participants
+              bar. The draft itself is cached, so the remount loses nothing. */}
           <WorkstreamComposer
             api={api ?? undefined}
             ariaLabel="Opening channel message"
@@ -589,7 +592,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
             error={(tooLong ? MESSAGE_TOO_LONG_MESSAGE : undefined) ?? create.error?.message ?? attachmentDraft.error}
             fileInputRef={fileInputRef}
             footerHint="Enter to create · Shift+Enter for a new line"
-            key={draftKey}
+            key={`${draftKey}:${location.key}`}
             members={members.data ?? []}
             model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}
             onAttach={attachmentDraft.addFiles}
