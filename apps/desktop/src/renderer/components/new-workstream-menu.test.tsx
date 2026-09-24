@@ -113,6 +113,30 @@ describe('sidebar creation menu', () => {
     expect(within(dialog).getByRole('button', { name: 'Create' })).toBeEnabled();
   });
 
+  it('keeps an open locked dialog on the Space it opened with', async () => {
+    const onCreateChannel = vi.fn(async () => undefined);
+    const menu = (lockedSpaceId: string) => <Tooltip.Provider>
+      <NewWorkstreamMenu lockedSpaceId={lockedSpaceId} offer="channel" spaces={[general, planning]} trigger="context"
+        onCreateChannel={onCreateChannel} onCreateSpace={vi.fn(async () => undefined)}>
+        <div data-testid="list" />
+      </NewWorkstreamMenu>
+    </Tooltip.Provider>;
+    const view = render(menu(general.id));
+    fireEvent.contextMenu(screen.getByTestId('list'), { clientX: 20, clientY: 20 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Start New Channel' }));
+    const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Launch' } });
+
+    // The sidebar's selection moves, as a deep link would move it.
+    view.rerender(menu(planning.id));
+
+    const picker = within(dialog).getByRole('combobox', { name: 'Space' });
+    expect(picker).toHaveTextContent('General');
+    expect(picker).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+    await waitFor(() => expect(onCreateChannel).toHaveBeenCalledWith({ name: 'Launch', spaceId: general.id }));
+  });
+
   it('omits Spaces reached only through a shared Channel', () => {
     render(<Tooltip.Provider>
       <NewWorkstreamMenu

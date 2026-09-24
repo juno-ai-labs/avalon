@@ -24,7 +24,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 68;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 69;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3368,6 +3368,22 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
   },
   {
     version: 68,
+    description: "pending loop inputs that land in send order without starting a run",
+    statements: [
+      // `1` for every row already queued: each was admitted to start a run.
+      `ALTER TABLE pending_loop_inputs ADD COLUMN starts_run INTEGER NOT NULL DEFAULT 1
+         CHECK (starts_run IN (0, 1))`,
+      // Its own trigger, so v34's prepared-fields trigger stays as shipped.
+      `CREATE TRIGGER pending_loop_inputs_starts_run_immutable
+         BEFORE UPDATE OF starts_run ON pending_loop_inputs
+         WHEN NEW.starts_run IS NOT OLD.starts_run
+         BEGIN
+           SELECT RAISE(ABORT, 'pending_loop_input_prepared_fields_are_immutable');
+         END`,
+    ],
+  },
+  {
+    version: 69,
     description: "record which conversation a background agent works for",
     statements: [`ALTER TABLE background_agent ADD COLUMN root_substream_id TEXT`],
   },

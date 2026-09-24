@@ -287,7 +287,9 @@ carries `transcript_projected_through` — the highest transcript sequence the
 model's conversation has considered, so a turn that started no run is appended
 at the next admission rather than lost),
 not-yet-canonical `pending_loop_inputs` whose prepared content is immutable
-and whose `input_sequence` is the live promotion order, minimal immutable
+and whose `input_sequence` is the live promotion order (since v68,
+`starts_run = 0` marks a message for the room that waits behind earlier input
+so it lands in send order, but starts no run), minimal immutable
 `delivered_loop_inputs` replay receipts, exact `assistant_turn_reservations`,
 subordinate execution receipts in `runs`, and a
 Bind head rebuilt from canonical participant history when no stable projection

@@ -473,7 +473,7 @@ subscription/run table reads.
 Use a test workspace with two members, Adam and Samantha.
 
 1. Sign in and create **CFO of Calm** with Samantha selected before submission.
-2. Confirm both people appear under **Participants** in the middle sidebar and Rally does not.
+2. Confirm both people appear under **Channel participants** in the middle sidebar and Rally does not.
 3. Send an opening instruction and observe a real OpenRouter response stream into the transcript.
 4. Attach a small text or PDF file, open **Context**, and confirm the resource appears without exposing storage identifiers or credentials.
 5. Open the same work stream as a third workspace member. Confirm **Viewing now** shows that person separately and does not add a participant row.

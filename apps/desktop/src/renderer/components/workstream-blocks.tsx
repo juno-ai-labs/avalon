@@ -2685,11 +2685,9 @@ export function MessageBlock({
   const sending = message.deliveryState === 'sending';
   const pending = message.deliveryState === 'steer_pending'
     || message.deliveryState === 'queue_pending';
-  const pendingLabel = message.deliveryState === 'steer_pending'
-    ? 'Will steer after this response'
-    : message.deliveryState === 'queue_pending'
-      ? 'Queued for the next loop'
-      : null;
+  // Every queued message says the same thing, whatever will deliver it: Rally
+  // has not read it yet.
+  const pendingLabel = pending ? 'Unseen' : null;
   // Only a settled text turn can be a cutoff — a streaming or undelivered one
   // has no fixed end to freeze. The id is read into a local so the callback
   // closes over the value the condition checked rather than re-asserting it.
