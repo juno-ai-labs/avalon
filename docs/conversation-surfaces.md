@@ -34,12 +34,18 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
 - `apps/desktop/src/renderer/components/conversation-follow.tsx` owns the
   **Jump to latest** and transient `ActivityPresence`, sharing retained motion.
 - `apps/desktop/src/renderer/components/agent-work-timing.tsx` owns every row in
-  that 20px-mark column: `AgentWorkTiming`, which counts, and the two that name
-  a state instead — `AgentCompactionIndicator` and `RunStoppingIndicator`, both
-  one call to the `ActivityStatusRow` primitive. A third state goes there, not
-  into a third copy of the row's `role`, live-region attributes and orb props.
+  that 20px-mark column: `AgentWorkTiming`, which counts, `AgentCompactionIndicator`,
+  which names a state instead and is one call to the `ActivityStatusRow`
+  primitive, and `RunStopAcknowledgement`, which is the dock's own. It does not
+  go through that primitive, and the exception is the point: `ActivityStatusRow`
+  is a row for a state that is still running, and this one has to span a change
+  from running to settled inside a single mounted live region. Another state
+  that is *running* goes into the primitive, not into another copy of the row's
+  `role`, live-region attributes and orb props.
   `conversationActivityRow` in `screens/conversation-surface.tsx` is the single
-  decision about which of them the feed's activity slot shows;
+  decision about which of them the feed's activity slot shows, and
+  `nextStopAcknowledgement` beside it is the single decision about what the
+  dock says of a stop;
   `conversationShowsStoppingRow` beside it is the separate question of whether
   the composer dock acknowledges a pending stop, and the two are separate
   because only one of them lives inside the scroller.
@@ -240,11 +246,92 @@ dock's line was up. Copy that named the response promised a boundary that
 arrives while the agent is visibly still working, which is the original defect
 one level down.
 
-Once a member-requested stop settles, the feed renders it as an intentional
-terminal state with a filled stop-square and no recovery action. The stopped
-prompt remains transcript history; continuing means composing a fresh turn,
-not replaying the stopped request. Failed runs remain a separate state and keep
-their Retry action.
+The stop's acknowledgement has two phases, one place, and one component.
+`RunStopAcknowledgement` holds the dock from the request onwards and takes
+`settled`: before, the orb and "Stopping once the current work finishes…";
+after, a filled stop-square in that same 20px slot and "Run stopped". It
+answers a button press, so it sits beside the button, and the reasons the
+stopping row is in the dock are its reasons too.
+
+**This row is not the record that a stop happened, and must not become one.**
+The record already exists and is durable: a stop that interrupts an assistant
+turn settles that turn's reservation as stopped, and
+`commitAssistantReservationError` writes an `assistant_turn_stopped` status
+fact the feed draws as `.assistant-turn-status-pill` — "Response stopped before
+it completed" — anchored to the turn it cut off, where it belongs. The sidebar
+carries it too, in `statusLabel.stopped`. What the dock adds is the
+acknowledgement of the *button press*, for the people who were in the room, and
+that is all it adds. The one case neither covers is a stop with no assistant
+reservation open — between steps, or while scheduling — which leaves no
+turn-anchored marker because there is no turn to anchor one to. Anybody
+tempted to add a transcript row for stops should start there, and not by
+duplicating the pill.
+
+One component across both phases rather than two sibling slots, because two
+would unmount one `role="status"` and mount another, and a live region inserted
+together with its content is not reliably announced. The reader that costs is
+the one this row is for: somebody who pressed Stop, cannot see the dock, and
+now has nothing in the transcript to fall back on either. Mounted once, the
+settled line is a content change inside a region that was already there.
+
+It is temporary, and it is session state. `nextStopAcknowledgement` holds the id
+of the run whose stop *this client watched settle*, armed by seeing the room's
+pending stop while the run was still going. The arming has to survive that wait:
+between the request and the settlement the run still reads `running`, so an
+arming that cleared itself as soon as it found nothing to acknowledge would be
+gone by the time there was something to say — which is how the first version
+of this failed, and what the transition's test pins.
+
+Both halves of the state name a run, and neither can be a boolean, because the
+two facts do not arrive together: `applyHarnessStatus` clears `stopRequested`
+from the status event and leaves `latestHarnessRun` to the canonical snapshot
+behind it, so the arm bridges that gap — and an arm not bound to its own run is
+inherited by a snapshot that lands already carrying the next one, which then
+says "Run stopped" as the settlement of a request nobody made for it.
+
+Two facts decide the phase, and each covers a stretch the other does not. The
+conversation's own `harnessStatus` says whether anything is live: `scheduled`,
+`running` and `needs_input` withhold the settled line entirely, because the
+status event moves first and a held acknowledgement would otherwise sit in the
+dock saying the run stopped while the feed above it draws an agent visibly
+working. The run row says whether the thing that ended was a stop — and it is
+the only thing that says so. **The status frame for a member stop does not
+report `stopped`.** `settleWorkstreamState` leaves a stopped run's work stream
+`idle` on purpose, because a stop is the member taking the conversation back
+rather than an outcome to report, and this client reads `idle` as `completed`.
+Driven against the running client, a real stop reports
+`status: completed, runStatus: stopped` — so the frame that ends the wait is
+indistinguishable from an ordinary finish until the run row behind it arrives.
+
+Two consequences follow, and both were found by driving a stop rather than by
+the suite. The arming has to outlive that frame: cleared on it, the
+acknowledgement is gone a beat before its own evidence lands and never appears
+at all. And the region has to stay mounted across it, still saying the wait is
+on, because it is: with nothing to draw in that window the dock went blank and
+the live region unmounted around the very change it exists to announce.
+
+It ends three ways: the run the arm names settles as something other than a
+stop, the latest run becomes a different one, or this reader sends their next
+message, which answers the button press more completely than the row does and
+is the one that covers a turn starting no run. That last one is cleared when
+the send is accepted rather than when it is attempted: a send that fails
+restores the draft and did not move the conversation on, and nothing could put
+the acknowledgement back, the latest run being durably stopped already.
+
+Nothing durable records that the acknowledgement was shown, so opening the
+conversation later shows the transcript and no notice. The run row cannot stand
+in for it: `latestHarnessRun.status` is permanent, it only moves when a new run
+exists, and a member turn the addressing classifier reads as conversation
+between people starts no run at all
+([`agent-harness.md`](agent-harness.md)) — so a notice read off the row alone
+outlived its moment and sat under every later message in a multi-person room.
+
+The stopped prompt remains transcript history; continuing means composing a
+fresh turn, not replaying the stopped request. Failed runs are the deliberate
+opposite and stay in the feed with their Retry action: a failure is something
+that happened to the reader and has to survive a reload for them to act on,
+where a stop is something they did and a person who was not there has no button
+press to have answered.
 
 The composer's width is the conversation's, not the pane's, and it is one width
 across every surface that has a composer. A turn is capped at `--turn-width-cap`
@@ -298,7 +385,7 @@ rule gives a row no margin of its own. Five cases cover the feed: turn after tur
 Rally's answer after the work that produced it also takes `sys.space.event.gap`,
 because it is the same turn finishing rather than a new one, and a row after an
 unloaded stretch takes `sys.space.seam.gap`, the widest, whatever its kind. The surface's own
-trailing rows, the live timer and the run notices, take `sys.space.block.gap`
+trailing rows, the live timer and the failure notice, take `sys.space.block.gap`
 above them for the same reason. Turn after turn is one unit, and what keeps the
 next turn off a bubble is the action slot every person's turn lays out under
 itself, painted on hover and held at its height where the surface has no
@@ -692,6 +779,71 @@ alongside its socket sequence, so revisiting a conversation can resume after the
 activation event without losing the warning; later clears replace that retained set.
 
 ## Changelog
+
+### 2026-09-24 — The stop's acknowledgement leaves the feed
+
+**What changed:** `RunStoppedNotice`, the card the transcript column appended
+whenever the latest run's status was `stopped`, is gone. `RunStopAcknowledgement`
+holds the dock across both phases and settles the stopping row where it stands,
+and `nextStopAcknowledgement` decides when it is drawn: only for a client that
+watched that stop settle, and only until the conversation moves on. Its CSS goes with it — the card's rules
+are deleted and `.run-stopped-mark` sizes the square to the orb slot it
+replaces.
+
+**Why:** the notice was durable chrome for a temporary event, and it was read
+off the wrong thing. `latestHarnessRun.status` is permanent and only moves when
+a *new run* exists. A member turn the addressing classifier reads as
+conversation between people starts no run at all — the decision in
+[`agent-harness.md`](agent-harness.md), deliberately invisible in the UI — so in
+a room where people are talking to each other the notice sat under every later
+message until somebody addressed Rally, which is to say never. What a reader saw
+there was a message they had just sent with "This run was stopped by request"
+underneath it, and nothing else on screen to read it as. Anchoring it to the
+transcript instead would have fixed the ordering and kept the deeper error: a
+card in the feed is a historical record, and this is an answer to a button
+press, owed to the people who were in the room when it landed and to nobody
+else.
+
+**Considered and rejected:** keeping it in the feed and withdrawing it once a
+member turn landed after the stop settled — written first, then dropped. It is a
+correct rule for the wrong object, and it made the notice's lifetime a question
+about turn ordering, which then needs an anchor: timestamps, which an optimistic
+turn carries the sender's own clock for, or turn identity, which would have put
+`runs.final_turn_id` and `trigger_part_id` on the wire for a banner. Neither
+question exists once the acknowledgement stops pretending to be history. Also
+rejected: a durable "stop acknowledged" flag on the conversation, which is the
+same category error with a migration attached. Also rejected: a timed fade — the
+row ends when the conversation moves, which needs no duration, and a duration
+here would be a limit picked by whoever typed it rather than by the team
+([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)).
+
+**Consequences:** no *chrome* in the transcript marks a stop any more. History
+is not left silent, which an earlier draft of this entry wrongly claimed and
+review corrected: the durable, turn-anchored `assistant_turn_stopped` pill
+already ships and is untouched here, so the deletion removes a duplicate rather
+than the record. The narrow gap it leaves is a stop taken with no assistant
+reservation open, which has no turn to anchor to; closing that is a decision to
+make on purpose, and not by adding a second mechanism beside the pill. The acknowledgement does not survive a reload,
+which is the point and not a defect to fix. It is armed by the stopping row's
+own condition, so a stop that settles before any render shows that row — the
+click and the settlement inside one frame — is acknowledged by nothing; the run
+is over either way, and the alternative is arming from a durable flag, which is
+what this entry removes. A future change to the arming has to keep it alive
+across the wait, and bound to the run it was made for: the run reads `running`
+for the whole of that wait, so the first version of this cleared the arm on the
+same pass that set it and put the row on screen never; the second held it as a
+bare boolean, which a snapshot arriving with the *next* run inherits, answering
+a button press nobody made for it. The first was caught by driving a real stop
+in the client rather than by the suite, and the second by review. Both are now
+pinned by the transition's tests and by the rendered case in
+`workstream-open.test.tsx`, which drives the status frame and the snapshot as
+two steps and fails if the dock stops drawing the row, or draws it in a
+different node. Review and the running client between them added the rest in
+one round: the conversation's live status withholds the settled line so it
+cannot sit beside an agent that is working again, the arming outlives a frame
+that cannot say a stop was a stop, and the region is held up through that
+window rather than blinking out of existence in it. The failure notice keeps the trailing-row treatment and
+the feed's `sys.space.block.gap`, and is now the only thing using it.
 
 ### 2026-09-22 — Editable fields get native text actions
 

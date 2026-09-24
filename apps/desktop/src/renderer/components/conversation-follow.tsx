@@ -1,4 +1,4 @@
-import { ArrowDown, Square, TriangleAlert } from 'lucide-react';
+import { ArrowDown, TriangleAlert } from 'lucide-react';
 import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { IconButton } from './primitives';
 
@@ -64,19 +64,6 @@ export function JumpToLatestButton({ onJump, visible = true }: { onJump: () => v
     <IconButton aria-hidden={!visible || undefined} className="jump-bottom" disabled={!visible} label="Jump to latest" onClick={onJump} ref={button} tabIndex={visible ? 0 : -1} tooltipSide="top">
       <ArrowDown aria-hidden="true" size={15} />
     </IconButton>
-  );
-}
-
-/** What a conversation says after somebody stopped it. */
-export function RunStoppedNotice(): React.JSX.Element {
-  return (
-    <section aria-label="Run stopped" className="run-stopped-notice" role="status">
-      <span aria-hidden="true" className="run-stopped-icon"><Square fill="currentColor" size={12} /></span>
-      <div className="run-stopped-copy">
-        <strong>Run stopped</strong>
-        <p>This run was stopped by request.</p>
-      </div>
-    </section>
   );
 }
 
