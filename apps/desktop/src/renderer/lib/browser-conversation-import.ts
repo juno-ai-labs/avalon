@@ -262,11 +262,15 @@ function claudeReader(conversation: BrowserConversation): string {
     if (data.current_leaf_message_uuid) {
       const byId = new Map(data.chat_messages.map((message) => [message.uuid, message]));
       const path = [];
-      for (let at = data.current_leaf_message_uuid; at && byId.has(at); at = byId.get(at).parent_message_uuid) {
+      let at = data.current_leaf_message_uuid;
+      for (; at && byId.has(at); at = byId.get(at).parent_message_uuid) {
         if (path.includes(byId.get(at))) throw new Failure('Claude returned an incomplete conversation.');
         path.unshift(byId.get(at));
       }
-      if (!path.length) throw new Failure('Claude returned an incomplete conversation.');
+      // The walk must end at the root, not at an ancestor the response left out;
+      // a suffix would silently drop the conversation's beginning.
+      if (!path.length || (at && at !== '00000000-0000-4000-8000-000000000000'))
+        throw new Failure('Claude returned an incomplete conversation.');
       data.chat_messages = path;
     }
     // Uploads are named in the conversation but not contained in it. The
@@ -372,7 +376,9 @@ export async function readBrowserConversation(
   const target = conversationAt(sourceUrl, '');
   if (!target) throw new Error('Choose a ChatGPT or Claude conversation in Rally’s browser.');
   const state = await bridge.getEmbeddedBrowserState();
-  let tab = state.tabs.find((candidate) => browserConversation(candidate)?.url === target.url);
+  // Import reads the tab the person is looking at when several show the conversation.
+  const showing = state.tabs.filter((candidate) => browserConversation(candidate)?.url === target.url);
+  let tab = showing.find((candidate) => candidate.id === state.activeTabId) ?? showing[0];
   let opened: string | null = null;
   if (!tab && openIfMissing) {
     const result = await bridge.commandEmbeddedBrowser({ action: 'open', url: target.url });
