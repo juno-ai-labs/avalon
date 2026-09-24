@@ -1015,6 +1015,7 @@ interface WorkspaceSocketAttachment extends SocketIdentity {
   connectionId: string;
   connectedAt: string;
   subscribed: boolean;
+  firstFrameReported: boolean;
   lastWaterline: number;
   presenceRevision: number;
   applicationState: "foreground" | "background";
@@ -3724,6 +3725,9 @@ function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
       connectionId: z.string().uuid(),
       connectedAt: z.string().datetime({ offset: true }),
       subscribed: z.boolean(),
+      // Older attached sockets have no diagnostic marker. Their first frame
+      // after a deployment may emit this phase once.
+      firstFrameReported: z.boolean().default(false),
       lastWaterline: z.number().int().nonnegative(),
       // Sockets accepted by the previous deployment carry none of these fields. They
       // resume safely as backgrounded and write the explicit shape on their
@@ -4554,7 +4558,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // Record callback ingress before initialization can stall; parse the
     // attachment only once because this callback also handles presence frames.
     const attachment = readAttachment(socket);
-    if (attachment && !attachment.subscribed) {
+    if (attachment && !attachment.subscribed && !attachment.firstFrameReported) {
+      socket.serializeAttachment({ ...attachment, firstFrameReported: true } satisfies WorkspaceSocketAttachment);
       this.logWorkspaceSocketHandshake(attachment, "frame_received");
     }
     await this.initialized;
@@ -11327,6 +11332,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       connectionId: uuidV7(),
       connectedAt: new Date().toISOString(),
       subscribed: false,
+      firstFrameReported: false,
       lastWaterline: 0,
       presenceRevision: 0,
       applicationState: "background",

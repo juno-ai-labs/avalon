@@ -104,7 +104,8 @@ warmth is not attention.
 The singleton socket assigns a UUIDv7 to each connection attempt and reports
 content-free opening phases through the desktop reliability telemetry path.
 Its `subscribe` frame optionally carries that UUID. WorkspaceDO logs `accepted`
-with a server connection ID, then `frame_received` before initialization,
+with a server connection ID, then `frame_received` once per socket before
+initialization,
 `subscribe_received`, `subscribe_authorized`, `sidebar_built`, `flags_resolved`,
 and `sync_sent`. The latter phases carry both IDs. `accepted` has only the
 connection ID because the room has not received the subscription yet; a
@@ -531,7 +532,9 @@ There was no evidence distinguishing a missing client `subscribe` from a room
 callback stalled during initial sync. Add one opaque attempt ID and phase logs
 on both sides of that boundary. The ID is optional on the wire so older
 desktop releases remain valid, and the phase logs exclude ticket and sidebar
-content. A future recovery change should use the observed failing phase rather
+content. The first-frame marker persists in the socket attachment so a client
+that never subscribes cannot multiply that log by sending more frames. A future
+recovery change should use the observed failing phase rather
 than infer a server fault from an accepted upgrade alone.
 
 ### 2026-09-17 — Foreground recovery reconciles unresolved commands
