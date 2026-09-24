@@ -52,6 +52,7 @@ import {
   type AutomationCreatorPluginCatalogEntry,
   type HarnessActivationInput,
   type HarnessEvent,
+  type HarnessStartupTiming,
   type HarnessPlugin,
   HarnessToolEffectUnresolvedError,
   type HarnessToolContext,
@@ -2727,12 +2728,17 @@ export async function runWorkstreamHarness(
   });
   modelRoutingPreparation.get();
   attachmentGroundingPreparation.get();
+  const livenessTimings: Record<string, number> = {};
   const liveness = new CoalescedRunLiveness(runs, input.harnessRunId, attemptLease, {
     leaseSeconds: 300,
     minimumIntervalMs: 5_000,
     ...(runtime.persistentLoop?.heartbeat ? {
       afterHeartbeat: () => runtime.persistentLoop!.heartbeat!(),
     } : {}),
+    onTiming: (stage, part, durationMs) => {
+      if (stage !== "inference_start" && stage !== "before_model") return;
+      livenessTimings[`liveness_${stage}_${part}_ms`] = durationMs;
+    },
   });
   // Independent reads begin while the lease heartbeat is checked. No prepared
   // value grants authority, and tool/prompt setup still waits for the heartbeat.
@@ -2917,12 +2923,38 @@ export async function runWorkstreamHarness(
   };
   const attachmentGrounding = await attachmentGroundingPreparation.get();
   const harnessInputsReadyAtMs = Date.now();
+  const startupDurations: Record<string, number> = {};
+  const activationDurations = new Map<string, Record<string, number>>();
+  const recordActivationDuration = (pluginId: string, name: string, durationMs: number) => {
+    const durations = activationDurations.get(pluginId) ?? {};
+    durations[name] = durationMs;
+    activationDurations.set(pluginId, durations);
+  };
+  const measureStartup = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
+    const startedAt = Date.now();
+    try {
+      return await run();
+    } finally {
+      startupDurations[name] = Date.now() - startedAt;
+    }
+  };
+  const addStartupDuration = async <T>(name: string, pluginId: string, run: () => Promise<T>): Promise<T> => {
+    const startedAt = Date.now();
+    try {
+      return await run();
+    } finally {
+      const durationMs = Date.now() - startedAt;
+      startupDurations[name] = (startupDurations[name] ?? 0) + durationMs;
+      recordActivationDuration(pluginId, name, durationMs);
+    }
+  };
   const runLimits = workstreamRunLimits();
   const runScopeLimits = {
     ...runLimits,
     maxCatalogTokens: numericEnv(env, "HARNESS_MAX_PLUGIN_CATALOG_TOKENS", 2_500),
   };
-  await persistImmutableRunScope(runs, input, liveness.lease, {
+  const toolSurfaceHash = await measureStartup("tool_surface_hash_ms", () => stableRunToolSurfaceHash(harnessTools));
+  await measureStartup("scope_persist_ms", async () => persistImmutableRunScope(runs, input, liveness.lease, {
     executionPrincipal: input.executionPrincipal,
     eligibleConnectionIds: [...harnessTools.frozenConnections.values()].map((plugin) => plugin.connectionId),
     eligibleCapabilities: [
@@ -2949,31 +2981,47 @@ export async function runWorkstreamHarness(
     },
     routingPolicyVersion: BIND_ROUTING_POLICY_VERSION,
     promptVersion: WORKSTREAM_PROMPT_VERSION,
-    toolSurfaceHash: await stableRunToolSurfaceHash(harnessTools),
+    toolSurfaceHash,
     memoryContextHash: promptContext.memoryContextHash,
     limits: runScopeLimits,
-  });
-  const priorHints = await priorHintsPreparation.get();
+  }, (stage, durationMs) => {
+    startupDurations[`scope_${stage}_ms`] = durationMs;
+  }));
+  const priorHints = await measureStartup("activation_hints_wait_ms", () => priorHintsPreparation.get());
+  startupDurations.activation_hints_load_ms = priorHintsPreparation.elapsedMs ?? 0;
   const requestedActivations = [
     ...priorHints,
     ...harnessTools.plugins.filter((plugin) => plugin.preload).map((plugin) => plugin.canonicalId),
   ];
+  let activationAuthorizationChecks = 0;
+  let activationToolLoads = 0;
+  let activationWrites = 0;
   const pluginById = new Map(harnessTools.plugins.map((plugin) => [plugin.canonicalId, plugin]));
-  const activationHints = await persistInitialPluginActivations(
+  const activationHints = await measureStartup("initial_activations_ms", () => persistInitialPluginActivations(
     requestedActivations,
-    async (pluginId) => {
+    (pluginId) => addStartupDuration("activation_authorize_ms", pluginId, async () => {
+      activationAuthorizationChecks += 1;
       const frozen = harnessTools.frozenConnections.get(pluginId);
       return frozen
-        ? reauthorizeFrozenPlugin(env, input, frozen, harnessSignal, "activation")
+        ? reauthorizeFrozenPlugin(env, input, frozen, harnessSignal, "activation", undefined,
+          (stage, durationMs) => {
+            startupDurations[`activation_${stage}_ms`] = (startupDurations[`activation_${stage}_ms`] ?? 0) + durationMs;
+            recordActivationDuration(pluginId, `${stage}_ms`, durationMs);
+          })
         : builtinPluginAuthorization(pluginId, harnessTools);
-    },
-    async (pluginId) => {
+    }),
+    (pluginId) => addStartupDuration("activation_persist_ms", pluginId, async () => {
+      activationWrites += 1;
       await persistWorkstreamPluginActivation(
         env,
         input,
         liveness.lease,
         pluginId,
         harnessTools,
+        (stage, durationMs) => {
+          startupDurations[`activation_${stage}_ms`] = (startupDurations[`activation_${stage}_ms`] ?? 0) + durationMs;
+          recordActivationDuration(pluginId, `${stage}_ms`, durationMs);
+        },
       );
       recordCredentialPluginActivation(
         pluginId,
@@ -2981,10 +3029,11 @@ export async function runWorkstreamHarness(
         activeCredentialPluginIds,
         harnessTools.loadedAutomationPluginIds,
       );
-    },
-    async (pluginId) => {
+    }),
+    (pluginId) => addStartupDuration("activation_prepare_ms", pluginId, async () => {
       const plugin = pluginById.get(pluginId);
       if (!plugin?.loadTools) return true;
+      activationToolLoads += 1;
       return plugin.loadTools().then(() => true, (error: unknown) => {
         logStructuredEvent(env, "warn", "dynamic_connector_tools_unavailable", {
           plugin_id: pluginId,
@@ -2994,8 +3043,9 @@ export async function runWorkstreamHarness(
         });
         return false;
       });
-    },
-  );
+    }),
+  ));
+  const requestedActivationCount = new Set(requestedActivations).size;
 
   const publishEvent = async (event: Record<string, unknown>) => {
     const publishers = [
@@ -3050,7 +3100,8 @@ export async function runWorkstreamHarness(
     }
   };
 
-  const modelRouting = await modelRoutingPreparation.get();
+  const modelRouting = await measureStartup("model_routing_wait_ms", () => modelRoutingPreparation.get());
+  startupDurations.model_routing_load_ms = modelRoutingPreparation.elapsedMs ?? 0;
   // A seeded run is routed where the seam is: the OpenRouter client, an
   // unbound model, no fallbacks, no Azure transport. See `demoSeedModelRoute`.
   const seedRoute = seedProvider ? demoSeedModelRoute(modelRouting) : null;
@@ -3102,7 +3153,7 @@ export async function runWorkstreamHarness(
   // recurring monitor only once every setup step that can throw has finished,
   // so a projection/plugin/scope failure cannot strand a timer that keeps a
   // failed attempt falsely owned in a reused Worker isolate.
-  await liveness.pulse("inference_start", true);
+  await measureStartup("inference_start_heartbeat_ms", () => liveness.pulse("inference_start", true));
   const livenessMonitor = liveness.startMonitor(5_000);
   const inferenceLogger = createAgentInferenceLogger(env, {
     workspaceId: input.workspaceId,
@@ -3193,7 +3244,7 @@ export async function runWorkstreamHarness(
   };
   let preparedCompactionVisibilityFingerprint: string | null = null;
   let outcome: Awaited<ReturnType<typeof runHarness>>;
-  await orderedTranscript.upsertActivity({
+  await measureStartup("response_activity_ms", () => orderedTranscript.upsertActivity({
     activityId: `${input.harnessRunId}:activity`,
     parentActivityId: null,
     scope: "response",
@@ -3203,7 +3254,9 @@ export async function runWorkstreamHarness(
     action: "start",
     revision: 1,
     occurredAtUtc: new Date().toISOString(),
-  });
+  }));
+  let firstInferenceBreakdownLogged = false;
+  let catalogSource: HarnessStartupTiming["catalogSource"] | undefined;
   try {
     outcome = await runHarness({
       config: {
@@ -3588,9 +3641,44 @@ export async function runWorkstreamHarness(
         completedAt,
       });
     },
-    onInferenceRequest: (request) => suppressInferenceRequestCapture
-      ? undefined
-      : inferenceLogger.onRequest(request),
+    onStartupTiming: (timing) => {
+      if (firstInferenceBreakdownLogged) return;
+      startupDurations[`bind_${timing.phase}_ms`] = timing.durationMs;
+      if (timing.catalogSource) catalogSource = timing.catalogSource;
+    },
+    onInferenceRequest: (request) => {
+      if (!firstInferenceBreakdownLogged) {
+        firstInferenceBreakdownLogged = true;
+        if (inferenceStartEligible && input.telemetryRequestReceivedAt !== undefined) {
+          const providerRequestHookAt = Date.now();
+          logStructuredEvent(env, "info", "agent_inference_start_breakdown", {
+            request_id: input.harnessRunId,
+            inference_request_id: request.inferenceRequestId,
+            operation_id: input.telemetryOperationId,
+            workspace_id: input.workspaceId,
+            workstream_id: input.parentId,
+            substream_id: input.substreamId ?? "0",
+            run_started_at: runStartedAtMs,
+            preparation_finished_at: inferencePreparationFinishedAtMs,
+            provider_request_hook_at: providerRequestHookAt,
+            post_prepared_ms: providerRequestHookAt - inferencePreparationFinishedAtMs,
+            initial_activation_requested_count: requestedActivationCount,
+            initial_activation_authorization_check_count: activationAuthorizationChecks,
+            initial_activation_tool_load_count: activationToolLoads,
+            initial_activation_write_count: activationWrites,
+            initial_activation_persisted_count: activationHints.length,
+            initial_activation_details: [...activationDurations.entries()].map(([pluginId, durations]) => ({
+              plugin_id: pluginId,
+              ...durations,
+            })),
+            context_catalog_source: catalogSource ?? "skipped",
+            ...livenessTimings,
+            ...startupDurations,
+          });
+        }
+      }
+      return suppressInferenceRequestCapture ? undefined : inferenceLogger.onRequest(request);
+    },
     onTranscriptIssues: (issues) => {
       if (issues.length === 0) return;
       logStructuredEvent(env, "warn", "harness_transcript_healed", {
@@ -3615,14 +3703,29 @@ export async function runWorkstreamHarness(
       });
     },
     onLiveness: async (stage) => {
+      const stageStartedAt = Date.now();
       await liveness.pulse(stage, stage === "before_model" || stage === "after_tool");
+      if (stage === "before_model" && !firstInferenceBreakdownLogged) {
+        startupDurations.before_model_heartbeat_ms = Date.now() - stageStartedAt;
+      }
       // Renewal must remain available while Bind settles an in-flight step
       // after archive or stop. New model work is authorized here; new tool
       // work is independently authorized by beforeToolCall above. Treating
       // archive as a renewal failure masks Bind's durable stop transition.
       if (stage === "before_model") {
+        const authorityStartedAt = Date.now();
         await assertSidekickAuthority();
-        await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
+        if (!firstInferenceBreakdownLogged) {
+          startupDurations.before_model_sidekick_authority_ms = Date.now() - authorityStartedAt;
+        }
+        const runAuthorityStartedAt = Date.now();
+        await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot, (name, durationMs) => {
+          if (!firstInferenceBreakdownLogged) startupDurations[`before_model_${name}_ms`] = durationMs;
+        });
+        if (!firstInferenceBreakdownLogged) {
+          startupDurations.before_model_run_authority_ms = Date.now() - runAuthorityStartedAt;
+          startupDurations.before_model_authority_ms = Date.now() - authorityStartedAt;
+        }
       }
     },
     findCompletedToolResult: async (toolCallId, inputHash, policyIdentity) => {
@@ -6155,8 +6258,9 @@ async function assertRunAuthorityStillValid(
   env: Env,
   input: WorkstreamWorkflowInput,
   expected?: RunAuthoritySnapshot,
+  onTiming?: (name: "principal" | "identity" | "conversation" | "automation", durationMs: number) => void,
 ): Promise<RunAuthoritySnapshot> {
-  const authority = await readRunAuthority(env, input, expected);
+  const authority = await readRunAuthority(env, input, expected, onTiming);
   return { automationRunId: authority.automationRunId,
     automationTemplateVersionId: authority.automationTemplateVersionId, triggerType: authority.triggerType };
 }
@@ -6165,27 +6269,36 @@ async function readRunAuthority(
   env: Env,
   input: WorkstreamWorkflowInput,
   expected?: RunAuthoritySnapshot,
+  onTiming?: (name: "principal" | "identity" | "conversation" | "automation", durationMs: number) => void,
 ): Promise<RunAuthoritySnapshot & { principalIsGuest: boolean }> {
   const db: D1Database = env.DB;
+  let startedAt = Date.now();
   const guest = await assertExecutionPrincipalAuthorized(db, input.workspaceId, input.executionPrincipal);
+  onTiming?.("principal", Date.now() - startedAt);
+  startedAt = Date.now();
   const workstream = await createIdentityObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0")
     .identity();
+  onTiming?.("identity", Date.now() - startedAt);
   if (!workstream || workstream.archived_at != null) {
     throw new ConnectorError("unauthorized", "Work stream is no longer active");
   }
 
   if (guest && input.executionPrincipal.type === "user" && !input.automationRun) {
+    startedAt = Date.now();
     // Use the same conversation admission as the transport. It also reports
     // parent/child archive state, so a second parent authority read is redundant.
     const parent = await conversationParentStub(env, input);
     const access = await parent.authorizeViewer({ workspaceId: input.workspaceId, parentId: input.parentId,
       userId: input.executionPrincipal.userId, substreamId: asSubstreamId(input.substreamId ?? "0"),
       requireGrantAuthority: true });
+    onTiming?.("conversation", Date.now() - startedAt);
     if (!access.authorized) throw new ConnectorError("unauthorized", "Shared conversation access has ended");
     if (access.archived) throw new ConnectorError("unauthorized", "Work stream is no longer active");
   } else if (input.substreamId && input.substreamId !== "0" && !input.automationRun) {
+    startedAt = Date.now();
     const parent = await conversationParentStub(env, input);
     const authority = await parent.authority({ workspaceId: input.workspaceId, parentId: input.parentId });
+    onTiming?.("conversation", Date.now() - startedAt);
     if (!authority.exists || authority.archived) throw new ConnectorError("unauthorized", "Work stream is no longer active");
   }
 
@@ -6208,6 +6321,7 @@ async function readRunAuthority(
   // and a run that outlived its consent must stop issuing provider writes
   // rather than finish on stale consent.
   const run = input.automationRun;
+  startedAt = Date.now();
   const live = await (await durableObjectStubForWorkspace(
     env,
     env.AUTOMATION_DOS,
@@ -6218,6 +6332,7 @@ async function readRunAuthority(
     automationId: run.automationId,
     runId: run.runId,
   });
+  onTiming?.("automation", Date.now() - startedAt);
   if (!live || live.lifecycle !== "active" || (live.state !== "running" && live.state !== "needs_input")) {
     throw new ConnectorError("unauthorized", "This automation run is no longer running");
   }
@@ -6397,6 +6512,7 @@ async function persistWorkstreamPluginActivation(
   lease: AttemptLease,
   pluginId: string,
   harnessTools: Awaited<ReturnType<typeof loadHarnessTools>>,
+  onTiming?: (stage: "run_write" | "hint_write", durationMs: number) => void,
 ): Promise<void> {
   const surfaceHash = harnessTools.pluginSurfaceHashes.get(pluginId);
   if (
@@ -6408,14 +6524,18 @@ async function persistWorkstreamPluginActivation(
   ) {
     throw new ConnectorError("unauthorized", "Plugin is outside this immutable run scope");
   }
+  let startedAt = Date.now();
   await persistRunPluginActivation(
     createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0"),
     input,
     lease,
     { pluginId, toolSurfaceHash: surfaceHash },
   );
+  onTiming?.("run_write", Date.now() - startedAt);
+  startedAt = Date.now();
   await createSchedulingObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0")
     .recordPluginActivation({ pluginId, now: Date.now() });
+  onTiming?.("hint_write", Date.now() - startedAt);
 }
 
 async function reauthorizeFrozenPlugin(
@@ -6425,6 +6545,7 @@ async function reauthorizeFrozenPlugin(
   signal: AbortSignal,
   occasion: PluginAuthorizationOccasion,
   ownershipGuard?: () => Promise<void>,
+  onTiming?: (stage: "connection_context" | "provider_health" | "health_verdict", durationMs: number) => void,
 ): Promise<PluginAuthorization> {
   try {
     await ownershipGuard?.();
@@ -6451,6 +6572,7 @@ async function reauthorizeFrozenPlugin(
       await ownershipGuard?.();
       return "authorized";
     }
+    let startedAt = Date.now();
     const { connection, adapter } = await loadAuthorizedConnectionContext(
       env,
       input,
@@ -6459,6 +6581,8 @@ async function reauthorizeFrozenPlugin(
       signal,
       ownershipGuard,
     );
+    onTiming?.("connection_context", Date.now() - startedAt);
+    startedAt = Date.now();
     const health = await withAuthorizedConnection(
       env,
       { connection, adapter, signal },
@@ -6468,8 +6592,12 @@ async function reauthorizeFrozenPlugin(
       // returned. The caller's deadline is disposable.
       (authorized) => raceWithSignal(adapter.healthCheck(authorized, signal), signal),
     );
+    onTiming?.("provider_health", Date.now() - startedAt);
     await ownershipGuard?.();
-    return await pluginAuthorizationFromHealth(env, input, frozen, health);
+    startedAt = Date.now();
+    const verdict = await pluginAuthorizationFromHealth(env, input, frozen, health);
+    onTiming?.("health_verdict", Date.now() - startedAt);
+    return verdict;
   } catch (error) {
     logPluginAuthorizationFailure(env, input, frozen, error);
     return error instanceof ConnectorError && error.code === "unauthorized"
