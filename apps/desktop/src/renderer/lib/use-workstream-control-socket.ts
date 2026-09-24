@@ -305,7 +305,7 @@ export function useWorkstreamControlSocket(
       // metadata frame is therefore the low-cost nudge to refresh associative
       // Space and ancestor presentation without polling.
       void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
-      queryClient.setQueryData(['workstream-background-agents', workstreamId], metadata.backgroundAgentCount ?? null);
+      queryClient.setQueryData(['workstream-background-agents', workstreamId], metadata.backgroundAgentCounts ?? null);
       const state = metadataState(metadata);
       const applied = applyVersionedWorkstreamState(queryClient, {
         workstreamId,

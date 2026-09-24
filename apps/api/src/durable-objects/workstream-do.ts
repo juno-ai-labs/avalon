@@ -2650,6 +2650,27 @@ export class WorkstreamDO extends ConversationParentDurableObject {
   }
 
   /**
+   * Running background agents, in total and by the conversation each works
+   * for, so a composer shows only the agents started from its own
+   * conversation. An agent from before roots were recorded counts in the main
+   * conversation.
+   */
+  private backgroundAgentCounts(): { backgroundAgentCount: number; backgroundAgentCounts: Record<string, number> } {
+    const rows = this.parentSql.exec<{ root: string; n: number }>(
+      `SELECT COALESCE(json_extract(effect_json, '$.backgroundAgentRootSubstreamId'), '0') AS root, COUNT(*) AS n
+         FROM substream_directory
+        WHERE substream_id <> '0' AND json_extract(effect_json, '$.backgroundAgent') = 1
+          AND json_extract(effect_json, '$.state') = 'running'
+          AND json_extract(effect_json, '$.archivedAt') IS NULL
+        GROUP BY root`,
+    ).toArray();
+    return {
+      backgroundAgentCount: rows.reduce((total, row) => total + row.n, 0),
+      backgroundAgentCounts: Object.fromEntries(rows.map((row) => [row.root, row.n])),
+    };
+  }
+
+  /**
    * A Channel's breakouts get a row of their own in the Organization; a
    * Space's children and the background agents do not.
    *
@@ -3229,12 +3250,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       titleStatus: row.title_status,
       exactState: row.exact_state,
       harnessStatus: harnessStatus(row.exact_state),
-      backgroundAgentCount: this.parentSql.exec<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM substream_directory
-          WHERE substream_id <> '0' AND json_extract(effect_json, '$.backgroundAgent') = 1
-            AND json_extract(effect_json, '$.state') = 'running'
-            AND json_extract(effect_json, '$.archivedAt') IS NULL`,
-      ).one().n,
+      ...this.backgroundAgentCounts(),
       latestAttentionSequenceNumber: row.latest_attention_ordinal,
       unreadTrackingStartSequenceNumber: row.unread_tracking_start_ordinal,
       lastActivityAt: iso(row.last_activity_at),

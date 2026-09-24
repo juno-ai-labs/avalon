@@ -1398,9 +1398,12 @@ export function ConversationSurface({
     id,
     visibleMembers,
   ), [id, visibleMembers, orderedTranscript.data]);
+  // The Channel sends counts for all of its conversations; this composer
+  // shows only the agents started from the conversation it belongs to.
   const backgroundAgents = useQuery({
     queryKey: ['workstream-background-agents', id], queryFn: skipToken,
-    initialData: null as number | null,
+    initialData: null as Record<string, number> | null,
+    select: (counts) => counts === null ? null : counts[substreamId] ?? 0,
   });
   const liveMessageIds = useMemo(() => new Set((transcriptOverlays.data ?? [])
     .filter((overlay) => overlay.provenance.source === 'client_command'
