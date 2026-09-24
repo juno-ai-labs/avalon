@@ -246,6 +246,8 @@ async function admitPendingInput(input: {
   elicitationId?: string;
   /** `system` is what an automation's posted result is admitted as: no author, a `system` canonical role. */
   actor?: "human" | "system";
+  /** `false` admits a message to the room that queues only to keep send order. */
+  startsRun?: boolean;
 }): Promise<{ inputId: string; attachmentId: string; loop: SubstreamLoopStorage }> {
   const inputId = input.inputId ?? "00000000-0000-7000-8000-000000000101";
   const attachmentId = "00000000-0000-7000-8000-000000000102";
@@ -287,7 +289,8 @@ async function admitPendingInput(input: {
   loop.completeInputPreparation({
     inputId,
     preparedTurnId: inputId,
-    mode: actor === "system" ? "queue" : "steer",
+    mode: actor === "system" || input.startsRun === false ? "queue" : "steer",
+    ...(input.startsRun === false ? { startsRun: false } : {}),
     actor,
     authorUserId: actor === "system" ? null : "user-1",
     authorNameSnapshot: actor === "system" ? null : "Ada at admission",
@@ -1791,6 +1794,121 @@ describe("canonical ordered work-stream transcript", () => {
       final_turn_id: null,
       terminalized_at: null,
     });
+  });
+
+  it("holds a steer sent after a waiting room message until that message has landed", async () => {
+    // [steer A, room message B, steer C]. Promoting both steers and then landing
+    // B would read A, C, B — C ahead of a message sent before it.
+    const { transcript, sql, storage } = open();
+    seedPendingInputRoot(sql);
+    const first = await admitPendingInput({ storage });
+    await transcript.commitBindTransition(initializePersistentLoop(), NOW + 2);
+    sql.exec(`UPDATE substream_loops SET bind_state_revision = 1 WHERE id = 1`);
+    const activated = await transcript.activatePendingInput({
+      loopId: "persistent-loop",
+      expectedInputId: first.inputId,
+      expectedLoopRevision: first.loop.loop()!.revision,
+      expectedBindGeneration: 1,
+      expectedBindStateRevision: 1,
+      receipt: {
+        substreamId: "0",
+        runId: "00000000-0000-7000-8000-000000000111",
+        executionEpoch: 1,
+        leaseOwner: "lease-1",
+        leaseExpiresAt: NOW + 100_000,
+        executionContextJson: JSON.stringify({ kind: "test_execution", loopId: "persistent-loop" }),
+        executionPrincipalJson: JSON.stringify({ type: "user", userId: "user-1" }),
+        origin: "human_message",
+        model: "test/model",
+      },
+      enqueueRegionalEffectsInTransaction: () => {},
+      now: NOW + 3,
+    });
+    const assistantTurnId = "persistent-loop:turn:1";
+    const reservation = first.loop.reserveAssistantTurn({
+      executionId: activated.receiptRunId,
+      executionEpoch: 1,
+      leaseOwner: "lease-1",
+      expectedLoopRevision: first.loop.loop()!.revision,
+      receiptRunId: activated.receiptRunId,
+      turnId: assistantTurnId,
+      modelTurnIndex: 1,
+      streamId: "stream-1",
+      now: NOW + 4,
+    });
+    const fence = {
+      executionId: activated.receiptRunId,
+      executionEpoch: 1,
+      leaseOwner: "lease-1",
+    };
+    await transcript.commitBindTransition({
+      kind: "assistant_reserved",
+      loopId: "persistent-loop",
+      generation: 1,
+      stateRevision: 3,
+      turnId: assistantTurnId,
+      modelTurnIndex: 1,
+      transcriptSequence: reservation.reservation.transcript_sequence,
+    }, NOW + 5, { ...fence, expectedBindStateRevision: 2 });
+    await transcript.commitBindTransition({
+      kind: "assistant_accepted",
+      loopId: "persistent-loop",
+      generation: 1,
+      stateRevision: 4,
+      turnId: assistantTurnId,
+      modelTurnIndex: 1,
+      transcriptSequence: reservation.reservation.transcript_sequence,
+      message: { role: "assistant", content: "First answer" },
+    }, NOW + 6, { ...fence, expectedBindStateRevision: 3 });
+
+    const steerA = await admitPendingInput({
+      storage, inputId: "00000000-0000-7000-8000-000000000121",
+      clientMessageId: "client-steer-a", text: "Steer A @Ada", withAttachment: false,
+    });
+    const roomB = await admitPendingInput({
+      storage, inputId: "00000000-0000-7000-8000-000000000131",
+      clientMessageId: "client-room-b", text: "Room B @Ada", withAttachment: false, startsRun: false,
+    });
+    const steerC = await admitPendingInput({
+      storage, inputId: "00000000-0000-7000-8000-000000000141",
+      clientMessageId: "client-steer-c", text: "Steer C @Ada", withAttachment: false,
+    });
+    const settled = await transcript.settlePendingSteersAtStep({
+      loopId: "persistent-loop",
+      ...fence,
+      expectedLoopRevision: steerC.loop.loop()!.revision,
+      expectedStepOrdinal: 0,
+      expectedBindGeneration: 1,
+      expectedBindStateRevision: 4,
+      assistantTurnId,
+      modelTurnIndex: 1,
+      enqueueRegionalEffectsInTransaction: () => {},
+      now: NOW + 9,
+    });
+
+    expect(settled.removedInputIds).toEqual([steerA.inputId, roomB.inputId]);
+    // The step that answers A reads B after it, as something said to the room.
+    const appended = settled.transitions.map((transition) => JSON.stringify(transition.message.content));
+    expect(appended).toHaveLength(2);
+    expect(appended[0]).toContain("Steer A @Ada");
+    expect(appended[1]).toContain("Room B @Ada");
+    expect(appended[1]).toContain("SAID TO THE ROOM");
+    expect(sql.exec<{ input_id: string }>(`SELECT input_id FROM pending_loop_inputs`).toArray())
+      .toEqual([{ input_id: steerC.inputId }]);
+    expect(sql.exec<{ turn_id: string }>(
+      `SELECT turn_id FROM participant_transcript_turns WHERE turn_id IN (?, ?)
+        ORDER BY transcript_sequence`,
+      steerA.inputId,
+      roomB.inputId,
+    ).toArray().map((row) => row.turn_id)).toEqual([steerA.inputId, roomB.inputId]);
+    // Directly under A: nothing lands between them.
+    expect(sql.exec<{ gap: number }>(
+      `SELECT b.transcript_sequence - a.transcript_sequence AS gap
+         FROM participant_transcript_turns AS a, participant_transcript_turns AS b
+        WHERE a.turn_id = ? AND b.turn_id = ?`,
+      steerA.inputId,
+      roomB.inputId,
+    ).one().gap).toBe(1);
   });
 
   it("atomically closes a withheld elicitation tool call before promoting its answer", async () => {
