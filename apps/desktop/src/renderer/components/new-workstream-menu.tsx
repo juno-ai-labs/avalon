@@ -49,13 +49,17 @@ export function NewWorkstreamMenu({
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  // The lock the dialog opened under. The live one follows the sidebar's
+  // selection, and an open dialog must not move to a Space nobody chose.
+  const [openedLock, setOpenedLock] = useState<string | null>(null);
+  const lock = kind === null ? lockedSpaceId ?? null : openedLock;
   // A locked Space is the only choice; one reached only through a shared
   // Channel leaves none, which disables the items.
-  const spaceLocked = lockedSpaceId !== undefined && lockedSpaceId !== null;
+  const spaceLocked = lock !== null;
   const selectableSpaces = useMemo(
     () => spaces.filter((space) => space.reach !== 'through_channel'
-      && (!spaceLocked || space.id === lockedSpaceId)),
-    [lockedSpaceId, spaceLocked, spaces],
+      && (lock === null || space.id === lock)),
+    [lock, spaces],
   );
   useEffect(() => {
     if (kind === null || kind === 'space') return;
@@ -67,6 +71,7 @@ export function NewWorkstreamMenu({
 
   const open = (next: CreationKind): void => {
     setKind(next);
+    setOpenedLock(lock);
     setSpaceId(selectableSpaces[0]?.id ?? '');
     setName('');
     setFailure(null);
