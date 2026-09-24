@@ -77,6 +77,7 @@ function renderComposer(
   return render(
     <Tooltip.Provider>
       <WorkstreamComposer
+        draftKey="test-draft"
         attachments={[]}
         fileInputRef={createRef<HTMLInputElement>()}
         members={members}
@@ -106,6 +107,7 @@ describe('WorkstreamComposer Stop action', () => {
     const composer = (detail: WorkstreamDetail): React.JSX.Element => (
       <Tooltip.Provider>
         <WorkstreamComposer
+          draftKey="test-draft"
           attachments={[]}
           fileInputRef={createRef<HTMLInputElement>()}
           members={[creator]}
@@ -169,6 +171,7 @@ describe('WorkstreamComposer over a remembered conversation', () => {
     render(
       <Tooltip.Provider>
         <WorkstreamComposer
+          draftKey="test-draft"
           attachments={[]}
           fileInputRef={createRef<HTMLInputElement>()}
           members={[creator]}
@@ -213,6 +216,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     render(
       <Tooltip.Provider>
         <WorkstreamComposer
+          draftKey="test-draft"
           api={{ getTranscriptionSocketTicket: vi.fn() }}
           attachments={[]}
           fileInputRef={createRef<HTMLInputElement>()}
@@ -268,6 +272,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     render(
       <Tooltip.Provider>
         <WorkstreamComposer
+          draftKey="test-draft"
           attachments={[attachment]}
           fileInputRef={createRef<HTMLInputElement>()}
           members={[creator]}
