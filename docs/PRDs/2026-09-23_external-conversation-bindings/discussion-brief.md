@@ -278,8 +278,8 @@ above remain the record of the first discussion.
   a full conversation address, and the Slack-only `authoringOrigin` prompt field
   is removed.
 - **Conversation tools.** Runs can list, read, and post to attached Channels and
-  Breakouts. Only the Sidekick's config conversation (substream `"0"`) can
-  attach, and for now attach is the only conversation tool it has.
+  Breakouts. The Sidekick's config conversation (substream `"0"`) has all
+  four tools, and is the only place that can attach.
 
 ## Conversation boundaries
 
