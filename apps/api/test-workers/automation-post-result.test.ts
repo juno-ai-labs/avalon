@@ -363,7 +363,7 @@ beforeEach(async () => {
 });
 
 describe("post_result", () => {
-  it.each([false, true])("reuses command membership for directory reads but refuses revocation before execution (%s)", async (revoked) => {
+  it.each([false, true])("uses model-turn authority for directory reads and refuses the next turn after revocation (%s)", async (revoked) => {
     await runInDurableObject(workspaceStub(), (instance) => {
       const target = instance as unknown as {
         activeWorkspaceMember: (workspaceId: string, userId: string) => Promise<boolean>;
@@ -383,10 +383,12 @@ describe("post_result", () => {
     const [run] = await settledRun(roomConversation());
     expect(run?.status).toBe(revoked ? "failed" : "completed");
     if (revoked) {
+      // The preceding model turn authorized this built-in read; the next
+      // model boundary sees the removal and stops the run.
       expect(await runInDurableObject(roomConversation(), (_instance, state) =>
         state.storage.sql.exec<{ n: number }>(
           "SELECT COUNT(*) AS n FROM tool_effects WHERE tool_name = 'sidekicks_list'",
-        ).one().n)).toBe(0);
+        ).one().n)).toBe(1);
     } else expect(provider.calls.some((call) => call.messages.some((message) =>
       message.role === "tool" && JSON.stringify(message.content).includes("sidekicks")))).toBe(true);
     expect(await runInDurableObject(workspaceStub(), (instance) =>
