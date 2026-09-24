@@ -7,7 +7,9 @@ import {
   type Session,
 } from "@rally/contracts";
 import { SIDELINE_AUTH_CALLBACK_URI } from "@rally/contracts/desktop-deep-link";
-import { RALLY_HEADERS } from "@rally/contracts/http-headers";
+import { CLIENT_CONTRACT_VERSION, RALLY_HEADERS } from "@rally/contracts/http-headers";
+import { socketTicketProtocols } from "@rally/contracts/socket-tickets";
+import { WebSocketUrlSchema } from "@rally/contracts/url-schemas";
 import { workstreamDeepLink } from "@rally/contracts/workstream-links";
 import {
   app,
@@ -25,10 +27,13 @@ import { randomBytes, createHash } from "node:crypto";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { WebSocket } from "ws";
+import { z } from "zod";
 
 import { sidelineHttpOutcome, type SidelineSendResult, type SidelineSession } from "../common/bridge";
 import { initializeSidelineUpdater, sidelineUpdateMenuItem } from "./updater";
 import { sidelineHttpSend, sidelineHttpSendResponse } from "./send-request";
+import { SIDELINE_SOCKET_ORIGIN, watchWorkspaceReach } from "./reach-watch";
 
 const API_BASE_URL = (
   process.env.VITE_API_GLOBAL_URL ?? (app.isPackaged ? "https://api.rallywith.ai" : "http://127.0.0.1:8787")
@@ -36,9 +41,11 @@ const API_BASE_URL = (
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const VISUAL_STATE = app.isPackaged ? undefined : process.env.SIDELINE_VISUAL_STATE;
 const SESSION_FILE = "sideline-session.bin";
+const SocketTicketSchema = z.object({ url: WebSocketUrlSchema, ticket: z.string().min(1) });
 let mainWindow: BrowserWindow | null = null;
 let session: Session | null = null;
 let pendingAuth: { attemptId: string; verifier: string } | null = null;
+let stopReachWatch: (() => void) | null = null;
 
 const visualSession: SidelineSession = {
   user: {
@@ -156,6 +163,7 @@ async function refreshIfNeeded(force = false): Promise<Session> {
   } catch (error) {
     session = null;
     await storeSession(null);
+    restartReachWatch();
     mainWindow?.webContents.send("sideline:session-changed", null);
     throw error;
   }
@@ -173,6 +181,23 @@ async function authenticated(path: string, init: RequestInit = {}): Promise<unkn
     if (!(error instanceof HttpResponseError) || error.status !== 401) throw error;
     return request(await refreshIfNeeded(true));
   }
+}
+
+/**
+ * Follow the current session's workspace socket, and tell the renderer when
+ * its catalog went stale. Called whenever `session` is replaced or cleared.
+ */
+function restartReachWatch(): void {
+  stopReachWatch?.();
+  stopReachWatch = null;
+  if (!session || VISUAL_STATE) return;
+  stopReachWatch = watchWorkspaceReach({
+    ticket: async () => SocketTicketSchema.parse(await authenticated("/workspace/socket", {
+      headers: { [RALLY_HEADERS.CLIENT_CONTRACT]: String(CLIENT_CONTRACT_VERSION) },
+    })),
+    open: (url, ticket) => new WebSocket(url, socketTicketProtocols(ticket), { origin: SIDELINE_SOCKET_ORIGIN }),
+    onStale: () => mainWindow?.webContents.send("sideline:catalog-stale"),
+  });
 }
 
 async function chooseWorkspace(identity: Session): Promise<Session> {
@@ -213,6 +238,7 @@ async function chooseWorkspace(identity: Session): Promise<Session> {
 async function finishSignIn(identity: Session): Promise<void> {
   session = await chooseWorkspace(identity);
   await storeSession(session);
+  restartReachWatch();
   mainWindow?.webContents.send("sideline:session-changed", publicSession(session));
 }
 
@@ -223,6 +249,7 @@ async function beginSignIn(): Promise<void> {
     }));
     session = development;
     await storeSession(session);
+    restartReachWatch();
     mainWindow?.webContents.send("sideline:session-changed", publicSession(session));
     return;
   }
@@ -311,6 +338,7 @@ else {
     app.setAsDefaultProtocolClient("sideline");
     session = VISUAL_STATE ? null : await loadSession();
     mainWindow = createWindow();
+    restartReachWatch();
     const updateHandle = initializeSidelineUpdater({
       isPackaged: app.isPackaged,
       isReleaseBuild: process.env.SIDELINE_RELEASE_BUILD === "true",
@@ -351,6 +379,7 @@ ipcMain.handle("sideline:sign-out", async (event) => {
   }).catch(() => undefined);
   session = null;
   await storeSession(null);
+  restartReachWatch();
   mainWindow?.webContents.send("sideline:session-changed", null);
 });
 ipcMain.handle("sideline:catalog", async (event) => {

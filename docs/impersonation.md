@@ -16,6 +16,7 @@ basis.
 | `apps/api/src/routes/sideline.ts` | The authenticated catalog and new-message HTTP boundary. |
 | `apps/api/src/services/demo-preparation.ts` | Creates the complete ordered relationship set for the people seated by one demo operation. |
 | `apps/sideline/` | Narrow Electron host: Google sign-in, encrypted operator session, typed IPC, card state, and native handoff to Rally. |
+| `apps/sideline/src/main/reach-watch.ts` | Holds the operator's workspace socket and reports the catalog stale on a `workspace_reach_changed` event or a reconnect. |
 | `apps/sideline/scripts/stamp-release.mjs` | Replans on a moved `main` tip before stamping and emits the final commit and API gate. |
 | `.github/workflows/release-sideline-macos.yml` | Frozen-commit verification, Developer ID signing, Apple notarization, artifact retention, and R2 publication. |
 | `packages/contracts/src/impersonation.ts` | Relationship, catalog, and send wire contracts. |
@@ -37,7 +38,19 @@ sandboxed renderer. The catalog service returns active represented members and
 the Channels and Breakouts each represented member can currently see.
 
 The catalog always includes the signed-in operator through their ordinary
-membership and adds other participants from active relationships. When the
+membership and adds other participants from active relationships.
+
+The catalog follows membership without polling. Sideline's main process holds
+one workspace socket for the operator, presenting the `app://sideline` Origin.
+When anyone in the catalog joins or leaves a Channel or Breakout, WorkspaceDO
+sends that socket `workspace_reach_changed` naming the person. It sends only to
+the person's own sockets and to operators with an active relationship to them
+([`realtime-sockets.md`](realtime-sockets.md)). The renderer then rereads the
+catalog in the background. The cards stay on screen during the read. A burst of
+events runs one read, plus one more if events arrived while it ran. Nothing is
+replayed, so every subscribe answer after the first also marks the catalog
+stale. A card whose participant or destination left the catalog keeps its
+selection, says why, and cannot send. When the
 operator selects themselves, Sideline calls the generic authenticated
 conversation-message API; no impersonation relationship or dual-principal audit
 is involved. A represented send still enters the regional impersonation
@@ -122,8 +135,10 @@ non-macOS, and non-arm64 builds never contact the production feed.
   an authorization fact already owned by audit.
 - The same logical retry keeps the same client message id, so the existing
   admission receipt is the only duplicate-send authority.
-- The sidecar never observes post-admission work. Polling or sockets would make
-  it a second conversation client and invite it to infer harness outcomes.
+- The sidecar never observes post-admission work. It opens no conversation feed
+  and reads nothing from its workspace socket but membership nudges; a feed
+  would make it a second conversation client and invite it to infer harness
+  outcomes.
 
 ## Boundary
 
@@ -150,7 +165,14 @@ reported as unknown and retains the same idempotency key. Existing message-size
 and admission limits apply unchanged. There is no sidecar-specific card,
 frequency, concurrency, timeout, or session limit.
 
-Catalog failure leaves drafts visible but unsendable. Sign-out and process exit
+Catalog failure leaves drafts visible but unsendable. A failed background
+reread keeps the catalog already on screen. The next nudge or reconnect reads
+again. Changes that alter what a person can see without a join or leave are
+not nudged: a Channel's scope change, a new workspace-scoped Channel, an
+archive, or a relationship grant or revocation. Those appear on the next
+reread or sign-in. A local `.env.local` written before `app://sideline` joined
+`ALLOWED_ORIGINS` needs it added, or the socket is refused and the catalog
+refreshes only on launch. Sign-out and process exit
 discard drafts and direct results. A successful direct response is final from
 Sideline's perspective even when later addressing or harness work fails.
 
@@ -160,14 +182,19 @@ Sideline's perspective even when later addressing or harness work fails.
 WorkspaceDO migrations and proves direction, self-pairs, idempotent setup, and
 revocation in workerd. Demo preparation tests cover the producer phase. API
 tests cover access, membership, relationship, destination, audit, self-send, and
-cross-participant admission boundaries. Sideline tests cover stable-versus-unknown
+cross-participant admission boundaries.
+`apps/api/test-workers/workspace-reach-changed.test.ts` proves on real sockets
+that a Channel or Breakout join or leave reaches the person and their
+operator, and nobody else, and that an unread-only projection stays quiet.
+Sideline tests cover the watcher's subscribe, reconnect, and revocation
+handling, the stale-selection notices, stable-versus-unknown
 retry classification, the auto-update host policy, and the shared composer's
 empty and validation states; its build covers the isolated main, preload, and
 renderer bundles. Release-tooling tests cover update-feed structure and the
 publication order through in-memory R2 and public-cache adapters. Run:
 
 ```bash
-pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-impersonation.test.ts
+pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-impersonation.test.ts test-workers/workspace-reach-changed.test.ts
 pnpm --filter @rally/api exec vitest run test/impersonation-service.test.ts test/demo-operations.test.ts
 pnpm --filter @rally/sideline test
 pnpm --filter @rally/sideline build
@@ -203,6 +230,36 @@ operator key. It registers only `sideline:`, while **Open in Rally** emits the
 existing `rallywithai:` deep link for the main app.
 
 ## Changelog
+
+### 2026-09-24 — Sideline's catalog follows membership changes
+
+**What changed:** WorkspaceDO now sends `workspace_reach_changed` when a
+directory projection flips a person's participation in a Channel or Breakout.
+It sends the event only to that person's sockets and to operators with an
+active relationship to them. Sideline holds the operator's workspace socket from
+its main process and rereads the catalog in the background on that event or
+after a reconnect. The composer says why a card's chosen participant or
+destination can no longer send.
+
+**Why:** The participant and destination dropdowns reflected sign-in time.
+When someone was added to a Breakout mid-demo, the operator had to restart
+Sideline to send there. A removal only showed up as a rejected send.
+
+**Considered and rejected:** Reusing the `workstream_directory` sync topic is
+broadcast to every socket on every mention and participant notification. It
+says nothing about Breakouts or about people the operator is not. Each hit would
+trigger a catalog walk across every destination of every participant. A new
+sync topic would fail older desktops' subscribe answer, because the topic enum
+is closed. Polling contradicts the latency goal and adds a timer number nobody
+set. Naming the conversation in the event would disclose a membership that the
+receiver might not be able to list.
+
+**Consequences:** The event is a platform signal about a person, not a Sideline
+endpoint. Any client may listen for it, and the Rally desktop currently
+ignores it. It is not durable, so listeners must reread on reconnect.
+`ALLOWED_ORIGINS` must admit `app://sideline`. Scope changes, new public
+Channels, and relationship changes still wait for the next reread. Nudging on
+them means raising the same event at their own writers.
 
 ### 2026-09-23 — Replan a Sideline stamp after main moves
 
