@@ -189,6 +189,44 @@ liveness callback. That later fence occurs after `agent_inference_prepared`; its
 wait remains in `request_to_inference_start_ms`, not this initial-authority
 field or `total_ms`.
 
+The first provider request also emits `agent_inference_start_breakdown`, joined
+to `agent_inference_started` by `request_id` and `inference_request_id`. It
+records `run_started_at`, `preparation_finished_at`, and
+`provider_request_hook_at` for a local timeline, then `post_prepared_ms` plus the awaited scope persistence, activation-hint
+wait and load, initial activation total and summed authorize/prepare/persist
+durations, model-routing wait and load, first lease renewal, response-activity
+write, and the `before_model` lease and authority checks. Activation requested
+and persisted counts distinguish an empty hint set from serial plugin setup;
+authorization-check, dynamic-tool-load, and activation-write counts expose
+which operations were actually attempted. `initial_activation_details` retains
+the authorization, preparation, and persistence durations for each requested
+canonical plugin ID, including nested connector-health and durable-write
+durations, so one slow item in the serial activation loop is identifiable.
+`tool_surface_hash_ms` precedes scope persistence; `scope_ownership_ms`,
+`scope_hash_ms`, and `scope_write_ms` divide that persistence call.
+`activation_run_write_ms` and `activation_hint_write_ms` divide its two durable
+writes; for credential plugins, `activation_connection_context_ms`,
+`activation_provider_health_ms`, and `activation_health_verdict_ms` divide
+authorization. `before_model_principal_ms` and `before_model_identity_ms`
+separate the D1 membership and Channel identity reads; conversation and
+automation authority fields appear only when that path runs. The forced lease
+renewals expose their attempt and persistent-loop parts as
+`liveness_inference_start_*_ms` and `liveness_before_model_*_ms`.
+`bind_*_ms` fields time plugin runtime creation, resident-context render,
+skill setup and restored-plugin activation, projection setup and validation,
+activation boundary, active-plugin reauthorization, provider resident-context
+render and transcript validation, system projection and provider-input hash,
+`before_model` callback, provider-boundary write, assistant reservation and Bind
+transition, request-message conversion, route pricing and planning, and route
+preparation. `context_catalog_source`
+is `provided`, `cache`, `inflight`, `fetch`, `fallback`, or `skipped`; a catalog
+fetch also exposes response, body, envelope parse, and per-model entry parse
+durations. The row is emitted synchronously
+at the first provider-request hook, with no telemetry await. It is diagnostic:
+loader durations can overlap their waits, and any unaccounted portion of
+`post_prepared_ms` is work between named awaited stages, not proof of one
+particular dependency.
+
 Durations come from `Date.now()`, which workerd pins for the duration of a
 synchronous run and advances only across I/O — a Spectre mitigation, and the
 same reason Cloudflare documents its own spans as sometimes reporting `0 ms` for
@@ -756,6 +794,27 @@ destination is account configuration; the **attachment is per Worker**, through
 a Worker exports when its own config names one.
 
 ## Changelog
+
+### 2026-09-23 — Measure the remaining first-dispatch waits
+
+**What changed:** The first provider request now emits one correlated breakdown
+of scope, activation, routing, liveness, authority, catalog, and Bind boundary
+timings, with activation counts and catalog source.
+
+**Why:** A production time-question run spent 3,031 ms after context/tools were
+ready and another 3,749 ms after preparation was logged. The existing aggregate
+milestones could not identify which waits owned either interval, so a 200 ms
+target for each phase could not be tested against individual dependencies.
+
+**Considered and rejected:** A log or remote telemetry call around every await
+would add work to the path being measured and require many records to diagnose
+one run. The synchronous first-dispatch row keeps the run joinable by its
+existing IDs and leaves authorization and durable ordering unchanged.
+
+**Consequences:** The row applies to the first provider request of the first
+durable attempt. Its durations are observational wall-clock deltas; workerd's
+clock behavior and overlapping loaders prevent treating their sum as an exact
+partition of the user-visible request.
 
 ### 2026-09-18 — Resolve aggregate inference preparation tails into dependency timings
 
