@@ -20,6 +20,7 @@ import type {
 import type { DesktopSettingsSection } from './settings';
 import type { ThemeChoice } from './themes';
 import type { EmbeddedBrowserBounds, EmbeddedBrowserCommand, EmbeddedBrowserResult, EmbeddedBrowserState } from './embedded-browser';
+import type { BrowserImportContext } from './browser-import';
 
 export type RallyRegion = Region;
 
@@ -361,12 +362,6 @@ export interface DesktopRestorableArtifactWindow {
 }
 
 export interface RallyDesktopBridge {
-  listLocalClaudeSessions: () => Promise<Array<{ id: string; kind: 'chat' | 'cowork'; title: string; updatedAt: number; sourceSessionId: string }>>;
-  readLocalClaudeSession: (id: string) => Promise<{ provider: 'claude' | 'claude_code'; text: string }>;
-  listLocalClaudeCodeSessions: () => Promise<Array<{ id: string; title: string; project: string; updatedAt: number }>>;
-  readLocalClaudeCodeSession: (id: string) => Promise<string>;
-  listLocalCodexSessions: () => Promise<Array<{ id: string; title: string; updatedAt: number }>>;
-  readLocalCodexSession: (id: string) => Promise<string>;
   getRuntimeConfig: () => Promise<RuntimeConfig>;
   /** Whether any Rally window currently owns application focus. */
   getApplicationForegroundState: () => Promise<boolean>;
@@ -465,6 +460,13 @@ export interface RallyDesktopBridge {
   setEmbeddedBrowserBounds: (bounds: EmbeddedBrowserBounds) => Promise<void>;
   setEmbeddedBrowserVisible: (visible: boolean) => Promise<void>;
   onEmbeddedBrowserState: (listener: (state: EmbeddedBrowserState) => void) => () => void;
+  /** Opens, or raises, the window for importing a signed-in Claude or ChatGPT conversation. */
+  openBrowserImport: (context: BrowserImportContext) => Promise<void>;
+  /** The import window's Spaces, as the main window last offered them. */
+  getBrowserImportContext: () => Promise<BrowserImportContext | null>;
+  onBrowserImportContextChanged: (listener: () => void) => () => void;
+  /** The import window's hand-off: the main window opens the Channel and this window closes. */
+  completeBrowserImport: (workstreamId: string) => Promise<void>;
   /**
    * Renders one of Rally's messages as a picture or a PDF and offers to save
    * it. Resolves with `saved: false` when the person dismissed the dialog, and

@@ -45,7 +45,7 @@ the source credentials, memory, authoring conversation, or run history.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/main/index.ts` | Window creation, sandbox and `contextIsolation` flags, navigation denial, IPC handler registration. |
-| `apps/desktop/src/main/embedded-browser.ts` | Isolated web contents for the local right-rail browser; its lifecycle and command boundary are documented in [`embedded-browser.md`](embedded-browser.md). |
+| `apps/desktop/src/main/embedded-browser.ts` | Isolated web contents for the local browser in the right rail and the import window; its lifecycle and command boundary are documented in [`embedded-browser.md`](embedded-browser.md). |
 | `apps/sideline/src/main/index.ts`, `apps/sideline/src/preload/index.ts` | The internal represented-messaging host, encrypted operator session, dedicated OAuth target, sender-confined IPC, and narrow renderer bridge. The relationship and audit boundary is documented in [`impersonation.md`](impersonation.md). |
 | `apps/desktop/src/preload/index.ts` | The whole renderer-facing API. Nothing else crosses. |
 | `apps/desktop/src/common/realtime-socket-validation.ts`, `apps/desktop/src/main/realtime-socket-ipc.ts` | Shared broker channel/event validation and the conversation-window socket IPC boundary. |
@@ -116,6 +116,13 @@ same as desktop.
   OAuth opens in the system browser. The embedded browser's isolated web
   contents handle website links and redirects within their own session, with
   non-web destinations rejected.
+- The main window and the import window may drive their own browser tabs,
+  including page script and DevTools commands; no other window may. Those
+  commands act with the person's website sign-ins, so a script injected into
+  either renderer would reach every site signed in there. The conversation
+  readers keep provider credentials inside the visited page, with one exception:
+  copying a claude.ai Artifact passes that Artifact's short-lived asset token
+  through the import window's renderer. See [`session-import.md`](session-import.md).
 - A strict Content Security Policy allows bundled content and the configured
   regional API only.
 - Markdown treats model, member, email, and attachment text as untrusted.

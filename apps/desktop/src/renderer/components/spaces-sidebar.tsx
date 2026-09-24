@@ -1,7 +1,6 @@
 import { IconArchive, IconRestore } from '@tabler/icons-react';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import type { ChannelImportInput } from './new-workstream-menu';
 import type { ContainerOrder, PersonalOrder, SpaceSummary } from '@rally/contracts';
 import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
 import { SidebarNavigationRowContent } from '@rally/ui/components/navigation';
@@ -59,7 +58,6 @@ interface SpacesSidebarProps {
   onWidthChange: (width: number) => void;
   onCreateChannel: (input: { name: string; spaceId: string }) => Promise<void>;
   onCreateSpace: (name: string) => Promise<void>;
-  onImportChannel: (input: ChannelImportInput) => Promise<void>;
   onOpenSearch?: () => void;
   onOrderPreviewChange: (order: string[] | null) => void;
   onArchive?: ((spaceId: string) => Promise<void>) | undefined;
@@ -106,7 +104,6 @@ export function SpacesSidebar({
   onWidthChange,
   onCreateChannel,
   onCreateSpace,
-  onImportChannel,
   onOpenSearch,
   onOrderPreviewChange,
   onArchive,
@@ -290,7 +287,6 @@ export function SpacesSidebar({
             spaces={spaces}
             onCreateChannel={onCreateChannel}
             onCreateSpace={onCreateSpace}
-            onImportChannel={onImportChannel}
           >
             <button
               aria-hidden={collapsed}
@@ -312,7 +308,6 @@ export function SpacesSidebar({
             spaces={spaces}
             onCreateChannel={onCreateChannel}
             onCreateSpace={onCreateSpace}
-            onImportChannel={onImportChannel}
           >
             <button
               aria-label="New channel or space"
