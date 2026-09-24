@@ -326,6 +326,9 @@ export function SpacesSidebar({
         {!readOnly && ready && spaces.length > 1 && <p className="sr-only" id="spaces-reorder-help">
           Hold Alt and press the Up or Down Arrow key to reorder a space.
         </p>}
+        {/* Right-clicking empty space in the Space list offers a new Space. */}
+        <NewWorkstreamMenu disabled={readOnly || !ready} offer="space" trigger="context"
+          onCreateChannel={onCreateChannel} onCreateSpace={onCreateSpace}>
         <SidebarScroll
           as="nav"
           aria-describedby={!readOnly && ready && spaces.length > 1 ? 'spaces-reorder-help' : undefined}
@@ -502,6 +505,7 @@ export function SpacesSidebar({
           </>}
           </SidebarList>
         </SidebarScroll>
+        </NewWorkstreamMenu>
         <div className="spaces-sidekick-slot" ref={sidekickSlotRef} />
         <SidebarHorizontalLine className="spaces-sidebar-footer-line" />
         <SidebarCollapseFooter
