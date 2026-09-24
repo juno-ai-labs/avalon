@@ -292,6 +292,34 @@ async function publishBreakout(
   await deliverParentEffects(env, channelObject(workstreamId));
 }
 
+/** Feed the page's WorkspaceDO authority without racing the parent's alarm. */
+async function publishBreakoutProjection(
+  workstreamId: WorkstreamId,
+  substreamId: string,
+  effects: readonly ConversationEffect[],
+  sourceVersion = 1,
+): Promise<void> {
+  await workspace().applyWorkstreamDirectoryEffects({
+    workspaceId: WORKSPACE_ID,
+    envelopes: effects.map((effect) => ParentEffectEnvelopeSchema.parse({
+      kind: "parent_effect",
+      contractVersion: 1,
+      region: "global",
+      workspaceId: WORKSPACE_ID,
+      parentKind: "workstream",
+      parentId: workstreamId,
+      substreamId,
+      generation: 1,
+      messageId: messageId(),
+      partitionKey: effect.kind === "directory_user" ? `user:${effect.userId}` : "common",
+      sourceVersion,
+      requiredProjectionVersion: null,
+      payloadHash: conversationEffectHash(effect),
+      effect,
+    })),
+  });
+}
+
 /**
  * Advance a Channel object's authority generation, the way an authority
  * transfer or an object restore does.
@@ -1061,13 +1089,13 @@ describe("space dashboard conversation page", () => {
     // row the page can ever hold is the breakout under test.
     await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
     await place(spaceId, CHANNEL_A);
-    await publishBreakout(CHANNEL_A, BREAKOUT_ONE, [
+    await publishBreakoutProjection(CHANNEL_A, BREAKOUT_ONE, [
       breakoutCommonEffect("Pricing", { state: "idle" }),
       viewerEffect(OWNER) as ConversationEffect,
     ]);
 
     await walkPredicate(spaceId, async (testCase, version) => {
-      await publishBreakout(
+      await publishBreakoutProjection(
         CHANNEL_A,
         BREAKOUT_ONE,
         [
