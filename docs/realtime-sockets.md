@@ -681,8 +681,9 @@ WorkspaceDO now watches for it. Every socket must send its first frame within
 desktop sends `subscribe` on open and abandons a socket after 65 s without a
 pong). The deadline is a derived alarm candidate, and accepting a socket lowers
 the alarm to it first, before the socket is accepted, so a failure there cannot
-leave an accepted socket no client holds. When an alarm finds a socket still
-silent past its deadline, **and** the object has heard from no socket at all
+leave an accepted socket no client holds. The check runs at the start of every
+alarm, before the maintenance deferral can end it early. When an alarm finds a
+socket still silent past its deadline, **and** the object has heard from no socket at all
 since that socket was accepted, it logs `workspace_socket_first_frame_missed` at
 error level (counts and ages only) and calls `state.abort()`. The abort drops
 every socket (clients see `1006` and reconnect) and the platform starts a fresh
@@ -737,7 +738,7 @@ receipt.
 | `apps/api/test/workstream-socket-warm.test.ts` | `pnpm --filter @rally/api test` | `ConversationService.socketTicket`: the parent's viewer decision gating the ticket, the parent kind and archive decision on it, and the deferred main-substream warm-up. |
 | `apps/api/test-workers/socket-subprotocol-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | The runtime constraint, on real workerd. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, and SubstreamAgent attachments/snapshots; authoritative workspace directory application/page/resource queries; eviction; native-RPC envelopes; workspace protocol/session/access close-code separation and payload-free diagnostics; truthful bounded transcript ranges; indivisible-turn payload-free envelopes; revocation; compaction recovery; queued-run coalescing; and ticket replay on real workerd. |
-| `apps/api/test-workers/workspace-socket-first-frame.test.ts`, `apps/api/test/socket-first-frame-watch.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts`; `pnpm --filter @rally/api test` | The first-frame watch, through the real accept and alarm paths: a silent socket on a silent object resets it, logs, and is dropped; each of the three "still hearing sockets" signals alone prevents a reset, including after a hibernation wake; accepting pulls the alarm in. |
+| `apps/api/test-workers/workspace-socket-first-frame.test.ts`, `apps/api/test/socket-first-frame-watch.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts`; `pnpm --filter @rally/api test` | The first-frame watch, through the real accept and alarm paths: a silent socket on a silent object resets it, logs, and is dropped, also while the region is closed for maintenance; each of the three "still hearing sockets" signals alone prevents a reset, including after a hibernation wake; accepting pulls the alarm in. |
 | `apps/api/test-workers/message-to-output-pipeline.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Fresh message admission and its private receipt on the authenticated SubstreamAgent socket, stable turn identity after hibernation/resend, and the message-to-provider pipeline on real workerd. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx`, `workstream-state-store.test.ts` | `pnpm --filter @rally/desktop test` | One persistent workspace connection, truthful terminal errors for access/session/protocol closes, correlated directory pages/pagination, immediate offline page rejection, waterline resume, stale/duplicate rejection across both sockets, independent common/viewer ordering, and idempotent command resend. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.test.tsx` | `pnpm --filter @rally/desktop test` | Complete aggregate snapshots, stale waterline rejection, nullable-field clearing, revocation, and reconnect. |
@@ -785,11 +786,9 @@ answered, no later socket speaking, no socket callback. Finding any, it logs
 `workspace_socket_first_frame_missed` and calls `state.abort()`. Accepting a
 socket first lowers the alarm to that socket's deadline.
 
-**Why:** On 2026-09-23 the Juno Labs object stopped delivering every
-hibernatable socket event, pings included, while alarms, RPC, and upgrades kept
-working. Desktops without a warm cache sat at "Opening channels…" for six hours
-until a deploy restarted the object. Nothing alerted, because nothing failed.
-The alarm is the one path still running in that state.
+**Why:** the 2026-09-23 incident in "An instance that stops hearing its
+sockets" above: nothing failed, so nothing alerted, and only a deploy cleared
+it. The alarm is the one path still running in that state.
 
 **Considered and rejected:** A client-side first-sync timeout only reconnects,
 and every reconnect lands on the same stuck instance. Closing the silent sockets
