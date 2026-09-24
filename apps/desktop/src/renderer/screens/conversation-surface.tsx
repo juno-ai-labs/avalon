@@ -1003,6 +1003,7 @@ export function ConversationSurface({
   const railScope = useUiStore((state) => state.railScope);
   const setRailLeaving = useUiStore((state) => state.setRailLeaving);
   const setRailScope = useUiStore((state) => state.setRailScope);
+  const setRailVariant = useUiStore((state) => state.setRailVariant);
   const setRailWidth = useUiStore((state) => state.setRailWidth);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -1324,6 +1325,9 @@ export function ConversationSurface({
   const railOpen = (railVariant === 'browser' || Boolean(artifactSidebar)) && storeRailOpen && railScope === id;
   useEffect(() => {
     if (restoredPanelKey.current !== artifactPanelKey) return;
+    // A link opened in the browser covers the artifact panel rather than
+    // closing it, so the saved panel stays for when the browser closes.
+    if (railVariant === 'browser' && artifactSidebar) return;
     writeLayout(artifactPanelKey, railOpen && railVariant === 'context' && artifactSidebar
       ? JSON.stringify({ resourceId: artifactSidebar.resourceId,
         workstreamScoped: artifactSidebar.workstreamScoped === true }) : null);
@@ -2766,7 +2770,7 @@ export function ConversationSurface({
 
       {railVariant === 'browser' && (railOpen || railLeaving) && window.rally && <EmbeddedBrowserRail
         leaving={railLeaving}
-        onClose={closeRail}
+        onClose={artifactSidebar ? () => setRailVariant('context') : closeRail}
         onResize={setRailWidth}
         width={railWidth}
       />}
