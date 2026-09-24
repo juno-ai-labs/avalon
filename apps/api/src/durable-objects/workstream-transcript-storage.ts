@@ -1450,6 +1450,13 @@ export class WorkstreamTranscriptStorage {
       ? this.pendingSteersForCommit()
       : [];
     const prepared = await this.preparePendingBindAppends(derived.next, pending);
+    // What lands under the steers is read by the step that answers them.
+    const withoutRunInputs = beforeLoop.stop_requested_at === null
+      ? this.inputsWithoutRunLandingAfter(prepared.map((append) => append.pending.input_id))
+      : [];
+    const withoutRunBind = withoutRunInputs.length > 0
+      ? await this.prepareInputsWithoutRunSteps(prepared.at(-1)?.next ?? derived.next, withoutRunInputs)
+      : null;
 
     const result = this.storage.transactionSync(() => {
       const loop = this.assertStepSettlementFence(input, now);
@@ -1526,7 +1533,16 @@ export class WorkstreamTranscriptStorage {
         turns.push(turn);
         deliveryEffects.push(delivered.deliveryEffect);
       }
-      const nextBindStateRevision = committedPrepared.at(-1)?.next.stateRevision
+      // What waited behind the steers just delivered lands with them, before
+      // the next model step can write a turn between them.
+      const committedWithoutRunBind = stop ? null : withoutRunBind;
+      const withoutRun = committedWithoutRunBind
+        ? this.deliverPreparedInputsWithoutRunInTransaction(withoutRunInputs, committedWithoutRunBind.steps, now)
+        : this.deliverLeadingInputsWithoutRunInTransaction(now);
+      turns.push(...withoutRun.turns);
+      deliveryEffects.push(...withoutRun.deliveryEffects);
+      const nextBindStateRevision = committedWithoutRunBind?.next.stateRevision
+        ?? committedPrepared.at(-1)?.next.stateRevision
         ?? committedDerived.next.stateRevision;
       // A safe step ends Bind's current model/tool iteration, not the durable
       // execution receipt. Keep ownership until terminal receipt publication
@@ -1569,16 +1585,20 @@ export class WorkstreamTranscriptStorage {
           ...committedDerived.steps.map((step) => step.transition),
           ...committedPrepared.flatMap((append) =>
             append.steps.map((step) => step.transition)),
+          ...committedWithoutRunBind?.steps.map((step) => step.transition) ?? [],
         ],
         turns,
-        removedInputIds: committedPrepared.map((append) => append.pending.input_id),
+        removedInputIds: [
+          ...committedPrepared.map((append) => append.pending.input_id),
+          ...withoutRun.removedInputIds,
+        ],
         deliveryEffects,
         deliveredDerivedInputKeys: committedDerived.keys,
         stop,
         loop: committedLoop,
       };
     });
-    const committedProjection = prepared.at(-1)?.next
+    const committedProjection = withoutRunBind?.next ?? prepared.at(-1)?.next
       ?? (derived.steps.length > 0 ? derived.next : undefined);
     if (committedProjection && !result.stop) {
       this.bindProjectionCache.set(input.loopId, committedProjection);
@@ -1700,6 +1720,14 @@ export class WorkstreamTranscriptStorage {
     if (!initializesFromCanonicalHistory && !prepared) {
       throw new Error("substream_loop_activation_input_missing");
     }
+    // Sent before this run starts, so this run reads it. A bootstrap reads the
+    // canonical history up to the activated turn instead, and the next input's
+    // gap-fill carries these.
+    const withoutRunInputs = prepared ? this.inputsWithoutRunLandingAfter([pending.input_id]) : [];
+    const withoutRunBind = prepared
+      ? await this.prepareInputsWithoutRunSteps(prepared.next, withoutRunInputs)
+      : null;
+    const committedProjection = withoutRunBind?.next ?? prepared?.next ?? null;
     this.validateActivationReceipt(input.receipt, now);
 
     const result = this.storage.transactionSync(() => {
@@ -1786,7 +1814,7 @@ export class WorkstreamTranscriptStorage {
             AND bind_state_revision = ?
           RETURNING loop_id, revision`,
         cycleOrdinal,
-        prepared?.next.stateRevision ?? 0,
+        committedProjection?.stateRevision ?? 0,
         input.receipt.runId,
         input.receipt.executionEpoch,
         input.receipt.leaseOwner,
@@ -1807,26 +1835,33 @@ export class WorkstreamTranscriptStorage {
         || activated.revision !== input.expectedLoopRevision + 1) {
         throw new Error("substream_loop_revision_mismatch");
       }
+      const turn = this.participantTurn(pending.prepared_turn_id);
+      // What was sent behind the activated input without addressing Rally
+      // lands directly under it, ahead of anything the new run writes.
+      const withoutRun = withoutRunBind
+        ? this.deliverPreparedInputsWithoutRunInTransaction(withoutRunInputs, withoutRunBind.steps, now)
+        : this.deliverLeadingInputsWithoutRunInTransaction(now);
+      const deliveryEffects = [delivered.deliveryEffect, ...withoutRun.deliveryEffects];
       invokeSynchronousEffectEnqueue(
         input.enqueueRegionalEffectsInTransaction,
-        [delivered.deliveryEffect],
+        deliveryEffects,
       );
-      const turn = this.participantTurn(pending.prepared_turn_id);
       const committedLoop = loopStorage.loop();
       if (!turn || turn.attentionOrdinal !== delivered.attentionOrdinal || !committedLoop) {
         throw new Error("pending_input_activation_hydration_failed");
       }
       return {
         outcome: "activated" as const,
-        transitions: prepared ? prepared.steps.map((step) => step.transition) : [],
-        turns: [turn],
-        removedInputIds: [pending.input_id],
-        deliveryEffects: [delivered.deliveryEffect],
+        transitions: [...prepared?.steps ?? [], ...withoutRunBind?.steps ?? []]
+          .map((step) => step.transition),
+        turns: [turn, ...withoutRun.turns],
+        removedInputIds: [pending.input_id, ...withoutRun.removedInputIds],
+        deliveryEffects,
         loop: committedLoop,
         receiptRunId: input.receipt.runId,
       };
     });
-    if (prepared) this.bindProjectionCache.set(input.loopId, prepared.next);
+    if (committedProjection) this.bindProjectionCache.set(input.loopId, committedProjection);
     return result;
   }
 
@@ -3816,7 +3851,22 @@ export class WorkstreamTranscriptStorage {
     insertPreparedTranscriptFact(this.sql, fact, now);
   }
 
+  /**
+   * The steers a safe step may promote: those ahead of the first queued
+   * message that starts no run. That message was sent before any steer behind
+   * it, and it lands only after this step's promotions, so a steer past it
+   * would be read — by the room and by the model — before it.
+   */
   private pendingSteersForCommit(): PendingLoopInputRow[] {
+    const steers: PendingLoopInputRow[] = [];
+    for (const pending of this.visibleSteersAndInputsWithoutRun()) {
+      if (pending.starts_run === 0) break;
+      steers.push(pending);
+    }
+    return steers;
+  }
+
+  private visibleSteersAndInputsWithoutRun(): PendingLoopInputRow[] {
     return this.sql.exec<PendingLoopInputRow>(
       `SELECT input_id, loop_id, input_sequence, prepared_turn_id,
               admitted_after_transcript_sequence, mode, actor, author_user_id,
@@ -3825,9 +3875,9 @@ export class WorkstreamTranscriptStorage {
               prepared_payload_audience, prepared_payload_media_type,
               prepared_payload_json, prepared_payload_sha256,
               prepared_payload_byte_length, bind_payload_json, provenance_json, authorization_json,
-              attachments_json, mentions_json, created_at, updated_at
+              attachments_json, mentions_json, starts_run, created_at, updated_at
          FROM pending_loop_inputs
-        WHERE mode = 'steer'
+        WHERE (mode = 'steer' OR starts_run = 0)
           AND NOT EXISTS (
             SELECT 1 FROM pending_loop_input_mailbox preparing
              WHERE preparing.loop_id = pending_loop_inputs.loop_id
@@ -3847,9 +3897,10 @@ export class WorkstreamTranscriptStorage {
               prepared_payload_audience, prepared_payload_media_type,
               prepared_payload_json, prepared_payload_sha256,
               prepared_payload_byte_length, bind_payload_json, provenance_json, authorization_json,
-              attachments_json, mentions_json, created_at, updated_at
+              attachments_json, mentions_json, starts_run, created_at, updated_at
          FROM pending_loop_inputs
-        WHERE NOT EXISTS (
+        WHERE starts_run = 1
+          AND NOT EXISTS (
             SELECT 1 FROM pending_loop_input_mailbox preparing
              WHERE preparing.loop_id = pending_loop_inputs.loop_id
                AND preparing.state = 'preparing'
@@ -3857,6 +3908,169 @@ export class WorkstreamTranscriptStorage {
           )
         ORDER BY input_sequence`,
     ).toArray();
+  }
+
+  /**
+   * The inputs at the head of the visible queue that start no run.
+   *
+   * Each waited only for what was sent before it, so the moment nothing is
+   * ahead it lands. Nothing about it touches Bind: it is a canonical turn like
+   * any message the room did not address to Rally, and the gap-fill appends it
+   * to the model's context ahead of the next input that does.
+   */
+  private leadingInputsWithoutRun(): PendingLoopInputRow[] {
+    const leading: PendingLoopInputRow[] = [];
+    for (const pending of new SubstreamLoopStorage(this.storage).pendingInputs()) {
+      if (pending.starts_run !== 0) break;
+      leading.push(pending);
+    }
+    return leading;
+  }
+
+  /** Whether an input that starts no run can land now. */
+  hasLeadingInputWithoutRun(): boolean {
+    return new SubstreamLoopStorage(this.storage).visibleHeadStartsNoRun();
+  }
+
+  /**
+   * The inputs that start no run and will lead the queue once `landingIds`
+   * are delivered: what lands in the same transaction, right under them.
+   */
+  private inputsWithoutRunLandingAfter(landingIds: readonly string[]): PendingLoopInputRow[] {
+    const landing = new Set(landingIds);
+    const following: PendingLoopInputRow[] = [];
+    for (const pending of new SubstreamLoopStorage(this.storage).pendingInputs()) {
+      if (landing.has(pending.input_id)) continue;
+      if (pending.starts_run !== 0) break;
+      following.push(pending);
+    }
+    return following;
+  }
+
+  /**
+   * The Bind appends that let a run read what the room said right after the
+   * input it is about to answer, as the gap-fill would have: overheard, keyed
+   * by the turn it lands as, so a later gap-fill skips it by provenance.
+   */
+  private async prepareInputsWithoutRunSteps(
+    previous: BindLoopProjectionState,
+    inputs: readonly PendingLoopInputRow[],
+  ): Promise<{ steps: PreparedPendingBindStep[]; next: BindLoopProjectionState }> {
+    const steps: PreparedPendingBindStep[] = [];
+    let projection = previous;
+    for (const pending of inputs) {
+      const material = parsePendingInputMaterial(pending);
+      const message = projectParticipantTextMessage({
+        author: {
+          type: "human",
+          userId: pending.author_user_id,
+          displayName: pending.author_name_snapshot,
+        },
+        text: material.payload.content,
+        mentions: material.mentions.map((mention) => ({
+          type: mention.mentionKind,
+          userId: mention.targetUserId,
+          displayName: null,
+        })),
+        overheard: true,
+      });
+      if (!message) continue;
+      const transition: PendingSettlementTransition = {
+        kind: "protocol_user_appended",
+        loopId: previous.loopId,
+        generation: projection.generation,
+        stateRevision: projection.stateRevision + 1,
+        message: modelMessageWithoutProvenance(message),
+        provenance: {
+          originKind: "derived",
+          sourceKind: "participant_turn",
+          sourceId: pending.prepared_turn_id,
+          sourceRevision: 1,
+        },
+        activationInputId: null,
+      };
+      const next = applyBindLoopTransition(projection, transition);
+      const facts = await this.materializeProjectionFacts(transition, projection, next);
+      const appended = facts.messageFacts[0];
+      if (!appended
+        || appended.position !== bindLoopNonSystemMessageCount(projection) + 1) {
+        throw new Error("bind_loop_projection_delta_invalid");
+      }
+      steps.push({ previous: projection, transition, next, facts });
+      projection = next;
+    }
+    return { steps, next: projection };
+  }
+
+  /**
+   * Land the leading inputs that start no run and write the Bind appends
+   * prepared for them. What was prepared must be exactly what leads now: the
+   * appends chain from the projection they were prepared on.
+   */
+  private deliverPreparedInputsWithoutRunInTransaction(
+    expected: readonly PendingLoopInputRow[],
+    steps: readonly PreparedPendingBindStep[],
+    now: number,
+  ): ReturnType<WorkstreamTranscriptStorage["deliverLeadingInputsWithoutRunInTransaction"]> {
+    const delivered = this.deliverLeadingInputsWithoutRunInTransaction(now);
+    if (expected.some((pending, index) => delivered.removedInputIds[index] !== pending.input_id)) {
+      throw new Error("pending_input_without_run_changed");
+    }
+    for (const step of steps) {
+      this.assertExpectedHead(step.previous, step.transition);
+      for (const fact of step.facts.materials) this.insertFact(fact, now);
+      this.writeBindState(step.transition, step.next, step.facts, now);
+    }
+    return delivered;
+  }
+
+  private deliverLeadingInputsWithoutRunInTransaction(now: number): {
+    turns: TranscriptTurn[];
+    removedInputIds: string[];
+    deliveryEffects: PendingInputDeliveryEffectInput[];
+  } {
+    const turns: TranscriptTurn[] = [];
+    const removedInputIds: string[] = [];
+    const deliveryEffects: PendingInputDeliveryEffectInput[] = [];
+    for (const pending of this.leadingInputsWithoutRun()) {
+      const delivered = this.promotePendingInputInTransaction(
+        pending,
+        parsePendingInputMaterial(pending),
+        now,
+      );
+      this.markPendingDeliveredDirect(pending, delivered.attentionOrdinal, now);
+      const turn = this.participantTurn(pending.prepared_turn_id);
+      if (!turn || turn.attentionOrdinal !== delivered.attentionOrdinal) {
+        throw new Error("pending_input_turn_hydration_failed");
+      }
+      turns.push(turn);
+      removedInputIds.push(pending.input_id);
+      deliveryEffects.push(delivered.deliveryEffect);
+    }
+    return { turns, removedInputIds, deliveryEffects };
+  }
+
+  /**
+   * Land the inputs that start no run and have nothing left ahead of them, on
+   * an idle loop. An executing loop lands them at its next safe step instead,
+   * or in the activation that delivered what they were waiting for.
+   */
+  deliverLeadingInputsWithoutRun(input: {
+    loopId: string;
+    enqueueRegionalEffectsInTransaction: (
+      deliveries: readonly PendingInputDeliveryEffectInput[],
+    ) => void;
+    now: number;
+  }): void {
+    this.storage.transactionSync(() => {
+      const loop = new SubstreamLoopStorage(this.storage).loop();
+      if (!loop || loop.loop_id !== input.loopId) throw new Error("substream_loop_not_found");
+      if (loop.status !== "idle") return;
+      invokeSynchronousEffectEnqueue(
+        input.enqueueRegionalEffectsInTransaction,
+        this.deliverLeadingInputsWithoutRunInTransaction(input.now).deliveryEffects,
+      );
+    });
   }
 
   private oldestActivationInput(
