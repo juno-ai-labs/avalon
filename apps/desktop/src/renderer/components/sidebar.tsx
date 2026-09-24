@@ -13,7 +13,7 @@ import {
   SidebarTitleHeader,
 } from '@rally/ui/components/resizable-sidebar';
 import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
-import { NewWorkstreamMenu, type ChannelImportInput } from './new-workstream-menu';
+import { NewWorkstreamMenu } from './new-workstream-menu';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
@@ -139,7 +139,6 @@ interface SidebarProps {
     filter: WorkstreamBatchFilter,
   ) => Promise<{ matchedCount: number; matchedNoteCount: number }>;
   onCreateChannel?: (input: { name: string; spaceId: string }) => Promise<void>;
-  onImportChannel?: (input: ChannelImportInput) => Promise<void>;
   onCreateSpace?: (input: CreateSpaceRequest) => Promise<SpaceSummary>;
   onAddChannelToSpace?: (spaceId: string, workstreamId: string) => Promise<void>;
   onMoveChannelToSpace?: (sourceSpaceId: string, targetSpaceId: string, workstreamId: string) => Promise<void>;
@@ -1173,7 +1172,6 @@ export function Sidebar({
   onRenameWorkstream,
   onPreviewWorkstreamBatch,
   onCreateChannel = async () => { throw new Error('Channel creation is unavailable.'); },
-  onImportChannel = async () => { throw new Error('Channel import is unavailable.'); },
   onCreateSpace = async () => {
     throw new Error('Space creation is unavailable.');
   },
@@ -2210,7 +2208,6 @@ export function Sidebar({
         onWidthChange={setSpacesSidebarWidth}
         onCreateChannel={createChannelFromSidebar}
         onCreateSpace={createSpaceFromSidebar}
-        onImportChannel={onImportChannel}
         onOpenSearch={onOpenSearch}
         onOrderPreviewChange={setSpaceOrderPreview}
         onMoveChannel={moveChannelFromSelectedSpace}
@@ -2273,7 +2270,6 @@ export function Sidebar({
             spaces={placementSpaces}
             onCreateChannel={createChannelFromSidebar}
             onCreateSpace={createSpaceFromSidebar}
-            onImportChannel={onImportChannel}
           >
             <button
               aria-hidden={compact}
@@ -2308,7 +2304,6 @@ export function Sidebar({
               spaces={placementSpaces}
               onCreateChannel={createChannelFromSidebar}
               onCreateSpace={createSpaceFromSidebar}
-              onImportChannel={onImportChannel}
             >
               <button type="button"
                 aria-label={NEW_STREAM_LABEL}
@@ -2340,7 +2335,6 @@ export function Sidebar({
               spaces={placementSpaces}
               onCreateChannel={createChannelFromSidebar}
               onCreateSpace={createSpaceFromSidebar}
-              onImportChannel={onImportChannel}
             >
               <button type="button"
                 className={clsx('sidebar-action', onNewStreamRoute && 'is-active')}

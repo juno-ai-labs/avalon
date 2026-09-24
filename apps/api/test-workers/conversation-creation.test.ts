@@ -278,18 +278,16 @@ describe("creating a work stream", () => {
     expect(boot.transcript.ranges.flatMap((range) => range.turns)).toHaveLength(2);
   });
 
-  it("materializes Firecrawl source as idle imported human and assistant turns", async () => {
+  it("materializes a shared ChatGPT page read in Rally's browser as idle imported human and assistant turns", async () => {
     const importEnv = withWorkspaceRuntimeDatabase(creationEnv(), WORKSPACE_ID);
     const url = "https://example.com/research-note";
-    const preview = await previewSessionImport({ kind: "link", url }, { FIRECRAWL_API_KEY: "test-key" }, async () => Response.json({
-      success: true, data: { metadata: { url, statusCode: 200 }, rawHtml: JSON.stringify({ title: "Generated garden", linear_conversation: [
-        { message: { author: { role: "user" }, content: { content_type: "text", parts: ["Draw my garden"] } } },
-        { message: { author: { role: "assistant" }, content: { content_type: "model_editable_context", model_set_context: "Internal context" } } },
-        { message: { author: { role: "tool" }, channel: "final", metadata: { image_gen_title: "Garden.png" }, content: { content_type: "multimodal_text", parts: [{ content_type: "image_asset_pointer", asset_pointer: "sediment://garden", mime_type: "image/png" }] } } },
-      ] }) },
-    }));
-    const prepared = await prepareSessionImport(importEnv, AUTH, preview, "firecrawl-import");
-    const created = await new WorkstreamObjectCreationService(importEnv, AUTH).createPrepared({ title: preview.title, clientMessageId: "firecrawl-import", participantUserIds: [] }, prepared);
+    const preview = await previewSessionImport({ kind: "export", provider: "chatgpt", sourceUrl: url, text: JSON.stringify({ title: "Generated garden", linear_conversation: [
+      { message: { author: { role: "user" }, content: { content_type: "text", parts: ["Draw my garden"] } } },
+      { message: { author: { role: "assistant" }, content: { content_type: "model_editable_context", model_set_context: "Internal context" } } },
+      { message: { author: { role: "tool" }, channel: "final", metadata: { image_gen_title: "Garden.png" }, content: { content_type: "multimodal_text", parts: [{ content_type: "image_asset_pointer", asset_pointer: "sediment://garden", mime_type: "image/png" }] } } },
+    ] }) });
+    const prepared = await prepareSessionImport(importEnv, AUTH, preview, "shared-page-import");
+    const created = await new WorkstreamObjectCreationService(importEnv, AUTH).createPrepared({ title: preview.title, clientMessageId: "shared-page-import", participantUserIds: [] }, prepared);
     const boot = await new WorkstreamObjectClient(importEnv, AUTH, created.workstream.id).boot();
     const turns = boot.transcript.ranges.flatMap((range) => range.turns);
     expect(turns.map((turn) => turn.actor)).toEqual(["human", "assistant"]);
@@ -312,16 +310,16 @@ describe("creating a work stream", () => {
       env.DB.prepare("INSERT INTO sessions(id,user_id,workspace_id,region,revoked_at,expires_at) VALUES (?,?,?,'global',NULL,'2099-01-01T00:00:00.000Z')")
         .bind(otherSessionId, otherUserId, WORKSPACE_ID),
     ]);
-    const preview = parseSessionExport("claude_code", [
-      { type: "user", sessionId: "session-42", uuid: "u1", message: { role: "user", content: "Original question" } },
-      { type: "assistant", sessionId: "session-42", uuid: "a1", parentUuid: "u1", message: { role: "assistant", content: [{ type: "text", text: "Original answer" }] } },
-    ].map((row) => JSON.stringify(row)).join("\n"));
+    const preview = parseSessionExport("claude", JSON.stringify({ uuid: "session-42", name: "Shared import", chat_messages: [
+      { uuid: "u1", sender: "human", content: [{ type: "text", text: "Original question" }] },
+      { uuid: "a1", sender: "assistant", content: [{ type: "text", text: "Original answer" }] },
+    ] }));
     const prepared = await prepareSessionImport(importEnv, AUTH, preview, "shared-import");
     const created = await new WorkstreamObjectCreationService(importEnv, AUTH).createPrepared({
       title: "Shared import", clientMessageId: "shared-import", participantUserIds: [otherUserId],
     }, prepared);
     const client = new WorkstreamObjectClient(importEnv, AUTH, created.workstream.id);
-    expect(await client.importedSessionSource()).toEqual({ provider: "claude_code", sessionId: "session-42", url: null });
+    expect(await client.importedSessionSource()).toEqual({ provider: "claude", sessionId: "session-42", url: null });
     expect((await client.boot()).transcript.ranges.flatMap((range) => range.turns)
       .some((turn) => turn.blocks.some((block) => block.type === 'text' && block.text === 'Original question'))).toBe(true);
     const otherClient = new WorkstreamObjectClient(importEnv, { ...AUTH, userId: otherUserId, sessionId: otherSessionId }, created.workstream.id);
@@ -334,21 +332,21 @@ describe("creating a work stream", () => {
 
   it("re-imports only source changes after Rally turns and projects the new source reply into the next run", async () => {
     const importEnv = withWorkspaceRuntimeDatabase(creationEnv(), WORKSPACE_ID);
-    const snapshot = (answer: string, continued = false, followup = 'Source follow-up') => parseSessionExport("claude_code", [
-      { type: "user", sessionId: "session-42", uuid: "u1", message: { role: "user", content: "Original question" } },
-      { type: "assistant", sessionId: "session-42", uuid: "a1", parentUuid: "u1", message: { role: "assistant", content: [{ type: "text", text: "Original answer" }] } },
+    const snapshot = (answer: string, continued = false, followup = 'Source follow-up') => parseSessionExport("claude", JSON.stringify({ uuid: "session-42", name: "Source session", chat_messages: [
+      { uuid: "u1", sender: "human", content: [{ type: "text", text: "Original question" }] },
+      { uuid: "a1", sender: "assistant", content: [{ type: "text", text: "Original answer" }] },
       ...(continued ? [
-        { type: "user", sessionId: "session-42", uuid: "u2", parentUuid: "a1", message: { role: "user", content: followup } },
-        { type: "assistant", sessionId: "session-42", uuid: "a2", parentUuid: "u2", message: { role: "assistant", content: [{ type: "text", text: answer }] } },
+        { uuid: "u2", sender: "human", content: [{ type: "text", text: followup }] },
+        { uuid: "a2", sender: "assistant", content: [{ type: "text", text: answer }] },
       ] : []),
-    ].map((row) => JSON.stringify(row)).join("\n"));
+    ] }));
     const initial = snapshot("", false);
     const initialPrepared = await prepareSessionImport(importEnv, AUTH, initial, "source-initial");
     const created = await new WorkstreamObjectCreationService(importEnv, AUTH).createPrepared({
       title: "Source session", clientMessageId: "source-initial", participantUserIds: [],
     }, initialPrepared);
     const client = new WorkstreamObjectClient(importEnv, AUTH, created.workstream.id);
-    expect(await client.importedSessionSource()).toEqual({ provider: "claude_code", sessionId: "session-42", url: null });
+    expect(await client.importedSessionSource()).toEqual({ provider: "claude", sessionId: "session-42", url: null });
     const agent = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, created.workstream.id));
     expect((await client.boot()).transcript.ranges.flatMap((range) => range.turns)
       .some((turn) => turn.blocks.some((block) => block.type === 'text' && block.text === 'Original question'))).toBe(true);
@@ -399,8 +397,8 @@ describe("creating a work stream", () => {
     await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes("Corrected Claude answer")), { timeout: 20_000 }).toBe(true);
     const request = provider.calls.find((call) => JSON.stringify(call.messages).includes("Corrected Claude answer"))!;
     expect(request.messages).toEqual(expect.arrayContaining([
-      expect.objectContaining({ role: "user", content: expect.stringContaining("IMPORTED Claude Code ASSISTANT REPLY — REVISED VERSION") }),
-      expect.objectContaining({ role: "user", content: expect.stringContaining("IMPORTED Claude Code USER MESSAGE — REVISED VERSION") }),
+      expect.objectContaining({ role: "user", content: expect.stringContaining("IMPORTED Claude ASSISTANT REPLY — REVISED VERSION") }),
+      expect.objectContaining({ role: "user", content: expect.stringContaining("IMPORTED Claude USER MESSAGE — REVISED VERSION") }),
     ]));
   });
 

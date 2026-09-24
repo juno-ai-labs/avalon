@@ -193,13 +193,12 @@ const OVERHEARD_HEADER = "SAID TO THE ROOM, NOT TO RALLY";
 
 /** Imported provider history is context, not a Rally member's request or Rally's own assistant output. */
 export function projectImportedSourceMessage(input: {
-  provider: 'chatgpt' | 'claude' | 'claude_code' | 'codex';
+  provider: 'chatgpt' | 'claude' | 'claude_code';
   role: 'user' | 'assistant';
   text: string;
   revised?: boolean;
 }): ModelMessage {
-  const provider = input.provider === 'chatgpt' ? 'ChatGPT' : input.provider === 'claude_code' ? 'Claude Code'
-    : input.provider === 'codex' ? 'Codex' : 'Claude';
+  const provider = input.provider === 'chatgpt' ? 'ChatGPT' : input.provider === 'claude_code' ? 'Claude Code' : 'Claude';
   return { role: 'user', content: [OVERHEARD_HEADER,
     `IMPORTED ${provider} ${input.role === 'assistant' ? 'ASSISTANT REPLY' : 'USER MESSAGE'}${input.revised ? ' — REVISED VERSION OF AN EARLIER SOURCE MESSAGE' : ''}`,
     withoutForgedAttribution(input.text)].join('\n\n') };

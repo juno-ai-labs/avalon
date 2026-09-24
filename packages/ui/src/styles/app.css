@@ -6400,6 +6400,25 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 .embedded-browser-start > div { display: flex; gap: 8px; }
 .embedded-browser-start button { background: var(--av-sys-color-surface-subtle); border: 1px solid var(--av-sys-color-border-subtle); border-radius: 7px; color: var(--av-sys-color-text-default); font: inherit; padding: 6px 11px; }
 .embedded-browser-error { background: var(--av-sys-color-surface-raised); color: var(--av-sys-color-text-default); left: 12px; padding: 12px; position: absolute; right: 12px; top: 88px; z-index: 1; }
+
+/* The import window: the browser's own toolbar is the title bar, with Import
+   and Close at its trailing edge. The native page fills `.browser-import-page`;
+   the start page is renderer content shown while the tab is blank. */
+.browser-import-window { background: var(--av-cmp-pane-background); color: var(--av-sys-color-text-default); display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+.browser-import-titlebar { align-items: center; border-bottom: 1px solid var(--av-sys-color-border-subtle); display: flex; flex-shrink: 0; gap: 8px; height: 52px; padding: 0 10px; }
+.browser-import-window.has-overlay-window-controls .browser-import-titlebar { padding-left: 82px; }
+.browser-import-titlebar .embedded-browser-toolbar { border-bottom: 0; flex: 1; min-width: 0; padding: 0; }
+.browser-import-tabs { border-bottom: 1px solid var(--av-sys-color-border-subtle); flex: 0 0 34px; padding: 3px 8px 0; }
+.browser-import-banner { background: var(--av-sys-color-surface-raised); border-bottom: 1px solid var(--av-sys-color-border-subtle); flex-shrink: 0; padding: 10px 16px; }
+.browser-import-page { flex: 1; min-height: 0; overflow: auto; position: relative; }
+.browser-import-start { margin: 0 auto; max-width: 440px; padding: 12vh 24px 48px; }
+.browser-import-start h1 { font-size: 20px; font-weight: 500; margin: 0 0 22px; }
+.browser-import-start ol { counter-reset: import-step; display: grid; gap: 16px; list-style: none; margin: 0; padding: 0; }
+.browser-import-start li { align-items: center; counter-increment: import-step; display: flex; gap: 12px; line-height: 1.4; }
+.browser-import-start li::before { align-items: center; border: 1px solid var(--av-sys-color-border-subtle); border-radius: 50%; color: var(--av-sys-color-text-muted); content: counter(import-step); display: inline-flex; flex: 0 0 26px; font-size: 13px; height: 26px; justify-content: center; }
+.browser-import-link { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; font-weight: 500; padding: 0; text-decoration: underline; text-decoration-color: var(--av-sys-color-border-strong); text-underline-offset: 3px; }
+.browser-import-link:hover { text-decoration-color: currentColor; }
+.browser-import-start strong { font-weight: 600; }
 .rail-section { padding-left: 15px; padding-right: 15px; }
 .rail-section-header h3 { font-size: 14px; font-weight: 400; letter-spacing: 0; text-transform: none; }
 .compact-run-list .run-rail-row { grid-template-columns: auto minmax(0, 1fr) auto; }
