@@ -95,9 +95,12 @@ for the next.
    A tool that sends from one place and routes replies to another is possible
    with the binding record, but no workflow needs it, and it makes the reply
    path harder to follow.
-8. **Attaching conversations from inside a scheduled run: rejected.** Only
-   authoring (a person, or the Sidekick's authoring conversation) attaches a
+8. **Attaching conversations from inside a run: rejected.** Only the
+   Sidekick's config conversation (its substream `"0"`) attaches a
    conversation, so a run cannot widen its own reach.
+9. **Reading and posting from the config conversation: deferred.** For now
+   the config conversation gets the attach tool only. Giving it list, read, or
+   post can follow when a setup flow needs it.
 
 ## Product behavior
 
@@ -139,18 +142,20 @@ desktop session.
 
 Every Sidekick that belongs to a room has one **home conversation**: the
 Channel Main conversation or the Breakout where it was set up. The home is
-always attached. People, or the Sidekick's authoring conversation, can attach
-further Channels or Breakouts.
+always attached. The Sidekick's config conversation, its substream `"0"`
+where it is set up and edited, can attach further Channels or Breakouts.
 
-A Sidekick run has four conversation tools:
+The tools split between the two kinds of Sidekick conversation:
 
-- **List** the conversations it is attached to, home first.
-- **Read** messages from an attached conversation, a page at a time.
-- **Post** to an attached conversation, defaulting to the home. This replaces
-  today's `sidekick_post_result`, which could post only to the owning Channel's
-  Main conversation.
-- **Attach** a conversation, offered only to authoring, never to a scheduled
-  run.
+| Tool | Config conversation (`"0"`) | Run |
+| --- | --- | --- |
+| **Attach** a conversation | Yes | No |
+| **List** attached conversations, home first | No | Yes |
+| **Read** messages from an attached conversation, a page at a time | No | Yes |
+| **Post** to an attached conversation, defaulting to the home | No | Yes |
+
+Post replaces today's `sidekick_post_result`, which could post only to the
+owning Channel's Main conversation.
 
 Reading and posting move content between audiences. A Sidekick may attach
 only to a conversation where that move cannot widen who sees the content, and
@@ -285,9 +290,9 @@ to bypass content containment or widen a Space to make placement succeed.
 
 A continued run acts with its run-as user's connectors whoever sent the input,
 including an external sender in a bound thread. A bound thread's reply text is
-untrusted input to that run in the same way an inbound email is. Attached
-conversations are fixed at authoring, so a run cannot widen what it can read
-or post to.
+untrusted input to that run in the same way an inbound email is. Only the
+Sidekick's config conversation can attach a conversation, so a run cannot
+widen what it can read or post to.
 
 ## Provider configuration
 
@@ -334,8 +339,9 @@ should be a Breakout is changed explicitly.
 - A message typed into a completed run's feed by any user who can post there
   continues the run the same way. Input to a paused or deleted Sidekick's run
   does not start a loop and tells the sender why.
-- A scheduled run cannot attach a conversation, and cannot read or post to a
-  conversation it is not attached to.
+- Only the Sidekick's config conversation offers the attach tool, and it
+  offers no other conversation tool. A run cannot attach a conversation, and
+  cannot read or post to a conversation it is not attached to.
 - Removal, archive, disconnect, provider ID change, and retry preserve the
   binding's identity or suspend it without moving messages to another target.
 
