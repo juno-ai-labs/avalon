@@ -33,6 +33,7 @@ import { ConversationHeader } from '@rally/ui/components/conversation-header';
 import { WorkstreamSidebar } from '@rally/ui/components/workstream-sidebar';
 import { Button, InlineError, Modal } from '@rally/ui/components/primitives';
 import { RallyApi } from '../../desktop/src/renderer/lib/api';
+import { logWarn } from '../../desktop/src/common/logger';
 import { ShareConversationButton, ShareConversationDialog } from '../../desktop/src/renderer/components/scope-sharing-panel';
 import { SidekickPicker } from '../../desktop/src/renderer/components/sidekick-picker';
 import { useCollaborationSession, CollaborationSessionProvider } from '../../desktop/src/renderer/lib/collaboration-session';
@@ -452,6 +453,8 @@ export default function BrowserConversation({ session, onSignOut }: { session: C
       ticket: () => api.getWorkspaceSocketTicket(),
       open: (url, ticket) => new WebSocket(url, socketTicketProtocols(ticket)),
       onStale: () => { void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] }); },
+      onDiagnostic: (diagnostic) => logWarn('rally', 'membership updates paused', diagnostic.code,
+        'closeCode' in diagnostic ? diagnostic.closeCode : diagnostic.error),
     });
   }, [api, queryClient, workspaceId]);
   if (!session.workspace) return <p>Open a shared conversation to continue.</p>;

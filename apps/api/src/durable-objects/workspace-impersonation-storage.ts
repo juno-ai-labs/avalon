@@ -89,13 +89,38 @@ export class WorkspaceImpersonationStorage {
     return [...unique.values()].map(relationship);
   }
 
+  /**
+   * Who may act as each of these people, in one read: active relationships
+   * only, keyed by impersonator. Used to address membership nudges, where a
+   * read per socket and person would put that many queries on a projection.
+   */
+  impersonatorsOf(workspaceId: string, representedUserIds: readonly string[]): Map<string, string[]> {
+    const byImpersonator = new Map<string, string[]>();
+    if (representedUserIds.length === 0) return byImpersonator;
+    const rows = this.sql.exec<{ impersonator_user_id: string; represented_user_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT DISTINCT impersonator_user_id, represented_user_id
+         FROM workspace_impersonation_relationships
+        WHERE workspace_id = ? AND revoked_at IS NULL
+          AND represented_user_id IN (${representedUserIds.map(() => "?").join(",")})`,
+      workspaceId,
+      ...representedUserIds,
+    ).toArray();
+    for (const row of rows) {
+      byImpersonator.set(row.impersonator_user_id, [
+        ...(byImpersonator.get(row.impersonator_user_id) ?? []),
+        row.represented_user_id,
+      ]);
+    }
+    return byImpersonator;
+  }
+
   revoke(input: {
     workspaceId: string;
     authorityBasis?: string;
     impersonatorUserId?: string;
     representedUserId?: string;
     now: string;
-  }): { revoked: number } {
+  }): { revoked: number; impersonatorUserIds: string[] } {
     if (!input.authorityBasis && !input.impersonatorUserId && !input.representedUserId) {
       throw new Error("impersonation_revocation_filter_required");
     }
@@ -104,11 +129,12 @@ export class WorkspaceImpersonationStorage {
     if (input.authorityBasis) { filters.push("authority_basis = ?"); values.push(input.authorityBasis); }
     if (input.impersonatorUserId) { filters.push("impersonator_user_id = ?"); values.push(input.impersonatorUserId); }
     if (input.representedUserId) { filters.push("represented_user_id = ?"); values.push(input.representedUserId); }
-    this.sql.exec(
-      `UPDATE workspace_impersonation_relationships SET revoked_at = ? WHERE ${filters.join(" AND ")}`,
+    const rows = this.sql.exec<{ impersonator_user_id: string } & Record<string, SqlStorageValue>>(
+      `UPDATE workspace_impersonation_relationships SET revoked_at = ?
+        WHERE ${filters.join(" AND ")} RETURNING impersonator_user_id`,
       input.now,
       ...values,
-    );
-    return { revoked: this.sql.exec<{ changes: number }>("SELECT changes() AS changes").one().changes };
+    ).toArray();
+    return { revoked: rows.length, impersonatorUserIds: [...new Set(rows.map((row) => row.impersonator_user_id))] };
   }
 }

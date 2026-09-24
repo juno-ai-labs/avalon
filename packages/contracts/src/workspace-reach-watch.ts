@@ -1,24 +1,25 @@
 import {
   WorkspaceReachChangedEventSchema,
-  WorkspaceSocketSyncEventSchema,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
 } from "./index";
 import { safeParseSocketEvent } from "./socket-events";
 
-// The Rally desktop's workspace-socket heartbeat and reconnect numbers
-// (`apps/desktop/src/renderer/lib/workspace-socket.tsx`), reused rather than
-// chosen again: this is the same socket, closed by the same server.
-const HEARTBEAT_MS = 50_000;
-const PONG_TIMEOUT_MS = 15_000;
-function reconnectDelay(attempt: number): number {
+/**
+ * How a client keeps a workspace socket alive: a `ping` after this much quiet,
+ * a close when its `pong` does not arrive within the timeout, and jittered
+ * exponential backoff to 30 seconds between attempts. One set of numbers for
+ * every client of this socket, because they are all closed by the same server.
+ */
+export const WORKSPACE_SOCKET_HEARTBEAT_MS = 50_000;
+export const WORKSPACE_SOCKET_PONG_TIMEOUT_MS = 15_000;
+export function workspaceSocketReconnectDelay(attempt: number): number {
   const ceiling = Math.min(30_000, 750 * 2 ** Math.min(Math.max(attempt, 0), 6));
   return Math.floor(ceiling / 2 + Math.random() * ceiling / 2);
 }
 
 /** The slice of the WHATWG `WebSocket` this watcher uses, so a test can drive it. */
 export interface ReachSocket {
-  readonly readyState: number;
   send(data: string): void;
   close(): void;
   addEventListener(type: "open" | "error", listener: () => void): void;
@@ -26,75 +27,94 @@ export interface ReachSocket {
   addEventListener(type: "close", listener: (event: { code: number }) => void): void;
 }
 
+/**
+ * Why the watcher is not listening right now, for the host to log.
+ *
+ * `stopped` is terminal: the server ended this session's access or the session
+ * itself, and the watcher will not reconnect. Everything else is followed by a
+ * scheduled retry.
+ */
+export type ReachWatchDiagnostic =
+  | { code: "ticket_failed"; error: unknown }
+  | { code: "open_failed"; error: unknown }
+  | { code: "closed"; closeCode: number }
+  | { code: "stopped"; closeCode: number };
+
 export interface ReachWatchDependencies {
   /** A fresh workspace socket ticket from `GET /workspace/socket`. */
   ticket(): Promise<{ url: string; ticket: string }>;
   open(url: string, ticket: string): ReachSocket;
   /**
    * The host's list may no longer match the server: somebody it shows joined
-   * or left a Channel or Breakout, or the socket reconnected after a gap in
+   * or left a Channel or Breakout, or the socket (re)subscribed after a gap in
    * which that could have happened unheard.
    */
   onStale(): void;
-  setTimer?: (callback: () => void, ms: number) => unknown;
-  clearTimer?: (handle: unknown) => void;
+  onDiagnostic?(diagnostic: ReachWatchDiagnostic): void;
+}
+
+/**
+ * The answer to `subscribe`: the one `workspace_sync` that carries `sidebar`.
+ *
+ * Recognized by shape, not parsed: the answer carries the whole sidebar, and a
+ * host that ships on its own schedule must not stop recognizing it because the
+ * server added a field this build's strict schema does not know.
+ */
+function isSubscribeAnswer(value: unknown): boolean {
+  return typeof value === "object" && value !== null
+    && (value as { type?: unknown }).type === "workspace_sync"
+    && "sidebar" in value;
 }
 
 /**
  * Hold one workspace socket and report when a list drawn from membership went
  * stale.
  *
- * For a host that has no workspace socket of its own — Sideline, and the lite
- * browser client — and needs only to hear that somebody it shows joined or
- * left a Channel or Breakout. Listens for `workspace_reach_changed`, which
- * WorkspaceDO sends only for the socket's own user and the people they may act
- * as, and ignores everything else the socket carries. It subscribes because an
- * unsubscribed socket is how the server marks one it has stopped serving; the
- * sidebar in the answer is discarded.
+ * For a host with no workspace socket of its own, Sideline and the lite
+ * browser client, that needs only to hear that somebody it shows joined or
+ * left a Channel or Breakout. It subscribes, because an unsubscribed socket is
+ * how the server marks one it has stopped serving, and then ignores everything
+ * but `workspace_reach_changed` and the subscribe answer.
  *
- * Every subscribe answer reports stale, the first included. Nothing is
+ * Every subscribe answer reports stale, the first included: nothing is
  * replayed across a reconnect, and the host's opening read can finish before
- * the first subscribe does — a change landing between the two reaches no
- * socket, so skipping the first answer would keep that read's stale result.
- * The cost is one extra background read when the host starts.
+ * the first subscribe does.
  *
  * @returns stop, which closes the socket and cancels any reconnect.
  */
 export function watchWorkspaceReach(dependencies: ReachWatchDependencies): () => void {
-  const setTimer = dependencies.setTimer ?? ((callback, ms) => setTimeout(callback, ms));
-  const clearTimer = dependencies.clearTimer ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
   let stopped = false;
   let socket: ReachSocket | null = null;
-  let reconnectTimer: unknown = null;
-  let heartbeatTimer: unknown = null;
-  let pongTimer: unknown = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+  let pongTimer: ReturnType<typeof setTimeout> | null = null;
   let attempt = 0;
 
   const clearHeartbeat = (): void => {
-    if (heartbeatTimer !== null) clearTimer(heartbeatTimer);
-    if (pongTimer !== null) clearTimer(pongTimer);
+    if (heartbeatTimer !== null) clearTimeout(heartbeatTimer);
+    if (pongTimer !== null) clearTimeout(pongTimer);
     heartbeatTimer = null;
     pongTimer = null;
   };
   const scheduleHeartbeat = (target: ReachSocket): void => {
     clearHeartbeat();
-    heartbeatTimer = setTimer(() => {
+    heartbeatTimer = setTimeout(() => {
       heartbeatTimer = null;
       if (stopped || socket !== target) return;
       target.send("ping");
-      pongTimer = setTimer(() => {
+      pongTimer = setTimeout(() => {
         pongTimer = null;
         if (!stopped && socket === target) target.close();
-      }, PONG_TIMEOUT_MS);
-    }, HEARTBEAT_MS);
+      }, WORKSPACE_SOCKET_PONG_TIMEOUT_MS);
+    }, WORKSPACE_SOCKET_HEARTBEAT_MS);
   };
   const scheduleReconnect = (): void => {
     if (stopped || reconnectTimer !== null) return;
     attempt += 1;
-    reconnectTimer = setTimer(() => {
+    reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
       void connect();
-    }, reconnectDelay(attempt));
+    }, workspaceSocketReconnectDelay(attempt));
   };
 
   const connect = async (): Promise<void> => {
@@ -102,7 +122,9 @@ export function watchWorkspaceReach(dependencies: ReachWatchDependencies): () =>
     let ticket: { url: string; ticket: string };
     try {
       ticket = await dependencies.ticket();
-    } catch {
+    } catch (error) {
+      if (stopped) return;
+      dependencies.onDiagnostic?.({ code: "ticket_failed", error });
       scheduleReconnect();
       return;
     }
@@ -110,10 +132,10 @@ export function watchWorkspaceReach(dependencies: ReachWatchDependencies): () =>
     let next: ReachSocket;
     try {
       // A constructor can throw synchronously (a malformed URL, a refused
-      // protocol). Unhandled, it would reject this call with no retry armed
-      // and leave the host's list stale for the rest of the session.
+      // protocol). Unhandled, it would reject this call with no retry armed.
       next = dependencies.open(ticket.url, ticket.ticket);
-    } catch {
+    } catch (error) {
+      dependencies.onDiagnostic?.({ code: "open_failed", error });
       scheduleReconnect();
       return;
     }
@@ -137,7 +159,7 @@ export function watchWorkspaceReach(dependencies: ReachWatchDependencies): () =>
       } catch {
         return;
       }
-      if (!subscribed && safeParseSocketEvent(WorkspaceSocketSyncEventSchema, decoded).success) {
+      if (!subscribed && isSubscribeAnswer(decoded)) {
         subscribed = true;
         attempt = 0;
         dependencies.onStale();
@@ -149,10 +171,15 @@ export function watchWorkspaceReach(dependencies: ReachWatchDependencies): () =>
       if (socket !== next) return;
       socket = null;
       clearHeartbeat();
-      // The server ended this user's access or session. The host's session
-      // path owns sign-out; reconnecting would only be refused again.
+      if (stopped) return;
+      // The server ended this session's access or the session itself.
+      // Reconnecting would only be refused again; the host decides what next.
       if (event.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE
-        || event.code === WORKSPACE_SOCKET_SESSION_INACTIVE_CODE) return;
+        || event.code === WORKSPACE_SOCKET_SESSION_INACTIVE_CODE) {
+        dependencies.onDiagnostic?.({ code: "stopped", closeCode: event.code });
+        return;
+      }
+      dependencies.onDiagnostic?.({ code: "closed", closeCode: event.code });
       scheduleReconnect();
     });
     next.addEventListener("error", () => {
@@ -163,7 +190,7 @@ export function watchWorkspaceReach(dependencies: ReachWatchDependencies): () =>
   void connect();
   return () => {
     stopped = true;
-    if (reconnectTimer !== null) clearTimer(reconnectTimer);
+    if (reconnectTimer !== null) clearTimeout(reconnectTimer);
     reconnectTimer = null;
     clearHeartbeat();
     const current = socket;

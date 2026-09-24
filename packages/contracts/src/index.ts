@@ -28,7 +28,7 @@ import {
   ResourceDirectionSchema,
   WireResourceRelationshipTypeSchema,
 } from "./resource-relationships";
-import { HttpsUrlSchema, HttpUrlSchema, httpUrlSchema } from "./url-schemas";
+import { HttpsUrlSchema, HttpUrlSchema, httpUrlSchema, WebSocketUrlSchema } from "./url-schemas";
 import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, WorkstreamIconKeySchema } from "./workstream-appearance";
 import {
   TranscriptActivitySchema,
@@ -2483,6 +2483,12 @@ export const WorkspacePresenceEventSchema = z.strictObject({
   workstreamId: WorkstreamIdSchema.nullable(),
   userIds: z.array(UserIdSchema),
 });
+
+/**
+ * A purpose-bound socket ticket as the Worker issues it: where to connect, and
+ * the single-use credential to present in `Sec-WebSocket-Protocol`.
+ */
+export const SocketTicketSchema = z.object({ url: WebSocketUrlSchema, ticket: z.string().min(1) });
 
 /**
  * These people joined or left a Channel or a Breakout.
