@@ -1,4 +1,5 @@
 import { useConversationAdmission } from './conversation-admission';
+import { conversationScopedChannelIds, useConversationDirectory } from './conversation-directory';
 import { safeParseSocketEvent } from "@rally/contracts";
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
 import {
@@ -737,6 +738,12 @@ export function useWorkstreamSocket(
   // is not mounted for it.
   parentKind: ConversationParentKind = 'workstream',
 ): WorkstreamSocketConnection {
+  // Main of a Channel this person reaches only through some of its
+  // conversations is not theirs to open; every Main feed, pooled or direct,
+  // passes here. The control socket makes the same check for itself.
+  const conversationScoped = conversationScopedChannelIds(useConversationDirectory());
+  const mainOutOfReach = parentKind === 'workstream' && substreamId === '0' && conversationScoped.has(parentId);
+  enabled = enabled && !mainOutOfReach;
   const admissionAllowed = useConversationAdmission();
   const localCacheScope = useLocalCacheScope();
   const effectiveOpenCommitted = openCommitted && admissionAllowed;

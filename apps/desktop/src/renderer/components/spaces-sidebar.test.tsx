@@ -440,6 +440,29 @@ describe('SpacesSidebar', () => {
     await waitFor(() => expect(onArchive).toHaveBeenCalledWith('launch'));
   });
 
+  it('creates a Space from a right-click on empty list space', async () => {
+    const onCreateSpace = vi.fn(async () => undefined);
+    renderSidebar({ onCreateSpace });
+
+    // A Space row keeps its own menu.
+    fireEvent.contextMenu(screen.getByRole('link', { name: 'Launch' }));
+    expect(await screen.findByRole('menuitem', { name: 'Archive space' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Create New Space' })).toBeNull();
+    fireEvent.contextMenu(screen.getByRole('menuitem', { name: 'Archive space' }), { clientX: 70, clientY: 95 });
+    expect(screen.queryByRole('menuitem', { name: 'Create New Space' })).toBeNull();
+    fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Archive space' }), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menuitem', { name: 'Archive space' })).toBeNull());
+
+    fireEvent.contextMenu(screen.getByRole('navigation', { name: 'Spaces' }), { clientX: 60, clientY: 400 });
+    await screen.findByRole('menuitem', { name: 'Create New Space' });
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Create New Space']);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Create New Space' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Create a new space' });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of space' }), { target: { value: 'Hiring' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+    await waitFor(() => expect(onCreateSpace).toHaveBeenCalledWith('Hiring'));
+  });
+
   it('restores an archived Space from the first rail', async () => {
     const onRestore = vi.fn(async () => undefined);
     renderSidebar({ inactiveSpaces: [space('archive', 'Archived', 0)], onRestore });

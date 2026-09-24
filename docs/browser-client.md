@@ -322,7 +322,11 @@ owned by [email-login.md](email-login.md).
 
 For local work, start the API according to [dev-environment.md](dev-environment.md)
 and run `pnpm dev:browser` on port 8794. Client assets rebuild on source edits. The Global service binding discovers the local
-`avalon-api-global` Worker. Configure the API's browser origin and explicit email
+`avalon-api-global` Worker. The script passes `--local-upstream localhost:8794`
+because `wrangler dev` otherwise rewrites the request URL and `Origin` to the
+production Custom Domain, and the API's origin check then refuses every browser
+mutation; [dev-environment.md](dev-environment.md#lite-browser-development) has
+the detail. Configure the API's browser origin and explicit email
 policy before testing real authentication. Development does not send emails.
 
 ## Failure modes and limits

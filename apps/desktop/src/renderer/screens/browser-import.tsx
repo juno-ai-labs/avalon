@@ -67,6 +67,17 @@ export function BrowserImportWindow(): React.JSX.Element {
     return () => { live = false; unsubscribe(); };
   }, [bridge]);
 
+  // Main reuses an open window and replaces its context, so a choice the new
+  // Spaces no longer hold, or a Space the new context locks away, moves to the
+  // first one it offers. A different Space is a different Channel, so an open
+  // sheet takes a new request identity with it.
+  useEffect(() => {
+    const offered = context?.spaces ?? [];
+    if (spaceId === '' || offered.some((space) => space.id === spaceId)) return;
+    setSpaceId(offered[0]?.id ?? '');
+    setPending((current) => current && { ...current, clientMessageId: crypto.randomUUID() });
+  }, [context, spaceId]);
+
   // A failure names the chat it was about; it does not follow the person to the next one.
   useEffect(() => { setFailure(null); }, [conversation?.url]);
 
@@ -97,7 +108,7 @@ export function BrowserImportWindow(): React.JSX.Element {
   };
 
   const createChannel = async (): Promise<void> => {
-    if (!pending || !api || saving || !name.trim() || !spaceId) return;
+    if (!pending || !api || saving || !name.trim() || !context?.spaces.some((space) => space.id === spaceId)) return;
     setSaving(true);
     setImportFailure(null);
     try {
@@ -155,7 +166,7 @@ export function BrowserImportWindow(): React.JSX.Element {
       <form className="space-create-form" onSubmit={(event) => { event.preventDefault(); void createChannel(); }}>
         <label className="form-field">
           <span>Space</span>
-          <DropdownSelect ariaLabel="Space" disabled={saving} onValueChange={(value) => { setSpaceId(value); renewRequest(); }}
+          <DropdownSelect ariaLabel="Space" disabled={saving || context?.spaceLocked === true} onValueChange={(value) => { setSpaceId(value); renewRequest(); }}
             options={spaces.map((space) => ({ label: space.name, value: space.id }))} value={spaceId} />
         </label>
         <label className="form-field" htmlFor={nameId}>

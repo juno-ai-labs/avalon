@@ -11,6 +11,8 @@ import {
 } from '@rally/contracts';
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
+import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
+import { conversationScopedChannelIds, useConversationDirectory } from './conversation-directory';
 import { logWarn } from '../../common/logger';
 import { normalizeHarnessStatus, type RallyApi } from './api';
 import type { WorkstreamDetail, WorkstreamSummary } from './types';
@@ -231,6 +233,11 @@ export function useWorkstreamControlSocket(
   initialReason: Exclude<WorkstreamSocketStartReason, 'reconnect'> = 'active_workstream',
   socketLeaseId?: string,
 ): void {
+  // This socket carries a Channel's Main metadata. A Channel this person
+  // reaches only through some of its conversations has none they may read, and
+  // asking would be refused on every reconnect for as long as it stays open.
+  const mainOutOfReach = conversationScopedChannelIds(useConversationDirectory()).has(workstreamId);
+  enabled = enabled && !mainOutOfReach;
   const queryClient = useQueryClient();
   const localCacheScope = useLocalCacheScope();
   const [generatedSocketLeaseId] = useState(() => socketLeaseId ?? uuidV7());
@@ -303,8 +310,13 @@ export function useWorkstreamControlSocket(
       if (metadata.id !== workstreamId) return;
       // The browser has no Organization socket. Its open conversation's
       // metadata frame is therefore the low-cost nudge to refresh associative
-      // Space and ancestor presentation without polling.
-      void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
+      // Space and ancestor presentation without polling — for a Channel that
+      // directory lists, and only then: a member's ordinary Channel is not in
+      // it, and refetching it on every frame there would buy nothing.
+      const directories = queryClient.getQueriesData<SharedNavigationDirectory>({ queryKey: ['shared-navigation'] });
+      if (directories.some(([, directory]) => directory?.workstreams.some((item) => item.parentId === workstreamId))) {
+        void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
+      }
       queryClient.setQueryData(['workstream-background-agents', workstreamId], metadata.backgroundAgentCount ?? null);
       const state = metadataState(metadata);
       const applied = applyVersionedWorkstreamState(queryClient, {

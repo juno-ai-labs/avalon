@@ -218,10 +218,13 @@ class AuthorizationBatch {
       const childEvidence = { owner: resource.parentId, revision: JSON.stringify([workstream.generation, child?.version]), validatedAt: workstream.validatedAt };
       if (!child?.exists || child.failed || !workstream.main.exists) return { status: 'not_found', resource, evidence: [mainEvidence, childEvidence] };
       if (!child.ready) return { status: 'unavailable', reason: 'projection_incomplete', retryable: true };
-      return evaluateReadPolicy({ kind: 'all', policies: [
-        fact(workstream.main.scope === 'workspace' || workstream.main.participant, 'not_participant', mainEvidence),
-        fact(child.member, 'private_child_membership_required', childEvidence),
-      ] }, Date.now());
+      // Main is read through the work stream; a breakout through its own roster
+      // alone, so a breakout member need not be able to read Main.
+      if (resource.substreamId === '0') {
+        return evaluateReadPolicy(fact(workstream.main.scope === 'workspace' || workstream.main.participant,
+          'not_participant', mainEvidence), Date.now());
+      }
+      return evaluateReadPolicy(fact(child.member, 'private_child_membership_required', childEvidence), Date.now());
     }
     const automation = await conversationParentStub(this.env, {
       workspaceId: subject.workspaceId, parentKind: 'automation', parentId: resource.parentId,
