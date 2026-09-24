@@ -1113,12 +1113,10 @@ const MAINTENANCE_RECHECK_MS = 5 * 60_000;
  * docs/adding-security-defensive-and-other-limits.md.
  *
  * Bounds: time from accepting a workspace socket to its first frame.
- * Without it: an instance that stops delivering hibernatable WebSocket events
- *   keeps accepting upgrades while answering none of them, including pings.
- *   Every desktop without a warm directory cache sits at "Opening channels…"
- *   until the next deploy restarts the object; on 2026-09-23 that was six
- *   hours for Juno Labs. Nothing else notices: alarms, RPC, and upgrades all
- *   keep succeeding, and the client's own reconnect lands on the same instance.
+ * Without it: an object that stops delivering socket events stays stuck, and
+ *   every desktop without a warm cache sits at "Opening channels…", until the
+ *   next deploy (docs/realtime-sockets.md, "An instance that stops hearing its
+ *   sockets").
  * Direction: upper bound.
  * Trips: when the object has also heard from no other socket since (see
  *   `socket-first-frame-watch.ts`), the next alarm logs
@@ -4879,6 +4877,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * already overdue still resumes the moment the region reopens.
    */
   protected override async scheduledAlarmDeferral(now: number): Promise<number | null> {
+    // First, because a deferral returns before `runDueAlarmWork`: a region
+    // closed for maintenance must not also hold a stuck object open.
+    this.resetIfSocketsMissedFirstFrame(now);
     const deferral = await this.instrumentWorkspaceAlarmPhase("authority_check", undefined, async () => {
       const authority = await readWorkstreamAuthorityControl(this.env);
       if (authority.phase === "durable_object_open" || authority.phase === "legacy_open") {
@@ -4960,13 +4961,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * has stayed silent past the first-frame deadline, and no socket at all has
    * been heard from since it was accepted.
    *
-   * The alarm is the one path still running when this matters: an instance
-   * that has stopped receiving socket events still runs alarms, RPC, and
-   * upgrades, so nothing a socket does can report it. Aborting is the remedy a
-   * deploy was providing by accident. It also drops every socket the instance
-   * holds (the client sees `1006`), so no explicit close is sent: the output
-   * gate breaks before a close frame could leave. Clients reconnect on their
-   * own, and the ones that were silent had already given up.
+   * Runs from the alarm, the one path such an object still runs. The abort
+   * drops every socket (`1006`) and clients reconnect; no close is sent first,
+   * because the output gate breaks before a close frame could leave.
    */
   private resetIfSocketsMissedFirstFrame(now: number): void {
     const sockets = this.watchedSockets();
@@ -4993,11 +4990,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    *
    * Expired activity events are swept on every wake rather than through an
    * entry: the sweep is idempotent, bounded to 500 rows, and its due time
-   * moves with every event this workspace records. The first-frame watch runs
-   * first, since it ends the invocation when it trips.
+   * moves with every event this workspace records.
    */
   protected override async runDueAlarmWork(now: number): Promise<void> {
-    this.resetIfSocketsMissedFirstFrame(now);
     const workspaceId = this.workspaceId();
     if (workspaceId) {
       try { await flushSearchAuthorizationPush(this.state.storage.sql, this.env, workspaceId); }

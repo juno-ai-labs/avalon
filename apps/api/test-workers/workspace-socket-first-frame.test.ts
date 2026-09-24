@@ -169,6 +169,21 @@ describe("WorkspaceDO first-frame watch", () => {
     }));
   });
 
+  it("still resets while the region is closed for maintenance", async () => {
+    const socket = await openSilentSocket();
+    const socketClosed = closed(socket);
+    const before = await currentInstance();
+    // A maintenance phase defers the whole alarm before its due work runs.
+    await env.DB.prepare(`UPDATE workstream_authority_control SET phase = 'maintenance_draining' WHERE id = 1`).run();
+    await setDeadline(0);
+
+    await runDurableObjectAlarm(workspace()).catch(() => undefined);
+
+    expect((await socketClosed).code).toBe(1006);
+    expect(await currentInstance()).not.toBe(before);
+    expect(resetLogged()).toBe(true);
+  });
+
   // The three signals that say the object still hears sockets, each isolated:
   // one silent client must not reset everyone else, whichever way the others
   // are being heard from.
