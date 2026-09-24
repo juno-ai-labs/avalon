@@ -4,7 +4,8 @@
 >
 > A shared connector conversation can become a Rally Space, and a thread in it
 > can become a Rally Channel, without making Rally a copy of the provider.
-> Companion architecture: [`design.md`](design.md). State: [`state.md`](state.md).
+> Companion architecture: [`design.md`](design.md). Discussion record:
+> [`discussion-brief.md`](discussion-brief.md). State: [`state.md`](state.md).
 > Standing contract: [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 > Read alongside [connectors](../../connectors.md), [Spaces](../../spaces.md),
 > [Slack integration](../../slack-integration.md), and
