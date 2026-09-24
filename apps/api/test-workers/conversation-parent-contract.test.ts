@@ -1102,11 +1102,32 @@ describe("conversation parent contract", () => {
     expect(await access.check({ ...address, substreamId: asSubstreamId(substreamId) })).toMatchObject({ status: "allowed" });
     expect(await access.check({ ...address, substreamId: asSubstreamId("0") })).toMatchObject({ status: "denied" });
     expect(await access.check({ ...address, substreamId: asSubstreamId(siblingId) })).toMatchObject({ status: "denied" });
+    // Losing the work stream closes Main and what they cannot read, never the
+    // breakout their own roster still admits; a membership that ended closes all.
+    const revoked = (reason: "workstream_participant_removed" | "workspace_membership_removed") =>
+      parent.revokeSocketAccess({ reason, workspaceId: WORKSPACE_ID, userId: MEMBER_ID, sessionId: null });
+    expect((await revoked("workstream_participant_removed")).substreamIds).toEqual(
+      expect.arrayContaining(["0", siblingId]));
+    expect((await revoked("workstream_participant_removed")).substreamIds).not.toContain(substreamId);
+    expect((await revoked("workspace_membership_removed")).substreamIds).toContain(substreamId);
     // Their own membership is authority enough to manage the roster.
     await expect(new SubstreamCreationService(TEST_ENV, { ...AUTH, userId: MEMBER_ID }).changeParticipant(
       PERSONAL_ROOM_ID, substreamId,
       { userId: PARTICIPANT_ID, operationId: "outsider-adds-participant" }, true,
     )).resolves.toMatchObject({ outcome: "added" });
+  });
+
+  it("shares a substream with a guest rather than seating them on its legacy roster", async () => {
+    // A guest reads only through grants, so a roster row would admit them to a
+    // breakout that search, artifacts and navigation all refuse.
+    await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
+    const substreamId = await seedPrivateChild(PERSONAL_ROOM_ID, "Private branch", "guest-child");
+    await env.DB.prepare("UPDATE workspace_members SET access_class = 'guest', role = NULL WHERE workspace_id = ? AND user_id = ?")
+      .bind(WORKSPACE_ID, MEMBER_ID).run();
+    await expect(new SubstreamCreationService(TEST_ENV, AUTH).changeParticipant(
+      PERSONAL_ROOM_ID, substreamId,
+      { userId: MEMBER_ID, operationId: "guest-child-add" }, true,
+    )).rejects.toMatchObject({ status: 409, code: "substream_guest_requires_share" });
   });
 
   it("renames a substream through the conversation that owns its title", async () => {

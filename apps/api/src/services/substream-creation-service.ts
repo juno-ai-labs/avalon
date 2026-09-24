@@ -4,6 +4,7 @@ import { asSubstreamId, asUserId, asWorkstreamId, type AgentModelOverride } from
 import { PrivateChildPreparationOperationSchema, type PrivateChildPreparationOperation } from "@rally/contracts/conversation-parent";
 import type { SubstreamCreationResult, SubstreamOpeningMessage } from "@rally/contracts/substream-creation";
 import type { AuthContext, Env } from "../env";
+import type { WorkstreamDO } from "../durable-objects/workstream-do";
 import { conversationObjectName, workstreamDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { ApiError } from "../lib/api-error";
@@ -233,7 +234,7 @@ export class SubstreamCreationService {
     // Before anything is created. A seating refusal that lands after the child
     // has been provisioned leaves a substream behind for a message the person
     // was told to fix, so the seating's own question is asked one step early.
-    await span.step("substream.create.participants.preflight", () => this.assertParticipantsAdmitted(opening));
+    await span.step("substream.create.participants.preflight", () => this.assertParticipantsAdmitted(parent, parentId, opening));
     // A child created with an instruction is named from it, exactly as a work
     // stream is: the first line stands while the naming pass runs, and
     // `naming` is what puts the skeleton in its header. A child created
@@ -283,17 +284,31 @@ export class SubstreamCreationService {
    * Refuse an opening whose mentions name somebody who cannot be seated, while
    * refusing still costs nothing.
    *
-   * The seating asks one question, active workspace membership, so this asks
-   * it first. A breakout does not require its members to read the work stream,
-   * so there is no second question about the parent.
+   * The seating's own questions, asked first: active workspace membership,
+   * and, for a guest only, whether this work stream admits them — a guest is
+   * seated through grants, which the parent answers. A member need not read the
+   * work stream: a substream seats them on its own.
    */
-  private async assertParticipantsAdmitted(opening: SubstreamOpeningMessage | null): Promise<void> {
+  private async assertParticipantsAdmitted(
+    parent: DurableObjectStub<WorkstreamDO>,
+    parentId: string,
+    opening: SubstreamOpeningMessage | null,
+  ): Promise<void> {
     for (const userId of opening?.confirmedParticipantUserIds ?? []) {
       const member = await this.env.DB.prepare(
-        `SELECT status FROM workspace_members WHERE workspace_id = ? AND user_id = ?`,
-      ).bind(this.auth.workspaceId, userId).first<{ status: string }>();
+        `SELECT status, access_class FROM workspace_members WHERE workspace_id = ? AND user_id = ?`,
+      ).bind(this.auth.workspaceId, userId).first<{ status: string; access_class: string }>();
       if (member?.status !== "active") {
         throw new ApiError(404, "workspace_member_not_found", "Workspace member not found.");
+      }
+      if (member.access_class === "member") continue;
+      // Grant authority only: a legacy roster never seats a guest.
+      const admitted = await parent.authorizeViewer({
+        workspaceId: this.auth.workspaceId, parentId, userId: asUserId(userId), requireGrantAuthority: true,
+      });
+      if (!admitted.authorized) {
+        throw new ApiError(409, "substream_guest_requires_share",
+          "Share this work stream with this guest before adding them to a substream.");
       }
     }
   }
@@ -404,6 +419,9 @@ export class SubstreamCreationService {
       }
       if (error.message.includes("workstream_archived")) {
         throw new ApiError(409, "substream_parent_unavailable", "Restore the work stream before changing this substream.");
+      }
+      if (error.message.includes("private_child_guest_requires_share")) {
+        throw new ApiError(409, "substream_guest_requires_share", "Share this substream with a guest instead of adding them.");
       }
       if (error.message.includes("private_child_last_participant")) {
         throw new ApiError(409, "substream_last_participant", "A substream keeps at least one participant.");

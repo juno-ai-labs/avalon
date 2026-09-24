@@ -642,7 +642,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     queryKey: conversationDirectoryQueryKey(workspace.id),
     queryFn: ({ signal }) => api!.getSharedNavigationDirectory(signal),
     enabled: Boolean(api),
-    refetchOnWindowFocus: 'always',
+    // A guest's whole rail is this read, refreshed on focus. A member's rail is
+    // the socket's; this read adds to it and is refreshed by the socket's own
+    // signals — a Channel's tombstone, a listed Channel's metadata frame —
+    // rather than by a request on every focus.
+    refetchOnWindowFocus: guestSession ? 'always' : false,
   });
   const associativeSpaces = useMemo(
     () => associativeSpacesForSidebar(associativeNavigation.data),

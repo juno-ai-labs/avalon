@@ -335,6 +335,20 @@ export function WorkstreamScreen(): React.JSX.Element {
     }
     previousChildren.current = { parentId: id, ids };
   }, [children.data, conversationDirectory, conversationScoped, id, selectedSubstreamId, restoredBreakout, setSearchParams]);
+  // A link that names no conversation opens Main, which a Channel reached only
+  // through some of its conversations does not offer: open the first it lists,
+  // as its sidebar row does.
+  const firstListedSubstreamId = directoryEntry && mainOmitted(directoryEntry)
+    ? (directoryEntry.conversations.find((item) => !item.archived) ?? directoryEntry.conversations[0])?.substreamId
+    : undefined;
+  useEffect(() => {
+    if (selectedSubstreamId !== '0' || !firstListedSubstreamId) return;
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set('substream', firstListedSubstreamId);
+      return next;
+    }, { replace: true });
+  }, [firstListedSubstreamId, selectedSubstreamId, setSearchParams]);
   const routeRef = useRef({ id, selectedSubstreamId, visit: 0 });
   routeRef.current = { id, selectedSubstreamId, visit: routeRef.current.visit + Number(routeRef.current.id !== id || routeRef.current.selectedSubstreamId !== selectedSubstreamId) };
   const reportParentAction = (workstream: WorkstreamSummary, action: 'rename' | 'archive' | 'make_public'): void => {
