@@ -25,7 +25,9 @@ A message a Sidekick run sends through a connector binds its reply thread to
 that run. A reply continues the run with the Sidekick's own instructions,
 tools, and authority, rather than opening an unrelated Agent Channel. A
 Sidekick has a home conversation, the Channel or Breakout it belongs to, and
-can list, read, and post to the conversations it is attached to. A
+can list, read, and post to the conversations it is attached to. The same
+conversation tools are a general Rally capability: an ordinary Channel or
+Breakout agent can use them to read its own Channel and Breakout. A
 multi-step Sidekick, such as one that collects answers at 1 PM and writes an
 agenda at 2 PM, uses its home conversation as the shared record between runs.
 
@@ -69,7 +71,10 @@ for the next.
    authority, even after the run has completed.
 7. A Sidekick has one home conversation (a Channel or a Breakout) and can list,
    read, and post to the conversations it is attached to.
-8. The binding mechanism is usable by another connector with any depth of
+8. The conversation tools are one general Rally capability, not Sidekick
+   code. Any agent loop can be given them, with a scope that says which
+   conversations it may reach.
+9. The binding mechanism is usable by another connector with any depth of
    rooms and threads without copying Slack-specific routing code.
 
 ## Non-goals
@@ -135,6 +140,29 @@ binding to an absent destination. Offline Rally clients can still open the
 Channel after ingress completes; the provider event is not dependent on a
 desktop session.
 
+### Conversation tools
+
+Rally agents get a general set of conversation tools: **list** the
+conversations the agent may reach, **read** messages from one a page at a
+time, and **post** to one. What an agent may reach is its **scope**, which
+depends on where the agent runs:
+
+| Agent | Scope | Tools |
+| --- | --- | --- |
+| Channel or Breakout agent | Its own conversation and its Channel's Main conversation | List, read |
+| Sidekick config conversation (`"0"`) | The Sidekick's attached conversations | Attach, list, read, post |
+| Sidekick run | The Sidekick's attached conversations | List, read, post |
+
+A Channel or Breakout agent can therefore read its own conversation beyond
+what fits in its context, and a Breakout agent can read the Channel it sits
+in. It posts to its own conversation by replying, as today. Attach exists
+only for Sidekicks.
+
+Reading and posting move content between audiences. Every read or post checks
+that the target is in scope and that the move cannot widen who sees the
+content. A conversation archived or made unreachable refuses reads and posts
+with a reason the agent can report.
+
 ### A Sidekick's home and attached conversations
 
 Every Sidekick that belongs to a room has one **home conversation**: the
@@ -142,22 +170,14 @@ Channel Main conversation or the Breakout where it was set up. The home is
 always attached. The Sidekick's config conversation, its substream `"0"`
 where it is set up and edited, can attach further Channels or Breakouts.
 
-The tools split between the two kinds of Sidekick conversation:
+A Sidekick's attached conversations are its scope for the conversation
+tools, with the home listed first and used as the default post target. Only
+the config conversation can attach, and a Sidekick may attach only to a
+conversation where reading and posting cannot widen who sees the content.
 
-| Tool | Config conversation (`"0"`) | Run |
-| --- | --- | --- |
-| **Attach** a conversation | Yes | No |
-| **List** attached conversations, home first | Yes | Yes |
-| **Read** messages from an attached conversation, a page at a time | Yes | Yes |
-| **Post** to an attached conversation, defaulting to the home | Yes | Yes |
-
-Post replaces today's `sidekick_post_result`, which could post only to the
-owning Channel's Main conversation.
-
-Reading and posting move content between audiences. A Sidekick may attach
-only to a conversation where that move cannot widen who sees the content, and
-each read or post rechecks it. A conversation archived or made unreachable
-refuses reads and posts with a reason the run can report.
+**`sidekick_post_result` is removed.** It could post only to the owning
+Channel's Main conversation, and beside a general post tool a model would not
+know which to use. The post conversation tool covers everything it did.
 
 ### Continuing a run
 
@@ -339,6 +359,9 @@ should be a Breakout is changed explicitly.
 - The Sidekick's config conversation offers all four conversation tools. A
   run offers list, read, and post; it cannot attach a conversation, and
   cannot read or post to a conversation it is not attached to.
+- A Breakout agent can list and read its own Breakout and its Channel's Main
+  conversation, and cannot read any other conversation.
+- No agent is offered `sidekick_post_result`.
 - Removal, archive, disconnect, provider ID change, and retry preserve the
   binding's identity or suspend it without moving messages to another target.
 
@@ -371,6 +394,9 @@ should be a Breakout is changed explicitly.
    original thread?
 9. **Showing a reopened run:** How does the Sidekick's run history show a run
    that completed, reopened, and completed again?
+10. **Posting for Channel and Breakout agents:** Should a Breakout agent be
+    able to post to its Channel's Main conversation, and should a Channel agent
+    reach its Breakouts? Both fit the same scope rule; neither is needed yet.
 
 ## Decision log
 
