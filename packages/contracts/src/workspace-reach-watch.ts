@@ -52,9 +52,11 @@ export interface ReachWatchDependencies {
  * unsubscribed socket is how the server marks one it has stopped serving; the
  * sidebar in the answer is discarded.
  *
- * Nothing is replayed across a reconnect, so every subscribe answer after the
- * first reports stale. The first is skipped because the host reads its list
- * when it starts.
+ * Every subscribe answer reports stale, the first included. Nothing is
+ * replayed across a reconnect, and the host's opening read can finish before
+ * the first subscribe does — a change landing between the two reaches no
+ * socket, so skipping the first answer would keep that read's stale result.
+ * The cost is one extra background read when the host starts.
  *
  * @returns stop, which closes the socket and cancels any reconnect.
  */
@@ -67,7 +69,6 @@ export function watchWorkspaceReach(dependencies: ReachWatchDependencies): () =>
   let heartbeatTimer: unknown = null;
   let pongTimer: unknown = null;
   let attempt = 0;
-  let subscribedOnce = false;
 
   const clearHeartbeat = (): void => {
     if (heartbeatTimer !== null) clearTimer(heartbeatTimer);
@@ -139,8 +140,7 @@ export function watchWorkspaceReach(dependencies: ReachWatchDependencies): () =>
       if (!subscribed && safeParseSocketEvent(WorkspaceSocketSyncEventSchema, decoded).success) {
         subscribed = true;
         attempt = 0;
-        if (subscribedOnce) dependencies.onStale();
-        subscribedOnce = true;
+        dependencies.onStale();
         return;
       }
       if (safeParseSocketEvent(WorkspaceReachChangedEventSchema, decoded).success) dependencies.onStale();

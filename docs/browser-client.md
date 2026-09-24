@@ -146,7 +146,7 @@ existing account/badge treatment; no workspace icon/color settings are introduce
 The browser does not install desktop background subscriptions. See [shared UI](shared-ui.md).
 It holds one workspace socket per tab, through `watchWorkspaceReach`, and reads
 nothing from it but `workspace_reach_changed`: when this person joins or leaves
-a Channel or Breakout, or the socket reconnects, the shared navigation is read
+a Channel or Breakout, or the socket (re)subscribes, the shared navigation is read
 again. Before this, a new grant reached the sidebar only on focus or through the
 open conversation's own metadata ([`realtime-sockets.md`](realtime-sockets.md)).
 
@@ -403,7 +403,7 @@ Substream Archive stays in the right-click menu, away from the header Share cont
 
 **What changed:** Each tab opens one workspace socket, through the same
 `/regional/<region>/socket/` forwarding the conversation feed uses, and rereads
-the shared navigation on `workspace_reach_changed` or a reconnect. It subscribes
+the shared navigation on `workspace_reach_changed` or any subscribe answer. It subscribes
 and ignores the sidebar payload the subscribe answer carries.
 
 **Why:** A person shared into a Channel or Breakout while their tab was open saw
@@ -418,7 +418,9 @@ carry.
 **Consequences:** A tab holds one socket more than it did, for as long as a
 workspace is selected. The subscribe answer is built per socket and discarded here; a
 lighter subscribe for listen-only hosts would remove that cost if it matters.
-Nothing is replayed, so a missed event is covered by the reread on reconnect.
+Nothing is replayed, so a missed event is covered by the reread on each
+subscribe answer, including the first: the opening navigation read can finish
+before the socket subscribes.
 
 ### 2026-09-22 — Read hierarchical shared-resource URLs
 

@@ -75,20 +75,22 @@ function harness() {
 }
 
 describe("watchWorkspaceReach", () => {
-  it("subscribes, and reports a reach change but not the first subscribe answer", async () => {
+  it("subscribes, and reports the first subscribe answer and a reach change", async () => {
     const { onStale, opened } = harness();
     const socket = await opened();
 
     expect(JSON.parse(socket.sent[0]!)).toEqual({ type: "subscribe", afterWaterline: 0 });
+    // The host's opening read may have finished before this subscribe, so a
+    // change between the two reached no socket.
     socket.message(subscribeAnswer);
-    expect(onStale).not.toHaveBeenCalled();
+    expect(onStale).toHaveBeenCalledTimes(1);
 
     socket.message({ ...subscribeAnswer, reason: "change", topics: ["activity"] });
     socket.message({ type: "workspace_presence", occurredAt: reachChanged.occurredAt, workstreamId: null, userIds: [] });
-    expect(onStale).not.toHaveBeenCalled();
+    expect(onStale).toHaveBeenCalledTimes(1);
 
     socket.message(reachChanged);
-    expect(onStale).toHaveBeenCalledTimes(1);
+    expect(onStale).toHaveBeenCalledTimes(2);
   });
 
   it("reports stale after a reconnect, since nothing is replayed across the gap", async () => {
@@ -101,7 +103,7 @@ describe("watchWorkspaceReach", () => {
     await vi.waitFor(() => expect(sockets).toHaveLength(2));
     const second = await opened();
     second.message(subscribeAnswer);
-    expect(onStale).toHaveBeenCalledTimes(1);
+    expect(onStale).toHaveBeenCalledTimes(2);
   });
 
   it("retries when opening the socket throws, rather than stopping for good", async () => {
