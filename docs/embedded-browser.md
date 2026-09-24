@@ -34,7 +34,9 @@ no Channel is on screen, takes the `openExternal` path it took before, where
 main's allowlist still admits only web URLs. Anchors reach it through one
 document listener (`captureLinkClicks`), which leaves alone a click a component
 already handled and Rally's own same-origin routes; citations, search link results and
-a resource's *Open source* call `openLink` directly. Sign-in and connector
+a resource's *Open source* call `openLink` directly. A link opened while an artifact
+panel holds the rail covers it rather than closing it: the panel's saved
+layout is left alone, and closing the browser returns to the panel. Sign-in and connector
 authorization keep calling `openExternal`, since their callbacks return to the
 app through the system browser. Links inside an artifact's own view are
 decided by the artifact surface and still leave for the system browser.
