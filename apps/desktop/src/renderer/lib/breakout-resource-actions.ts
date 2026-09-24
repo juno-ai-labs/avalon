@@ -9,12 +9,14 @@ import type { WorkstreamResource } from './types';
  * everyone in either room can open it. Only artifacts get the action: a source
  * the breakout was given came from somewhere a person can attach it from
  * already. One the Channel already holds keeps the item, disabled, so the menu
- * says why nothing would happen.
+ * says why nothing would happen. While an attach is `pending` every item is
+ * disabled, because the host runs one at a time.
  */
-export function breakoutResourceActions({ attach, breakoutResources, channelResources }: {
+export function breakoutResourceActions({ attach, breakoutResources, channelResources, pending = false }: {
   attach: (resource: WorkstreamResource) => void;
   breakoutResources: readonly WorkstreamResource[];
   channelResources: readonly WorkstreamResource[];
+  pending?: boolean;
 }): NonNullable<CitationContext['actions']> {
   const artifacts = new Map(breakoutResources
     .filter((resource) => resource.direction === 'artifact')
@@ -26,7 +28,7 @@ export function breakoutResourceActions({ attach, breakoutResources, channelReso
     return [{
       id: 'attach-to-channel',
       label: 'Attach to channel',
-      disabled: inChannel.has(resource.id),
+      disabled: pending || inChannel.has(resource.id),
       onSelect: () => attach(resource),
     }];
   };
