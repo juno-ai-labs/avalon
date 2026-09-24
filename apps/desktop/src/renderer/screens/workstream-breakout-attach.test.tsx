@@ -219,6 +219,20 @@ describe('attaching a breakout artifact to its channel', () => {
       .toHaveAttribute('aria-disabled', 'true'));
   });
 
+  it('sends one attach while the first is still in flight', async () => {
+    api.attachResource.mockReturnValue(new Promise(() => undefined));
+    renderScreen({ breakout: true });
+    await openCardMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Attach to channel' }));
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+
+    await openCardMenu();
+    const item = await screen.findByRole('menuitem', { name: 'Attach to channel' });
+    await waitFor(() => expect(item).toHaveAttribute('aria-disabled', 'true'));
+    fireEvent.click(item);
+    expect(api.attachResource).toHaveBeenCalledOnce();
+  });
+
   it('offers no menu in the channel itself', async () => {
     renderScreen({ breakout: false });
     await openCardMenu();

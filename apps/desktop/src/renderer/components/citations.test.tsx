@@ -409,6 +409,22 @@ describe('resource citations', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
+  it('opens the host\'s menu on an audio tile', async () => {
+    const recording: CitationResource = { id: 'standup', title: 'standup.mp3', resourceType: 'generated_file', mimeType: 'audio/mpeg' };
+    const onSelect = vi.fn();
+    render(
+      <MarkdownBody citations={context({
+        resolve: (resourceId) => (resourceId === recording.id ? recording : undefined),
+        actions: () => [{ id: 'attach', label: 'Attach to channel', onSelect }],
+      })}>
+        {'![standup.mp3](resource://standup)'}
+      </MarkdownBody>,
+    );
+    fireEvent.contextMenu(screen.getByText('standup.mp3'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Attach to channel' }));
+    expect(onSelect).toHaveBeenCalledOnce();
+  });
+
   it('shows a disabled action without running it', async () => {
     const onSelect = vi.fn();
     render(

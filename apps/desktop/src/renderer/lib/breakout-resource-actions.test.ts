@@ -31,6 +31,11 @@ describe('breakoutResourceActions', () => {
     expect(actions('market-map')?.[0]?.disabled).toBe(true);
   });
 
+  it('disables every item while an attach is in flight', () => {
+    const actions = breakoutResourceActions({ attach: vi.fn(), breakoutResources: [site], channelResources: [], pending: true });
+    expect(actions('market-map')?.[0]?.disabled).toBe(true);
+  });
+
   it('offers nothing for a source or a resource the breakout does not hold', () => {
     const actions = breakoutResourceActions({ attach: vi.fn(), breakoutResources: [source], channelResources: [] });
     expect(actions('brief')).toBeUndefined();
