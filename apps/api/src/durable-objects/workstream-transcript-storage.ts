@@ -1526,6 +1526,11 @@ export class WorkstreamTranscriptStorage {
         turns.push(turn);
         deliveryEffects.push(delivered.deliveryEffect);
       }
+      // What waited behind the steers just delivered lands with them, before
+      // the next model step can write a turn between them.
+      const withoutRun = this.deliverLeadingInputsWithoutRunInTransaction(now);
+      turns.push(...withoutRun.turns);
+      deliveryEffects.push(...withoutRun.deliveryEffects);
       const nextBindStateRevision = committedPrepared.at(-1)?.next.stateRevision
         ?? committedDerived.next.stateRevision;
       // A safe step ends Bind's current model/tool iteration, not the durable
@@ -1571,7 +1576,10 @@ export class WorkstreamTranscriptStorage {
             append.steps.map((step) => step.transition)),
         ],
         turns,
-        removedInputIds: committedPrepared.map((append) => append.pending.input_id),
+        removedInputIds: [
+          ...committedPrepared.map((append) => append.pending.input_id),
+          ...withoutRun.removedInputIds,
+        ],
         deliveryEffects,
         deliveredDerivedInputKeys: committedDerived.keys,
         stop,
@@ -1807,11 +1815,15 @@ export class WorkstreamTranscriptStorage {
         || activated.revision !== input.expectedLoopRevision + 1) {
         throw new Error("substream_loop_revision_mismatch");
       }
+      const turn = this.participantTurn(pending.prepared_turn_id);
+      // What was sent behind the activated input without addressing Rally
+      // lands directly under it, ahead of anything the new run writes.
+      const withoutRun = this.deliverLeadingInputsWithoutRunInTransaction(now);
+      const deliveryEffects = [delivered.deliveryEffect, ...withoutRun.deliveryEffects];
       invokeSynchronousEffectEnqueue(
         input.enqueueRegionalEffectsInTransaction,
-        [delivered.deliveryEffect],
+        deliveryEffects,
       );
-      const turn = this.participantTurn(pending.prepared_turn_id);
       const committedLoop = loopStorage.loop();
       if (!turn || turn.attentionOrdinal !== delivered.attentionOrdinal || !committedLoop) {
         throw new Error("pending_input_activation_hydration_failed");
@@ -1819,9 +1831,9 @@ export class WorkstreamTranscriptStorage {
       return {
         outcome: "activated" as const,
         transitions: prepared ? prepared.steps.map((step) => step.transition) : [],
-        turns: [turn],
-        removedInputIds: [pending.input_id],
-        deliveryEffects: [delivered.deliveryEffect],
+        turns: [turn, ...withoutRun.turns],
+        removedInputIds: [pending.input_id, ...withoutRun.removedInputIds],
+        deliveryEffects,
         loop: committedLoop,
         receiptRunId: input.receipt.runId,
       };
@@ -3825,9 +3837,9 @@ export class WorkstreamTranscriptStorage {
               prepared_payload_audience, prepared_payload_media_type,
               prepared_payload_json, prepared_payload_sha256,
               prepared_payload_byte_length, bind_payload_json, provenance_json, authorization_json,
-              attachments_json, mentions_json, created_at, updated_at
+              attachments_json, mentions_json, starts_run, created_at, updated_at
          FROM pending_loop_inputs
-        WHERE mode = 'steer'
+        WHERE mode = 'steer' AND starts_run = 1
           AND NOT EXISTS (
             SELECT 1 FROM pending_loop_input_mailbox preparing
              WHERE preparing.loop_id = pending_loop_inputs.loop_id
@@ -3847,9 +3859,10 @@ export class WorkstreamTranscriptStorage {
               prepared_payload_audience, prepared_payload_media_type,
               prepared_payload_json, prepared_payload_sha256,
               prepared_payload_byte_length, bind_payload_json, provenance_json, authorization_json,
-              attachments_json, mentions_json, created_at, updated_at
+              attachments_json, mentions_json, starts_run, created_at, updated_at
          FROM pending_loop_inputs
-        WHERE NOT EXISTS (
+        WHERE starts_run = 1
+          AND NOT EXISTS (
             SELECT 1 FROM pending_loop_input_mailbox preparing
              WHERE preparing.loop_id = pending_loop_inputs.loop_id
                AND preparing.state = 'preparing'
@@ -3857,6 +3870,80 @@ export class WorkstreamTranscriptStorage {
           )
         ORDER BY input_sequence`,
     ).toArray();
+  }
+
+  /**
+   * The inputs at the head of the visible queue that start no run.
+   *
+   * Each waited only for what was sent before it, so the moment nothing is
+   * ahead it lands. Nothing about it touches Bind: it is a canonical turn like
+   * any message the room did not address to Rally, and the gap-fill appends it
+   * to the model's context ahead of the next input that does.
+   */
+  private leadingInputsWithoutRun(): PendingLoopInputRow[] {
+    const leading: PendingLoopInputRow[] = [];
+    for (const pending of new SubstreamLoopStorage(this.storage).pendingInputs()) {
+      if (pending.starts_run !== 0) break;
+      leading.push(pending);
+    }
+    return leading;
+  }
+
+  /** Whether an input that starts no run can land now. */
+  hasLeadingInputWithoutRun(): boolean {
+    return this.leadingInputsWithoutRun().length > 0;
+  }
+
+  private deliverLeadingInputsWithoutRunInTransaction(now: number): {
+    turns: TranscriptTurn[];
+    removedInputIds: string[];
+    deliveryEffects: PendingInputDeliveryEffectInput[];
+  } {
+    const turns: TranscriptTurn[] = [];
+    const removedInputIds: string[] = [];
+    const deliveryEffects: PendingInputDeliveryEffectInput[] = [];
+    for (const pending of this.leadingInputsWithoutRun()) {
+      const delivered = this.promotePendingInputInTransaction(
+        pending,
+        parsePendingInputMaterial(pending),
+        now,
+      );
+      this.markPendingDeliveredDirect(pending, delivered.attentionOrdinal, now);
+      const turn = this.participantTurn(pending.prepared_turn_id);
+      if (!turn || turn.attentionOrdinal !== delivered.attentionOrdinal) {
+        throw new Error("pending_input_turn_hydration_failed");
+      }
+      turns.push(turn);
+      removedInputIds.push(pending.input_id);
+      deliveryEffects.push(delivered.deliveryEffect);
+    }
+    return { turns, removedInputIds, deliveryEffects };
+  }
+
+  /**
+   * Land the inputs that start no run and have nothing left ahead of them, on
+   * an idle loop. An executing loop lands them at its next safe step instead,
+   * or in the activation that delivered what they were waiting for.
+   */
+  deliverLeadingInputsWithoutRun(input: {
+    loopId: string;
+    enqueueRegionalEffectsInTransaction: (
+      deliveries: readonly PendingInputDeliveryEffectInput[],
+    ) => void;
+    now?: number;
+  }): { turns: TranscriptTurn[]; removedInputIds: string[] } {
+    const now = input.now ?? Date.now();
+    return this.storage.transactionSync(() => {
+      const loop = new SubstreamLoopStorage(this.storage).loop();
+      if (!loop || loop.loop_id !== input.loopId) throw new Error("substream_loop_not_found");
+      if (loop.status !== "idle") return { turns: [], removedInputIds: [] };
+      const delivered = this.deliverLeadingInputsWithoutRunInTransaction(now);
+      invokeSynchronousEffectEnqueue(
+        input.enqueueRegionalEffectsInTransaction,
+        delivered.deliveryEffects,
+      );
+      return { turns: delivered.turns, removedInputIds: delivered.removedInputIds };
+    });
   }
 
   private oldestActivationInput(
