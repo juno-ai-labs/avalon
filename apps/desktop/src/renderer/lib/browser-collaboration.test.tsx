@@ -39,6 +39,11 @@ class BrowserSocket extends EventTarget {
 
 let fetchHandler: (input: string) => Promise<Response>;
 
+/** The conversation feed sockets, apart from the tab's one workspace socket. */
+const feedSockets = () => BrowserSocket.instances.filter((socket) => socket.url.includes('/socket/conversations/'));
+const workspaceSockets = () => BrowserSocket.instances.filter((socket) => socket.url.includes('/socket/workspaces/'));
+const workspaceTicket = () => Response.json({ url: `wss://api.rallywith.ai/socket/workspaces/${workspace.id}`, ticket: 'workspace-ticket' });
+
 beforeEach(() => {
   BrowserSocket.instances = [];
   fetchHandler = async (input) => Response.json({ error: { message: `Unexpected request: ${input}` } }, { status: 404 });
@@ -66,6 +71,7 @@ it('keeps the live collaboration socket across a focus session refresh', async (
       id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', name: 'Guest space', iconKey: 'briefcase', colorKey: 'blue', scope: 'personal', workstreamIds: [parent],
     }], workstreams: [{ parentId: parent, title: 'Shared parent', scope: 'personal', archived: false,
       conversations: [{ substreamId: child, title: 'Shared child conversation', scope: 'personal', archived: false }] }] });
+    if (path.endsWith('/workspace/socket')) return workspaceTicket();
     if (path.endsWith('/socket')) return Response.json({ url: 'wss://api.rallywith.ai/socket/conversations/' + parent + '/' + child, ticket: 'fixture-ticket' });
     if (path.endsWith('/sidekicks') || path.endsWith('/recommended-sidekicks')) return Response.json({ items: [] });
     if (path.endsWith('/feature-flags')) return Response.json({ liveArtifactsEnabled: false });
@@ -75,8 +81,8 @@ it('keeps the live collaboration socket across a focus session refresh', async (
   const view = render(<BrowserEntry renderCollaboration={(region, session, onSignOut) =>
     <BrowserConversation session={cookieClientSession(region, session)} onSignOut={onSignOut} />} />);
   try {
-    await waitFor(() => expect(BrowserSocket.instances).toHaveLength(1));
-    const socket = BrowserSocket.instances[0]!;
+    await waitFor(() => expect(feedSockets()).toHaveLength(1));
+    const socket = feedSockets()[0]!;
     await act(async () => { socket.open(); });
     await screen.findByRole('heading', { name: 'Shared child conversation' });
     const previousSelections = selections;
@@ -84,7 +90,10 @@ it('keeps the live collaboration socket across a focus session refresh', async (
     await waitFor(() => expect(selections).toBeGreaterThan(previousSelections));
     await act(async () => { await Promise.resolve(); });
     expect(socket.readyState).toBe(BrowserSocket.OPEN);
-    expect(BrowserSocket.instances).toHaveLength(1);
+    expect(feedSockets()).toHaveLength(1);
+    // The membership socket is keyed by the workspace, not the session object,
+    // so a focus-time session refresh does not reconnect it either.
+    expect(workspaceSockets()).toHaveLength(1);
     expect(screen.getByRole('heading', { name: 'Shared child conversation' })).toBeInTheDocument();
   } finally { view.unmount(); }
 });
@@ -106,6 +115,7 @@ it('groups a guest’s authorized Channels by Space and opens the shared Breakou
           conversations: [{ substreamId: archivedChild, title: 'Archived breakout', scope: 'personal', archived: true }] },
       ],
     });
+    if (path.endsWith('/workspace/socket')) return workspaceTicket();
     if (path.endsWith('/socket')) return Response.json({ url: `wss://api.rallywith.ai/socket/conversations/${otherParent}/${otherChild}`, ticket: 'fixture-ticket' });
     if (path.endsWith('/sidekicks') || path.endsWith('/recommended-sidekicks')) return Response.json({ items: [] });
     if (path.endsWith('/feature-flags')) return Response.json({ liveArtifactsEnabled: false });
@@ -125,8 +135,8 @@ it('groups a guest’s authorized Channels by Space and opens the shared Breakou
     expect(location.pathname).toBe(`/app/workspaces/global/${workspace.id}/workstreams/${otherParent}/substreams/${otherChild}`);
     expect(screen.getByRole('button', { name: 'Research' })).toHaveAttribute('aria-pressed', 'true');
 
-    await waitFor(() => expect(BrowserSocket.instances.length).toBeGreaterThan(0));
-    await act(async () => { BrowserSocket.instances.at(-1)!.open(); });
+    await waitFor(() => expect(feedSockets().length).toBeGreaterThan(0));
+    await act(async () => { feedSockets().at(-1)!.open(); });
     expect(await screen.findByRole('button', { name: 'Go to breakout: Breakout Beta' })).toHaveAttribute('aria-current', 'page');
     fireEvent.click(screen.getByRole('link', { name: 'Channel Alpha' }));
     await waitFor(() => expect(location.pathname).toBe(`/app/workspaces/global/${workspace.id}/workstreams/${parent}/substreams/${child}`));

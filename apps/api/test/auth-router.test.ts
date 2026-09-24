@@ -98,6 +98,27 @@ describe("authentication in the complete application router", () => {
     expect(members.find((member) => member.user.id === userId)).toMatchObject({ role:"owner" });
   });
 
+  it("issues a guest the workspace socket ticket its sidebar nudges arrive on", async () => {
+    const guestId = "00000000-0000-7000-8000-000000000004";
+    database.prepare("INSERT INTO users (id,email,name,created_at,updated_at) VALUES (?, 'guest@example.com','Guest',?,?)").run(guestId, at, at);
+    database.prepare("INSERT INTO workspace_members (workspace_id,user_id,access_class,role,status,joined_at) VALUES (?,?,'guest',NULL,'active',?)")
+      .run(workspaceId, guestId, at);
+    const bindings = createTestEnv({ ...env(), PUBLIC_API_BASE_URL: "https://api.example.test" });
+    const guestSession = await new AuthService(bindings).createRegionalSession(guestId, workspaceId);
+    const request = (path: string) => createApp().request(path, {
+      headers: { authorization: `Bearer ${guestSession.accessToken}` },
+    }, bindings);
+
+    const ticket = await request("/workspace/socket");
+    expect(ticket.status).toBe(200);
+    expect(await ticket.json()).toMatchObject({
+      url: `wss://api.example.test/socket/workspaces/${workspaceId}`,
+      ticket: expect.any(String),
+    });
+    // The rest of `/workspace` stays member-only.
+    expect((await request("/workspace")).status).toBe(403);
+  });
+
   it("promotes the same guest through the public route and retains its session binding", async () => {
     const guestId = "00000000-0000-7000-8000-000000000004";
     database.prepare("INSERT INTO users (id,email,name,created_at,updated_at) VALUES (?, 'guest@example.com','Guest',?,?)").run(guestId, at, at);

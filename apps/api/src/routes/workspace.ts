@@ -25,7 +25,7 @@ import {
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { requireCurrentClientContract } from "../lib/client-contract";
-import { getAuth } from "../middleware/auth";
+import { getAuth, getWorkspaceAuth } from "../middleware/auth";
 import { SpaceService } from "../services/space-service";
 import { WorkspaceService } from "../services/workspace-service";
 import { workspaceAttention } from "../services/workspace-attention-service";
@@ -38,6 +38,30 @@ const invitationParam = z.object({ id: IdSchema });
 const memberParam = z.object({ userId: IdSchema });
 const MemberPageSchema = z.object({ items: z.array(WorkspaceMemberSchema) });
 const InvitationPageSchema = z.object({ items: z.array(WorkspaceInvitationSchema) });
+
+/**
+ * The workspace socket's ticket, for members and guests alike.
+ *
+ * Mounted on the identity layer with the workspace-relationship check rather
+ * than under `requireAuth`, which admits members only: WorkspaceDO already
+ * shapes a guest's socket (no Space state, per-viewer rows), and a guest's
+ * client needs it for the membership nudges its shared navigation follows.
+ *
+ * The door to the sidebar payload, which now carries both Space directories
+ * and is parsed strictly by every shipped desktop. A build that cannot read it
+ * is told to update here rather than left reconnecting to a socket whose first
+ * frame it discards.
+ */
+export async function workspaceSocketTicket(c: Context<HonoAppEnv>) {
+  requireCurrentClientContract((name) => c.req.header(name));
+  const auth = getWorkspaceAuth(c);
+  const ticket = await issueWorkspaceSocketTicket(c.env, auth);
+  const url = new URL(c.env.PUBLIC_API_BASE_URL);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.pathname = `/socket/workspaces/${auth.workspaceId}`;
+  url.search = "";
+  return c.json(SocketTicketSchema.parse({ url: url.toString(), ticket }));
+}
 
 export const workspaceRoutes = new Hono<HonoAppEnv>();
 
@@ -53,20 +77,6 @@ workspaceRoutes.get("/", async (c) =>
   c.json(WorkspaceSchema.parse(await new WorkspaceService(c.env, getAuth(c)).getWorkspace())));
 workspaceRoutes.get("/attention", async (c) =>
   c.json(WorkspaceAttentionSchema.parse(await workspaceAttention(c.env, getAuth(c)))));
-workspaceRoutes.get("/socket", async (c) => {
-  // The door to the sidebar payload, which now carries both Space directories
-  // and is parsed strictly by every shipped desktop. A build that cannot read
-  // it is told to update here rather than left reconnecting to a socket whose
-  // first frame it discards.
-  requireCurrentClientContract((name) => c.req.header(name));
-  const auth = getAuth(c);
-  const ticket = await issueWorkspaceSocketTicket(c.env, auth);
-  const url = new URL(c.env.PUBLIC_API_BASE_URL);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.pathname = `/socket/workspaces/${auth.workspaceId}`;
-  url.search = "";
-  return c.json(SocketTicketSchema.parse({ url: url.toString(), ticket }));
-});
 workspaceRoutes.patch("/", zValidator("json", UpdateWorkspaceRequestSchema), async (c) =>
   c.json(WorkspaceSchema.parse(await new WorkspaceService(c.env, getAuth(c)).updateWorkspace(c.req.valid("json")))),
 );
