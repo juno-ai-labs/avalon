@@ -1217,9 +1217,11 @@ export class WorkstreamDO extends ConversationParentDurableObject {
           WHERE child.substream_id = ? AND child.kind = 'child'`,
         request.userId, substreamId,
       ));
+      // Membership of the child alone admits. Reading the channel is neither
+      // required nor enough: a breakout member need not be in Main, and a Main
+      // participant who is not a member cannot open the breakout.
       return ConversationParentAuthorizeViewerResultSchema.parse({
-        authorized: (row.scope === "workspace" || this.isParticipant(request.userId))
-          && child?.status === "ready" && child.version !== null,
+        authorized: child?.status === "ready" && child.version !== null,
         // Either archive reaches this conversation: the work stream's, which
         // takes all of its children with it, and the child's own. One field
         // because every caller downstream already refuses writes and socket
@@ -1236,6 +1238,39 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       authorized,
       archived: row.archived_at !== null,
     });
+  }
+
+  /**
+   * Whether this person may read one conversation of this work stream.
+   *
+   * A union of the two authorities, not a fork between them. Grants decide
+   * wherever they exist — including a Channel on grant authority from its
+   * start, which has no migration row. A conversation mid-handoff answers only
+   * through grants, so a legacy roster never admits alongside a frozen one.
+   * An unmigrated conversation also admits a member through its legacy roster:
+   * Main through the work stream's scope and participants, a breakout through
+   * its own membership alone, so a breakout member need not read Main. Archive
+   * is not asked; archived conversations stay readable. A guest reads only
+   * through grants.
+   */
+  private canReadConversation(address: { workspaceId: string; parentId: string; userId: UserId },
+    substreamId: SubstreamId, relationship: WorkspaceRelationship | null): boolean {
+    if (this.participantMigrationPhase(substreamId) !== null) {
+      return this.migratedConversationAccess(address, substreamId, relationship).allowed;
+    }
+    if (this.resolveScopeAccess({ userId: address.userId, target: { kind: "conversation",
+      workspaceId: asWorkspaceId(address.workspaceId), parentId: address.parentId, substreamId } }, relationship).allowed) {
+      return true;
+    }
+    if (relationship?.status !== "active" || relationship.accessClass !== "member") return false;
+    if (substreamId === "0") return this.metadataRow()?.scope === "workspace" || this.isParticipant(address.userId);
+    return first(this.parentSql.exec<{ one: number }>(
+      `SELECT 1 AS one FROM conversation_children child
+         JOIN private_child_memberships member
+           ON member.substream_id = child.substream_id AND member.user_id = ? AND member.active = 1
+        WHERE child.substream_id = ? AND child.kind = 'child' AND child.status = 'ready'`,
+      address.userId, substreamId,
+    )) !== null;
   }
 
   private participantMigrationPhase(substreamId: string): "pending" | "complete" | null {
@@ -1515,9 +1550,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       audience: "restricted" | "inherits_workstream";
     }>(
       "SELECT substream_id,title,archived_at,audience FROM conversation_children ORDER BY substream_id",
-    ).toArray().filter((child) => this.resolveScopeAccess({ userId: request.userId,
-      target: { kind: "conversation", workspaceId: request.workspaceId, parentId: request.parentId,
-        substreamId: asSubstreamId(child.substream_id) } }, relationship).allowed)
+    ).toArray().filter((child) => this.canReadConversation(request, asSubstreamId(child.substream_id), relationship))
       .map((child) => {
         const common = projections.get(child.substream_id);
         const viewer = viewerProjections?.get(child.substream_id);
@@ -2187,7 +2220,6 @@ export class WorkstreamDO extends ConversationParentDurableObject {
         if (!this.migratedConversationAccess({ ...request, userId: request.actorUserId },
           request.substreamId, relationship).allowed) throw new Error("private_child_participant_required");
       } else {
-        if (!this.canRead(request.actorUserId)) throw new Error("private_child_participant_required");
         const actor = first(this.parentSql.exec<{ active: number }>(
           `SELECT active FROM private_child_memberships WHERE substream_id = ? AND user_id = ?`,
           request.substreamId, request.actorUserId,
@@ -2341,10 +2373,14 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       if (result.status !== "committed") throw new Error("participant_grant_conflict");
       return { outcome:active ? "added" : "removed",membershipVersion:result.grant.revision };
     }
-    if (active && !this.canRead(request.userId)) {
-      throw new Error("private_child_member_not_admitted_to_parent");
+    // A breakout's roster is its own: neither the person added nor the person
+    // adding needs to read the channel. The actor's active membership, checked
+    // in the transaction below, is the whole of the authority. A guest reads
+    // only through grants, so a legacy roster row would seat them somewhere
+    // nothing else admits them; a guest is shared the breakout instead.
+    if (active && (await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.userId))?.accessClass !== "member") {
+      throw new Error("private_child_guest_requires_share");
     }
-    if (!this.canRead(request.actorUserId)) throw new Error("private_child_participant_required");
     const now = Date.now();
     const result = this.state.storage.transactionSync(() => {
       const child = first(this.parentSql.exec<{ status: string; archived_at: number | null }>(
@@ -2352,6 +2388,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
         request.substreamId,
       ));
       if (!child || child.status !== "ready") throw new Error("private_child_not_ready");
+      if (this.metadataRow()?.archived_at != null) throw new Error("workstream_archived");
       // Adding somebody to an archived substream would seat them in a room
       // that is in nobody's sidebar; removing from one is equally moot. Restore
       // it first. Refused for both directions so the roster of an archived
@@ -3466,7 +3503,16 @@ export class WorkstreamDO extends ConversationParentDurableObject {
         `SELECT substream_id FROM substream_directory ORDER BY substream_id`,
       ).toArray().map((row) => row.substream_id),
     ])];
-    return { substreamIds };
+    if (request.reason !== "workstream_participant_removed") return { substreamIds };
+    // Losing this work stream — removed from Main, or its audience narrowed —
+    // is not losing a breakout, whose roster is its own. Main is always named:
+    // it is what was lost, and its participant projection may not have caught
+    // up yet. A breakout is named only when this person can no longer read it.
+    // A session or membership that ended closes everything, above.
+    const relationship = await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.userId);
+    const address = { workspaceId: request.workspaceId, parentId: identity.workstream_id, userId: UserIdSchema.parse(request.userId) };
+    return { substreamIds: substreamIds.filter((substreamId) => substreamId === "0"
+      || !this.canReadConversation(address, asSubstreamId(substreamId), relationship)) };
   }
 
   private async broadcastMetadata(): Promise<void> {

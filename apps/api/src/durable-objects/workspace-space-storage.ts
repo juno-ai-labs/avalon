@@ -1734,6 +1734,46 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
+   * The Channels this person reaches only through a breakout: they may list
+   * one of its breakouts, and cannot see the Channel itself.
+   *
+   * Candidates for the conversation-scoped directory, beside the scope grant
+   * directory's, and never admission: each is re-asked of its own work stream,
+   * which decides every conversation it releases. A Channel this person can
+   * already see is left out because the member directory already lists it.
+   *
+   * Reads `workspace_breakout_viewers` by user, which has no index for it. The
+   * table holds one row per breakout member, so the scan is the cheaper choice
+   * until an Organization's breakouts say otherwise.
+   */
+  channelsReachedOnlyThroughBreakouts(userId: string): string[] {
+    if (!this.breakoutsReady()) return [];
+    return this.storage.sql.exec<{ workstream_id: string }>(
+      `SELECT DISTINCT breakout.workstream_id
+         FROM workspace_breakout_viewers breakout_viewer
+         JOIN workspace_breakout_directory breakout
+           ON breakout.workstream_id = breakout_viewer.workstream_id
+          AND breakout.substream_id = breakout_viewer.substream_id
+          AND breakout.authority_generation = breakout_viewer.authority_generation
+         JOIN workspace_workstream_directory directory
+           ON directory.workstream_id = breakout.workstream_id
+         LEFT JOIN workspace_workstream_viewers viewer
+           ON viewer.workstream_id = directory.workstream_id
+          AND viewer.user_id = ?1
+          AND viewer.authority_generation = directory.authority_generation
+        WHERE breakout_viewer.user_id = ?1
+          AND breakout_viewer.listable = 1
+          AND breakout.archived_at IS NULL
+          AND directory.archived_at IS NULL
+          -- A missing viewer row makes the predicate NULL, and NOT NULL is
+          -- NULL: "IS NOT 1" is what reads that as "cannot see the Channel".
+          AND ${channelVisibleToViewerSql("directory", "viewer")} IS NOT 1
+        ORDER BY breakout.workstream_id`,
+      userId,
+    ).toArray().map((row) => row.workstream_id);
+  }
+
+  /**
    * One page of the Channels this Space holds, archived ones included.
    *
    * `walkReach` is the difference between what a surface means by a member and
