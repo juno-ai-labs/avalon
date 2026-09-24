@@ -516,6 +516,31 @@ describe('New channel home', () => {
     expect(screen.queryByRole('combobox', { name: 'Search people' })).not.toHaveFocus();
   });
 
+  // One instance of the screen used to serve every `:spaceId`, so the people
+  // picked for a Channel in one Space were sent with the next one, in another.
+  it('starts each opening with no one picked, even in another Organization-wide space', async () => {
+    const otherId = asSpaceId('00000000-0000-7000-8000-00000000a002');
+    const [general] = generalSpaceDirectory().items;
+    renderSpaceScreen(GENERAL_SPACE_ID, {
+      waterline: 1,
+      items: [general!, { ...general!, id: otherId, name: 'Launch', systemRole: null }],
+    }, otherId);
+    act(() => screen.getByRole('combobox', { name: 'Search people' }).focus());
+    fireEvent.click(await screen.findByRole('option', { name: 'Samantha Lee — samantha@example.com' }));
+    expect(screen.getByRole('button', { name: 'Remove Samantha Lee' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('link', { name: 'New channel in another space' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove Samantha Lee' })).not.toBeInTheDocument());
+    const composer = screen.getByRole('textbox', { name: 'Opening channel message' });
+    fireEvent.change(composer, { target: { value: 'Plan the launch' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(expect.objectContaining({
+      participantIds: [],
+      spaceIds: [otherId],
+    })));
+  });
+
   it('shows an empty recipient result when the organization has no available members', async () => {
     api.getWorkspaceMembers.mockResolvedValue([currentUser]);
     renderScreen();
@@ -648,6 +673,23 @@ describe('New channel home', () => {
       requestId: expect.any(String),
       spaceIds: [GENERAL_SPACE_ID],
     }));
+  });
+
+  // The composer keeps taking Enter while it shows the create in flight, so a
+  // new draft sent then would start a second Channel. The words stay put.
+  it('refuses a second create while the first is pending and keeps the new draft', async () => {
+    api.createWorkstream.mockReturnValue(new Promise(() => undefined));
+    renderScreen();
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
+    fireEvent.change(composer, { target: { value: 'First' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await screen.findByRole('status', { name: 'Rally is working' });
+
+    fireEvent.change(composer, { target: { value: 'Second' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(composer).toHaveValue('Second'));
+    expect(api.createWorkstream).toHaveBeenCalledTimes(1);
   });
 
   it('clears the submitted message before the create request settles and blocks duplicate submission', async () => {

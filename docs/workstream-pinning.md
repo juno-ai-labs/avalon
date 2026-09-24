@@ -162,8 +162,8 @@ the home; it is now the New action, and a funnel keyed on that surface reads
 the leaves above as `workstream` views instead. The name is left alone rather
 than migrated, but the reading changed meaning twice.
 
-The one deliberate exception is the inert composer route a cross-workspace deep
-link parks on while its resource action resolves. Landing there would open and
+The one deliberate exception is the inert `/opening` route a cross-workspace
+deep link parks on while its resource action resolves. Landing there would open and
 record a visit to an unrelated room in the new workspace a moment before the
 link's own destination arrives.
 
