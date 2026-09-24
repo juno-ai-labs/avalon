@@ -186,6 +186,11 @@ const bridge: RallyDesktopBridge = {
   commandEmbeddedBrowser: (command) => ipcRenderer.invoke('embedded-browser:command', command) as Promise<EmbeddedBrowserResult>,
   setEmbeddedBrowserBounds: (bounds) => ipcRenderer.invoke('embedded-browser:bounds', bounds) as Promise<void>,
   setEmbeddedBrowserVisible: (visible) => ipcRenderer.invoke('embedded-browser:visible', visible) as Promise<void>,
+  onEmbeddedBrowserFocusAddress: (listener) => {
+    const handler = (): void => listener();
+    ipcRenderer.on('embedded-browser:focus-address', handler);
+    return () => ipcRenderer.removeListener('embedded-browser:focus-address', handler);
+  },
   onEmbeddedBrowserState: (listener) => {
     embeddedBrowserListeners.add(listener);
     return () => embeddedBrowserListeners.delete(listener);

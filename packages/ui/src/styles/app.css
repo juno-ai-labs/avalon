@@ -6382,15 +6382,30 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 .artifact-sidebar-body:has(> .site-detail) { display: flex; overflow: hidden; }
 .artifact-sidebar-body > .site-detail { flex: 1 1 auto; }
 
-.embedded-browser-rail .rail-surface-content { grid-template-rows: 36px 44px minmax(0, 1fr); }
+.embedded-browser-rail .rail-surface-content { grid-template-rows: 44px 44px minmax(0, 1fr); }
+.embedded-browser-controls { display: contents; }
 .embedded-browser-chrome,
 .embedded-browser-toolbar { align-items: center; border-bottom: 1px solid var(--av-sys-color-border-subtle); display: flex; gap: 4px; min-width: 0; padding: 0 8px; }
-.embedded-browser-tabs { display: flex; flex: 1; gap: 4px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+/* Browser tabs are Rally's own tabs — the borderless pills of the search
+   filters and sidebar rows — not a copy of Chrome's. */
+.embedded-browser-tabstrip { align-items: center; display: flex; flex: 1; gap: 4px; min-width: 0; }
+.embedded-browser-tabs { display: flex; flex: 0 1 auto; gap: 2px; min-width: 0; overflow-x: auto; padding: 2px 0; scrollbar-width: none; }
 .embedded-browser-tabs::-webkit-scrollbar { display: none; }
-.embedded-browser-tab { align-items: center; background: var(--av-sys-color-surface-subtle); border-radius: 8px 8px 0 0; display: flex; max-width: 190px; min-width: 100px; }
-.embedded-browser-tab:has([aria-selected="true"]) { background: var(--av-sys-color-surface-raised); }
-.embedded-browser-tab-select { align-items: center; background: transparent; border: 0; color: var(--av-sys-color-text-default); display: flex; flex: 1; font: inherit; gap: 6px; min-width: 0; padding: 5px 8px; text-align: left; }
-.embedded-browser-tab-select span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.embedded-browser-tab { align-items: center; border-radius: 8px; color: var(--av-sys-color-text-subtle); display: flex; flex: 1 1 180px; height: 30px; max-width: 200px; min-width: 76px; position: relative; transition: background-color 140ms ease, color 140ms ease; }
+.embedded-browser-tab:hover { background-image: var(--hover-layer); }
+.embedded-browser-tab[data-active] { background-color: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
+.embedded-browser-tab[data-dragging] { opacity: 0.5; }
+.embedded-browser-tab[data-drop-before]::before { background: var(--av-sys-color-focus-default); border-radius: 1px; bottom: 5px; content: ""; left: -2px; position: absolute; top: 5px; width: 2px; }
+.embedded-browser-tab-select { align-items: center; background: transparent; border: 0; border-radius: 8px; color: inherit; cursor: pointer; display: flex; flex: 1; font: inherit; font-size: 13px; gap: 7px; height: 100%; line-height: 18px; min-width: 0; padding: 0 2px 0 9px; text-align: left; }
+.embedded-browser-tab-select:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: -2px; }
+.embedded-browser-tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.embedded-browser-tab-icon { border-radius: 3px; flex-shrink: 0; height: 14px; object-fit: contain; width: 14px; }
+.embedded-browser-tab-spinner { animation: spin 0.8s linear infinite; border: 1.5px solid var(--av-sys-color-border-default); border-radius: 50%; border-top-color: var(--av-sys-color-text-subtle); flex-shrink: 0; height: 12px; margin: 1px; width: 12px; }
+.embedded-browser-tab-close { align-items: center; background: transparent; border: 0; border-radius: 6px; color: inherit; cursor: pointer; display: flex; flex-shrink: 0; height: 20px; justify-content: center; margin-right: 5px; opacity: 0; width: 20px; }
+.embedded-browser-tab:hover .embedded-browser-tab-close,
+.embedded-browser-tab[data-active] .embedded-browser-tab-close { opacity: 1; }
+.embedded-browser-tab-close:hover { background-image: var(--hover-layer); color: var(--av-sys-color-text-default); }
+@media (prefers-reduced-motion: reduce) { .embedded-browser-tab-spinner { animation: none; } .embedded-browser-tab { transition: none; } }
 .embedded-browser-toolbar form { flex: 1; min-width: 0; }
 .embedded-browser-toolbar input { background: var(--av-sys-color-surface-subtle); border: 1px solid var(--av-sys-color-border-subtle); border-radius: 7px; color: var(--av-sys-color-text-default); font: inherit; height: 30px; padding: 0 9px; width: 100%; }
 .embedded-browser-toolbar input:focus { outline: 2px solid var(--av-sys-color-brand-base); outline-offset: 1px; }
@@ -6405,10 +6420,12 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
    and Close at its trailing edge. The native page fills `.browser-import-page`;
    the start page is renderer content shown while the tab is blank. */
 .browser-import-window { background: var(--av-cmp-pane-background); color: var(--av-sys-color-text-default); display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-.browser-import-titlebar { align-items: center; border-bottom: 1px solid var(--av-sys-color-border-subtle); display: flex; flex-shrink: 0; gap: 8px; height: 52px; padding: 0 10px; }
+.browser-import-titlebar { align-items: center; display: flex; flex-shrink: 0; gap: 8px; height: 46px; padding: 0 10px; }
 .browser-import-window.has-overlay-window-controls .browser-import-titlebar { padding-left: 82px; }
-.browser-import-titlebar .embedded-browser-toolbar { border-bottom: 0; flex: 1; min-width: 0; padding: 0; }
-.browser-import-tabs { border-bottom: 1px solid var(--av-sys-color-border-subtle); flex: 0 0 34px; padding: 3px 8px 0; }
+.browser-import-toolbar { align-items: center; border-bottom: 1px solid var(--av-sys-color-border-subtle); display: flex; flex-shrink: 0; gap: 8px; height: 46px; padding: 0 10px; }
+.browser-import-toolbar .embedded-browser-toolbar { border-bottom: 0; flex: 1; min-width: 0; padding: 0; }
+/* Tabs can be dragged to reorder; the title bar's empty space still moves the window. */
+.window-drag .embedded-browser-tabs { -webkit-app-region: no-drag; }
 .browser-import-banner { background: var(--av-sys-color-surface-raised); border-bottom: 1px solid var(--av-sys-color-border-subtle); flex-shrink: 0; padding: 10px 16px; }
 .browser-import-page { flex: 1; min-height: 0; overflow: auto; position: relative; }
 .browser-import-start { margin: 0 auto; max-width: 440px; padding: 12vh 24px 48px; }
