@@ -106,7 +106,16 @@ export function watchWorkspaceReach(dependencies: ReachWatchDependencies): () =>
       return;
     }
     if (stopped) return;
-    const next = dependencies.open(ticket.url, ticket.ticket);
+    let next: ReachSocket;
+    try {
+      // A constructor can throw synchronously (a malformed URL, a refused
+      // protocol). Unhandled, it would reject this call with no retry armed
+      // and leave the host's list stale for the rest of the session.
+      next = dependencies.open(ticket.url, ticket.ticket);
+    } catch {
+      scheduleReconnect();
+      return;
+    }
     socket = next;
     let subscribed = false;
     next.addEventListener("open", () => {
