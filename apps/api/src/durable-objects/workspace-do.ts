@@ -93,6 +93,7 @@ import {
   WorkspaceSocketClientEventSchema,
   WorkspaceFeatureFlagsEventSchema,
   WorkspacePresenceEventSchema,
+  WorkspaceReachChangedEventSchema,
   WorkspaceSocketSyncEventSchema,
   WorkspaceSyncTopicSchema,
   WORKSTREAM_NAMING_GRACE_MS,
@@ -8405,6 +8406,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // reconciliation, none of which a breakout has or wants.
     const breakoutChanges = new Set<string>();
     const breakoutViewerChanges = new Map<string, Set<string>>();
+    // Everyone who joined or left a Channel or a Breakout in this batch. Wider
+    // than `reachViewers`, which is Channels only because a breakout moves no
+    // Space; this set feeds `publishReachChanged`, which is about the person.
+    const reachChangedUsers = new Set<string>();
     const breakoutDirectoryReady = breakoutEnvelopes.length === 0
       || this.breakoutStorage().ready();
     for (const envelope of spaceEnvelopes) {
@@ -8419,12 +8424,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // existing incomplete-acceptance path keeps it retryable until migration
       // 63 creates the destination.
       if (!breakoutDirectoryReady) continue;
-      if (this.applyBreakoutDirectoryEnvelope(envelope, activeUsers)) {
+      const breakout = this.applyBreakoutDirectoryEnvelope(envelope, activeUsers);
+      if (breakout.moved) {
         if (envelope.effect.kind === "directory_common") breakoutChanges.add(envelope.parentId);
         else if (envelope.effect.kind === "directory_user") {
           const users = breakoutViewerChanges.get(envelope.parentId) ?? new Set<string>();
           users.add(envelope.effect.userId);
           breakoutViewerChanges.set(envelope.parentId, users);
+          if (breakout.participationChanged) reachChangedUsers.add(envelope.effect.userId);
         }
       }
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
@@ -8455,6 +8462,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           commonChanges.add(envelope.parentId);
           reachChannels.add(envelope.parentId);
           reachViewers.add(envelope.effect.userId);
+          reachChangedUsers.add(envelope.effect.userId);
         } else {
           const users = viewerChanges.get(envelope.parentId) ?? new Set<string>();
           users.add(envelope.effect.userId);
@@ -8530,6 +8538,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // snapshot, which rebuilds both directories per socket; it goes out as a
     // nudge of its own, carrying the Spaces to read again and their small
     // aggregate counts for the sidebar.
+    this.publishReachChanged(reachChangedUsers);
     this.publishSpaceConversationsChanged({
       channelIds: [...commonChanges, ...breakoutChanges],
       viewerChannelIds: mergeViewerChanges(viewerChanges, breakoutViewerChanges),
@@ -11546,7 +11555,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private applyBreakoutDirectoryEnvelope(
     envelope: ParentEffectEnvelope,
     activeUsers: ReadonlySet<string>,
-  ): boolean {
+  ): { moved: boolean; participationChanged: boolean } {
     return this.state.storage.transactionSync(() => {
       const receipt = this.state.storage.sql.exec<{ payload_hash: string }>(
         `SELECT payload_hash FROM workspace_workstream_effect_receipts WHERE message_id = ?`,
@@ -11556,19 +11565,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         if (receipt.payload_hash !== envelope.payloadHash) {
           throw new Error("workspace_directory_effect_idempotency_conflict");
         }
-        return false;
+        return { moved: false, participationChanged: false };
       }
       const now = Date.now();
       const breakouts = this.breakoutStorage();
-      let moved = false;
+      let result = { moved: false, participationChanged: false };
       if (envelope.effect.kind === "directory_common") {
         // Shared: a breakout's title, state and activity reorder or remove the
         // row on every reader's page at once.
-        moved = breakouts.applyCommon(envelope, now);
+        result = { moved: breakouts.applyCommon(envelope, now), participationChanged: false };
       } else if (envelope.effect.kind === "directory_user") {
         // Personal: one person's unread, mention or first open, which only
-        // they are nudged about.
-        moved = breakouts.applyViewer(envelope, activeUsers.has(envelope.effect.userId), now);
+        // they are nudged about — or their joining or leaving it.
+        result = breakouts.applyViewer(envelope, activeUsers.has(envelope.effect.userId), now);
       }
       insertWorkstreamEffectReceipt(
         this.state.storage,
@@ -11577,7 +11586,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         envelope.payloadHash,
         now,
       );
-      return moved;
+      return result;
     });
   }
 
@@ -12155,6 +12164,54 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       } catch {
         // Hibernation owns close cleanup, and a reconnect asks for the whole
         // sidebar again, so a socket that missed this list is not left stale.
+      }
+    }
+  }
+
+  /**
+   * Tell each socket whose reach includes a person that the person joined or
+   * left a Channel or Breakout.
+   *
+   * **Addressed to the person and to whoever can act as them.** A socket
+   * hears a user id only when the socket's own user is that person, or holds
+   * an active directed impersonation relationship to them — the same
+   * authority the Sideline catalog reads the person's destinations under. The
+   * event names people and nothing else: no Channel or Breakout id, so a
+   * membership that the receiving socket could not otherwise list is not
+   * disclosed by it. The receiver re-reads whatever it shows.
+   *
+   * **Not on the waterline.** Nothing is recorded or replayed; a client that
+   * was away rereads on reconnect. That keeps it off the hottest path's
+   * durable writes, and a missed nudge costs one stale dropdown until then.
+   *
+   * The relationship check is an exact primary-key read per (socket user,
+   * changed person) pair, done only when somebody's participation flipped.
+   */
+  private publishReachChanged(userIds: ReadonlySet<string>): void {
+    if (userIds.size === 0) return;
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) return;
+    const impersonation = new WorkspaceImpersonationStorage(this.state.storage);
+    const occurredAt = new Date().toISOString();
+    const reachable = new Map<string, string[]>();
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed) continue;
+      let named = reachable.get(attachment.userId);
+      if (!named) {
+        named = [...userIds].filter((userId) => userId === attachment.userId
+          || impersonation.authorize(workspaceId, attachment.userId, userId) !== null);
+        reachable.set(attachment.userId, named);
+      }
+      if (named.length === 0) continue;
+      try {
+        socket.send(JSON.stringify(WorkspaceReachChangedEventSchema.parse({
+          type: "workspace_reach_changed",
+          occurredAt,
+          userIds: named,
+        })));
+      } catch {
+        // Hibernation owns cleanup; a reconnecting client rereads.
       }
     }
   }

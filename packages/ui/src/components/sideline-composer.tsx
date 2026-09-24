@@ -135,6 +135,11 @@ export function SidelineComposer(props: {
             item.workstreamId === card.workstreamId && item.substreamId === card.substreamId
           ));
           const messageTooLong = card.message.length > MESSAGE_MAX_CHARACTERS;
+          // A refreshed catalog can drop a choice this card already made: the
+          // participant left a Channel or Breakout, or stopped being one this
+          // operator may act as. Keep the choice and say why it cannot send.
+          const participantGone = Boolean(props.catalog && card.representedUserId && !participant);
+          const destinationGone = Boolean(participant && card.workstreamId && !selectedDestination);
           const canSend = catalogReady && card.state !== "sending" && Boolean(
             participant && selectedDestination && card.message.trim() && !messageTooLong,
           );
@@ -183,7 +188,17 @@ export function SidelineComposer(props: {
                       } : { workstreamId: "", substreamId: "0" });
                     }}
                 />
-                {participant && destinations.length === 0 && (
+                {participantGone && (
+                  <p className="sideline-field-message sideline-field-message-warning">
+                    This participant is no longer available. Choose another.
+                  </p>
+                )}
+                {destinationGone && (
+                  <p className="sideline-field-message sideline-field-message-warning">
+                    {`${participant?.name ?? "This participant"} is no longer in this destination. Choose another.`}
+                  </p>
+                )}
+                {participant && destinations.length === 0 && !destinationGone && (
                   <p className="sideline-field-message sideline-field-message-warning">
                     This participant has no eligible destination.
                   </p>
