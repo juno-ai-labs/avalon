@@ -2223,7 +2223,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return provision;
   }
 
-  /** `rootSubstreamId` is the conversation this agent works for; the composer there counts it. */
   async initializeBackgroundAgent(input: {
     executionPrincipal: WorkstreamWorkflowInput["executionPrincipal"];
     rootSubstreamId: SubstreamId;
