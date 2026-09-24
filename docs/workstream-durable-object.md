@@ -975,7 +975,10 @@ message that started no run. It lands the moment nothing is ahead of it: in
 the activation or safe-step transaction that delivers the input it waited on,
 directly under that input and ahead of anything the new step writes, or, when
 what was ahead fails or is reordered away while the loop is idle, at the start
-of the next drain, which `nextLoopWorkAt` asks for. Meanwhile every viewer sees
+of the next drain, which `nextLoopWorkAt` asks for. A steer behind a waiting
+one of these is held until it has landed: a safe step promotes only the steers
+ahead of the first, so `[steer A, room B, steer C]` reads A, B, then C at the
+next step, never A, C, B. Meanwhile every viewer sees
 it in the feed where it was sent, marked **Unseen** like any queued message.
 While the loop is executing, Electron always admits a newly composed message
 as `queue`. Slack and other external producers still send `steer` when they
