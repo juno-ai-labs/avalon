@@ -2689,6 +2689,30 @@ export class WorkstreamDO extends ConversationParentDurableObject {
   }
 
   /**
+   * Running background agents, in total and by the conversation each works
+   * for. The map holds only `visibleRoots`: a private Breakout's id is not the
+   * viewer's to learn unless they are a member of it.
+   */
+  private backgroundAgentCounts(
+    visibleRoots: ReadonlySet<string>,
+  ): { backgroundAgentCount: number; backgroundAgentCounts: Record<string, number> } {
+    const rows = this.parentSql.exec<{ root: string; n: number }>(
+      `SELECT COALESCE(json_extract(effect_json, '$.backgroundAgentRootSubstreamId'), '0') AS root, COUNT(*) AS n
+         FROM substream_directory
+        WHERE substream_id <> '0' AND json_extract(effect_json, '$.backgroundAgent') = 1
+          AND json_extract(effect_json, '$.state') = 'running'
+          AND json_extract(effect_json, '$.archivedAt') IS NULL
+        GROUP BY root`,
+    ).toArray();
+    return {
+      backgroundAgentCount: rows.reduce((total, row) => total + row.n, 0),
+      backgroundAgentCounts: Object.fromEntries(rows
+        .filter((row) => visibleRoots.has(row.root))
+        .map((row) => [row.root, row.n])),
+    };
+  }
+
+  /**
    * A Channel's breakouts get a row of their own in the Organization; a
    * Space's children and the background agents do not.
    *
@@ -2702,7 +2726,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
    *
    * A background agent is excluded because it is not a conversation anybody
    * opens: it is a worker this object starts, counted in the Channel's
-   * `backgroundAgentCount` and drawn nowhere as a row. Forwarding those would
+   * `backgroundAgentCounts` and drawn nowhere as a row. Forwarding those would
    * put one Queue message and one workspace row on every step a worker takes.
    * The flag is read back from the child's own stored projection, which the
    * caller has just upserted, so a common effect is classified by the payload
@@ -3301,6 +3325,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     const nextPendingWakeup = row.next_wakeup_due_at && row.next_wakeup_prompt
       ? { dueAt: iso(row.next_wakeup_due_at), promptPreview: promptPreview(row.next_wakeup_prompt) }
       : null;
+    const privateChildren = this.visiblePrivateChildrenForUser(userId);
     return WorkstreamControlMetadataSchema.parse({
       stateVersion: this.stateVersionForUser(row, userId),
       privateChildrenWaterline: this.latestStateRow(`children:${userId}`)?.waterline ?? 0,
@@ -3316,12 +3341,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       titleStatus: row.title_status,
       exactState: row.exact_state,
       harnessStatus: harnessStatus(row.exact_state),
-      backgroundAgentCount: this.parentSql.exec<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM substream_directory
-          WHERE substream_id <> '0' AND json_extract(effect_json, '$.backgroundAgent') = 1
-            AND json_extract(effect_json, '$.state') = 'running'
-            AND json_extract(effect_json, '$.archivedAt') IS NULL`,
-      ).one().n,
+      ...this.backgroundAgentCounts(new Set(["0", ...privateChildren.map((child) => child.substreamId)])),
       latestAttentionSequenceNumber: row.latest_attention_ordinal,
       unreadTrackingStartSequenceNumber: row.unread_tracking_start_ordinal,
       lastActivityAt: iso(row.last_activity_at),
@@ -3333,7 +3353,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       systemKind: row.system_kind,
       nextPendingWakeup,
       nextTerminalActionAt: iso(row.next_terminal_action_at),
-      privateChildren: this.visiblePrivateChildrenForUser(userId).map((child) => ({
+      privateChildren: privateChildren.map((child) => ({
         ...child,
         createdAt: iso(child.createdAt),
         updatedAt: iso(child.updatedAt),

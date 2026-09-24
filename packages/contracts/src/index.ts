@@ -2651,8 +2651,18 @@ export const WorkstreamControlMetadataSchema = z.strictObject({
   titleStatus: z.enum(["naming", "automatic", "settled"]),
   exactState: z.string().min(1).max(80),
   harnessStatus: HarnessStatusSchema,
-  /** Omission means this snapshot does not know the current background count. */
+  /**
+   * Every running background agent in the work stream. Kept for desktop
+   * clients released before `backgroundAgentCounts`; drop it once the oldest
+   * supported desktop reads that field instead.
+   */
   backgroundAgentCount: z.number().int().nonnegative().optional(),
+  /**
+   * Running background agents by the conversation they work for, keyed by
+   * substream id. A conversation with none is absent. Omission of the whole
+   * field means this snapshot does not know the current counts.
+   */
+  backgroundAgentCounts: z.record(SubstreamIdSchema, z.number().int().positive()).optional(),
   latestAttentionSequenceNumber: z.number().int().nonnegative(),
   unreadTrackingStartSequenceNumber: z.number().int().nonnegative(),
   lastActivityAt: TimestampSchema,

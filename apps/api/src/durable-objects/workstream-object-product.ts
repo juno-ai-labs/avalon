@@ -3556,9 +3556,15 @@ export class WorkstreamObjectProductService {
       inputId: row.input_id,
       resourceId: row.resource_id,
     }));
+    const background = this.storage.sql.exec<{ root_substream_id: string | null }>(
+      "SELECT root_substream_id FROM background_agent WHERE id = 1",
+    ).toArray()[0];
     return {
       kind: "directory_common" as const,
-      backgroundAgent: this.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM background_agent").one().n > 0,
+      backgroundAgent: background !== undefined,
+      ...(background?.root_substream_id != null
+        ? { backgroundAgentRootSubstreamId: asSubstreamId(background.root_substream_id) }
+        : {}),
       appearance: root.appearance_json ? WorkstreamAppearanceSchema.parse(JSON.parse(root.appearance_json)) : undefined,
       title: truncateUtf16Safe(root.title, 500),
       description: truncateUtf16Safe(root.description, WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),

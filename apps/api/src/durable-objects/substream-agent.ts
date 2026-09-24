@@ -2191,14 +2191,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     await this.initialized;
     const identity = this.identityRows.identity();
     if (!identity) return null;
-    const background = this.state.storage.sql.exec<{ execution_principal_json: string; stopped_at: number | null }>(
-      "SELECT execution_principal_json, stopped_at FROM background_agent WHERE id = 1",
+    const background = this.state.storage.sql.exec<{
+      execution_principal_json: string; stopped_at: number | null; root_substream_id: string | null;
+    }>(
+      "SELECT execution_principal_json, stopped_at, root_substream_id FROM background_agent WHERE id = 1",
     ).toArray()[0];
     return {
       name: identity.title, description: identity.description,
       status: background?.stopped_at != null ? "stopped" : this.loop.loop()?.status ?? "idle",
       background: !!background,
       executionPrincipal: background ? ExecutionPrincipalSchema.parse(JSON.parse(background.execution_principal_json)) : null,
+      rootSubstreamId: background?.root_substream_id ?? null,
     };
   }
 
@@ -2207,6 +2210,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     bootstrap: SubstreamRuntimeBootstrapRequest;
     provision: WorkstreamProvisionInput;
     executionPrincipal: WorkstreamWorkflowInput["executionPrincipal"];
+    rootSubstreamId: SubstreamId;
   }): Promise<DurableObjectRpcResult> {
     const boot = await this.bootstrapRuntime(input.bootstrap);
     if (boot.status !== 200) return boot;
@@ -2215,18 +2219,22 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // `backgroundAgent` flag that projection carries. Marked after, the first
     // projection said "breakout", the Channel forwarded it, and the
     // Organization kept an unseen breakout row nobody could open or clear.
-    await this.initializeBackgroundAgent({ executionPrincipal: input.executionPrincipal });
+    await this.initializeBackgroundAgent({ executionPrincipal: input.executionPrincipal, rootSubstreamId: input.rootSubstreamId });
     return this.executeIdentityOperation({
       workspaceId: input.bootstrap.workspaceId, workstreamId: input.bootstrap.parentId,
       substreamId: input.bootstrap.substreamId ?? "0", operation: "provision", args: [input.provision],
     });
   }
 
-  async initializeBackgroundAgent(input: { executionPrincipal: WorkstreamWorkflowInput["executionPrincipal"] }) {
+  async initializeBackgroundAgent(input: {
+    executionPrincipal: WorkstreamWorkflowInput["executionPrincipal"];
+    rootSubstreamId: SubstreamId;
+  }) {
     await this.initialized;
     const principal = ExecutionPrincipalSchema.parse(input.executionPrincipal);
     this.state.storage.sql.exec(
-      "INSERT OR IGNORE INTO background_agent (id, execution_principal_json) VALUES (1, ?)", JSON.stringify(principal),
+      "INSERT OR IGNORE INTO background_agent (id, execution_principal_json, root_substream_id) VALUES (1, ?, ?)",
+      JSON.stringify(principal), input.rootSubstreamId,
     );
   }
 
