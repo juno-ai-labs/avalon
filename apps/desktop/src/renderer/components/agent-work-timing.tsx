@@ -1,4 +1,5 @@
 import clsx from 'clsx';
+import { Square } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ThinkingOrb } from 'thinking-orbs';
 import { formatDuration } from '../lib/format';
@@ -18,6 +19,9 @@ import { useAppearance } from '../lib/theme';
  * waiting on reads as the stop being ignored all over again.
  */
 export const STOPPING_LABEL = 'Stopping once the current work finishes…';
+
+/** The settled half of that sentence, and the whole of what is left to say. */
+export const STOPPED_LABEL = 'Run stopped';
 
 export interface AgentWorkTimingProps {
   active: boolean;
@@ -117,14 +121,52 @@ export function AgentCompactionIndicator(): React.JSX.Element {
 }
 
 /**
- * What the composer dock says between a Stop request and the run ending.
+ * What the composer dock says about a stop: one line, two phases.
  *
  * It borrows the activity rows' shape because it is the same kind of line, but
  * it is drawn in the dock rather than in the feed, and it carries no duration.
- * `docs/conversation-surfaces.md` owns both reasons.
+ * `docs/conversation-surfaces.md` owns both reasons. Settled, it is no longer
+ * an activity row — nothing is running — so it parks the orb's slot rather
+ * than borrowing `ActivityStatusRow`, whose whole contract is a state that is
+ * still going, and the mark takes that same 20px so the line does not shift
+ * under itself as the phase changes.
+ *
+ * **One component, mounted across both phases, deliberately.** Two sibling
+ * slots would unmount one `role="status"` and mount another, and a live region
+ * inserted together with its content is not reliably announced — the guidance
+ * is that the region exists first and its contents change. That gap falls on
+ * exactly the reader this row is for: somebody who pressed Stop and cannot see
+ * the dock, who now has nothing in the transcript to fall back on either.
  */
-export function RunStoppingIndicator(): React.JSX.Element {
-  return <ActivityStatusRow label={STOPPING_LABEL} />;
+export function RunStopAcknowledgement({ settled }: { settled: boolean }): React.JSX.Element {
+  const appearance = useAppearance();
+  const label = settled ? STOPPED_LABEL : STOPPING_LABEL;
+
+  return (
+    <div
+      aria-atomic="true"
+      aria-label={label}
+      aria-live="polite"
+      className={clsx('agent-work-timing', !settled && 'agent-work-timing-active')}
+      role="status"
+    >
+      {settled ? (
+        <span aria-hidden="true" className="run-stopped-mark">
+          <Square fill="currentColor" size={11} />
+        </span>
+      ) : (
+        <ThinkingOrb
+          aria-hidden="true"
+          className="agent-work-timing-orb"
+          size={20}
+          speed={1}
+          state="solving"
+          theme={appearance}
+        />
+      )}
+      <span aria-hidden="true" className="agent-work-timing-label">{label}</span>
+    </div>
+  );
 }
 
 /**
