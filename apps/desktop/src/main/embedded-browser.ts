@@ -11,6 +11,8 @@ import {
 interface BrowserTab {
   id: string;
   view: WebContentsView;
+  /** The tab the person opened that this popup tab belongs to, or null for one they opened. */
+  popupOf: string | null;
 }
 
 const embeddedBrowserContents = new WeakSet<WebContents>();
@@ -111,7 +113,7 @@ export class EmbeddedBrowser {
     }
   }
 
-  private async open(url = 'about:blank'): Promise<void> {
+  private async open(url = 'about:blank', popupOf: string | null = null): Promise<void> {
     const target = embeddedBrowserUrl(url);
     if (!target) throw new Error('Only HTTP and HTTPS pages can open in the browser');
     const view = new WebContentsView({ webPreferences: {
@@ -124,14 +126,30 @@ export class EmbeddedBrowser {
       spellcheck: true,
       // There is deliberately no preload in visited pages.
     } });
-    this.registerView(view);
+    this.registerView(view, popupOf);
     if (target !== 'about:blank') await view.webContents.loadURL(target);
   }
 
-  private registerView(view: WebContentsView): void {
+  /**
+   * A page's popup opens as a tab, and each tab the person opened has at most
+   * one: popups from it, or from its popup, reuse that tab. A sign-in popup
+   * works; a page that calls `window.open` in a loop re-navigates one tab
+   * instead of spawning a renderer per call.
+   */
+  private async openPopup(fromId: string, url: string): Promise<void> {
+    const root = this.tabs.get(fromId)?.popupOf ?? fromId;
+    const existing = [...this.tabs.values()].find((tab) => tab.popupOf === root);
+    if (!existing) return this.open(url, root);
+    this.activeTabId = existing.id;
+    this.layout();
+    this.publish();
+    await existing.view.webContents.loadURL(url);
+  }
+
+  private registerView(view: WebContentsView, popupOf: string | null): void {
     const id = randomUUID();
     const contents = view.webContents;
-    this.configureRemoteContents(contents);
+    this.configureRemoteContents(contents, id);
     contents.on('page-title-updated', () => this.publish());
     contents.on('did-navigate', () => this.publish());
     contents.on('did-navigate-in-page', () => this.publish());
@@ -144,21 +162,21 @@ export class EmbeddedBrowser {
       // that went away on its own still needs it.
       if (this.forget(id)) this.publish();
     });
-    this.tabs.set(id, { id, view });
+    this.tabs.set(id, { id, view, popupOf });
     this.window.contentView.addChildView(view);
     this.activeTabId = id;
     this.layout();
     this.publish();
   }
 
-  private configureRemoteContents(contents: WebContents): void {
+  private configureRemoteContents(contents: WebContents, id: string): void {
     embeddedBrowserContents.add(contents);
     contents.setUserAgent(chromeUserAgent());
     contents.setWindowOpenHandler(({ url: popupUrl }) => {
       if (embeddedBrowserUrl(popupUrl)) {
         // Native popups from a WebContentsView can remain blank before their
         // first navigation. Open the destination in the rail's own tab model.
-        setImmediate(() => { void this.open(popupUrl).catch(() => undefined); });
+        setImmediate(() => { void this.openPopup(id, popupUrl).catch(() => undefined); });
       }
       return { action: 'deny' };
     });
