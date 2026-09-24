@@ -962,11 +962,19 @@ deliver after the persistent loop next becomes idle; promotion wakes that same
 loop rather than creating another one. If failure or stop prevents a steer boundary, the input
 falls forward to the next idle activation and is never lost. Multiple inputs
 remain distinct; no later steer overwrites an earlier one.
+
+A human message the addressing classifier says is for the people in the room
+is written straight to the transcript, **unless anything sent before it is still
+queued or preparing**. Then it queues behind as `starts_run = 0`: it never starts
+a run, and it lands directly under the input it waited on, at that input's
+activation or safe step, or at the next idle drain if what was ahead fails. A
+safe step promotes only the steers ahead of the first such message, so a later
+steer never lands above it. The run that answers the input reads it as said to
+the room.
 While the loop is executing, Electron always admits a newly composed message
 as `queue`. Slack and other external producers still send `steer` when they
-mean a safe-step interruption. The pending set is painted as a list attached
-to the top of the composer — slightly inset, overlapping the input — with the
-author's avatar and a hover drag handle. Reorder is a REST `PUT` of the full
+mean a safe-step interruption. The pending set renders in the feed for every
+viewer, each input where it was sent, marked **Unseen**. Reorder is a REST `PUT` of the full
 visible `inputIds` list; the object permutes existing `input_sequence` values
 and fans `loop_input_upserted` to every connected viewer. Prepared content
 stays immutable. Reconnect never infers delivery mode or order from local
@@ -1701,7 +1709,7 @@ onto `runs.state` forward only.
 | `workstream`, `substream_agent_identity`, `substreams` | Local root/authority, immutable external child identity, and LLM-array context metadata. The root's `workstream_key` is the parent id and `parent_kind` (v39, default `workstream`) says which kind; `origin_type`, `automation_subscription_id`, `automation_run_id`, and `planned_for` are dead columns, never written or projected, kept because the runtime-compat triggers in `workstream-runtime-compat-schema.ts` name them inside released migration hashes. Existing main data uses local context `0`. |
 | `participants`, `member_attention` | Participation and personal read/mention waterlines; active workspace membership remains D1 authority. |
 | `participant_transcript_turns`, `participant_transcript_blocks`, `participant_transcript_attachments`, `participant_transcript_mentions`, `transcript_facts`, `transcript_payloads`, `content_refs` | One provider-neutral semantic order whose canonical turns reference content-addressed payloads plus exact attachment, mention, and large-content joins. Accepted human and assistant content, identity, and order never change. One stable tool turn may advance only its explicit lifecycle from started to terminal; a different turn under the same client id remains an ignored replay. Terminal residual-receipt repair asynchronously prepares the replacement payload, then commits its fact and tool metadata synchronously so alarm/reaper settlement cannot leave a started card behind. Tool UI rows project only as complete assistant-call/tool-result pairs; pending messages have no canonical order and enter Bind only through the persistent loop's delivery transaction. |
-| `substream_loops`, `pending_loop_inputs`, `delivered_loop_inputs`, `assistant_turn_reservations`, `bind_loop_heads`, `bind_loop_state_messages`, `bind_activation_inputs`, `bind_provider_boundaries` | One persistent loop lifecycle and execution fence, server-authoritative prepared input awaiting atomic promotion, minimal delivery replay identity after promotion, exact canonical slots reserved before assistant generation, the current Bind projection, immutable activation receipts, and provider-boundary hashes. `bind_loop_heads` is the only current Bind metadata authority; ordered message rows reference it directly. Pending inputs have neither transcript nor attention order until delivery. |
+| `substream_loops`, `pending_loop_inputs`, `delivered_loop_inputs`, `assistant_turn_reservations`, `bind_loop_heads`, `bind_loop_state_messages`, `bind_activation_inputs`, `bind_provider_boundaries` | One persistent loop lifecycle and execution fence, server-authoritative prepared input awaiting atomic promotion, minimal delivery replay identity after promotion, exact canonical slots reserved before assistant generation, the current Bind projection, immutable activation receipts, and provider-boundary hashes. `bind_loop_heads` is the only current Bind metadata authority; ordered message rows reference it directly. Pending inputs have neither transcript nor attention order until delivery; `starts_run = 0` marks one that lands in order but starts no run. |
 | `runs`, `run_scopes`, `run_memory_contexts`, `run_plugin_activations`, `run_lifecycle_events`, `inference_attempts` | Subordinate execution receipts, frozen authority/context, and provider attempts. A run records restart context and loop provenance but is never the loop identity. |
 | `tool_effects`, `tool_effect_checkpoints`, `attachment_tool_receipts`, `plugin_activation_hints`, `elicitation_requests` | Planned/executed tools, replay fences, resumable activation, and human-input pauses. Each elicitation retains the stable Bind tool slot that its eventual answer must close. |
 | `active_output_turns`, `active_output_chunks`, `active_agent_compaction`, `realtime_state` | Reconnect-safe partial output keyed by an explicit transient `stream_id`, active compaction phase, and the room sequence. Canonical output identity remains the turn's `turn_id`; `active_agent_compaction` is a singleton operational checkpoint and immutable summary history remains below. |
@@ -1839,6 +1847,45 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-09-24 — A message for the room waits behind input queued before it
+
+**What changed:** Schema v68 adds `pending_loop_inputs.starts_run` (default
+`1`) with its own immutability trigger. A human message classified as not
+addressing Rally is admitted as a pending input with `starts_run = 0` when any
+input or preparing reservation sits ahead of it, unless the room is a stopped
+background agent; otherwise it is written straight to the transcript as before.
+Activation, safe-step settlement and the idle drain land the leading
+`starts_run = 0` inputs once nothing is ahead of them, and the first two append
+them to Bind as overheard turns after the input just delivered. A safe step
+promotes only the steers ahead of the first `starts_run = 0` input. Every queued
+message's pill in the feed now reads **Unseen**.
+
+**Why:** In a production breakout one member asked Rally for something while a
+run was going, so it queued; another member replied "Agreed" to it seconds
+later without addressing Rally. The reply went straight to the transcript and
+the request only landed when the run ended 90 seconds later, so the feed showed
+the agreement two rows above what it agreed with, permanently. The old pills
+described delivery mechanics and fit neither kind of queued message; the member
+asked for one word.
+
+**Considered and rejected:** Giving a queued input its transcript sequence at
+admission and delivering it to the model later. The feed would then show the
+request above a reply that never saw it, and transcript order would stop
+matching what the model read, which the gap-fill and the reorder control both
+assume. Leaving the room message out of the run it follows was rejected too:
+it was sent before that run started, and an addition like "include the Series B
+ones too" has to reach it.
+
+**Consequences:** A message for the room can wait, shown to everyone as
+**Unseen**, until the input ahead of it lands, which during a run is up to the
+run's length. A steer sent after it waits one more safe step. The
+`hasInputAhead` check runs before the admission transaction; if the input ahead
+lands in that window the message still queues and lands at the next safe step
+or drain. A queue that stalls for another reason (a withheld tool batch
+awaiting repair) now holds room messages behind it too. A future delivery path
+that removes a pending input without promoting it must leave the loop able to
+find the `starts_run = 0` inputs it exposes, as `nextLoopWorkAt` does today.
 
 ### 2026-09-24 — Background agents stop counting as breakouts
 

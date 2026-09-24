@@ -636,6 +636,13 @@ export function WorkspaceSocketProvider({
                 exact: true,
               });
             }
+            // A tombstone says this Channel is not one this person sees, which
+            // is also what being seated in one of its breakouts, or leaving its
+            // Main, looks like from here: which of its conversations they
+            // reach may have changed, and only the conversation directory says.
+            if (workstreamState.data.workstream === null) {
+              void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
+            }
             return;
           }
           const sidebarList = safeParseSocketEvent(WorkspaceSidebarListEventSchema, decoded);

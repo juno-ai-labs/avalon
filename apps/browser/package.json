@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "pnpm build:client && concurrently -k \"vite build --watch\" \"wrangler dev --port 8794\"",
+    "dev": "pnpm build:client && concurrently -k \"vite build --watch\" \"wrangler dev --port 8794 --local-upstream localhost:8794\"",
     "build:client": "vite build",
     "deploy": "pnpm build:client && wrangler deploy",
     "build": "pnpm build:client && wrangler deploy --dry-run --outdir dist-worker",

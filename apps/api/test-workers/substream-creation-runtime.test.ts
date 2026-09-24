@@ -754,13 +754,12 @@ describe("substream preparation on workerd", () => {
     }, { timeout: 10_000 }).toBe("x-ai/grok-4.6");
   });
 
-  it("refuses a mention of somebody the work stream has not admitted before creating anything", async () => {
+  it("refuses a mention of somebody outside the workspace before creating anything", async () => {
     const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
     const operationId = "00000000-0000-7000-8000-00000000ce42";
     await service.prepare(WORKSTREAM_ID, { operationId, throughTurnId: "source-turn-1" });
-    // Somebody who is not in the workspace at all, and then somebody who is but
-    // whom this work stream does not admit. The composer offers a roster wider
-    // than the child's own participants, so either is an ordinary mistake.
+    // Somebody who is not in the workspace at all. A workspace member need not
+    // be able to read the work stream: a substream seats them on its own.
     const stranger = "00000000-0000-7000-8000-0000000000ff";
     const opening = (userId: UserId) => ({
       clientMessageId: "opening-with-a-stranger",
@@ -771,18 +770,6 @@ describe("substream preparation on workerd", () => {
     });
     await expect(service.confirm(WORKSTREAM_ID, operationId, opening(asUserId(stranger))))
       .rejects.toMatchObject({ code: "workspace_member_not_found" });
-    // A work stream nobody but its participants can read. `OTHER_ID` is an
-    // active member of the workspace and not a participant here, which is the
-    // case the seating refuses and this check has to reach first.
-    await runInDurableObject(parent(), (_instance, state) => {
-      state.storage.sql.exec(`UPDATE workstream_metadata SET scope = 'personal' WHERE id = 1`);
-    });
-    await expect(service.confirm(WORKSTREAM_ID, operationId, opening(asUserId(OTHER_ID))))
-      .rejects.toMatchObject({ code: "substream_member_needs_workstream_access" });
-    await runInDurableObject(parent(), (_instance, state) => {
-      state.storage.sql.exec(`UPDATE workstream_metadata SET scope = 'workspace' WHERE id = 1`);
-    });
-
     // The refusal costs nothing: it lands before the child is provisioned, so
     // there is no substream, no turn and no summary spent on one.
     expect((await parent().listVisiblePrivateChildren({
