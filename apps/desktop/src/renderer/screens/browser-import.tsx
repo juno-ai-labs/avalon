@@ -81,6 +81,12 @@ export function BrowserImportWindow(): React.JSX.Element {
     }
   };
 
+  // A retry of the same request keeps its identity; a changed name or Space is
+  // a different Channel, which the creation receipt would refuse under the old one.
+  const renewRequest = (): void => {
+    setPending((current) => current && { ...current, clientMessageId: crypto.randomUUID() });
+  };
+
   const createChannel = async (): Promise<void> => {
     if (!pending || !api || saving || !name.trim() || !spaceId) return;
     setSaving(true);
@@ -137,12 +143,12 @@ export function BrowserImportWindow(): React.JSX.Element {
       <form className="space-create-form" onSubmit={(event) => { event.preventDefault(); void createChannel(); }}>
         <label className="form-field">
           <span>Space</span>
-          <DropdownSelect ariaLabel="Space" disabled={saving} onValueChange={setSpaceId}
+          <DropdownSelect ariaLabel="Space" disabled={saving} onValueChange={(value) => { setSpaceId(value); renewRequest(); }}
             options={spaces.map((space) => ({ label: space.name, value: space.id }))} value={spaceId} />
         </label>
         <label className="form-field" htmlFor={nameId}>
           <span>Name of channel</span>
-          <input autoFocus disabled={saving} id={nameId} maxLength={180} onChange={(event) => setName(event.target.value)} required value={name} />
+          <input autoFocus disabled={saving} id={nameId} maxLength={180} onChange={(event) => { setName(event.target.value); renewRequest(); }} required value={name} />
         </label>
         {spaces.length === 0 && <InlineError>There is no Space to import into. Create one in Rally first.</InlineError>}
         {importFailure && <InlineError>{importFailure}</InlineError>}

@@ -140,10 +140,9 @@ export class EmbeddedBrowser {
     contents.on('render-process-gone', () => this.publish());
     contents.on('destroyed', () => {
       if (!this.window.isDestroyed()) this.window.contentView.removeChildView(view);
-      this.tabs.delete(id);
-      if (this.activeTabId === id) this.activeTabId = this.tabs.keys().next().value ?? null;
-      this.layout();
-      this.publish();
+      // A `close` command has already removed and replaced the tab; only a tab
+      // that went away on its own still needs it.
+      if (this.forget(id)) this.publish();
     });
     this.tabs.set(id, { id, view });
     this.window.contentView.addChildView(view);
@@ -170,6 +169,14 @@ export class EmbeddedBrowser {
     contents.on('will-redirect', preventNonWebNavigation);
   }
 
+  /** Drops a tab and picks the next active one; false when it was already gone. */
+  private forget(id: string): boolean {
+    if (!this.tabs.delete(id)) return false;
+    if (this.activeTabId === id) this.activeTabId = this.tabs.keys().next().value ?? null;
+    this.layout();
+    return true;
+  }
+
   private tab(id?: string): BrowserTab {
     const tab = this.tabs.get(id ?? this.activeTabId ?? '');
     if (!tab) throw new Error('Browser tab is no longer open');
@@ -189,10 +196,8 @@ export class EmbeddedBrowser {
     }
     if (command.action === 'close') {
       const tab = this.tab(command.tabId);
+      this.forget(tab.id);
       tab.view.webContents.close();
-      this.tabs.delete(tab.id);
-      if (this.activeTabId === tab.id) this.activeTabId = this.tabs.keys().next().value ?? null;
-      this.layout();
       this.publish();
       return { kind: 'state', state: this.state() };
     }

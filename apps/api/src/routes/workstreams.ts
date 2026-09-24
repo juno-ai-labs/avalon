@@ -183,7 +183,7 @@ workstreamRoutes.post("/import", zValidator("json", SessionImportRequestSchema),
     throw new ApiError(422, "session_import_identity_missing", "Preview the selected conversation again before importing it");
   }
   if (body.source.url && sessionSourceUrlProvider(body.source.url, body.source.sessionId) !== body.source.provider) {
-    throw new ApiError(422, "invalid_session_source", "The source does not match the provider");
+    throw new ApiError(422, "invalid_session_source", "The source.url does not belong to source.provider");
   }
   const conversation = await prepareSessionImport(c.env, getAuth(c), body, body.clientMessageId);
   // Placement is creation semantics, not imported-history identity. Keeping it
@@ -211,7 +211,7 @@ workstreamRoutes.post("/:id/import/update", zValidator("param", idParam),
       throw new ApiError(422, "session_import_identity_missing", "Preview the selected conversation again before updating it");
     }
     if (body.source.url && sessionSourceUrlProvider(body.source.url, body.source.sessionId) !== body.source.provider) {
-      throw new ApiError(422, "invalid_session_source", "The source does not match the provider");
+      throw new ApiError(422, "invalid_session_source", "The source.url does not belong to source.provider");
     }
     const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
     const checkpoint = await client.importedSessionCheckpoint();

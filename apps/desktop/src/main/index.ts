@@ -3,6 +3,8 @@ import { boundsWithoutConversationDetails, clampWindowBounds, readMainWindowStat
 import { EmbeddedBrowser, isEmbeddedBrowserWebContents } from './embedded-browser';
 import { EmbeddedBrowserBoundsSchema, EmbeddedBrowserCommandSchema, type EmbeddedBrowserCommand } from '../common/embedded-browser';
 import { BrowserImportContextSchema, BrowserImportedWorkstreamIdSchema, type BrowserImportContext } from '../common/browser-import';
+import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
+import type { ZodType } from 'zod';
 import {
   ActivateWorkspaceRequestSchema,
   ClientFeatureFlagsSchema,
@@ -490,6 +492,8 @@ let sidekicksWindow: BrowserWindow | null = null;
 let browserImportWindow: BrowserWindow | null = null;
 /** The Spaces the main window offered when it opened the import window. */
 let browserImportContext: BrowserImportContext | null = null;
+/** The Organization whose Spaces the import window offers. */
+let browserImportWorkspaceId: string | null = null;
 /**
  * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
  * docs/adding-security-defensive-and-other-limits.md.
@@ -842,6 +846,11 @@ function flagSessionIdentity(userId: string, apiBaseUrl: string): string {
 function broadcastSessionChanged(value: WireSession | null): void {
   closeArtifactWindowsOutsideSession(value?.workspace?.id ?? null, value?.user.id ?? null);
   closeEmbeddedBrowsersOutsideUser(value?.user.id ?? null);
+  // The import window offers one Organization's Spaces; another Organization's
+  // session would place an import in a Space it does not have.
+  if (browserImportWindow && !browserImportWindow.isDestroyed() && (value?.workspace?.id ?? null) !== browserImportWorkspaceId) {
+    browserImportWindow.close();
+  }
   if (value) desktopPush.sessionChanged();
   const exposed = value ? publicSession(value) : null;
   for (const window of rallyWindows()) window.webContents.send('session:changed', exposed);
@@ -2919,6 +2928,16 @@ function closeEmbeddedBrowsersOutsideUser(userId: string | null): void {
  * rail or the import window. Each has its own tabs over the account's shared
  * partition, so neither can drive the other's pages.
  */
+/**
+ * A browser request's input, or an error naming the field and issue it failed
+ * on — never the rejected value. These callers are Rally's own renderers.
+ */
+function parseBrowserIpc<T>(schema: ZodType<T>, raw: unknown, label: string): T {
+  const parsed = schema.safeParse(raw);
+  if (parsed.success) return parsed.data;
+  throw new Error(zodDiagnosticCode(parsed.error, label, { namesUnknownKeys: true }) ?? `${label}_invalid`);
+}
+
 function embeddedBrowserHost(event: IpcMainInvokeEvent): BrowserWindow {
   assertTrustedIpcSender(event);
   const window = event.sender === mainWindow?.webContents ? mainWindow
@@ -3308,11 +3327,11 @@ function registerIpc(): void {
   ipcMain.handle('embedded-browser:state', (event) => embeddedBrowserFor(embeddedBrowserHost(event)).state());
   ipcMain.handle('embedded-browser:command', async (event, raw: unknown) => {
     const host = embeddedBrowserHost(event);
-    const command = EmbeddedBrowserCommandSchema.parse(raw) as EmbeddedBrowserCommand;
+    const command = parseBrowserIpc(EmbeddedBrowserCommandSchema, raw, 'embedded_browser_command') as EmbeddedBrowserCommand;
     return await embeddedBrowserFor(host).command(command);
   });
   ipcMain.handle('embedded-browser:bounds', (event, raw: unknown) => {
-    embeddedBrowserFor(embeddedBrowserHost(event)).setBounds(EmbeddedBrowserBoundsSchema.parse(raw));
+    embeddedBrowserFor(embeddedBrowserHost(event)).setBounds(parseBrowserIpc(EmbeddedBrowserBoundsSchema, raw, 'embedded_browser_bounds'));
   });
   ipcMain.handle('embedded-browser:visible', (event, raw: unknown) => {
     const host = embeddedBrowserHost(event);
@@ -3321,7 +3340,7 @@ function registerIpc(): void {
   });
   ipcMain.handle('browser-import:open', async (event, raw: unknown) => {
     assertMainWindowIpcSender(event);
-    await openBrowserImportWindow(BrowserImportContextSchema.parse(raw));
+    await openBrowserImportWindow(parseBrowserIpc(BrowserImportContextSchema, raw, 'browser_import_context'));
   });
   ipcMain.handle('browser-import:context', (event) => {
     assertBrowserImportIpcSender(event);
@@ -3329,7 +3348,7 @@ function registerIpc(): void {
   });
   ipcMain.handle('browser-import:imported', (event, raw: unknown) => {
     assertBrowserImportIpcSender(event);
-    const workstreamId = BrowserImportedWorkstreamIdSchema.parse(raw);
+    const workstreamId = parseBrowserIpc(BrowserImportedWorkstreamIdSchema, raw, 'browser_import_workstream');
     // The same route a menu-bar pick takes, so the main window opens the new
     // Channel whether or not it was ready, and is brought forward to show it.
     emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`, 'in_app_link');
@@ -4555,6 +4574,7 @@ async function createSidekicksWindow(requestedTarget?: SidekicksWindowTarget): P
  */
 async function openBrowserImportWindow(context: BrowserImportContext): Promise<void> {
   browserImportContext = context;
+  browserImportWorkspaceId = inMemorySession?.workspace?.id ?? null;
   if (browserImportWindow && !browserImportWindow.isDestroyed()) {
     browserImportWindow.webContents.send('browser-import:context-changed');
     revealWindow(browserImportWindow);
@@ -4593,6 +4613,7 @@ async function openBrowserImportWindow(context: BrowserImportContext): Promise<v
     if (browserImportWindow !== window) return;
     browserImportWindow = null;
     browserImportContext = null;
+    browserImportWorkspaceId = null;
   });
   await loadRenderer(window, rendererUrl('browser-import'), 'browser-import');
 }
