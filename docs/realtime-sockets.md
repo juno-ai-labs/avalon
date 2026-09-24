@@ -667,6 +667,58 @@ The client treats every one of these as a failed connect and reconnects with
 jittered backoff; it does not distinguish them, which is why the status is worth
 keeping correct for whoever reads the logs.
 
+### An instance that stops hearing its sockets
+
+On 2026-09-23 the Juno Labs WorkspaceDO kept accepting workspace-socket upgrades
+for hours while running no `webSocketMessage`, no `webSocketClose`, and no ping
+auto-response. Alarms, RPC, and upgrades all kept succeeding, so nothing
+failed: desktops with no warm directory cache sat at "Opening channels…", and
+only the next deploy, which restarts the object, cleared it. The runtime cause
+is not known.
+
+WorkspaceDO now watches for it. Every socket must send its first frame within
+`WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS` (two minutes, set by the team; the
+desktop sends `subscribe` on open and abandons a socket after 65 s without a
+pong). The deadline is a derived alarm candidate, and accepting a socket lowers
+the alarm to it first, before the socket is accepted, so a failure there cannot
+leave an accepted socket no client holds. The check runs at the start of every
+alarm, before the maintenance deferral can end it early. When an alarm finds a
+socket still silent past its deadline, **and** the object has heard from no socket at all
+since that socket was accepted, it logs `workspace_socket_first_frame_missed` at
+error level (counts and ages only) and calls `state.abort()`. The abort drops
+every socket (clients see `1006` and reconnect) and the platform starts a fresh
+instance, so nothing silent carries over into it.
+
+**One silent socket is never enough on its own.** Its client controls it, so a
+silent socket alone would let any member reset the whole Organization every two
+minutes. The object must also have heard from nobody since, and any one of
+three signals says it has:
+
+- **The runtime answered some socket's ping** at or after the silent socket's
+  accept (`getWebSocketAutoResponseTimestamp`). Idle desktops ping every 50 s,
+  and the stuck object answered none. Kept by the runtime, so it survives
+  hibernation.
+- **A socket accepted at or after the silent one has spoken** (`subscribed` or
+  `firstFrameReported` in its attachment). Also survives hibernation.
+- **This instance ran any socket callback** after the silent socket's accept:
+  a frame, a close, or an error. In memory only, so a hibernation wake forgets
+  it; the two above cover that case.
+
+"Spoke" means any frame: `firstFrameReported` is written before the handler
+awaits anything, so a slow `subscribe` does not look silent.
+
+**What a false positive looks like.** A client never has to die for a socket to
+go silent: the server only has to see neither a frame nor a close, which is what
+happens when a connection drops without a FIN after the upgrade and before
+`subscribe` arrives, on a Wi-Fi drop or a laptop lid closed just after a resume
+reconnect. That socket resets the object only when no other socket answers a
+ping, speaks, or closes in the following two minutes, which in practice means
+nobody else is connected; then the reset interrupts only background work
+(alarms retry, and Queue-delivered RPC redelivers). A member who is the only
+one connected can cause the same on purpose. Either shows up as a
+`workspace_socket_first_frame_missed` row with `open_sockets` at or near
+`missed_sockets`; a wedge with people connected shows many open sockets.
+
 Directory pages are read-only and are not reconnect-resend commands. If
 Electron receives the browser `offline` signal while a page is in flight, it
 clears that request's 120-second timer and rejects immediately with
@@ -686,6 +738,7 @@ receipt.
 | `apps/api/test/workstream-socket-warm.test.ts` | `pnpm --filter @rally/api test` | `ConversationService.socketTicket`: the parent's viewer decision gating the ticket, the parent kind and archive decision on it, and the deferred main-substream warm-up. |
 | `apps/api/test-workers/socket-subprotocol-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | The runtime constraint, on real workerd. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, and SubstreamAgent attachments/snapshots; authoritative workspace directory application/page/resource queries; eviction; native-RPC envelopes; workspace protocol/session/access close-code separation and payload-free diagnostics; truthful bounded transcript ranges; indivisible-turn payload-free envelopes; revocation; compaction recovery; queued-run coalescing; and ticket replay on real workerd. |
+| `apps/api/test-workers/workspace-socket-first-frame.test.ts`, `apps/api/test/socket-first-frame-watch.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts`; `pnpm --filter @rally/api test` | The first-frame watch, through the real accept and alarm paths: a silent socket on a silent object resets it, logs, and is dropped, also while the region is closed for maintenance; each of the three "still hearing sockets" signals alone prevents a reset, including after a hibernation wake; accepting pulls the alarm in. |
 | `apps/api/test-workers/message-to-output-pipeline.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Fresh message admission and its private receipt on the authenticated SubstreamAgent socket, stable turn identity after hibernation/resend, and the message-to-provider pipeline on real workerd. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx`, `workstream-state-store.test.ts` | `pnpm --filter @rally/desktop test` | One persistent workspace connection, truthful terminal errors for access/session/protocol closes, correlated directory pages/pagination, immediate offline page rejection, waterline resume, stale/duplicate rejection across both sockets, independent common/viewer ordering, and idempotent command resend. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.test.tsx` | `pnpm --filter @rally/desktop test` | Complete aggregate snapshots, stale waterline rejection, nullable-field clearing, revocation, and reconnect. |
@@ -724,6 +777,33 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 Child archive admission uses the same `parent_archived` ticket field as parent archive. Already-open private-child sockets additionally check the versioned local archive mirror; there is no per-command parent RPC. See [work-stream durable objects](workstream-durable-object.md) for lifecycle delivery.
+
+### 2026-09-24 — A WorkspaceDO that stops hearing its sockets resets itself
+
+**What changed:** WorkspaceDO's alarm checks for sockets that have sent no
+frame within two minutes while the object heard from no socket at all: no ping
+answered, no later socket speaking, no socket callback. Finding any, it logs
+`workspace_socket_first_frame_missed` and calls `state.abort()`. Accepting a
+socket first lowers the alarm to that socket's deadline.
+
+**Why:** the 2026-09-23 incident in "An instance that stops hearing its
+sockets" above: nothing failed, so nothing alerted, and only a deploy cleared
+it. The alarm is the one path still running in that state.
+
+**Considered and rejected:** A client-side first-sync timeout only reconnects,
+and every reconnect lands on the same stuck instance. Closing the silent sockets
+before aborting was tried: the abort breaks the output gate first, so the close
+frame never leaves, and the abort drops the sockets anyway. Resetting on a
+silent socket alone was rejected in review: any member could hold one open and
+reset the whole Organization every two minutes. Counting only sockets accepted
+by the current instance was dropped in review too: an instance restarts on
+every hibernation wake, so that rule disabled the watch for any object that
+slept, and the abort already leaves nothing to inherit. For the same reason the
+"heard from" evidence cannot be in-memory alone.
+
+**Consequences:** The deadline is a team-set limit. The runtime cause is still
+unknown, so an error-level `workspace_socket_first_frame_missed` is the signal
+to watch; one that recurs means the reset is treating a symptom.
 
 ### 2026-09-17 — Ordinary pending-command replay follows socket generations
 

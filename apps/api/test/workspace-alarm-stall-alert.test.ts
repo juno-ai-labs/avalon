@@ -50,6 +50,8 @@ async function bootWorkspace(): Promise<{
       id: createTestJurisdictionalDurableObjectId("workspace-do", "us"),
       blockConcurrencyWhile: async <T,>(body: () => Promise<T>) => body(),
       setWebSocketAutoResponse: () => undefined,
+      // Arming reads the first-frame watch's sockets; this object holds none.
+      getWebSockets: () => [],
       waitUntil: (promise: Promise<unknown>) => { pending.push(promise); },
       storage,
     }),
