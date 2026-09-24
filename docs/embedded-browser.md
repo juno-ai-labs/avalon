@@ -28,11 +28,12 @@ browser variant, as a new tab on that address. The Channel header has no
 button of its own for the browser. `renderer/lib/browser-rail-links.ts` holds
 the one decision: while a Channel's conversation surface is mounted on the
 desktop, it registers itself as the rail host (`useBrowserRailLinks`; a
-Sidekick's surface shares the component but does not register), and `openLink` sends an http or https URL
-there; any other scheme, and any link clicked where no Channel is on screen,
-still goes to the system browser. Anchors reach it through one document
-listener (`captureLinkClicks`), which leaves alone a click a component already
-handled and Rally's own same-origin routes; citations, search link results and
+Sidekick's surface shares the component but does not register), and `openLink`
+sends an http or https URL there. Any other scheme, and any link clicked where
+no Channel is on screen, takes the `openExternal` path it took before, where
+main's allowlist still admits only web URLs. Anchors reach it through one
+document listener (`captureLinkClicks`), which leaves alone a click a component
+already handled and Rally's own same-origin routes; citations, search link results and
 a resource's *Open source* call `openLink` directly. Sign-in and connector
 authorization keep calling `openExternal`, since their callbacks return to the
 app through the system browser. Links inside an artifact's own view are
