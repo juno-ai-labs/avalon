@@ -226,17 +226,18 @@ describe("workspace_reach_changed", () => {
     const bystander = await connect(BYSTANDER);
 
     await project(CHANNEL, [viewer(REPRESENTED, true)], 2);
-    await vi.waitFor(() => {
-      expect(operator.reach).toEqual([[REPRESENTED]]);
-      expect(represented.reach).toEqual([[REPRESENTED]]);
-      // The bystander is sent the Channel row for the facepile after the reach
-      // event would have gone out, so its arrival bounds the wait for silence.
-      expect(bystander.channelRows).toBeGreaterThan(0);
-    });
-    expect(bystander.reach).toEqual([]);
-
     await project(CHANNEL, [viewer(REPRESENTED, false)], 3);
-    await vi.waitFor(() => expect(operator.reach).toEqual([[REPRESENTED], [REPRESENTED]]));
+    // The operator's own join names the operator: a marker no wrong event for
+    // the represented person could be mistaken for. Its arrival on every socket
+    // that should hear it bounds the wait for the silence of the others.
+    await project(CHANNEL, [viewer(OPERATOR, true)], 4);
+    await vi.waitFor(() => {
+      expect(operator.reach).toEqual([[REPRESENTED], [REPRESENTED], [OPERATOR]]);
+      expect(bystander.channelRows).toBeGreaterThan(2);
+    });
+    // Nobody acts as the operator, so the represented person never hears them.
+    expect(represented.reach).toEqual([[REPRESENTED], [REPRESENTED]]);
+    expect(bystander.reach).toEqual([]);
   });
 
   it("stays quiet for a projection that moves no membership", async () => {
@@ -245,23 +246,53 @@ describe("workspace_reach_changed", () => {
 
     await project(CHANNEL, [viewer(REPRESENTED, true, 4)], 3);
     await project(CHANNEL, [viewer(BYSTANDER, true)], 4);
-    // The bystander's join is not the operator's to hear, and the unread move
-    // before it is no join at all; a later join proves the socket was live.
-    await project(CHANNEL, [viewer(REPRESENTED, false)], 5);
-    await vi.waitFor(() => expect(operator.reach).toHaveLength(1));
-    expect(operator.reach).toEqual([[REPRESENTED]]);
+    await project(CHANNEL, [viewer(OPERATOR, true)], 5);
+    await vi.waitFor(() => expect(operator.reach).toContainEqual([OPERATOR]));
+    expect(operator.reach).toEqual([[OPERATOR]]);
   });
 
-  it("tells the operator when the person they can act as joins or leaves a Breakout", async () => {
+  it("tells the operator when the person they can act as joins or leaves a Breakout, and not on an unread move", async () => {
     await project(CHANNEL, [viewer(REPRESENTED, true)], 2);
     const operator = await connect(OPERATOR);
 
     await project(CHANNEL, [breakoutCommon(), viewer(REPRESENTED, true)], 1, BREAKOUT);
-    await vi.waitFor(() => expect(operator.reach).toEqual([[REPRESENTED]]));
-
     await project(CHANNEL, [viewer(REPRESENTED, true, 2)], 2, BREAKOUT);
     await project(CHANNEL, [viewer(REPRESENTED, false)], 3, BREAKOUT);
-    await vi.waitFor(() => expect(operator.reach).toHaveLength(2));
-    expect(operator.reach).toEqual([[REPRESENTED], [REPRESENTED]]);
+    await project(CHANNEL, [viewer(OPERATOR, true)], 1, BREAKOUT);
+    await vi.waitFor(() => expect(operator.reach).toContainEqual([OPERATOR]));
+    expect(operator.reach).toEqual([[REPRESENTED], [REPRESENTED], [OPERATOR]]);
+  });
+
+  it("tells the operator when a Breakout drops the row of somebody who left the Organization", async () => {
+    await project(CHANNEL, [viewer(REPRESENTED, true)], 2);
+    await project(CHANNEL, [breakoutCommon(), viewer(REPRESENTED, true)], 1, BREAKOUT);
+    const operator = await connect(OPERATOR);
+
+    await env.DB.prepare("UPDATE workspace_members SET status = 'removed' WHERE workspace_id = ? AND user_id = ?")
+      .bind(WORKSPACE_ID, REPRESENTED).run();
+    await project(CHANNEL, [viewer(REPRESENTED, true, 1)], 2, BREAKOUT);
+    await project(CHANNEL, [viewer(OPERATOR, true)], 1, BREAKOUT);
+    await vi.waitFor(() => expect(operator.reach).toContainEqual([OPERATOR]));
+    expect(operator.reach).toEqual([[REPRESENTED], [OPERATOR]]);
+  });
+
+  it("tells an operator their relationships changed, and goes quiet about somebody they can no longer act as", async () => {
+    const operator = await connect(OPERATOR);
+
+    await workspace().upsertImpersonationRelationships({
+      workspaceId: WORKSPACE_ID,
+      relationships: [{ impersonatorUserId: OPERATOR, representedUserId: BYSTANDER, authorityBasis: "test:reach" }],
+    });
+    await vi.waitFor(() => expect(operator.reach).toEqual([[OPERATOR]]));
+
+    await workspace().revokeImpersonationRelationships({
+      workspaceId: WORKSPACE_ID, impersonatorUserId: OPERATOR, representedUserId: REPRESENTED,
+    });
+    await vi.waitFor(() => expect(operator.reach).toEqual([[OPERATOR], [OPERATOR]]));
+
+    await project(CHANNEL, [viewer(REPRESENTED, true)], 2);
+    await project(CHANNEL, [viewer(BYSTANDER, true)], 3);
+    await vi.waitFor(() => expect(operator.reach).toHaveLength(3));
+    expect(operator.reach).toEqual([[OPERATOR], [OPERATOR], [BYSTANDER]]);
   });
 });

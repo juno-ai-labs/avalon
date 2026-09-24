@@ -25,7 +25,15 @@ The lite browser host forwards same-origin ticketed upgrades through a configure
 regional API service binding. It returns the source upgrade directly, without
 accepting a socket or relaying frames. The shared API client maps browser ticket
 URLs to that route and preserves the ticket subprotocol. This implements the
-transport boundary; the browser opens a standalone feed for the visible conversation. See [browser-client.md](browser-client.md).
+transport boundary; the browser opens a standalone feed for the visible
+conversation, plus one workspace socket per tab that it reads only for
+`workspace_reach_changed`. See [browser-client.md](browser-client.md).
+
+Sideline's main process holds one workspace socket for the signed-in operator
+over Node's `ws`, presenting `app://sideline`, and reads only the same event
+([`impersonation.md`](impersonation.md)). Both use `watchWorkspaceReach` in
+`@rally/contracts/workspace-reach-watch`, which shares the desktop workspace
+socket's heartbeat and reconnect numbers.
 
 This document owns the end-to-end topology, connection-selection policy, process
 boundaries, and lifecycle. [`realtime-sockets.md`](realtime-sockets.md) owns the
@@ -41,6 +49,7 @@ protocol inside each Durable Object.
 | --- | --- |
 | `apps/desktop/src/renderer/lib/workspace-workstream-sockets.tsx` | Selects the active work stream, every pinned work stream, the five most recently active unpinned work streams, and any additional running work stream for proactive connection. |
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Owns the singleton native Chromium WorkspaceDO socket, workspace subscription, directory paging, replay, and outbound message-command queue. |
+| `packages/contracts/src/workspace-reach-watch.ts` | The listen-only workspace socket for hosts without one of their own (Sideline main, the lite browser), and the heartbeat and reconnect numbers every workspace-socket client shares. |
 | `apps/desktop/src/renderer/lib/conversation-admission.tsx` | Composes account and workspace-journey readiness independently of connection warming. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns one WorkstreamDO/substream `0` pair per selected work stream above the route, retains recently viewed pairs for five minutes, and supports presence-free pair warming on deliberate hover. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Owns the WorkstreamDO metadata protocol, ticket request, snapshot application, heartbeat, and reconnect state machine. |

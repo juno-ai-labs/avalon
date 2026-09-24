@@ -145,10 +145,8 @@ stays reachable in a local **Shared channels** group. Workspace identity uses th
 existing account/badge treatment; no workspace icon/color settings are introduced.
 The browser does not install desktop background subscriptions. See [shared UI](shared-ui.md).
 It holds one workspace socket per tab, through `watchWorkspaceReach`, and reads
-nothing from it but `workspace_reach_changed`: when this person joins or leaves
-a Channel or Breakout, or the socket (re)subscribes, the shared navigation is read
-again. Before this, a new grant reached the sidebar only on focus or through the
-open conversation's own metadata ([`realtime-sockets.md`](realtime-sockets.md)).
+the shared navigation again when that socket reports this person's reach
+changed ([`realtime-sockets.md`](realtime-sockets.md)).
 
 ### Shared collaboration transport
 

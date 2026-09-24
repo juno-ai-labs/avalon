@@ -348,20 +348,22 @@ A person joining or leaving a Channel or Breakout is sent as
 WorkspaceDO raises it where a directory projection flips a viewer's
 `is_participant`: the Channel viewer write and the Breakout viewer write, which
 every membership path reaches (direct add and remove, mention seating, Space
-sources, scope grants, Breakout participant changes). It is addressed rather
+sources, scope grants, Breakout participant changes), and where an operator's
+impersonation relationships are granted or revoked. It is addressed rather
 than broadcast: a socket hears a user id only when its own user is that person
 or holds an active impersonation relationship to them. It is not a
 `workspace_sync` topic, because the topic enum is closed and a new value would
 fail every older desktop's subscribe answer; an unknown event `type` is ignored
-instead. It is not on the waterline or replayed, so a listener rereads on
-reconnect. Three clients listen. The desktop's own workspace socket rereads the
+instead. It is not on the waterline or replayed, so a listener rereads on every
+subscribe answer. Three clients listen. The desktop's own workspace socket rereads the
 guest navigation (`shared-navigation`) on it: a member's Channel rows and Space
 pages already move on the same flip, but a guest is sent no Space snapshot, so
 without it a guest's new grant waited for window focus. Hosts with no workspace
 socket of their own — Sideline ([`impersonation.md`](impersonation.md)) and the
 lite browser client ([`browser-client.md`](browser-client.md)) — hold one
 through `watchWorkspaceReach` in `@rally/contracts/workspace-reach-watch`, which
-subscribes, discards the sidebar, and reports only this event and reconnects.
+subscribes, discards the sidebar, and reports only this event and subscribe
+answers, with a diagnostic hook the host logs when it cannot connect.
 
 The directory page in that payload deliberately excludes system work streams.
 Debug enabled is rare and engineers only, and the server does not hold the
@@ -799,6 +801,36 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 Child archive admission uses the same `parent_archived` ticket field as parent archive. Already-open private-child sockets additionally check the versioned local archive mirror; there is no per-command parent RPC. See [work-stream durable objects](workstream-durable-object.md) for lifecycle delivery.
+
+### 2026-09-24 — Membership changes reach the people who show them
+
+**What changed:** WorkspaceDO sends `workspace_reach_changed` when a directory
+projection flips someone's participation in a Channel or Breakout, and when an
+operator's impersonation relationships change. It goes to that person's own
+sockets and to operators with an active relationship to them, found in one
+query per publish, and names people only. The desktop rereads guest navigation
+on it. Sideline and the lite browser, which had no workspace socket, hold a
+listen-only one through `watchWorkspaceReach`.
+
+**Why:** Sideline's catalog reflected sign-in time, and a guest's sidebar on
+either client learned of a new grant only on window focus: guests are sent no
+Space snapshot, and the shared navigation is assembled on request with nothing
+to push it.
+
+**Considered and rejected:** Reusing `workstream_directory`, which is broadcast
+to every socket on every mention and participant notification and says nothing
+about Breakouts or represented people. A new `workspace_sync` topic, which the
+closed topic enum would make every older desktop reject, including its
+subscribe answer. Naming the conversation, which would disclose a membership
+the receiver might not be able to list. Polling, which adds a timer number
+nobody set and still lags.
+
+**Consequences:** The event is a nudge. It is not durable, so a listener
+rereads on every subscribe answer, the first included, because its opening read
+can finish before it subscribes. Listen-only sockets are still full subscribers
+and are sent the sidebar they discard; a lighter subscribe mode for them is the
+next change if that cost shows. Scope changes, new workspace-scoped Channels
+and archives are not nudged.
 
 ### 2026-09-24 — A WorkspaceDO that stops hearing its sockets resets itself
 

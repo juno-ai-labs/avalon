@@ -20,6 +20,7 @@ import {
   TerminalNetworkPolicyPreviewSchema,
   PreviewTerminalNetworkPolicyRequestSchema,
   ApplyTerminalNetworkPolicyRequestSchema,
+  SocketTicketSchema,
 } from "@rally/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
@@ -37,7 +38,6 @@ const invitationParam = z.object({ id: IdSchema });
 const memberParam = z.object({ userId: IdSchema });
 const MemberPageSchema = z.object({ items: z.array(WorkspaceMemberSchema) });
 const InvitationPageSchema = z.object({ items: z.array(WorkspaceInvitationSchema) });
-const SocketTicketSchema = z.object({ url: z.string().min(1), ticket: z.string().min(1) });
 
 export const workspaceRoutes = new Hono<HonoAppEnv>();
 

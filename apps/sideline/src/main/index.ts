@@ -4,13 +4,14 @@ import {
   SidelineSendRequestSchema,
   SidelineSendResponseSchema,
   ChannelAccessSchema,
+  SocketTicketSchema,
   type Session,
 } from "@rally/contracts";
 import { SIDELINE_AUTH_CALLBACK_URI } from "@rally/contracts/desktop-deep-link";
 import { CLIENT_CONTRACT_VERSION, RALLY_HEADERS } from "@rally/contracts/http-headers";
 import { socketTicketProtocols } from "@rally/contracts/socket-tickets";
-import { WebSocketUrlSchema } from "@rally/contracts/url-schemas";
 import { workstreamDeepLink } from "@rally/contracts/workstream-links";
+import { watchWorkspaceReach, type ReachWatchDiagnostic } from "@rally/contracts/workspace-reach-watch";
 import {
   app,
   BrowserWindow,
@@ -28,12 +29,10 @@ import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
-import { z } from "zod";
 
 import { sidelineHttpOutcome, type SidelineSendResult, type SidelineSession } from "../common/bridge";
 import { initializeSidelineUpdater, sidelineUpdateMenuItem } from "./updater";
 import { sidelineHttpSend, sidelineHttpSendResponse } from "./send-request";
-import { watchWorkspaceReach } from "@rally/contracts/workspace-reach-watch";
 
 const API_BASE_URL = (
   process.env.VITE_API_GLOBAL_URL ?? (app.isPackaged ? "https://api.rallywith.ai" : "http://127.0.0.1:8787")
@@ -43,11 +42,11 @@ const VISUAL_STATE = app.isPackaged ? undefined : process.env.SIDELINE_VISUAL_ST
 const SESSION_FILE = "sideline-session.bin";
 /** The origin Sideline's workspace socket presents; the Worker's `ALLOWED_ORIGINS` must admit it. */
 const SIDELINE_SOCKET_ORIGIN = "app://sideline";
-const SocketTicketSchema = z.object({ url: WebSocketUrlSchema, ticket: z.string().min(1) });
 let mainWindow: BrowserWindow | null = null;
 let session: Session | null = null;
 let pendingAuth: { attemptId: string; verifier: string } | null = null;
 let stopReachWatch: (() => void) | null = null;
+let reachWatchGeneration = 0;
 
 const visualSession: SidelineSession = {
   user: {
@@ -112,6 +111,11 @@ function publicSession(value: Session | null): SidelineSession | null {
   return value?.workspace ? { user: value.user, workspace: value.workspace } : null;
 }
 
+/** Tell the renderer, if there is still a window to tell. */
+function sendToWindow(channel: string, ...payload: unknown[]): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, ...payload);
+}
+
 function base64url(value: Buffer): string {
   return value.toString("base64").replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/gu, "");
 }
@@ -151,22 +155,48 @@ async function jsonRequest(url: string, init: RequestInit = {}): Promise<unknown
   return body;
 }
 
+/**
+ * Whether `/auth/refresh` refused the refresh token itself, as opposed to
+ * failing to answer. Only a refusal ends the session: a network failure while
+ * the laptop wakes, or a 5xx, leaves the session and the operator's drafts in
+ * place for the next attempt.
+ */
+function refreshRefused(error: unknown): boolean {
+  return error instanceof HttpResponseError && [400, 401, 403].includes(error.status);
+}
+
+// One refresh at a time. The server rotates the refresh token on every call,
+// so two concurrent refreshes with the same token each rotate it, and keeping
+// whichever answer lands last can hold a token the server already superseded —
+// which the next refresh, outside the replay grace, is refused for.
+let refreshInFlight: Promise<Session> | null = null;
+
 async function refreshIfNeeded(force = false): Promise<Session> {
   if (!session) throw new Error("Sign in to use Sideline");
   if (!force && Date.parse(session.expiresAt) - Date.now() > 30_000) return session;
+  refreshInFlight ??= refreshSession(session).finally(() => { refreshInFlight = null; });
+  return refreshInFlight;
+}
+
+async function refreshSession(current: Session): Promise<Session> {
   try {
-    session = SessionSchema.parse(await jsonRequest(`${session.apiBaseUrl}/auth/refresh`, {
+    const next = SessionSchema.parse(await jsonRequest(`${current.apiBaseUrl}/auth/refresh`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refreshToken: session.refreshToken }),
+      body: JSON.stringify({ refreshToken: current.refreshToken }),
     }));
+    // Signed out or into another session while this ran: that is the session now.
+    if (session !== current) throw new Error("Sign in to use Sideline");
+    session = next;
     await storeSession(session);
     return session;
   } catch (error) {
-    session = null;
-    await storeSession(null);
-    restartReachWatch();
-    mainWindow?.webContents.send("sideline:session-changed", null);
+    if (session === current && refreshRefused(error)) {
+      session = null;
+      await storeSession(null);
+      restartReachWatch();
+      sendToWindow("sideline:session-changed", null);
+    }
     throw error;
   }
 }
@@ -185,20 +215,40 @@ async function authenticated(path: string, init: RequestInit = {}): Promise<unkn
   }
 }
 
+/** A line an operator reading the terminal can act on, naming why the catalog stopped following. */
+function logReachDiagnostic(diagnostic: ReachWatchDiagnostic): void {
+  const reason = "error" in diagnostic
+    ? diagnostic.error instanceof HttpResponseError
+      ? `${diagnostic.code} (${diagnostic.error.status})`
+      : `${diagnostic.code} (${diagnostic.error instanceof Error ? diagnostic.error.name : "unknown"})`
+    : `${diagnostic.code} (close ${diagnostic.closeCode})`;
+  console.warn(`[sideline] membership updates paused: ${reason}`);
+}
+
 /**
  * Follow the current session's workspace socket, and tell the renderer when
- * its catalog went stale. Called whenever `session` is replaced or cleared.
+ * its catalog went stale. Called whenever `session` is set or cleared; a
+ * refresh replaces the token without moving the socket.
  */
 function restartReachWatch(): void {
   stopReachWatch?.();
   stopReachWatch = null;
+  const generation = ++reachWatchGeneration;
   if (!session || VISUAL_STATE) return;
   stopReachWatch = watchWorkspaceReach({
     ticket: async () => SocketTicketSchema.parse(await authenticated("/workspace/socket", {
       headers: { [RALLY_HEADERS.CLIENT_CONTRACT]: String(CLIENT_CONTRACT_VERSION) },
     })),
     open: (url, ticket) => new WebSocket(url, socketTicketProtocols(ticket), { origin: SIDELINE_SOCKET_ORIGIN }),
-    onStale: () => mainWindow?.webContents.send("sideline:catalog-stale"),
+    onStale: () => sendToWindow("sideline:catalog-stale"),
+    onDiagnostic: (diagnostic) => {
+      logReachDiagnostic(diagnostic);
+      if (diagnostic.code !== "stopped" || generation !== reachWatchGeneration) return;
+      // The server ended this session's access. A forced refresh either signs
+      // the operator out, which stops the watch, or issues a session the
+      // server accepts, which is worth one more connection.
+      void refreshIfNeeded(true).then(() => { if (session) restartReachWatch(); }, () => undefined);
+    },
   });
 }
 
@@ -241,7 +291,7 @@ async function finishSignIn(identity: Session): Promise<void> {
   session = await chooseWorkspace(identity);
   await storeSession(session);
   restartReachWatch();
-  mainWindow?.webContents.send("sideline:session-changed", publicSession(session));
+  sendToWindow("sideline:session-changed", publicSession(session));
 }
 
 async function beginSignIn(): Promise<void> {
@@ -252,7 +302,7 @@ async function beginSignIn(): Promise<void> {
     session = development;
     await storeSession(session);
     restartReachWatch();
-    mainWindow?.webContents.send("sideline:session-changed", publicSession(session));
+    sendToWindow("sideline:session-changed", publicSession(session));
     return;
   }
   const verifier = base64url(randomBytes(32));
@@ -382,7 +432,7 @@ ipcMain.handle("sideline:sign-out", async (event) => {
   session = null;
   await storeSession(null);
   restartReachWatch();
-  mainWindow?.webContents.send("sideline:session-changed", null);
+  sendToWindow("sideline:session-changed", null);
 });
 ipcMain.handle("sideline:catalog", async (event) => {
   assertSender(event);

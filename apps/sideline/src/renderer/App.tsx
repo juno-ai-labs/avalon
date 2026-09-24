@@ -65,8 +65,8 @@ export default function App(): React.JSX.Element {
 
   // A membership change arrives as a burst when one action moves many
   // conversations (a Space's Channels, say). Each read walks every destination
-  // of every participant, so a burst runs one read and, if more arrived while
-  // it ran, exactly one more — never one per event.
+  // of every participant, so events that arrive while a read runs collapse into
+  // the single read that follows it, never one read per event.
   const staleRead = useRef<{ running: boolean; again: boolean }>({ running: false, again: false });
   const refreshStale = useCallback(async () => {
     const state = staleRead.current;
