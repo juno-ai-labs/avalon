@@ -2306,6 +2306,14 @@ describe("Durable Objects in the Workers runtime", () => {
         .bind(participantId),
       // The opening message is also an activity event, and the consumer
       // applies one of those only under the work stream's active route.
+      // Bootstrap reads it to refuse a Space or Sidekick id a Channel create claimed.
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_create_receipts (
+        workspace_id TEXT NOT NULL, creator_user_id TEXT NOT NULL, client_message_id TEXT NOT NULL,
+        workstream_id TEXT NOT NULL, generation INTEGER NOT NULL, request_hash TEXT NOT NULL,
+        state TEXT NOT NULL, message_id TEXT, harness_run_id TEXT, error_code TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, creator_user_id, client_message_id), UNIQUE (workstream_id)
+      )`),
       env.DB.prepare(`CREATE TABLE workstream_authority_routes (
         workspace_id TEXT NOT NULL, workstream_id TEXT PRIMARY KEY, generation INTEGER NOT NULL,
         object_name TEXT NOT NULL, state TEXT NOT NULL, stage_index INTEGER NOT NULL DEFAULT 0,

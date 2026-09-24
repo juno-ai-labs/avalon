@@ -5,6 +5,7 @@ import { conversationObjectName } from "../durable-objects/names";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import type { WorkstreamProvisionInput } from "../durable-objects/workstream-identity-storage";
 import type { Env } from "../env";
+import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
@@ -133,6 +134,20 @@ export async function bootstrapWorkstreamRuntimeEnvironment(
       at,
     ),
   ]);
+  // A Channel create may name its own id, and claims it with its receipt only
+  // while no anchor has it. This is the other half of that claim, for a Space
+  // or Sidekick: anchor first, then refuse if a Channel's receipt already names
+  // the id. Whichever statement D1 runs first wins, so the two cannot both
+  // believe they own it. Their ids can be seen before their anchor exists when
+  // provisioning is replayed, which is the case this closes; it fails loudly
+  // rather than sharing the id's route. A Channel's own bootstrap is exempt:
+  // a receipt for its id is its own, and restoring a created Channel is one.
+  const claimed = parentKind !== "workstream" && await env.DB.prepare(
+    "SELECT 1 AS claimed FROM workstream_create_receipts WHERE workstream_id = ? LIMIT 1",
+  ).bind(workstreamId).first<{ claimed: number }>();
+  if (claimed) {
+    throw new ApiError(409, "workstream_id_unavailable", "This conversation id is already claimed by a channel create");
+  }
   const stub = await durableObjectStubForWorkspace(
     env,
     env.SUBSTREAM_AGENTS,
