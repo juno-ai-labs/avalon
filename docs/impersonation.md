@@ -48,8 +48,8 @@ the person's own sockets and to operators with an active relationship to them
 ([`realtime-sockets.md`](realtime-sockets.md)). The renderer then rereads the
 catalog in the background. The cards stay on screen during the read. A burst of
 events runs one read, plus one more if events arrived while it ran. Nothing is
-replayed, so every subscribe answer after the first also marks the catalog
-stale. A card whose participant or destination left the catalog keeps its
+replayed, and the opening catalog read can finish before the socket subscribes,
+so every subscribe answer, the first included, also marks the catalog stale. A card whose participant or destination left the catalog keeps its
 selection, says why, and cannot send. When the
 operator selects themselves, Sideline calls the generic authenticated
 conversation-message API; no impersonation relationship or dual-principal audit

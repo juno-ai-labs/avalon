@@ -34,6 +34,8 @@ export default function App(): React.JSX.Element {
   const [status, setStatus] = useState<"loading" | "ready" | "empty" | "denied" | "offline" | "error">("loading");
   const [statusMessage, setStatusMessage] = useState<string>();
   const catalogGeneration = useRef(0);
+  const catalogShown = useRef(false);
+  catalogShown.current = status === "ready" || status === "empty";
 
   /**
    * Read the catalog. A `quiet` read is a background refresh: the current
@@ -53,10 +55,11 @@ export default function App(): React.JSX.Element {
     } catch (error) {
       if (generation !== catalogGeneration.current) return;
       const offline = isOffline(error);
-      const failed = offline ? "offline" : "error";
-      // A quiet read replaces only a state that has nothing to show.
-      setStatus((current) => (quiet && (current === "ready" || current === "empty") ? current : failed));
-      if (!quiet) setStatusMessage(offline ? "Sideline is offline. Drafts remain available." : messageOf(error));
+      // A quiet read replaces only a state that has nothing to show. It can
+      // supersede the opening read, which leaves "loading" with no catalog.
+      if (quiet && catalogShown.current) return;
+      setStatus(offline ? "offline" : "error");
+      setStatusMessage(offline ? "Sideline is offline. Drafts remain available." : messageOf(error));
     }
   }, [session]);
 
