@@ -1,10 +1,8 @@
 import { startCanvaConnection } from './canva-loopback';
 import { boundsWithoutConversationDetails, clampWindowBounds, readMainWindowState, writeMainWindowState } from './main-window-state';
-import { listLocalClaudeCodeSessions, readLocalClaudeCodeSession } from './claude-code-sessions';
-import { listLocalClaudeSessions, readLocalClaudeSession } from './local-claude-sessions';
-import { listLocalCodexSessions, readLocalCodexSession } from './local-codex-sessions';
 import { EmbeddedBrowser, isEmbeddedBrowserWebContents } from './embedded-browser';
 import { EmbeddedBrowserBoundsSchema, EmbeddedBrowserCommandSchema, type EmbeddedBrowserCommand } from '../common/embedded-browser';
+import { BrowserImportContextSchema, BrowserImportedWorkstreamIdSchema, type BrowserImportContext } from '../common/browser-import';
 import {
   ActivateWorkspaceRequestSchema,
   ClientFeatureFlagsSchema,
@@ -488,6 +486,10 @@ let conversationDetailsExpansion = 0;
 let conversationDetailsAppliedWidth = 0;
 let settingsWindow: BrowserWindow | null = null;
 let sidekicksWindow: BrowserWindow | null = null;
+/** The one window that imports a signed-in Claude or ChatGPT conversation. */
+let browserImportWindow: BrowserWindow | null = null;
+/** The Spaces the main window offered when it opened the import window. */
+let browserImportContext: BrowserImportContext | null = null;
 /**
  * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
  * docs/adding-security-defensive-and-other-limits.md.
@@ -701,7 +703,7 @@ async function reportJavascriptErrorCandidate(
 }
 
 function rallyWindows(): BrowserWindow[] {
-  return availableRendererWindows([mainWindow, settingsWindow, sidekicksWindow, deepLinkErrorWindow]);
+  return availableRendererWindows([mainWindow, settingsWindow, sidekicksWindow, deepLinkErrorWindow, browserImportWindow]);
 }
 
 protocol.registerSchemesAsPrivileged([{
@@ -2906,7 +2908,23 @@ function closeEmbeddedBrowsersOutsideUser(userId: string | null): void {
     if (entry.userId === userId && !window.isDestroyed()) continue;
     entry.browser.dispose();
     embeddedBrowsers.delete(window);
+    // The import window exists only to show its browser; without that
+    // account's browser it has nothing left to import from.
+    if (window === browserImportWindow && !window.isDestroyed()) window.close();
   }
+}
+
+/**
+ * The Rally window whose browser a request addresses: the main window's right
+ * rail or the import window. Each has its own tabs over the account's shared
+ * partition, so neither can drive the other's pages.
+ */
+function embeddedBrowserHost(event: IpcMainInvokeEvent): BrowserWindow {
+  assertTrustedIpcSender(event);
+  const window = event.sender === mainWindow?.webContents ? mainWindow
+    : event.sender === browserImportWindow?.webContents ? browserImportWindow : null;
+  if (!window) throw new Error('Only the main Rally window and the import window can use the browser');
+  return window;
 }
 
 function embeddedBrowserFor(window: BrowserWindow): EmbeddedBrowser {
@@ -3236,7 +3254,8 @@ function assertTrustedIpcSender(event: IpcMainInvokeEvent): void {
   const belongsToRallyWindow = sender === mainWindow?.webContents
     || sender === settingsWindow?.webContents
     || sender === sidekicksWindow?.webContents
-    || sender === deepLinkErrorWindow?.webContents;
+    || sender === deepLinkErrorWindow?.webContents
+    || sender === browserImportWindow?.webContents;
   if (!belongsToRallyWindow || !event.senderFrame || !rendererNavigationAllowed(event.senderFrame.url)) {
     throw new Error('Blocked IPC request from untrusted content');
   }
@@ -3253,6 +3272,13 @@ function assertDeepLinkErrorIpcSender(event: IpcMainInvokeEvent): void {
   assertTrustedIpcSender(event);
   if (!deepLinkErrorWindow || event.sender !== deepLinkErrorWindow.webContents) {
     throw new Error('Only the deep-link failure window can read or dismiss its message');
+  }
+}
+
+function assertBrowserImportIpcSender(event: IpcMainInvokeEvent): void {
+  assertTrustedIpcSender(event);
+  if (!browserImportWindow || event.sender !== browserImportWindow.webContents) {
+    throw new Error('Only the import window can complete an import');
   }
 }
 
@@ -3279,50 +3305,35 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     return runtimeConfig();
   });
-  ipcMain.handle('embedded-browser:state', (event) => {
-    assertMainWindowIpcSender(event);
-    return embeddedBrowserFor(mainWindow!).state();
-  });
+  ipcMain.handle('embedded-browser:state', (event) => embeddedBrowserFor(embeddedBrowserHost(event)).state());
   ipcMain.handle('embedded-browser:command', async (event, raw: unknown) => {
-    assertMainWindowIpcSender(event);
+    const host = embeddedBrowserHost(event);
     const command = EmbeddedBrowserCommandSchema.parse(raw) as EmbeddedBrowserCommand;
-    return await embeddedBrowserFor(mainWindow!).command(command);
+    return await embeddedBrowserFor(host).command(command);
   });
   ipcMain.handle('embedded-browser:bounds', (event, raw: unknown) => {
-    assertMainWindowIpcSender(event);
-    embeddedBrowserFor(mainWindow!).setBounds(EmbeddedBrowserBoundsSchema.parse(raw));
+    embeddedBrowserFor(embeddedBrowserHost(event)).setBounds(EmbeddedBrowserBoundsSchema.parse(raw));
   });
   ipcMain.handle('embedded-browser:visible', (event, raw: unknown) => {
-    assertMainWindowIpcSender(event);
+    const host = embeddedBrowserHost(event);
     if (typeof raw !== 'boolean') throw new Error('Browser visibility must be a boolean');
-    embeddedBrowserFor(mainWindow!).setVisible(raw);
+    embeddedBrowserFor(host).setVisible(raw);
   });
-  ipcMain.handle('session-import:local-claude-code-list', (event) => {
+  ipcMain.handle('browser-import:open', async (event, raw: unknown) => {
     assertMainWindowIpcSender(event);
-    return listLocalClaudeCodeSessions();
+    await openBrowserImportWindow(BrowserImportContextSchema.parse(raw));
   });
-  ipcMain.handle('session-import:local-claude-list', (event) => {
-    assertMainWindowIpcSender(event);
-    return listLocalClaudeSessions();
+  ipcMain.handle('browser-import:context', (event) => {
+    assertBrowserImportIpcSender(event);
+    return browserImportContext;
   });
-  ipcMain.handle('session-import:local-claude-read', (event, id: unknown) => {
-    assertMainWindowIpcSender(event);
-    if (typeof id !== 'string') throw new Error('Invalid local session selection');
-    return readLocalClaudeSession(id);
-  });
-  ipcMain.handle('session-import:local-claude-code-read', (event, id: unknown) => {
-    assertMainWindowIpcSender(event);
-    if (typeof id !== 'string') throw new Error('Invalid local session selection');
-    return readLocalClaudeCodeSession(id);
-  });
-  ipcMain.handle('session-import:local-codex-list', (event) => {
-    assertMainWindowIpcSender(event);
-    return listLocalCodexSessions();
-  });
-  ipcMain.handle('session-import:local-codex-read', (event, id: unknown) => {
-    assertMainWindowIpcSender(event);
-    if (typeof id !== 'string') throw new Error('Invalid local session selection');
-    return readLocalCodexSession(id);
+  ipcMain.handle('browser-import:imported', (event, raw: unknown) => {
+    assertBrowserImportIpcSender(event);
+    const workstreamId = BrowserImportedWorkstreamIdSchema.parse(raw);
+    // The same route a menu-bar pick takes, so the main window opens the new
+    // Channel whether or not it was ready, and is brought forward to show it.
+    emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`, 'in_app_link');
+    browserImportWindow?.close();
   });
   ipcMain.handle('application:foreground-get', (event) => {
     assertTrustedIpcSender(event);
@@ -4198,7 +4209,7 @@ function preloadPath(): string {
 
 function installWindowDiagnostics(
   window: BrowserWindow,
-  surface: 'main' | 'settings' | 'sidekicks' | 'deep-link-error',
+  surface: 'main' | 'settings' | 'sidekicks' | 'deep-link-error' | 'browser-import',
 ): void {
   window.webContents.on('preload-error', (_event, _scriptPath, error) => {
     logError('rally', `${surface} preload failed to initialize`, {
@@ -4259,7 +4270,7 @@ function installWindowDiagnostics(
 async function loadRenderer(
   window: BrowserWindow,
   url: string,
-  surface: 'main' | 'settings' | 'sidekicks' | 'deep-link-error',
+  surface: 'main' | 'settings' | 'sidekicks' | 'deep-link-error' | 'browser-import',
 ): Promise<void> {
   try {
     await window.loadURL(url);
@@ -4271,7 +4282,7 @@ async function loadRenderer(
 }
 
 function rendererUrl(
-  surface?: 'settings' | 'sidekicks' | 'deep-link-error',
+  surface?: 'settings' | 'sidekicks' | 'deep-link-error' | 'browser-import',
   settingsSection?: DesktopSettingsSection,
 ): string {
   const target = rendererDevelopmentUrl
@@ -4282,6 +4293,7 @@ function rendererUrl(
   if (surface === 'settings') target.hash = '/settings';
   if (surface === 'sidekicks') target.hash = '/sidekicks';
   if (surface === 'deep-link-error') target.hash = '/deep-link-error';
+  if (surface === 'browser-import') target.hash = '/browser-import';
 
   return target.toString();
 }
@@ -4533,6 +4545,56 @@ async function createSidekicksWindow(requestedTarget?: SidekicksWindowTarget): P
     sidekicksWindow = null;
   });
   await loadRenderer(sidekicksWindow, target.toString(), 'sidekicks');
+}
+
+/**
+ * A window around the account's local browser, for finding and importing one
+ * signed-in Claude or ChatGPT conversation. It is a Rally renderer surface
+ * with its own browser, so the page is not squeezed into the Channel rail and
+ * the import controls sit outside the visited site.
+ */
+async function openBrowserImportWindow(context: BrowserImportContext): Promise<void> {
+  browserImportContext = context;
+  if (browserImportWindow && !browserImportWindow.isDestroyed()) {
+    browserImportWindow.webContents.send('browser-import:context-changed');
+    revealWindow(browserImportWindow);
+    return;
+  }
+  const window = new BrowserWindow({
+    width: 1120,
+    height: 820,
+    minWidth: 720,
+    minHeight: 560,
+    show: false,
+    backgroundColor: windowBackgroundColor(),
+    title: 'Import Channel',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    trafficLightPosition: { x: 18, y: 17 },
+    ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
+    webPreferences: {
+      preload: preloadPath(),
+      contextIsolation: true,
+      devTools: !app.isPackaged,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+    },
+  });
+  browserImportWindow = window;
+  // The renderer document is titled "Rally"; this window is named for its job.
+  window.on('page-title-updated', (event) => event.preventDefault());
+  installEditableTextMenu(window);
+  installWindowDiagnostics(window, 'browser-import');
+  window.setMenuBarVisibility(false);
+  window.once('ready-to-show', () => window.show());
+  window.on('closed', () => {
+    if (browserImportWindow !== window) return;
+    browserImportWindow = null;
+    browserImportContext = null;
+  });
+  await loadRenderer(window, rendererUrl('browser-import'), 'browser-import');
 }
 
 function installApplicationMenu(): void {

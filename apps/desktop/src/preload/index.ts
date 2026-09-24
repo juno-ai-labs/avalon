@@ -17,6 +17,7 @@ import type { MessageExportResult } from '../common/message-export';
 import type { DesktopReleaseChannel } from '../common/release-channels';
 import type { DesktopRealtimeSocketEvent } from '../common/realtime-socket';
 import type { EmbeddedBrowserResult, EmbeddedBrowserState } from '../common/embedded-browser';
+import type { BrowserImportContext } from '../common/browser-import';
 import {
   REALTIME_SOCKET_IPC_CHANNELS,
   parseRealtimeSocketEvent,
@@ -114,12 +115,6 @@ ipcRenderer.on('deep-link-error:changed', (_event, rawNotice: unknown) => {
 });
 
 const bridge: RallyDesktopBridge = {
-  listLocalClaudeSessions: () => ipcRenderer.invoke('session-import:local-claude-list') as ReturnType<RallyDesktopBridge['listLocalClaudeSessions']>,
-  readLocalClaudeSession: (id) => ipcRenderer.invoke('session-import:local-claude-read', id) as ReturnType<RallyDesktopBridge['readLocalClaudeSession']>,
-  listLocalClaudeCodeSessions: () => ipcRenderer.invoke('session-import:local-claude-code-list') as Promise<Array<{ id: string; title: string; project: string; updatedAt: number }>>,
-  readLocalClaudeCodeSession: (id) => ipcRenderer.invoke('session-import:local-claude-code-read', id) as Promise<string>,
-  listLocalCodexSessions: () => ipcRenderer.invoke('session-import:local-codex-list') as ReturnType<RallyDesktopBridge['listLocalCodexSessions']>,
-  readLocalCodexSession: (id) => ipcRenderer.invoke('session-import:local-codex-read', id) as ReturnType<RallyDesktopBridge['readLocalCodexSession']>,
   getRuntimeConfig: () => ipcRenderer.invoke('runtime:get-config') as Promise<RuntimeConfig>,
   getApplicationForegroundState: () => ipcRenderer.invoke('application:foreground-get') as Promise<boolean>,
   onApplicationForegroundChanged: (listener) => {
@@ -195,6 +190,14 @@ const bridge: RallyDesktopBridge = {
     embeddedBrowserListeners.add(listener);
     return () => embeddedBrowserListeners.delete(listener);
   },
+  openBrowserImport: (context) => ipcRenderer.invoke('browser-import:open', context) as Promise<void>,
+  getBrowserImportContext: () => ipcRenderer.invoke('browser-import:context') as Promise<BrowserImportContext | null>,
+  onBrowserImportContextChanged: (listener) => {
+    const handler = (): void => listener();
+    ipcRenderer.on('browser-import:context-changed', handler);
+    return () => ipcRenderer.removeListener('browser-import:context-changed', handler);
+  },
+  completeBrowserImport: (workstreamId) => ipcRenderer.invoke('browser-import:imported', workstreamId) as Promise<void>,
   exportMessage: (request) => ipcRenderer.invoke('message-export:save', request) as Promise<MessageExportResult>,
   connectCanva: (operationId) => ipcRenderer.invoke('canva:connect', operationId) as Promise<{ url: string; attemptId: string }>,
   openExternal: (url) => ipcRenderer.invoke('system:open-external', url) as Promise<void>,

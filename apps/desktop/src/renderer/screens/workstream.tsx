@@ -23,7 +23,7 @@ import type { WorkstreamChildDirectory } from '../lib/use-workstream-control-soc
 import type { WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
 import { Button, IconButton, InlineError, Modal } from '../components/primitives';
-import { SessionImportUpdateDialog } from '../components/session-import-update-dialog';
+import { SessionImportUpdateDialog, importedSourceUpdatable } from '../components/session-import-update-dialog';
 
 import { useCachedWorkstreamAppearance } from '../lib/use-workstreams-query';
 import { launchedSubstreamDetail, optimisticOpeningTranscript } from '../lib/launched-conversation';
@@ -569,7 +569,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   return (
     <>
     {api && session?.workspace && sharingSubstream !== null && <ShareConversationDialog api={api} workspaceId={session.workspace.id} parentId={id} substreamId={sharingSubstream} open onOpenChange={(open) => { if (!open) setSharingSubstream(null); }} />}
-    {api && importedSource.data && <SessionImportUpdateDialog key={id} api={api} open={importUpdateOpen}
+    {api && importedSourceUpdatable(importedSource.data) && <SessionImportUpdateDialog key={id} api={api} open={importUpdateOpen}
       onClose={() => setImportUpdateOpen(false)} source={importedSource.data} workstreamId={id} />}
     <ConversationSurface
       parentId={id}
@@ -624,7 +624,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         <WorkstreamHeader
           actions={api && session?.workspace ? <>
             <BrowserRailButton openRail={context.openRail} />
-            {selectedSubstreamId === '0' && importedSource.data && <IconButton label="Import updates" onClick={() => setImportUpdateOpen(true)}><IconCloudDownload aria-hidden="true" size={18} stroke={1.8} /></IconButton>}
+            {selectedSubstreamId === '0' && importedSourceUpdatable(importedSource.data) && <IconButton label="Import updates" onClick={() => setImportUpdateOpen(true)}><IconCloudDownload aria-hidden="true" size={18} stroke={1.8} /></IconButton>}
             <ShareConversationButton api={api} workspaceId={session.workspace.id}
               parentId={id} substreamId={selectedSubstreamId} />
           </> : null}

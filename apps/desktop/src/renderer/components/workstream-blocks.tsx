@@ -2676,8 +2676,7 @@ export function MessageBlock({
   const external = message.authorType === 'external';
   // Cowork and Claude Code share a JSONL decoder and source provider. Keep the
   // attribution accurate for both without exposing the storage format.
-  const importedProvider = message.importProvenance?.source.provider === 'chatgpt' ? 'ChatGPT'
-    : message.importProvenance?.source.provider === 'codex' ? 'Codex' : 'Claude';
+  const importedProvider = message.importProvenance?.source.provider === 'chatgpt' ? 'ChatGPT' : 'Claude';
   const ownHumanMessage = message.authorType === 'human' && !message.importProvenance
     && currentUserId !== undefined && message.author?.id === currentUserId;
   const humanAuthorName = message.importProvenance ? `${importedProvider} user`

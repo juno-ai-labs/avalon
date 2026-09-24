@@ -187,15 +187,6 @@ export class FirecrawlClient {
     };
   }
 
-  /** Capture source bytes as text without Markdown conversion or cached page content. */
-  async scrapeSource(url: string, options: FirecrawlCallOptions = {}): Promise<{ body: string; url: string | null; statusCode: number }> {
-    const response = await this.request("/scrape", {
-      url, formats: ["rawHtml"], onlyMainContent: false, removeBase64Images: false,
-      proxy: "auto", timeout: SCRAPE_TIMEOUT_MS, maxAge: 0, storeInCache: false,
-    }, z.object({ success: z.literal(true), data: z.object({ rawHtml: z.string().min(1), metadata: scrapeMetadataSchema }) }), options.signal);
-    return { body: response.data.rawHtml, url: response.data.metadata.url ?? null, statusCode: response.data.metadata.statusCode ?? 0 };
-  }
-
   async scrape(
     input: FirecrawlScrapeInput,
     options: FirecrawlCallOptions = {},
