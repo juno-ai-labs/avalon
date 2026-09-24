@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const CATALOG_URL = "https://openrouter.ai/api/v1/models";
 const CACHE_KEY = "openrouter:context-windows:v1";
+const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 const SnapshotSchema = z.object({
   version: z.literal(1),
@@ -19,7 +20,19 @@ export async function loadOpenRouterContextWindows(
   return SnapshotSchema.safeParse(value).data?.windows ?? {};
 }
 
-/** Called only by the daily Global scheduled Worker; a failed refresh retains the last snapshot. */
+/** The hourly metadata tick seeds a missing snapshot and refreshes it once per day. */
+export async function refreshOpenRouterContextWindowsIfDue(
+  env: ContextWindowCache,
+  options: { fetch?: typeof globalThis.fetch; now?: () => number } = {},
+): Promise<void> {
+  const now = (options.now ?? Date.now)();
+  const current = SnapshotSchema.safeParse(await env.INFERENCE_PRICING_CACHE.get(CACHE_KEY, "json"));
+  if (current.success && Object.keys(current.data.windows).length > 0
+    && now - current.data.fetchedAtMs < REFRESH_INTERVAL_MS) return;
+  await refreshOpenRouterContextWindows(env, options);
+}
+
+/** A failed refresh retains the last snapshot. */
 export async function refreshOpenRouterContextWindows(
   env: ContextWindowCache,
   options: { fetch?: typeof globalThis.fetch; now?: () => number } = {},

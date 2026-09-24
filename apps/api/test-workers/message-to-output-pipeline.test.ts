@@ -4561,6 +4561,26 @@ describe("a member's message travels the whole pipeline", () => {
     expect(denied.status).toBe(401);
   });
 
+  it("refreshes cached product admission when the Worker presents a changed member role", async () => {
+    const stub = agentStub();
+    await initializeWorkstream(stub, "first message");
+    await env.DB.prepare("UPDATE workspace_members SET role = 'admin' WHERE workspace_id = ? AND user_id = ?")
+      .bind(WORKSPACE_ID, USER_ID).run();
+
+    const promoted = await product(stub, {
+      operation: "create_message",
+      auth: { ...AUTH, role: "admin" },
+      input: {
+        text: "after promotion",
+        clientMessageId: "pipeline-role-change-1",
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+      },
+    });
+    expect(promoted.status).toBe(200);
+  });
+
   it("fails an observable streamed response without retry and replaces its partial overlay with the reserved error turn", async () => {
     const stub = agentStub();
     let socket: WebSocket | null = null;
