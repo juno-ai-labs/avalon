@@ -33,6 +33,7 @@ import { useCitations } from '../lib/use-citations';
 import { breakoutResourceActions } from '../lib/breakout-resource-actions';
 import { ApiError, type MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
+import { useBrowserRailLinks } from '../lib/browser-rail-links';
 import { desktopBridge } from '../lib/platform';
 import { refreshPoppedOutArtifacts } from '../lib/popped-out-artifacts';
 import { layoutKey, readArtifactPanel, writeLayout } from '../lib/desktop-layout';
@@ -1017,6 +1018,7 @@ export function ConversationSurface({
   const railScope = useUiStore((state) => state.railScope);
   const setRailLeaving = useUiStore((state) => state.setRailLeaving);
   const setRailScope = useUiStore((state) => state.setRailScope);
+  const setRailVariant = useUiStore((state) => state.setRailVariant);
   const setRailWidth = useUiStore((state) => state.setRailWidth);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -1108,6 +1110,8 @@ export function ConversationSurface({
       setRailScope(null);
     };
   }, [artifactPanelKey, closeRail, id, inspect, setRailScope]);
+  // Only a Channel draws the browser rail; a Sidekick's links stay external.
+  useBrowserRailLinks(parentKind === 'workstream');
 
   useLayoutEffect(() => {
     activeConversationAddressRef.current = conversationAddress;
@@ -1360,6 +1364,9 @@ export function ConversationSurface({
   const railOpen = (railVariant === 'browser' || Boolean(artifactSidebar)) && storeRailOpen && railScope === id;
   useEffect(() => {
     if (restoredPanelKey.current !== artifactPanelKey) return;
+    // A link opened in the browser covers the artifact panel rather than
+    // closing it, so the saved panel stays for when the browser closes.
+    if (railVariant === 'browser' && artifactSidebar) return;
     writeLayout(artifactPanelKey, railOpen && railVariant === 'context' && artifactSidebar
       ? JSON.stringify({ resourceId: artifactSidebar.resourceId,
         workstreamScoped: artifactSidebar.workstreamScoped === true }) : null);
@@ -2792,7 +2799,7 @@ export function ConversationSurface({
 
       {railVariant === 'browser' && (railOpen || railLeaving) && window.rally && <EmbeddedBrowserRail
         leaving={railLeaving}
-        onClose={closeRail}
+        onClose={artifactSidebar ? () => setRailVariant('context') : closeRail}
         onResize={setRailWidth}
         width={railWidth}
       />}

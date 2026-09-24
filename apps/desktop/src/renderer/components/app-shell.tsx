@@ -16,6 +16,7 @@ import {
 import type { RallyApi } from '../lib/api';
 import { workstreamRecencyAt } from '../lib/format';
 import { MemberPresentationContext } from '../lib/member-presentation';
+import { openLink } from '../lib/browser-rail-links';
 import { conversationDirectoryQueryKey } from '../lib/conversation-directory';
 import { desktopBridge } from '../lib/platform';
 import { layoutKey, writeLayout } from '../lib/desktop-layout';
@@ -1076,7 +1077,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           if (target.kind === 'message') {
             navigate(`/workstreams/${target.workstreamId}?substream=${encodeURIComponent(target.substreamId)}&turn=${encodeURIComponent(target.turnId)}&sequence=${target.transcriptSequence}`);
           } else if (target.kind === 'link') {
-            void desktopBridge().openExternal(target.url);
+            void openLink(target.url);
           } else {
             setSearchPreview({ identity: searchIdentity, preview: { name: result.title, ...(target.mimeType ? { mimeType: target.mimeType } : {}), loadContent: (signal) => api.getSearchResourcePreviewContent(target.resourceId, signal) } });
           }
