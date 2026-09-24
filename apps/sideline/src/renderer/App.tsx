@@ -35,10 +35,15 @@ export default function App(): React.JSX.Element {
   const [statusMessage, setStatusMessage] = useState<string>();
   const catalogGeneration = useRef(0);
 
-  const load = useCallback(async () => {
+  /**
+   * Read the catalog. A `quiet` read is a background refresh: the current
+   * catalog stays on screen while it runs, and a failure leaves it there
+   * rather than replacing the cards with an error.
+   */
+  const load = useCallback(async (quiet = false) => {
     if (!session) return;
     const generation = ++catalogGeneration.current;
-    setStatus("loading");
+    if (!quiet) setStatus("loading");
     try {
       const next = await window.sideline.catalog();
       if (generation !== catalogGeneration.current) return;
@@ -48,10 +53,35 @@ export default function App(): React.JSX.Element {
     } catch (error) {
       if (generation !== catalogGeneration.current) return;
       const offline = isOffline(error);
-      setStatus(offline ? "offline" : "error");
-      setStatusMessage(offline ? "Sideline is offline. Drafts remain available." : messageOf(error));
+      const failed = offline ? "offline" : "error";
+      // A quiet read replaces only a state that has nothing to show.
+      setStatus((current) => (quiet && (current === "ready" || current === "empty") ? current : failed));
+      if (!quiet) setStatusMessage(offline ? "Sideline is offline. Drafts remain available." : messageOf(error));
     }
   }, [session]);
+
+  // A membership change arrives as a burst when one action moves many
+  // conversations (a Space's Channels, say). Each read walks every destination
+  // of every participant, so a burst runs one read and, if more arrived while
+  // it ran, exactly one more — never one per event.
+  const staleRead = useRef<{ running: boolean; again: boolean }>({ running: false, again: false });
+  const refreshStale = useCallback(async () => {
+    const state = staleRead.current;
+    if (state.running) {
+      state.again = true;
+      return;
+    }
+    state.running = true;
+    try {
+      do {
+        state.again = false;
+        await load(true);
+      } while (state.again);
+    } finally {
+      state.running = false;
+    }
+  }, [load]);
+  useEffect(() => window.sideline.onCatalogStale(() => { void refreshStale(); }), [refreshStale]);
 
   useEffect(() => {
     const generation = catalogGeneration.current;

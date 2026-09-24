@@ -94,7 +94,9 @@ admission is split in two.
    same pair from Node's `ws` client and supplies the fixed application Origin
    (`app://rallywithai`). iOS `URLSession` does not send `Origin` on a WebSocket
    upgrade, so the native client sets that same allowlisted value on the
-   handshake request. Both become `Sec-WebSocket-Protocol`, the handshake header
+   handshake request. Sideline's main process opens only the workspace
+   socket, from the `ws` client, and presents its own `app://sideline`
+   Origin rather than borrowing Rally's. Both become `Sec-WebSocket-Protocol`, the handshake header
    available for browser-compatible ticket presentation. A ticket is a compact
    JWS — base64url joined by dots — which is a legal subprotocol token, so it
    needs no encoding.
@@ -340,6 +342,20 @@ that lives outside it. Live flag changes arrive as a separate
 They are deliberately not a `workspace_sync` topic broadcast: two people in the
 same object may match different Flagship rules, so WorkspaceDO evaluates once
 per connected user and sends only to that user's sockets.
+
+A person joining or leaving a Channel or Breakout is sent as
+`workspace_reach_changed`, naming only the people and never the conversation.
+WorkspaceDO raises it where a directory projection flips a viewer's
+`is_participant`: the Channel viewer write and the Breakout viewer write, which
+every membership path reaches (direct add and remove, mention seating, Space
+sources, scope grants, Breakout participant changes). It is addressed rather
+than broadcast: a socket hears a user id only when its own user is that person
+or holds an active impersonation relationship to them. It is not a
+`workspace_sync` topic, because the topic enum is closed and a new value would
+fail every older desktop's subscribe answer; an unknown event `type` is ignored
+instead. It is not on the waterline or replayed, so a listener rereads on
+reconnect. Sideline is the listener today, and the Rally desktop ignores it
+([`impersonation.md`](impersonation.md)).
 
 The directory page in that payload deliberately excludes system work streams.
 Debug enabled is rare and engineers only, and the server does not hold the

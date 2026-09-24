@@ -2485,6 +2485,23 @@ export const WorkspacePresenceEventSchema = z.strictObject({
 });
 
 /**
+ * These people joined or left a Channel or a Breakout.
+ *
+ * Addressed rather than broadcast: a socket is told a person's id only when
+ * its own user is that person or may act as them through an active
+ * impersonation relationship. It names no conversation, so it discloses no
+ * membership the receiver could not already read; a receiver that cares
+ * rereads its own view. Outside the waterline and never replayed — a client
+ * rereads on reconnect instead. Older clients ignore the unknown `type`.
+ */
+export const WorkspaceReachChangedEventSchema = z.strictObject({
+  type: z.literal("workspace_reach_changed"),
+  occurredAt: TimestampSchema,
+  userIds: z.array(UserIdSchema).min(1),
+});
+export type WorkspaceReachChangedEvent = z.infer<typeof WorkspaceReachChangedEventSchema>;
+
+/**
  * User-specific flags sent outside the workspace waterline. Two people in one
  * WorkspaceDO can match different Flagship rules, so these values must never
  * ride the common `workspace_sync` event.
