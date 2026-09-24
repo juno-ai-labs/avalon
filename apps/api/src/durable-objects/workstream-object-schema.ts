@@ -24,7 +24,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 67;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 68;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3365,6 +3365,15 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
         committed_at INTEGER NOT NULL
       ) STRICT`,
     ],
+  },
+  {
+    version: 68,
+    description: "record which conversation a background agent works for",
+    // The first conversation up the delegation chain that nobody delegated:
+    // the one a person was in when the work started. The composer counts a
+    // Channel's running agents per this conversation rather than across the
+    // whole Channel. NULL for an agent started before this column existed.
+    statements: [`ALTER TABLE background_agent ADD COLUMN root_substream_id TEXT`],
   },
 ];
 

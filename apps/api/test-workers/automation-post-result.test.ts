@@ -35,6 +35,7 @@ import {
   asWorkspaceId,
   asWorkstreamId,
   type AutomationDraft,
+  type SubstreamId,
 } from "@rally/contracts";
 
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
@@ -52,6 +53,7 @@ import { createAutomation } from "../src/services/automation-service";
 import { attachWorkstreamRuntimeResource } from "../src/services/workstream-object-client";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
+  bootstrapConversationChildRuntime,
   provisionWorkstreamObject,
 } from "../src/services/workstream-runtime-database";
 import {
@@ -1189,6 +1191,7 @@ describe("post_result", () => {
       socket.send(JSON.stringify({ type: "subscribe" }));
       const frame = JSON.parse(String((await metadata).data));
       expect(frame.metadata.backgroundAgentCount).toBe(1);
+      expect(frame.metadata.backgroundAgentCounts).toEqual({ "0": 1 });
       expect(frame.metadata.privateChildren).toEqual([]);
       const heldForeground = await post(roomConversation(), "/internal/product", { operation: "create_message", auth: AUTH,
         input: { text: "HOLD_BACKGROUND: foreground work to stop", clientMessageId: crypto.randomUUID(),
@@ -1213,6 +1216,69 @@ describe("post_result", () => {
       });
       await deliverChildEffects(TEST_ENV, child);
       await expect.poll(() => latestCount, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(0);
+    } finally {
+      release();
+      heldBackgroundModel = null;
+      socket?.close();
+    }
+  });
+
+  it("counts a Breakout's workers, and the workers they start, only in that Breakout", async () => {
+    let release = () => {};
+    heldBackgroundModel = new Promise<void>((resolve) => { release = resolve; });
+    const breakoutId = asSubstreamId(crypto.randomUUID());
+    await roomParent().reserveChild({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: breakoutId,
+      kind: "child", createdByUserId: AUTHOR_ID, authorityGeneration: 1 });
+    await bootstrapConversationChildRuntime(TEST_ENV, WORKSPACE_ID, "workstream", ROOM_ID, breakoutId);
+    await provisionWorkstreamObject(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, substreamId: breakoutId,
+      title: "Side question", objective: "", scope: "personal", createdByUserId: AUTHOR_ID,
+      participantUserIds: [AUTHOR_ID], harnessStatus: "idle", titleStatus: "settled", emailAddress: null,
+      emailRouteStatus: null, systemKind: null, modelOverride: null, now: Date.now() });
+    const startFrom = async (substreamId: SubstreamId, backgroundAgent: boolean) => {
+      const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+        parentKind: "workstream", parentId: ROOM_ID, substreamId, loopId: `workstream:${ROOM_ID}:substream:${substreamId}:loop`,
+        harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null, backgroundAgent,
+        executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+      const started = await new AgentCommunicationService(TEST_ENV, input).start({ name: "Researcher",
+        description: "Research in the background", message: "HOLD_BACKGROUND: research the alternatives", attachmentIds: [] }, {
+        workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+        toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+        executionPrincipal: input.executionPrincipal, signal: new AbortController().signal,
+      });
+      const address = agentAddressForId(started.agentId);
+      return { substreamId: address.substreamId, stub: env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId))) };
+    };
+    let socket: WebSocket | undefined;
+    try {
+      const worker = await startFrom(breakoutId, false);
+      const nested = await startFrom(worker.substreamId, true);
+      for (const agent of [worker, nested]) {
+        await expect.poll(async () => (await agent.stub.agentRuntimeInfo())?.status,
+          { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe("executing");
+        await deliverChildEffects(TEST_ENV, agent.stub);
+      }
+      const response = await roomParent().fetch("https://workstream.test/socket", { headers: {
+        Upgrade: "websocket", "x-rally-workspace-id": WORKSPACE_ID, "x-rally-workstream-id": ROOM_ID,
+        "x-rally-user-id": AUTHOR_ID, "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": crypto.randomUUID(),
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1000) + 60),
+      } });
+      expect(response.status).toBe(101);
+      socket = response.webSocket!;
+      socket.accept();
+      const metadata = new Promise<MessageEvent>((resolve) => socket!.addEventListener("message", resolve, { once: true }));
+      socket.send(JSON.stringify({ type: "subscribe" }));
+      const frame = JSON.parse(String((await metadata).data));
+      expect(frame.metadata.backgroundAgentCounts).toEqual({ [breakoutId]: 2 });
+      expect(frame.metadata.backgroundAgentCount).toBe(2);
+      // Stopped rather than finished: a finished worker notifies its starter,
+      // whose run would outlive the test.
+      for (const agent of [nested, worker]) await agent.stub.stopOwnedAgent();
+      release();
+      for (const agent of [worker, nested]) {
+        expect((await settledRun(agent.stub))[0]).toMatchObject({ status: "cancelled" });
+      }
     } finally {
       release();
       heldBackgroundModel = null;
@@ -1417,7 +1483,7 @@ describe("post_result", () => {
 
   it("keeps the receiver's inherited principal when another principal sends a continuation", async () => {
     const principal = { type: "user" as const, userId: AUTHOR_ID };
-    await roomConversation().initializeBackgroundAgent({ executionPrincipal: principal });
+    await roomConversation().initializeBackgroundAgent({ executionPrincipal: principal, rootSubstreamId: asSubstreamId("0") });
     const recipientAgentId = agentIdForAddress({ parentKind: "workstream", parentId: ROOM_ID, substreamId: asSubstreamId("0") });
     const senderAgentId = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("0") });
     const messageId = crypto.randomUUID();

@@ -1039,7 +1039,7 @@ aggregate is built from, so an envelope naming it would ask the Organization to
 store the Channel twice, and a Space has no breakout any surface draws.
 
 **Background agents are not forwarded.** A background agent is a worker the
-Channel starts — counted in `backgroundAgentCount`, drawn nowhere as a row —
+Channel starts — counted in `backgroundAgentCounts`, drawn nowhere as a row —
 and forwarding one would put a Queue message and a workspace row on every step
 it takes. The flag is read back from the child's own stored projection, which
 the apply has just written, so a common effect is classified by the payload
