@@ -6,22 +6,19 @@
  *
  * The production failure it answers cannot be staged here — nothing in workerd
  * can be told to stop delivering socket events — so the silent socket is a real
- * one whose client simply never sends, and the alarm's clock is moved past the
- * deadline by passing `now`. Everything between is the real object: the
- * accepted socket, its attachment, `getWebSockets`, and `state.abort`.
+ * one whose client simply never sends, and the deadline is shortened on the
+ * live instance. Everything else is the real object: the accept, the alarm
+ * (`runDurableObjectAlarm`), the attachments, and `state.abort`.
  */
 
 import { env } from "cloudflare:workers";
-import { runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
-import {
-  WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS,
-  type WorkspaceDO,
-} from "../src/durable-objects/workspace-do";
+import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 
 const OWNER = asUserId("00000000-0000-7000-8000-000000000ff1");
 let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000ff0");
@@ -30,7 +27,7 @@ let ticketSeq = 0;
 
 /** The private members this suite drives, named once rather than cast at each use. */
 interface WatchSurface {
-  resetIfSocketsMissedFirstFrame(now: number, deadlineMs: number): void;
+  socketFirstFrameDeadlineMs: number;
   nextDerivedAlarmCandidates(): readonly number[];
 }
 
@@ -107,81 +104,100 @@ function closed(socket: WebSocket): Promise<CloseEvent> {
   return new Promise((resolve) => socket.addEventListener("close", resolve, { once: true }));
 }
 
+/** Shorten the deadline on the live instance, so the real paths can be driven without waiting. */
+async function setDeadline(ms: number): Promise<void> {
+  await runInDurableObject(workspace(), (instance: WorkspaceDO) => {
+    watch(instance).socketFirstFrameDeadlineMs = ms;
+  });
+}
+
+async function silentSocketDeadline(): Promise<{ deadline: number; alarm: number | null; candidates: readonly number[] }> {
+  return runInDurableObject(workspace(), async (instance: WorkspaceDO, state) => {
+    const [server] = state.getWebSockets();
+    const { connectedAt } = server!.deserializeAttachment() as { connectedAt: string };
+    return {
+      deadline: Date.parse(connectedAt) + watch(instance).socketFirstFrameDeadlineMs,
+      alarm: await state.storage.getAlarm(),
+      candidates: watch(instance).nextDerivedAlarmCandidates(),
+    };
+  });
+}
+
 async function currentInstance(): Promise<WorkspaceDO> {
   return runInDurableObject(workspace(), (instance: WorkspaceDO) => instance);
 }
+
+let errors: MockInstance<typeof console.error>;
 
 beforeEach(async () => {
   workspaceSeq += 1;
   WORKSPACE_ID = asWorkspaceId(`00000000-0000-7000-8000-${String(workspaceSeq).padStart(9, "0")}ff0`);
   await establishWorkspace();
+  errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
 
+afterEach(() => {
+  errors.mockRestore();
+});
+
+function resetLogged(): boolean {
+  return errors.mock.calls.some(([entry]) =>
+    (entry as { event?: unknown } | undefined)?.event === "workspace_socket_first_frame_missed");
+}
+
 describe("WorkspaceDO first-frame watch", () => {
-  it("resets the instance and closes a socket that never sent its first frame", async () => {
+  it("resets from its alarm when a socket stays silent and nothing else is heard", async () => {
     const socket = await openSilentSocket();
     const socketClosed = closed(socket);
     const before = await currentInstance();
-    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await setDeadline(0);
 
-    try {
-      await expect(runInDurableObject(workspace(), (instance: WorkspaceDO) => {
-        watch(instance).resetIfSocketsMissedFirstFrame(
-          Date.now() + WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS,
-          WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS,
-        );
-      })).rejects.toThrow();
-      // The reset is the signal an operator watches for, so it must be logged
-      // before the abort ends the invocation.
-      expect(errors).toHaveBeenCalledWith(expect.objectContaining({
-        level: "error",
-        event: "workspace_socket_first_frame_missed",
-        workspace_id: WORKSPACE_ID,
-        missed_sockets: 1,
-        open_sockets: 1,
-      }));
-    } finally {
-      errors.mockRestore();
-    }
+    // The real alarm path. It ends in `state.abort`, so the run itself fails.
+    await runDurableObjectAlarm(workspace()).catch(() => undefined);
 
     expect((await socketClosed).code).toBe(1006);
     expect(await currentInstance()).not.toBe(before);
+    // The reset is the signal an operator watches for, so it must be logged
+    // before the abort ends the invocation.
+    expect(errors).toHaveBeenCalledWith(expect.objectContaining({
+      level: "error",
+      event: "workspace_socket_first_frame_missed",
+      workspace_id: WORKSPACE_ID,
+      missed_sockets: 1,
+      open_sockets: 1,
+    }));
   });
 
-  it("leaves the instance alone once the socket has subscribed", async () => {
-    const socket = await openSilentSocket();
-    await subscribe(socket);
+  // One client controls whether its own socket speaks. While any other client
+  // is heard from, a silent socket is that client's doing, not the instance's.
+  it("does not reset for one silent client while another socket is heard from", async () => {
+    const silent = await openSilentSocket();
+    let silentClosed = false;
+    silent.addEventListener("close", () => { silentClosed = true; });
+    const active = await openSilentSocket();
+    await subscribe(active);
     const before = await currentInstance();
+    await setDeadline(0);
 
-    await runInDurableObject(workspace(), (instance: WorkspaceDO) => {
-      watch(instance).resetIfSocketsMissedFirstFrame(
-        Date.now() + WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS,
-        WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS,
-      );
-    });
+    await runDurableObjectAlarm(workspace());
 
     expect(await currentInstance()).toBe(before);
-    socket.close(1000, "done");
+    expect(resetLogged()).toBe(false);
+    expect(silentClosed).toBe(false);
+    active.close(1000, "done");
+    silent.close(1000, "done");
   });
 
-  it("counts a socket still waiting for its first frame among the alarm's wake reasons", async () => {
+  it("pulls the alarm in to a new socket's deadline", async () => {
+    // Sooner than any wake reason the fixture workspace already has armed, so
+    // only the accept-time arm can explain an alarm this early.
+    await setDeadline(10_000);
     await openSilentSocket();
 
-    const { deadline, candidates } = await runInDurableObject(
-      workspace(),
-      (instance: WorkspaceDO, state) => {
-        const [server] = state.getWebSockets();
-        const { connectedAt } = server!.deserializeAttachment() as { connectedAt: string };
-        return {
-          deadline: Date.parse(connectedAt) + WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS,
-          candidates: watch(instance).nextDerivedAlarmCandidates(),
-        };
-      },
-    );
+    const { deadline, alarm, candidates } = await silentSocketDeadline();
 
-    // The accept-time `ensureAlarmNoLaterThan` is not asserted here: a fixture
-    // workspace always has an earlier wake reason armed, so its alarm reads the
-    // same with or without it.
     expect(candidates).toContain(deadline);
+    expect(alarm).not.toBeNull();
+    expect(alarm!).toBeLessThanOrEqual(deadline);
   });
 });
