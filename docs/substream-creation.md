@@ -375,16 +375,14 @@ the first model context without becoming executable historical work.
 
 ## Invariants
 
-- **Explicit child membership alone admits a child.** Parent visibility is
-  neither required nor enough: parent participants cannot enumerate or open
-  someone else's private child, and adding a child member does not grant Main
-  or sibling access. `WorkstreamDO.canReadConversation` is the one predicate for
-  one conversation, under either authority, and discovery asks it too.
-- **A child member who cannot read Main still finds the child.** WorkspaceDO
-  names the Channel as a conversation-directory candidate from its Breakout
-  viewer rows, `/sharing/navigation` releases only the conversations the
-  predicate above admits, and the desktop draws that Channel the way it draws a
-  guest's: its name and those conversations, never Main.
+- **Explicit child membership alone admits a child, and discovery asks the
+  same question.** Parent visibility is neither required nor enough: parent
+  participants cannot enumerate or open someone else's private child, and
+  adding a child member does not grant Main or sibling access.
+  `WorkstreamDO.canReadConversation` is the one predicate for one conversation
+  — a grant, or for an unmigrated conversation a member's legacy roster — and
+  `/sharing/navigation` releases only what it admits. A guest is shared a
+  breakout rather than seated on a legacy roster.
 - One operation pins one capture, recipe, child ID and membership receipt.
   Replanning a retry would silently change the context that operation froze.
 - Context installation writes no live transcript turn, pending input or run.
@@ -580,11 +578,17 @@ they can read its Channel, and reading the Breakout no longer requires it
 either: the parent's viewer check, its add/remove/archive checks, the creation
 mention preflight and `AuthorizationService` all decide a Breakout from its own
 membership. `WorkstreamDO.canReadConversation` is the one predicate for one
-conversation under either authority. WorkspaceDO adds Channels reached only
+conversation: a grant admits wherever one exists, and an unmigrated
+conversation also admits a member through its legacy roster. A guest is refused
+a legacy roster row and is shared the breakout instead, since grants are the
+only path that admits a guest anywhere else. Losing Main, or a narrowed
+audience, closes Main's sockets but no longer a breakout the person still
+belongs to. WorkspaceDO adds Channels reached only
 through a Breakout to the conversation-directory candidates, and the desktop
 fetches `/sharing/navigation` for members as well as guests: a Channel whose
-entry omits Main is conversation-scoped, whoever is looking. The participant
-dialog shows the route's refusal sentence.
+entry omits Main is conversation-scoped, whoever is looking, and a Channel's
+tombstone frame refreshes that read. The participant dialog shows the route's
+refusal sentence.
 
 **Why:** A person could not add colleagues to a Breakout of a personal Channel
 they were not in, and the dialog said only "That participant couldn't be
