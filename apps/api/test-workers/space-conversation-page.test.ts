@@ -1308,4 +1308,63 @@ describe("space dashboard conversation page", () => {
     // no destination.
     expect(await pendingParentEffects(channelObject(CHANNEL_A))).toEqual([]);
   });
+
+  it("given a background agent forwarded as a breakout before it was marked, when it projects marked, then the Organization stops counting it", async () => {
+    await openChannelObject(CHANNEL_A);
+    await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
+    // The first projection an agent sent before it marked itself: no flag, so
+    // its Channel forwarded it as a breakout nobody had opened.
+    await publishBreakout(CHANNEL_A, BREAKOUT_TWO, [
+      breakoutCommonEffect("Worker", { state: "idle" }),
+      viewerEffect(OWNER, { unseen: true }) as ConversationEffect,
+    ]);
+    expect((await connectViewer(OWNER)).initialChannelCounts).toEqual([1]);
+
+    await publishBreakout(CHANNEL_A, BREAKOUT_TWO, [
+      { ...breakoutCommonEffect("Worker", { state: "completed" }), backgroundAgent: true },
+      viewerEffect(OWNER, { unseen: true }) as ConversationEffect,
+    ], 2);
+
+    expect(await breakoutRows()).toMatchObject({ rows: [] });
+    await expect(inspect("SELECT user_id FROM workspace_breakout_viewers"))
+      .resolves.toMatchObject({ rows: [] });
+    expect((await connectViewer(OWNER)).initialChannelCounts).toEqual([0]);
+  });
+
+  it("retracts background agents a Channel already forwarded as breakouts when migration 20 runs", async () => {
+    await openChannelObject(CHANNEL_A);
+    await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
+    await publishBreakout(CHANNEL_A, BREAKOUT_ONE, [
+      breakoutCommonEffect("Pricing"),
+      viewerEffect(OWNER) as ConversationEffect,
+    ]);
+    await publishBreakout(CHANNEL_A, BREAKOUT_TWO, [
+      breakoutCommonEffect("Worker", { state: "idle" }),
+      viewerEffect(OWNER, { unseen: true }) as ConversationEffect,
+    ]);
+
+    // Reconstruct the deployed state: the agent's later, marked projection
+    // reached the Channel and stopped there, so the Channel knows it is an
+    // agent while the Organization still holds its first, unmarked row.
+    // Removing migration 20's receipt makes the next construction the
+    // production upgrade event.
+    await runInDurableObject(channelObject(CHANNEL_A), (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE substream_directory
+            SET effect_json = json_set(effect_json, '$.backgroundAgent', json('true'))
+          WHERE substream_id = ?`,
+        BREAKOUT_TWO,
+      );
+      state.storage.sql.exec("DELETE FROM _sql_schema_migrations WHERE version = 20");
+    });
+    await evictDurableObject(channelObject(CHANNEL_A));
+    expect((await connectViewer(OWNER)).initialChannelCounts).toEqual([2]);
+
+    await deliverParentEffects(env, channelObject(CHANNEL_A));
+
+    expect(await breakoutRows()).toMatchObject({
+      rows: [{ workstream_id: CHANNEL_A, substream_id: BREAKOUT_ONE, title: "Pricing" }],
+    });
+    expect((await connectViewer(OWNER)).initialChannelCounts).toEqual([1]);
+  });
 });

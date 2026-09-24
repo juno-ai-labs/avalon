@@ -97,9 +97,10 @@ export const WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS: readonly string[] = [
   // page asks it rather than re-deriving the question from participation.
   //
   // No index beside the primary key. Every read of this table starts from a
-  // `(workstream_id, substream_id)` the page has already chosen, and the only
-  // delete is the per-envelope one the projection itself performs when a
-  // person stops being an active member. `workspace_workstream_viewers` has no
+  // `(workstream_id, substream_id)` the page has already chosen, and both
+  // deletes are per-envelope ones the projection itself performs: when a
+  // person stops being an active member, and when the conversation turns out
+  // to be a background agent. `workspace_workstream_viewers` has no
   // user-id index either, and there is no sweep for one to serve: an index
   // here would be a write on every viewer projection buying nothing, and a
   // comment claiming a sweep that somebody would later quote as evidence one
@@ -238,6 +239,26 @@ export class WorkspaceBreakoutStorage {
     ).toArray()[0];
     if (!projectionSupersedes(envelope, current, "workspace_breakout_projection_version_conflict")) {
       return false;
+    }
+    // A background agent is not a breakout. Its Channel forwards one only to
+    // withdraw a row it published before the agent was marked, so the answer
+    // is to hold no row for it, and no viewer rows that would count it.
+    // Deleting drops the version fence, so an unmarked projection still in the
+    // Queue could put the row back. None is sent any more: the child marks
+    // itself before its first projection. Only an agent started in the
+    // minutes around the deploy of that change could race this.
+    if (effect.backgroundAgent === true) {
+      this.storage.sql.exec(
+        `DELETE FROM workspace_breakout_viewers WHERE workstream_id = ? AND substream_id = ?`,
+        envelope.parentId,
+        envelope.substreamId,
+      );
+      return this.storage.sql.exec<{ substream_id: string } & Record<string, SqlStorageValue>>(
+        `DELETE FROM workspace_breakout_directory
+          WHERE workstream_id = ? AND substream_id = ? RETURNING substream_id`,
+        envelope.parentId,
+        envelope.substreamId,
+      ).toArray().length === 1;
     }
     // A schema-57 Organization can receive the migration-63 tables while its
     // cleanup still holds later migrations. Keep the once-only replay retryable
