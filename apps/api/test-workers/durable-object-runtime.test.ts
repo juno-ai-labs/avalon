@@ -1538,6 +1538,7 @@ describe("Durable Objects in the Workers runtime", () => {
         expect(phases).toContainEqual(expect.objectContaining({
           phase: "frame_received", connection_id: subscribed[0]?.connection_id,
         }));
+        expect(phases.filter((entry) => entry.phase === "frame_received")).toHaveLength(1);
         expect(JSON.stringify(phases)).not.toContain(ticketId);
       } finally {
         socket!.close(1000, "test complete");
