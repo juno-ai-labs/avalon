@@ -307,8 +307,8 @@ describe("POST /spaces", () => {
     await settleSpaceEffects(created.id);
 
     // The row the Organization holds, at the version the Space's own object
-    // wrote rather than the one its reservation did. `reserveSpace` writes
-    // source version 0 and `reserveChild` delivers 1; anything above them is
+    // wrote rather than the one its reservation did. `reserveSpace` commits
+    // the parent's provisional version 1; anything above it is
     // the conversation's own aggregate, and a Space stuck below it is one the
     // Organization can never be told anything new about — not its scope, not
     // its name, not its appearance.
@@ -442,18 +442,123 @@ describe("POST /spaces/:id/channels/:workstreamId/move", () => {
       expect.objectContaining({ spaceId: target.id }),
     ]));
     expect((await channelSpaceSources(workstreamId)).map((item) => item.spaceId)).not.toContain(source.id);
+    // One WorkspaceDO transaction: no `move` intent was staged for a resume,
+    // and the add-then-remove path (which stages an `add` into the target and a
+    // `remove` out of the source) was not taken.
     expect(await workspace().runInspectionSql({
-      sql: `SELECT kind, state, source_space_id, space_id
-              FROM space_intents WHERE workstream_id = ? ORDER BY created_at DESC LIMIT 1`,
-      bindings: [workstreamId],
-    })).toMatchObject({
-      rows: [{
-        kind: "move",
-        state: "settled",
-        source_space_id: source.id,
-        space_id: target.id,
-      }],
+      sql: `SELECT kind, space_id FROM space_intents
+             WHERE workstream_id = ? AND (kind IN ('move', 'remove') OR space_id = ?)`,
+      bindings: [workstreamId, target.id],
+    })).toMatchObject({ rows: [] });
+  });
+
+  it("given a Channel whose provenance is behind the source Space, when the one-transaction move is asked, then it writes nothing", async () => {
+    const source = await createSpace("personal", "Source");
+    const target = await createSpace("personal", "Target");
+    const workstreamId = await createChannel("stale-provenance-move");
+    expect((await request(`/spaces/${source.id}/channels`, OWNER_AUTH, { workstreamId })).status).toBe(200);
+    // The source Space moves past the revision the Channel recorded for it,
+    // which is what an audience change still walking its Channels looks like.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE spaces SET revision = revision + 1 WHERE space_id = ?", source.id);
     });
+    const snapshot = async () => ({
+      memberships: (await workspace().runInspectionSql({
+        sql: `SELECT space_id, state, generation FROM space_channel_memberships
+               WHERE workstream_id = ? ORDER BY space_id`,
+        bindings: [workstreamId],
+      })).rows,
+      sources: (await workspace().runInspectionSql({
+        sql: `SELECT space_id, space_revision, membership_generation FROM parent_space_sources
+               WHERE parent_id = ? ORDER BY space_id`,
+        bindings: [workstreamId],
+      })).rows,
+      operations: (await workspace().runInspectionSql({
+        sql: "SELECT COUNT(*) AS count FROM parent_access_operations WHERE parent_id = ?",
+        bindings: [workstreamId],
+      })).rows,
+    });
+    const before = await snapshot();
+
+    const declined = await workspace().moveSpaceMembership({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      sourceSpaceId: source.id,
+      targetSpaceId: target.id,
+      workstreamId,
+    });
+
+    expect(declined).toEqual({ ok: true, moved: false });
+    expect(await snapshot()).toEqual(before);
+
+    // The route takes the add-then-remove path instead, and still moves it.
+    const moved = await request(
+      `/spaces/${target.id}/channels/${workstreamId}/move`,
+      OWNER_AUTH,
+      { sourceSpaceId: source.id },
+    );
+    expect(moved).toMatchObject({
+      status: 200,
+      body: { source: { id: source.id, channelCount: 0 }, target: { id: target.id, channelCount: 1 } },
+    });
+    expect((await channelSpaceSources(workstreamId)).map((item) => item.spaceId))
+      .toEqual(expect.arrayContaining([target.id]));
+  });
+});
+
+describe("a Space and its hosted parent", () => {
+  it("given a parent reservation that fails, when a Space is reserved with its parent, then no Space row commits", async () => {
+    const spaceId = asSpaceId("00000000-0000-7000-8000-00000000d2a1");
+    // A parent row for this id under another Organization: `reserveChild`
+    // finds it and refuses the identity, inside the reservation's transaction.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO parent_metadata
+           (parent_id, parent_kind, workspace_id, region, authority_generation, title, description,
+            preview, scope, exact_state, system_kind, last_activity_at, completed_at,
+            archived_at, email_address, created_by_user_id, title_status,
+            source_created_at, source_updated_at, created_at, updated_at)
+         VALUES (?, 'space', '00000000-0000-7000-8000-00000000d2ff', 'global', 1, 'Elsewhere', '',
+                 '', 'workspace', 'idle', NULL, 0, NULL, NULL, NULL, NULL, 'settled', 0, 0, 0, 0)`,
+        spaceId,
+      );
+    });
+
+    const failure = await workspace().reserveSpace({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      space: { name: "Company", iconKey: "briefcase", colorKey: "blue", scope: "workspace" },
+      spaceId,
+      reserveParent: true,
+    }).then(() => null, (error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT COUNT(*) AS count FROM spaces WHERE space_id = ?",
+      bindings: [spaceId],
+    })).toMatchObject({ rows: [{ count: 0 }] });
+  });
+
+  it("given no General, when it is opened, then it is written with its parent and later callers reuse it", async () => {
+    const actor = { workspaceId: WORKSPACE_ID, userId: OWNER };
+    expect(await workspace().openGeneralSpace(actor)).toEqual({ ok: true, absent: true });
+    const spaceId = asSpaceId("00000000-0000-7000-8000-00000000d2a2");
+
+    const opened = await workspace().openGeneralSpace({ ...actor, spaceId });
+
+    expect(opened).toMatchObject({ ok: true, created: true, space: { id: spaceId, systemRole: "general" } });
+    // The parent's provisional projection superseded the reservation in the
+    // same transaction, so the committed row is already at version one.
+    expect(await workspace().runInspectionSql({
+      sql: `SELECT directory.source_version, parent.parent_kind
+              FROM spaces directory JOIN parent_metadata parent ON parent.parent_id = directory.space_id
+             WHERE directory.space_id = ?`,
+      bindings: [spaceId],
+    })).toMatchObject({ rows: [{ source_version: 1, parent_kind: "space" }] });
+    expect(await workspace().openGeneralSpace({
+      ...actor, spaceId: asSpaceId("00000000-0000-7000-8000-00000000d2a3"),
+    })).toMatchObject({ ok: true, created: false, space: { id: spaceId } });
+    expect(await workspace().openGeneralSpace(actor)).toMatchObject({ ok: true, created: false, space: { id: spaceId } });
   });
 });
 

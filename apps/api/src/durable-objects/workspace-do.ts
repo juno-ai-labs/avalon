@@ -69,6 +69,7 @@ import {
   asAutomationId,
   asSpaceId,
   asSubstreamId,
+  asUserId,
   asWorkspaceId,
   asWorkstreamId,
   automationTriggersAdmitResourceType,
@@ -108,6 +109,7 @@ import {
   type PersonalOrder,
   type SpaceErrorCode,
   type SpaceSnapshot,
+  type SpaceSummary,
   type Workstream,
   type WorkspaceSocketSyncEvent,
   type WorkspaceSyncTopic,
@@ -622,6 +624,9 @@ import {
   WorkspaceSpaceListRequestSchema,
   WorkspaceSpaceMembersRequestSchema,
   WorkspaceSpaceMembersResultSchema,
+  WorkspaceSpaceGeneralOpenResultSchema,
+  WorkspaceSpaceGeneralRequestSchema,
+  WorkspaceSpaceMembershipMoveOutcomeSchema,
   WorkspaceSpaceMembershipMovePlanResultSchema,
   WorkspaceSpaceMembershipMoveRequestSchema,
   WorkspaceSpaceMembershipMoveResultSchema,
@@ -659,6 +664,9 @@ import {
   type WorkspaceSpaceListRequest,
   type WorkspaceSpaceMembersRequest,
   type WorkspaceSpaceMembersResult,
+  type WorkspaceSpaceGeneralOpenResult,
+  type WorkspaceSpaceGeneralRequest,
+  type WorkspaceSpaceMembershipMoveOutcome,
   type WorkspaceSpaceMembershipMovePlanResult,
   type WorkspaceSpaceMembershipMoveRequest,
   type WorkspaceSpaceMembershipMoveResult,
@@ -5211,6 +5219,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return (await this.hostedParent(input.parentId, input.workspaceId)).confirmSpaceAccessSource(input);
   }
 
+  /** Called over RPC only by a Worker from before `moveSpaceMembership`, during a rollout. */
   async replaceEquivalentSpaceAccessSource(input: Parameters<HostedParent["replaceEquivalentSpaceAccessSource"]>[0]) {
     return (await this.hostedParent(input.parentId, input.workspaceId)).replaceEquivalentSpaceAccessSource(input);
   }
@@ -7154,12 +7163,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Allocate a Space and answer with it before its own object exists.
+   * Allocate a Space and answer with it before its hidden conversation exists.
    *
-   * The caller provisions `SpaceDO` next and calls `cancelSpaceReservation` if
-   * that fails. Nothing is published to a socket until the reservation is
-   * either provisioned or cancelled — the snapshot below is what a client
-   * applies, and a Space whose object never opened must not reach one.
+   * With `reserveParent`, the Space's row and its hosted parent (metadata, main
+   * child and provisional directory projection) are written in one
+   * transaction, so the version-zero reservation is superseded before it ever
+   * commits and there is nothing to cancel if the parent cannot be reserved.
+   * `SpaceService.create` has already written the D1 anchor under this id.
+   * A replay of an existing, readable id reserves the parent again, which is
+   * idempotent and finishes a reservation an earlier Worker left without one.
+   *
+   * Without it (a Worker from before the field, and test fixtures) the Space
+   * is written alone at source version zero; that caller reserves the parent
+   * itself and calls `cancelSpaceReservation` if it cannot.
    */
   async reserveSpace(input: WorkspaceSpaceReserveRequest): Promise<WorkspaceSpaceReserveResult> {
     await this.initialized;
@@ -7167,9 +7183,69 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
-    const reserved = this.spaceStorage().reserveForCreation(request, request.spaceId ?? uuidV7());
+    const spaceId = request.spaceId ?? uuidV7();
+    if (!request.reserveParent) {
+      const reserved = this.spaceStorage().reserveForCreation(request, spaceId);
+      if (!reserved.space) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
+      return WorkspaceSpaceReserveResultSchema.parse({ ok: true, ...reserved });
+    }
+    const parent = await this.spaceParentReservation(spaceId);
+    if (!parent.ok) return { ok: false, code: parent.code, unreachableUserIds: [], blockedWorkstreamIds: [] };
+    const reserved = this.state.storage.transactionSync(() => {
+      const result = this.spaceStorage().reserveForCreation(request, spaceId);
+      if (result.space) parent.reserve(request.userId, result.space);
+      return result;
+    });
     if (!reserved.space) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
+    await this.afterParentWrite();
     return WorkspaceSpaceReserveResultSchema.parse({ ok: true, ...reserved });
+  }
+
+  /**
+   * What reserving a Space's hosted parent needs from outside the transaction:
+   * a legacy parent imported, and the regional authority generation the parent
+   * is born at. An id this object already hosts as a Channel is refused as
+   * `space_not_found`, the answer an identity the caller cannot use as a Space
+   * always gets; a generation D1 cannot supply is `space_authority_unreachable`.
+   */
+  private async spaceParentReservation(spaceId: string): Promise<
+    | { ok: false; code: "space_not_found" | "space_authority_unreachable" }
+    | { ok: true; reserve: (userId: string, space: SpaceSummary) => void }
+  > {
+    await this.ensureParentImported(spaceId);
+    const known = this.state.storage.sql.exec<{ parent_kind: string }>(
+      `SELECT parent_kind FROM parent_metadata WHERE parent_id = ?
+       UNION ALL SELECT parent_kind FROM parent_imports WHERE parent_id = ?
+       LIMIT 1`,
+      spaceId, spaceId,
+    ).toArray()[0]?.parent_kind;
+    if (known !== undefined && known !== "space") return { ok: false, code: "space_not_found" };
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (authority.generation < 1) return { ok: false, code: "space_authority_unreachable" };
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) throw new Error("workspace_identity_unknown");
+    return {
+      ok: true,
+      reserve: (userId, space) => {
+        new HostedParent(this.hostedParentHost(), space.id, HOSTED_SPACE_ROLE).reserveChild({
+          workspaceId: asWorkspaceId(workspaceId),
+          parentId: space.id,
+          substreamId: asSubstreamId("0"),
+          kind: "main",
+          createdByUserId: asUserId(userId),
+          authorityGeneration: authority.generation,
+          directory: {
+            title: space.name,
+            description: "",
+            scope: space.scope,
+            systemKind: null,
+            emailAddress: null,
+            titleStatus: "settled",
+            createdAt: space.createdAt,
+          },
+        });
+      },
+    };
   }
 
   /**
@@ -7180,6 +7256,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * delete any Space still at source version zero — which for the seconds
    * between `reserveSpace` and the first `directory_common` effect is every
    * Space anybody is creating.
+   *
+   * Only the version-zero form of `reserveSpace` needs this; `SpaceService`
+   * reserves with the parent and no longer calls it.
    */
   async cancelSpaceReservation(input: WorkspaceSpaceRequest): Promise<{ cancelled: boolean }> {
     await this.initialized;
@@ -7199,6 +7278,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * `system_role` is what makes a race between two of them produce one Space
    * rather than two fallbacks. The caller still provisions the object; a
    * `created: true` answer is what tells it to.
+   *
+   * This is the version-zero form, kept for a Worker from before
+   * `openGeneralSpace` during a rollout and for fixtures that want General
+   * without its hidden conversation.
    */
   async ensureGeneralSpace(input: WorkspaceSpaceListRequest): Promise<WorkspaceSpaceGeneralResult> {
     await this.initialized;
@@ -7207,11 +7290,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
     if (refusal) return { ok: false, code: refusal };
     const storage = this.spaceStorage();
-    const general = storage.ensureGeneral({
-      workspaceId: request.workspaceId,
-      userId: request.userId,
-      space: { name: "General", iconKey: "building-2", colorKey: "blue", scope: "workspace" },
-    }, uuidV7());
+    const general = storage.ensureGeneral(WorkspaceDO.generalReservation(request), uuidV7());
     // A General that already existed is still subject to this viewer's read —
     // which for an Organization-wide Space is every active member, and is the
     // answer rather than an assumption.
@@ -7225,6 +7304,61 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       space: general.space,
       created: general.created,
     });
+  }
+
+  /**
+   * The Organization's General Space with its hosted parent, created once.
+   *
+   * Two forms, because `SpaceService` writes the D1 anchor under General's id
+   * before General exists and so has to learn first whether it does. Without
+   * a `spaceId` this only answers: General, or `absent`; that is the whole
+   * cost for every caller after the first. With one, General and its hosted
+   * parent are written in one transaction, or the General a concurrent caller
+   * made is the answer (`created: false`) and the unique partial index is
+   * still what decided it.
+   */
+  async openGeneralSpace(input: WorkspaceSpaceGeneralRequest): Promise<WorkspaceSpaceGeneralOpenResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceGeneralRequestSchema, input, "open_general_space");
+    this.assertWorkspace(request.workspaceId);
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    if (refusal) return { ok: false, code: refusal };
+    const storage = this.spaceStorage();
+    const existing = storage.generalSpaceId();
+    let general: { space: SpaceSummary; created: boolean };
+    if (existing !== null) {
+      const space = storage.readable(request.userId, existing);
+      if (space === false) return { ok: false, code: "space_not_found" };
+      general = { space, created: false };
+    } else if (request.spaceId === undefined) {
+      return { ok: true, absent: true };
+    } else {
+      const spaceId = request.spaceId;
+      const parent = await this.spaceParentReservation(spaceId);
+      if (!parent.ok) return { ok: false, code: parent.code };
+      general = this.state.storage.transactionSync(() => {
+        const ensured = storage.ensureGeneral(WorkspaceDO.generalReservation(request), spaceId);
+        if (ensured.created) parent.reserve(request.userId, ensured.space);
+        return ensured;
+      });
+      if (!general.created && storage.readable(request.userId, general.space.id) === false) {
+        return { ok: false, code: "space_not_found" };
+      }
+    }
+    storage.noteGeneralSpace(general.space.id);
+    if (general.created) {
+      this.publishSpaceSnapshot();
+      await this.afterParentWrite();
+    }
+    return WorkspaceSpaceGeneralOpenResultSchema.parse({ ok: true, space: general.space, created: general.created });
+  }
+
+  private static generalReservation(request: { workspaceId: string; userId: string }): WorkspaceSpaceReserveRequest {
+    return {
+      workspaceId: asWorkspaceId(request.workspaceId),
+      userId: asUserId(request.userId),
+      space: { name: "General", iconKey: "building-2", colorKey: "blue", scope: "workspace" },
+    };
   }
 
   /**
@@ -7716,6 +7850,73 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return result;
   }
 
+  /**
+   * Move a Channel between two Spaces that grant the same audience, in one
+   * transaction of this object.
+   *
+   * The Space memberships, the Channel's recorded Space provenance (its hosted
+   * parent's `parent_access_sources`) and the source's retired defaults, pins
+   * and arrangement all live in this database, so the move is one
+   * `transactionSync` rather than a staged intent, a provenance RPC and a
+   * settlement. No audience changes: the two Spaces grant the same readers, so
+   * the Channel's canonical scope and participant operations have nothing to
+   * do. `moved: false` sends the caller down the add-then-remove path, which
+   * is also what happens when the Channel's record does not match the Spaces
+   * as they are now; nothing is written in that case.
+   */
+  async moveSpaceMembership(
+    input: WorkspaceSpaceMembershipMoveRequest,
+  ): Promise<WorkspaceSpaceMembershipMoveOutcome> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceMembershipMoveRequestSchema, input, "move_space_membership");
+    this.assertWorkspace(request.workspaceId);
+    const refusal = await this.spaceMoveRefusal(request);
+    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
+    const channel = await this.hostedParent(request.workstreamId, request.workspaceId);
+    const operationId = uuidV7();
+    const result = WorkspaceSpaceMembershipMoveOutcomeSchema.parse(
+      this.spaceStorage().moveEquivalentMembership(request, (fences) => channel.replaceEquivalentSpaceAccessSource({
+        workspaceId: request.workspaceId,
+        parentId: request.workstreamId,
+        sourceSpaceId: request.sourceSpaceId,
+        targetSpaceId: request.targetSpaceId,
+        ...fences,
+        operationId,
+      }).ok),
+    );
+    if (result.ok && result.moved) {
+      this.publishSpaceSnapshot();
+      this.publishSpaceConversationsChanged({
+        spaceIdsThroughChannel: new Map([[
+          request.workstreamId,
+          [request.sourceSpaceId, request.targetSpaceId],
+        ]]),
+      });
+      this.deferSpaceMembershipConvergence(request.workspaceId, request.workstreamId, true);
+    }
+    return result;
+  }
+
+  /** Who may move a Channel between two Spaces; null to proceed. */
+  private async spaceMoveRefusal(request: WorkspaceSpaceMembershipMoveRequest): Promise<SpaceErrorCode | null> {
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) return "space_access_denied";
+    const storage = this.spaceStorage();
+    if (!storage.ready()) return "space_bootstrap_pending";
+    if (storage.reach(request.userId, request.sourceSpaceId) === "through_channel"
+      || storage.reach(request.userId, request.targetSpaceId) === "through_channel") {
+      return "space_access_denied";
+    }
+    if (!this.directoryVisible(request.userId, request.workstreamId)) return "space_not_found";
+    return null;
+  }
+
+  /**
+   * The staged form of an equal-audience move. Only a Worker from before
+   * `moveSpaceMembership` calls it, during a rollout; the `move` intent it
+   * stages is finished by `SpaceService.resumeIntent` through
+   * `replanSpaceMembershipMoveForAudience` and `finalizeSpaceMembershipMove`,
+   * which stay for intents already stored.
+   */
   async prepareSpaceMembershipMove(
     input: WorkspaceSpaceMembershipMoveRequest,
   ): Promise<WorkspaceSpaceMembershipMovePlanResult> {
@@ -7726,22 +7927,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       "prepare_space_membership_move",
     );
     this.assertWorkspace(request.workspaceId);
-    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
-      return { ok: false, code: "space_access_denied", unreachableUserIds: [], blockedWorkstreamIds: [] };
-    }
-    const storage = this.spaceStorage();
-    if (!storage.ready()) {
-      return { ok: false, code: "space_bootstrap_pending", unreachableUserIds: [], blockedWorkstreamIds: [] };
-    }
-    if (storage.reach(request.userId, request.sourceSpaceId) === "through_channel"
-      || storage.reach(request.userId, request.targetSpaceId) === "through_channel") {
-      return { ok: false, code: "space_access_denied", unreachableUserIds: [], blockedWorkstreamIds: [] };
-    }
-    if (!this.directoryVisible(request.userId, request.workstreamId)) {
-      return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
-    }
+    const refusal = await this.spaceMoveRefusal(request);
+    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const result = WorkspaceSpaceMembershipMovePlanResultSchema.parse(
-      storage.prepareMembershipMove(
+      this.spaceStorage().prepareMembershipMove(
         request,
         uuidV7(),
         Date.now() + SPACE_INTENT_RESUME_DELAY_MS,
@@ -7795,22 +7984,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     );
     if (result.ok) await this.armNextAlarm();
     return result;
-  }
-
-  async cancelSpaceMembershipMove(
-    input: WorkspaceSpaceMembershipMoveSettleRequest,
-  ): Promise<{ cancelled: boolean }> {
-    await this.initialized;
-    const request = parseRpcInput(
-      WorkspaceSpaceMembershipMoveSettleRequestSchema,
-      input,
-      "cancel_space_membership_move",
-    );
-    this.assertWorkspace(request.workspaceId);
-    const cancelled = this.spaceStorage().cancelMembershipMove(request);
-    if (cancelled) this.publishSpaceSnapshot();
-    await this.armNextAlarm();
-    return { cancelled };
   }
 
   async finalizeSpaceMembershipRemoval(

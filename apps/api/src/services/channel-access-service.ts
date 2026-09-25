@@ -133,29 +133,6 @@ export class ChannelAccessService {
     return (await this.observation(workstreamId)).title;
   }
 
-  /** Replace one Space source with an audience-equivalent source in one hop. */
-  async replaceEquivalentSpaceSource(
-    workstreamId: string,
-    input: {
-      sourceSpaceId: SpaceId;
-      targetSpaceId: SpaceId;
-      scope: SpaceScope;
-      participantUserIds: readonly UserId[];
-      sourceSpaceRevision: number;
-      sourceMembershipGeneration: number;
-      targetSpaceRevision: number;
-      targetMembershipGeneration: number;
-      operationId: string;
-    },
-  ): Promise<void> {
-    const result = await (await this.room()).replaceEquivalentSpaceAccessSource({
-      ...this.address(workstreamId),
-      ...input,
-      participantUserIds: [...input.participantUserIds],
-    });
-    if (!result.ok) throw spaceAccessError(result.code, "Channel");
-  }
-
   /**
    * Every source that currently grants a reader access to this Channel.
    *

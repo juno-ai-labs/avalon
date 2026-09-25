@@ -54,14 +54,12 @@ interface WorkspaceDouble {
   spaceSummary: ReturnType<typeof vi.fn>;
   listSpaceMembers: ReturnType<typeof vi.fn>;
   prepareSpaceMembershipRemoval: ReturnType<typeof vi.fn>;
-  prepareSpaceMembershipMove: ReturnType<typeof vi.fn>;
+  moveSpaceMembership: ReturnType<typeof vi.fn>;
   replanSpaceMembershipMoveForAudience: ReturnType<typeof vi.fn>;
   finalizeSpaceMembershipMove: ReturnType<typeof vi.fn>;
-  cancelSpaceMembershipMove: ReturnType<typeof vi.fn>;
   finalizeSpaceMembershipRemoval: ReturnType<typeof vi.fn>;
   noteSpaceAudience: ReturnType<typeof vi.fn>;
   reserveSpace: ReturnType<typeof vi.fn>;
-  cancelSpaceReservation: ReturnType<typeof vi.fn>;
   recordSpaceIntentReceipt: ReturnType<typeof vi.fn>;
   prepareSpaceArchive: ReturnType<typeof vi.fn>;
   finalizeSpaceArchive: ReturnType<typeof vi.fn>;
@@ -77,7 +75,7 @@ function workspaceDouble(overrides: Partial<WorkspaceDouble> = {}): WorkspaceDou
     prepareSpaceMembershipRemoval: vi.fn(async () => ({
       ok: true, space: summary(), membershipGeneration: 4,
     })),
-    prepareSpaceMembershipMove: vi.fn(async () => ({ ok: true, equivalentAudience: false })),
+    moveSpaceMembership: vi.fn(async () => ({ ok: true, moved: false })),
     replanSpaceMembershipMoveForAudience: vi.fn(async () => ({
       ok: true,
       equivalentAudience: true,
@@ -92,11 +90,9 @@ function workspaceDouble(overrides: Partial<WorkspaceDouble> = {}): WorkspaceDou
       source: summary({ channelCount: 0 }),
       target: summary({ id: TARGET_SPACE_ID }),
     })),
-    cancelSpaceMembershipMove: vi.fn(async () => ({ cancelled: true })),
     finalizeSpaceMembershipRemoval: vi.fn(async () => ({ ok: true, space: summary() })),
     noteSpaceAudience: vi.fn(async () => ({ ok: true, space: summary({ revision: 4 }) })),
     reserveSpace: vi.fn(async (): Promise<WorkspaceSpaceReserveResult> => ({ ok: true, space: summary(), created: true })),
-    cancelSpaceReservation: vi.fn(async () => ({ cancelled: true })),
     recordSpaceIntentReceipt: vi.fn(async () => ({ recorded: true })),
     prepareSpaceArchive: vi.fn(async () => ({ ok: true, space: summary() })),
     finalizeSpaceArchive: vi.fn(async () => ({ ok: true, space: summary({ status: "archived" }) })),
@@ -315,9 +311,9 @@ describe("SpaceService audience changes", () => {
 });
 
 describe("SpaceService lifecycle fan-out", () => {
-  it("refuses an invalid move source before reserving the destination", async () => {
+  it("refuses an invalid move source before touching either placement", async () => {
     const workspace = workspaceDouble({
-      prepareSpaceMembershipMove: vi.fn(async () => ({
+      moveSpaceMembership: vi.fn(async () => ({
         ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [],
       })),
     });
@@ -328,30 +324,19 @@ describe("SpaceService lifecycle fan-out", () => {
       CHANNEL_ID,
     )).rejects.toMatchObject({ code: "space_not_found" });
 
-    expect(workspace.reserveSpace).not.toHaveBeenCalled();
+    expect(workspace.prepareSpaceMembershipRemoval).not.toHaveBeenCalled();
   });
 
-  it("moves equal-audience provenance without reading or rewriting the Channel audience", async () => {
+  it("moves equal-audience provenance in one WorkspaceDO call without reading or rewriting the Channel audience", async () => {
     const log: string[] = [];
     const source = summary();
     const target = summary({ id: TARGET_SPACE_ID, name: "Product", channelCount: 0 });
     const workspace = workspaceDouble({
-      prepareSpaceMembershipMove: vi.fn(async () => {
-        log.push("prepare");
+      moveSpaceMembership: vi.fn(async () => {
+        log.push("move");
         return {
           ok: true,
-          equivalentAudience: true,
-          operationId: "00000000-0000-7000-8000-0000000000e1",
-          source,
-          target,
-          sourceMembershipGeneration: 4,
-          targetMembershipGeneration: 2,
-        };
-      }),
-      finalizeSpaceMembershipMove: vi.fn(async () => {
-        log.push("finalize");
-        return {
-          ok: true,
+          moved: true,
           source: { ...source, channelCount: 0 },
           target: { ...target, channelCount: 1 },
         };
@@ -366,87 +351,18 @@ describe("SpaceService lifecycle fan-out", () => {
       target: { id: TARGET_SPACE_ID, channelCount: 1 },
     });
 
-    expect(log).toEqual(["prepare", `replace:${SPACE_ID}:${TARGET_SPACE_ID}`, "finalize"]);
-    expect(channels.room.replaceEquivalentSpaceAccessSource).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sourceSpaceRevision: 3,
-        sourceMembershipGeneration: 4,
-        targetSpaceRevision: 3,
-        targetMembershipGeneration: 2,
-      }),
-    );
+    expect(log).toEqual(["move"]);
+    expect(workspace.moveSpaceMembership).toHaveBeenCalledWith({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      sourceSpaceId: SPACE_ID,
+      targetSpaceId: TARGET_SPACE_ID,
+      workstreamId: CHANNEL_ID,
+    });
     expect(channels.conversation.handleProductRequest).not.toHaveBeenCalled();
+    expect(channels.room.replaceEquivalentSpaceAccessSource).not.toHaveBeenCalled();
     expect(channels.room.applySpaceAccessSource).not.toHaveBeenCalled();
     expect(channels.room.retractSpaceAccessSource).not.toHaveBeenCalled();
-  });
-
-  it("keeps a refused fast move on its original intent while converging the audience", async () => {
-    const log: string[] = [];
-    const source = summary();
-    const target = summary({ id: TARGET_SPACE_ID, name: "Product", channelCount: 0 });
-    const workspace = workspaceDouble({
-      prepareSpaceMembershipMove: vi.fn(async () => ({
-        ok: true,
-        equivalentAudience: true,
-        operationId: "00000000-0000-7000-8000-0000000000e2",
-        source,
-        target,
-        sourceMembershipGeneration: 4,
-        targetMembershipGeneration: 2,
-      })),
-      replanSpaceMembershipMoveForAudience: vi.fn(async () => ({
-        ok: true,
-        equivalentAudience: true,
-        operationId: "00000000-0000-7000-8000-0000000000e2",
-        source: { ...source, revision: 4 },
-        target: { ...target, revision: 5 },
-        sourceMembershipGeneration: 4,
-        targetMembershipGeneration: 2,
-      })),
-      finalizeSpaceMembershipMove: vi.fn(async () => {
-        log.push("finalize");
-        return {
-          ok: true,
-          source: { ...source, revision: 4, channelCount: 0 },
-          target: { ...target, revision: 5, channelCount: 1 },
-        };
-      }),
-    });
-    const channels = channelDoubles(log);
-    channels.room.readManagementAccess = vi.fn(async () => {
-      throw new Error("recovery_must_not_reauthorize");
-    });
-    channels.room.readPersistedSpaceAccessSources = vi.fn(async () => [
-      { spaceId: SPACE_ID, scope: "workspace", participantUserIds: [OWNER, MEMBER] },
-    ]);
-    channels.room.replaceEquivalentSpaceAccessSource = vi.fn(async () => ({
-      ok: false, code: "space_revision_conflict",
-    }));
-
-    await expect(new SpaceService(serviceEnv({
-      workspace, conversation: channels.conversation, room: channels.room,
-    }), auth()).moveChannel(SPACE_ID, TARGET_SPACE_ID, CHANNEL_ID)).resolves.toMatchObject({
-      source: { id: SPACE_ID, revision: 4, channelCount: 0 },
-      target: { id: TARGET_SPACE_ID, revision: 5, channelCount: 1 },
-    });
-
-    expect(workspace.cancelSpaceMembershipMove).not.toHaveBeenCalled();
-    expect(channels.room.readManagementAccess).not.toHaveBeenCalled();
-    expect(channels.room.readPersistedSpaceAccessSources).toHaveBeenCalledWith({
-      workspaceId: WORKSPACE_ID,
-      parentId: CHANNEL_ID,
-    });
-    expect(log).toEqual([
-      `retract:${CHANNEL_ID}`,
-      `apply:${CHANNEL_ID}:2`,
-      `retract:${CHANNEL_ID}`,
-      "finalize",
-    ]);
-    expect(workspace.finalizeSpaceMembershipMove).toHaveBeenCalledWith(expect.objectContaining({
-      operationId: "00000000-0000-7000-8000-0000000000e2",
-      sourceSpaceRevision: 4,
-      targetSpaceRevision: 5,
-    }));
   });
 
   it("given an archive, when it runs, then reached Channel retractions overlap and all settle before finalization", async () => {
@@ -757,7 +673,7 @@ describe("SpaceService intent resumption", () => {
 });
 
 describe("SpaceService creation", () => {
-  it("given a Space whose object cannot be opened, when creation fails, then the reservation is cancelled", async () => {
+  it("given a D1 anchor that cannot be written, when creation fails, then nothing was reserved", async () => {
     const workspace = workspaceDouble();
     const env = serviceEnv({
       workspace,
@@ -770,11 +686,9 @@ describe("SpaceService creation", () => {
       name: "Company", iconKey: "briefcase", colorKey: "blue", scope: "workspace",
     })).rejects.toMatchObject({ status: 503, code: "space_authority_unreachable" });
 
-    // A reservation left behind would be a Space in every member's sidebar that
-    // answers nothing, because the object it names was never opened.
-    expect(workspace.cancelSpaceReservation).toHaveBeenCalledWith(
-      expect.objectContaining({ spaceId: SPACE_ID }),
-    );
+    // The anchor comes first, so a failure there leaves no Space in any
+    // member's sidebar and no reservation to cancel.
+    expect(workspace.reserveSpace).not.toHaveBeenCalled();
   });
 });
 
