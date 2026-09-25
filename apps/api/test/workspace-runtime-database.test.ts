@@ -223,6 +223,7 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "workspace_space_viewers",
   "workspace_sidebar_list_state",
   "workspace_socket_ticket_receipts",
+  "workspace_socket_unheard", // The first-frame watch's ledger; socket paths and the alarm only.
   "workspace_sync_events",
   "workspace_workstream_directory",
   "workspace_workstream_effect_receipts",
