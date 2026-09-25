@@ -775,6 +775,8 @@ const EMPTY_DIRECTORY: SpaceDirectory = SpaceDirectorySchema.parse({ waterline: 
 export class WorkspaceSpaceStorage {
   private tablesPresent: boolean | null = null;
   private breakoutTablesPresent: boolean | null = null;
+  /** Sidekick defaults this instance wrote onto a Channel in place; the caller refreshes the rails when nonzero. */
+  sidekickDefaultsApplied = 0;
 
   constructor(private readonly storage: DurableObjectStorage) {}
 
@@ -3655,12 +3657,26 @@ export class WorkspaceSpaceStorage {
     );
   }
 
+  /**
+   * Deliver each target, in the caller's transaction where the target lives in
+   * this database, and through the activity Queue otherwise.
+   *
+   * A Sidekick default's target is the member Channel's `parent_sidekicks`
+   * row, which is in this object's SQLite whenever the Channel's parent is
+   * hosted here, so it is written now rather than sent out and back in. The
+   * rest take the Queue: a resource is attached through the Channel's main
+   * conversation (a SubstreamAgent), and a Sidekick target whose Channel parent
+   * is not hosted yet, is archived, or whose Sidekick this Organization's
+   * directory does not show as a live workspace Sidekick keeps the canonical
+   * path, which checks the Sidekick and the Channel and names what it refused.
+   */
   private stageDefaultPublications(
     targets: readonly WorkspaceSpaceDefaultTarget[],
     requestedByUserId: string,
     now: number,
   ): void {
     for (const target of targets) {
+      if (target.kind === "sidekick" && this.applySidekickDefaultInPlace(target, now)) continue;
       this.storage.sql.exec(
         `INSERT OR IGNORE INTO space_default_publications (
            space_id, kind, target_id, default_generation, workstream_id,
@@ -3679,6 +3695,50 @@ export class WorkspaceSpaceStorage {
         now,
       );
     }
+  }
+
+  /**
+   * Write one Sidekick default onto its member Channel, if everything it needs
+   * is in this database. False leaves the target for the Queue.
+   *
+   * No actor's Channel management access is asked, which the Queue path does.
+   * The Space's own write check admitted the person who added the default or
+   * placed the Channel, and recommending a workspace Sidekick exposes nothing
+   * a member of the Organization could not already open.
+   */
+  private applySidekickDefaultInPlace(target: WorkspaceSpaceDefaultTarget, now: number): boolean {
+    const eligible = this.storage.sql.exec<{ one: number } & Record<string, SqlStorageValue>>(
+      `SELECT 1 AS one FROM parent_metadata parent, automation_directory sidekick
+        WHERE parent.parent_id = ? AND parent.parent_kind = 'workstream' AND parent.archived_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM parent_imports ledger
+                           WHERE ledger.parent_id = parent.parent_id AND ledger.state = 'pending')
+          AND sidekick.automation_id = ? AND sidekick.scope = 'workspace' AND sidekick.lifecycle <> 'deleted'`,
+      target.workstreamId,
+      target.targetId,
+    ).toArray().length === 1;
+    if (!eligible) return false;
+    this.storage.sql.exec(
+      `INSERT OR IGNORE INTO parent_sidekicks (parent_id, sidekick_id, attached_at) VALUES (?, ?, ?)`,
+      target.workstreamId,
+      target.targetId,
+      now,
+    );
+    this.storage.sql.exec(
+      `UPDATE space_default_targets
+          SET state = 'applied', attempts = attempts + 1, updated_at = ?, applied_at = ?
+        WHERE space_id = ? AND kind = ? AND target_id = ? AND default_generation = ?
+          AND workstream_id = ? AND membership_generation = ? AND state = 'pending'`,
+      now,
+      now,
+      target.spaceId,
+      target.kind,
+      target.targetId,
+      target.defaultGeneration,
+      target.workstreamId,
+      target.membershipGeneration,
+    );
+    this.sidekickDefaultsApplied += 1;
+    return true;
   }
 
   /** The active Spaces a Channel keeps once this one stops reaching it. */

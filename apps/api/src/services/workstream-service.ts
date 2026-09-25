@@ -772,9 +772,9 @@ export class WorkstreamService {
     await new ConversationService(this.env, this.auth).writableClient(id, visibleSubstreamId);
     const room = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, this.auth.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
-    const management = await room.readManagementAccess({ workspaceId: this.auth.workspaceId, parentId: id, userId: this.auth.userId });
-    if (!management.allowed) throw new ApiError(403, "sidekick_attachment_forbidden", "Workstream management access is required");
-    if (!management.writable) throw new ApiError(409, "sidekick_attachment_workstream_archived", "The workstream is archived");
+    // Management access is checked once, by `room.setSidekickRecommendation`
+    // below, in the same call that writes the recommendation. Asking the room
+    // first as well cost a second round trip for the same answer.
     const backgroundAgent = backgroundExecution ? await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS,
       this.auth.workspaceId, conversationObjectName(this.env.AVALON_REGION, this.auth.workspaceId, id, asSubstreamId(substreamId))) : null;
     if (backgroundExecution && backgroundAgent) {
@@ -811,7 +811,7 @@ export class WorkstreamService {
       await room.setSidekickRecommendation({ workspaceId: this.auth.workspaceId, parentId: id, userId: this.auth.userId, sidekickId, attached });
     } catch (error) {
       if (error instanceof Error && error.message === "sidekick_attachment_participant_required") {
-        throw new ApiError(403, "sidekick_attachment_forbidden", "Only participants can change Sidekick attachments");
+        throw new ApiError(403, "sidekick_attachment_forbidden", "Workstream management access is required");
       }
       if (error instanceof Error && error.message === "sidekick_attachment_workstream_archived") {
         throw new ApiError(409, "sidekick_attachment_workstream_archived", "The workstream is archived");

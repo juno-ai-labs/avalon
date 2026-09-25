@@ -156,7 +156,8 @@ import { parseRpcInput } from "../lib/rpc-input";
 import { uuidV7 } from "../lib/uuid-v7";
 import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observability/logger";
 import {
-  publishAccessRevocation,
+  descendantRevocation,
+  publishDescendantRevocations,
   revocationClosesSession,
   SocketAccessRevocationSchema,
   type SocketAccessRevocation,
@@ -4927,14 +4928,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // A Channel's Sidekick conversations sit outside its participant
         // projection, so a revoked Channel grant also has to reach them. The
         // row stays until the revocation Queue takes the fan-out; applying the
-        // grant again on retry is answered by its receipt.
-        const published = await publishAccessRevocation(this.env, {
+        // grant again on retry is answered by its receipt. The Sidekicks the
+        // Channel owns are this object's rows, so their `automation` hops are
+        // published directly rather than a `workstream_automations` hop that
+        // would only come back here to ask for them.
+        const automationIds = this.automationIdsOwnedBy(grant.target.parentId);
+        if (automationIds.length === 0) continue;
+        const revocation: SocketAccessRevocation = {
           reason: "workstream_participant_removed", workspaceId: asWorkspaceId(workspaceId),
           userId: grant.userId, sessionId: null,
           ...(grant.membershipIncarnation ? { membershipIncarnation: grant.membershipIncarnation } : {}),
-          target: { scope: "workstream_automations", workstreamId: grant.target.parentId },
-        });
-        if (!published) throw new Error("scope_grant_sidekick_revocation_publish_failed");
+        };
+        try {
+          await publishDescendantRevocations(this.env, automationIds.map((automationId) =>
+            descendantRevocation(revocation, { scope: "automation", automationId })));
+        } catch (error) {
+          throw new Error("scope_grant_sidekick_revocation_publish_failed", { cause: error });
+        }
       }
       return grants;
     });
@@ -5356,8 +5366,40 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   // Socket revocation for a parent's Channel control sockets.
 
-  async revokeNarrowedAudienceAccess(input: Parameters<HostedParent["revokeNarrowedAudienceAccess"]>[0]) {
-    return (await this.hostedParent(input.parentId, input.workspaceId)).revokeNarrowedAudienceAccess(input);
+  /**
+   * The `workstream_audience_narrowed` hop, parent step included.
+   *
+   * Closes the Channel's control sockets it can no longer admit, then, for each
+   * person whose socket that was, runs the per-user parent step here too: the
+   * conversations the revocation continues to, and the Sidekicks the Channel
+   * owns. Both lists are this object's rows, so the consumer publishes only
+   * the leaves instead of a `workstream` and a `workstream_automations` hop per
+   * person that each came straight back here.
+   *
+   * The per-user step carries `workstream_participant_removed`, the reason a
+   * narrowing is published with: losing the Channel keeps any breakout the
+   * person can still read. `closedUserIds` stays in the answer so a consumer
+   * from before this change still publishes its two hops per person.
+   */
+  async revokeNarrowedAudienceAccess(input: Parameters<HostedParent["revokeNarrowedAudienceAccess"]>[0]): Promise<{
+    closedUserIds: string[];
+    substreams: { userId: string; substreamIds: string[] }[];
+    automationIds: string[];
+  }> {
+    const parent = await this.hostedParent(input.parentId, input.workspaceId);
+    const { closedUserIds } = await parent.revokeNarrowedAudienceAccess(input);
+    const substreams: { userId: string; substreamIds: string[] }[] = [];
+    for (const userId of closedUserIds) {
+      const { substreamIds } = await parent.revokeSocketAccess({
+        reason: "workstream_participant_removed", workspaceId: asWorkspaceId(input.workspaceId), userId, sessionId: null,
+      });
+      substreams.push({ userId, substreamIds });
+    }
+    return {
+      closedUserIds,
+      substreams,
+      automationIds: closedUserIds.length ? this.automationIdsOwnedBy(input.parentId) : [],
+    };
   }
 
   /** The `workstream` revocation hop: close this Channel's control sockets and name its conversations. */
@@ -6453,17 +6495,55 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = z.strictObject({ workspaceId: WorkspaceIdSchema, workstreamId: IdSchema }).parse(input);
     this.assertWorkspace(request.workspaceId);
-    return {
-      automationIds: this.state.storage.sql.exec<{ automation_id: string }>(
-        `SELECT automation_id FROM automation_directory
-          WHERE owning_workstream_id = ? AND lifecycle <> 'deleted' ORDER BY automation_id`,
-        request.workstreamId,
-      ).toArray().map((row) => row.automation_id),
-    };
+    return { automationIds: this.automationIdsOwnedBy(request.workstreamId) };
+  }
+
+  /** The live Sidekicks a Channel owns, each an `automation` revocation hop. */
+  private automationIdsOwnedBy(workstreamId: string): string[] {
+    return this.state.storage.sql.exec<{ automation_id: string }>(
+      `SELECT automation_id FROM automation_directory
+        WHERE owning_workstream_id = ? AND lifecycle <> 'deleted' ORDER BY automation_id`,
+      workstreamId,
+    ).toArray().map((row) => row.automation_id);
+  }
+
+  /**
+   * The `workstream` hop for every hosted Channel a person could hold a socket
+   * on, run here in the same call as the workspace hop.
+   *
+   * A Channel's control sockets are this object's sockets and its children are
+   * this object's rows, so publishing a `workstream` message per Channel only
+   * for it to come back here was a Queue round trip per Channel before any
+   * conversation heard. A Channel whose legacy import is still pending is left
+   * to its own hop: importing it here would put one remote call per such
+   * Channel inside this walk.
+   */
+  private async revokeHostedChannelAccess(
+    workstreamIds: readonly string[],
+    revocation: SocketAccessRevocation,
+  ): Promise<{ workstreamId: string; substreamIds: string[] }[]> {
+    const channels: { workstreamId: string; substreamIds: string[] }[] = [];
+    for (const workstreamId of workstreamIds) {
+      const pendingImport = this.state.storage.sql.exec(
+        "SELECT 1 FROM parent_imports WHERE parent_id = ? AND state = 'pending'", workstreamId,
+      ).toArray().length > 0;
+      if (pendingImport) continue;
+      const { substreamIds } = await (await this.hostedParent(workstreamId)).revokeSocketAccess(revocation);
+      channels.push({ workstreamId, substreamIds });
+    }
+    return channels;
   }
 
   async revokeSocketAccess(revocation: SocketAccessRevocation): Promise<{
+    /**
+     * Every Channel the person could hold a socket on. A Channel also named in
+     * `channels` has had its hop run here; a consumer publishes a `workstream`
+     * hop only for the rest. Kept whole so a consumer from before `channels`
+     * still reaches every Channel.
+     */
     workstreamIds: string[];
+    /** The Channels whose `workstream` hop this call ran, with the conversations each names. */
+    channels: { workstreamId: string; substreamIds: string[] }[];
     automationIds: string[];
     artifactIds: string[];
   }> {
@@ -6504,8 +6584,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         sockets: closed,
       });
     }
+    const workstreamIds = this.revocableWorkstreamIds(request.userId);
     return {
-      workstreamIds: this.revocableWorkstreamIds(request.userId),
+      workstreamIds,
+      channels: await this.revokeHostedChannelAccess(workstreamIds, request),
       // Every automation, unfiltered by person, for the same reason the
       // artifact list is: an automation's conversation admits its author and
       // its run-as principal, any member when it is workspace-scoped, and any
@@ -7669,7 +7751,27 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // time. A failed re-derive leaves the existing wake in place; that wake is
     // itself the recovery path and will safely find the settled intent.
     this.deferSpaceMembershipConvergence(request.workspaceId, request.workstreamId, false);
+    await this.afterSidekickDefaultsApplied(storage, request.workspaceId);
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
+  }
+
+  /**
+   * Refresh every open Sidekick rail after a Space wrote Sidekick defaults
+   * onto member Channels in its own transaction, as the Queue path's
+   * `setSidekickRecommendation` does. The write has committed, so a failed
+   * refresh is logged rather than failing the request that made it.
+   */
+  private async afterSidekickDefaultsApplied(storage: WorkspaceSpaceStorage, workspaceId: string): Promise<void> {
+    if (storage.sidekickDefaultsApplied === 0) return;
+    try {
+      await this.publishSync(["automations"], workspaceId,
+        this.placementAffinity() ?? await workspacePlacementAffinity(this.env, workspaceId));
+    } catch (error) {
+      logWarn(this.env, "space_sidekick_default_refresh_failed", {
+        workspace_id: workspaceId,
+        reason: diagnosticErrorCode(error, "space_sidekick_default_refresh_failed"),
+      });
+    }
   }
 
   async cancelSpaceMembership(input: WorkspaceSpaceMembershipSettleRequest): Promise<WorkspaceSpaceMutationResult> {
@@ -7777,6 +7879,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ]]),
     });
     this.deferSpaceMembershipConvergence(request.workspaceId, request.workstreamId, true);
+    await this.afterSidekickDefaultsApplied(storage, request.workspaceId);
     return WorkspaceSpaceMembershipMoveResultSchema.parse({ ok: true, ...moved });
   }
 
@@ -7946,9 +8049,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
-    const result = WorkspaceSpaceDefaultResultSchema.parse(this.spaceStorage().addDefault(request));
+    const storage = this.spaceStorage();
+    const result = WorkspaceSpaceDefaultResultSchema.parse(storage.addDefault(request));
     if (result.ok) this.publishSpaceSnapshot();
     if (result.ok && result.targets.length > 0) await this.armNextAlarm();
+    await this.afterSidekickDefaultsApplied(storage, request.workspaceId);
     return result;
   }
 
@@ -12409,7 +12514,42 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       JSON.stringify([parentId, substreamId])).toArray().length > 0;
   }
 
+  /**
+   * Discovery for one parent or one conversation.
+   *
+   * A parent job for a Channel hosted here is answered in place: its children
+   * are `parent_children` rows in this database, so registering them is a few
+   * statements in the caller's transaction rather than a Queue hop to a Worker
+   * that would call straight back into this object for the list and the
+   * registration. A conversation job, a Sidekick parent (its children are in
+   * AutomationDO) and a Channel whose legacy import has not run yet (reading
+   * it would need the import, which is async) still go through the Queue.
+   */
   private enqueueAuthorizationDiscovery(job: AuthorizationProjectionJob): void {
+    if (job.substreamId === undefined) {
+      const hostedChannel = this.state.storage.sql.exec(
+        `SELECT 1 FROM parent_metadata parent
+          WHERE parent.parent_id = ? AND parent.parent_kind = 'workstream'
+            AND NOT EXISTS (SELECT 1 FROM parent_imports ledger
+                             WHERE ledger.parent_id = parent.parent_id AND ledger.state = 'pending')`,
+        job.parentId,
+      ).toArray().length > 0;
+      if (hostedChannel) {
+        this.state.storage.sql.exec('DELETE FROM authorization_delivery WHERE job_key = ?',
+          JSON.stringify([job.parentId, null]));
+        this.registerAuthorizationChildrenInPlace({
+          workspaceId: job.workspaceId, parentId: job.parentId,
+          // The same rows `HostedParent.listAuthorizationChildren` answers.
+          substreamIds: this.state.storage.sql.exec<{ substream_id: string }>(
+            `SELECT substream_id FROM parent_children WHERE parent_id = ? AND (kind = 'main' OR status = 'ready')
+              ORDER BY substream_id`,
+            job.parentId,
+          ).toArray().map((row) => SubstreamIdSchema.parse(row.substream_id)),
+          ...(job.mutationAt === undefined ? {} : { mutationAt: job.mutationAt }),
+        });
+        return;
+      }
+    }
     this.state.storage.sql.exec(`INSERT INTO authorization_delivery(job_key, payload_json, not_before) VALUES (?, ?, 0)
       ON CONFLICT(job_key) DO UPDATE SET payload_json = CASE
         WHEN json_extract(authorization_delivery.payload_json, '$.mutationAt') IS NULL THEN excluded.payload_json
@@ -12423,35 +12563,42 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamIds: z.array(SubstreamIdSchema), refreshExisting: z.boolean().optional(), mutationAt: z.number().int().nonnegative().optional() }).parse(input);
     this.assertWorkspace(request.workspaceId);
-    this.state.storage.transactionSync(() => {
-      // Reconcile the exact registry: deleted/failed children must not leave immortal pending receipts.
-      const expected = new Set(request.substreamIds);
-      const old = this.state.storage.sql.exec<{ substream_id: string }>(
-        'SELECT substream_id FROM authorization_backfill_children WHERE parent_id = ? UNION SELECT substream_id FROM authorization_inventories WHERE parent_id = ?',
-        request.parentId, request.parentId,
-      ).toArray();
-      for (const child of old) if (!expected.has(SubstreamIdSchema.parse(child.substream_id))) {
-        for (const table of ['authorization_backfill_children', 'authorization_inventories', 'authorization_locations']) {
-          this.state.storage.sql.exec(`DELETE FROM ${table} WHERE parent_id = ? AND substream_id = ?`, request.parentId, child.substream_id);
-        }
-        this.state.storage.sql.exec('DELETE FROM authorization_delivery WHERE job_key = ?', JSON.stringify([request.parentId, child.substream_id]));
-      }
-      for (const substreamId of request.substreamIds) {
-        if (request.refreshExisting === false && this.state.storage.sql.exec(
-          'SELECT 1 FROM authorization_backfill_children WHERE parent_id = ? AND substream_id = ?', request.parentId, substreamId,
-        ).toArray().length) continue;
-        this.state.storage.sql.exec(`INSERT INTO authorization_backfill_children(parent_id, substream_id) VALUES (?, ?)
-          ON CONFLICT(parent_id, substream_id) DO UPDATE SET completed = 0`, request.parentId, substreamId);
-        this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
-          workspaceId: request.workspaceId, parentId: request.parentId, substreamId,
-          ...(request.mutationAt === undefined ? {} : { mutationAt: request.mutationAt }) });
-      }
-      this.state.storage.sql.exec('UPDATE authorization_backfill SET completed = 1 WHERE parent_id = ?', request.parentId);
-      if (request.mutationAt !== undefined) this.state.storage.sql.exec(
-        "UPDATE search_authorization_push SET timing_origin = CASE WHEN first_mutated_at IS NULL OR ? <= first_mutated_at THEN 'source_mutation' ELSE timing_origin END, first_mutated_at = COALESCE(MIN(first_mutated_at, ?), ?) WHERE kind = 'parent' AND target_id = ?",
-        request.mutationAt, request.mutationAt, request.mutationAt, request.parentId);
-    });
+    this.state.storage.transactionSync(() => this.registerAuthorizationChildrenInPlace(request));
     await this.armNextAlarm();
+  }
+
+  /** The registration itself, in the caller's transaction. */
+  private registerAuthorizationChildrenInPlace(request: {
+    workspaceId: AuthorizationProjectionJob["workspaceId"]; parentId: string;
+    substreamIds: NonNullable<AuthorizationProjectionJob["substreamId"]>[];
+    refreshExisting?: boolean | undefined; mutationAt?: number | undefined;
+  }): void {
+    // Reconcile the exact registry: deleted/failed children must not leave immortal pending receipts.
+    const expected = new Set(request.substreamIds);
+    const old = this.state.storage.sql.exec<{ substream_id: string }>(
+      'SELECT substream_id FROM authorization_backfill_children WHERE parent_id = ? UNION SELECT substream_id FROM authorization_inventories WHERE parent_id = ?',
+      request.parentId, request.parentId,
+    ).toArray();
+    for (const child of old) if (!expected.has(SubstreamIdSchema.parse(child.substream_id))) {
+      for (const table of ['authorization_backfill_children', 'authorization_inventories', 'authorization_locations']) {
+        this.state.storage.sql.exec(`DELETE FROM ${table} WHERE parent_id = ? AND substream_id = ?`, request.parentId, child.substream_id);
+      }
+      this.state.storage.sql.exec('DELETE FROM authorization_delivery WHERE job_key = ?', JSON.stringify([request.parentId, child.substream_id]));
+    }
+    for (const substreamId of request.substreamIds) {
+      if (request.refreshExisting === false && this.state.storage.sql.exec(
+        'SELECT 1 FROM authorization_backfill_children WHERE parent_id = ? AND substream_id = ?', request.parentId, substreamId,
+      ).toArray().length) continue;
+      this.state.storage.sql.exec(`INSERT INTO authorization_backfill_children(parent_id, substream_id) VALUES (?, ?)
+        ON CONFLICT(parent_id, substream_id) DO UPDATE SET completed = 0`, request.parentId, substreamId);
+      this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
+        workspaceId: request.workspaceId, parentId: request.parentId, substreamId,
+        ...(request.mutationAt === undefined ? {} : { mutationAt: request.mutationAt }) });
+    }
+    this.state.storage.sql.exec('UPDATE authorization_backfill SET completed = 1 WHERE parent_id = ?', request.parentId);
+    if (request.mutationAt !== undefined) this.state.storage.sql.exec(
+      "UPDATE search_authorization_push SET timing_origin = CASE WHEN first_mutated_at IS NULL OR ? <= first_mutated_at THEN 'source_mutation' ELSE timing_origin END, first_mutated_at = COALESCE(MIN(first_mutated_at, ?), ?) WHERE kind = 'parent' AND target_id = ?",
+      request.mutationAt, request.mutationAt, request.mutationAt, request.parentId);
   }
 
   async authorizationBackfillStatus(input: { workspaceId: string }) {

@@ -130,6 +130,34 @@ describe('authorization SQLite state', () => {
   const deliveryKeys = (state: DurableObjectState) => state.storage.sql
     .exec<{ job_key: string }>('SELECT job_key FROM authorization_delivery').toArray().map((row) => row.job_key);
 
+  it('registers a hosted Channel\'s conversations when discovery starts, queueing only conversation jobs', async () => {
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName('authorization-storage-hosted-parent'));
+    await stub.initializeWorkspace(workspaceId, 'wnam');
+    await directoryParent(stub);
+    const reservedSubstreamId = '00000000-0000-7000-8000-000000000b08';
+    await runInDurableObject(stub, async (instance, state) => state.blockConcurrencyWhile(async () => {
+      state.storage.sql.exec(`INSERT INTO parent_metadata
+        (parent_id, parent_kind, workspace_id, region, authority_generation, title, description, preview, scope,
+         exact_state, last_activity_at, created_at, updated_at)
+        VALUES (?, 'workstream', ?, 'global', 1, 'Hosted', '', '', 'workspace', 'idle', 0, 0, 0)`, parentId, workspaceId);
+      state.storage.sql.exec(`INSERT INTO parent_children (parent_id, substream_id, kind, created_at, status)
+        VALUES (?, '0', 'main', 0, 'ready'), (?, ?, 'child', 0, 'ready'), (?, ?, 'child', 0, 'reserved')`,
+      parentId, parentId, siblingSubstreamId, parentId, reservedSubstreamId);
+
+      await instance.beginAuthorizationBackfill({ workspaceId });
+
+      // The parent's step ran here: no parent job waits for a Worker to ask this
+      // object for its own children, and a reserved child has nothing to read.
+      expect(deliveryKeys(state).sort()).toEqual([
+        JSON.stringify([parentId, '0']), JSON.stringify([parentId, siblingSubstreamId]),
+      ].sort());
+      expect(state.storage.sql.exec<{ completed: number }>(
+        'SELECT completed FROM authorization_backfill WHERE parent_id = ?', parentId).one().completed).toBe(1);
+      expect(await instance.authorizationBackfillStatus({ workspaceId }))
+        .toMatchObject({ pendingParents: 0, pendingChildren: 2 });
+    }));
+  });
+
   it('re-enqueues a tracked parent whose discovery never completed', async () => {
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName('authorization-storage-stuck-parent'));
     await stub.initializeWorkspace(workspaceId, 'wnam');
