@@ -2775,9 +2775,12 @@ describe("a member's message travels the whole pipeline", () => {
         state.storage.sql.exec(`INSERT INTO parent_breakout_members
           (parent_id,substream_id,user_id,active,version,added_by_user_id,added_at,removed_at,updated_at) VALUES (?,?,?,0,3,?,10,20,20)`,
         WORKSTREAM_ID,substreamId,USER_ID,USER_ID);
+        // Parked until the migration has frozen it: the Organization object's
+        // own alarms drain due breakout effects, and one firing before the
+        // migration would deliver this row as ordinary pre-migration work.
         state.storage.sql.exec(`INSERT INTO parent_breakout_member_effects
           (parent_id,operation_id,substream_id,user_id,actor_user_id,active,membership_version,state,attempts,not_before,created_at)
-          VALUES (?,?,?,?,?,0,3,'pending',0,0,20)`,WORKSTREAM_ID,crypto.randomUUID(),substreamId,USER_ID,USER_ID);
+          VALUES (?,?,?,?,?,0,3,'pending',0,?,20)`,WORKSTREAM_ID,crypto.randomUUID(),substreamId,USER_ID,USER_ID,Number.MAX_SAFE_INTEGER);
       });
       const address = { workspaceId:WORKSPACE_ID,parentId:WORKSTREAM_ID,substreamId };
       const invitation = { workspaceId:WORKSPACE_ID,parentId:WORKSTREAM_ID,actorUserId:USER_ID,
@@ -2801,6 +2804,11 @@ describe("a member's message travels the whole pipeline", () => {
       await expect.poll(() => runInDurableObject(child, (_instance,state) =>
         state.storage.sql.exec("SELECT user_id FROM participants WHERE status='active' ORDER BY user_id").toArray()),
       { timeout:30_000 }).toEqual([{ user_id:OTHER_USER_ID }]);
+      // Now due, the frozen legacy effect must still be skipped by the drain.
+      await withHostedParent(parent, WORKSTREAM_ID, async (hosted, state) => {
+        state.storage.sql.exec("UPDATE parent_breakout_member_effects SET not_before=0 WHERE parent_id=? AND substream_id=?",WORKSTREAM_ID,substreamId);
+        await hosted.drainPrivateChildMembershipEffects();
+      });
       await withParentGrants(parent, address, (store,state) => {
         expect(store.forUser(OTHER_USER_ID)).toMatchObject([{ target:{ kind:"conversation",substreamId },active:true }]);
         expect(store.forUser(USER_ID)).toEqual([]);

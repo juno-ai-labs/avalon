@@ -627,7 +627,7 @@ describe("the membership route", () => {
 });
 
 describe("carrying one revocation to the objects", () => {
-  interface Visit { name: string; revocation: unknown }
+  interface Visit { name: string; revocation: unknown; parentId?: string }
 
   function fanOut(options: {
     workstreamIds?: string[];
@@ -642,12 +642,18 @@ describe("carrying one revocation to the objects", () => {
     const listed: Array<{ name: string; request: unknown }> = [];
     const sent: Published[] = [];
     /**
-     * One double serves all four namespaces: the consumer calls
-     * `revokeSocketAccess` on the objects that hold sockets and `listChildren`
-     * on an automation, which holds none of its own, and what each object
-     * answers with is the whole difference between the hops.
+     * One double serves every namespace: the consumer calls
+     * `revokeSocketAccess` on the objects that hold sockets,
+     * `revokeParentSocketAccess` on the Organization object for a Channel
+     * parent it hosts, and `listChildren` on an automation, which holds none of
+     * its own, and what each object answers with is the whole difference
+     * between the hops.
      */
-    const namespace = (answer: () => unknown, owned?: () => unknown): DurableObjectNamespace => {
+    const namespace = (
+      answer: () => unknown,
+      owned?: () => unknown,
+      parent?: () => unknown,
+    ): DurableObjectNamespace => {
       const binding: DurableObjectNamespace = createCloudflareTestBinding<DurableObjectNamespace>({
         idFromName: (name: string) => createTestDurableObjectId(name),
         get: (id: DurableObjectId) => ({
@@ -655,6 +661,11 @@ describe("carrying one revocation to the objects", () => {
             visits.push({ name: id.toString(), revocation });
             if (options.failAt) throw new Error("object unreachable");
             return answer();
+          },
+          revokeParentSocketAccess: async (request: { parentId: string; revocation: unknown }) => {
+            visits.push({ name: id.toString(), revocation: request.revocation, parentId: request.parentId });
+            if (options.failAt) throw new Error("object unreachable");
+            return parent?.();
           },
           revokeNarrowedAudienceAccess: async (request: unknown) => {
             listed.push({ name: id.toString(), request });
@@ -689,8 +700,7 @@ describe("carrying one revocation to the objects", () => {
       WORKSPACE_DOS: namespace(() => ({
         workstreamIds: options.workstreamIds ?? [],
         automationIds: options.automationIds ?? [],
-      }), () => ({ automationIds: options.ownedAutomationIds ?? [] })),
-      WORKSTREAM_DOS: namespace(() => ({
+      }), () => ({ automationIds: options.ownedAutomationIds ?? [] }), () => ({
         substreamIds: options.substreamIds ?? [],
       })),
       SUBSTREAM_AGENTS: namespace(() => undefined),
@@ -874,9 +884,12 @@ describe("carrying one revocation to the objects", () => {
   });
 
   it("publishes a message for every substream a work stream names", async () => {
-    const { env, sent } = fanOut({ substreamIds: ["0", SUBSTREAM] });
+    const { env, visits, sent } = fanOut({ substreamIds: ["0", SUBSTREAM] });
     await applyAccessRevocation(env, message({ scope: "workstream", workstreamId: WORKSTREAM }));
 
+    // The Organization object is asked about this Channel's parent, not the
+    // Organization's own sockets.
+    expect(visits.map((visit) => visit.parentId)).toEqual([WORKSTREAM]);
     expect(targetsOf(sent)).toEqual([
       { scope: "substream", workstreamId: WORKSTREAM, substreamId: "0" },
       { scope: "substream", workstreamId: WORKSTREAM, substreamId: SUBSTREAM },
