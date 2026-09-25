@@ -556,7 +556,14 @@ function environment(database: DatabaseSync): Env {
     // creation RPCs answer on the same stub as the Space and origin reads.
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
       extra: {
-        ...parentCreationRpcs(),
+        // The Slack creation path still reserves the parent and flushes its
+        // provisional directory row itself; the coordinator does both inside
+        // `reserveChannelInSpaces`.
+        reserveChild: vi.fn(async (input: { authorityGeneration: number }) => ({
+          reserved: true as const,
+          authorityGeneration: input.authorityGeneration,
+        })),
+        flushProvisionalDirectory: vi.fn(async () => undefined),
         ...spaceCreationRoomRpcs(),
         ...spaceCreationWorkspaceRpcs(),
         opportunityOriginEvents: vi.fn(async (request: { opportunityId: string }) => {
@@ -618,24 +625,6 @@ function environment(database: DatabaseSync): Env {
     OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
     OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
   });
-}
-
-/**
- * The parent's half of a create.
- *
- * Creation reserves the main conversation on the parent, which the
- * Organization object hosts, before the child is initialized, then flushes its
- * provisional directory effects alongside initialization. No origin assertion reads those parent operations, but a
- * create that cannot make them never reaches the attach these tests are about.
- */
-function parentCreationRpcs() {
-  return {
-    reserveChild: vi.fn(async (input: { authorityGeneration: number }) => ({
-      reserved: true as const,
-      authorityGeneration: input.authorityGeneration,
-    })),
-    flushProvisionalDirectory: vi.fn(async () => undefined),
-  };
 }
 
 function opportunityRequest() {

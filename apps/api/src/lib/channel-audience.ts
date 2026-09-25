@@ -1,4 +1,4 @@
-import type { UserId } from "@rally/contracts";
+import { asUserId, type Scope, type SpaceSummary, type UserId } from "@rally/contracts";
 
 import type { WorkstreamReaderAudience } from "./audience-containment";
 
@@ -175,5 +175,94 @@ export function audienceSourceRetractionPlan(input: {
     narrowScope: input.currentReaders.scope === "workspace",
     seatUserIds: remaining.participantUserIds.filter((userId) => !seated.has(userId)),
     removeUserIds: [...new Set(input.suppliedByDeparting)].filter((userId) => !retained.has(userId)),
+  };
+}
+
+/**
+ * The audience and the defaults a Channel is born with, given the Spaces it is
+ * born in.
+ *
+ * Every Channel has at least one Space (General when nothing named another),
+ * so this runs on every create rather than on the ones that chose a
+ * destination. The arithmetic is {@link effectiveChannelAudience}: a source
+ * only ever widens, so an Organization-wide Space makes the Channel
+ * Organization-wide and personal Spaces contribute their rosters. Computing it
+ * before the Channel exists is what lets `initialize` open the conversation
+ * with its real audience in one write, instead of a private Channel that
+ * becomes public a round trip later.
+ *
+ * Two callers compute it from the same Spaces and must agree:
+ * `WorkspaceDO.reserveChannelInSpaces`, which writes the provisional directory
+ * row with this scope, and the creation coordinator, which opens the
+ * conversation with it. It is pure, so they do.
+ *
+ * A direct participant may sit outside every personal Space roster. Their
+ * Channel access grants associative visibility of the containing Spaces'
+ * presentation metadata; it does not make them a Space participant.
+ */
+export function resolveSpaceWorkstreamStart(input: {
+  spaces: readonly SpaceSummary[];
+  scope: Scope;
+  requestedParticipantUserIds: readonly string[];
+  originResourceIds?: readonly string[];
+}): { scope: Scope; participantUserIds: string[]; originResourceIds: string[] } {
+  const requested = [...new Set(input.requestedParticipantUserIds)];
+  const sources = input.spaces.map((space) => ({
+    sourceId: space.id as string,
+    scope: space.scope,
+    participantUserIds: space.participants.map((participant) => participant.userId),
+  }));
+  const audience = effectiveChannelAudience({
+    direct: { scope: input.scope, participantUserIds: requested.map(asUserId) },
+    sources,
+  });
+  return {
+    scope: audience.scope,
+    // An Organization-wide Channel keeps the roster the caller asked for: the
+    // union reports no participants for a `workspace` audience because it does
+    // not need any to decide who may read, and dropping them here would lose
+    // the people a connector resolved out of its conversation.
+    participantUserIds: audience.scope === "workspace"
+      ? requested
+      : [...audience.participantUserIds],
+    // Caller resources precede Space defaults; both are deduplicated. Only
+    // resources, because only a resource is something the opening run can read:
+    // a Sidekick recommendation arrives through the ordinary staged delivery
+    // the placement stages for every new member.
+    originResourceIds: [...new Set([
+      ...(input.originResourceIds ?? []),
+      ...input.spaces.flatMap((space) => space.defaultResourceIds),
+    ])],
+  };
+}
+
+/** A Channel as a Space source observes it: its readers and its seated participants. */
+export interface ObservedBirthChannel {
+  readers: WorkstreamReaderAudience;
+  participantUserIds: UserId[];
+}
+
+/**
+ * The Channel the next Space source observes at birth, after this one.
+ *
+ * Each source's plan is a delta against the Channel as it was *before* that
+ * source, so the observation is threaded from the requested audience through
+ * each Space in turn. The Channel cannot answer this itself: once it opens,
+ * every source's readers are seated and indistinguishable.
+ */
+export function observedAfterBirthSource(
+  born: ObservedBirthChannel,
+  source: NamedAudienceSource,
+  seatUserIds: readonly UserId[],
+): ObservedBirthChannel {
+  const next = effectiveChannelAudience({
+    direct: { scope: born.readers.scope, participantUserIds: born.participantUserIds },
+    sources: [source],
+  });
+  return {
+    readers: next.scope === "workspace"
+      ? { scope: "workspace" }
+      : { scope: "personal", userIds: [...next.participantUserIds] },
+    participantUserIds: [...new Set([...born.participantUserIds, ...seatUserIds])],
   };
 }

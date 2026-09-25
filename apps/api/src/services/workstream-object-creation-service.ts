@@ -1,6 +1,6 @@
-import { asWorkspaceId, WorkstreamCreationFieldsSchema } from "@rally/contracts";
+import { WorkstreamCreationFieldsSchema } from "@rally/contracts";
 import type { ConversationInitialization, PreparedConversation } from "@rally/contracts";
-import { CreateWorkstreamRequestSchema, asSubstreamId, asUserId, asWorkstreamId } from "@rally/contracts";
+import { CreateWorkstreamRequestSchema, asUserId, asWorkstreamId } from "@rally/contracts";
 import type {
   DemoSeed,
   ExecutionPrincipal,
@@ -20,18 +20,14 @@ import type { AuthContext, Env } from "../env";
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
 import { workstreamImportHash } from "../durable-objects/workstream-import-hash";
 import {
-  WorkspaceSpaceMembershipPlanResultSchema,
-  WorkspaceSpaceMutationResultSchema,
-  type WorkspaceSpaceMembershipSettleRequest,
+  WorkspaceChannelReservationResultSchema,
+  type WorkspaceChannelReservationRequest,
 } from "../durable-objects/workspace-space-protocol";
-import type { ObservedChannel } from "../durable-objects/workstream-access-protocol";
 import { ApiError } from "../lib/api-error";
-import { effectiveChannelAudience } from "../lib/channel-audience";
+import { resolveSpaceWorkstreamStart } from "../lib/channel-audience";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { uuidV7 } from "../lib/uuid-v7";
 import { logWarn } from "../observability/logger";
 import { noFlowSpan, type FlowSpan } from "../observability/tracing";
-import { ChannelAccessService } from "./channel-access-service";
 import { SpaceService, spaceRefusal } from "./space-service";
 import { provisionalWorkstreamDescription } from "./workstream-description-service";
 import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-service";
@@ -116,67 +112,13 @@ interface CreateOptions {
 }
 
 /**
- * The audience and the defaults a Channel is born with, given the Spaces it is
- * born in.
- *
- * Every Channel has at least one Space — General when nothing named another —
- * so this runs on every create rather than on the ones that chose a
- * destination. The arithmetic is {@link effectiveChannelAudience}, the same
- * pure function the Channel's own authority derives its readers from: a source
- * only ever widens, so an Organization-wide Space makes the Channel
- * Organization-wide and personal Spaces contribute their rosters. Computing it
- * here rather than widening afterwards is what lets `initialize` open the
- * conversation with its real audience in one write, instead of a private
- * Channel that becomes public a round trip later.
- *
- * A direct participant may sit outside every personal Space roster. Their
- * Channel access grants associative visibility of the containing Spaces'
- * presentation metadata; it does not make them a Space participant.
+ * The audience a Channel is born with, re-exported from the pure module that
+ * `WorkspaceDO.reserveChannelInSpaces` computes the same answer with.
  */
-export function resolveSpaceWorkstreamStart(input: {
-  spaces: readonly SpaceSummary[];
-  scope: Scope;
-  requestedParticipantUserIds: readonly string[];
-  originResourceIds?: readonly string[];
-}): { scope: Scope; participantUserIds: string[]; originResourceIds: string[] } {
-  const requested = [...new Set(input.requestedParticipantUserIds)];
-  const sources = input.spaces.map((space) => ({
-    sourceId: space.id as string,
-    scope: space.scope,
-    participantUserIds: space.participants.map((participant) => participant.userId),
-  }));
-  const audience = effectiveChannelAudience({
-    direct: { scope: input.scope, participantUserIds: requested.map(asUserId) },
-    sources,
-  });
-  return {
-    scope: audience.scope,
-    // An Organization-wide Channel keeps the roster the caller asked for: the
-    // union reports no participants for a `workspace` audience because it does
-    // not need any to decide who may read, and dropping them here would lose
-    // the people a connector resolved out of its conversation.
-    participantUserIds: audience.scope === "workspace"
-      ? requested
-      : [...audience.participantUserIds],
-    // Caller resources precede Space defaults; both are deduplicated. Only
-    // resources, because only a resource is something the opening run can read:
-    // a Sidekick recommendation arrives through the ordinary staged delivery
-    // `finalizeSpaceMembership` schedules for every new member.
-    originResourceIds: [...new Set([
-      ...(input.originResourceIds ?? []),
-      ...input.spaces.flatMap((space) => space.defaultResourceIds),
-    ])],
-  };
-}
+export { resolveSpaceWorkstreamStart };
 
-/** The Organization object, addressed once and handed to each staged step. */
+/** The Organization object, addressed once per create. */
 type WorkspaceStub = Awaited<ReturnType<typeof durableObjectStubForWorkspace<WorkspaceDO>>>;
-
-/** One Space this Channel is being born in, staged and waiting to settle. */
-interface SpaceMembershipStage {
-  space: SpaceSummary;
-  settle: WorkspaceSpaceMembershipSettleRequest;
-}
 
 /** The half of {@link SpaceService} a replayed create reconciles through. */
 interface ReplaySpacePlacement {
@@ -188,11 +130,16 @@ interface ReplaySpacePlacement {
  * Reconcile the Space placement that is outside the D1 create receipt.
  *
  * The receipt records that the Channel exists; it records nothing about the
- * Organization's membership rows, which live in another object. A redelivered
- * create therefore has to place the Channel again, and `addChannel` is exactly
- * that operation — its preflight answers an already-active membership with the
- * generation it already has, so the second attempt settles rather than
- * conflicting.
+ * Organization's membership rows, which live in the Organization object. A
+ * first create commits its placement before the conversation opens, but a
+ * replay can still find none (a receipt reserved before Spaces existed, or a
+ * Channel since taken out of the Space it named), so a redelivered create
+ * places the Channel again. It goes through `addChannel` rather than
+ * `reserveChannelInSpaces` because the Channel already exists: its audience
+ * has to be widened through its canonical operations, which the birth-mode
+ * reservation assumes already happened. `addChannel`'s preflight answers an
+ * already-active membership with the generation it already has, so the second
+ * attempt settles rather than conflicting.
  */
 export async function reconcileReplayedSpaceMembership(input: {
   spaces: ReplaySpacePlacement;
@@ -351,24 +298,7 @@ export class WorkstreamObjectCreationService {
     }
     span.setAttributes({ "rally.create.path": "fresh" });
 
-    // Every Channel is born in a Space, so this runs on every create rather
-    // than on the ones that chose a destination. Staged *before* the D1 anchor:
-    // a Space the caller may not reach, or that has been archived, refuses here
-    // and leaves nothing behind but the idempotency receipt the caller can
-    // retry against.
     const workstreamId = asWorkstreamId(receipt.workstream_id);
-    const stages = await span.step("workstream.create.spaces.prepare", () =>
-      this.stageSpaceMemberships(workspace, body.spaceIds, workstreamId));
-    const start = resolveSpaceWorkstreamStart({
-      spaces: stages.map((stage) => stage.space),
-      scope: requestedScope,
-      requestedParticipantUserIds: body.participantUserIds,
-      originResourceIds: options.originResourceIds ?? [],
-    });
-    const scope = start.scope;
-    const participantUserIds = start.participantUserIds;
-    const originResourceIds = start.originResourceIds;
-
     const objective = body.objective
       ?? provisionalWorkstreamDescription(body.openingMessage, "Review the attached files");
     const title = body.title ?? provisionalWorkstreamTitle(objective, "New work stream");
@@ -378,159 +308,116 @@ export class WorkstreamObjectCreationService {
       workstreamId: receipt.workstream_id,
     } as const;
     const emailRouting = new WorkstreamEmailRoutingService(this.env);
-    let created: Awaited<ReturnType<WorkstreamObjectClient["initialize"]>>;
-    // One attempt, and the order inside it is what keeps a Channel from ever
-    // being seen outside a Space.
-    //
-    // The memberships settle *before* the parent reserves its main
-    // conversation, because reserving one arms the object's recovery alarm —
-    // and that alarm delivers the deferred provisional directory row itself if
-    // it wins the race with this coordinator. A settlement after it would
-    // therefore publish, on any failure in between, a Channel that is
-    // Organization-wide and in no Space at all. Settled first, the row carries
-    // its placement whichever path publishes it.
-    //
-    // A failure before the settlement cancels every staged membership: a
-    // `joining` row no list shows and no alarm finishes is a placement that
-    // would never become one. A failure *after* it leaves an active membership
-    // for a Channel whose conversation may never open, which is the residue to
-    // prefer — the retry under the same create key reuses the same id, and the
-    // settlement is idempotent at the generation it already has.
-    try {
-      const email = await span.step("workstream.create.email_address.reserve", () => emailRouting.reserve(routeInput));
-      await span.step("workstream.create.spaces.finalize", () =>
-        this.finalizeSpaceMemberships(workspace, stages));
+    const email = await span.step("workstream.create.email_address.reserve", () => emailRouting.reserve(routeInput));
 
-      await span.step("workstream.create.d1_rows.write", () => writeRegionalWorkstreamAnchorBatch(
-        this.env,
-        { workspaceId: this.auth.workspaceId, workstreamId: receipt.workstream_id, at },
-        () => [
-          this.env.DB.prepare(
-            `INSERT OR IGNORE INTO workstream_authority_routes
-               (workspace_id, workstream_id, generation, object_name, state, stage_index,
-                source_cursor, source_fence_sequence, source_hash, target_hash,
-                row_counts_json, imported_at, verified_at, activated_at, updated_at)
-             VALUES (?, ?, ?, ?, 'verified', 0, 0, 0, 'created_in_do', 'created_in_do',
-                     '{}', ?, ?, NULL, ?)`,
-          ).bind(
-            this.auth.workspaceId,
-            receipt.workstream_id,
-            control.generation,
-            `${this.env.AVALON_REGION}:${this.auth.workspaceId}:${receipt.workstream_id}`,
-            at,
-            at,
-            at,
-          ),
-        ],
-      ));
-
-      // The parent first. Reserving the main conversation creates the parent's
-      // row and puts a provisional row in the workspace directory synchronously,
-      // so the person about to open this work stream finds it listed before the
-      // child has said anything. Idempotent: a retried create finds the child
-      // already registered and enqueues nothing twice.
-      const workstream = await durableObjectStubForWorkspace(
-        this.env,
-        this.env.WORKSPACE_DOS,
-        this.auth.workspaceId,
-        workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)),
-      );
-      await span.step("workstream.create.parent.reserve", () => workstream.reserveChild({
+    // Every Channel is born in a Space, so this runs on every create rather
+    // than on the ones that chose a destination. One WorkspaceDO call commits
+    // the memberships, the Space defaults the Channel inherits, the parent row
+    // with its provisional directory row, and the record of which Space
+    // supplied which reader, in one transaction. So a Channel is never listed
+    // outside a Space, and a Space the caller may not reach, or that has been
+    // archived, refuses here with nothing written.
+    //
+    // Before the D1 anchor, so that refusal leaves only the idempotency
+    // receipt and the address reservation, both keyed to this id and reused
+    // by a retry under the same create key. A failure *after* this call
+    // leaves a placed, listed Channel whose conversation may never open, which
+    // is the residue to prefer: the retry reuses the id and this call is
+    // idempotent for it.
+    const placement = await span.step("workstream.create.spaces.reserve", () =>
+      this.reserveInSpaces(workspace, {
         workspaceId: this.auth.workspaceId,
-        parentId: receipt.workstream_id,
-        substreamId: asSubstreamId("0"),
-        kind: "main",
-        createdByUserId: this.auth.userId,
+        userId: asUserId(this.auth.userId),
+        workstreamId,
+        spaceIds: [...body.spaceIds],
+        requestedScope,
+        requestedParticipantUserIds: body.participantUserIds.map(asUserId),
         authorityGeneration: control.generation,
         directory: {
           title,
           description: objective,
-          scope,
-          systemKind: null,
           emailAddress: email.emailAddress,
           titleStatus: body.title == null ? "naming" : "settled",
           createdAt: at,
         },
-        deferDirectoryDelivery: true,
       }));
-      // The provenance behind the audience the conversation is about to open
-      // with. After the reservation, because the Channel's authority asserts
-      // an identity that the reservation is what writes; before `initialize`,
-      // because which Space reaches a Channel is true of it whether or not
-      // anybody ever opened it.
-      await span.step("workstream.create.spaces.record", () =>
-        this.recordSpaceSources(stages, workstreamId, title, requestedScope, body.participantUserIds));
+    // The same pure derivation the reservation wrote the directory row's scope
+    // with, over the same Spaces, so the conversation opens with that scope.
+    const start = resolveSpaceWorkstreamStart({
+      spaces: placement.spaces,
+      scope: requestedScope,
+      requestedParticipantUserIds: body.participantUserIds,
+      originResourceIds: options.originResourceIds ?? [],
+    });
+    const scope = start.scope;
+    const participantUserIds = start.participantUserIds;
+    const originResourceIds = start.originResourceIds;
 
-      // Started, not awaited. The flush below addresses the *parent*
-      // authority and this addresses the conversation, so they are two objects
-      // and neither waits on the other — which is how `66fef78` ran them. The
-      // serialization between them was introduced because the flush published
-      // the Channel while its placements were still `joining`; the settlement
-      // then moved ahead of `reserveChild`, so by the time either of these
-      // starts every placement is `active` and that reason is gone. What the
-      // flush reads is the reservation's own outbox rows at source version one,
-      // which `reserveChild` wrote and `initialize` does not touch.
-      const initialize = span.step("workstream.create.child.initialize", () => client.initialize({
-        workspaceId: this.auth.workspaceId,
-        workstreamId: asWorkstreamId(receipt.workstream_id),
-        generation: control.generation,
-        title,
-        objective,
-        descriptionSource: input.descriptionSource ?? "derived",
-        titleStatus: body.title == null ? "naming" : "settled",
-        emailAddress: email.emailAddress,
-        creatorUserId: this.auth.userId,
-        openingMessage: body.openingMessage,
-        ...((options.initialization?.kind === "history") ? { initialization: options.initialization } : {}),
-        mentions: body.mentions,
-        openingStructuredContent: options.openingStructuredContent ?? null,
-        clientMessageId: body.clientMessageId,
-        participantUserIds,
-        notifyParticipants: options.notifyParticipants ?? false,
-        attachmentIds: body.attachmentIds,
-        scope,
-        originResourceIds,
-        modelOverride: body.modelOverride ?? null,
-        systemKind: null,
-        ...(options.seed ? { seed: options.seed } : {}),
-        createdFromOpportunityId: options.opportunitySnapshot?.opportunityId ?? null,
-        opportunityVersion: options.opportunitySnapshot?.version ?? null,
-        opportunityDisplayPromptHash: options.opportunitySnapshot?.displayPromptHash ?? null,
-        opportunityExecutionPromptHash: options.opportunitySnapshot?.executionPromptHash ?? null,
-        executionPrincipal: options.executionPrincipal ?? { type: "user", userId: this.auth.userId },
-        ...(options.slackOrigin ? { slackOrigin: options.slackOrigin } : {}),
-        ...(options.slackSearchAuthorization ? {
-          slackSearchAuthorization: options.slackSearchAuthorization,
-        } : {}),
-        ...(options.telemetryOperationId ? {
-          telemetryOperationId: options.telemetryOperationId,
-          telemetrySubjectUserId: this.auth.userId,
-        } : {}),
-        ...(options.telemetryRequestReceivedAt !== undefined ? {
-          telemetryRequestReceivedAt: options.telemetryRequestReceivedAt,
-          telemetryJourney: "workstream_create" as const,
-        } : {}),
-        reason: options.reason ?? "opening_message",
-      }));
-      const directoryFlush = span.step("workstream.create.directory.flush", () =>
-        workstream.flushProvisionalDirectory({
-          workspaceId: this.auth.workspaceId,
-          parentId: receipt.workstream_id,
-        }));
-      // Settled rather than raced, so a rejection on one side does not leave
-      // the other unhandled — and reported in a fixed order, so a create that
-      // fails both ways fails for the same reason every time.
-      const [initializeResult, directoryResult] = await Promise.allSettled([
-        initialize,
-        directoryFlush,
-      ]);
-      if (initializeResult.status === "rejected") throw initializeResult.reason;
-      if (directoryResult.status === "rejected") throw directoryResult.reason;
-      created = initializeResult.value;
-    } catch (error) {
-      await this.cancelSpaceMemberships(workspace, stages);
-      throw error;
-    }
+    await span.step("workstream.create.d1_rows.write", () => writeRegionalWorkstreamAnchorBatch(
+      this.env,
+      { workspaceId: this.auth.workspaceId, workstreamId: receipt.workstream_id, at },
+      () => [
+        this.env.DB.prepare(
+          `INSERT OR IGNORE INTO workstream_authority_routes
+             (workspace_id, workstream_id, generation, object_name, state, stage_index,
+              source_cursor, source_fence_sequence, source_hash, target_hash,
+              row_counts_json, imported_at, verified_at, activated_at, updated_at)
+           VALUES (?, ?, ?, ?, 'verified', 0, 0, 0, 'created_in_do', 'created_in_do',
+                   '{}', ?, ?, NULL, ?)`,
+        ).bind(
+          this.auth.workspaceId,
+          receipt.workstream_id,
+          control.generation,
+          `${this.env.AVALON_REGION}:${this.auth.workspaceId}:${receipt.workstream_id}`,
+          at,
+          at,
+          at,
+        ),
+      ],
+    ));
+
+    const created = await span.step("workstream.create.child.initialize", () => client.initialize({
+      workspaceId: this.auth.workspaceId,
+      workstreamId: asWorkstreamId(receipt.workstream_id),
+      generation: control.generation,
+      title,
+      objective,
+      descriptionSource: input.descriptionSource ?? "derived",
+      titleStatus: body.title == null ? "naming" : "settled",
+      emailAddress: email.emailAddress,
+      creatorUserId: this.auth.userId,
+      openingMessage: body.openingMessage,
+      ...((options.initialization?.kind === "history") ? { initialization: options.initialization } : {}),
+      mentions: body.mentions,
+      openingStructuredContent: options.openingStructuredContent ?? null,
+      clientMessageId: body.clientMessageId,
+      participantUserIds,
+      notifyParticipants: options.notifyParticipants ?? false,
+      attachmentIds: body.attachmentIds,
+      scope,
+      originResourceIds,
+      modelOverride: body.modelOverride ?? null,
+      systemKind: null,
+      ...(options.seed ? { seed: options.seed } : {}),
+      createdFromOpportunityId: options.opportunitySnapshot?.opportunityId ?? null,
+      opportunityVersion: options.opportunitySnapshot?.version ?? null,
+      opportunityDisplayPromptHash: options.opportunitySnapshot?.displayPromptHash ?? null,
+      opportunityExecutionPromptHash: options.opportunitySnapshot?.executionPromptHash ?? null,
+      executionPrincipal: options.executionPrincipal ?? { type: "user", userId: this.auth.userId },
+      ...(options.slackOrigin ? { slackOrigin: options.slackOrigin } : {}),
+      ...(options.slackSearchAuthorization ? {
+        slackSearchAuthorization: options.slackSearchAuthorization,
+      } : {}),
+      ...(options.telemetryOperationId ? {
+        telemetryOperationId: options.telemetryOperationId,
+        telemetrySubjectUserId: this.auth.userId,
+      } : {}),
+      ...(options.telemetryRequestReceivedAt !== undefined ? {
+        telemetryRequestReceivedAt: options.telemetryRequestReceivedAt,
+        telemetryJourney: "workstream_create" as const,
+      } : {}),
+      reason: options.reason ?? "opening_message",
+    }));
     span.setAttributes({ "rally.harness_run.id": created.harnessRunId });
     const activatedAt = new Date().toISOString();
     const activated = await span.step("workstream.create.route.activate", () => this.env.DB.prepare(
@@ -598,114 +485,29 @@ export class WorkstreamObjectCreationService {
   }
 
   /**
-   * Stage a membership in every Space this Channel is being born in, or in
-   * General when it named none.
-   *
-   * All or nothing, and before anything durable about the Channel exists: a
-   * Space the caller may not reach refuses here, where the only thing to undo
-   * is the memberships staged ahead of it. The returned rows carry the Space
-   * as it was and the generation the staging is at, which is both halves of
-   * the fence every later step re-reads.
+   * Place and reserve the Channel in its Spaces through the one WorkspaceDO
+   * call, making General first in the one case that call cannot: a request
+   * that named no Space in an Organization that has no General yet. Making
+   * General provisions its own conversation, which is not a write the
+   * Organization can take inside a transaction, and happens once per
+   * Organization.
    */
-  private async stageSpaceMemberships(
+  private async reserveInSpaces(
     workspace: WorkspaceStub,
-    requested: readonly SpaceId[],
-    workstreamId: WorkstreamId,
-  ): Promise<SpaceMembershipStage[]> {
-    const spaceIds = requested.length > 0
-      ? requested
-      : [(await new SpaceService(this.env, this.auth).ensureGeneral()).id];
-    const stages: SpaceMembershipStage[] = [];
-    try {
-      for (const spaceId of spaceIds) {
-        const plan = WorkspaceSpaceMembershipPlanResultSchema.parse(await workspace.prepareSpaceMembership({
-          workspaceId: this.auth.workspaceId,
-          userId: asUserId(this.auth.userId),
-          spaceId,
-          workstreamId,
-        }));
-        if (!plan.ok) throw spaceRefusal(plan.code, "", plan.unreachableUserIds);
-        stages.push({
-          space: plan.space,
-          settle: {
-            workspaceId: this.auth.workspaceId,
-            userId: asUserId(this.auth.userId),
-            spaceId,
-            workstreamId,
-            spaceRevision: plan.space.revision,
-            membershipGeneration: plan.membershipGeneration,
-          },
-        });
-      }
-      return stages;
-    } catch (error) {
-      await this.cancelSpaceMemberships(workspace, stages);
-      throw error;
-    }
-  }
-
-  /**
-   * Record which Space supplied which of the readers `initialize` just seated.
-   *
-   * Threaded rather than computed per Space: each source's plan is a delta
-   * against the Channel as it was *before* that source, so the observation is
-   * carried forward from the requested audience through each Space in turn. The
-   * Channel itself cannot answer this — by now every source's readers are
-   * seated and indistinguishable.
-   */
-  private async recordSpaceSources(
-    stages: readonly SpaceMembershipStage[],
-    workstreamId: WorkstreamId,
-    title: string,
-    requestedScope: Scope,
-    requestedParticipantUserIds: readonly string[],
-  ): Promise<void> {
-    const access = new ChannelAccessService(this.env, this.auth);
-    const participantUserIds = [...new Set(requestedParticipantUserIds)].map(asUserId);
-    let born: ObservedChannel = {
-      readers: requestedScope === "workspace"
-        ? { scope: "workspace" as const }
-        : { scope: "personal" as const, userIds: participantUserIds },
-      participantUserIds,
-    };
-    for (const stage of stages) {
-      born = await access.recordSpaceSourceAtCreation(workstreamId, {
-        spaceId: stage.space.id,
-        scope: stage.space.scope,
-        participantUserIds: stage.space.participants.map((participant) => participant.userId),
-        spaceRevision: stage.space.revision,
-        membershipGeneration: stage.settle.membershipGeneration,
-        operationId: uuidV7(),
-      }, born, title);
-    }
-  }
-
-  private async finalizeSpaceMemberships(
-    workspace: WorkspaceStub,
-    stages: readonly SpaceMembershipStage[],
-  ): Promise<void> {
-    for (const stage of stages) {
-      const settled = WorkspaceSpaceMutationResultSchema.parse(
-        await workspace.finalizeSpaceMembership(stage.settle),
+    request: WorkspaceChannelReservationRequest,
+  ): Promise<{ authorityGeneration: number; spaces: SpaceSummary[] }> {
+    let result = WorkspaceChannelReservationResultSchema.parse(await workspace.reserveChannelInSpaces(request));
+    if (result.status === "general_missing") {
+      const general = await new SpaceService(this.env, this.auth).ensureGeneral();
+      result = WorkspaceChannelReservationResultSchema.parse(
+        await workspace.reserveChannelInSpaces({ ...request, spaceIds: [general.id] }),
       );
-      if (!settled.ok) throw spaceRefusal(settled.code, stage.space.name, settled.unreachableUserIds);
     }
-  }
-
-  /**
-   * Take every staged membership back out.
-   *
-   * Best effort per Space rather than a batch that stops at the first failure:
-   * a cancel that throws leaves a `joining` row the alarm will republish as an
-   * intent, and the refusal the caller is about to see is the useful one.
-   */
-  private async cancelSpaceMemberships(
-    workspace: WorkspaceStub,
-    stages: readonly SpaceMembershipStage[],
-  ): Promise<void> {
-    for (const stage of stages) {
-      await workspace.cancelSpaceMembership(stage.settle).catch(() => undefined);
-    }
+    if (result.status === "reserved") return result;
+    if (result.status === "refused") throw spaceRefusal(result.code, "");
+    // General was made above, so a second answer that it is missing is the
+    // Organization contradicting itself rather than a state to wait out.
+    throw new Error("workstream_create_general_space_missing");
   }
 
   private receipt(clientMessageId: string): Promise<ReceiptRow | null> {
