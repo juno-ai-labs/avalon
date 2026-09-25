@@ -31,11 +31,11 @@ export function enumerateSearchAuthorizationUniverse(sql: SqlStorage, workspaceI
   const connection = (connectionId: string): AuthorizationResource => ({ kind: 'connection', workspaceId: workspace, connectionId });
 
   const directory = (parentId: string) => sql.exec<DirectoryRow>(
-    'SELECT workstream_id, scope, archived_at FROM workspace_workstream_directory WHERE workstream_id = ?', parentId).toArray()[0];
+    'SELECT workstream_id, scope, archived_at FROM channels WHERE workstream_id = ?', parentId).toArray()[0];
   const automation = (parentId: string) => sql.exec<AutomationRow>(
     'SELECT automation_id, scope, author_user_id, owning_workstream_id, lifecycle FROM automation_directory WHERE automation_id = ?', parentId).toArray()[0];
   const participants = (parentId: string) => sql.exec<{ user_id: string }>(
-    'SELECT user_id FROM workspace_workstream_viewers WHERE workstream_id = ? AND is_participant = 1', parentId).toArray()
+    'SELECT user_id FROM channel_viewers WHERE workstream_id = ? AND is_participant = 1', parentId).toArray()
     .map((row) => row.user_id).filter((userId) => active.has(userId));
   /** Who could read a parent, before its canonical owner decides. Unknown parents reach nobody. */
   const parentSubjects = (parentId: string): string[] => {
@@ -80,7 +80,7 @@ export function enumerateSearchAuthorizationUniverse(sql: SqlStorage, workspaceI
     case 'member': {
       if (!active.has(target.id)) return [];
       const resources: AuthorizationResource[] = [];
-      for (const room of sql.exec<DirectoryRow>('SELECT workstream_id, scope, archived_at FROM workspace_workstream_directory WHERE archived_at IS NULL').toArray()) {
+      for (const room of sql.exec<DirectoryRow>('SELECT workstream_id, scope, archived_at FROM channels WHERE archived_at IS NULL').toArray()) {
         if (room.scope !== 'workspace' && !participants(room.workstream_id).includes(target.id)) continue;
         resources.push(...parentConversations(room.workstream_id), ...parentResources(room.workstream_id));
       }

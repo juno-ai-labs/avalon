@@ -459,9 +459,9 @@ export function channelVisibleToViewerSql(directory: string, viewer: string): st
 export function spaceReachedThroughChannelSql(space: string): string {
   return `EXISTS (SELECT 1
             FROM space_channel_memberships reach_membership
-            JOIN workspace_workstream_directory reach_directory
+            JOIN channels reach_directory
               ON reach_directory.workstream_id = reach_membership.workstream_id
-            LEFT JOIN workspace_workstream_viewers reach_viewer
+            LEFT JOIN channel_viewers reach_viewer
               ON reach_viewer.workstream_id = reach_directory.workstream_id
              AND reach_viewer.user_id = ?
              AND reach_viewer.authority_generation = reach_directory.authority_generation
@@ -801,7 +801,7 @@ export class WorkspaceSpaceStorage {
    */
   ready(): boolean {
     this.tablesPresent ??= this.storage.sql.exec<{ name: string } & Record<string, SqlStorageValue>>(
-      `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_space_directory'`,
+      `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'spaces'`,
     ).toArray().length === 1;
     return this.tablesPresent;
   }
@@ -809,7 +809,7 @@ export class WorkspaceSpaceStorage {
   /** Whether this object has reached the migration that created Breakout projections. */
   private breakoutsReady(): boolean {
     this.breakoutTablesPresent ??= this.storage.sql.exec<{ name: string } & Record<string, SqlStorageValue>>(
-      `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_breakout_directory'`,
+      `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'breakouts'`,
     ).toArray().length === 1;
     return this.breakoutTablesPresent;
   }
@@ -831,11 +831,11 @@ export class WorkspaceSpaceStorage {
   ): SpaceSummary {
     return this.storage.transactionSync(() => {
       const previousCreatedAt = this.storage.sql.exec<{ created_at: number | null } & Record<string, SqlStorageValue>>(
-        "SELECT MAX(created_at) AS created_at FROM workspace_space_directory",
+        "SELECT MAX(created_at) AS created_at FROM spaces",
       ).one().created_at;
       const createdAt = Math.max(now, (previousCreatedAt ?? -1) + 1);
       this.storage.sql.exec(
-        `INSERT INTO workspace_space_directory (
+        `INSERT INTO spaces (
            space_id, title, scope, appearance_json, archived_at,
            created_by_user_id, system_role, authority_generation, source_version,
            payload_hash, revision, created_at, updated_at, source_created_at, source_updated_at
@@ -852,7 +852,7 @@ export class WorkspaceSpaceStorage {
         createdAt,
       );
       this.storage.sql.exec(
-        `INSERT INTO workspace_space_viewers
+        `INSERT INTO space_viewers
            (space_id, user_id, is_participant, authority_generation, source_version, payload_hash)
          VALUES (?, ?, 1, 1, 0, '')`,
         spaceId,
@@ -870,7 +870,7 @@ export class WorkspaceSpaceStorage {
   } {
     return this.storage.transactionSync(() => {
       const exists = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
-        "SELECT space_id FROM workspace_space_directory WHERE space_id = ?", spaceId,
+        "SELECT space_id FROM spaces WHERE space_id = ?", spaceId,
       ).toArray().length > 0;
       if (exists) return { space: this.readable(request.userId, spaceId), created: false };
       return { space: this.reserve(request, spaceId, null), created: true };
@@ -921,14 +921,14 @@ export class WorkspaceSpaceStorage {
         // Only a row nothing has projected onto yet: once the Space's own
         // object has published a version, cancelling the reservation would
         // delete a Space that exists.
-        `DELETE FROM workspace_space_directory
+        `DELETE FROM spaces
           WHERE space_id = ? AND source_version = 0 AND created_by_user_id = ?
           RETURNING space_id`,
         spaceId,
         createdByUserId,
       ).toArray().length === 1;
       if (!removed) return false;
-      this.storage.sql.exec("DELETE FROM workspace_space_viewers WHERE space_id = ?", spaceId);
+      this.storage.sql.exec("DELETE FROM space_viewers WHERE space_id = ?", spaceId);
       // Both directions: the Space leaves everybody's Organization order, and
       // the order of the Channels somebody had arranged inside it goes with the
       // container it was about.
@@ -970,8 +970,8 @@ export class WorkspaceSpaceStorage {
     if (!this.ready()) return EMPTY_DIRECTORY;
     const rows = this.storage.sql.exec<SpaceRow>(
       `SELECT space.*, ${spaceReachSql("space", "viewer")} AS reach
-         FROM workspace_space_directory space
-         LEFT JOIN workspace_space_viewers viewer
+         FROM spaces space
+         LEFT JOIN space_viewers viewer
            ON viewer.space_id = space.space_id
           AND viewer.user_id = ? AND viewer.is_participant = 1
         WHERE space.archived_at IS NOT NULL
@@ -1248,7 +1248,7 @@ export class WorkspaceSpaceStorage {
     return this.storage.transactionSync(() => {
       if (!this.canEdit(request.userId, request.spaceId)) return false;
       const updated = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
-        `UPDATE workspace_space_directory
+        `UPDATE spaces
             SET title = ?, appearance_json = ?, revision = revision + 1, updated_at = ?
           WHERE space_id = ? RETURNING space_id`,
         request.presentation.name.trim(),
@@ -1288,7 +1288,7 @@ export class WorkspaceSpaceStorage {
         return "self_excluded";
       }
       const updated = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
-        `UPDATE workspace_space_directory
+        `UPDATE spaces
             SET scope = ?, revision = revision + 1, updated_at = ?
           WHERE space_id = ? AND archived_at IS NULL RETURNING space_id`,
         request.audience.scope,
@@ -1298,11 +1298,11 @@ export class WorkspaceSpaceStorage {
       if (!updated) return false;
       const requested = new Set<string>(request.audience.participantUserIds);
       for (const row of this.storage.sql.exec<{ user_id: string } & Record<string, SqlStorageValue>>(
-        "SELECT user_id FROM workspace_space_viewers WHERE space_id = ?",
+        "SELECT user_id FROM space_viewers WHERE space_id = ?",
         request.spaceId,
       ).toArray()) {
         this.storage.sql.exec(
-          `UPDATE workspace_space_viewers SET is_participant = ? WHERE space_id = ? AND user_id = ?`,
+          `UPDATE space_viewers SET is_participant = ? WHERE space_id = ? AND user_id = ?`,
           requested.has(row.user_id) ? 1 : 0,
           request.spaceId,
           row.user_id,
@@ -1311,7 +1311,7 @@ export class WorkspaceSpaceStorage {
       }
       for (const userId of requested) {
         this.storage.sql.exec(
-          `INSERT INTO workspace_space_viewers
+          `INSERT INTO space_viewers
              (space_id, user_id, is_participant, authority_generation, source_version, payload_hash)
            VALUES (?, ?, 1, 1, 0, '')`,
           request.spaceId,
@@ -1343,7 +1343,7 @@ export class WorkspaceSpaceStorage {
     } & Record<string, SqlStorageValue>>(
       `SELECT authority_generation, source_version, payload_hash, title, scope,
               appearance_json, archived_at
-         FROM workspace_space_directory WHERE space_id = ?`,
+         FROM spaces WHERE space_id = ?`,
       projection.spaceId,
     ).toArray()[0];
     if (current
@@ -1366,7 +1366,7 @@ export class WorkspaceSpaceStorage {
       || current.appearance_json !== appearanceJson
       || current.archived_at !== projection.archivedAt;
     this.storage.sql.exec(
-      `INSERT INTO workspace_space_directory (
+      `INSERT INTO spaces (
          space_id, title, scope, appearance_json, archived_at,
          created_by_user_id, system_role, authority_generation, source_version,
          payload_hash, revision, created_at, updated_at, source_created_at, source_updated_at
@@ -1377,12 +1377,12 @@ export class WorkspaceSpaceStorage {
          appearance_json = excluded.appearance_json,
          archived_at = excluded.archived_at,
          created_by_user_id = COALESCE(
-           workspace_space_directory.created_by_user_id, excluded.created_by_user_id
+           spaces.created_by_user_id, excluded.created_by_user_id
          ),
          authority_generation = excluded.authority_generation,
          source_version = excluded.source_version,
          payload_hash = excluded.payload_hash,
-         revision = workspace_space_directory.revision + ?,
+         revision = spaces.revision + ?,
          updated_at = excluded.updated_at,
          source_created_at = excluded.source_created_at,
          source_updated_at = excluded.source_updated_at`,
@@ -1409,7 +1409,7 @@ export class WorkspaceSpaceStorage {
   applyViewerProjection(projection: SpaceViewerProjection, active: boolean, now = Date.now()): boolean {
     if (!active) {
       const deleted = this.storage.sql.exec<{ user_id: string } & Record<string, SqlStorageValue>>(
-        `DELETE FROM workspace_space_viewers WHERE space_id = ? AND user_id = ? RETURNING user_id`,
+        `DELETE FROM space_viewers WHERE space_id = ? AND user_id = ? RETURNING user_id`,
         projection.spaceId,
         projection.userId,
       ).toArray().length === 1;
@@ -1423,7 +1423,7 @@ export class WorkspaceSpaceStorage {
       is_participant: number;
     } & Record<string, SqlStorageValue>>(
       `SELECT authority_generation, source_version, payload_hash, is_participant
-         FROM workspace_space_viewers WHERE space_id = ? AND user_id = ?`,
+         FROM space_viewers WHERE space_id = ? AND user_id = ?`,
       projection.spaceId,
       projection.userId,
     ).toArray()[0];
@@ -1440,7 +1440,7 @@ export class WorkspaceSpaceStorage {
     if (!applies) return false;
     const changed = current?.is_participant !== (projection.isParticipant ? 1 : 0);
     this.storage.sql.exec(
-      `INSERT INTO workspace_space_viewers
+      `INSERT INTO space_viewers
          (space_id, user_id, is_participant, authority_generation, source_version, payload_hash)
        VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(space_id, user_id) DO UPDATE SET
@@ -1457,7 +1457,7 @@ export class WorkspaceSpaceStorage {
     );
     if (changed) {
       this.storage.sql.exec(
-        `UPDATE workspace_space_directory SET revision = revision + 1, updated_at = ?
+        `UPDATE spaces SET revision = revision + 1, updated_at = ?
           WHERE space_id = ?`,
         now,
         projection.spaceId,
@@ -1546,9 +1546,9 @@ export class WorkspaceSpaceStorage {
                   directory.workstream_id AS conversation_id,
                   directory.last_activity_at AS last_activity_at
              FROM space_channel_memberships membership
-             JOIN workspace_workstream_directory directory
+             JOIN channels directory
                ON directory.workstream_id = membership.workstream_id
-             LEFT JOIN workspace_workstream_viewers viewer
+             LEFT JOIN channel_viewers viewer
                ON viewer.workstream_id = directory.workstream_id
               AND viewer.user_id = ?1
               AND viewer.authority_generation = directory.authority_generation
@@ -1568,15 +1568,15 @@ export class WorkspaceSpaceStorage {
                   breakout.substream_id AS conversation_id,
                   breakout.last_activity_at AS last_activity_at
              FROM space_channel_memberships membership
-             JOIN workspace_workstream_directory directory
+             JOIN channels directory
                ON directory.workstream_id = membership.workstream_id
-             LEFT JOIN workspace_workstream_viewers viewer
+             LEFT JOIN channel_viewers viewer
                ON viewer.workstream_id = directory.workstream_id
               AND viewer.user_id = ?1
               AND viewer.authority_generation = directory.authority_generation
-             JOIN workspace_breakout_directory breakout
+             JOIN breakouts breakout
                ON breakout.workstream_id = membership.workstream_id
-             LEFT JOIN workspace_breakout_viewers breakout_viewer
+             LEFT JOIN breakout_viewers breakout_viewer
                ON breakout_viewer.workstream_id = breakout.workstream_id
               AND breakout_viewer.substream_id = breakout.substream_id
               AND breakout_viewer.user_id = ?1
@@ -1638,9 +1638,9 @@ export class WorkspaceSpaceStorage {
       `SELECT space_id, COUNT(*) AS count FROM (
          SELECT membership.space_id, directory.workstream_id AS conversation_id
            FROM space_channel_memberships membership
-           JOIN workspace_workstream_directory directory
+           JOIN channels directory
              ON directory.workstream_id = membership.workstream_id
-           LEFT JOIN workspace_workstream_viewers viewer
+           LEFT JOIN channel_viewers viewer
              ON viewer.workstream_id = directory.workstream_id
             AND viewer.user_id = ?
             AND viewer.authority_generation = directory.authority_generation
@@ -1652,15 +1652,15 @@ export class WorkspaceSpaceStorage {
          ${includeBreakouts ? `UNION ALL
          SELECT membership.space_id, breakout.substream_id AS conversation_id
            FROM space_channel_memberships membership
-           JOIN workspace_workstream_directory directory
+           JOIN channels directory
              ON directory.workstream_id = membership.workstream_id
-           LEFT JOIN workspace_workstream_viewers viewer
+           LEFT JOIN channel_viewers viewer
              ON viewer.workstream_id = directory.workstream_id
             AND viewer.user_id = ?
             AND viewer.authority_generation = directory.authority_generation
-           JOIN workspace_breakout_directory breakout
+           JOIN breakouts breakout
              ON breakout.workstream_id = membership.workstream_id
-           LEFT JOIN workspace_breakout_viewers breakout_viewer
+           LEFT JOIN breakout_viewers breakout_viewer
              ON breakout_viewer.workstream_id = breakout.workstream_id
             AND breakout_viewer.substream_id = breakout.substream_id
             AND breakout_viewer.user_id = ?
@@ -1703,14 +1703,14 @@ export class WorkspaceSpaceStorage {
         count: number;
       } & Record<string, SqlStorageValue>>(
         `SELECT breakout.workstream_id, COUNT(*) AS count
-           FROM workspace_breakout_directory breakout
-           JOIN workspace_workstream_directory directory
+           FROM breakouts breakout
+           JOIN channels directory
              ON directory.workstream_id = breakout.workstream_id
-           LEFT JOIN workspace_workstream_viewers viewer
+           LEFT JOIN channel_viewers viewer
              ON viewer.workstream_id = directory.workstream_id
             AND viewer.user_id = ?
             AND viewer.authority_generation = directory.authority_generation
-           LEFT JOIN workspace_breakout_viewers breakout_viewer
+           LEFT JOIN breakout_viewers breakout_viewer
              ON breakout_viewer.workstream_id = breakout.workstream_id
             AND breakout_viewer.substream_id = breakout.substream_id
             AND breakout_viewer.user_id = ?
@@ -1742,7 +1742,7 @@ export class WorkspaceSpaceStorage {
    * which decides every conversation it releases. A Channel this person can
    * already see is left out because the member directory already lists it.
    *
-   * Reads `workspace_breakout_viewers` by user, which has no index for it. The
+   * Reads `breakout_viewers` by user, which has no index for it. The
    * table holds one row per breakout member, so the scan is the cheaper choice
    * until an Organization's breakouts say otherwise.
    */
@@ -1750,14 +1750,14 @@ export class WorkspaceSpaceStorage {
     if (!this.breakoutsReady()) return [];
     return this.storage.sql.exec<{ workstream_id: string }>(
       `SELECT DISTINCT breakout.workstream_id
-         FROM workspace_breakout_viewers breakout_viewer
-         JOIN workspace_breakout_directory breakout
+         FROM breakout_viewers breakout_viewer
+         JOIN breakouts breakout
            ON breakout.workstream_id = breakout_viewer.workstream_id
           AND breakout.substream_id = breakout_viewer.substream_id
           AND breakout.authority_generation = breakout_viewer.authority_generation
-         JOIN workspace_workstream_directory directory
+         JOIN channels directory
            ON directory.workstream_id = breakout.workstream_id
-         LEFT JOIN workspace_workstream_viewers viewer
+         LEFT JOIN channel_viewers viewer
            ON viewer.workstream_id = directory.workstream_id
           AND viewer.user_id = ?1
           AND viewer.authority_generation = directory.authority_generation
@@ -1880,8 +1880,8 @@ export class WorkspaceSpaceStorage {
       } & Record<string, SqlStorageValue>>(
         `SELECT membership.workstream_id, membership.space_id
            FROM space_channel_memberships membership
-           JOIN workspace_space_directory space ON space.space_id = membership.space_id
-           LEFT JOIN workspace_space_viewers viewer
+           JOIN spaces space ON space.space_id = membership.space_id
+           LEFT JOIN space_viewers viewer
              ON viewer.space_id = space.space_id
             AND viewer.user_id = ? AND viewer.is_participant = 1
           WHERE membership.state = 'active' AND space.archived_at IS NULL
@@ -1911,7 +1911,7 @@ export class WorkspaceSpaceStorage {
     return this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
       `SELECT membership.space_id
          FROM space_channel_memberships membership
-         JOIN workspace_space_directory space ON space.space_id = membership.space_id
+         JOIN spaces space ON space.space_id = membership.space_id
         WHERE membership.workstream_id = ?
           AND membership.state = 'active'
           AND space.archived_at IS NULL
@@ -1948,7 +1948,7 @@ export class WorkspaceSpaceStorage {
         `SELECT space.space_id, space.title, space.appearance_json, space.scope, space.created_at,
                 membership.workstream_id
            FROM space_channel_memberships membership
-           JOIN workspace_space_directory space ON space.space_id = membership.space_id
+           JOIN spaces space ON space.space_id = membership.space_id
            WHERE membership.state = 'active' AND space.archived_at IS NULL
             AND membership.workstream_id IN (${chunk.map(() => "?").join(", ")})
           ORDER BY space.created_at, space.space_id, membership.workstream_id`,
@@ -2183,7 +2183,7 @@ export class WorkspaceSpaceStorage {
         space_id: string;
         revision: number;
       } & Record<string, SqlStorageValue>>(
-        `SELECT space_id, revision FROM workspace_space_directory
+        `SELECT space_id, revision FROM spaces
           WHERE space_id IN (?, ?) AND archived_at IS NULL`,
         request.sourceSpaceId,
         request.targetSpaceId,
@@ -2385,7 +2385,7 @@ export class WorkspaceSpaceStorage {
   finalizeMembership(request: WorkspaceSpaceMembershipSettleRequest, now = Date.now()): SpaceSummary | "conflict" | false {
     return this.storage.transactionSync(() => {
       const space = this.storage.sql.exec<{ revision: number } & Record<string, SqlStorageValue>>(
-        "SELECT revision FROM workspace_space_directory WHERE space_id = ? AND archived_at IS NULL",
+        "SELECT revision FROM spaces WHERE space_id = ? AND archived_at IS NULL",
         request.spaceId,
       ).toArray()[0];
       if (!space) return false;
@@ -2551,7 +2551,7 @@ export class WorkspaceSpaceStorage {
         system_role: string | null;
         revision: number;
       } & Record<string, SqlStorageValue>>(
-        "SELECT system_role, revision FROM workspace_space_directory WHERE space_id = ?",
+        "SELECT system_role, revision FROM spaces WHERE space_id = ?",
         spaceId,
       ).one();
       if (row.system_role === "general") {
@@ -2592,13 +2592,13 @@ export class WorkspaceSpaceStorage {
     return this.storage.transactionSync(() => {
       if (!this.canEdit(userId, spaceId, true)) return false;
       const protectedRow = this.storage.sql.exec<{ one: number } & Record<string, SqlStorageValue>>(
-        `SELECT 1 AS one FROM workspace_space_directory
+        `SELECT 1 AS one FROM spaces
           WHERE space_id = ? AND system_role = 'general'`,
         spaceId,
       ).toArray()[0];
       if (protectedRow) return "protected";
       const archived = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
-        `UPDATE workspace_space_directory
+        `UPDATE spaces
             SET archived_at = ?, revision = revision + 1, updated_at = ?
           WHERE space_id = ? AND archived_at IS NULL RETURNING space_id`,
         now,
@@ -2638,7 +2638,7 @@ export class WorkspaceSpaceStorage {
       // empty `RETURNING` is the refusal.
       if (!this.canEdit(userId, spaceId)) return false;
       const restored = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
-        `UPDATE workspace_space_directory
+        `UPDATE spaces
             SET archived_at = NULL, revision = revision + 1, updated_at = ?
           WHERE space_id = ? AND archived_at IS NOT NULL RETURNING space_id`,
         now,
@@ -2799,7 +2799,7 @@ export class WorkspaceSpaceStorage {
           AND registered.target_id = target.target_id
          JOIN space_channel_memberships membership
            ON membership.space_id = target.space_id AND membership.workstream_id = target.workstream_id
-         JOIN workspace_space_directory space ON space.space_id = target.space_id
+         JOIN spaces space ON space.space_id = target.space_id
         WHERE target.space_id = ? AND target.kind = ? AND target.target_id = ?
           AND target.default_generation = ? AND target.workstream_id = ?
           AND target.membership_generation = ?
@@ -3219,7 +3219,7 @@ export class WorkspaceSpaceStorage {
   allSpaceIds(): string[] {
     if (!this.ready()) return [];
     return this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
-      "SELECT space_id FROM workspace_space_directory ORDER BY space_id",
+      "SELECT space_id FROM spaces ORDER BY space_id",
     ).toArray().map((row) => row.space_id);
   }
 
@@ -3227,7 +3227,7 @@ export class WorkspaceSpaceStorage {
   generalSpaceId(): string | null {
     if (!this.ready()) return null;
     return this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
-      "SELECT space_id FROM workspace_space_directory WHERE system_role = 'general'",
+      "SELECT space_id FROM spaces WHERE system_role = 'general'",
     ).toArray()[0]?.space_id ?? null;
   }
 
@@ -3335,7 +3335,7 @@ export class WorkspaceSpaceStorage {
               EXISTS (SELECT 1 FROM space_channel_memberships membership
                        WHERE membership.workstream_id = directory.workstream_id
                          AND membership.state = 'active') AS placed
-         FROM workspace_workstream_directory directory
+         FROM channels directory
         WHERE directory.system_kind IS NULL
           AND (? IS NULL OR directory.workstream_id > ?)
         ORDER BY directory.workstream_id
@@ -3419,7 +3419,7 @@ export class WorkspaceSpaceStorage {
     if (workstreamIds !== undefined && workstreamIds.length === 0) return false;
     const scoped = workstreamIds !== undefined;
     return this.storage.sql.exec<{ one: number } & Record<string, SqlStorageValue>>(
-      `SELECT 1 AS one FROM workspace_workstream_directory directory
+      `SELECT 1 AS one FROM channels directory
         WHERE directory.system_kind IS NULL
           AND NOT EXISTS (SELECT 1 FROM space_channel_memberships membership
                            WHERE membership.workstream_id = directory.workstream_id
@@ -3519,7 +3519,7 @@ export class WorkspaceSpaceStorage {
         workstream_id: string;
         user_id: string;
       } & Record<string, SqlStorageValue>>(
-        `SELECT workstream_id, user_id FROM workspace_workstream_viewers
+        `SELECT workstream_id, user_id FROM channel_viewers
           WHERE is_participant = 1 AND workstream_id IN (${chunk.map(() => "?").join(", ")})
           ORDER BY workstream_id, user_id`,
         ...chunk,
@@ -3686,7 +3686,7 @@ export class WorkspaceSpaceStorage {
     return this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
       `SELECT membership.space_id
          FROM space_channel_memberships membership
-         JOIN workspace_space_directory space ON space.space_id = membership.space_id
+         JOIN spaces space ON space.space_id = membership.space_id
         WHERE membership.workstream_id = ? AND membership.state = 'active'
           AND membership.space_id <> ? AND space.archived_at IS NULL
         ORDER BY membership.space_id`,
@@ -3714,8 +3714,8 @@ export class WorkspaceSpaceStorage {
     for (const chunk of boundParameterChunks(workstreamIds)) {
       for (const row of this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
         `SELECT directory.workstream_id
-           FROM workspace_workstream_directory directory
-           LEFT JOIN workspace_workstream_viewers viewer
+           FROM channels directory
+           LEFT JOIN channel_viewers viewer
              ON viewer.workstream_id = directory.workstream_id
             AND viewer.user_id = ?
             AND viewer.authority_generation = directory.authority_generation
@@ -3739,7 +3739,7 @@ export class WorkspaceSpaceStorage {
 
   private participantUserIds(spaceId: string): string[] {
     return this.storage.sql.exec<{ user_id: string } & Record<string, SqlStorageValue>>(
-      `SELECT user_id FROM workspace_space_viewers
+      `SELECT user_id FROM space_viewers
         WHERE space_id = ? AND is_participant = 1 ORDER BY user_id`,
       spaceId,
     ).toArray().map((row) => row.user_id);
@@ -3761,8 +3761,8 @@ export class WorkspaceSpaceStorage {
     for (const chunk of boundParameterChunks(spaceIds)) {
       for (const row of this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
         `SELECT space.space_id
-           FROM workspace_space_directory space
-           LEFT JOIN workspace_space_viewers viewer
+           FROM spaces space
+           LEFT JOIN space_viewers viewer
              ON viewer.space_id = space.space_id
             AND viewer.user_id = ? AND viewer.is_participant = 1
           WHERE ${spaceVisibleToViewerSql("space", "viewer")}
@@ -3781,8 +3781,8 @@ export class WorkspaceSpaceStorage {
     if (!this.ready()) return [];
     return this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
       `SELECT space.space_id
-         FROM workspace_space_directory space
-         LEFT JOIN workspace_space_viewers viewer
+         FROM spaces space
+         LEFT JOIN space_viewers viewer
            ON viewer.space_id = space.space_id
           AND viewer.user_id = ? AND viewer.is_participant = 1
         WHERE space.archived_at IS NULL
@@ -3810,8 +3810,8 @@ export class WorkspaceSpaceStorage {
     if (!this.ready()) return null;
     return this.storage.sql.exec<{ reach: SpaceReach } & Record<string, SqlStorageValue>>(
       `SELECT ${spaceReachSql("space", "viewer")} AS reach
-         FROM workspace_space_directory space
-         LEFT JOIN workspace_space_viewers viewer
+         FROM spaces space
+         LEFT JOIN space_viewers viewer
            ON viewer.space_id = space.space_id
           AND viewer.user_id = ? AND viewer.is_participant = 1
         WHERE space.space_id = ?
@@ -3876,8 +3876,8 @@ export class WorkspaceSpaceStorage {
     const rows = this.storage.sql.exec<SpaceRow>(
       `SELECT space.*, ${spaceReachSql("space", "viewer")} AS reach
          FROM workspace_container_order ordering
-         JOIN workspace_space_directory space ON space.space_id = ordering.item_id
-         LEFT JOIN workspace_space_viewers viewer
+         JOIN spaces space ON space.space_id = ordering.item_id
+         LEFT JOIN space_viewers viewer
            ON viewer.space_id = space.space_id
           AND viewer.user_id = ? AND viewer.is_participant = 1
         WHERE ordering.user_id = ? AND ordering.container_kind = 'organization'
@@ -3938,8 +3938,8 @@ export class WorkspaceSpaceStorage {
   private space(spaceId: string, userId: string): SpaceSummary | false {
     const row = this.storage.sql.exec<SpaceRow>(
       `SELECT space.*, ${spaceReachSql("space", "viewer")} AS reach
-         FROM workspace_space_directory space
-         LEFT JOIN workspace_space_viewers viewer
+         FROM spaces space
+         LEFT JOIN space_viewers viewer
            ON viewer.space_id = space.space_id
           AND viewer.user_id = ? AND viewer.is_participant = 1
         WHERE space.space_id = ?
@@ -3963,7 +3963,7 @@ export class WorkspaceSpaceStorage {
     const row = this.storage.sql.exec<SpaceRow>(
       `SELECT space.*,
               CASE WHEN space.scope = 'workspace' THEN 'organization' ELSE 'participant' END AS reach
-         FROM workspace_space_directory space
+         FROM spaces space
         WHERE space.space_id = ? AND space.archived_at IS NULL`,
       spaceId,
     ).toArray()[0];
@@ -4049,10 +4049,10 @@ export class WorkspaceSpaceStorage {
     return this.storage.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
       `SELECT COUNT(*) AS count
          FROM space_channel_memberships membership
-         JOIN workspace_workstream_directory directory
+         JOIN channels directory
            ON directory.workstream_id = membership.workstream_id
          ${viewerScoped
-           ? `LEFT JOIN workspace_workstream_viewers viewer
+           ? `LEFT JOIN channel_viewers viewer
                 ON viewer.workstream_id = directory.workstream_id
                AND viewer.user_id = ?
                AND viewer.authority_generation = directory.authority_generation`

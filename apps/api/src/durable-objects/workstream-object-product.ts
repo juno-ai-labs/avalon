@@ -1916,8 +1916,8 @@ export class WorkstreamObjectProductService {
            ON membership.space_id = pin.space_id
           AND membership.workstream_id = pin.workstream_id
           AND membership.state = 'active'
-         JOIN workspace_space_directory space ON space.space_id = pin.space_id
-         LEFT JOIN workspace_space_viewers viewer
+         JOIN spaces space ON space.space_id = pin.space_id
+         LEFT JOIN space_viewers viewer
            ON viewer.space_id = space.space_id
           AND viewer.user_id = ? AND viewer.is_participant = 1
         WHERE pin.workstream_id = ? AND pin.user_id = ? AND space.archived_at IS NULL

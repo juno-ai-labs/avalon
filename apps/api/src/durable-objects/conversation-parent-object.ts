@@ -211,7 +211,7 @@ function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCurs
   return cursor.toArray()[0] ?? null;
 }
 
-function canonicalState(effects: readonly DirectoryCommonEffect[]): string {
+export function canonicalState(effects: readonly DirectoryCommonEffect[]): string {
   const states = new Set(effects.map((effect) => effect.state));
   for (const state of [
     "running", "interrupting", "preparing_context", "waiting_capacity", "scheduled",

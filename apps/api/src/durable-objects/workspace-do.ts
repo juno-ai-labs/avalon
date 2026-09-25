@@ -178,7 +178,7 @@ import {
 import { boundParameterChunks } from "./bound-parameters";
 import { projectionSupersedes, type StoredProjection } from "./projection-fence";
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
-import { automationDOName, workspaceDOName } from "./names";
+import { automationDOName, spaceDOName, workspaceDOName, workstreamDOName } from "./names";
 import {
   OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
   applyRetirementGate,
@@ -678,6 +678,30 @@ import {
   WorkspaceBreakoutStorage,
   type WorkspaceBreakoutRow,
 } from "./workspace-breakout-storage";
+import { HOSTED_PARENT_SCHEMA_STATEMENTS } from "./hosted-parent-schema";
+import {
+  HOSTED_CHANNEL_ROLE,
+  HOSTED_SPACE_ROLE,
+  HostedParent,
+  parentControlSocketTag,
+  readControlSocketAttachment,
+  type HostedParentHost,
+} from "./hosted-parent";
+import {
+  deferParentImport,
+  dueParentImports,
+  importLegacyParent,
+  LegacyParentExportSchema,
+  nextParentImportDueAt,
+  notePendingParentImport,
+  parentImportState,
+} from "./hosted-parent-import";
+import {
+  HostedParticipantProjectionAlarmSchema,
+  PARTICIPANT_MIGRATION_ALARM,
+  PARTICIPANT_PROJECTION_ALARM,
+} from "./scope-grant-storage";
+import { SCOPE_INVITATION_DELIVERY_ALARM } from "./scope-invitation-storage";
 import {
   applyWorkstreamRegionalEnvelope,
   insertWorkstreamEffectReceipt,
@@ -3690,6 +3714,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   statements: [
     "ALTER TABLE workspace_breakout_directory ADD COLUMN appearance_json TEXT CHECK (appearance_json IS NULL OR json_valid(appearance_json))",
   ],
+}, {
+  version: 70,
+  description: "host channel and space parents; name the directories channels, breakouts and spaces",
+  statements: [...HOSTED_PARENT_SCHEMA_STATEMENTS],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -3937,8 +3965,8 @@ function loadParticipantPreviews(
     const placeholders = chunk.map(() => "?").join(", ");
     rows.push(...sql.exec<{ workstream_id: string; user_id: string }>(
       `SELECT viewer.workstream_id, viewer.user_id
-         FROM workspace_workstream_viewers viewer
-         JOIN workspace_workstream_directory directory
+         FROM channel_viewers viewer
+         JOIN channels directory
            ON directory.workstream_id = viewer.workstream_id
           AND directory.authority_generation = viewer.authority_generation
         WHERE viewer.workstream_id IN (${placeholders})
@@ -4166,8 +4194,8 @@ function loadSpacePins(
            ON membership.space_id = pin.space_id
           AND membership.workstream_id = pin.workstream_id
           AND membership.state = 'active'
-         JOIN workspace_space_directory space ON space.space_id = pin.space_id
-         LEFT JOIN workspace_space_viewers viewer
+         JOIN spaces space ON space.space_id = pin.space_id
+         LEFT JOIN space_viewers viewer
            ON viewer.space_id = space.space_id
           AND viewer.user_id = ? AND viewer.is_participant = 1
         WHERE pin.user_id = ? AND space.archived_at IS NULL
@@ -4252,8 +4280,8 @@ const SELECT_WORKSPACE_DIRECTORY = `SELECT directory.workstream_id,
     viewer.source_event_id AS viewer_event_id,
     NULL AS pin_position,
     access.last_accessed_at
-  FROM workspace_workstream_directory directory
-  LEFT JOIN workspace_workstream_viewers viewer
+  FROM channels directory
+  LEFT JOIN channel_viewers viewer
     ON viewer.workstream_id = directory.workstream_id
    AND viewer.user_id = ?
    AND viewer.authority_generation = directory.authority_generation
@@ -5650,8 +5678,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private revocableWorkstreamIds(userId: string): string[] {
     return this.state.storage.sql.exec<{ workstream_id: string }>(
       `SELECT directory.workstream_id
-         FROM workspace_workstream_directory directory
-         LEFT JOIN workspace_workstream_viewers viewer
+         FROM channels directory
+         LEFT JOIN channel_viewers viewer
            ON viewer.workstream_id = directory.workstream_id AND viewer.user_id = ?
         WHERE viewer.user_id IS NOT NULL OR directory.scope = 'workspace'
         ORDER BY directory.workstream_id`,
@@ -5883,8 +5911,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   ): boolean {
     return this.state.storage.sql.exec<{ is_participant: number }>(
       `SELECT viewer.is_participant
-         FROM workspace_workstream_viewers viewer
-         JOIN workspace_workstream_directory directory
+         FROM channel_viewers viewer
+         JOIN channels directory
            ON directory.workstream_id = viewer.workstream_id
           AND directory.authority_generation = viewer.authority_generation
         WHERE viewer.workstream_id = ? AND viewer.user_id = ?
@@ -6568,12 +6596,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       authority_generation: number;
     }>(
       `SELECT title, scope, archived_at, authority_generation
-         FROM workspace_workstream_directory WHERE workstream_id = ?`,
+         FROM channels WHERE workstream_id = ?`,
       request.workstreamId,
     ).toArray()[0];
     if (!row) return { found: false };
     const participantUserIds = this.state.storage.sql.exec<{ user_id: string }>(
-      `SELECT user_id FROM workspace_workstream_viewers
+      `SELECT user_id FROM channel_viewers
         WHERE workstream_id = ? AND authority_generation = ? AND is_participant = 1
         ORDER BY user_id`,
       request.workstreamId,
@@ -7260,7 +7288,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   private directoryChannelsPresent(workstreamIds: readonly string[]): string[] {
     return this.state.storage.sql.exec<{ workstream_id: string }>(
-      `SELECT workstream_id FROM workspace_workstream_directory
+      `SELECT workstream_id FROM channels
         WHERE workstream_id IN (SELECT value FROM json_each(?))`,
       JSON.stringify([...workstreamIds]),
     ).toArray().map((row) => row.workstream_id);
@@ -7831,8 +7859,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             event.audience_kind = 'workspace'
             OR (event.audience_kind = 'user' AND event.audience_user_id = ?)
             OR (event.audience_kind = 'workstream' AND EXISTS (
-              SELECT 1 FROM workspace_workstream_directory directory
-              JOIN workspace_workstream_viewers viewer
+              SELECT 1 FROM channels directory
+              JOIN channel_viewers viewer
                 ON viewer.workstream_id = directory.workstream_id
                AND viewer.authority_generation = directory.authority_generation
                AND viewer.user_id = ?
@@ -8345,7 +8373,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     // A Space publishes the same `directory_common` and `directory_user`
     // effects a Channel does, and both land here. They are kept apart from this
-    // line on: a Space in `workspace_workstream_directory` would be a Space in
+    // line on: a Space in `channels` would be a Space in
     // the Channel sidebar, and the two directories answer different questions.
     const request = WorkspaceDirectoryApplyRequestSchema.parse(input);
     if (!this.workspaceId()) {
@@ -8481,7 +8509,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           waterline: number;
           payload_hash: string;
         }>(`SELECT authority_generation, waterline, payload_hash
-              FROM workspace_workstream_directory WHERE workstream_id = ?`,
+              FROM channels WHERE workstream_id = ?`,
         envelope.parentId).toArray()[0];
         // Reconcile on an exact replay as well as the first application. The
         // directory row and registration replacement are separate durable
@@ -8656,7 +8684,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }>(
       `SELECT automation.automation_id, directory.workstream_id, directory.archived_at
          FROM automation_directory automation
-         JOIN workspace_workstream_directory directory
+         JOIN channels directory
            ON directory.workstream_id = automation.owning_workstream_id
         WHERE automation.lifecycle <> 'deleted'
           AND automation.owning_workstream_id IN (SELECT value FROM json_each(?))
@@ -8974,8 +9002,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
            ) OR (
              viewer.is_participant = 1 AND directory.exact_state = 'needs_input'
            ) THEN 1 ELSE 0 END), 0) AS unread_and_needs_input
-       FROM workspace_workstream_directory directory
-       LEFT JOIN workspace_workstream_viewers viewer
+       FROM channels directory
+       LEFT JOIN channel_viewers viewer
          ON viewer.workstream_id = directory.workstream_id
         AND viewer.user_id = ?
         AND viewer.authority_generation = directory.authority_generation
@@ -9042,8 +9070,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       : "directory.last_activity_at";
     return this.state.storage.sql.exec<{ workstream_id: string }>(
       `SELECT directory.workstream_id
-         FROM workspace_workstream_directory directory
-         LEFT JOIN workspace_workstream_viewers viewer
+         FROM channels directory
+         LEFT JOIN channel_viewers viewer
            ON viewer.workstream_id = directory.workstream_id
           AND viewer.user_id = ?
           AND viewer.authority_generation = directory.authority_generation
@@ -9057,8 +9085,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           AND (? IS NULL OR EXISTS (
             SELECT 1
               FROM space_channel_memberships membership
-              JOIN workspace_space_directory space ON space.space_id = membership.space_id
-              LEFT JOIN workspace_space_viewers space_viewer
+              JOIN spaces space ON space.space_id = membership.space_id
+              LEFT JOIN space_viewers space_viewer
                 ON space_viewer.space_id = space.space_id
                AND space_viewer.user_id = ?1 AND space_viewer.is_participant = 1
              WHERE membership.space_id = ?
@@ -10713,8 +10741,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = z.strictObject({ workspaceId: z.string().uuid(), userId: z.string().uuid() }).parse(input);
     this.assertWorkspace(request.workspaceId);
     const rows = this.state.storage.sql.exec<{ workstream_id: string }>(
-      `SELECT directory.workstream_id FROM workspace_workstream_directory directory
-       LEFT JOIN workspace_workstream_viewers viewer
+      `SELECT directory.workstream_id FROM channels directory
+       LEFT JOIN channel_viewers viewer
          ON viewer.workstream_id = directory.workstream_id AND viewer.user_id = ?
         AND viewer.authority_generation = directory.authority_generation
        WHERE directory.scope = 'workspace' OR viewer.is_participant = 1
@@ -10730,8 +10758,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceDirectoryReadableIdsRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     const rows = this.state.storage.sql.exec<{ workstream_id: string }>(
-      `SELECT directory.workstream_id FROM workspace_workstream_directory directory
-       LEFT JOIN workspace_workstream_viewers viewer
+      `SELECT directory.workstream_id FROM channels directory
+       LEFT JOIN channel_viewers viewer
          ON viewer.workstream_id = directory.workstream_id
         AND viewer.user_id = ?
         AND viewer.authority_generation = directory.authority_generation
@@ -10751,8 +10779,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceDirectoryVisibleIdsRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     const rows = this.state.storage.sql.exec<{ workstream_id: string }>(
-      `SELECT directory.workstream_id FROM workspace_workstream_directory directory
-       LEFT JOIN workspace_workstream_viewers viewer
+      `SELECT directory.workstream_id FROM channels directory
+       LEFT JOIN channel_viewers viewer
          ON viewer.workstream_id = directory.workstream_id
         AND viewer.user_id = ?
         AND viewer.authority_generation = directory.authority_generation
@@ -10894,8 +10922,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }>(
       `SELECT directory.authority_generation, viewer.waterline,
               viewer.listable, directory.title, directory.email_address
-         FROM workspace_workstream_directory directory
-         JOIN workspace_workstream_viewers viewer
+         FROM channels directory
+         JOIN channel_viewers viewer
            ON viewer.workstream_id = directory.workstream_id
           AND viewer.user_id = ?
           AND viewer.authority_generation = directory.authority_generation
@@ -10920,7 +10948,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const rows = this.state.storage.sql.exec<{ workstream_id: string }>(
       `SELECT link.workstream_id FROM workspace_workstream_resource_links link
-       JOIN workspace_workstream_directory directory
+       JOIN channels directory
          ON directory.workstream_id = link.workstream_id
        WHERE link.resource_id = ? AND directory.archived_at IS NULL
          AND (? = 0 OR link.watch_enabled = 1)
@@ -10988,7 +11016,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const column = request.kind === "terminal" ? "next_terminal_action_at" : "next_wakeup_due_at";
     return this.state.storage.sql.exec<{ workstream_id: string }>(
-      `SELECT workstream_id FROM workspace_workstream_directory
+      `SELECT workstream_id FROM channels
         WHERE archived_at IS NULL AND ${column} IS NOT NULL AND ${column} <= ?
         ORDER BY ${column}, workstream_id LIMIT ?`,
       epoch(request.through),
@@ -11008,7 +11036,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       due_at: number;
     }>(
       `SELECT 'terminal' AS kind, workstream_id, next_terminal_action_at AS due_at
-         FROM workspace_workstream_directory
+         FROM channels
         WHERE archived_at IS NULL AND next_terminal_action_at IS NOT NULL
        ORDER BY due_at, workstream_id`,
     ).toArray();
@@ -11036,9 +11064,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       `SELECT directory.workstream_id, directory.scope, directory.created_by_user_id,
               COALESCE(viewer.is_participant, 0) AS is_participant
          FROM workspace_workstream_resource_links link
-         JOIN workspace_workstream_directory directory
+         JOIN channels directory
            ON directory.workstream_id = link.workstream_id
-         LEFT JOIN workspace_workstream_viewers viewer
+         LEFT JOIN channel_viewers viewer
            ON viewer.workstream_id = directory.workstream_id
           AND viewer.user_id = ?
           AND viewer.authority_generation = directory.authority_generation
@@ -11231,7 +11259,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(WorkspaceIdSchema.parse(input.workspaceId));
     this.state.storage.transactionSync(() => {
       const parents = this.state.storage.sql.exec<{ parent_id: string; parent_kind: 'workstream' | 'automation' }>(
-        `SELECT workstream_id AS parent_id, 'workstream' AS parent_kind FROM workspace_workstream_directory
+        `SELECT workstream_id AS parent_id, 'workstream' AS parent_kind FROM channels
          UNION SELECT automation_id AS parent_id, 'automation' AS parent_kind FROM automation_directory`,
       ).toArray();
       const workspaceId = asWorkspaceId(input.workspaceId);
@@ -11336,7 +11364,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const parents = this.state.storage.sql.exec<{ pending: number }>('SELECT COUNT(*) AS pending FROM authorization_backfill WHERE completed = 0').one().pending;
     const children = this.state.storage.sql.exec<{ pending: number }>('SELECT COUNT(*) AS pending FROM authorization_backfill_children WHERE completed = 0').one().pending;
     const undiscovered = this.state.storage.sql.exec<{ pending: number }>(`SELECT COUNT(*) AS pending FROM (
-      SELECT workstream_id AS parent_id FROM workspace_workstream_directory
+      SELECT workstream_id AS parent_id FROM channels
       UNION SELECT automation_id AS parent_id FROM automation_directory
     ) directory LEFT JOIN authorization_backfill tracked USING(parent_id) WHERE tracked.parent_id IS NULL`).one().pending;
     return { pendingParents: parents + undiscovered, pendingChildren: children,
@@ -11631,7 +11659,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           archived_at: number | null;
         } & Record<string, SqlStorageValue>>(
           `SELECT authority_generation, waterline, payload_hash, archived_at
-             FROM workspace_workstream_directory WHERE workstream_id = ?`,
+             FROM channels WHERE workstream_id = ?`,
           envelope.parentId,
         ).toArray()[0];
         if (projectionSupersedes(
@@ -11639,7 +11667,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         )) {
           const effect = envelope.effect;
           this.state.storage.sql.exec(
-            `INSERT INTO workspace_workstream_directory
+            `INSERT INTO channels
                (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
                 title, description, preview, scope, exact_state, system_kind,
                 last_activity_at, completed_at, archived_at, email_address,
@@ -11706,7 +11734,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             epoch(effect.updatedAt ?? effect.lastActivityAt),
             now,
           );
-          this.state.storage.sql.exec(`UPDATE workspace_workstream_directory SET appearance_json = ? WHERE workstream_id = ?`, effect.appearance ? JSON.stringify(effect.appearance) : null, envelope.parentId);
+          this.state.storage.sql.exec(`UPDATE channels SET appearance_json = ? WHERE workstream_id = ?`, effect.appearance ? JSON.stringify(effect.appearance) : null, envelope.parentId);
           this.state.storage.sql.exec(
             `DELETE FROM workspace_workstream_resource_links WHERE workstream_id = ?`,
             envelope.parentId,
@@ -11771,13 +11799,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           is_participant: number;
         } & Record<string, SqlStorageValue>>(
           `SELECT authority_generation, waterline, payload_hash, is_participant
-             FROM workspace_workstream_viewers WHERE workstream_id = ? AND user_id = ?`,
+             FROM channel_viewers WHERE workstream_id = ? AND user_id = ?`,
           envelope.parentId,
           effect.userId,
         ).toArray()[0];
         if (!activeUsers.has(effect.userId)) {
           const deleted = this.state.storage.sql.exec<{ is_participant: number }>(
-            `DELETE FROM workspace_workstream_viewers
+            `DELETE FROM channel_viewers
               WHERE workstream_id = ? AND user_id = ? RETURNING is_participant`,
             envelope.parentId,
             effect.userId,
@@ -11790,7 +11818,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           )) {
             const wasParticipant = current?.is_participant === 1;
             this.state.storage.sql.exec(
-              `INSERT INTO workspace_workstream_viewers
+              `INSERT INTO channel_viewers
                  (workstream_id, user_id, authority_generation, waterline,
                   source_event_id, payload_hash, is_participant, participant_added_at,
                   unread_count, you_are_mentioned,
@@ -11808,7 +11836,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
                    WHEN excluded.is_participant = 0 THEN NULL
                    ELSE COALESCE(
                      excluded.participant_added_at,
-                     workspace_workstream_viewers.participant_added_at
+                     channel_viewers.participant_added_at
                    )
                  END,
                  unread_count = excluded.unread_count,
@@ -11987,8 +12015,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   private directoryVisible(userId: string, workstreamId: string): boolean {
     return this.state.storage.sql.exec<{ one: number }>(
-      `SELECT 1 AS one FROM workspace_workstream_directory directory
-       LEFT JOIN workspace_workstream_viewers viewer
+      `SELECT 1 AS one FROM channels directory
+       LEFT JOIN channel_viewers viewer
          ON viewer.workstream_id = directory.workstream_id
         AND viewer.user_id = ?
         AND viewer.authority_generation = directory.authority_generation
@@ -12784,7 +12812,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.state.storage.transactionSync(() => {
       const now = Date.now();
       for (const row of sql.exec<{ workstream_id: string }>(
-        "SELECT workstream_id FROM workspace_workstream_directory",
+        "SELECT workstream_id FROM channels",
       ).toArray()) {
         sql.exec(
           `INSERT OR IGNORE INTO workspace_retirement_graph

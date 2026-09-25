@@ -2646,7 +2646,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * Settle one durable tool receipt inside the event that owns this object.
    *
    * No `commitRuntimeMutation` wrapper, unlike the Terminal endpoint: receipts
-   * move no deadline `workspace_workstream_directory` projects, so there is no
+   * move no deadline `channels` projects, so there is no
    * `directory_common` effect to enqueue. That is asserted rather than assumed,
    * against this object's real outbox, in `test-workers/tool-receipt-authority.test.ts`
    * — with a publishing Terminal operation beside it as the control, because
@@ -3076,7 +3076,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // Through `commitRuntimeMutation`, not directly, for the same reason
       // Typed mutation endpoints do: a write that moves a Terminal deadline has to
       // enqueue the `directory_common` effect, because
-      // `workspace_workstream_directory.next_terminal_action_at` is the only
+      // `channels.next_terminal_action_at` is the only
       // thing the workspace's alarm reads to decide a sandbox is due, and that
       // effect is its only writer. Calling the storage method on its own
       // committed the row and told nobody.

@@ -397,7 +397,7 @@ const SCHEDULE_TARGET_QUERIES: readonly { kind: WorkspaceScheduleTargetKind; sql
  *
  * The work-stream half comes from the directory rather than from a table here:
  * a Terminal sandbox's deadline is written by the work stream that owns it and
- * republished into `workspace_workstream_directory`, which is the only index
+ * republished into `channels`, which is the only index
  * the workspace has of when a sandbox is next due.
  */
 export async function workspaceScheduleTargets(
