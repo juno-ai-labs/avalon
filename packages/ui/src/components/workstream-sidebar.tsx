@@ -148,7 +148,7 @@ function ConversationRowMenu({ actions, children, icon, target }: {
 }
 
 /** Work-stream navigation only: no second resource query or substream model. */
-export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSidekickMenuOpen, onRefreshSidekicks, onOpenResource, workstream, creatingSubstream = null, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekickFailure, addSidekick, substreamActions, mainActions, scrollRef }: {
+export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSidekickMenuOpen, onRefreshSidekicks, onOpenResource, workstream, creatingSubstream = null, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekickFailure, addSidekick, substreamActions, mainActions, scrollRef, footerLeading }: {
   workstream: SidebarPresentation;
   onOpenResource?: (id: string, returnFocus: HTMLElement) => void;
   mainVisible?: boolean; onOpenSidekick?: (id: string) => void; onSidekickMenuOpen?: () => void;
@@ -186,6 +186,8 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
   substreamActions?: ConversationRowActions | undefined;
   mainActions?: ConversationRowActions | undefined;
   scrollRef?: React.Ref<HTMLElement>;
+  /** Leading footer content, for a host whose outer rails are absent and left it nowhere else to go. */
+  footerLeading?: React.ReactNode;
 }): React.JSX.Element {
   const {
     compact,
@@ -370,6 +372,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
         constrained={constrained}
         constrainedTitle="Widen the window to expand channel"
         expandLabel="Expand channel"
+        leading={footerLeading}
         onToggle={onToggle}
       />
     </ResizableSidebar>
