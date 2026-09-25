@@ -802,6 +802,13 @@ Also rejected: naming the sending conversation in the byline. The sender is an
 agent address, and resolving it to a name is a read this row does not
 otherwise need.
 
+**Known gap:** a coordinating agent that reuses an existing Sidekick sends its
+setup request mid-conversation, and that request is still counted. Position
+cannot tell it from any other follow-up; showing it needs the sender to mark
+the message as a request for the reader, which nothing carries yet. The rule
+also applies to any other conversation an agent message opens, a Channel
+included, where the label is accurate if rare.
+
 ### 2026-09-19 — A background agent's messages and its two ends are counted rows
 
 **What changed:** A message from a background agent no longer renders as a
