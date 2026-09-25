@@ -1,5 +1,5 @@
 /**
- * WorkspaceDO migration 70: Channel and Space parents move into the
+ * WorkspaceDO migration 71: Channel and Space parents move into the
  * Organization object.
  *
  * Two halves. The directory tables WorkspaceDO already held take the product's

@@ -125,7 +125,7 @@ import {
 } from "@rally/contracts";
 import { WorkspaceImpersonationStorage } from "./workspace-impersonation-storage";
 import { AuthorizationSnapshotSchema, AuthorizationSubjectSchema, AuthorizationResourceSchema } from '../services/authorization-policy';
-import { SearchAuthorizationSnapshotSchema, SearchAuthorizationTargetSchema, searchAuthorizationKey } from '../services/search-authorization';
+import { SearchAuthorizationSnapshotSchema, SearchAuthorizationTargetSchema, searchAuthorizationKey, searchDecisionFingerprint } from '../services/search-authorization';
 import { flushAuthorizationDeliveries, type AuthorizationProjectionJob } from './authorization-projection';
 import { AuthorizationStorage, AUTHORIZATION_STORAGE_MIGRATION, AUTHORIZATION_STORAGE_TABLES, AuthorizationLocationSchema } from './authorization-storage';
 import { ONBOARDING_JOURNEY_SQL, OnboardingJourneyStore } from './onboarding-journey';
@@ -3716,6 +3716,13 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   ],
 }, {
   version: 70,
+  description: 'remember which search decision KV acknowledged',
+  // A push re-derives every decision under its target, and most come out the
+  // same. With the acknowledged fingerprint beside the key, an unchanged
+  // decision skips its KV write. Existing keys start unknown and write once.
+  statements: ['ALTER TABLE search_authorization_keys ADD COLUMN published_decision TEXT'],
+}, {
+  version: 71,
   description: "host channel and space parents; name the directories channels, breakouts and spaces",
   statements: [...HOSTED_PARENT_SCHEMA_STATEMENTS],
 }];
@@ -11100,7 +11107,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   async registerSearchAuthorization(input: unknown) {
     await this.initialized;
-    const request = z.strictObject({ subject: AuthorizationSubjectSchema, resources: z.array(AuthorizationResourceSchema) }).parse(input);
+    const request = z.strictObject({ subject: AuthorizationSubjectSchema, resources: z.array(AuthorizationResourceSchema),
+      unregisteredOnly: z.literal(true).optional() }).parse(input);
     this.assertWorkspace(request.subject.workspaceId);
     // Resolve async keys first, then validate the whole batch before any writes.
     const keys = await Promise.all(request.resources.map(resource => searchAuthorizationKey(request.subject, resource)));
@@ -11108,17 +11116,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.assertWorkspace(resource.workspaceId);
       if (this.isRetiredMeetingResource(resource)) throw new Error('meeting_notes_retired');
     }
-    const generations: number[] = [];
+    // A null generation is a key this caller did not claim: already registered, under `unregisteredOnly`.
+    const generations: (number | null)[] = [];
     for (const [index, resource] of request.resources.entries()) {
       const key = keys[index]!;
       // Allocate before owner reads. A later attempt supersedes an earlier one even in the same millisecond.
       const generation = this.state.storage.sql.exec<{ generation: number }>(`INSERT INTO search_authorization_keys
         (cache_key, generation, resource_id, parent_id, connection_id) VALUES (?, 1, ?, ?, ?)
-        ON CONFLICT(cache_key) DO UPDATE SET generation = generation + 1 RETURNING generation`, key,
+        ON CONFLICT(cache_key) DO ${request.unregisteredOnly ? 'NOTHING' : 'UPDATE SET generation = generation + 1'} RETURNING generation`, key,
         resource.kind === 'resource' ? resource.resourceId : resource.kind === 'memory' ? resource.scopeId : null,
         resource.kind === 'conversation' || resource.kind === 'memory' ? resource.parentId : null,
-        resource.kind === 'connection' ? resource.connectionId : null).one().generation;
+        resource.kind === 'connection' ? resource.connectionId : null).toArray()[0]?.generation ?? null;
       generations.push(generation);
+      if (generation === null) continue;
       const pending = { version: 1, generation, subject: request.subject, resource, observedAt: 0,
         decision: { status: 'unavailable', reason: 'projection_incomplete', retryable: true } };
       this.state.storage.sql.exec('INSERT INTO authorization_snapshots VALUES (?, ?, 0) ON CONFLICT(cache_key) DO NOTHING',
@@ -11166,10 +11176,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       .map((row) => SearchAuthorizationSnapshotSchema.parse(JSON.parse(row.snapshot_json)));
   }
 
-  async writeSearchAuthorizationSnapshots(input: unknown) {
+  /** `republish` is for a KV miss: KV lacks the decision whatever this object last recorded. */
+  async writeSearchAuthorizationSnapshots(input: unknown, options?: unknown) {
     await this.initialized;
     const snapshots = z.array(SearchAuthorizationSnapshotSchema).parse(input);
-    const stats = { written: 0, superseded: 0, kvWriteMs: 0 };
+    const { republish = false } = z.strictObject({ republish: z.boolean().optional() }).optional().parse(options) ?? {};
+    const stats = { written: 0, unchanged: 0, superseded: 0, kvWriteMs: 0 };
     const results = await Promise.allSettled(snapshots.map(async (snapshot) => {
       this.assertWorkspace(snapshot.subject.workspaceId);
       this.assertWorkspace(snapshot.resource.workspaceId);
@@ -11178,9 +11190,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // Serialize only this key's network writes; unrelated WorkspaceDO events stay runnable.
       const publication = previous.catch(() => {}).then(async () => {
         if (this.isRetiredMeetingResource(snapshot.resource)) { stats.superseded++; return; }
-        const current = this.state.storage.sql.exec<{ generation: number }>(
-          'SELECT generation FROM search_authorization_keys WHERE cache_key = ?', key).toArray()[0];
+        const current = this.state.storage.sql.exec<{ generation: number; published_decision: string | null }>(
+          'SELECT generation, published_decision FROM search_authorization_keys WHERE cache_key = ?', key).toArray()[0];
         if (current?.generation !== snapshot.generation) { stats.superseded++; return; }
+        const fingerprint = searchDecisionFingerprint(snapshot.decision);
         this.state.storage.transactionSync(() => {
           this.state.storage.sql.exec(`INSERT INTO authorization_snapshots(cache_key, snapshot_json, validated_at) VALUES (?, ?, ?)
             ON CONFLICT(cache_key) DO UPDATE SET snapshot_json = excluded.snapshot_json, validated_at = excluded.validated_at`,
@@ -11191,9 +11204,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           }
         });
         if (this.env.AVALON_REGION === 'global' && this.env.AUTHORIZATION_CACHE) {
+          // Readers act only on the fingerprinted part, so KV already serves this decision.
+          if (!republish && current.published_decision === fingerprint) { stats.unchanged++; stats.written++; return; }
           const startedAt = Date.now();
-          try { await this.env.AUTHORIZATION_CACHE.put(key, JSON.stringify(snapshot)); }
-          catch (error) {
+          // A put that fails may or may not have landed; forget what KV holds until one is acknowledged.
+          this.state.storage.sql.exec('UPDATE search_authorization_keys SET published_decision = NULL WHERE cache_key = ?', key);
+          try {
+            await this.env.AUTHORIZATION_CACHE.put(key, JSON.stringify(snapshot));
+            // Writes to one key are serialized above, so this is what KV now holds.
+            this.state.storage.sql.exec('UPDATE search_authorization_keys SET published_decision = ? WHERE cache_key = ?', fingerprint, key);
+          } catch (error) {
             this.state.storage.sql.exec(`INSERT INTO search_authorization_push VALUES (?, ?, 1, 0, ?, ?)
               ON CONFLICT(kind, target_id) DO UPDATE SET revision = revision + 1,
                 timing_origin = CASE WHEN first_mutated_at IS NULL OR excluded.first_mutated_at < first_mutated_at THEN excluded.timing_origin ELSE timing_origin END,
