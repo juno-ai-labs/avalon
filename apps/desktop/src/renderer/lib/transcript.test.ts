@@ -4091,5 +4091,15 @@ describe('the agent message that opens a conversation', () => {
     // Rally wrote it, not the reader: it is not theirs to reorder.
     expect(overlay.message.deliveryState).toBeUndefined();
     expect(isComposerQueueOverlay(overlay, { harnessRunning: true })).toBe(false);
+
+    // A follow-up admitted before the first turn lands is also after
+    // sequence 0, and must not be drawn as a second opener.
+    const followUp = pendingTranscriptInputOverlay(
+      { ...input, inputId: 'turn-next', futureTurnId: 'turn-next', inputSequence: 2 },
+      'workstream-one',
+      { source: 'socket_snapshot', snapshotId: 'snap' },
+    );
+    expect(followUp.message.messageType).toBe('plugin_activity');
+    expect(followUp.message.text).toBeUndefined();
   });
 });

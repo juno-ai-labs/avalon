@@ -884,7 +884,14 @@ export function pendingTranscriptInputOverlay(
   // teammate's message is neither.
   // The brief that opens a conversation is drawn as it will be once promoted,
   // and stays off the composer queue for the same reason as the counted row.
-  if (opensConversationWithAgentMessage(input.block.structuredContent, input.afterTranscriptSequence === 0)) {
+  // Every input admitted before the first turn lands reports
+  // `afterTranscriptSequence` 0, so that alone would open a follow-up too. The
+  // loop numbers its inputs from 1 and delivers in that order, so the first
+  // admission is the one that becomes turn 1.
+  if (opensConversationWithAgentMessage(
+    input.block.structuredContent,
+    input.afterTranscriptSequence === 0 && input.inputSequence === 1,
+  )) {
     return {
       identity: input.clientMessageId
         ? { type: 'client_message', clientMessageId: input.clientMessageId, turnId: input.futureTurnId }
@@ -1255,8 +1262,10 @@ export const OPENING_AGENT_MESSAGE_LABEL = 'Opening instructions';
  * A worker's conversation opens the same way, but nobody opens it.
  *
  * `opensConversation` is the caller's, because the two projections know it
- * differently: a canonical turn by its sequence, a pending input by having no
- * turn before it. A host notice never opens a conversation, and is kept out
+ * differently: a canonical turn by its sequence, a pending input by being the
+ * loop's first admission with no turn before it. Where the two could disagree
+ * (a first admission withdrawn before delivery), the pending row stays counted
+ * until promotion: showing an opener late is safe, showing a follow-up is not. A host notice never opens a conversation, and is kept out
  * all the same so the rule reads as what it means.
  */
 function opensConversationWithAgentMessage(

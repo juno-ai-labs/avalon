@@ -204,8 +204,8 @@ than a fallback. Aggregating two reasons into one row would have to drop one of
 them, so the reason is part of the group key.
 
 **The message that opens a conversation is not counted.** When an agent message
-is the conversation's first turn (transcript sequence 1, or a pending input with
-nothing before it), `opensConversationWithAgentMessage` routes it to an ordinary
+is the conversation's first turn (transcript sequence 1, or the loop's first
+pending input, `inputSequence` 1, with nothing before it), `opensConversationWithAgentMessage` routes it to an ordinary
 Rally text row with the byline label **Opening instructions**
 (`OPENING_AGENT_MESSAGE_LABEL`), body and attachments shown. That message is the
 reason the conversation exists: a Sidekick created by another conversation's
