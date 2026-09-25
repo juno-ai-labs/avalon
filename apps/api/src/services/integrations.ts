@@ -2018,6 +2018,9 @@ function createAvalonAutomationsPlugin(
             description: detail.description,
             lifecycle: detail.lifecycle,
             scope: detail.scope,
+            // What submit_draft's icon and colour are told to keep; null
+            // where nobody has chosen, so the chat picks fresh.
+            appearance: detail.appearance ?? null,
             currentDefinitionRevision: detail.currentDefinitionRevision,
             acceptedDefinitionRevision: detail.acceptedDefinitionRevision,
             currentDefinition: detail.currentDefinition && detail.currentDefinition.definitionVersion !== 2
@@ -2088,6 +2091,7 @@ function createAvalonAutomationsPlugin(
           draft: { ...draft, definitionVersion: 2 },
           evaluatorRules: draftState.evaluatorRules,
           submittedByRunId: input.harnessRunId,
+          appearance: target.appearance,
           actor: actorRequest.actor,
         });
         return { ...submitted, saved: draft.ready, description: draft.description };
