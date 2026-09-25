@@ -1730,18 +1730,58 @@ pre {
 .conversation-opening-header-mark { height: 20px; width: 20px; }
 .conversation-opening-header-title { height: 0.78em; width: min(24ch, 42%); }
 .conversation-opening-header-action { display: block; height: 28px; width: 68px; }
-.conversation-opening-messages { display: grid; gap: 44px; }
-.conversation-opening-message { display: grid; gap: 9px; max-width: 82%; }
-.conversation-opening-byline { align-items: center; display: flex; gap: 8px; }
-.conversation-opening-avatar { height: 22px; width: 22px; }
-.conversation-opening-name { height: 0.7em; width: 13ch; }
-.conversation-opening-name.is-short { width: 9ch; }
-.conversation-opening-line { height: 0.72em; width: 100%; }
-.conversation-opening-line.is-medium { width: 84%; }
-.conversation-opening-line.is-short { width: 58%; }
-.conversation-opening-message.is-human { justify-self: end; max-width: 62%; width: 100%; }
-.conversation-opening-bubble { border-radius: 14px; height: 40px; justify-self: end; width: 100%; }
-.conversation-opening-bubble.is-short { height: 12px; width: 46%; }
+/* The feed placeholders are drawn in the settled turn's own units, so the
+   snapshot replaces them without the column jumping: a byline at the byline's
+   size with no avatar (the feed has none), prose lines one prose line-height
+   apart, and a person's turn as a bubble on the right holding its own lines.
+   Turns sit `--space-8` apart: the stack gap plus the action row a settled
+   turn lays out beneath itself. */
+.conversation-opening-messages { align-content: start; display: grid; gap: var(--space-8); }
+.conversation-opening-message { display: grid; }
+.conversation-opening-byline {
+  align-items: center;
+  display: flex;
+  font-size: var(--av-cmp-feed-byline-font-size);
+  gap: var(--space-2);
+  height: 1em;
+  margin-bottom: var(--space-2);
+}
+.conversation-opening-name { height: 0.85em; width: 5ch; }
+.conversation-opening-name.is-long { width: 9ch; }
+.conversation-opening-time { background: var(--av-ref-color-neutral-3); height: 0.85em; width: 14ch; }
+.conversation-opening-prose,
+.conversation-opening-bubble {
+  /* Grid, so each bar's block margins stay whole instead of collapsing into
+     the next bar's and packing the lines two-thirds of a line apart. */
+  display: grid;
+  font-size: var(--av-sys-font-size-prose);
+  line-height: var(--av-sys-font-leading-prose);
+}
+.conversation-opening-prose + .conversation-opening-prose { margin-top: var(--av-sys-space-prose-gap); }
+/* A bar as tall as a lowercase letter, centred in one line box. */
+.conversation-opening-line { height: 0.6em; margin-block: calc((1lh - 0.6em) / 2); width: 100%; }
+.conversation-opening-line.is-long { width: 94%; }
+.conversation-opening-line.is-medium { width: 72%; }
+.conversation-opening-line.is-short { width: 46%; }
+.conversation-opening-message.is-human {
+  --turn-bubble-radius: calc(var(--av-sys-size-radius-xl) + 6px);
+  justify-items: end;
+  justify-self: end;
+  max-width: min(88%, var(--turn-width-cap), calc(100% - 82px));
+  width: 100%;
+}
+.conversation-opening-message.is-human > .conversation-opening-byline {
+  margin-bottom: var(--space-1);
+  padding-inline-end: var(--turn-bubble-radius);
+}
+.conversation-opening-bubble {
+  background: var(--av-ref-color-neutral-3);
+  border-radius: var(--turn-bubble-radius);
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  width: 100%;
+}
+.conversation-opening-bubble > .conversation-opening-line { background: var(--av-ref-color-neutral-5); }
 .conversation-opening-composer-dock { pointer-events: none; }
 .conversation-opening-composer {
   border-radius: 22px;

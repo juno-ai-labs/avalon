@@ -213,24 +213,40 @@ export function ConversationOpeningSkeleton({
           <div className="transcript-column conversation-opening-messages">
             <div className="conversation-opening-message">
               <div className="conversation-opening-byline">
-                <span className="skeleton-bar conversation-opening-avatar" />
                 <span className="skeleton-bar conversation-opening-name" />
+                <span className="skeleton-bar conversation-opening-time" />
               </div>
-              <span className="skeleton-bar conversation-opening-line" />
-              <span className="skeleton-bar conversation-opening-line is-short" />
+              <div className="conversation-opening-prose">
+                <span className="skeleton-bar conversation-opening-line" />
+                <span className="skeleton-bar conversation-opening-line is-long" />
+                <span className="skeleton-bar conversation-opening-line is-short" />
+              </div>
             </div>
             <div className="conversation-opening-message is-human">
-              <span className="skeleton-bar conversation-opening-bubble" />
-              <span className="skeleton-bar conversation-opening-bubble is-short" />
+              <div className="conversation-opening-byline">
+                <span className="skeleton-bar conversation-opening-time" />
+                <span className="skeleton-bar conversation-opening-name is-long" />
+              </div>
+              <div className="conversation-opening-bubble">
+                <span className="skeleton-bar conversation-opening-line" />
+                <span className="skeleton-bar conversation-opening-line is-long" />
+                <span className="skeleton-bar conversation-opening-line is-medium" />
+              </div>
             </div>
             <div className="conversation-opening-message">
               <div className="conversation-opening-byline">
-                <span className="skeleton-bar conversation-opening-avatar" />
-                <span className="skeleton-bar conversation-opening-name is-short" />
+                <span className="skeleton-bar conversation-opening-name" />
+                <span className="skeleton-bar conversation-opening-time" />
               </div>
-              <span className="skeleton-bar conversation-opening-line is-medium" />
-              <span className="skeleton-bar conversation-opening-line" />
-              <span className="skeleton-bar conversation-opening-line is-short" />
+              <div className="conversation-opening-prose">
+                <span className="skeleton-bar conversation-opening-line is-long" />
+                <span className="skeleton-bar conversation-opening-line" />
+                <span className="skeleton-bar conversation-opening-line is-medium" />
+              </div>
+              <div className="conversation-opening-prose">
+                <span className="skeleton-bar conversation-opening-line" />
+                <span className="skeleton-bar conversation-opening-line is-short" />
+              </div>
             </div>
           </div>
         </div>
