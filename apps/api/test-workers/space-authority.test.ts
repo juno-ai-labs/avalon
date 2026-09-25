@@ -314,19 +314,16 @@ async function place(spaceId: SpaceId, workstreamId: WorkstreamId): Promise<void
   if (!settled.ok) throw new Error(`finalizeSpaceMembership refused: ${settled.code}`);
 }
 
-/**
- * One member Channel's own authority, opened the way
- * `channel-access-sources.test.ts` opens one.
+/*
+ * A member Channel's own authority is hosted by the Organization object, and
+ * is opened the way `channel-access-sources.test.ts` opens one.
  *
  * The archive fan-out has two halves: the Space membership says which
  * Channels this Space still reaches, and each of those Channels' parents
- * withdraws the source itself. Both now live in the Organization object, which
- * hosts every Channel parent; proving the source is gone still needs the real
- * Channel authority, not a count of membership rows.
+ * withdraws the source itself. Both now live in the Organization object;
+ * proving the source is gone still needs the real Channel authority, not a
+ * count of membership rows.
  */
-function memberChannel(_workstreamId: WorkstreamId) {
-  return workspace();
-}
 
 const observedChannel = {
   readers: { scope: "workspace" as const },
@@ -334,7 +331,7 @@ const observedChannel = {
 };
 
 async function openMemberChannel(workstreamId: WorkstreamId): Promise<void> {
-  await runInDurableObject(memberChannel(workstreamId), (_instance, state) => {
+  await runInDurableObject(workspace(), (_instance, state) => {
     // Written directly, for the reason the access-sources suite writes it: this
     // case is about the provenance rows, not about how a Channel comes to be.
     state.storage.sql.exec(
@@ -364,11 +361,11 @@ async function seatSpaceSource(workstreamId: WorkstreamId, spaceId: SpaceId): Pr
     membershipGeneration: 1,
     channel: observedChannel,
   };
-  const applied = await memberChannel(workstreamId).applySpaceAccessSource({
+  const applied = await workspace().applySpaceAccessSource({
     ...address, spaceId, ...source, operationId: crypto.randomUUID(),
   });
   if (!applied.ok) throw new Error(`applySpaceAccessSource refused: ${applied.code}`);
-  const confirmed = await memberChannel(workstreamId).confirmSpaceAccessSource({
+  const confirmed = await workspace().confirmSpaceAccessSource({
     ...address, spaceId, operationId: crypto.randomUUID(), seatedUserIds: [], source,
   });
   if (!confirmed.ok) throw new Error(`confirmSpaceAccessSource refused: ${confirmed.code}`);
@@ -1658,7 +1655,7 @@ describe("WorkspaceDO space authority", () => {
     });
     if (!members.ok) throw new Error(members.code);
     for (const { workstreamId } of members.members) {
-      const retracted = await memberChannel(workstreamId).retractSpaceAccessSource({
+      const retracted = await workspace().retractSpaceAccessSource({
         workspaceId: WORKSPACE_ID,
         parentId: workstreamId,
         spaceId,
@@ -1678,7 +1675,7 @@ describe("WorkspaceDO space authority", () => {
       bindings: [operationId],
     })).toMatchObject({ rows: [{ state: "settled", receipts_json: '["archived"]' }] });
     for (const workstreamId of [CHANNEL_A, CHANNEL_B]) {
-      expect(await memberChannel(workstreamId).readAccessSources({
+      expect(await workspace().readAccessSources({
         workspaceId: WORKSPACE_ID, parentId: workstreamId, channel: observedChannel,
       })).toMatchObject({
         spaces: [{ spaceId: second, scope: "workspace", participantUserIds: [OWNER] }],

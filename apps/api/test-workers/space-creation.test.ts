@@ -45,10 +45,6 @@ function workspace() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
 }
 
-/** A Channel's authority, hosted by the Organization object like every Channel parent. */
-function channelAuthority(_workstreamId: string) {
-  return workspace();
-}
 
 /** The address allocator needs a key; it is configuration, not behaviour. */
 function creationEnv(): Env {
@@ -133,7 +129,7 @@ describe("a Channel created without a Space", () => {
     // so a later retraction knows what it supplied. Read with the Channel as
     // the creation left it, which is the observation the authority derives the
     // direct source from.
-    const sources = await channelAuthority(workstreamId).readAccessSources({
+    const sources = await workspace().readAccessSources({
       workspaceId: WORKSPACE_ID,
       parentId: workstreamId,
       channel: { readers: { scope: "workspace" }, participantUserIds: [USER_ID] },
