@@ -129,8 +129,8 @@ beforeEach(async () => {
   ]);
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
   await runInDurableObject(workspace(), (_instance, state) => {
-    state.storage.sql.exec("DELETE FROM workspace_workstream_viewers");
-    state.storage.sql.exec("DELETE FROM workspace_workstream_directory");
+    state.storage.sql.exec("DELETE FROM channel_viewers");
+    state.storage.sql.exec("DELETE FROM channels");
     state.storage.sql.exec("DELETE FROM workspace_workstream_effect_receipts");
   });
   sequence += 1_000;

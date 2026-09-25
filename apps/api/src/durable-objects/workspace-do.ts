@@ -4786,6 +4786,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
+  /**
+   * Whether migration 71 has run. An Organization held below schema 58 by the
+   * meeting-notes cleanup has no `parent_*` tables, and its cold start and
+   * alarm must still work so the operator retirement RPCs can finish it.
+   */
+  private hostedParentSchemaPresent(): boolean {
+    return this.state.storage.sql.exec(
+      "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'parent_outbox'",
+    ).toArray().length > 0;
+  }
+
   private nextParentOutboxDueAt(): number | null {
     return this.state.storage.sql.exec<{ due_at: number | null }>(
       `SELECT MIN(not_before) AS due_at FROM parent_outbox WHERE state IN ('pending', 'inflight')`,
@@ -5568,9 +5579,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const searchAuthorization = nextSearchAuthorizationPush(this.state.storage.sql);
     const authorization = this.state.storage.sql.exec<{ due: number | null }>('SELECT MIN(not_before) AS due FROM authorization_delivery').one().due;
     const firstFrame = nextFirstFrameDeadline(this.watchedSockets(), this.socketFirstFrameDeadlineMs);
-    const parentOutbox = this.nextParentOutboxDueAt();
-    const parentBreakouts = HostedParent.nextDueAt(this.state.storage.sql);
-    const parentImport = nextParentImportDueAt(this.state.storage.sql);
+    const hosted = this.hostedParentSchemaPresent();
+    const parentOutbox = hosted ? this.nextParentOutboxDueAt() : null;
+    const parentBreakouts = hosted ? HostedParent.nextDueAt(this.state.storage.sql) : null;
+    const parentImport = hosted ? nextParentImportDueAt(this.state.storage.sql) : null;
     return [
       ...(parentOutbox === null ? [] : [parentOutbox]),
       ...(parentBreakouts === null ? [] : [parentBreakouts]),
@@ -5640,9 +5652,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (workspaceId) {
       // Hosted parents first: an outbox row is a directory update somebody is
       // waiting to see, and an import is a Channel nobody can open until it lands.
-      await this.instrumentWorkspaceAlarmPhase("parent_outbox", undefined, () => this.drainParentOutbox());
-      await this.instrumentWorkspaceAlarmPhase("parent_import", undefined, () => this.importDueParents(now));
-      await this.instrumentWorkspaceAlarmPhase("parent_breakouts", undefined, () => this.drainDueParentBreakouts(now));
+      if (this.hostedParentSchemaPresent()) {
+        await this.instrumentWorkspaceAlarmPhase("parent_outbox", undefined, () => this.drainParentOutbox());
+        await this.instrumentWorkspaceAlarmPhase("parent_import", undefined, () => this.importDueParents(now));
+        await this.instrumentWorkspaceAlarmPhase("parent_breakouts", undefined, () => this.drainDueParentBreakouts(now));
+      }
       try { await flushSearchAuthorizationPush(this.state.storage.sql, this.env, workspaceId); }
       catch { logWarn(this.env, 'search_authorization_push_deferred', { region: this.env.AVALON_REGION }); }
       try { await flushAuthorizationDeliveries(this.state.storage.sql, this.env.ACTIVITY_QUEUE, now); }

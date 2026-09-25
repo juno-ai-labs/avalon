@@ -238,7 +238,7 @@ it('repairs a terminal deadline on exact directory replay after a post-commit fa
     try {
       await expect(instance.applyWorkstreamDirectoryEffects(request)).rejects.toThrow('injected_post_commit_failure');
     } finally { failure.mockRestore(); }
-    expect(sql.exec('SELECT next_terminal_action_at FROM workspace_workstream_directory WHERE workstream_id = ?', workstreamId).one())
+    expect(sql.exec('SELECT next_terminal_action_at FROM channels WHERE workstream_id = ?', workstreamId).one())
       .toEqual({ next_terminal_action_at: Date.parse(dueAt) });
     expect(sql.exec("SELECT alarm_key FROM _internal_durable_alarms WHERE kind = 'terminal'").toArray()).toEqual([]);
     await instance.applyWorkstreamDirectoryEffects(request);
