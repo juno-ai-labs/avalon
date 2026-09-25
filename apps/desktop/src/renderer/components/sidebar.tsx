@@ -2284,10 +2284,13 @@ export function Sidebar({
           <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
             <ChevronsLeft size={16} />
           </IconButton>
-        </SidebarTitleHeader> : spaces !== undefined && (loading || !spacesReady) ? (
-          // The Space this rail will be headed by has not arrived. Its mark and
-          // name are drawn as placeholders rather than falling through to the
-          // header below, whose New button a Space rail never shows.
+        </SidebarTitleHeader> : spaces !== undefined && loading ? (
+          // The first answer, which carries the Space that heads this rail, is
+          // in flight: its mark and name are drawn as placeholders rather than
+          // the New header below, which only an answered rail with no Space
+          // falls through to. Gated on `loading` alone: an Organization that is
+          // still opening (`!spacesReady`) can stay so for a whole backfill,
+          // and keeps its working New channel for that time.
           <SidebarTitleHeader
             className="sidebar-titlebar window-drag channels-sidebar-titlebar skeleton-title-header"
             icon={<span className="skeleton-bar skeleton-title-mark" />}
