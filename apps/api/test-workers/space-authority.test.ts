@@ -41,7 +41,7 @@ import {
 import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
 import { canonicalWorkstreamUrl } from "../src/services/workstream-link-service";
 
-import { workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import { workspaceDOName } from "../src/durable-objects/names";
 import { WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS } from "../src/durable-objects/workspace-breakout-storage";
 
 /** Its own workspace id: object names are shared across files, storage is not. */
@@ -318,13 +318,14 @@ async function place(spaceId: SpaceId, workstreamId: WorkstreamId): Promise<void
  * One member Channel's own authority, opened the way
  * `channel-access-sources.test.ts` opens one.
  *
- * The archive fan-out is two objects: WorkspaceDO says which Channels this
- * Space still reaches, and each of those Channels withdraws the source itself.
- * Proving the source is gone therefore needs the real Channel authority, not a
- * count of membership rows.
+ * The archive fan-out has two halves: the Space membership says which
+ * Channels this Space still reaches, and each of those Channels' parents
+ * withdraws the source itself. Both now live in the Organization object, which
+ * hosts every Channel parent; proving the source is gone still needs the real
+ * Channel authority, not a count of membership rows.
  */
-function memberChannel(workstreamId: WorkstreamId) {
-  return env.WORKSTREAM_DOS.getByName(workstreamDOName("global", WORKSPACE_ID, workstreamId));
+function memberChannel(_workstreamId: WorkstreamId) {
+  return workspace();
 }
 
 const observedChannel = {
@@ -337,16 +338,17 @@ async function openMemberChannel(workstreamId: WorkstreamId): Promise<void> {
     // Written directly, for the reason the access-sources suite writes it: this
     // case is about the provenance rows, not about how a Channel comes to be.
     state.storage.sql.exec(
-      `INSERT INTO workstream_metadata
-         (id, workspace_id, workstream_id, region, authority_generation, title, description,
+      `INSERT INTO parent_metadata
+         (parent_id, parent_kind, workspace_id, region, authority_generation, title, description,
           preview, scope, exact_state, last_activity_at, created_at, updated_at)
-       VALUES (1, ?, ?, 'global', 1, 'Member Channel', '', '', 'workspace', 'idle', 1, 1, 1)`,
-      WORKSPACE_ID,
+       VALUES (?, 'workstream', ?, 'global', 1, 'Member Channel', '', '', 'workspace', 'idle', 1, 1, 1)`,
       workstreamId,
+      WORKSPACE_ID,
     );
     state.storage.sql.exec(
-      `INSERT INTO conversation_children (substream_id, kind, created_by_user_id, created_at, status, updated_at)
-       VALUES ('0', 'main', ?, 1, 'ready', 1)`,
+      `INSERT INTO parent_children (parent_id, substream_id, kind, created_by_user_id, created_at, status, updated_at)
+       VALUES (?, '0', 'main', ?, 1, 'ready', 1)`,
+      workstreamId,
       OWNER,
     );
   });
@@ -707,7 +709,7 @@ describe("WorkspaceDO space authority", () => {
       bindings: [],
     })).toMatchObject({ rows: [{ count: 0 }] });
     expect(await workspace().runInspectionSql({
-      sql: "SELECT space_id FROM workspace_space_directory",
+      sql: "SELECT space_id FROM spaces",
       bindings: [],
     })).toMatchObject({ rows: [{ space_id: spaceId }] });
   });
@@ -1366,7 +1368,7 @@ describe("WorkspaceDO space authority", () => {
     if (!plan.ok || !plan.equivalentAudience) throw new Error("move was not staged");
     await runInDurableObject(workspace(), (_instance, state) => {
       state.storage.sql.exec(
-        "UPDATE workspace_space_viewers SET is_participant = 0 WHERE space_id = ? AND user_id = ?",
+        "UPDATE space_viewers SET is_participant = 0 WHERE space_id = ? AND user_id = ?",
         target,
         OWNER,
       );
@@ -1751,14 +1753,14 @@ describe("WorkspaceDO space authority", () => {
     expect(second.space.id).toBe(first.space.id);
     expect([first.created, second.created].filter(Boolean)).toHaveLength(1);
     expect(await workspace().runInspectionSql({
-      sql: "SELECT space_id FROM workspace_space_directory WHERE system_role = 'general'",
+      sql: "SELECT space_id FROM spaces WHERE system_role = 'general'",
       bindings: [],
     })).toMatchObject({ rows: [{ space_id: first.space.id }] });
     // And the loser left nothing behind: a reservation writes a viewer row and
     // an order row beside the directory row, and the refused one rolls all
     // three back rather than orphaning them under an id nothing names.
     expect(await workspace().runInspectionSql({
-      sql: "SELECT COUNT(*) AS count FROM workspace_space_directory",
+      sql: "SELECT COUNT(*) AS count FROM spaces",
       bindings: [],
     })).toMatchObject({ rows: [{ count: 1 }] });
   });
@@ -1851,9 +1853,9 @@ describe("WorkspaceDO space authority", () => {
       for (const table of [
         "space_default_publications", "space_default_targets", "space_defaults",
         "space_channel_memberships", "space_intents",
-        "space_bootstrap", "workspace_container_order", "workspace_space_viewers",
-        "workspace_space_state", "workspace_space_directory",
-        "workspace_breakout_viewers", "workspace_breakout_directory",
+        "space_bootstrap", "workspace_container_order", "space_viewers",
+        "workspace_space_state", "spaces",
+        "breakout_viewers", "breakouts",
       ]) sql.exec(`DROP TABLE ${table}`);
     });
     await evictDurableObject(workspace());
@@ -1865,7 +1867,7 @@ describe("WorkspaceDO space authority", () => {
       bindings: [],
     })).toMatchObject({ rows: [{ version: 57 }] });
     expect(await workspace().runInspectionSql({
-      sql: "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_space_directory'",
+      sql: "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'spaces'",
       bindings: [],
     })).toMatchObject({ rows: [] });
 
@@ -1923,14 +1925,17 @@ describe("WorkspaceDO space authority", () => {
       bindings: [breakoutEnvelope.messageId],
     })).resolves.toMatchObject({ rows: [{ count: 0 }] });
 
-    // Install the exact breakout tables from migration 63 without exercising
-    // the unrelated meeting-retirement chain this fixture deliberately holds.
-    // The same delivery is then accepted: this is the Queue retry the empty
-    // acceptance preserves rather than a second publication from the Channel.
+    // Install the exact breakout tables from migration 63, under the names
+    // migration 71 gives them, without exercising the unrelated
+    // meeting-retirement chain this fixture deliberately holds. The same
+    // delivery is then accepted: this is the Queue retry the empty acceptance
+    // preserves rather than a second publication from the Channel.
     await runInDurableObject(workspace(), (_instance, state) => {
       for (const statement of WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS) {
         state.storage.sql.exec(statement);
       }
+      state.storage.sql.exec("ALTER TABLE workspace_breakout_directory RENAME TO breakouts");
+      state.storage.sql.exec("ALTER TABLE workspace_breakout_viewers RENAME TO breakout_viewers");
     });
     await expect(workspace().applyWorkstreamDirectoryEffects({
       workspaceId: WORKSPACE_ID,
@@ -1939,7 +1944,7 @@ describe("WorkspaceDO space authority", () => {
       accepted: [{ messageId: breakoutEnvelope.messageId, payloadHash: breakoutEnvelope.payloadHash }],
     });
     await expect(workspace().runInspectionSql({
-      sql: "SELECT title FROM workspace_breakout_directory WHERE workstream_id = ? AND substream_id = ?",
+      sql: "SELECT title FROM breakouts WHERE workstream_id = ? AND substream_id = ?",
       bindings: [CHANNEL_A, BREAKOUT_A],
     })).resolves.toMatchObject({ rows: [{ title: "Quiet breakout" }] });
 

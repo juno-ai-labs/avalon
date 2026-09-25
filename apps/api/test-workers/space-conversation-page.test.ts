@@ -450,10 +450,23 @@ async function seedLegacyChannel(workstreamId: WorkstreamId, projections: Legacy
   });
 }
 
-/** The Organization's ledger names the parent as still held by its legacy object. */
+/**
+ * Hand the parent back to its legacy object: the Organization holds no hosted
+ * rows for it, and its import ledger says it is still to be imported.
+ *
+ * A case opens the hosted parent first and removes it here, because a
+ * directory effect for a parent the Organization does not host notes it for
+ * import, and the alarm would then import it at a moment the case does not
+ * choose. One transaction, so the alarm sees either the open parent or the
+ * pending one.
+ */
 async function markParentPendingImport(workstreamId: WorkstreamId): Promise<void> {
   await runInDurableObject(workspace(), (_instance, state) => {
-    notePendingParentImport(state.storage.sql, workstreamId, "workstream");
+    state.storage.transactionSync(() => {
+      state.storage.sql.exec("DELETE FROM parent_children WHERE parent_id = ?", workstreamId);
+      state.storage.sql.exec("DELETE FROM parent_metadata WHERE parent_id = ?", workstreamId);
+      notePendingParentImport(state.storage.sql, workstreamId, "workstream");
+    });
   });
 }
 
@@ -581,6 +594,7 @@ beforeEach(async () => {
 
 describe("space dashboard conversation page", () => {
   it("replays breakout projections that were already stored when forwarding shipped", async () => {
+    await openChannelObject(CHANNEL_A);
     await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
 
     // The deployed state before breakout forwarding: the legacy Channel object
@@ -1480,6 +1494,7 @@ describe("space dashboard conversation page", () => {
   });
 
   it("retracts background agents a Channel already forwarded as breakouts when it is imported", async () => {
+    await openChannelObject(CHANNEL_A);
     await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
     // What the Organization holds: both children as breakouts, the agent's
     // first, unmarked projection among them.
