@@ -1219,7 +1219,8 @@ describe("Durable Objects in the Workers runtime", () => {
     const legacy = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
       workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
-    expect((await fetchAndDrain(legacy, "https://object.test/health")).status).toBe(410);
+    const health = await legacy.fetch("https://object.test/health");
+    expect(await health.json()).toMatchObject({ ok: true, role: "workstream-legacy" });
     await runInDurableObject(legacy, (instance, state) => {
       expect(instance).toBeInstanceOf(WorkstreamDO);
       expect(tableNames(state)).toEqual([]);

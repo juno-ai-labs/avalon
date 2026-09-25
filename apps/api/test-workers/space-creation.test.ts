@@ -23,7 +23,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { asSpaceId, asUserId, asWorkspaceId, asWorkstreamId, type SpaceId } from "@rally/contracts";
 
 import type { AuthContext, Env } from "../src/env";
-import { workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import { workspaceDOName } from "../src/durable-objects/names";
 import { SlackWorkspaceWorkstreamService } from "../src/services/slack-workspace-workstream-service";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
@@ -45,10 +45,9 @@ function workspace() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
 }
 
-function channelAuthority(workstreamId: string) {
-  return env.WORKSTREAM_DOS.getByName(
-    workstreamDOName("global", WORKSPACE_ID, asWorkstreamId(workstreamId)),
-  );
+/** A Channel's authority, hosted by the Organization object like every Channel parent. */
+function channelAuthority(_workstreamId: string) {
+  return workspace();
 }
 
 /** The address allocator needs a key; it is configuration, not behaviour. */

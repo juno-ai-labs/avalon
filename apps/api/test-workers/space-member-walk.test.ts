@@ -38,7 +38,7 @@ import {
 } from "@rally/contracts";
 import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
 
-import { conversationObjectName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import { SPACE_BOOTSTRAP_PAGE_SIZE } from "../src/durable-objects/workspace-space-storage";
 import type { AuthContext } from "../src/env";
 import { consumeActivityQueue } from "../src/queues/activity-consumer";
@@ -77,8 +77,9 @@ function workspace() {
   return env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID));
 }
 
-function memberChannel(workstreamId: WorkstreamId) {
-  return env.WORKSTREAM_DOS.getByName(workstreamDOName("global", WORKSPACE_ID, workstreamId));
+/** A member Channel's authority, hosted by the Organization object like every Channel parent. */
+function memberChannel(_workstreamId: WorkstreamId) {
+  return workspace();
 }
 
 function conversation(workstreamId: WorkstreamId) {
@@ -206,9 +207,10 @@ const observedChannel = {
 };
 
 /**
- * One member Channel, in both objects a Space step reaches.
+ * One member Channel, in both places a Space step reaches.
  *
- * The authority holds the provenance the retraction acts on; the hidden
+ * The authority (hosted by the Organization object) holds the provenance the
+ * retraction acts on; the hidden
  * conversation is what `ChannelAccessService` reads the Channel's own audience
  * from before it asks for a plan. Written directly rather than created through
  * the coordinator, because this file is about the walk over them rather than
@@ -218,16 +220,17 @@ const observedChannel = {
 async function openMemberChannel(workstreamId: WorkstreamId): Promise<void> {
   await runInDurableObject(memberChannel(workstreamId), (_instance, state) => {
     state.storage.sql.exec(
-      `INSERT INTO workstream_metadata
-         (id, workspace_id, workstream_id, region, authority_generation, title, description,
+      `INSERT INTO parent_metadata
+         (parent_id, parent_kind, workspace_id, region, authority_generation, title, description,
           preview, scope, exact_state, last_activity_at, created_at, updated_at)
-       VALUES (1, ?, ?, 'global', 1, 'Member Channel', '', '', 'workspace', 'idle', 1, 1, 1)`,
-      WORKSPACE_ID,
+       VALUES (?, 'workstream', ?, 'global', 1, 'Member Channel', '', '', 'workspace', 'idle', 1, 1, 1)`,
       workstreamId,
+      WORKSPACE_ID,
     );
     state.storage.sql.exec(
-      `INSERT INTO conversation_children (substream_id, kind, created_by_user_id, created_at, status, updated_at)
-       VALUES ('0', 'main', ?, 1, 'ready', 1)`,
+      `INSERT INTO parent_children (parent_id, substream_id, kind, created_by_user_id, created_at, status, updated_at)
+       VALUES (?, '0', 'main', ?, 1, 'ready', 1)`,
+      workstreamId,
       OWNER,
     );
   });
