@@ -4,6 +4,10 @@ import { z } from "zod";
 import type { NamedAudienceSource } from "../lib/channel-audience";
 
 /**
+ * The legacy `WorkstreamDO` ledger's statements, frozen: migration 18 of that
+ * ledger names them, and a shipped migration is never edited. The hosted
+ * tables these became are in `hosted-parent-schema.ts`.
+ *
  * Included in the parent object's versioned migrations, never run on the
  * request path. It sits here rather than in `workstream-do-schema.ts` for the
  * reason every other statement group does: the tables belong to the storage
@@ -107,7 +111,12 @@ function sourceFromRow(row: {
  * computed from can never disagree.
  */
 export class WorkstreamAccessStorage {
-  constructor(private readonly storage: DurableObjectStorage) {}
+  /**
+   * One Channel's rows inside the Organization object. Every statement below
+   * names `parent_id`: a statement that forgot it would read or rewrite the
+   * provenance of every Channel in the Organization.
+   */
+  constructor(private readonly storage: DurableObjectStorage, private readonly parentId: string) {}
 
   private get sql(): SqlStorage {
     return this.storage.sql;
@@ -122,7 +131,8 @@ export class WorkstreamAccessStorage {
    */
   directAudience(): { scope: AudienceScope; observed: boolean } {
     const row = this.sql.exec<{ scope: string; updated_at: number }>(
-      "SELECT scope, updated_at FROM workstream_direct_audience WHERE id = 1",
+      "SELECT scope, updated_at FROM parent_direct_audience WHERE parent_id = ?",
+      this.parentId,
     ).toArray()[0];
     if (!row) return { scope: "personal", observed: false };
     return { scope: AudienceScopeSchema.parse(row.scope), observed: row.updated_at > 0 };
@@ -138,8 +148,9 @@ export class WorkstreamAccessStorage {
    */
   recordDirectScope(scope: AudienceScope, now: number, observed = true): void {
     this.sql.exec(
-      `INSERT INTO workstream_direct_audience (id, scope, updated_at) VALUES (1, ?, ?)
-         ON CONFLICT (id) DO UPDATE SET scope = excluded.scope, updated_at = excluded.updated_at`,
+      `INSERT INTO parent_direct_audience (parent_id, scope, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT (parent_id) DO UPDATE SET scope = excluded.scope, updated_at = excluded.updated_at`,
+      this.parentId,
       AudienceScopeSchema.parse(scope),
       // A recorded scope has to be distinguishable from the backfill, and the
       // caller's clock can be zero in a test that pins time.
@@ -153,7 +164,8 @@ export class WorkstreamAccessStorage {
       space_revision: number; membership_generation: number;
     }>(
       `SELECT space_id, scope, participants_json, space_revision, membership_generation
-         FROM workstream_space_access_sources ORDER BY space_id`,
+         FROM parent_space_sources WHERE parent_id = ? ORDER BY space_id`,
+      this.parentId,
     ).toArray().map(sourceFromRow);
   }
 
@@ -163,7 +175,8 @@ export class WorkstreamAccessStorage {
       space_revision: number; membership_generation: number;
     }>(
       `SELECT space_id, scope, participants_json, space_revision, membership_generation
-         FROM workstream_space_access_sources WHERE space_id = ?`,
+         FROM parent_space_sources WHERE parent_id = ? AND space_id = ?`,
+      this.parentId,
       spaceId,
     ).toArray()[0];
     return row ? sourceFromRow(row) : null;
@@ -179,15 +192,16 @@ export class WorkstreamAccessStorage {
     now: number;
   }): void {
     this.sql.exec(
-      `INSERT INTO workstream_space_access_sources
-         (space_id, scope, participants_json, space_revision, membership_generation,
+      `INSERT INTO parent_space_sources
+         (parent_id, space_id, scope, participants_json, space_revision, membership_generation,
           operation_id, applied_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (space_id) DO UPDATE SET
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (parent_id, space_id) DO UPDATE SET
          scope = excluded.scope, participants_json = excluded.participants_json,
          space_revision = excluded.space_revision,
          membership_generation = excluded.membership_generation,
          operation_id = excluded.operation_id, updated_at = excluded.updated_at`,
+      this.parentId,
       input.spaceId,
       AudienceScopeSchema.parse(input.scope),
       JSON.stringify(ParticipantsSchema.parse([...input.participantUserIds])),
@@ -201,12 +215,13 @@ export class WorkstreamAccessStorage {
 
   /** Deletes the source and, through the cascade, its supplied readers. */
   deleteSource(spaceId: string): void {
-    this.sql.exec("DELETE FROM workstream_space_access_sources WHERE space_id = ?", spaceId);
+    this.sql.exec("DELETE FROM parent_space_sources WHERE parent_id = ? AND space_id = ?", this.parentId, spaceId);
   }
 
   suppliedReaders(spaceId: string): UserId[] {
     return this.sql.exec<{ user_id: string }>(
-      "SELECT user_id FROM workstream_space_supplied_readers WHERE space_id = ? ORDER BY user_id",
+      "SELECT user_id FROM parent_space_readers WHERE parent_id = ? AND space_id = ? ORDER BY user_id",
+      this.parentId,
       spaceId,
     ).toArray().map((row) => UserIdSchema.parse(row.user_id));
   }
@@ -214,8 +229,9 @@ export class WorkstreamAccessStorage {
   recordSuppliedReaders(spaceId: string, userIds: readonly UserId[]): void {
     for (const userId of userIds) {
       this.sql.exec(
-        `INSERT INTO workstream_space_supplied_readers (space_id, user_id) VALUES (?, ?)
-           ON CONFLICT (space_id, user_id) DO NOTHING`,
+        `INSERT INTO parent_space_readers (parent_id, space_id, user_id) VALUES (?, ?, ?)
+           ON CONFLICT (parent_id, space_id, user_id) DO NOTHING`,
+        this.parentId,
         spaceId,
         UserIdSchema.parse(userId),
       );
@@ -231,7 +247,8 @@ export class WorkstreamAccessStorage {
    */
   claimReaderAsDirect(userId: UserId): void {
     this.sql.exec(
-      "DELETE FROM workstream_space_supplied_readers WHERE user_id = ?",
+      "DELETE FROM parent_space_readers WHERE parent_id = ? AND user_id = ?",
+      this.parentId,
       UserIdSchema.parse(userId),
     );
   }
@@ -255,7 +272,8 @@ export class WorkstreamAccessStorage {
     const requestJson = JSON.stringify(input.request);
     return this.storage.transactionSync(() => {
       const receipt = this.sql.exec<{ request_json: string; result_json: string }>(
-        "SELECT request_json, result_json FROM workstream_access_operations WHERE operation_id = ?",
+        "SELECT request_json, result_json FROM parent_access_operations WHERE parent_id = ? AND operation_id = ?",
+        this.parentId,
         input.operationId,
       ).toArray()[0];
       if (receipt) {
@@ -264,8 +282,9 @@ export class WorkstreamAccessStorage {
       }
       const result = input.resultSchema.parse(input.body());
       this.sql.exec(
-        `INSERT INTO workstream_access_operations (operation_id, request_json, result_json, created_at)
-         VALUES (?, ?, ?, ?)`,
+        `INSERT INTO parent_access_operations (parent_id, operation_id, request_json, result_json, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        this.parentId,
         input.operationId,
         requestJson,
         JSON.stringify(result),

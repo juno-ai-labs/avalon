@@ -17,7 +17,7 @@ import { projectionSupersedes, type StoredProjection } from "./projection-fence"
  * while its Channel is not, so the projection now travels the rest of the way.
  *
  * These are **two more directory tables, not a widening of the Channel's.**
- * `workspace_workstream_directory` is read as "one row per Channel" by every
+ * `channels` is read as "one row per Channel" by every
  * sidebar page, pin, watch registration, retirement enumeration and cutover
  * query in WorkspaceDO; a `substream_id` column there would have made each of
  * those learn a filter it does not have today, and the first one that forgot
@@ -34,7 +34,7 @@ import { projectionSupersedes, type StoredProjection } from "./projection-fence"
  * WorkspaceDO's breakout directory tables. Migration 63.
  *
  * **Neither table has a foreign key, and that is a measured decision rather
- * than an omission.** `workspace_workstream_viewers` cascades from the Channel
+ * than an omission.** `channel_viewers` cascades from the Channel
  * directory, and the obvious reading is that these two should cascade the same
  * way — from the Channel directory, and from the breakout directory. Both were
  * tried on real workerd and both are wrong, because Durable Object SQLite
@@ -172,13 +172,13 @@ export const SELECT_WORKSPACE_BREAKOUT = `SELECT breakout.workstream_id, breakou
     viewer.manual_unread_generation, viewer.latest_mention_attention_ordinal,
     viewer.unseen, parent.title AS parent_title,
     parent.appearance_json AS parent_appearance_json
-  FROM workspace_breakout_directory breakout
-  LEFT JOIN workspace_breakout_viewers viewer
+  FROM breakouts breakout
+  LEFT JOIN breakout_viewers viewer
     ON viewer.workstream_id = breakout.workstream_id
    AND viewer.substream_id = breakout.substream_id
    AND viewer.user_id = ?
    AND viewer.authority_generation = breakout.authority_generation
-  JOIN workspace_workstream_directory parent
+  JOIN channels parent
     ON parent.workstream_id = breakout.workstream_id`;
 
 /**
@@ -210,7 +210,7 @@ export class WorkspaceBreakoutStorage {
   ready(): boolean {
     if (this.tablesPresent === null) {
       const columns = this.storage.sql.exec<{ name: string } & Record<string, SqlStorageValue>>(
-        `PRAGMA table_info(workspace_breakout_directory)`,
+        `PRAGMA table_info(breakouts)`,
       ).toArray();
       this.tablesPresent = columns.length > 0;
       this.appearanceColumnPresent = columns.some((column) => column.name === "appearance_json");
@@ -233,7 +233,7 @@ export class WorkspaceBreakoutStorage {
     const effect = envelope.effect;
     const current = this.storage.sql.exec<StoredProjection & Record<string, SqlStorageValue>>(
       `SELECT authority_generation, waterline, payload_hash
-         FROM workspace_breakout_directory WHERE workstream_id = ? AND substream_id = ?`,
+         FROM breakouts WHERE workstream_id = ? AND substream_id = ?`,
       envelope.parentId,
       envelope.substreamId,
     ).toArray()[0];
@@ -250,7 +250,7 @@ export class WorkspaceBreakoutStorage {
     const tombstone = effect.backgroundAgent === true;
     if (tombstone) {
       this.storage.sql.exec(
-        `DELETE FROM workspace_breakout_viewers WHERE workstream_id = ? AND substream_id = ?`,
+        `DELETE FROM breakout_viewers WHERE workstream_id = ? AND substream_id = ?`,
         envelope.parentId,
         envelope.substreamId,
       );
@@ -263,7 +263,7 @@ export class WorkspaceBreakoutStorage {
     const appearanceUpdate = this.appearanceColumnPresent
       ? ", appearance_json = excluded.appearance_json" : "";
     this.storage.sql.exec(
-      `INSERT INTO workspace_breakout_directory
+      `INSERT INTO breakouts
          (workstream_id, substream_id, authority_generation, waterline, source_event_id,
           payload_hash, title, description, scope, exact_state${appearanceColumn}, title_status,
           created_by_user_id, last_activity_at, completed_at, archived_at,
@@ -335,7 +335,7 @@ export class WorkspaceBreakoutStorage {
     const effect = envelope.effect;
     if (!activeMember) {
       const deleted = this.storage.sql.exec<{ is_participant: number } & Record<string, SqlStorageValue>>(
-        `DELETE FROM workspace_breakout_viewers
+        `DELETE FROM breakout_viewers
           WHERE workstream_id = ? AND substream_id = ? AND user_id = ? RETURNING is_participant`,
         envelope.parentId,
         envelope.substreamId,
@@ -347,7 +347,7 @@ export class WorkspaceBreakoutStorage {
       is_participant: number;
     } & Record<string, SqlStorageValue>>(
       `SELECT authority_generation, waterline, payload_hash, is_participant
-         FROM workspace_breakout_viewers
+         FROM breakout_viewers
         WHERE workstream_id = ? AND substream_id = ? AND user_id = ?`,
       envelope.parentId,
       envelope.substreamId,
@@ -357,7 +357,7 @@ export class WorkspaceBreakoutStorage {
       return unchanged;
     }
     this.storage.sql.exec(
-      `INSERT INTO workspace_breakout_viewers
+      `INSERT INTO breakout_viewers
          (workstream_id, substream_id, user_id, authority_generation, waterline,
           source_event_id, payload_hash, is_participant, unread_count,
           you_are_mentioned, unseen, listable, seen_attention_ordinal,

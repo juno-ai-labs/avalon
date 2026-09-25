@@ -33,19 +33,20 @@ export function scopeInvitationOrigin(env: Env): URL | null {
   return origin;
 }
 
-/** Product authority stays in the WorkstreamDO that owns the resulting grants. */
+/** Product authority stays with the parent that owns the resulting grants. */
 export class ScopeInvitationService {
   private readonly invitations: ScopeInvitationStorage;
   constructor(private readonly env: Env, private readonly storage: DurableObjectStorage,
+    private readonly parentId: string,
     private readonly resolve: (request: ScopeAccessRequest, relationship: WorkspaceRelationship | null) => ScopeAccessResult,
     private readonly coverageMatches: (request: z.infer<typeof CreateScopeInvitationsSchema>) => boolean,
     private readonly enqueueDirectory: (grant: ScopeGrant, now: number) => void) {
-    this.invitations = new ScopeInvitationStorage(storage);
+    this.invitations = new ScopeInvitationStorage(storage, parentId);
   }
 
   private canShare(targets: z.infer<typeof CreateScopeInvitationsSchema>["targets"], actor: WorkspaceRelationship | null): boolean {
-    if (this.storage.sql.exec("SELECT 1 FROM main_participant_migration WHERE phase = 'pending'").toArray().length ||
-      this.storage.sql.exec("SELECT 1 FROM child_participant_migrations WHERE phase = 'pending' LIMIT 1").toArray().length) return false;
+    if (this.storage.sql.exec("SELECT 1 FROM parent_participant_migrations WHERE parent_id = ? AND phase = 'pending' LIMIT 1",
+      this.parentId).toArray().length) return false;
     return actor !== null && targets.every((target) => {
       const access = this.resolve({ target, userId: actor.userId }, actor);
       return access.allowed && access.writable && access.grantIds.length > 0;
@@ -54,15 +55,18 @@ export class ScopeInvitationService {
 
   private targetsReady(targets: z.infer<typeof CreateScopeInvitationsSchema>["targets"]): boolean {
     if (targets.some((target) => target.kind === "workstream") && this.storage.sql.exec(
-      `SELECT 1 FROM conversation_children child LEFT JOIN child_participant_migrations migration
-        ON migration.substream_id=child.substream_id
-       WHERE child.kind='child' AND child.status='ready' AND child.audience='inherits_workstream'
+      `SELECT 1 FROM parent_children child LEFT JOIN parent_participant_migrations migration
+        ON migration.parent_id=child.parent_id AND migration.substream_id=child.substream_id
+       WHERE child.parent_id=? AND child.kind='child' AND child.status='ready' AND child.audience='inherits_workstream'
          AND (migration.phase IS NULL OR migration.phase!='complete') LIMIT 1`,
+      this.parentId,
     ).toArray().length > 0) return false;
     return targets.every((target) => {
-      const phase = target.kind === "workstream" || target.substreamId === "0"
-        ? this.storage.sql.exec<{ phase: string }>("SELECT phase FROM main_participant_migration WHERE singleton = 1").toArray()[0]?.phase
-        : this.storage.sql.exec<{ phase: string }>("SELECT phase FROM child_participant_migrations WHERE substream_id = ?", target.substreamId).toArray()[0]?.phase;
+      const substreamId = target.kind === "workstream" ? "0" : target.substreamId;
+      const phase = this.storage.sql.exec<{ phase: string }>(
+        "SELECT phase FROM parent_participant_migrations WHERE parent_id = ? AND substream_id = ?",
+        this.parentId, substreamId,
+      ).toArray()[0]?.phase;
       return phase === "complete";
     });
   }
@@ -182,6 +186,7 @@ export class ScopeInvitationService {
       }
       if (!this.canShare(current.summary.targets, currentActor)) return denied("sharing_required");
       const grants = new ScopeGrantStorage(this.storage, request, this.enqueueDirectory);
+      if (request.parentId !== this.parentId) throw new Error("scope_invitation_parent_mismatch");
       for (const [index, target] of current.summary.targets.entries()) {
         const operationId = current.grantOperationIds[index];
         if (!operationId) throw new Error("scope_invitation_grant_operation_missing");
@@ -285,9 +290,11 @@ export class ScopeInvitationService {
       // Inside the guard with the transcript read: a local read that fails is
       // still only a title, and an invitation must not fail for want of one.
       conversationTitle = substreamId === "0"
-        ? this.storage.sql.exec<{ title: string | null }>("SELECT title FROM workstream_metadata WHERE id = 1").toArray()[0]?.title ?? null
-        : this.storage.sql.exec<{ title: string | null }>("SELECT title FROM conversation_children WHERE substream_id = ?", substreamId)
-          .toArray()[0]?.title ?? null;
+        ? this.storage.sql.exec<{ title: string | null }>("SELECT title FROM parent_metadata WHERE parent_id = ?", this.parentId)
+          .toArray()[0]?.title ?? null
+        : this.storage.sql.exec<{ title: string | null }>(
+          "SELECT title FROM parent_children WHERE parent_id = ? AND substream_id = ?", this.parentId, substreamId,
+        ).toArray()[0]?.title ?? null;
       return { conversationTitle, preview: await readConversationPreview(this.env, {
         workspaceId: target.workspaceId, parentId: target.parentId, substreamId,
         turns: PREVIEW_TURNS, words: PREVIEW_WORDS, bytes: PREVIEW_BYTES,
