@@ -96,7 +96,7 @@ describe("seeding a pack", () => {
     await service.addChannel(id, asWorkstreamId(opened.workstreamId!));
     expect(await runInDurableObject(workspace, (_instance, state) =>
       state.storage.sql.exec<{ source_version: number }>(
-        "SELECT source_version FROM workspace_space_directory WHERE space_id = ?", id,
+        "SELECT source_version FROM spaces WHERE space_id = ?", id,
       ).one().source_version)).toBe(0);
     // Fail the regional anchor write on a real second provision, before any
     // first projection reaches WorkspaceDO. No service or object is doubled.
@@ -155,7 +155,7 @@ describe("seeding a pack", () => {
         .toEqual({ spaceIds: [id] });
     }
     expect(await runInDurableObject(workspace, (_instance, state) =>
-      state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM workspace_space_directory WHERE title = ?", "Customer: Acme").one().count))
+      state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM spaces WHERE title = ?", "Customer: Acme").one().count))
       .toBe(1);
     expect(provider.calls).toEqual([]);
   });
