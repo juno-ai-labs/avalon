@@ -248,9 +248,7 @@ export class AutomationService {
         // after the archive, and the object itself answers what the archive
         // forbids (`sidekick_room_archived` on resume) rather than a blanket
         // refusal that hides it.
-        const owner = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
-          this.auth.workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
-        participantOfOwningWorkstream = (await owner.readManagementAccess({
+        participantOfOwningWorkstream = (await workspace.readManagementAccess({
           workspaceId: this.auth.workspaceId,
           parentId: owned.owningWorkstreamId,
           userId: this.auth.userId,
