@@ -388,7 +388,6 @@
   --av-cmp-row-height: 46px;
   --av-cmp-row-padding: 8px;
   --av-cmp-row-leading: 1.55;
-  --av-cmp-row-hint-gap: 7px;
   --av-cmp-row-height-dense: 44px;
   --av-cmp-row-background-selected: rgba(119, 119, 119, 0.17);
 
@@ -753,7 +752,6 @@
   --av-cmp-row-height: 46px;
   --av-cmp-row-padding: 8px;
   --av-cmp-row-leading: 1.55;
-  --av-cmp-row-hint-gap: 7px;
   --av-cmp-row-height-dense: 44px;
   --av-cmp-row-background-selected: rgba(119, 119, 119, 0.32);
 
