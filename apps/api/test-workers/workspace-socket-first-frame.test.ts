@@ -12,7 +12,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
 import { asUserId, asWorkspaceId } from "@rally/contracts";
@@ -209,6 +209,26 @@ describe("WorkspaceDO first-frame watch", () => {
     await runDurableObjectAlarm(workspace()).catch(() => undefined);
     expect(resetLogged()).toBe(true);
     errors.mockClear();
+    const fresh = await currentInstance();
+    await setDeadline(0);
+
+    await runDurableObjectAlarm(workspace());
+
+    expect(await currentInstance()).toBe(fresh);
+    expect(resetLogged()).toBe(false);
+    expect(await unheardIds()).toEqual([]);
+  });
+
+  // A healthy object ran the close callback, then was evicted before the
+  // deadline: the fresh instance never heard it, and must not read the row as
+  // a socket it failed to hear.
+  it("does not reset after an eviction over a socket an earlier instance heard close", async () => {
+    const socket = await openSilentSocket();
+    socket.close(1000, "gave up");
+    await vi.waitFor(async () => {
+      expect(await runInDurableObject(workspace(), (_instance: WorkspaceDO, state) => state.getWebSockets().length)).toBe(0);
+    });
+    await evictDurableObject(workspace());
     const fresh = await currentInstance();
     await setDeadline(0);
 
