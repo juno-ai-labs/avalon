@@ -2432,6 +2432,56 @@ export class WorkspaceSpaceStorage {
     });
   }
 
+  /**
+   * Put a Channel that is being created straight into a Space, active.
+   *
+   * No `joining` stage and no intent: the caller writes the membership, the
+   * Channel's parent and its Space sources in one transaction, so there is no
+   * moment between a staged row and its settlement for a crash to land in and
+   * nothing for an alarm to finish. A row that is already active (a retry of
+   * the same create) keeps its generation; a removed one is reactivated at the
+   * next generation, as `prepareMembership` would stage it.
+   */
+  enterMembershipAtBirth(
+    request: WorkspaceSpaceMembershipRequest,
+    now = Date.now(),
+  ): { ok: true; space: SpaceSummary; membershipGeneration: number } | { ok: false } {
+    return this.storage.transactionSync(() => {
+      if (!this.canEdit(request.userId, request.spaceId, true)) return { ok: false as const };
+      const existing = this.storage.sql.exec<{
+        state: string;
+        generation: number;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT state, generation FROM space_channel_memberships
+          WHERE space_id = ? AND workstream_id = ?`,
+        request.spaceId,
+        request.workstreamId,
+      ).toArray()[0];
+      const membershipGeneration = existing?.state === "active"
+        ? existing.generation
+        : (existing?.generation ?? 0) + 1;
+      if (existing?.state !== "active") {
+        this.storage.sql.exec(
+          `INSERT INTO space_channel_memberships
+             (space_id, workstream_id, state, generation, joined_at, updated_at, removed_at)
+           VALUES (?, ?, 'active', ?, ?, ?, NULL)
+           ON CONFLICT (space_id, workstream_id) DO UPDATE
+             SET state = 'active', generation = excluded.generation, joined_at = excluded.joined_at,
+                 updated_at = excluded.updated_at, removed_at = NULL`,
+          request.spaceId,
+          request.workstreamId,
+          membershipGeneration,
+          now,
+          now,
+        );
+        this.advanceWaterline(now);
+      }
+      const space = this.space(request.spaceId, request.userId);
+      if (space === false) return { ok: false as const };
+      return { ok: true as const, space, membershipGeneration };
+    });
+  }
+
   /** Stage a membership removal, refusing one that would leave no home. */
   prepareMembershipRemoval(
     request: WorkspaceSpaceMembershipRemovalRequest,

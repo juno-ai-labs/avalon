@@ -107,6 +107,7 @@ import {
   type WorkspaceSidebar,
   type PersonalOrder,
   type SpaceErrorCode,
+  type SpaceSummary,
   type SpaceSnapshot,
   type Workstream,
   type WorkspaceSocketSyncEvent,
@@ -154,6 +155,7 @@ import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { nextFirstFrameDeadline, socketsMissedWhileInstanceSilent } from "./socket-first-frame-watch";
 import { parseRpcInput } from "../lib/rpc-input";
 import { uuidV7 } from "../lib/uuid-v7";
+import { observedAfterBirthSource, resolveSpaceWorkstreamStart, type ObservedBirthChannel } from "../lib/channel-audience";
 import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observability/logger";
 import {
   publishAccessRevocation,
@@ -638,6 +640,10 @@ import {
   WorkspaceSpaceIntentFailureRequestSchema,
   WorkspaceSpaceIntentReceiptRequestSchema,
   WorkspaceSpaceReserveRequestSchema,
+  WorkspaceChannelReservationRequestSchema,
+  WorkspaceChannelReservationResultSchema,
+  type WorkspaceChannelReservationRequest,
+  type WorkspaceChannelReservationResult,
   type SpaceDefaultQueueMessage,
   type SpaceDefaultTargetFailureRequest,
   type WorkspaceChannelSpacesRequest,
@@ -1202,6 +1208,13 @@ function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTa
  *   measured; it is the team's to set.
  */
 const SPACE_INTENT_RESUME_DELAY_MS = 30_000;
+
+/** A refusal raised inside `reserveChannelInSpaces`'s transaction, so it rolls back. */
+class ChannelReservationRefused extends Error {
+  constructor(readonly code: SpaceErrorCode, readonly spaceId: string) {
+    super(code);
+  }
+}
 
 const PROJECT_CASCADE_DEPENDENTS = [
   "project_participants",
@@ -7685,6 +7698,118 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return WorkspaceSpaceMutationResultSchema.parse(space === false
       ? { ok: false, code: "space_not_found" }
       : { ok: true, space });
+  }
+
+  /**
+   * A new Channel's Organization-side birth: its Space memberships, the
+   * defaults those Spaces hand a new member, its parent row with the
+   * provisional directory row, and the record of which Space supplied which
+   * reader, in one transaction.
+   *
+   * This replaces the creation coordinator's staged sequence (`ensureGeneral`,
+   * then `prepareSpaceMembership`, `finalizeSpaceMembership`, `reserveChild`
+   * and `applySpaceAccessSource` in its birth mode, per Space), which was
+   * shaped for Spaces and Channels that lived in different objects. Every row
+   * those calls wrote is in this database now, so the stages and their
+   * `joining` rows, `add` intents and cancellations bought nothing but round
+   * trips. The older RPCs stay for adding a Channel that already exists,
+   * where the Channel's canonical operations run between plan and commit.
+   *
+   * The sources are recorded in birth mode: the coordinator opens the
+   * conversation with the union of these Spaces' audiences already written,
+   * so there is no canonical operation to run between the plan and its commit.
+   *
+   * Idempotent for a retry of the same create: an active membership keeps its
+   * generation, the reservation finds its child registered, and the sources
+   * are recorded again at whatever revision the Spaces are at now.
+   */
+  async reserveChannelInSpaces(input: WorkspaceChannelReservationRequest): Promise<WorkspaceChannelReservationResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceChannelReservationRequestSchema, input, "reserve_channel_in_spaces");
+    this.assertWorkspace(request.workspaceId);
+    const refused = (code: SpaceErrorCode, spaceId: string | null): WorkspaceChannelReservationResult =>
+      WorkspaceChannelReservationResultSchema.parse({ status: "refused", code, spaceId });
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    if (refusal) return refused(refusal, null);
+    const storage = this.spaceStorage();
+    const generalSpaceId = request.spaceIds.length > 0 ? null : storage.generalSpaceId();
+    if (request.spaceIds.length === 0 && generalSpaceId === null) return { status: "general_missing" };
+    const spaceIds = request.spaceIds.length > 0 ? [...new Set<string>(request.spaceIds)] : [generalSpaceId ?? ""];
+    // The same per-Space gate every Space write takes: reaching a Space only
+    // through a Channel in it is not enough to put another Channel there.
+    const throughChannel = spaceIds.find((spaceId) => storage.reach(request.userId, spaceId) === "through_channel");
+    if (throughChannel) return refused("space_access_denied", throughChannel);
+    const parent = await this.hostedParent(request.workstreamId, request.workspaceId);
+    const workstreamId = request.workstreamId;
+    const followUpMark = this.pendingParentFollowUps.length;
+    let reserved: { authorityGeneration: number; spaces: SpaceSummary[] };
+    try {
+      reserved = this.state.storage.transactionSync(() => {
+        const placed: { space: SpaceSummary; membershipGeneration: number }[] = [];
+        for (const spaceId of spaceIds) {
+          const entered = storage.enterMembershipAtBirth({
+            workspaceId: request.workspaceId, userId: request.userId, spaceId: asSpaceId(spaceId), workstreamId,
+          });
+          if (!entered.ok) throw new ChannelReservationRefused("space_not_found", spaceId);
+          storage.stageDefaultsForMember(spaceId, workstreamId, entered.membershipGeneration, request.userId);
+          placed.push(entered);
+        }
+        const spaces = placed.map((entry) => entry.space);
+        const start = resolveSpaceWorkstreamStart({
+          spaces, scope: request.requestedScope, requestedParticipantUserIds: request.requestedParticipantUserIds,
+        });
+        const child = parent.reserveChild({
+          workspaceId: request.workspaceId,
+          parentId: workstreamId,
+          substreamId: asSubstreamId("0"),
+          kind: "main",
+          createdByUserId: request.userId,
+          authorityGeneration: request.authorityGeneration,
+          directory: { ...request.directory, scope: start.scope, systemKind: null },
+        });
+        const participantUserIds = [...new Set(request.requestedParticipantUserIds)];
+        let born: ObservedBirthChannel = {
+          readers: request.requestedScope === "workspace"
+            ? { scope: "workspace" }
+            : { scope: "personal", userIds: participantUserIds },
+          participantUserIds,
+        };
+        for (const entry of placed) {
+          const participants = entry.space.participants.map((participant) => participant.userId);
+          const applied = parent.applySpaceAccessSource({
+            workspaceId: request.workspaceId,
+            parentId: workstreamId,
+            spaceId: entry.space.id,
+            scope: entry.space.scope,
+            participantUserIds: participants,
+            spaceRevision: entry.space.revision,
+            membershipGeneration: entry.membershipGeneration,
+            operationId: uuidV7(),
+            channel: born,
+            bornWithSourceApplied: true,
+          });
+          if (!applied.ok) throw new ChannelReservationRefused(applied.code, entry.space.id);
+          born = observedAfterBirthSource(born, {
+            sourceId: entry.space.id, scope: entry.space.scope, participantUserIds: participants,
+          }, applied.plan.seatUserIds);
+        }
+        return { authorityGeneration: child.authorityGeneration, spaces };
+      });
+    } catch (error) {
+      // The directory follow-ups the reservation recorded were rolled back
+      // with it; forget their ids so nothing runs a row that never committed.
+      this.pendingParentFollowUps.splice(followUpMark);
+      if (error instanceof ChannelReservationRefused) return refused(error.code, error.spaceId);
+      throw error;
+    }
+    // After the commit, what the staged calls did after theirs: the Space
+    // snapshot, the dashboards the Channel entered, the directory follow-ups,
+    // and the alarm that delivers the staged defaults.
+    this.publishSpaceSnapshot();
+    this.publishSpaceConversationsChanged({ spaceIdsThroughChannel: new Map([[workstreamId, spaceIds]]) });
+    await this.afterParentWrite();
+    this.deferSpaceMembershipConvergence(request.workspaceId, workstreamId, false);
+    return WorkspaceChannelReservationResultSchema.parse({ status: "reserved", ...reserved });
   }
 
   async prepareSpaceMembershipRemoval(

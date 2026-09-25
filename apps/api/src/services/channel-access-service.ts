@@ -426,68 +426,6 @@ export class ChannelAccessService {
   }
 
   /**
-   * Record a Space source on a Channel that was *born* with its audience.
-   *
-   * The creation coordinator has already seated this Space's readers: it
-   * derived the union of every named Space before `initialize`, so the
-   * conversation opened with the right scope and the right roster in one write
-   * rather than through a widening the room would have to be asked for
-   * afterwards. What is still missing is the *provenance* — which of those
-   * readers this Space supplied — and that cannot be read back off the Channel,
-   * because by now every source's readers are seated and indistinguishable.
-   *
-   * So `born` is the Channel as it was *before* this source: the requested
-   * audience for the first Space, and the running union for each one after it.
-   * The plan computed against it names exactly the readers this Space added,
-   * and the same call commits them. Applying nothing is the point — the
-   * canonical operations already ran, inside `initialize` — which is why this
-   * is here rather than in the coordinator: the seam stays the only writer of a
-   * Channel's access provenance.
-   *
-   * **It is also why this is one round trip where every other caller takes
-   * two.** The split exists to bracket the canonical operations that seat the
-   * plan, and there are none here, so `bornWithSourceApplied` has the object
-   * plan and commit in one transaction instead of charging every Channel
-   * creation a second same-object hop per Space.
-   *
-   * Returns the Channel as the next source will observe it.
-   */
-  async recordSpaceSourceAtCreation(
-    workstreamId: string,
-    source: SpaceAccessSource,
-    born: ObservedChannel,
-    channelTitle: string,
-  ): Promise<ObservedChannel> {
-    const room = await this.room();
-    const applied = await room.applySpaceAccessSource({
-      ...this.address(workstreamId),
-      spaceId: source.spaceId,
-      scope: source.scope,
-      participantUserIds: [...source.participantUserIds],
-      spaceRevision: source.spaceRevision,
-      membershipGeneration: source.membershipGeneration,
-      operationId: source.operationId,
-      channel: born,
-      bornWithSourceApplied: true,
-    });
-    if (!applied.ok) throw spaceAccessError(applied.code, channelTitle);
-    const next = effectiveChannelAudience({
-      direct: { scope: born.readers.scope, participantUserIds: born.participantUserIds },
-      sources: [{
-        sourceId: source.spaceId,
-        scope: source.scope,
-        participantUserIds: source.participantUserIds,
-      }],
-    });
-    return {
-      readers: next.scope === "workspace"
-        ? { scope: "workspace" }
-        : { scope: "personal", userIds: [...next.participantUserIds] },
-      participantUserIds: [...new Set([...born.participantUserIds, ...applied.plan.seatUserIds])],
-    };
-  }
-
-  /**
    * Withdraw a Space's source from one Channel.
    *
    * `expectedSpaceRevision` is what an audience change carries and a removal or
