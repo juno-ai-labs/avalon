@@ -51,7 +51,7 @@ separately.
 | `apps/api/src/durable-objects/hosted-parent.ts` | `HostedParent`: one Channel's or Space's parent authority, scoped to a `parent_id` inside `WorkspaceDO`'s SQLite. The port of what `WorkstreamDO` and `ConversationParentDurableObject` did for one object. |
 | `apps/api/src/durable-objects/hosted-parent-schema.ts` | `WorkspaceDO` migration 71: the `parent_*` tables, the directory renames, and the seeded import ledger. |
 | `apps/api/src/durable-objects/hosted-parent-import.ts` | Moving one legacy object's rows into the hosted tables, and the ledger that says which parents still need it. |
-| `apps/api/src/durable-objects/workspace-do.ts` | The RPC facade: every conversation-parent method now answers here, dispatching to `HostedParent` for its `parentId`. Also the Channel control socket and the local outbox drain. |
+| `apps/api/src/durable-objects/workspace-do.ts` | The RPC facade: every conversation-parent method now answers here, dispatching to `HostedParent` for its `parentId`. Also the Channel control socket, the in-transaction apply of what a parent publishes, the outbox drain, and the workspace relationship table. |
 | `apps/api/src/durable-objects/workstream-do.ts`, `space-do.ts` | **Legacy.** Kept deployed only so existing objects can be exported. Everything but `exportParentState`, the receive-forward, and fleet operations is gone. |
 | `apps/api/src/durable-objects/scope-grant-storage.ts`, `scope-invitation-storage.ts`, `scope-invitation-service.ts`, `workstream-access-storage.ts` | The grant, invitation and Space-provenance repositories, now scoped by `parent_id`. |
 | `apps/api/src/services/conversation-parent-client.ts` | `conversationParentStub`: `WorkspaceDO` for a Channel or a Space, `SidekickDO` for a Sidekick. |
@@ -108,9 +108,9 @@ The parent state moved in under a `parent_` prefix, one row set per parent:
 
 | Flow | Before | Now |
 | --- | --- | --- |
-| A viewer check on a conversation request | two calls to the parent object, after probing which namespace owns the id | one call to `WorkspaceDO`, which resolves the kind and answers the viewer together |
-| A conversation's title, preview or unread reaching the sidebar | conversation → Queue → parent → Queue → `WorkspaceDO` | conversation → Queue → `WorkspaceDO`, which applies the parent step and the directory step back to back |
-| A grant reaching the grant directory | grant in the parent, Queue message, directory in `WorkspaceDO` | both in `WorkspaceDO`, the directory applied from the local outbox |
+| A viewer check on a conversation request | two calls to the parent object, after probing which namespace owns the id, each reading D1 for the relationship | one call to `WorkspaceDO`, which resolves the kind and answers the viewer together from its own relationship table |
+| A conversation's title, preview or unread reaching the sidebar | conversation → Queue → parent → Queue → `WorkspaceDO` | conversation → Queue → `WorkspaceDO`, which applies the parent step and the directory step in one transaction |
+| A grant reaching the grant directory | grant in the parent, Queue message, directory in `WorkspaceDO` | one transaction in `WorkspaceDO` |
 | Creating a Channel | reserve in the parent, a synchronous call back to `WorkspaceDO` for the provisional directory row | one `WorkspaceDO` call |
 | Breakout creation | about ten calls to the parent | the same calls, now answered by the warm Organization object |
 
@@ -121,29 +121,63 @@ is still the durable handoff out of a `SubstreamAgent`), and activity and
 notification effects, which still leave through the Queue so their delivery runs
 in a Worker rather than in the Organization object.
 
-### The local outbox
+### Effects land in the parent's transaction
 
-`HostedParent` records every projection it publishes in `parent_outbox` in the
-same transaction as the fact, exactly as the legacy object did. What changed is
-the drain. Directory kinds (`directory_common`, `directory_user`,
-`scope_grant_directory`) are applied by `WorkspaceDO` to itself straight after
-the write returns, through the same `applyWorkstreamDirectoryEffects` and
-`applyScopeGrantDirectory` paths the Queue consumer used, and deleted once
-applied. Activity and notification kinds wait for the alarm and leave on
-`ACTIVITY_QUEUE` as a `parent_effect`, as they did before: their consumer
-applies the regional effect and delivers the notification in a Worker, and
-nobody who made the write is waiting on it. Either way the row stays until its
-destination has it, so a failure is retried by the alarm rather than lost.
+Everything a hosted parent publishes lands in the same transaction as the
+parent change that caused it. `HostedParent` wraps its writes in `tx()`; at the
+end of the outermost one it hands what it published to
+`WorkspaceDO.applyLocalEffects`, which writes:
+
+- the directory rows (`channels`, `channel_viewers`, `breakouts`, `spaces`,
+  `space_viewers`) through the synchronous core `applyDirectoryBatch`, Channel
+  rows before viewer rows;
+- the grant directory (`scope_grant_directory`);
+- the activity row and the notification record
+  (`applyWorkstreamRegionalEnvelope`).
+
+Each envelope is applied in its own savepoint, so one that throws is rolled
+back alone and the parent change still commits. The sends that follow a
+directory change (socket publishes, Space snapshots, schedule refresh, watch
+reconciliation, archival notices to owned Sidekicks) cannot run inside a
+transaction. They are recorded as a `workspace_directory_followups` row in the
+same transaction, run straight after the commit, and taken by the alarm's
+`directory_followup` phase if that run did not finish.
+
+### The outbox is the fallback
+
+`parent_outbox` now holds only what could not land in the transaction or has
+to leave the object:
+
+- a viewer row for someone the member table has never heard of (the drain
+  learns their relationship with one D1 read, then applies it);
+- a row whose apply threw, such as a viewer row whose Channel row is not there
+  yet (made due again the moment that Channel row lands);
+- a notification to deliver and a mention to snapshot, which the activity
+  Queue's consumer does in a Worker (its apply is a replay: the record is
+  already here);
+- a revoked Channel grant, whose Sidekick revocation is a Queue send.
 
 The drain keeps the legacy drain's limits: directory rows are applied at most
 `MAX_DIRECTORY_APPLY_ENVELOPES` at a time, Queue rows go in `sendBatch` calls
 under the Queue's per-call size, and a single row too large for one Queue
-message is deleted with a `parent_effect_oversized` warning, because it would be
-refused on every attempt and stall every row behind it. One drain runs at a
-time: rows are not claimed, so a drain started by a request's import and one
-started by the alarm would otherwise send the same rows. A viewer row applied
-before its Channel's row existed is refused and put off; when that Channel's row
-lands, its waiting viewer rows are made due in the same drain.
+message is deleted with a `parent_effect_oversized` warning. One drain runs at
+a time, so a drain started by a request's import and one started by the alarm
+cannot send the same rows.
+
+### Workspace relationships are local
+
+`workspace_member_status` holds each person's workspace relationship
+(incarnation, revision, access class, role, status) as this object last heard
+it. The relationship change events keep it current: the relationship consumer
+calls `WorkspaceDO.applyMemberStatus` in D1's sequence order, and someone who
+stops being an active member leaves every viewer directory in that
+transaction. `readRelationship` answers access checks, Space checks and the
+directory's member filter from it; D1 is read once, for someone it has never
+heard of (a member from before the table existed), and that answer never
+replaces an event's. The team accepts up to five minutes between a D1 change
+and this table and chose to trust the events rather than re-read on a timer. A
+request that has just written a relationship to D1 (accepting an invitation)
+records it here itself, so its own next checks see it.
 
 ### Moving an existing parent
 
@@ -189,10 +223,13 @@ receipts already fell back to past their retention.
   that exists, and a write would create rows the import then collides with.
 - **The legacy object answers nothing after export but export.** A write that
   landed there after the rows were copied would be lost silently.
-- **The outbox row commits with the fact.** Applying the directory inside the
-  same transaction as the fact is not possible (the apply path awaits D1 and
-  publishes to sockets), so the row is the durable record that it still has to
-  happen.
+- **What a parent publishes commits with the parent change.** The directory,
+  grant directory, activity and notification rows are applied in its
+  transaction; anything that cannot be (a follow-up send, a row that has to
+  wait, work that leaves the object) is recorded durably in that same
+  transaction, as a follow-up row or an outbox row.
+- **An event's relationship is never replaced by a D1 read.** Events carry D1's
+  sequence; a D1 read is only for someone never heard of.
 - **Parent-kind is carried, never probed.** A lookup that tries a namespace to
   see whether something is there creates the object it asked about.
 
