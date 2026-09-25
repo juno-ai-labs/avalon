@@ -12,6 +12,7 @@ import {
   AutomationRunSchema,
   AutomationSetEvaluatorRulesInputV1Schema,
   DemoSeedSchema,
+  PROJECT_COLOR_RING,
   WorkstreamAppearanceSchema,
   WorkstreamAppearancePatchSchema,
   automationAcceptanceSelections,
@@ -566,6 +567,17 @@ export class SidekickDO extends ConversationParentDurableObject {
     const revision = this.state.storage.transactionSync(() => {
       const latest = this.assertAutomation(request.workspaceId, request.automationId);
       if (latest.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
+      // A colour outside the ring is one nobody can pick any more, so it may
+      // only be the one this Sidekick already wears, kept through an edit.
+      if (request.appearance && !(PROJECT_COLOR_RING as readonly string[]).includes(request.appearance.color)) {
+        const stored = latest.appearance_json
+          ? WorkstreamAppearanceSchema.parse(JSON.parse(latest.appearance_json)).color
+          : null;
+        if (stored !== request.appearance.color) {
+          throw new ApiError(400, "sidekick_color_not_offered",
+            `color ${request.appearance.color} is kept only when it is the Sidekick's current color; choose one of ${PROJECT_COLOR_RING.join(", ")}`);
+        }
+      }
       const definitionRevision = latest.current_definition_revision + 1;
       this.state.storage.sql.exec(
         `INSERT INTO definition_revisions

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PROJECT_COLOR_KEYS_STORABLE, PROJECT_COLOR_RING, PROJECT_ICON_KEYS } from "./projects";
+import { PROJECT_COLOR_KEYS_STORABLE, PROJECT_ICON_KEYS } from "./projects";
 
 export const WORKSTREAM_ICON_KEYS = [
   "aperture", "atom", "boxes", "circle-dot", "circuit-board", "component",
@@ -118,15 +118,16 @@ export type WorkstreamAppearance = z.infer<typeof WorkstreamAppearanceSchema>;
 export type WorkstreamAppearancePatch = z.infer<typeof WorkstreamAppearancePatchSchema>;
 
 /**
- * An icon and a colour both chosen, each from what the picker offers.
+ * An icon and a colour both set, as the Sidekick setup chat submits them.
  *
- * Narrower than {@link WorkstreamAppearanceSchema} on purpose: that one parses
- * stored rows, so it admits null and every retired colour. This one is for a
- * new choice — the Sidekick setup chat's — where a null or a colour nobody can
- * pick any more would be a choice no person could have made.
+ * Neither may be null: the chat always states both. The colour takes the whole
+ * storable vocabulary rather than only the ring, because the chat is told to
+ * keep a Sidekick's current colour and that colour may be `black` or a retired
+ * one. Whether a colour outside the ring is allowed is a question about what is
+ * already stored, so `SidekickDO` answers it, not this schema.
  */
 export const PickedAppearanceSchema = z.strictObject({
   icon: WorkstreamIconKeySchema,
-  color: z.enum(PROJECT_COLOR_RING),
+  color: z.enum(PROJECT_COLOR_KEYS_STORABLE),
 });
 export type PickedAppearance = z.infer<typeof PickedAppearanceSchema>;
