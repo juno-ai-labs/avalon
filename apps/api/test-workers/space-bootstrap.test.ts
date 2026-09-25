@@ -113,8 +113,8 @@ async function forgetSpaces(): Promise<void> {
   await runInDurableObject(workspace(), (_instance, state) => {
     for (const table of [
       "space_channel_memberships",
-      "workspace_space_directory",
-      "workspace_space_viewers",
+      "spaces",
+      "space_viewers",
       "workspace_container_order",
     ]) state.storage.sql.exec(`DELETE FROM ${table}`);
     state.storage.sql.exec(
@@ -154,7 +154,7 @@ async function forgetMembership(workstreamId: string): Promise<void> {
 async function archiveInDirectory(workstreamId: string): Promise<void> {
   await runInDurableObject(workspace(), (_instance, state) => {
     state.storage.sql.exec(
-      "UPDATE workspace_workstream_directory SET archived_at = ? WHERE workstream_id = ?",
+      "UPDATE channels SET archived_at = ? WHERE workstream_id = ?",
       Date.now(),
       workstreamId,
     );
@@ -211,7 +211,7 @@ async function membershipRows(): Promise<Array<{ workstream_id: string; state: s
 
 async function generalCount(): Promise<number> {
   const result = await workspace().runInspectionSql({
-    sql: "SELECT COUNT(*) AS count FROM workspace_space_directory WHERE system_role = 'general'",
+    sql: "SELECT COUNT(*) AS count FROM spaces WHERE system_role = 'general'",
     bindings: [],
   });
   return (result.rows[0] as { count: number }).count;
@@ -367,7 +367,7 @@ async function directoryRow(workstreamId: string): Promise<{
   authority_generation: number;
 } | undefined> {
   const result = await workspace().runInspectionSql({
-    sql: `SELECT title, waterline, authority_generation FROM workspace_workstream_directory
+    sql: `SELECT title, waterline, authority_generation FROM channels
            WHERE workstream_id = ?`,
     bindings: [workstreamId],
   });

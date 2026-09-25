@@ -2119,7 +2119,7 @@ export class HostedParent {
 
   async mutateParticipantGrant(input: ParticipantGrantMutation): Promise<ScopeGrantMutationResult> {
     const request = parseRpcInput(ParticipantGrantMutationSchema, input, "participant_grant_mutation");
-    const result = await this.authorizedGrantMutation({ ...request, spaceSourceId: undefined, expectedRevision: 0 }, true);
+    const result = await this.authorizedGrantMutation({ ...request, expectedRevision: 0 }, true);
     if (result.status === "committed") {
       // Converge the addressed roster before replying; the alarm is the recovery path.
       await this.deliverParticipantProjection(

@@ -21,8 +21,8 @@ import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { asSpaceId, asUserId, asWorkspaceId, asWorkstreamId, type SpaceId, type UserId } from "@rally/contracts";
 
-import { workstreamDOName } from "../src/durable-objects/names";
 import type { ObservedChannel as Observed } from "../src/durable-objects/workstream-access-protocol";
+import { hostedParentStub } from "./helpers/hosted-parent";
 
 /** Its own workspace: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000ac500");
@@ -33,7 +33,8 @@ const OWNER = asUserId("00000000-0000-7000-8000-0000000ac504");
 const READER = asUserId("00000000-0000-7000-8000-0000000ac505");
 const OTHER = asUserId("00000000-0000-7000-8000-0000000ac506");
 
-const channel = () => env.WORKSTREAM_DOS.getByName(workstreamDOName("global", WORKSPACE_ID, CHANNEL_ID));
+/** The Organization object, which hosts this Channel's parent. */
+const channel = () => hostedParentStub(env, WORKSPACE_ID);
 const address = { workspaceId: WORKSPACE_ID, parentId: CHANNEL_ID };
 
 /** A personal Channel whose only reader is its owner. */
@@ -76,10 +77,12 @@ function applySource(input: {
 function storedSources() {
   return runInDurableObject(channel(), (_instance, state) => ({
     sources: state.storage.sql.exec<{ space_id: string; participants_json: string }>(
-      "SELECT space_id, participants_json FROM workstream_space_access_sources ORDER BY space_id",
+      "SELECT space_id, participants_json FROM parent_space_sources WHERE parent_id = ? ORDER BY space_id",
+      CHANNEL_ID,
     ).toArray(),
     supplied: state.storage.sql.exec<{ space_id: string; user_id: string }>(
-      "SELECT space_id, user_id FROM workstream_space_supplied_readers ORDER BY space_id, user_id",
+      "SELECT space_id, user_id FROM parent_space_readers WHERE parent_id = ? ORDER BY space_id, user_id",
+      CHANNEL_ID,
     ).toArray(),
   }));
 }
@@ -120,21 +123,28 @@ function retract(spaceId: SpaceId, observed: Observed, operationId = crypto.rand
 
 beforeEach(async () => {
   await reset();
+  // The Organization object learns its placement from D1 on the first parent
+  // request, as it does in production.
+  await env.DB.batch([
+    env.DB.prepare("CREATE TABLE workspaces (id TEXT PRIMARY KEY, region TEXT DEFAULT 'global', placement_affinity TEXT DEFAULT 'wnam')"),
+    env.DB.prepare("INSERT INTO workspaces (id) VALUES (?)").bind(WORKSPACE_ID),
+  ]);
   await runInDurableObject(channel(), (_instance, state) => {
     // The identity row every RPC asserts its address against. Written directly
     // because these tests are about the provenance tables, not about how a
     // Channel comes to exist.
     state.storage.sql.exec(
-      `INSERT INTO workstream_metadata
-         (id, workspace_id, workstream_id, region, authority_generation, title, description,
+      `INSERT INTO parent_metadata
+         (parent_id, parent_kind, workspace_id, region, authority_generation, title, description,
           preview, scope, exact_state, last_activity_at, created_at, updated_at)
-       VALUES (1, ?, ?, 'global', 1, 'Hiring', '', '', 'personal', 'idle', 1, 1, 1)`,
-      WORKSPACE_ID,
+       VALUES (?, 'workstream', ?, 'global', 1, 'Hiring', '', '', 'personal', 'idle', 1, 1, 1)`,
       CHANNEL_ID,
+      WORKSPACE_ID,
     );
     state.storage.sql.exec(
-      `INSERT INTO conversation_children (substream_id, kind, created_by_user_id, created_at, status, updated_at)
-       VALUES ('0', 'main', ?, 1, 'ready', 1)`,
+      `INSERT INTO parent_children (parent_id, substream_id, kind, created_by_user_id, created_at, status, updated_at)
+       VALUES (?, '0', 'main', ?, 1, 'ready', 1)`,
+      CHANNEL_ID,
       OWNER,
     );
   });
@@ -271,12 +281,17 @@ describe("a Channel's Space access sources", () => {
     expect(await channel().readAccessSources({ ...address, channel: personal([OWNER]) }))
       .toEqual({ direct: { scope: "personal", participantUserIds: [OWNER] }, spaces: [] });
     await runInDurableObject(channel(), (_instance, state) => {
-      expect(state.storage.sql.exec("SELECT space_id FROM workstream_space_access_sources").toArray()).toEqual([]);
+      expect(state.storage.sql.exec(
+        "SELECT space_id FROM parent_space_sources WHERE parent_id = ?", CHANNEL_ID,
+      ).toArray()).toEqual([]);
       // And the Channel's own scope is still unestablished, so the first
-      // Space that *does* commit still seeds it from what it observed.
-      expect(state.storage.sql.exec<{ updated_at: number }>(
-        "SELECT updated_at FROM workstream_direct_audience WHERE id = 1",
-      ).one().updated_at).toBe(0);
+      // Space that *does* commit still seeds it from what it observed. A
+      // hosted parent has no backfilled row: absent and `updated_at = 0` both
+      // read as unestablished.
+      const direct = state.storage.sql.exec<{ updated_at: number }>(
+        "SELECT updated_at FROM parent_direct_audience WHERE parent_id = ?", CHANNEL_ID,
+      ).toArray();
+      expect(direct.every((row) => row.updated_at === 0)).toBe(true);
     });
   });
 
@@ -383,8 +398,12 @@ describe("a Channel's Space access sources", () => {
     await runInDurableObject(channel(), (_instance, state) => {
       // The cascade, which is what makes "a source that no longer exists stops
       // granting" true of the provenance too.
-      expect(state.storage.sql.exec("SELECT space_id FROM workstream_space_access_sources").toArray()).toEqual([]);
-      expect(state.storage.sql.exec("SELECT user_id FROM workstream_space_supplied_readers").toArray()).toEqual([]);
+      expect(state.storage.sql.exec(
+        "SELECT space_id FROM parent_space_sources WHERE parent_id = ?", CHANNEL_ID,
+      ).toArray()).toEqual([]);
+      expect(state.storage.sql.exec(
+        "SELECT user_id FROM parent_space_readers WHERE parent_id = ?", CHANNEL_ID,
+      ).toArray()).toEqual([]);
     });
   });
 

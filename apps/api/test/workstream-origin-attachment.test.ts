@@ -552,11 +552,12 @@ function environment(database: DatabaseSync): Env {
         }),
       },
     }),
-    WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
-      extra: { ...parentCreationRpcs(), ...spaceCreationRoomRpcs() },
-    }),
+    // The Organization object hosts the Channel's parent, so the parent's
+    // creation RPCs answer on the same stub as the Space and origin reads.
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
       extra: {
+        ...parentCreationRpcs(),
+        ...spaceCreationRoomRpcs(),
         ...spaceCreationWorkspaceRpcs(),
         opportunityOriginEvents: vi.fn(async (request: { opportunityId: string }) => {
           const rows = database.prepare(
@@ -622,9 +623,9 @@ function environment(database: DatabaseSync): Env {
 /**
  * The parent's half of a create.
  *
- * Creation reserves the main conversation on the parent object before the child
- * is initialized, then flushes its provisional directory effects alongside
- * initialization. No origin assertion reads those parent operations, but a
+ * Creation reserves the main conversation on the parent, which the
+ * Organization object hosts, before the child is initialized, then flushes its
+ * provisional directory effects alongside initialization. No origin assertion reads those parent operations, but a
  * create that cannot make them never reaches the attach these tests are about.
  */
 function parentCreationRpcs() {
