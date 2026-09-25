@@ -45,7 +45,8 @@ describe("socket first-frame watch", () => {
       sockets: FirstFrameWatchedSocket[],
       lastSocketEventAt: number | null = null,
       now = late,
-    ) => judgeUnheardSockets([silent], sockets, now, DEADLINE_MS, lastSocketEventAt);
+      instanceStartedAt = at("06:00:00.000"),
+    ) => judgeUnheardSockets([silent], sockets, now, DEADLINE_MS, lastSocketEventAt, instanceStartedAt);
 
     it("counts a socket unheard past its deadline when nothing has been heard since", () => {
       expect(judge([open("silent", "06:00:10.000")])).toEqual({ missed: [silent], settled: [] });
@@ -56,6 +57,14 @@ describe("socket first-frame watch", () => {
     // the socket inside the deadline, so it is no longer open to be read.
     it("counts it after its client has closed it", () => {
       expect(judge([])).toEqual({ missed: [silent], settled: [] });
+    });
+
+    // An eviction or an earlier reset: that instance is gone, and so is
+    // everything it could have been stuck on.
+    it("settles it once gone, when an earlier instance accepted it", () => {
+      expect(judge([], null, late, at("06:01:00.000"))).toEqual({ missed: [], settled: [silent] });
+      expect(judge([open("silent", "06:00:10.000")], null, late, at("06:01:00.000")))
+        .toEqual({ missed: [silent], settled: [] });
     });
 
     it("lets it go once its own attachment says it spoke", () => {
