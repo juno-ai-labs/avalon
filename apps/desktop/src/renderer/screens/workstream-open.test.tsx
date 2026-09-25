@@ -988,7 +988,8 @@ describe('socket-first channel open', () => {
     const status = screen.getByRole('status', { name: 'Opening channel…' });
     expect(status).toBeVisible();
     expect(status).not.toHaveAttribute('aria-busy');
-    expect(document.querySelectorAll('.conversation-opening-sidebar .skeleton-row')).toHaveLength(7);
+    // Main and two Breakouts, then the participants row under its rule.
+    expect(document.querySelectorAll('.conversation-opening-sidebar .skeleton-row')).toHaveLength(4);
     expect(document.querySelectorAll('.conversation-opening-message')).toHaveLength(3);
     expect(document.querySelector('.conversation-opening-composer')).not.toBeNull();
     expect(document.querySelector('[data-testid="thinking-orb"]')).toBeNull();

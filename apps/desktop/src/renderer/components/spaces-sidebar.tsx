@@ -340,7 +340,7 @@ export function SpacesSidebar({
           {!ready ? (
             <p className="spaces-sidebar-empty">Rally is opening this organization. Spaces appear once every channel has one.</p>
           ) : loading && spaces.length === 0 ? (
-            <SidebarSkeletonRows count={4} hint />
+            <SidebarSkeletonRows count={4} hint="some" mark="tile" />
           ) : spaces.length === 0 ? (
             <p className="spaces-sidebar-empty">No spaces yet</p>
           ) : <>
