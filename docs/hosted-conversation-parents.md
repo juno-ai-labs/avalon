@@ -201,12 +201,17 @@ directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
 
 ## Testing
 
-`apps/api/test-workers/hosted-parent-import.test.ts` exports a populated legacy
-`WorkstreamDO` and a legacy `SpaceDO` through the real Durable Object pipeline,
-imports them, and proves the rows, the frozen legacy object, and the local
-outbox drain. The conversation-parent contract tests
-(`conversation-parent-contract.test.ts` and its neighbours) now run against the
-hosted parent. Run with `pnpm --filter @rally/api test:workers`.
+`apps/api/test-workers/hosted-parent-import.test.ts` seeds a legacy
+`WorkstreamDO` with its own migration ledger and rows, then proves on real
+workerd that the first request to the Organization object imports it, that the
+legacy object is frozen and answers 410, and that a parent whose legacy object
+never existed closes its ledger row without creating that object. A Space uses
+the same code with a different namespace and is not covered separately.
+`conversation-effect-queue.test.ts` proves the outbox drain: directory rows
+applied in the object, activity and notification rows sent to the Queue. The
+conversation-parent contract tests (`conversation-parent-contract.test.ts` and
+its neighbours) run against the hosted parent. Run with
+`pnpm --filter @rally/api test:workers`.
 
 ## Open questions
 
