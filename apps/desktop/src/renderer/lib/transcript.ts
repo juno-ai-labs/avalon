@@ -882,16 +882,17 @@ export function pendingTranscriptInputOverlay(
   // the same row is available here. It also keeps the message off the composer
   // queue: a queued row is something a person wrote and can reorder, and a
   // teammate's message is neither.
-  // The brief that opens a conversation is drawn as it will be once promoted,
-  // and stays off the composer queue for the same reason as the counted row.
-  // Every input admitted before the first turn lands reports
-  // `afterTranscriptSequence` 0, so that alone would open a follow-up too. The
-  // loop numbers its inputs from 1 and delivers in that order, so the first
-  // admission is the one that becomes turn 1.
-  if (opensConversationWithAgentMessage(
+  //
+  // The opener is the exception, drawn as it will be once promoted. Every input
+  // admitted before the first turn lands is after sequence 0, so the loop's
+  // first admission is what picks it out: inputs are numbered from 1 and
+  // delivered in that order.
+  const opening = opensConversationWithAgentMessage(
     input.block.structuredContent,
     input.afterTranscriptSequence === 0 && input.inputSequence === 1,
-  )) {
+  );
+  const agentMessage = opening ? null : agentMessageActivity(input.block.structuredContent);
+  if (opening || agentMessage) {
     return {
       identity: input.clientMessageId
         ? { type: 'client_message', clientMessageId: input.clientMessageId, turnId: input.futureTurnId }
@@ -909,35 +910,14 @@ export function pendingTranscriptInputOverlay(
         workstreamId,
         sequenceNumber: 0,
         authorType: 'agent',
-        messageType: 'text',
-        contextLabel: OPENING_AGENT_MESSAGE_LABEL,
-        text: input.block.text,
-        attachments: input.block.attachments?.map((attachment) => ({ ...attachment })),
-        createdAt: input.admittedAtUtc,
-      },
-    };
-  }
-  const agentMessage = agentMessageActivity(input.block.structuredContent);
-  if (agentMessage) {
-    return {
-      identity: input.clientMessageId
-        ? { type: 'client_message', clientMessageId: input.clientMessageId, turnId: input.futureTurnId }
-        : { type: 'loop_input', inputId: input.inputId, futureTurnId: input.futureTurnId },
-      provenance,
-      position: {
-        afterTranscriptSequence: input.afterTranscriptSequence,
-        eventSequence: provenance.source === 'socket_event'
-          ? provenance.eventSequence
-          : input.inputSequence,
-      },
-      message: {
-        id: input.futureTurnId,
-        ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
-        workstreamId,
-        sequenceNumber: 0,
-        authorType: 'agent',
-        messageType: 'plugin_activity',
-        pluginActivity: agentMessage,
+        ...(agentMessage
+          ? { messageType: 'plugin_activity' as const, pluginActivity: agentMessage }
+          : {
+              messageType: 'text' as const,
+              contextLabel: OPENING_AGENT_MESSAGE_LABEL,
+              text: input.block.text,
+              attachments: input.block.attachments?.map((attachment) => ({ ...attachment })),
+            }),
         createdAt: input.admittedAtUtc,
       },
     };
@@ -1252,21 +1232,9 @@ export function dedupeAdjacentConnectorConnectionCards(messages: readonly Messag
 export const OPENING_AGENT_MESSAGE_LABEL = 'Opening instructions';
 
 /**
- * Whether this block is the agent message that opened its conversation.
- *
- * Every other agent message is machinery written for another agent, and
- * `agentMessageActivity` counts it. The opening one is not: it is the reason
- * the conversation exists. A Sidekick created by another conversation's agent
- * is set up from exactly this message, and counting it left the Sidekick's own
- * conversation starting with Rally answering a request nobody could read.
- * A worker's conversation opens the same way, but nobody opens it.
- *
- * `opensConversation` is the caller's, because the two projections know it
- * differently: a canonical turn by its sequence, a pending input by being the
- * loop's first admission with no turn before it. Where the two could disagree
- * (a first admission withdrawn before delivery), the pending row stays counted
- * until promotion: showing an opener late is safe, showing a follow-up is not. A host notice never opens a conversation, and is kept out
- * all the same so the rule reads as what it means.
+ * Whether this block is the agent message that opened its conversation, which
+ * is drawn as a message rather than counted. Callers say whether the block is
+ * first, since the canonical and pending projections know it differently.
  */
 function opensConversationWithAgentMessage(
   structuredContent: Readonly<Record<string, unknown>> | null | undefined,
