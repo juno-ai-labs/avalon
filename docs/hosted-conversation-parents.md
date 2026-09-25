@@ -49,7 +49,7 @@ separately.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/durable-objects/hosted-parent.ts` | `HostedParent`: one Channel's or Space's parent authority, scoped to a `parent_id` inside `WorkspaceDO`'s SQLite. The port of what `WorkstreamDO` and `ConversationParentDurableObject` did for one object. |
-| `apps/api/src/durable-objects/hosted-parent-schema.ts` | `WorkspaceDO` migration 70: the `parent_*` tables, the directory renames, and the seeded import ledger. |
+| `apps/api/src/durable-objects/hosted-parent-schema.ts` | `WorkspaceDO` migration 71: the `parent_*` tables, the directory renames, and the seeded import ledger. |
 | `apps/api/src/durable-objects/hosted-parent-import.ts` | Moving one legacy object's rows into the hosted tables, and the ledger that says which parents still need it. |
 | `apps/api/src/durable-objects/workspace-do.ts` | The RPC facade: every conversation-parent method now answers here, dispatching to `HostedParent` for its `parentId`. Also the Channel control socket and the local outbox drain. |
 | `apps/api/src/durable-objects/workstream-do.ts`, `space-do.ts` | **Legacy.** Kept deployed only so existing objects can be exported. Everything but `exportParentState`, the receive-forward, and fleet operations is gone. |
@@ -135,7 +135,7 @@ before.
 
 ### Moving an existing parent
 
-Migration 70 seeds `parent_imports` with one `pending` row for every Channel and
+Migration 71 seeds `parent_imports` with one `pending` row for every Channel and
 Space the Organization's directory already held. A legacy parent effect for an
 id the ledger does not know (from a legacy object that was mid-delivery at
 deploy) adds a `pending` row too. A parent id with no row is new, and is
