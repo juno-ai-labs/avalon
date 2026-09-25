@@ -1,5 +1,6 @@
 import type { ScopeGrant } from "@rally/contracts/scope-grants";
 import {
+  ScopeGrantSchema,
   AcceptScopeInvitationSchema,
   ConnectorParticipantAdmissionSchema,
   CreateScopeInvitationsSchema,
@@ -1084,6 +1085,24 @@ export class HostedParent {
     ).toArray()) {
       this.enqueueProjection(`substream:${row.substream_id}:common`,
         WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(row.effect_json)), now, row.substream_id);
+    }
+  }
+
+  /**
+   * Publish every direct grant to the grant directory. The legacy migration 17
+   * published deliveries still queued when grant discovery moved to the
+   * outbox; an object that never woke for it arrives here with some unsent.
+   * Hash-deduplicated per key against the projection keys the import carried,
+   * so a grant already published sends nothing.
+   */
+  republishDirectGrants(now = Date.now()): void {
+    if (!this.role.publishesGrantDirectory || !this.metadataRow()) return;
+    const publish = this.grantDirectoryWriter();
+    for (const row of this.sql.exec<{ grant_json: string }>(
+      `SELECT grant_json FROM parent_grants WHERE parent_id = ? AND source_kind = 'direct' ORDER BY user_id, scope_kind, substream_id`,
+      this.parentId,
+    ).toArray()) {
+      publish(ScopeGrantSchema.parse(JSON.parse(row.grant_json)), now);
     }
   }
 

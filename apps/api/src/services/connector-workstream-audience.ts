@@ -1,7 +1,7 @@
 import { ConnectorParticipantAdmissionSchema } from "@rally/contracts/scope-grants";
-import { workstreamDOName } from "../durable-objects/names";
+import { workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { asWorkspaceId, asWorkstreamId, ParticipantSchema, type ExternalActor, type Scope } from "@rally/contracts";
+import { asWorkspaceId, type ExternalActor, ParticipantSchema, type Scope } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { logWarn } from "../observability/logger";
@@ -183,8 +183,8 @@ export async function admitConnectorAudience(
     now: Date.now(),
   });
   if (seated === null) {
-    const parent = await durableObjectStubForWorkspace(env, env.WORKSTREAM_DOS, input.workspaceId,
-      workstreamDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId), asWorkstreamId(input.workstreamId)));
+    const parent = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, input.workspaceId,
+      workspaceDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId)));
     const admission = await parent.admitConnectorParticipants(ConnectorParticipantAdmissionSchema.parse({
       workspaceId: input.workspaceId, parentId: input.workstreamId, eventId: input.eventId,
       userIds, addedByUserId: input.addedByUserId,

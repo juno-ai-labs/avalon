@@ -163,12 +163,30 @@ async function resolveInspectionSubstreamRoute(
     // main substream, so this check cannot materialize a previously absent DO.
     return route;
   }
-  const workstream = await workstreamStub(env, route);
-  const directory = await workstream.runInspectionSql({
-    sql: `SELECT substream_id FROM substream_directory WHERE substream_id = ?`,
-    bindings: [input.substreamId],
+  const known = await inspectionSubstreamIds(env, route);
+  return known.includes(input.substreamId) ? route : null;
+}
+
+/**
+ * Every conversation a Channel's parent has heard from. The parent is hosted
+ * by the Organization object now; a Channel whose rows have not moved yet is
+ * read from its legacy object, which still holds them.
+ */
+async function inspectionSubstreamIds(env: Env, route: InspectionWorkstreamRoute): Promise<string[]> {
+  const workspace = await workspaceStub(env, route.workspace_id);
+  const hosted = await workspace.runInspectionSql({
+    sql: `SELECT substream_id FROM parent_child_projections WHERE parent_id = ?
+          UNION SELECT substream_id FROM parent_children WHERE parent_id = ?
+          UNION SELECT 'pending:' || state FROM parent_imports WHERE parent_id = ? AND state = 'pending'`,
+    bindings: [route.workstream_id, route.workstream_id, route.workstream_id],
   });
-  return directory.rows.length === 0 ? null : route;
+  const ids = hosted.rows.map((row) => String(row.substream_id));
+  if (!ids.includes("pending:pending")) return ids;
+  const legacy = await (await workstreamStub(env, route)).runInspectionSql({
+    sql: `SELECT substream_id FROM substream_directory`,
+    bindings: [],
+  });
+  return legacy.rows.map((row) => String(row.substream_id));
 }
 
 /**
@@ -366,21 +384,15 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     const request = parseRpcInput(WorkstreamInspectionInputSchema, input, "listSubstreams");
     const route = await resolveInspectionWorkstreamRoute(this.env, request.workstreamId);
     if (!route) return { found: false };
-    const workstream = await workstreamStub(this.env, route);
-    const result = await workstream.runInspectionSql({
-      sql: `SELECT '0' AS substream_id
-            UNION
-            SELECT substream_id FROM substream_directory
-            ORDER BY substream_id`,
-      bindings: [],
-    });
+    const substreamIds = [...new Set(["0", ...await inspectionSubstreamIds(this.env, route)])].sort();
     return EngineeringSubstreamListLookupSchema.parse({
       found: true,
       value: {
         region: this.env.AVALON_REGION,
         workspaceId: route.workspace_id,
         workstreamId: route.workstream_id,
-        items: z.array(SubstreamDirectoryRowSchema).parse(result.rows).map((row) => ({
+        items: z.array(SubstreamDirectoryRowSchema).parse(substreamIds.map((substreamId) => ({ substream_id: substreamId })))
+          .map((row) => ({
           workspaceId: route.workspace_id,
           workstreamId: route.workstream_id,
           substreamId: row.substream_id,
