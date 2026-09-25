@@ -357,6 +357,12 @@ describe('conversation opening skeleton geometry', () => {
     expect(openingComposer).toContain('max-width: var(--composer-width);');
   });
 
+  it('gives the compact participants placeholder the settled stack geometry', () => {
+    expect(rule('.workstream-context-sidebar.is-compact .avatar-stack .avatar,\n.workstream-context-sidebar.is-compact .avatar-overflow')).toContain('height: 20px;');
+    expect(rule('.workstream-context-sidebar.is-compact .skeleton-avatar-stack > .skeleton-bar')).toContain('height: 20px;');
+    expect(rule('.workstream-context-sidebar.is-compact .skeleton-avatar-stack > .skeleton-bar + .skeleton-bar')).toContain('margin-left: -12px;');
+  });
+
   it('does not restate the shared sidebar header height', () => {
     expect(rule('.conversation-opening-sidebar-header')).toBeNull();
     expect(rule('.sidebar-row.sidebar-header')).toContain('height: 43px;');
