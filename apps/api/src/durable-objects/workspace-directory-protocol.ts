@@ -280,9 +280,15 @@ export const WorkspaceDirectoryResourceAccessResultSchema = deferredZodSchema(()
   })).max(10_000),
 }));
 
+/**
+ * The most directory envelopes one apply accepts. A caller holding more, such
+ * as the Organization's own `parent_outbox` drain, splits them at this size.
+ */
+export const MAX_DIRECTORY_APPLY_ENVELOPES = 25;
+
 export const WorkspaceDirectoryApplyRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
-  envelopes: z.array(ParentEffectEnvelopeSchema).min(1).max(25),
+  envelopes: z.array(ParentEffectEnvelopeSchema).min(1).max(MAX_DIRECTORY_APPLY_ENVELOPES),
 }).superRefine((request, context) => {
   for (const [index, envelope] of request.envelopes.entries()) {
     if (envelope.workspaceId !== request.workspaceId) {
