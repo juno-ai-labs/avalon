@@ -6,10 +6,11 @@
  * What this suite is about is the *page*: which conversations a Space answers
  * with for one person, in what order, and how a breakout's own projection gets
  * there. Every part of that needs the runtime. The forwarding is a Channel
- * object's outbox drained through the real activity consumer into a real
- * WorkspaceDO; the idempotency is that WorkspaceDO's receipt table; the
- * visibility, the ordering and the cursor are SQL over storage a double could
- * only describe back to itself.
+ * parent, hosted in the real WorkspaceDO, applying its breakout projection to
+ * the Organization's own breakout tables; the idempotency is that parent's
+ * receipt table and the directory's waterline; the visibility, the ordering
+ * and the cursor are SQL over storage a double could only describe back to
+ * itself.
  *
  * The case that matters most is the last one. The page's filter and
  * `conversationNeedsViewer` in `@rally/contracts` are one decision written
@@ -47,7 +48,10 @@ import {
   type ParentEffect,
 } from "@rally/contracts/conversation-effects";
 
-import { workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import { notePendingParentImport } from "../src/durable-objects/hosted-parent-import";
+import { workstreamDOName } from "../src/durable-objects/names";
+import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
+import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-do-schema";
 import {
   SPACE_CHANNEL_PAGE_SIZE,
   WorkspaceSpaceStorage,
@@ -57,6 +61,7 @@ import {
   deliverParentEffects,
   pendingParentEffects,
 } from "./helpers/conversation-effects";
+import { hostedParentStub } from "./helpers/hosted-parent";
 
 /** Its own workspace id: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000d100");
@@ -69,8 +74,10 @@ const PRIVATE_CHANNEL = asWorkstreamId("00000000-0000-7000-8000-00000000d105");
 const BREAKOUT_ONE = asSubstreamId("00000000-0000-7000-8000-00000000d106");
 const BREAKOUT_TWO = asSubstreamId("00000000-0000-7000-8000-00000000d107");
 
-const workspace = () => env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID));
-const channelObject = (workstreamId: WorkstreamId) =>
+/** The Organization object, which also hosts every Channel parent in it. */
+const workspace = () => hostedParentStub(env, WORKSPACE_ID);
+/** A Channel's legacy parent object, which only exports its rows to the Organization object. */
+const legacyChannelObject = (workstreamId: WorkstreamId) =>
   env.WORKSTREAM_DOS.getByName(workstreamDOName("global", WORKSPACE_ID, workstreamId));
 
 let effectSequence = 0;
@@ -271,10 +278,12 @@ function childEnvelope(
  * One breakout's projection, forwarded by its Channel the way production
  * forwards one.
  *
- * Deliberately not written straight at WorkspaceDO: what is under test in the
- * first case is the *forward*, which is a decision the Channel object makes,
- * and a hand-written envelope would have proved the receiving half twice and
- * the sending half not at all.
+ * Deliberately not written straight at the directory: what is under test in
+ * the first case is the *forward*, which is a decision the Channel parent
+ * makes, and a hand-written envelope would have proved the receiving half
+ * twice and the sending half not at all. The directory half is applied inside
+ * the Organization object straight after the parent write; delivering the
+ * parent outbox afterwards only sends what still leaves on the Queue.
  */
 async function publishBreakout(
   workstreamId: WorkstreamId,
@@ -283,13 +292,13 @@ async function publishBreakout(
   sourceVersion = 1,
   generation = 1,
 ): Promise<void> {
-  await channelObject(workstreamId).receiveChildEffects({
+  await workspace().receiveChildEffects({
     substreamId,
     envelopes: effects.map((effect) => (
       childEnvelope(workstreamId, substreamId, effect, sourceVersion, generation)
     )),
   });
-  await deliverParentEffects(env, channelObject(workstreamId));
+  await deliverParentEffects(env, workspace());
 }
 
 /** Feed the page's WorkspaceDO authority without racing the parent's alarm. */
@@ -321,10 +330,10 @@ async function publishBreakoutProjection(
 }
 
 /**
- * Advance a Channel object's authority generation, the way an authority
+ * Advance a Channel parent's authority generation, the way an authority
  * transfer or an object restore does.
  *
- * Written straight into `workstream_metadata` because what is under test is
+ * Written straight into `parent_metadata` because what is under test is
  * what the *Organization* does with the projections that follow, and driving a
  * real transfer would be several objects' worth of setup for one number.
  */
@@ -332,32 +341,119 @@ async function advanceChannelGeneration(
   workstreamId: WorkstreamId,
   generation: number,
 ): Promise<void> {
-  await runInDurableObject(channelObject(workstreamId), (_instance, state) => {
+  await runInDurableObject(workspace(), (_instance, state) => {
     state.storage.sql.exec(
-      "UPDATE workstream_metadata SET authority_generation = ? WHERE id = 1",
+      "UPDATE parent_metadata SET authority_generation = ? WHERE parent_id = ?",
       generation,
+      workstreamId,
     );
   });
 }
 
-/** The identity row every effect path on a Channel object reads its address from. */
+/** The identity row every effect path on a Channel parent reads its address from. */
 async function openChannelObject(workstreamId: WorkstreamId): Promise<void> {
-  await runInDurableObject(channelObject(workstreamId), (_instance, state) => {
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec(
+      `INSERT INTO parent_metadata
+         (parent_id, parent_kind, workspace_id, region, authority_generation, title,
+          description, preview, scope, exact_state, last_activity_at,
+          created_at, updated_at)
+       VALUES (?, 'workstream', ?, 'global', 1, 'Member Channel', '', '', 'workspace', 'idle', 1, 1, 1)`,
+      workstreamId,
+      WORKSPACE_ID,
+    );
+    state.storage.sql.exec(
+      `INSERT INTO parent_children
+         (parent_id, substream_id, kind, created_by_user_id, created_at, status, updated_at)
+       VALUES (?, '0', 'main', ?, 1, 'ready', 1)`,
+      workstreamId,
+      OWNER,
+    );
+  });
+}
+
+/** A child's stored projection, as a deployed legacy Channel object holds it. */
+interface LegacyProjection {
+  substreamId: string;
+  common: ConversationEffect;
+  viewers: ConversationEffect[];
+  /** Whether the legacy object had already forwarded this child's common row. */
+  forwarded?: boolean;
+}
+
+/**
+ * A deployed legacy Channel object that stored its children's projections,
+ * with the Organization's import ledger saying the parent is still there.
+ *
+ * Seeded as rows because the legacy class no longer receives child effects:
+ * it only exports. The rows are the ones its ledger wrote before the move.
+ */
+async function seedLegacyChannel(workstreamId: WorkstreamId, projections: LegacyProjection[]): Promise<void> {
+  await runInDurableObject(legacyChannelObject(workstreamId), (instance, state) => {
+    applyDurableObjectSqliteMigrations({
+      storage: state.storage,
+      migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS,
+      component: "workstream_do",
+      workerVersionId: "test",
+    });
     state.storage.sql.exec(
       `INSERT INTO workstream_metadata
          (id, workspace_id, workstream_id, region, authority_generation, title,
           description, preview, scope, exact_state, last_activity_at,
           created_at, updated_at)
-       VALUES (1, ?, ?, 'global', 1, 'Member Channel', '', '', 'workspace', 'idle', 1, 1, 1)`,
+       VALUES (1, ?, ?, 'global', 1, 'Roadmap', '', '', 'workspace', 'idle', 1, 1, 1)`,
       WORKSPACE_ID,
       workstreamId,
     );
     state.storage.sql.exec(
-      `INSERT INTO conversation_children
-         (substream_id, kind, created_by_user_id, created_at, status, updated_at)
+      `INSERT INTO conversation_children (substream_id, kind, created_by_user_id, created_at, status, updated_at)
        VALUES ('0', 'main', ?, 1, 'ready', 1)`,
       OWNER,
     );
+    for (const projection of projections) {
+      state.storage.sql.exec(
+        `INSERT INTO conversation_children (substream_id, kind, created_by_user_id, created_at, status, updated_at)
+         VALUES (?, 'child', ?, 1, 'ready', 1)`,
+        projection.substreamId,
+        OWNER,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO substream_directory (substream_id, source_version, payload_hash, effect_json, updated_at)
+         VALUES (?, 1, ?, ?, 1)`,
+        projection.substreamId,
+        conversationEffectHash(projection.common),
+        JSON.stringify(projection.common),
+      );
+      for (const viewer of projection.viewers) {
+        if (viewer.kind !== "directory_user") throw new Error("legacy viewer projection must be directory_user");
+        state.storage.sql.exec(
+          `INSERT INTO substream_user_directory
+             (substream_id, user_id, source_version, payload_hash, effect_json, updated_at)
+           VALUES (?, ?, 1, ?, ?, 1)`,
+          projection.substreamId,
+          viewer.userId,
+          conversationEffectHash(viewer),
+          JSON.stringify(viewer),
+        );
+      }
+      if (projection.forwarded) {
+        state.storage.sql.exec(
+          `INSERT INTO projection_keys (projection_key, next_version, last_payload_hash, updated_at)
+           VALUES (?, 2, 'fnv1a64:0000000000000000', 1)`,
+          `substream:${projection.substreamId}:common`,
+        );
+      }
+    }
+    // The instance decided it was empty when it started, before the ledger
+    // above existed. A deployed object with this ledger starts not empty.
+    (instance as unknown as { empty: boolean }).empty = false;
+  });
+}
+
+/** The Organization's ledger names the parent as still held by its legacy object. */
+async function markParentPendingImport(workstreamId: WorkstreamId): Promise<void> {
+  await runInDurableObject(workspace(), (_instance, state) => {
+    notePendingParentImport(state.storage.sql, workstreamId, "workstream");
   });
 }
 
@@ -474,7 +570,7 @@ function inspect(sql: string): Promise<{ rows: Record<string, unknown>[] }> {
 
 function breakoutRows(): Promise<{ rows: Record<string, unknown>[] }> {
   return inspect(`SELECT workstream_id, substream_id, title, exact_state
-                    FROM workspace_breakout_directory ORDER BY substream_id`);
+                    FROM breakouts ORDER BY substream_id`);
 }
 
 beforeEach(async () => {
