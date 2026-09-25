@@ -623,6 +623,26 @@ describe("AutomationDO", () => {
     expect((await runInDurableObject(automationStub(), (instance: AutomationDO) => instance.readDetail({ ...addressed(), actor: actor() }))).loadable).toBe(true);
   });
 
+  it("keeps a person's pick when the chat repeats its own earlier appearance", async () => {
+    await createDraft();
+    const draft = { ...DEFINITION, definitionVersion: 2 as const, triggers: [] };
+    const save = (appearance: { icon: "lightbulb" | "rocket"; color: "emerald" | "red" | "blue" }) => automationStub().saveDefinition({
+      ...addressed(), draft, evaluatorRules: null, submittedByRunId: null, appearance, actor: actor(),
+    });
+    const stored = async () => JSON.parse((await runInDurableObject(automationStub(), (_instance, state) => state.storage.sql.exec<{ appearance_json: string }>(
+      `SELECT appearance_json FROM automation WHERE id = 1`,
+    ).one().appearance_json)));
+    await save({ icon: "lightbulb", color: "emerald" });
+    expect(await stored()).toEqual({ icon: "lightbulb", color: "emerald" });
+    await automationStub().setAppearance({ ...addressed(), actor: actor(), appearance: { color: "red" } });
+    // "Also run it on Fridays": the chat copies its earlier call.
+    await save({ icon: "lightbulb", color: "emerald" });
+    expect(await stored()).toEqual({ icon: "lightbulb", color: "red" });
+    // A value it has not submitted before is a choice, and is written.
+    await save({ icon: "rocket", color: "blue" });
+    expect(await stored()).toEqual({ icon: "rocket", color: "blue" });
+  });
+
   it("keeps a retired colour the Sidekick already wears, and refuses it as a new choice", async () => {
     await createDraft();
     const draft = { ...DEFINITION, definitionVersion: 2 as const, triggers: [] };
