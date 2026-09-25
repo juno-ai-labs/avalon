@@ -47,7 +47,7 @@ the D1 intent for the existing scheduled recovery path.
 | `apps/api/src/services/auth-service.ts` | `logout` — publishes for each session row it revoked. |
 | `apps/api/src/worker-events.ts` | Queue dispatch by name — ahead of the work-stream maintenance gate — and session expiry plus durable relationship dispatch on the existing cron. |
 | `apps/api/src/services/workspace-relationship-delivery.ts` | Retries D1-recorded membership changes through the existing revocation queue. Queue acceptance marks dispatch, not application. |
-| `apps/api/src/durable-objects/{workspace-do,substream-agent,artifact-host-do}.ts` | `revokeSocketAccess` on each socket-holding object. `WorkspaceDO` also closes one Channel's control sockets through `revokeParentSocketAccess`, which runs `HostedParent.revokeSocketAccess` in `hosted-parent.ts`. `AutomationDO` holds no socket; the consumer asks it `listChildren` instead. |
+| `apps/api/src/durable-objects/{workspace-do,substream-agent,artifact-host-do}.ts` | `revokeSocketAccess` on each socket-holding object. `WorkspaceDO.revokeSocketAccess` also runs every hosted Channel's step (`HostedParent.revokeSocketAccess` in `hosted-parent.ts`) in the same call; `revokeParentSocketAccess` runs one Channel's step for a `workstream` hop. `AutomationDO` holds no socket; the consumer asks it `listChildren` instead. |
 | `packages/db/migrations/0091_seed_expired_session_revocations.sql` | Marks the expired-session backlog older than seven days revoked so the sweep starts clean, and indexes the query it runs every five minutes. The cutoff matters: marking a row suppresses its announcement forever, and migrations run before the Worker deploys, so anything recent is left for the sweep to announce properly. |
 
 ### The producer writes the fact and publishes it
@@ -74,9 +74,10 @@ fail closed. Socket admission already checks the current relationship incarnatio
 Promotion preserves the incarnation and does not revoke the conversation.
 
 Revoked workstream grants use their existing durable `scope_grant_directory`
-effect as the publication intent. After applying its directory projection, the
-activity consumer publishes a `workstream_automations` revocation and acknowledges
-the effect only after Queue acceptance. A failed send retries the effect; repeated
+effect as the publication intent. After applying its directory projection,
+WorkspaceDO reads the Sidekicks the Channel owns from its own
+`automation_directory`, publishes one `automation` hop per Sidekick (nothing when
+it owns none), and deletes the effect's outbox row only after Queue acceptance. A failed send retries the effect; repeated
 application is safe. The grant's membership incarnation travels with the message.
 This connects separately seated Sidekick authoring/run conversations to parent
 grant revocation without adding checks to frame publication or ordinary turns.
@@ -100,7 +101,7 @@ The producers are:
   the automations the room owns admitted this person through the room, and
   nothing inside the room reaches those objects.
 - **A workstream grant is revoked.** The durable grant-directory effect publishes
-  the existing `workstream_automations` hop before acknowledgment. Main and child
+  the owned Sidekicks' `automation` hops before acknowledgment. Main and child
   conversation membership is independently handled by participant projections.
 - **A session is revoked.** `AuthService.logout` returns the rows it revoked
   (`RETURNING id, user_id, workspace_id`) and publishes one message per row,
@@ -117,16 +118,32 @@ calls `revokeSocketAccess`, and receives back the children that object knows
 about; each child becomes its own message on the same queue.
 
 ```
-workspace              ──▶ WorkspaceDO    ──▶ [workstreamIds] + [automationIds] + [artifactIds]
+workspace              ──▶ WorkspaceDO    ──▶ [substreams of every hosted Channel] + [automationIds] + [artifactIds]
+                                              (+ a workstream hop per Channel still awaiting its import)
 workstream_automations ──▶ WorkspaceDO    ──▶ [automationIds the room owns]  (automationIdsOwnedByWorkstream)
 workstream             ──▶ WorkspaceDO    ──▶ [substreamIds]   (revokeParentSocketAccess)
 workstream_audience_narrowed
-                       ──▶ WorkspaceDO    ──▶ [closedUserIds]  (revokeNarrowedAudienceAccess)
+                       ──▶ WorkspaceDO    ──▶ [substreams per closed reader] + [automationIds the room owns]
+                                              (revokeNarrowedAudienceAccess)
 automation             ──▶ AutomationDO   ──▶ [substreamIds]   (listChildren; it holds no socket)
 space                  ──▶ WorkspaceDO    ──▶ [substreamIds]   (listChildren; a Space holds no socket)
 substream              ──▶ SubstreamAgent ──▶ (leaf)
 artifact               ──▶ ArtifactHostDO ──▶ (leaf)
 ```
+
+A Channel's parent, its control sockets and its children all live in
+WorkspaceDO, so a hop that reaches WorkspaceDO runs the Channel step there
+rather than publishing a `workstream` or `workstream_automations` message that
+would only come back to the same object. The workspace hop answers `channels`,
+one entry per hosted Channel whose step it ran, beside the full
+`workstreamIds`; the consumer publishes a `workstream` hop only for a Channel
+not in `channels`. The narrowing hop answers `substreams` and `automationIds`
+beside `closedUserIds`. Both keep the older fields so a consumer from before
+this change still reaches everything, and the consumer falls back to the older
+hops when an object from before it answers without the new ones. The
+`workstream` and `workstream_automations` hops stay: Workers still publish
+`workstream_automations` for a removed participant, and messages of both kinds
+may already be queued at a deploy.
 
 The fan-out is queue-driven rather than one long call chain for three reasons: a
 hop that fails is retried alone rather than restarting the walk; no single
@@ -179,10 +196,11 @@ stream that stops being Organization-wide takes access from every member who is
 not a participant, which is a set nothing outside the room can enumerate and
 nobody wants one message per name for. What *is* enumerable is who is holding a
 socket right now, and only the room knows that — so the hop asks it to close
-what it can no longer admit and to answer with whose sockets those were. Each
-of those names then becomes an ordinary `workstream` hop, which reaches the
-substreams, and an ordinary `workstream_automations` hop, which reaches the
-automations the room owns. The message carries `userId: null`, and the schema
+what it can no longer admit and to answer with whose sockets those were. In the
+same call WorkspaceDO runs each of those people's Channel step (with the
+`workstream_participant_removed` reason the narrowing carries) and reads the
+automations the room owns, so the consumer publishes the substream and
+automation leaves for each name directly. The message carries `userId: null`, and the schema
 refuses that in any other combination: a per-user hop that lost its user would
 close every socket it found.
 
@@ -211,8 +229,8 @@ rather than the producer publishing a flat list.
 The lists are deliberately generous. `WorkspaceDO` returns the person's own
 viewer rows plus every workspace-scoped work stream, because a workspace-scoped
 work stream is readable by any member and can therefore hold a socket the object
-never wrote a viewer row for. For a `workstream` hop, `WorkspaceDO` closes that
-Channel's control sockets (tagged `parent-control:<id>`) and names every child
+never wrote a viewer row for. For each of those Channels (inside the workspace
+hop, or in a `workstream` hop), `WorkspaceDO` closes that Channel's control sockets (tagged `parent-control:<id>`) and names every child
 in the Channel's `parent_children` rows, which always include `"0"`, plus any
 substream in `parent_child_projections`. When the reason is
 `workstream_participant_removed`, it keeps `"0"` and drops breakouts the person
@@ -274,7 +292,11 @@ room would go on seeing an evicted reader listed as present.
   re-published list is a list of hops that each find nothing to do. Retries are
   therefore free of consequence, which is what lets the consumer retry at all.
 - **An object returns lists; it does not publish.** Keeping the transport in the
-  consumer is what keeps the five objects independent of the queue.
+  consumer is what keeps the five objects independent of the queue. The one
+  exception is WorkspaceDO applying a revoked Channel grant from its own outbox:
+  no consumer is involved there, so it publishes the owned Sidekicks'
+  `automation` hops itself, as it published the `workstream_automations` hop
+  before.
 - **Every object that accepts a socket is on this walk.** A room admits on a
   ticket and never re-authorizes, so an object added to the tree without a
   `revokeSocketAccess` and a hop to reach it keeps serving somebody who has lost
@@ -466,6 +488,36 @@ would be a way into somebody else's workspace.
   somebody kept access they should have lost.
 
 ## Changelog
+
+### 2026-09-25 — The Channel step runs inside the Organization object
+
+**What changed:** `WorkspaceDO.revokeSocketAccess` runs every hosted Channel's
+step (close its control sockets, name its conversations) in the same call and
+answers `channels`; the consumer publishes substream leaves for those and a
+`workstream` hop only for a Channel still awaiting its legacy import.
+`revokeNarrowedAudienceAccess` also answers each closed reader's conversations
+and the Channel's owned Sidekicks, so the consumer publishes leaves instead of a
+`workstream` and a `workstream_automations` hop per reader. A revoked Channel
+grant applied from WorkspaceDO's outbox publishes `automation` hops from its own
+`automation_directory`, and nothing when the Channel owns none.
+
+**Why:** Channel parents moved into WorkspaceDO, so each of those intermediate
+messages was a Queue round trip from WorkspaceDO back into WorkspaceDO before a
+conversation heard. A membership removal paid one per revocable Channel. The
+revocation reaches the conversations one Queue hop sooner, with fewer messages.
+
+**Considered and rejected:** Importing a pending legacy Channel inside the
+workspace hop, which would put a remote call per such Channel into one
+invocation; it keeps its own hop instead. Dropping `workstreamIds` from the
+answer, which would leave a consumer from before `channels` reaching no Channel
+during a rollout.
+
+**Consequences:** The workspace hop is now one invocation per Organization
+whatever its Channel count, bounded by the in-memory walk over its hosted
+Channels and a D1 session read per matching control socket when the message
+carries an incarnation. The `workstream` and `workstream_automations` hops and
+the consumer's fallbacks are still needed for Worker producers and for
+messages queued before a deploy.
 
 ### 2026-09-21 — Artifact serving trusts admitted sessions until retraction
 
