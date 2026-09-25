@@ -351,6 +351,33 @@ describe('projected search authorization', () => {
     await publish({ status: 'allowed', evidence: [{ ...allowed.evidence[0]!, revision: '2' }] }, { republish: true });
     expect(puts).toBe(3);
   });
+  it('writes KV again after a put whose outcome was unknown', async () => {
+    const stub = env.WORKSPACE_DOS.getByName('search-authorization-unknown-put');
+    await stub.initializeWorkspace(subject.workspaceId, 'wnam');
+    const revised: AuthorizationDecision = { status: 'allowed', evidence: [{ ...allowed.evidence[0]!, revision: '2' }] };
+    let puts = 0;
+    let landThenThrow = false;
+    await runInDurableObject(stub, (instance) => {
+      const target = instance as unknown as { env: Env };
+      const original = target.env.AUTHORIZATION_CACHE!;
+      target.env = { ...target.env, AUTHORIZATION_CACHE: createCloudflareTestBinding<KVNamespace>({ put: async (key, value) => {
+        puts++; await original.put(key, value);
+        if (landThenThrow) throw new Error('kv outcome unknown');
+      } }) };
+    });
+    const publish = async (decision: AuthorizationDecision) => {
+      const [generation] = await stub.registerSearchAuthorization({ subject, resources: [resource] });
+      return stub.writeSearchAuthorizationSnapshots([{ version: 1, generation, subject, resource, decision, observedAt: Date.now() }]);
+    };
+    await publish(allowed);
+    // KV keeps the revised decision although the put reported failure.
+    landThenThrow = true;
+    await expect(publish(revised)).rejects.toThrow('kv outcome unknown');
+    landThenThrow = false;
+    await publish(allowed);
+    expect(puts).toBe(3);
+    expect(await env.AUTHORIZATION_CACHE!.get(await searchAuthorizationKey(subject, resource), 'json')).toMatchObject({ decision: allowed });
+  });
 });
 
 describe('deferred first fills', () => {
