@@ -3333,12 +3333,10 @@ describe("a member's message travels the whole pipeline", () => {
         }, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBeGreaterThan(0);
         expect((await revokedGrantRows())[0]?.attempts).toBeGreaterThan(0);
         holdSidekickRevocations = false;
-        let debugx = "";
-        try { await expect.poll(async () => {
+        await expect.poll(async () => {
           await drainParentOutboxNow();
-          debugx = JSON.stringify({ rows: (await revokedGrantRows()).map((r) => [r.attempts, r.payload_json]), refusals: sidekickRevocationRefusals, calls: revocationSend.mock.calls.length, results: revocationSend.mock.results.map((r) => [r.type, String(r.value)]), all: await runInDurableObject(parent, (_i, st) => st.storage.sql.exec("SELECT effect_kind,state,attempts,not_before FROM parent_outbox").toArray()) });
           return (await revokedGrantRows()).length;
-        }, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(0); } catch { throw new Error("DEBUGX " + debugx); }
+        }, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(0);
         const published = revocationSend.mock.calls.map(([body]) => body).filter(isSidekickRevocation);
         expect(published.length).toBeGreaterThan(sidekickRevocationRefusals);
         const pending: unknown[] = [published.at(-1)];
