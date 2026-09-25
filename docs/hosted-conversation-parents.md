@@ -49,7 +49,7 @@ separately.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/durable-objects/hosted-parent.ts` | `HostedParent`: one Channel's or Space's parent authority, scoped to a `parent_id` inside `WorkspaceDO`'s SQLite. The port of what `WorkstreamDO` and `ConversationParentDurableObject` did for one object. |
-| `apps/api/src/durable-objects/hosted-parent-schema.ts` | `WorkspaceDO` migration 71: the `parent_*` tables, the directory renames, and the seeded import ledger. |
+| `apps/api/src/durable-objects/hosted-parent-schema.ts` | `WorkspaceDO` migration 72: the `parent_*` tables, the directory renames, and the seeded import ledger. |
 | `apps/api/src/durable-objects/hosted-parent-import.ts` | Moving one legacy object's rows into the hosted tables, and the ledger that says which parents still need it. |
 | `apps/api/src/durable-objects/workspace-do.ts` | The RPC facade: every conversation-parent method now answers here, dispatching to `HostedParent` for its `parentId`. Also the Channel control socket, the in-transaction apply of what a parent publishes, the outbox drain, and the workspace relationship table. |
 | `apps/api/src/durable-objects/workstream-do.ts`, `space-do.ts` | **Legacy.** Kept deployed only so existing objects can be exported. Everything but `exportParentState`, the receive-forward, and fleet operations is gone. |
@@ -181,7 +181,7 @@ records it here itself, so its own next checks see it.
 
 ### Moving an existing parent
 
-Migration 71 seeds `parent_imports` with one `pending` row for every Channel and
+Migration 72 seeds `parent_imports` with one `pending` row for every Channel and
 Space the Organization's directory already held. A legacy parent effect for an
 id the ledger does not know (from a legacy object that was mid-delivery at
 deploy) adds a `pending` row too, and so does a child effect for a parent with
@@ -251,7 +251,7 @@ directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
 | A legacy object that was never created (an id the directory knew but no object held) | Its export returns no metadata; the parent is marked `imported` empty. |
 | The directory apply fails after a parent commit | The `parent_outbox` row stays and the alarm reapplies it; the apply is idempotent on generation, waterline and payload hash. |
 | A Queue message addressed to the legacy object arrives after export | The legacy object forwards it to `WorkspaceDO`. |
-| An Organization held below schema 58 by the meeting-notes cleanup | Migration 71 has not run, so there are no `channels` or `parent_*` tables and every Channel request fails with `no such table`. The object itself still starts and its alarm skips the hosted-parent phases, so the operator retirement RPCs can finish it. Every production object was at schema 70 before this change, so none should be held; the error is loud if one is. |
+| An Organization held below schema 58 by the meeting-notes cleanup | Migration 72 has not run, so there are no `channels` or `parent_*` tables and every Channel request fails with `no such table`. The object itself still starts and its alarm skips the hosted-parent phases, so the operator retirement RPCs can finish it. Every production object was at schema 70 before this change, so none should be held; the error is loud if one is. |
 | The Organization object is unavailable | Channels and Spaces cannot be opened, listed or changed. That was already true of the sidebar; it is now true of a Channel's viewer check too. |
 
 ## Testing

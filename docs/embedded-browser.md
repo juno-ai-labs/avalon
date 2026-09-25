@@ -79,7 +79,8 @@ in search filters and sidebar rows, not a Chrome tab. A new-tab button follows
 the tabs, tabs shrink to share the strip, and the strip scrolls to keep the
 active tab visible. A middle click or the close button closes a tab, closing
 selects the neighbour to its right (else left), and closing the last tab leaves
-a blank one. Tabs drag to reorder (`move`). The strip is one tab stop: arrows,
+a blank one. In the rail, closing the only tab when it is already blank (by the
+close button, a middle click, Delete or ⌘W) closes the rail instead. Tabs drag to reorder (`move`). The strip is one tab stop: arrows,
 Home and End move between tabs and Delete closes one. `embeddedBrowserShortcut`
 defines the browser shortcuts once — ⌘T, ⌘W, ⌘1–⌘9, ⌃Tab and ⌘⇧[ / ], ⌘L, ⌘R,
 ⌘[ / ] — for a key pressed in Rally's controls (the renderer's listener) and
@@ -155,6 +156,23 @@ check that the guest page starts exactly below the rail toolbar and does not
 cover the conversation.
 
 ## Changelog
+
+### 2026-09-25 — Closing the only blank tab closes the rail
+
+**What changed:** `EmbeddedBrowserTabs` and `useEmbeddedBrowserShortcuts` take
+an optional `onCloseLast`. When the tab being closed is the only one and is
+blank, they call it instead of sending `close`. The rail passes its own close.
+
+**Why:** Main replaces a closed last tab with a blank one, so closing a lone
+blank tab did nothing visible. People expected the X to dismiss the browser.
+
+**Considered and rejected:** Closing the rail from main when the last tab
+closes. Main does not own the rail's open state, and the import window must
+keep its blank tab.
+
+**Consequences:** A host that omits `onCloseLast` keeps the old behavior, as
+the import window does. Closing the last tab when it holds a page still leaves
+a blank tab.
 
 ### 2026-09-24 — Open web links in the rail instead of from a header button
 

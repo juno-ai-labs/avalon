@@ -36,7 +36,7 @@ it("upgrades a populated v68 breakout directory without losing its row and const
       component: "workspace_do", workerVersionId: "with-breakout-appearance", now: 2,
     });
     const sql = state.storage.sql;
-    // Migration 71 renamed the directory to `breakouts`; the v68 row has to
+    // Migration 72 renamed the directory to `breakouts`; the v68 row has to
     // survive both the appearance column and the rename.
     expect(sql.exec("SELECT name FROM sqlite_schema WHERE name = 'workspace_breakout_directory'").toArray()).toEqual([]);
     expect(sql.exec<{ substream_id: string; title: string; appearance_json: string | null }>(

@@ -588,6 +588,8 @@ describe('public Rally site', () => {
     )).toBe('/app/workspaces/:region/:workspace/workstreams/:id');
     expect(normalizedTelemetryPathname('/app/workspaces/enterprise/private-workspace'))
       .toBe('/app/workspaces/:region/:workspace/workstreams/:id');
+    expect(normalizedTelemetryPathname('/app/global/1111117Hxt1fAWDjN7TW/sk/1111117Hxt1fAWDjN7TX/'))
+      .toBe('/app/:region/:organization/sk/:sidekick');
     expect(normalizedTelemetryPathname('/app/global/private-org/s/private-space/c'))
       .toBe('/app/:unrecognized');
     expect(normalizedTelemetryPathname('/trust/privacy/')).toBe('/trust/privacy/');

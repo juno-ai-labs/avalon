@@ -186,6 +186,9 @@ export function normalizedTelemetryPathname(pathname: string): string {
   if (/^\/app\/[^/]+\/[^/]+\/s\/[^/]+\/?$/u.test(path)) {
     return '/app/:region/:organization/s/:space';
   }
+  if (/^\/app\/[^/]+\/[^/]+\/sk\/[^/]+\/?$/u.test(path)) {
+    return '/app/:region/:organization/sk/:sidekick';
+  }
   if (path.startsWith('/app/workspaces/')) {
     return '/app/workspaces/:region/:workspace/workstreams/:id';
   }

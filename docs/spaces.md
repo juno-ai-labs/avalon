@@ -1835,7 +1835,7 @@ when one of them refuses.
 
 Ten tables in WorkspaceDO's migration 63, and two more in migration 65.
 
-`spaces` (created as `workspace_space_directory` and renamed by migration 71;
+`spaces` (created as `workspace_space_directory` and renamed by migration 72;
 see [`hosted-conversation-parents.md`](hosted-conversation-parents.md#table-map))
 is one row per Space: the name, appearance and scope
 a projection wrote, the archive timestamp, the protected `system_role`, the

@@ -102,7 +102,7 @@ import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, Button, EmptyState, IconButton, InlineError, LoadingState, Modal } from '../components/primitives';
 import { SidebarSkeletonRows } from '../components/sidebar-skeleton';
 import { useWorkstreamSidebarGeometry } from '@rally/ui/components/workstream-sidebar';
-import { SidebarScroll, SidebarTitleHeader } from '@rally/ui/components/resizable-sidebar';
+import { SidebarHorizontalLine, SidebarScroll, SidebarTitleHeader } from '@rally/ui/components/resizable-sidebar';
 import { CopyButton } from '../components/copy-button';
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
 import { ConnectorConnectionsProvider } from '../components/connector-mentions';
@@ -166,13 +166,25 @@ function ConversationOpeningSidebar(): React.JSX.Element {
     >
       <SidebarTitleHeader
         className="workstream-context-toolbar window-drag conversation-opening-sidebar-header"
-        icon={<span className="skeleton-bar conversation-opening-sidebar-mark" />}
-        title={<span className="skeleton-bar conversation-opening-sidebar-title" />}
+        icon={<span className="skeleton-bar skeleton-title-mark" />}
+        title={<span className="skeleton-bar skeleton-title-line" />}
       />
       <SidebarScroll className="workstream-context-scroll conversation-opening-sidebar-scroll">
-        <SidebarSkeletonRows count={4} />
-        <span className="skeleton-bar skeleton-group-label" />
+        {/* The main conversation and its Breakouts, then the participants
+            section under its rule: the rail's own order, with no group
+            headings because the real rail has none above its rows. */}
         <SidebarSkeletonRows count={3} />
+        <section className="workstream-context-section">
+          <SidebarHorizontalLine />
+          <h2><span className="skeleton-bar skeleton-section-label" /></h2>
+          <div className="sidebar-row workstream-context-row skeleton-row">
+            <span className="skeleton-avatar-stack">
+              <span className="skeleton-bar" />
+              <span className="skeleton-bar" />
+              <span className="skeleton-bar" />
+            </span>
+          </div>
+        </section>
       </SidebarScroll>
     </aside>
   );
@@ -213,24 +225,40 @@ export function ConversationOpeningSkeleton({
           <div className="transcript-column conversation-opening-messages">
             <div className="conversation-opening-message">
               <div className="conversation-opening-byline">
-                <span className="skeleton-bar conversation-opening-avatar" />
                 <span className="skeleton-bar conversation-opening-name" />
+                <span className="skeleton-bar conversation-opening-time" />
               </div>
-              <span className="skeleton-bar conversation-opening-line" />
-              <span className="skeleton-bar conversation-opening-line is-short" />
+              <div className="conversation-opening-prose">
+                <span className="skeleton-bar conversation-opening-line" />
+                <span className="skeleton-bar conversation-opening-line is-long" />
+                <span className="skeleton-bar conversation-opening-line is-short" />
+              </div>
             </div>
             <div className="conversation-opening-message is-human">
-              <span className="skeleton-bar conversation-opening-bubble" />
-              <span className="skeleton-bar conversation-opening-bubble is-short" />
+              <div className="conversation-opening-byline">
+                <span className="skeleton-bar conversation-opening-time" />
+                <span className="skeleton-bar conversation-opening-name is-long" />
+              </div>
+              <div className="conversation-opening-bubble">
+                <span className="skeleton-bar conversation-opening-line" />
+                <span className="skeleton-bar conversation-opening-line is-long" />
+                <span className="skeleton-bar conversation-opening-line is-medium" />
+              </div>
             </div>
             <div className="conversation-opening-message">
               <div className="conversation-opening-byline">
-                <span className="skeleton-bar conversation-opening-avatar" />
-                <span className="skeleton-bar conversation-opening-name is-short" />
+                <span className="skeleton-bar conversation-opening-name" />
+                <span className="skeleton-bar conversation-opening-time" />
               </div>
-              <span className="skeleton-bar conversation-opening-line is-medium" />
-              <span className="skeleton-bar conversation-opening-line" />
-              <span className="skeleton-bar conversation-opening-line is-short" />
+              <div className="conversation-opening-prose">
+                <span className="skeleton-bar conversation-opening-line is-long" />
+                <span className="skeleton-bar conversation-opening-line" />
+                <span className="skeleton-bar conversation-opening-line is-medium" />
+              </div>
+              <div className="conversation-opening-prose">
+                <span className="skeleton-bar conversation-opening-line" />
+                <span className="skeleton-bar conversation-opening-line is-short" />
+              </div>
             </div>
           </div>
         </div>

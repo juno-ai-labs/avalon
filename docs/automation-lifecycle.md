@@ -262,7 +262,10 @@ a filter.
 `/sidekicks/new` replaces itself with the resulting detail route so Back cannot
 create a second draft. Coordinating conversations use `rally_agents` to discover
 and reuse a suitable Sidekick owned by their workstream, or create a minimal one
-there by default, then send setup instructions to its authoring agent. Drafting
+there by default, then send setup instructions to its authoring agent. Those
+instructions open the authoring conversation and are shown there as its
+**Opening instructions** row
+([`plugin-activity-rows.md`](plugin-activity-rows.md)). Drafting
 tools are available only in that authoring conversation. The persisted drafting
 plugin id and canonical tool names stay; the model reads the plugin as
 `rally_sidekicks` and its tools under the `sidekick_` prefix. Workstream-owned

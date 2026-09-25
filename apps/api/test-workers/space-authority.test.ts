@@ -1926,7 +1926,7 @@ describe("WorkspaceDO space authority", () => {
     })).resolves.toMatchObject({ rows: [{ count: 0 }] });
 
     // Install the exact breakout tables from migration 63, under the names
-    // migration 71 gives them, without exercising the unrelated
+    // migration 72 gives them, without exercising the unrelated
     // meeting-retirement chain this fixture deliberately holds. The same
     // delivery is then accepted: this is the Queue retry the empty acceptance
     // preserves rather than a second publication from the Channel.
