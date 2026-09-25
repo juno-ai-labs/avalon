@@ -314,9 +314,14 @@ async function place(spaceId: SpaceId, workstreamId: WorkstreamId): Promise<void
   if (!settled.ok) throw new Error(`finalizeSpaceMembership refused: ${settled.code}`);
 }
 
-/*
- * A member Channel's own authority is hosted by the Organization object, and
- * is opened the way `channel-access-sources.test.ts` opens one.
+const observedChannel = {
+  readers: { scope: "workspace" as const },
+  participantUserIds: [OWNER],
+};
+
+/**
+ * One member Channel's own authority, hosted by the Organization object and
+ * opened the way `channel-access-sources.test.ts` opens one.
  *
  * The archive fan-out has two halves: the Space membership says which
  * Channels this Space still reaches, and each of those Channels' parents
@@ -324,12 +329,6 @@ async function place(spaceId: SpaceId, workstreamId: WorkstreamId): Promise<void
  * proving the source is gone still needs the real Channel authority, not a
  * count of membership rows.
  */
-
-const observedChannel = {
-  readers: { scope: "workspace" as const },
-  participantUserIds: [OWNER],
-};
-
 async function openMemberChannel(workstreamId: WorkstreamId): Promise<void> {
   await runInDurableObject(workspace(), (_instance, state) => {
     // Written directly, for the reason the access-sources suite writes it: this

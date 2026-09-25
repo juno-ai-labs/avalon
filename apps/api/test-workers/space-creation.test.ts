@@ -45,7 +45,6 @@ function workspace() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
 }
 
-
 /** The address allocator needs a key; it is configuration, not behaviour. */
 function creationEnv(): Env {
   return new Proxy(env, {

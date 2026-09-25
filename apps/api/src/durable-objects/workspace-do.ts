@@ -181,7 +181,7 @@ import {
 import { boundParameterChunks } from "./bound-parameters";
 import { projectionSupersedes, type StoredProjection } from "./projection-fence";
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
-import { automationDOName, spaceDOName, workspaceDOName, workstreamDOName } from "./names";
+import { automationDOName, conversationObjectName, spaceDOName, workspaceDOName, workstreamDOName } from "./names";
 import {
   OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
   applyRetirementGate,
@@ -4557,6 +4557,30 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   private readonly parentImportsInFlight = new Map<string, Promise<void>>();
 
+  /**
+   * Start a Channel's Main conversation warming when someone opens the
+   * Channel, without waiting for it. The legacy parent did this on its own
+   * wake; the Organization object never sleeps for a Channel, so the socket
+   * open is the moment a person is about to read Main.
+   *
+   * Nothing here is awaited or retried. A conversation that fails to wake is
+   * woken by the request that needs it; this only removes latency and must
+   * never add a failure.
+   */
+  private wakeMainConversation(parentId: string): void {
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) return;
+    this.state.waitUntil((async () => {
+      try {
+        const stub = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, workspaceId,
+          conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), parentId));
+        await stub.wake();
+      } catch {
+        // Warming is best effort by construction.
+      }
+    })());
+  }
+
   private hostedParentHost(): HostedParentHost {
     return {
       env: this.env,
@@ -5101,7 +5125,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (request.method === "GET" && path === "/parent-socket") {
       const parentId = WorkstreamIdSchema.safeParse(readRallyHeader(request.headers, RALLY_HEADERS.WORKSTREAM_ID));
       if (!parentId.success) return json({ error: "invalid_socket_identity" }, 400);
-      return (await this.hostedParent(parentId.data)).acceptSocket(request);
+      const response = await (await this.hostedParent(parentId.data)).acceptSocket(request);
+      if (response.status === 101) this.wakeMainConversation(parentId.data);
+      return response;
     }
     if (request.method === "GET" && path === "/health") {
       return json({
