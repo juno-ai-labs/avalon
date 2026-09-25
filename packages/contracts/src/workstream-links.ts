@@ -51,6 +51,10 @@ export interface SpaceLinkTarget extends WorkspaceTarget {
   spaceId: string;
 }
 
+export interface SidekickLinkTarget extends WorkspaceTarget {
+  sidekickId: string;
+}
+
 export type ParsedWorkstreamLinkTarget = WorkstreamLinkTarget | (WorkspaceTarget & {
   spaceId?: undefined;
   workstreamId: string;
@@ -128,6 +132,42 @@ export function spaceCanonicalUrl(webBaseUrl: string, target: SpaceLinkTarget): 
     throw new Error("A Space link requires a region, Organization UUID, and Space UUID");
   }
   return new URL(`${WORKSTREAM_LINK_PATH_PREFIX}${target.region}/${uuidToBase58(target.workspaceId)}/s/${uuidToBase58(target.spaceId)}/`, webBaseUrl).toString();
+}
+
+function assertSidekickLinkTarget(target: SidekickLinkTarget): void {
+  if (!isWorkspaceTarget(target) || !isWorkstreamId(target.sidekickId)) {
+    throw new Error("A Sidekick link requires a region, Organization UUID, and Sidekick UUID");
+  }
+}
+
+/** The addressed desktop destination for a Sidekick's own screen. */
+export function sidekickDeepLink(target: SidekickLinkTarget): string {
+  assertSidekickLinkTarget(target);
+  return addWorkspaceTarget(
+    new URL(`${DESKTOP_DEEP_LINK_PROTOCOL}//sidekicks/${uuidToBase58(target.sidekickId)}`),
+    target,
+    { base58: true },
+  ).toString();
+}
+
+/**
+ * The canonical URL for a Sidekick. A Sidekick belongs to the Organization,
+ * not to a Space, so it sits directly under the Organization segment.
+ */
+export function sidekickCanonicalUrl(webBaseUrl: string, target: SidekickLinkTarget): string {
+  assertSidekickLinkTarget(target);
+  return new URL(`${WORKSTREAM_LINK_PATH_PREFIX}${target.region}/${uuidToBase58(target.workspaceId)}/sk/${uuidToBase58(target.sidekickId)}/`, webBaseUrl).toString();
+}
+
+/** Parse the canonical Sidekick path. */
+export function parseSidekickLinkPathTarget(pathname: string): SidekickLinkTarget | null {
+  const normalized = pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+  const match = /^\/app\/([a-z][a-z0-9-]*)\/([^/]+)\/sk\/([^/]+)$/u.exec(normalized);
+  if (!match) return null;
+  const workspaceId = uuidFromBase58(match[2]!);
+  const sidekickId = uuidFromBase58(match[3]!);
+  const target = { region: match[1]!, workspaceId: workspaceId!, sidekickId: sidekickId! };
+  return workspaceId && sidekickId && isWorkspaceTarget(target) ? target as SidekickLinkTarget : null;
 }
 
 /** Parse the canonical Space root, without accepting a Channel below it. */

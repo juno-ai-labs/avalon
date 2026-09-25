@@ -928,6 +928,14 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         else if (requireActiveWorkspace('Sign in before opening this channel link.')) openWorkstream();
         return;
       }
+      if (intent.kind === 'sidekick') {
+        await runInDeepLinkWorkspace(intent.target, () => {
+          setDeepLinkError(null);
+          markSurfaceEntrypoint(navigation.entrypoint);
+          window.location.hash = `/sidekicks/${intent.sidekickId}`;
+        });
+        return;
+      }
       if (intent.kind === 'settings') {
         const openSettings = async (): Promise<void> => {
           setDeepLinkError(null);
