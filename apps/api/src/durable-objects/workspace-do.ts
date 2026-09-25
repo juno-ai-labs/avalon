@@ -4655,9 +4655,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.armNextAlarm();
   }
 
-  /** After a parent write: apply what it put in the outbox, and arm what it scheduled. */
+  /**
+   * After a parent write: apply the directory rows it put in the outbox, and
+   * arm what it scheduled. Activity and notification rows wait for the alarm,
+   * as they did in the legacy parent: their delivery is a Queue send that
+   * nobody who made the write is waiting on.
+   */
   private async afterParentWrite(): Promise<void> {
-    await this.drainParentOutbox();
+    await this.drainParentOutbox({ localOnly: true });
     await this.armNextAlarm();
   }
 
@@ -4670,16 +4675,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * and delivers the notification in a Worker. A row is deleted only once its
    * destination has it, and a failure defers it for the alarm.
    */
-  private async drainParentOutbox(): Promise<void> {
+  private async drainParentOutbox(options: { localOnly?: boolean } = {}): Promise<void> {
     const workspaceId = this.workspaceId();
     if (!workspaceId) return;
     const rows = this.state.storage.sql.exec<{ payload_json: string; effect_kind: string }>(
       `SELECT payload_json, effect_kind FROM parent_outbox
         WHERE state IN ('pending', 'inflight') AND not_before <= ?
+          AND (? = 0 OR effect_kind IN ('directory_common', 'directory_user', 'scope_grant_directory'))
         ORDER BY CASE effect_kind WHEN 'directory_common' THEN 0 WHEN 'directory_user' THEN 1 ELSE 2 END,
                  created_at, message_id
         LIMIT 100`,
       Date.now(),
+      options.localOnly ? 1 : 0,
     ).toArray();
     if (rows.length === 0) return;
     const envelopes = rows.map((row) => ParentEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
