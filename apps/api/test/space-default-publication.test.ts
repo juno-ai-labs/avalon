@@ -149,7 +149,7 @@ describe("republishing unsettled Space intents", () => {
       region: "global",
       now: 2_000,
       retryAt: (attempt) => 2_000 + attempt * 60_000,
-    })).resolves.toBe(1);
+    })).resolves.toEqual({ published: 1, inPlace: [] });
 
     // Everything the consumer needs to address the work travels on the message:
     // by the time it runs, the request that staged the intent is gone.
@@ -169,6 +169,26 @@ describe("republishing unsettled Space intents", () => {
       cursor: "MDAwMDAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGMx",
       requestedByUserId: OWNER,
     } }]);
+  });
+
+  it("given an intent WorkspaceDO finishes itself, when the alarm runs, then it is handed back rather than sent", async () => {
+    const move = { ...INTENT, operationId: "00000000-0000-7000-8000-0000000000e8", kind: "move" as const };
+    const storage = storageDouble({ intents: [INTENT, move] });
+    const sendBatch = vi.fn(async () => undefined);
+
+    await expect(publishSpaceIntentResumes({
+      storage,
+      queue: { sendBatch },
+      workspaceId: WORKSPACE_ID,
+      region: "global",
+      now: 2_000,
+      retryAt: (attempt) => 2_000 + attempt * 60_000,
+      inPlace: (intent) => intent.kind !== "move",
+    })).resolves.toEqual({ published: 1, inPlace: [INTENT] });
+
+    // Both were claimed with their retry gate advanced; only the move leaves.
+    expect(storage.claimIntentResumes).toHaveBeenCalledTimes(1);
+    expect(sendBatch).toHaveBeenCalledWith([{ body: expect.objectContaining({ kind: "move" }) }]);
   });
 
   it("carries both source fences when the unsettled intent is a move", async () => {

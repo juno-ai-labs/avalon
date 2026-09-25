@@ -7,10 +7,11 @@ import { vi } from "vitest";
  * Every Channel is born in a Space. The ordinary create
  * (`workstream-object-creation-service.ts`) places and reserves it with one
  * WorkspaceDO call, `reserveChannelInSpaces`; a Channel added to a Space after
- * it exists (the connector placement, a replayed create) goes through the staged
- * membership RPCs and the Channel's plan-then-confirm source RPCs, because its
- * audience is widened between the two. Both are doubled here, because this
- * helper serves both.
+ * it exists goes through `addSpaceChannel`, one call in which WorkspaceDO widens
+ * its audience through its conversation (a replayed create), or through the
+ * staged membership RPCs and the Channel's plan-then-confirm source RPCs (the
+ * connector placement). All of them are doubled here, because this helper
+ * serves each.
  *
  * These doubles answer the *steady* case: the Space already exists, so nothing
  * provisions its parent, and every step succeeds. That is deliberate. What a
@@ -59,10 +60,12 @@ function summary(spaceId: string) {
 export function spaceCreationWorkspaceRpcs() {
   return {
     // A replayed create re-adds the Channel through the full `addChannel`,
-    // which asks the Organization whether the Channel is one this caller can
-    // see before it stages anything. Idempotent in production; here it is one
+    // which is one WorkspaceDO call. Idempotent in production; here it is one
     // more RPC a replay case has to get past.
-    canReadWorkstream: vi.fn(async () => true),
+    addSpaceChannel: vi.fn(async (input: { spaceId: string }) => ({
+      ok: true as const,
+      space: summary(input.spaceId),
+    })),
     // The create's one Organization-side call. The input is declared so a
     // caller can read what the creation asked for, which is the direct half of
     // the audience an Organization-wide Space widens past on its way to

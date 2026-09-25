@@ -33,13 +33,18 @@ import {
   WorkspaceSpaceMembershipMoveOutcomeSchema,
   WorkspaceSpaceMembershipMovePlanResultSchema,
   WorkspaceSpaceMembershipMoveResultSchema,
-  WorkspaceSpaceMembershipPlanResultSchema,
   WorkspaceSpaceMutationResultSchema,
   WorkspaceSpaceReserveResultSchema,
+  WorkspaceSpaceChannelChangeResultSchema,
+  WorkspaceSpaceIntentResumeResultSchema,
+  WorkspaceSpaceMemberWalkResultSchema,
+  type SpaceActorAuth,
+  type ParsedSpaceChannelRefusal,
+  type SpaceMemberWalkKind,
+  type WorkspaceSpaceChannelChangeResult,
   type SpaceIntentKind,
   type SpaceMember,
   type MemberWalkReach,
-  type WorkspaceSpaceMembershipPlanResult,
   type WorkspaceSpaceMembershipMovePlanResult,
   type WorkspaceSpaceMutationResult,
 } from "../durable-objects/workspace-space-protocol";
@@ -48,13 +53,12 @@ import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
-import { ChannelAccessService } from "./channel-access-service";
+import { ChannelAccessService, spaceAccessError } from "./channel-access-service";
 import { ResourceService } from "./resource-service";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
 } from "./workstream-runtime-database";
-import { WorkstreamDirectoryService } from "./workstream-directory-service";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 
 /**
@@ -131,6 +135,31 @@ export function spaceRefusal(
 }
 
 /**
+ * The refusal a WorkspaceDO-driven Space operation answered, as the error the
+ * route renders: a Space refusal names the Space, a Channel refusal names the
+ * Channel, and the Channel conversation's own refusal keeps its code and
+ * sentence.
+ */
+function channelChangeRefusal(refusal: ParsedSpaceChannelRefusal): ApiError {
+  switch (refusal.about) {
+    case "space":
+      return spaceRefusal(refusal.code, refusal.subject, refusal.unreachableUserIds, refusal.blockedWorkstreamIds);
+    case "channel":
+      return spaceAccessError(refusal.code, refusal.subject);
+    case "conversation":
+      return new ApiError(apiErrorStatus(refusal.status), refusal.code, refusal.message, refusal.details);
+  }
+}
+
+function apiErrorStatus(status: number): ApiError["status"] {
+  switch (status) {
+    case 400: case 401: case 403: case 404: case 409: case 413:
+    case 422: case 426: case 429: case 502: case 503: return status;
+    default: return 500;
+  }
+}
+
+/**
  * How a resumed Space intent ended.
  *
  * `abandoned` carries the receipt the intent was settled with, because the
@@ -141,16 +170,6 @@ export function spaceRefusal(
 export type SpaceIntentResumeOutcome =
   | { readonly outcome: "settled" }
   | { readonly outcome: "abandoned"; readonly reason: string };
-
-/**
- * Cloudflare permits six simultaneous outgoing connections per invocation
- * (https://developers.cloudflare.com/workers/platform/limits/, verified
- * 2026-09-21).
- * A member step reaches one Channel authority at a time, so six independent
- * archive retractions can overlap without asking the runtime to queue a
- * seventh connection for us.
- */
-const SPACE_ARCHIVE_MEMBER_CONCURRENCY = 6;
 
 /**
  * The participant roster a walk may re-apply, refusing a summary that is not
@@ -181,11 +200,12 @@ function rosterOf(space: SpaceSummary): UserId[] {
  * conversation own what the Space *is* — its name, appearance, scope,
  * participants and attachments — and each member Channel owns its own audience.
  *
- * Nothing here writes a Channel's audience itself. Every membership, audience
- * change, archive and restore goes through {@link ChannelAccessService}, which
- * applies the delta through the Channel's canonical scope and participant
- * operations so the retained-content containment preflight and its SQL triggers
- * stay the only fence.
+ * Nothing here writes a Channel's audience itself. A membership, an audience
+ * change, an archive and a restore are driven by WorkspaceDO
+ * (`SpaceChannelAccess`), and a stored `move` intent's recovery by
+ * {@link ChannelAccessService}; both apply the delta through the Channel's
+ * canonical scope and participant operations so the retained-content
+ * containment preflight and its SQL triggers stay the only fence.
  */
 export class SpaceService {
   constructor(private readonly env: Env, private readonly auth: AuthContext) {}
@@ -449,108 +469,33 @@ export class SpaceService {
       throw error;
     }
 
-    const access = new ChannelAccessService(this.env, this.auth);
-    const walk = await this.walkMembers({
-      spaceId,
-      operationId,
-      pageReceipt: "audience_page",
-      cursor: null,
-      step: async ({ workstreamId, membershipGeneration }) => {
-        // The Space, re-read each time round. Every step below is a
-        // cross-object await, so a later audience change can accept and
-        // overtake this one part way through the walk; carrying on would leave
-        // the Channels behind it on a roster nobody asked for. Abandoning here
-        // is safe because the newer change walks every member itself.
-        if ((await this.summary(spaceId)).revision !== updated.revision) return "abandon";
-        // The revision travels with the retraction as well as the application:
-        // the retraction deletes the row the application's fence reads, so
-        // without it an older convergence would be refused by nothing.
-        await access.retractSpaceSource(workstreamId, spaceId, uuidV7(), updated.revision);
-        await access.applySpaceSource(workstreamId, {
-          spaceId,
-          scope: input.scope,
-          participantUserIds: [...requested].map(asUserId),
-          spaceRevision: updated.revision,
-          membershipGeneration,
-          operationId: uuidV7(),
-        });
-        return "continue";
-      },
+    // Each member Channel converges by retract-then-apply in WorkspaceDO. The
+    // walk abandons if a later audience change overtakes it, because that
+    // change walks every member itself.
+    return this.walkMembers({
+      spaceId, operationId, kind: "audience", cursor: null, expectedSpaceRevision: updated.revision,
     });
-    await this.recordReceipt(
-      operationId, walk === "abandoned" ? "audience_superseded" : "audience_settled", true,
-    );
-    return this.summary(spaceId);
   }
 
   /**
-   * Put a Channel in a Space: stage, apply, settle.
+   * Put a Channel in a Space: one WorkspaceDO call.
    *
-   * The membership is not visible until the audience it implies has been
-   * applied, so nothing ever renders a placement whose readers have not been
-   * granted. A failure anywhere in between cancels the staged row rather than
-   * leaving a `joining` membership that no list shows and no alarm finishes.
+   * WorkspaceDO stages the membership, asks the Channel's conversation for the
+   * audience it implies, and only then activates it, so nothing renders a
+   * placement whose readers have not been granted; a failure part way cancels
+   * the staged row rather than leaving a `joining` membership.
    */
   async addChannel(spaceId: SpaceId, workstreamId: WorkstreamId): Promise<SpaceSummary> {
-    if (!await new WorkstreamDirectoryService(this.env, this.auth).visible(workstreamId)) {
-      throw new ApiError(404, "workstream_not_found", "Channel not found");
-    }
-    const workspace = await this.workspace();
-    const plan = this.planned(await workspace.prepareSpaceMembership({
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      userId: asUserId(this.auth.userId),
-      spaceId,
-      workstreamId,
-    }), "");
-    const settle = {
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      userId: asUserId(this.auth.userId),
-      spaceId,
-      workstreamId,
-      spaceRevision: plan.space.revision,
-      membershipGeneration: plan.membershipGeneration,
-    };
-    const access = new ChannelAccessService(this.env, this.auth);
-    let sourceApplied = false;
-    try {
-      await access.applySpaceSource(workstreamId, {
-        spaceId,
-        scope: plan.space.scope,
-        participantUserIds: plan.space.participants.map((participant) => participant.userId),
-        spaceRevision: plan.space.revision,
-        membershipGeneration: plan.membershipGeneration,
-        operationId: uuidV7(),
-      });
-      sourceApplied = true;
-      return this.settled(await workspace.finalizeSpaceMembership(settle), plan.space.name);
-    } catch (error) {
-      if (sourceApplied) {
-        await access.retractSpaceSource(workstreamId, spaceId, uuidV7(), plan.space.revision);
-      }
-      await workspace.cancelSpaceMembership(settle).catch(() => undefined);
-      throw error;
-    }
+    return this.changedChannel(await (await this.workspace()).addSpaceChannel({
+      auth: this.actor(), spaceId, workstreamId,
+    }));
   }
 
-  /** Take a Channel out of a Space, when it still has another home. */
+  /** Take a Channel out of a Space, when it still has another home: one WorkspaceDO call. */
   async removeChannel(spaceId: SpaceId, workstreamId: WorkstreamId): Promise<SpaceSummary> {
-    const access = new ChannelAccessService(this.env, this.auth);
-    const workspace = await this.workspace();
-    const plan = this.planned(await workspace.prepareSpaceMembershipRemoval({
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      userId: asUserId(this.auth.userId),
-      spaceId,
-      workstreamId,
-    }), "");
-    await access.retractSpaceSource(workstreamId, spaceId, uuidV7());
-    return this.settled(await workspace.finalizeSpaceMembershipRemoval({
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      userId: asUserId(this.auth.userId),
-      spaceId,
-      workstreamId,
-      spaceRevision: plan.space.revision,
-      membershipGeneration: plan.membershipGeneration,
-    }), plan.space.name);
+    return this.changedChannel(await (await this.workspace()).removeSpaceChannel({
+      auth: this.actor(), spaceId, workstreamId,
+    }));
   }
 
   /**
@@ -684,31 +629,14 @@ export class SpaceService {
     // revision — which the archive itself advances — made the two halves agree
     // by arithmetic over writes in two objects rather than by saying so.
     const operationId = uuidV7();
-    const plan = this.settled(await workspace.prepareSpaceArchive({
+    this.settled(await workspace.prepareSpaceArchive({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       spaceId,
       operationId,
     }), "");
-    const access = new ChannelAccessService(this.env, this.auth);
-    await this.walkMembers({
-      spaceId,
-      operationId,
-      pageReceipt: "archive_page",
-      reach: "reaching",
-      cursor: null,
-      concurrency: SPACE_ARCHIVE_MEMBER_CONCURRENCY,
-      step: async ({ workstreamId }) => {
-        await access.retractSpaceSource(workstreamId, spaceId, uuidV7());
-        return "continue";
-      },
-    });
-    return this.settled(await workspace.finalizeSpaceArchive({
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      userId: asUserId(this.auth.userId),
-      spaceId,
-      operationId,
-    }), plan.name);
+    // The last page of the walk finalizes the archive and answers with it.
+    return this.walkMembers({ spaceId, operationId, kind: "archive", cursor: null, expectedSpaceRevision: null });
   }
 
   /**
@@ -723,35 +651,15 @@ export class SpaceService {
     // One id, minted here and carried to both halves, exactly as an archive's
     // is: the restore stages an intent and the walk below settles it.
     const operationId = uuidV7();
-    const restored = this.settled(await (await this.workspace()).restoreSpace({
+    this.settled(await (await this.workspace()).restoreSpace({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       spaceId,
       operationId,
     }), "");
-    const access = new ChannelAccessService(this.env, this.auth);
-    // The memberships the restore just put back, each at the generation that
-    // restore advanced it to — read after it, so the fence every application
-    // carries is the row's own rather than a constant.
-    await this.walkMembers({
-      spaceId,
-      operationId,
-      pageReceipt: "restore_page",
-      cursor: null,
-      step: async ({ workstreamId, membershipGeneration }) => {
-        await access.applySpaceSource(workstreamId, {
-          spaceId,
-          scope: restored.scope,
-          participantUserIds: restored.participants.map((participant) => participant.userId),
-          spaceRevision: restored.revision,
-          membershipGeneration,
-          operationId: uuidV7(),
-        });
-        return "continue";
-      },
-    });
-    await this.recordReceipt(operationId, "restored", true);
-    return this.summary(spaceId);
+    // Each membership the restore put back is re-applied at the generation the
+    // restore advanced it to, read in WorkspaceDO as the walk reaches it.
+    return this.walkMembers({ spaceId, operationId, kind: "restore", cursor: null, expectedSpaceRevision: null });
   }
 
   /**
@@ -877,71 +785,44 @@ export class SpaceService {
   /**
    * Carry one staged operation to every member Channel, a page at a time.
    *
-   * The one walk an audience change, an archive and a restore all take, and the
-   * one the resume takes for them — which is the point of it being a function
-   * rather than a loop written out three times. A request and its resume that
-   * walked differently are two implementations of the same convergence, and the
-   * resume is the one nobody watches.
-   *
-   * Paged, and the page is recorded on the intent before the next one starts.
-   * Each member Channel costs a retraction and an application — several
-   * cross-object awaits each — so an unbounded walk is not a slow invocation
-   * but one that runs out of subrequests, and before this the resume re-read
-   * the whole member list and started again at the first Channel: every
-   * redelivery redoing the same prefix and dying in the same place. A Space
-   * under the ceiling still completes inside the request, exactly as it did.
-   * Past it the invocation fails, the intent stays unsettled with its cursor,
-   * and the alarm's resume continues from the page it names.
-   *
-   * The last page writes no cursor. The caller settles the intent immediately
-   * after, and a settle that does not land leaves the cursor at the start of
-   * that page — so the resume redoes one page rather than the whole walk.
-   *
-   * Archive is the one walk that opts into bounded overlap: its retractions
-   * are independent, and the caller still waits for every started retraction
-   * before advancing the cursor or finalizing. `allSettled` is deliberate — a
-   * failed Channel must not leave sibling writes floating after this method
-   * rejects.
+   * The one walk an audience change, an archive and a restore all take, and
+   * the one their resume takes. Each page is one WorkspaceDO call: it changes
+   * every member Channel's source there, through the Channel's own
+   * conversation, and writes the cursor the page ended at onto the intent
+   * before it answers. A Space past one invocation's budget fails part way,
+   * the intent stays unsettled with its cursor, and the resume continues from
+   * that page. The last page settles the intent (an archive is finalized) and
+   * answers with the Space.
    */
   private async walkMembers(input: {
     spaceId: SpaceId;
-    /** The intent whose cursor this walk advances. */
     operationId: string;
-    pageReceipt: string;
-    reach?: MemberWalkReach;
+    kind: SpaceMemberWalkKind;
     cursor: string | null;
-  } & (
-    | {
-      concurrency?: undefined;
-      step: (member: SpaceMember) => Promise<"continue" | "abandon">;
-    }
-    | {
-      concurrency: number;
-      step: (member: SpaceMember) => Promise<"continue">;
-    }
-  )): Promise<"walked" | "abandoned"> {
+    expectedSpaceRevision: number | null;
+  }): Promise<SpaceSummary> {
+    const workspace = await this.workspace();
     let cursor = input.cursor;
-    const concurrency = input.concurrency ?? 1;
     for (;;) {
-      const page = await this.memberPage(input.spaceId, input.reach ?? "active", cursor);
-      for (let offset = 0; offset < page.members.length; offset += concurrency) {
-        const results = await Promise.allSettled(
-          page.members.slice(offset, offset + concurrency).map(input.step),
-        );
-        const rejected = results.find((result) => result.status === "rejected");
-        if (rejected?.status === "rejected") throw rejected.reason;
-        if (results.some((result) => result.status === "fulfilled" && result.value === "abandon")) {
-          return "abandoned";
-        }
-      }
-      if (page.nextCursor === null) return "walked";
-      cursor = page.nextCursor;
-      await this.recordReceipt(input.operationId, input.pageReceipt, false, cursor);
+      const page = WorkspaceSpaceMemberWalkResultSchema.parse(await workspace.walkSpaceMembers({
+        auth: this.actor(),
+        spaceId: input.spaceId,
+        operationId: input.operationId,
+        kind: input.kind,
+        cursor,
+        expectedSpaceRevision: input.expectedSpaceRevision,
+      }));
+      if (!page.ok) throw channelChangeRefusal(page.refusal);
+      if (page.outcome !== "page") return page.space;
+      cursor = page.cursor;
     }
   }
 
   /**
-   * Finish a staged operation whose request never came back.
+   * Finish a staged operation whose request never came back, for a
+   * `space_intent_resume` message. A stored `move` is finished here; every other
+   * kind is finished by WorkspaceDO (`SpaceChannelAccess.resume`), which is also
+   * what the alarm runs in place.
    *
    * Every branch is the same work the request would have done, against the
    * fences the intent recorded. That is what makes a redelivery safe: the
@@ -1009,190 +890,15 @@ export class SpaceService {
       }
       return { outcome: "settled" };
     }
-    const space = await this.summary(intent.spaceId);
-    // The resume runs as the person who staged the intent, and `summary` is
-    // *their* view of the Space. Somebody taken out of a Space between staging
-    // an operation and its resume still reaches it through a Channel placed in
-    // it, so this read no longer refuses them — it answers `through_channel`,
-    // whose roster is empty by design. Every branch below re-applies that
-    // roster to member Channels, so the walk would withdraw every reader this
-    // Space supplies, seat nobody, and settle itself as a success.
-    //
-    // Terminal rather than retried, the way `requester_inactive` is: no later
-    // delivery gives the requester their reach back, so republishing this
-    // forever would cost an alarm wake and a dead-letter message per delivery
-    // and never converge. The reason goes on the row as well as into the
-    // consumer's log — `recordIntentFailure` only writes while the intent is
-    // unsettled, so it goes on before the receipt that settles it.
-    if (space.reach === "through_channel") {
-      await workspace.recordSpaceIntentFailure({
-        workspaceId: asWorkspaceId(this.auth.workspaceId),
-        userId: asUserId(this.auth.userId),
-        operationId: intent.operationId,
-        errorCode: "requester_reach_lost",
-      });
-      return abandon("requester_reach_lost");
-    }
-    const access = new ChannelAccessService(this.env, this.auth);
-    if (intent.kind === "add") {
-      // Both fences are written by the staging and neither is nullable for
-      // this kind, so a row without them is a malformed one rather than an
-      // operation to re-run. Named rather than re-run, and named for what is
-      // missing rather than for the kind.
-      if (!intent.workstreamId || !intent.membershipGeneration) {
-        return abandon("add_fences_missing");
-      }
-      // A fence against a Space whose *audience* moved, and nothing more. A
-      // viewer projection flips `is_participant` without touching `revision`,
-      // so this guard does not see a requester who has been taken out of the
-      // Space — which is why the reach check above it is the one that covers
-      // an emptied roster, for this branch as much as for the walks.
-      if (space.revision !== intent.spaceRevision) {
-        await workspace.cancelSpaceMembership({
-          workspaceId: asWorkspaceId(this.auth.workspaceId),
-          userId: asUserId(this.auth.userId),
-          spaceId: intent.spaceId,
-          workstreamId: intent.workstreamId,
-          spaceRevision: intent.spaceRevision,
-          membershipGeneration: intent.membershipGeneration,
-        });
-        return abandon("add_superseded");
-      }
-      await access.applySpaceSource(intent.workstreamId, {
-        spaceId: intent.spaceId,
-        scope: space.scope,
-        participantUserIds: rosterOf(space),
-        spaceRevision: intent.spaceRevision,
-        membershipGeneration: intent.membershipGeneration,
-        operationId: uuidV7(),
-      });
-      await workspace.finalizeSpaceMembership({
-        workspaceId: asWorkspaceId(this.auth.workspaceId),
-        userId: asUserId(this.auth.userId),
-        spaceId: intent.spaceId,
-        workstreamId: intent.workstreamId,
-        spaceRevision: intent.spaceRevision,
-        membershipGeneration: intent.membershipGeneration,
-      });
-      return { outcome: "settled" };
-    }
-    if (intent.kind === "remove") {
-      if (!intent.workstreamId || !intent.membershipGeneration) {
-        return abandon("remove_fences_missing");
-      }
-      await access.retractSpaceSource(intent.workstreamId, intent.spaceId, uuidV7());
-      await workspace.finalizeSpaceMembershipRemoval({
-        workspaceId: asWorkspaceId(this.auth.workspaceId),
-        userId: asUserId(this.auth.userId),
-        spaceId: intent.spaceId,
-        workstreamId: intent.workstreamId,
-        spaceRevision: intent.spaceRevision,
-        membershipGeneration: intent.membershipGeneration,
-      });
-      return { outcome: "settled" };
-    }
-    if (intent.kind === "audience") {
-      // A superseded audience change is still an interrupted one. The request
-      // that staged this died part way through its walk, so some member
-      // Channels carry the roster it was applying and the rest carry whatever
-      // came before — and the newer change that overtook it has a walk of its
-      // own that may have died the same way. Abandoning here left those
-      // Channels split with nothing to notice, so this converges against the
-      // Space *as it is now* instead: re-applying the current source is an
-      // idempotent delta on a Channel that already has it.
-      const superseded = space.revision !== intent.spaceRevision;
-      if (superseded) {
-        logWarn(this.env, "space_audience_intent_superseded", {
-          workspace_id: this.auth.workspaceId,
-          space_id: intent.spaceId,
-          operation_id: intent.operationId,
-          staged_revision: intent.spaceRevision,
-          current_revision: space.revision,
-        });
-      }
-      // From the page the request got to, not from the first Channel: the same
-      // walk the request takes, continued rather than restarted.
-      await this.walkMembers({
-        spaceId: intent.spaceId,
-        operationId: intent.operationId,
-        pageReceipt: "audience_page",
-        cursor: intent.cursor,
-        step: async ({ workstreamId, membershipGeneration }) => {
-          await access.retractSpaceSource(workstreamId, intent.spaceId, uuidV7(), space.revision);
-          await access.applySpaceSource(workstreamId, {
-            spaceId: intent.spaceId,
-            scope: space.scope,
-            participantUserIds: rosterOf(space),
-            spaceRevision: space.revision,
-            membershipGeneration,
-            operationId: uuidV7(),
-          });
-          return "continue";
-        },
-      });
-      await this.recordReceipt(
-        intent.operationId,
-        superseded ? "audience_superseded" : "audience_settled",
-        true,
-      );
-      return { outcome: "settled" };
-    }
-    if (intent.kind === "archive") {
-      // `reaching`, for the reason `archive` uses it: the prepare that staged
-      // this intent already flipped every membership to `removing`, so the
-      // active set is empty and the Channels whose source is still live are
-      // exactly the ones this read names.
-      await this.walkMembers({
-        spaceId: intent.spaceId,
-        operationId: intent.operationId,
-        pageReceipt: "archive_page",
-        reach: "reaching",
-        cursor: intent.cursor,
-        concurrency: SPACE_ARCHIVE_MEMBER_CONCURRENCY,
-        step: async ({ workstreamId }) => {
-          await access.retractSpaceSource(workstreamId, intent.spaceId, uuidV7());
-          return "continue";
-        },
-      });
-      await workspace.finalizeSpaceArchive({
-        workspaceId: asWorkspaceId(this.auth.workspaceId),
-        userId: asUserId(this.auth.userId),
-        spaceId: intent.spaceId,
-        operationId: intent.operationId,
-      });
-      return { outcome: "settled" };
-    }
-    if (intent.kind === "restore") {
-      // The audience walk minus the retraction. The archive is what took this
-      // Space's source off every member Channel, so there is nothing to
-      // withdraw; what is left half-done is the re-application, and it is an
-      // idempotent delta on a Channel that already has it.
-      await this.walkMembers({
-        spaceId: intent.spaceId,
-        operationId: intent.operationId,
-        pageReceipt: "restore_page",
-        cursor: intent.cursor,
-        step: async ({ workstreamId, membershipGeneration }) => {
-          await access.applySpaceSource(workstreamId, {
-            spaceId: intent.spaceId,
-            scope: space.scope,
-            participantUserIds: rosterOf(space),
-            spaceRevision: space.revision,
-            membershipGeneration,
-            operationId: uuidV7(),
-          });
-          return "continue";
-        },
-      });
-      await this.recordReceipt(intent.operationId, "restored", true);
-      return { outcome: "settled" };
-    }
-    // Every kind that stages an intent has a branch above, and
-    // `SpaceIntentKindSchema` admits no others — so this is unreachable rather
-    // than a fallback, and a kind added without a branch fails to compile here
-    // rather than being abandoned by name at three in the morning.
-    const exhaustiveKind: never = intent.kind;
-    throw new Error(`unsupported_space_intent_kind:${String(exhaustiveKind)}`);
+    // Every other kind is finished in WorkspaceDO, through the path its
+    // request takes, from the intent row as it stands now. The alarm resumes
+    // them there directly; this is for a message a Worker still consumes.
+    const resumed = WorkspaceSpaceIntentResumeResultSchema.parse(await workspace.resumeSpaceIntent({
+      auth: this.actor(),
+      operationId: intent.operationId,
+    }));
+    if (!resumed.ok) throw channelChangeRefusal(resumed.refusal);
+    return resumed.outcome === "settled" ? { outcome: "settled" } : { outcome: "abandoned", reason: resumed.reason };
   }
 
   private async recordReceipt(
@@ -1357,23 +1063,30 @@ export class SpaceService {
     });
   }
 
+  /** The person this request acts as, for WorkspaceDO to act as on a Channel's conversation. */
+  private actor(): SpaceActorAuth {
+    return {
+      sessionId: this.auth.sessionId,
+      userId: asUserId(this.auth.userId),
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      region: this.auth.region,
+      role: this.auth.role,
+      ...(this.auth.principal ? { principal: this.auth.principal } : {}),
+    };
+  }
+
+  private changedChannel(result: WorkspaceSpaceChannelChangeResult): SpaceSummary {
+    const parsed = WorkspaceSpaceChannelChangeResultSchema.parse(result);
+    if (!parsed.ok) throw channelChangeRefusal(parsed.refusal);
+    return SpaceSummarySchema.parse(parsed.space);
+  }
+
   private settled(result: WorkspaceSpaceMutationResult, spaceName: string): SpaceSummary {
     const parsed = WorkspaceSpaceMutationResultSchema.parse(result);
     if (!parsed.ok) {
       throw spaceRefusal(parsed.code, spaceName, parsed.unreachableUserIds, parsed.blockedWorkstreamIds);
     }
     return SpaceSummarySchema.parse(parsed.space);
-  }
-
-  private planned(
-    result: WorkspaceSpaceMembershipPlanResult,
-    spaceName: string,
-  ): Extract<WorkspaceSpaceMembershipPlanResult, { ok: true }> {
-    const parsed = WorkspaceSpaceMembershipPlanResultSchema.parse(result);
-    if (!parsed.ok) {
-      throw spaceRefusal(parsed.code, spaceName, parsed.unreachableUserIds, parsed.blockedWorkstreamIds);
-    }
-    return parsed;
   }
 
   private plannedMove(
