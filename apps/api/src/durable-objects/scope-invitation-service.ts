@@ -6,7 +6,7 @@ import { ListScopeInvitationsSchema, ScopeInvitationsListSchema, CreateScopeInvi
 import type { Env } from "../env";
 import { encryptString, decryptString, hmacSha256, timingSafeEqualText } from "../lib/crypto";
 import { uuidV7 } from "../lib/uuid-v7";
-import { ensureGuestRelationship, readWorkspaceRelationship, type WorkspaceRelationship } from "../services/workspace-relationship-service";
+import { ensureGuestRelationship, type WorkspaceRelationship } from "../services/workspace-relationship-service";
 import { sendResendEmail } from "../services/resend";
 import { readConversationPreview } from "../services/conversation-preview";
 import { discardScopeInvitationLinks, issueScopeInvitationLink, scopeInvitationLinkUrl } from "../services/scope-invitation-link";
@@ -40,7 +40,9 @@ export class ScopeInvitationService {
     private readonly parentId: string,
     private readonly resolve: (request: ScopeAccessRequest, relationship: WorkspaceRelationship | null) => ScopeAccessResult,
     private readonly coverageMatches: (request: z.infer<typeof CreateScopeInvitationsSchema>) => boolean,
-    private readonly enqueueDirectory: (grant: ScopeGrant, now: number) => void) {
+    private readonly enqueueDirectory: (grant: ScopeGrant, now: number) => void,
+    private readonly readRelationship: (workspaceId: string, userId: string) => Promise<WorkspaceRelationship | null>,
+    private readonly noteRelationship: (relationship: WorkspaceRelationship) => void) {
     this.invitations = new ScopeInvitationStorage(storage, parentId);
   }
 
@@ -73,7 +75,7 @@ export class ScopeInvitationService {
 
   async list(input: z.infer<typeof ListScopeInvitationsSchema>) {
     const request = ListScopeInvitationsSchema.parse(input);
-    const actor = await readWorkspaceRelationship(this.env.DB, request.target.workspaceId, request.actorUserId);
+    const actor = await this.readRelationship(request.target.workspaceId, request.actorUserId);
     if (!this.canShare([request.target], actor)) return ScopeInvitationsListSchema.parse({ status: "denied", reason: "sharing_required" });
     const invitations = this.invitations.summaries().filter((invitation) =>
       invitation.targets.some((target) => target.kind === request.target.kind
@@ -109,7 +111,7 @@ export class ScopeInvitationService {
         tokenHash: await this.tokenHash(id, token),
         deliveryEncrypted: JSON.stringify(await encryptString(JSON.stringify(delivery), this.env.OAUTH_STATE_ENCRYPTION_KEY, `scope-invitation:${id}`)) } };
     }));
-    const actor = await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.actorUserId);
+    const actor = await this.readRelationship(request.workspaceId, request.actorUserId);
     // All external awaits precede local sharing checks and the transaction.
     const outcome = this.record(request, actor, minted.map((invitation) => invitation.record));
     // A denial, a replay and a conflict each leave rows addressing invitations
@@ -172,10 +174,13 @@ export class ScopeInvitationService {
     // share. That grants no conversation access and a retry resumes this step.
     if (initial.summary.status === "accepted" && initial.summary.acceptedByUserId !== request.userId) return denied("invitation_unavailable");
     const recipient = initial.summary.status === "accepted"
-      ? await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.userId)
+      ? await this.readRelationship(request.workspaceId, request.userId)
       : await ensureGuestRelationship(this.env.DB, request.workspaceId, request.userId);
+    // This request just wrote the relationship to D1, so its checks below and
+    // the viewer checks right after it read that, not the table's older answer.
+    if (recipient && initial.summary.status !== "accepted") this.noteRelationship(recipient);
     if (recipient?.status !== "active") return denied("relationship_required");
-    const currentActor = await readWorkspaceRelationship(this.env.DB, request.workspaceId, initial.actorUserId);
+    const currentActor = await this.readRelationship(request.workspaceId, initial.actorUserId);
     if (currentActor?.incarnation !== initial.actorIncarnation) return denied("sharing_required");
     return this.storage.transactionSync(() => {
       const current = this.invitations.read(request.invitationId);
@@ -229,7 +234,7 @@ export class ScopeInvitationService {
 
   async revoke(input: z.infer<typeof RevokeScopeInvitationSchema>): Promise<ScopeInvitationResult> {
     const request = RevokeScopeInvitationSchema.parse(input);
-    const actor = await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.actorUserId);
+    const actor = await this.readRelationship(request.workspaceId, request.actorUserId);
     const current = this.invitations.read(request.invitationId);
     if (!current) return denied("invitation_unavailable");
     if (!this.canShare(current.summary.targets, actor)) return denied("sharing_required");
@@ -341,7 +346,7 @@ export class ScopeInvitationService {
     if (!this.targetsReady(record.summary.targets)) return "migration_pending";
     const target = record.summary.targets[0];
     if (!target) return "sharing_required";
-    const actor = await readWorkspaceRelationship(this.env.DB, target.workspaceId, record.actorUserId);
+    const actor = await this.readRelationship(target.workspaceId, record.actorUserId);
     return actor?.incarnation === record.actorIncarnation && this.canShare(record.summary.targets, actor)
       ? null : "sharing_required";
   }

@@ -141,7 +141,7 @@ import {
 } from "../services/access-revocation";
 import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationRequest } from "../services/authorization-policy";
 import { resolveScopedAccess } from "../services/scope-grant-policy";
-import { readWorkspaceRelationship, type WorkspaceRelationship } from "../services/workspace-relationship-service";
+import type { WorkspaceRelationship } from "../services/workspace-relationship-service";
 import {
   ReceiveChildEffectsRequestSchema,
   canonicalState,
@@ -238,6 +238,18 @@ export interface HostedParentHost {
   controlSockets(parentId: string): WebSocket[];
   /** Accept a hibernating control socket under this parent's tags. */
   acceptControlSocket(server: WebSocket, parentId: string, userId: string): void;
+  /**
+   * Apply published effects inside the caller's transaction, and name the
+   * ones that still need an outbox row: a directory row the Organization
+   * cannot apply yet, or work that has to leave the object.
+   */
+  applyLocalEffects(envelopes: readonly ParentEffectEnvelope[]): {
+    outbox: { envelope: ParentEffectEnvelope; code: string | null }[];
+  };
+  /** A person's workspace relationship, from the Organization's own table. */
+  readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
+  /** Record a relationship this request just read from or wrote to D1. */
+  noteRelationship(relationship: WorkspaceRelationship): void;
 }
 
 /** The hibernation tag every control socket of one parent carries. */
@@ -429,6 +441,42 @@ export class HostedParent {
     return this.host.storage.sql;
   }
 
+  /** Effects published in the open transaction, applied just before it commits. */
+  private localEffects: ParentEffectEnvelope[] = [];
+  private txDepth = 0;
+
+  /**
+   * A transaction whose published effects land in it: the Organization's
+   * directory, grant directory, activity feed and notification records
+   * commit with the parent change that caused them, in the order the
+   * directory needs (a Channel's row before its viewers' rows).
+   */
+  private tx<T>(fn: () => T): T {
+    return this.storage.transactionSync(() => {
+      this.txDepth += 1;
+      try {
+        const result = fn();
+        if (this.txDepth === 1) this.flushLocalEffects();
+        return result;
+      } finally {
+        this.txDepth -= 1;
+        if (this.txDepth === 0) this.localEffects = [];
+      }
+    });
+  }
+
+  private flushLocalEffects(): void {
+    if (this.localEffects.length === 0) return;
+    const rank = (envelope: ParentEffectEnvelope) => (envelope.effect.kind === "directory_common" ? 0
+      : envelope.effect.kind === "directory_user" ? 1 : envelope.effect.kind === "scope_grant_directory" ? 2 : 3);
+    const effects = this.localEffects.splice(0).sort((left, right) => rank(left) - rank(right));
+    this.publishLocal(effects, Date.now());
+  }
+
+  private publishLocal(envelopes: readonly ParentEffectEnvelope[], now: number): void {
+    for (const { envelope } of this.host.applyLocalEffects(envelopes).outbox) this.writeOutboxRow(envelope, now);
+  }
+
   // ---------------------------------------------------------------------------
   // Identity.
   // ---------------------------------------------------------------------------
@@ -542,7 +590,7 @@ export class HostedParent {
   }
 
   private applyChildEnvelope(substreamId: string, envelope: ConversationEffectEnvelope): void {
-    this.storage.transactionSync(() => {
+    this.tx(() => {
       const now = Date.now();
       this.admitChildEnvelope(envelope, now);
       const receipt = first(this.sql.exec<{ payload_hash: string }>(
@@ -1024,6 +1072,17 @@ export class HostedParent {
   }
 
   private insertOutbox(envelope: ParentEffectEnvelope, now: number): void {
+    if (this.txDepth > 0) {
+      this.localEffects.push(envelope);
+      return;
+    }
+    // Published outside this parent's own transaction (an import replay runs
+    // inside the Organization's): apply it now, in one of its own.
+    this.storage.transactionSync(() => this.publishLocal([envelope], now));
+  }
+
+  /** The durable fallback: a row the drain applies or sends after the commit. */
+  private writeOutboxRow(envelope: ParentEffectEnvelope, now: number): void {
     const inserted = this.sql.exec<{ message_id: string }>(
       `INSERT OR IGNORE INTO parent_outbox
          (message_id, parent_id, partition_key, source_version, source_epoch, effect_kind,
@@ -1129,7 +1188,7 @@ export class HostedParent {
     this.assertParent(request.workspaceId, request.parentId);
     const substreamId = request.substreamId ?? "0";
     if (this.participantMigrationPhase(substreamId) !== null) {
-      const relationship = await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.userId);
+      const relationship = await this.host.readRelationship(request.workspaceId, request.userId);
       const access = this.migratedConversationAccess(request, asSubstreamId(substreamId), relationship);
       const current = this.metadataRow();
       const child = this.sql.exec<{ archived_at: number | null; status: "reserved" | "ready" | "failed" }>(
@@ -1192,7 +1251,7 @@ export class HostedParent {
     const request = ConversationParentReserveChildRequestSchema.parse(input);
     if (request.parentId !== this.parentId) throw new Error("conversation_parent_identity_mismatch");
     const now = Date.now();
-    const authorityGeneration = this.storage.transactionSync(() => {
+    const authorityGeneration = this.tx(() => {
       let metadata = this.metadataRow();
       if (!metadata) {
         if (request.substreamId !== "0" || !request.directory) throw new Error("workstream_parent_missing");
@@ -1281,7 +1340,7 @@ export class HostedParent {
     this.assertParent(request.workspaceId, request.parentId);
     const migrated = request.substreamIds.filter((id) => this.participantMigrationPhase(id) !== null);
     const relationship = migrated.length
-      ? await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.userId) : null;
+      ? await this.host.readRelationship(request.workspaceId, request.userId) : null;
     const store = this.scopeGrants(request);
     const scopes = migrated.map((substreamId) => ({
       substreamId,
@@ -1336,7 +1395,7 @@ export class HostedParent {
     const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema,
       userId: UserIdSchema }), input, "workstream_management_access");
     this.assertParent(request.workspaceId, request.parentId);
-    const relationship = await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.userId);
+    const relationship = await this.host.readRelationship(request.workspaceId, request.userId);
     const target = { kind: "workstream" as const, workspaceId: request.workspaceId, parentId: request.parentId };
     const access = this.resolveScopeAccess({ userId: request.userId, target }, relationship);
     if (access.allowed || access.reason !== "grant_required") return access;
@@ -1748,7 +1807,7 @@ export class HostedParent {
       z.record(z.string(), z.string().min(1)).parse(JSON.parse(migration.incarnations_json ?? "{}")));
     const committed = await source.transferParticipantAuthority({ ...address, phase: "commit" });
     if (committed.status !== "committed") throw new Error(`participant_migration_commit_${committed.status}`);
-    this.storage.transactionSync(() => {
+    this.tx(() => {
       store.registerParticipantProjection("0", migration.transfer_id);
       this.sql.exec(
         "UPDATE parent_participant_migrations SET phase = 'complete' WHERE parent_id = ? AND substream_id = '0' AND transfer_id = ?",
@@ -1764,7 +1823,7 @@ export class HostedParent {
     const request = parseRpcInput(ConversationParentAuthorityRequestSchema, input, "main_participant_migration");
     this.assertParent(request.workspaceId, request.parentId);
     const incarnations = await this.membershipIncarnations(request.workspaceId);
-    return this.storage.transactionSync(() => {
+    return this.tx(() => {
       const existing = this.sql.exec<{ transfer_id: string; phase: string }>(
         "SELECT transfer_id, phase FROM parent_participant_migrations WHERE parent_id = ? AND substream_id = '0'",
         this.parentId,
@@ -1806,7 +1865,7 @@ export class HostedParent {
     if (prepared.status !== "prepared") throw new Error(`participant_migration_prepare_${prepared.status}`);
     const committed = await source.transferParticipantAuthority({ ...address, phase: "commit" });
     if (committed.status !== "committed") throw new Error(`participant_migration_commit_${committed.status}`);
-    this.storage.transactionSync(() => {
+    this.tx(() => {
       // Parent membership was imported before any external await. The child's
       // local roster is only a reconciliation audience, never granting evidence.
       this.scopeGrants(address).registerParticipantProjection(substreamId, migration.transfer_id,
@@ -1832,7 +1891,7 @@ export class HostedParent {
     request: { workspaceId: WorkspaceId; parentId: string; substreamId: SubstreamId },
     incarnations: Record<string, string>,
   ): { status: "pending" | "complete" | "conflict"; transferId?: string } {
-    return this.storage.transactionSync(() => {
+    return this.tx(() => {
       const existing = this.sql.exec<{ transfer_id: string; phase: string }>(
         "SELECT transfer_id, phase FROM parent_participant_migrations WHERE parent_id = ? AND substream_id = ?",
         this.parentId, request.substreamId,
@@ -1871,7 +1930,9 @@ export class HostedParent {
     return new ScopeInvitationService(this.env, this.storage, this.parentId,
       (request, relationship) => this.resolveScopeAccess(request, relationship),
       (request) => this.completeWorkstreamCoverage(request.targets),
-      this.grantDirectoryWriter());
+      this.grantDirectoryWriter(),
+      (workspaceId, userId) => this.host.readRelationship(workspaceId, userId),
+      (relationship) => this.host.noteRelationship(relationship));
   }
 
   async deliverInvitation(invitationId: string): Promise<void> {
@@ -1892,14 +1953,14 @@ export class HostedParent {
     const request = ScopeSharingOptionsRequestSchema.parse(input);
     if (!this.metadataRow()) return ScopeSharingOptionsSchema.parse({ scopes: [], completeWorkstreamTargets: null });
     this.assertParent(request.workspaceId, request.parentId);
-    let actor = await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.actorUserId);
+    let actor = await this.host.readRelationship(request.workspaceId, request.actorUserId);
     if (actor?.status !== "active") return ScopeSharingOptionsSchema.parse({ scopes: [], completeWorkstreamTargets: null });
     let legacyMainParticipant = false;
     if (this.participantMigrationPhase("0") === null) {
       const main = await createIdentityObjectPort(this.env, request.workspaceId, request.parentId)
         .readAuthorizationFacts({ userId: request.actorUserId });
       legacyMainParticipant = main.exists && main.participant && !main.archived;
-      actor = await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.actorUserId);
+      actor = await this.host.readRelationship(request.workspaceId, request.actorUserId);
     }
     const metadata = this.metadataRow();
     if (!metadata || actor?.status !== "active" || metadata.archived_at !== null) {
@@ -1955,7 +2016,7 @@ export class HostedParent {
       target.kind === "workstream" ? "0" : target.substreamId), ...inherited])];
     const legacy = substreamIds.filter((id) => this.participantMigrationPhase(id) !== "complete");
     if (!legacy.length) return null;
-    const actor = await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.actorUserId);
+    const actor = await this.host.readRelationship(request.workspaceId, request.actorUserId);
     if (actor?.status !== "active") return { status: "denied", reason: "relationship_required" };
     const parentAccess = this.resolveScopeAccess({ userId: request.actorUserId,
       target: { kind: "workstream", workspaceId: request.workspaceId, parentId: request.parentId } }, actor);
@@ -1989,7 +2050,7 @@ export class HostedParent {
     const request = ScopeGrantManagementRequestSchema.parse(input);
     this.assertParent(request.target.workspaceId, request.target.parentId);
     const denied = { status: "denied" as const, reason: "sharing_required" as const };
-    const actor = await readWorkspaceRelationship(this.env.DB, request.target.workspaceId, request.actorUserId);
+    const actor = await this.host.readRelationship(request.target.workspaceId, request.actorUserId);
     const canManage = (relationship: WorkspaceRelationship | null) => {
       const access = this.resolveScopeAccess({ target: request.target, userId: request.actorUserId }, relationship);
       return access.allowed && access.writable && access.grantIds.length > 0;
@@ -2001,7 +2062,7 @@ export class HostedParent {
       await this.env.DB.prepare("SELECT name, email FROM users WHERE id = ?").bind(grant.userId)
         .first<{ name: string; email: string }>(),
     ] as const)));
-    const current = await readWorkspaceRelationship(this.env.DB, request.target.workspaceId, request.actorUserId);
+    const current = await this.host.readRelationship(request.target.workspaceId, request.actorUserId);
     // Profile lookup interleaves. Re-read authority and grants before releasing labels.
     if (!canManage(current) || current?.incarnation !== actor?.incarnation || current?.revision !== actor?.revision) {
       return ManagedScopeGrantsSchema.parse(denied);
@@ -2047,13 +2108,13 @@ export class HostedParent {
   /** Canonical exact-scope admission for the new sharing protocol. No Main preflight. */
   async readScopeAccess(input: ScopeAccessRequest): Promise<ScopeAccessResult> {
     const request = parseRpcInput(ScopeAccessRequestSchema, input, "scope_access");
-    const relationship = await readWorkspaceRelationship(this.env.DB, request.target.workspaceId, request.userId);
+    const relationship = await this.host.readRelationship(request.target.workspaceId, request.userId);
     return this.resolveScopeAccess(request, relationship);
   }
 
   async readSharedWorkstream(input: z.infer<typeof SharedWorkstreamRequestSchema>) {
     const request = SharedWorkstreamRequestSchema.parse(input);
-    const relationship = await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.userId);
+    const relationship = await this.host.readRelationship(request.workspaceId, request.userId);
     const metadata = this.metadataRow();
     if (!metadata || relationship?.status !== "active" || relationship.incarnation !== request.membershipIncarnation) return null;
     this.assertParent(request.workspaceId, request.parentId);
@@ -2150,11 +2211,11 @@ export class HostedParent {
       return { status: "ready" };
     }
     const relationships = await Promise.all(userIds.map((userId) =>
-      readWorkspaceRelationship(this.env.DB, request.workspaceId, userId)));
+      this.host.readRelationship(request.workspaceId, userId)));
     const target = { kind: "conversation" as const, workspaceId: request.workspaceId,
       parentId: request.parentId, substreamId: asSubstreamId("0") };
     const store = this.scopeGrants(target);
-    const result = this.storage.transactionSync(() => {
+    const result = this.tx(() => {
       if (this.participantMigrationPhase("0") !== "complete") return { status: "pending" as const };
       const prior = this.sql.exec<{ request_json: string }>(
         "SELECT request_json FROM parent_connector_admissions WHERE parent_id = ? AND event_id = ?",
@@ -2193,7 +2254,7 @@ export class HostedParent {
     if (!request.active || request.userId !== request.actorUserId || request.target.kind !== "conversation") {
       return { status: "denied" };
     }
-    const relationship = await readWorkspaceRelationship(this.env.DB, request.target.workspaceId, request.userId);
+    const relationship = await this.host.readRelationship(request.target.workspaceId, request.userId);
     const access = this.migratedConversationAccess({ ...request.target, userId: request.userId },
       request.target.substreamId, relationship);
     if (!access.allowed || !access.writable || relationship?.status !== "active") return { status: "denied" };
@@ -2209,8 +2270,8 @@ export class HostedParent {
 
   private async authorizedGrantMutation(request: ScopeGrantMutation, useCurrentRevision: boolean): Promise<ScopeGrantMutationResult> {
     const [actor, recipient, activeIncarnations] = await Promise.all([
-      readWorkspaceRelationship(this.env.DB, request.target.workspaceId, request.actorUserId),
-      readWorkspaceRelationship(this.env.DB, request.target.workspaceId, request.userId),
+      this.host.readRelationship(request.target.workspaceId, request.actorUserId),
+      this.host.readRelationship(request.target.workspaceId, request.userId),
       !request.active ? this.membershipIncarnations(request.target.workspaceId) : Promise.resolve(null),
     ]);
     if (this.sql.exec("SELECT 1 FROM parent_participant_migrations WHERE parent_id = ? AND phase = 'pending' LIMIT 1",
@@ -2272,7 +2333,7 @@ export class HostedParent {
     }
     const relationships = new Map(this.participantMigrationPhase("0") !== null
       ? await Promise.all(initialMembers.map(async (userId) => [userId,
-        await readWorkspaceRelationship(this.env.DB, request.workspaceId, userId)] as const)) : []);
+        await this.host.readRelationship(request.workspaceId, userId)] as const)) : []);
     if (!this.canPreparePrivateChild(request, request.creatorUserId, relationships.get(request.creatorUserId) ?? null)) {
       throw new Error("private_child_creator_not_admitted_to_parent");
     }
@@ -2293,7 +2354,7 @@ export class HostedParent {
     }
     const now = Date.now();
     const substreamId = uuidV7(now);
-    this.storage.transactionSync(() => {
+    this.tx(() => {
       this.registerChild(substreamId, "child", request.creatorUserId, now);
       this.sql.exec(
         `UPDATE parent_children SET status = 'reserved', title = ?, updated_at = ? WHERE parent_id = ? AND substream_id = ?`,
@@ -2334,8 +2395,8 @@ export class HostedParent {
     const request = parseRpcInput(ClaimPrivateChildConfirmationRequestSchema, input, "private_child_confirmation");
     this.assertParent(request.workspaceId, request.parentId);
     const relationship = this.participantMigrationPhase("0") !== null
-      ? await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.actorUserId) : null;
-    this.storage.transactionSync(() => {
+      ? await this.host.readRelationship(request.workspaceId, request.actorUserId) : null;
+    this.tx(() => {
       const operation = this.requirePrivateChildPreparation(request.operationId);
       if (operation.creatorUserId !== request.actorUserId) throw new Error("private_child_confirmation_forbidden");
       if (!this.canPreparePrivateChild(request, request.actorUserId, relationship)) throw new Error("private_child_confirmation_forbidden");
@@ -2359,7 +2420,7 @@ export class HostedParent {
     const request = SavePrivateChildCaptureRequestSchema.parse(input);
     this.assertParent(request.workspaceId, request.parentId);
     const value = JSON.stringify(request.capture);
-    this.storage.transactionSync(() => {
+    this.tx(() => {
       const row = first(this.sql.exec<{ status: string; value: string | null }>(
         `SELECT status, capture_json AS value FROM parent_breakout_preparations WHERE parent_id = ? AND operation_id = ?`,
         this.parentId, request.operationId,
@@ -2401,7 +2462,7 @@ export class HostedParent {
     const json = JSON.stringify(request.preparedContext);
     const creator = this.requirePrivateChildPreparation(request.operationId).creatorUserId;
     const relationship = this.participantMigrationPhase("0") !== null
-      ? await readWorkspaceRelationship(this.env.DB, request.workspaceId, creator) : null;
+      ? await this.host.readRelationship(request.workspaceId, creator) : null;
     const operation = this.requirePrivateChildPreparation(request.operationId);
     // Re-read local grant authority after the relationship read, before commit/return.
     if (!this.canPreparePrivateChild(request, operation.creatorUserId, relationship)) throw new Error("private_child_preparation_forbidden");
@@ -2409,7 +2470,7 @@ export class HostedParent {
       throw new Error("private_child_context_conflict");
     }
     if (!operation.preparedContext) {
-      this.storage.transactionSync(() => {
+      this.tx(() => {
         const current = this.requirePrivateChildPreparation(request.operationId);
         if (current.status !== "preparing") throw new Error("private_child_preparation_not_writable");
         this.sql.exec(
@@ -2433,8 +2494,8 @@ export class HostedParent {
     const incarnations = request.status === "ready" && this.participantMigrationPhase("0") !== null
       ? await this.membershipIncarnations(request.workspaceId) : {};
     const relationship = this.participantMigrationPhase("0") !== null
-      ? await readWorkspaceRelationship(this.env.DB, request.workspaceId, selectedOperation.creatorUserId) : null;
-    this.storage.transactionSync(() => {
+      ? await this.host.readRelationship(request.workspaceId, selectedOperation.creatorUserId) : null;
+    this.tx(() => {
       const operation = this.requirePrivateChildPreparation(request.operationId);
       if (!this.canPreparePrivateChild(request, operation.creatorUserId, relationship)) throw new Error("private_child_preparation_forbidden");
       if (operation.status === request.status) return;
@@ -2490,9 +2551,9 @@ export class HostedParent {
     const request = SetPrivateChildArchivedRequestSchema.parse(input);
     this.assertParent(request.workspaceId, request.parentId);
     const relationship = this.participantMigrationPhase(request.substreamId) !== null
-      ? await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.actorUserId) : null;
+      ? await this.host.readRelationship(request.workspaceId, request.actorUserId) : null;
     const now = Date.now();
-    const result = this.storage.transactionSync(() => {
+    const result = this.tx(() => {
       const child = first(this.sql.exec<{ status: string; archived_at: number | null }>(
         `SELECT status, archived_at FROM parent_children WHERE parent_id = ? AND substream_id = ? AND kind = 'child'`,
         this.parentId, request.substreamId,
@@ -2633,11 +2694,11 @@ export class HostedParent {
       return { outcome: active ? "added" : "removed", membershipVersion: result.grant.revision };
     }
     // A breakout's roster is its own; a guest is shared the breakout instead.
-    if (active && (await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.userId))?.accessClass !== "member") {
+    if (active && (await this.host.readRelationship(request.workspaceId, request.userId))?.accessClass !== "member") {
       throw new Error("private_child_guest_requires_share");
     }
     const now = Date.now();
-    const result = this.storage.transactionSync(() => {
+    const result = this.tx(() => {
       const child = first(this.sql.exec<{ status: string; archived_at: number | null }>(
         `SELECT status, archived_at FROM parent_children WHERE parent_id = ? AND substream_id = ? AND kind = 'child'`,
         this.parentId, request.substreamId,
@@ -2894,7 +2955,7 @@ export class HostedParent {
     const now = Date.now();
     const expiresAtMs = identity.ticketExpiresAt * 1_000;
     if (expiresAtMs <= now) return false;
-    return this.storage.transactionSync(() => {
+    return this.tx(() => {
       this.sql.exec(`DELETE FROM workspace_socket_ticket_receipts WHERE expires_at < ?`, now - 300_000);
       return this.sql.exec<{ ticket_id: string }>(
         `INSERT OR IGNORE INTO workspace_socket_ticket_receipts (ticket_id, user_id, expires_at, consumed_at)
@@ -3120,7 +3181,7 @@ export class HostedParent {
     ])];
     if (request.reason !== "workstream_participant_removed") return { substreamIds };
     // Losing this Channel is not losing a breakout, whose roster is its own.
-    const relationship = await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.userId);
+    const relationship = await this.host.readRelationship(request.workspaceId, request.userId);
     const address = { workspaceId: request.workspaceId, parentId: this.parentId, userId: UserIdSchema.parse(request.userId) };
     return { substreamIds: substreamIds.filter((substreamId) => substreamId === "0"
       || !this.canReadConversation(address, asSubstreamId(substreamId), relationship)) };

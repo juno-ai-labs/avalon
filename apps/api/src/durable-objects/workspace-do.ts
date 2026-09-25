@@ -4,7 +4,7 @@ import {
   SharedNavigationSpaceSchema,
   SharedNavigationSpacesRequestSchema,
 } from "@rally/contracts/scope-grants";
-import { EFFECT_QUEUE_MESSAGE_MAX_BYTES, ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
+import { EFFECT_QUEUE_MESSAGE_MAX_BYTES, isPersonNotificationEffect, ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
 import { ConversationEffectEnvelopeSchema, type ConversationEffectEnvelope } from "@rally/contracts/conversation-effects";
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
 
@@ -162,6 +162,11 @@ import {
   type SocketAccessRevocation,
 } from "../services/access-revocation";
 import { resolveClientFeatureFlagsForSubject } from "../services/client-feature-flags";
+import {
+  readWorkspaceRelationship,
+  WorkspaceRelationshipSchema,
+  type WorkspaceRelationship,
+} from "../services/workspace-relationship-service";
 import { evaluateExternalEventPredicate } from "../services/external-event-evaluator";
 import { SIDEBAR_LIST_LIMIT } from "../services/sidebar-reads";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
@@ -4261,6 +4266,31 @@ function internalDirectoryItem(row: WorkspaceDirectoryRow) {
  * A Channel and one of its breakouts can both move for the same person inside
  * one Queue batch, and what that person is owed is one nudge rather than two.
  */
+/**
+ * What one committed directory batch still owes after its commit: the socket
+ * sends, reconciliations and schedule re-arms. Recorded as a row in the same
+ * transaction (`workspace_directory_followups`), so it survives a crash.
+ */
+interface DirectoryFollowUp {
+  workspaceId: string;
+  publishSnapshotAll: boolean;
+  snapshotUsers: string[];
+  reachChangedUsers: string[];
+  commonChanges: string[];
+  viewerChanges: [string, string[]][];
+  breakoutChanges: string[];
+  breakoutViewerChanges: [string, string[]][];
+  reopenBootstrap: boolean;
+  watchReconciliations: string[];
+  archivalChanges: string[];
+  refreshTerminal: boolean;
+  refreshWatchKinds: boolean;
+  directoryChanged: boolean;
+  /** Workspace sync topics an activity or notification record moved. */
+  syncTopics: WorkspaceSyncTopic[];
+  refreshProductAlarm: boolean;
+}
+
 function mergeViewerChanges(
   first: ReadonlyMap<string, ReadonlySet<string>>,
   second: ReadonlyMap<string, ReadonlySet<string>>,
@@ -4592,7 +4622,104 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       acceptControlSocket: (server, parentId, userId) => {
         this.state.acceptWebSocket(server, [parentControlSocketTag(parentId), userId]);
       },
+      applyLocalEffects: (envelopes) => this.applyLocalEffects(envelopes),
+      readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
+      noteRelationship: (relationship) => this.noteRelationship(relationship),
     };
+  }
+
+  /** Follow-ups recorded by hosted-parent writes in this request, run after their commit. */
+  private readonly pendingParentFollowUps: number[] = [];
+
+  /**
+   * Apply what a hosted parent just published, inside the parent's own
+   * transaction: the directory rows, the grant directory, the activity row
+   * and the notification record all commit with the change that caused them.
+   * Returns the envelopes that still need the outbox: directory rows this
+   * object cannot apply yet, and the rows whose remaining work leaves the
+   * object (a notification to deliver, a mention to snapshot, a revoked
+   * Channel grant's Sidekick revocation).
+   */
+  private applyLocalEffects(envelopes: readonly ParentEffectEnvelope[]): {
+    outbox: { envelope: ParentEffectEnvelope; code: string | null }[];
+  } {
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) return { outbox: envelopes.map((envelope) => ({ envelope, code: "workspace_identity_unknown" })) };
+    const outbox: { envelope: ParentEffectEnvelope; code: string | null }[] = [];
+    const directory = envelopes.filter((envelope) => (
+      envelope.effect.kind === "directory_common" || envelope.effect.kind === "directory_user"
+    ));
+    const followUp = directory.length > 0
+      ? (() => {
+        const applied = this.applyDirectoryBatch({ workspaceId, envelopes: directory }, { deferUnknownMembers: true });
+        outbox.push(...applied.deferred);
+        return applied.followUp;
+      })()
+      : WorkspaceDO.emptyDirectoryFollowUp(workspaceId);
+    for (const envelope of envelopes) {
+      const effect = envelope.effect;
+      if (effect.kind === "directory_common" || effect.kind === "directory_user") continue;
+      if (effect.kind === "scope_grant_directory") {
+        try {
+          this.state.storage.transactionSync(() => applyScopeGrantDirectory(this.state.storage, envelope));
+        } catch (error) {
+          outbox.push({ envelope, code: diagnosticErrorCode(error, "grant_directory_apply_failed") });
+          continue;
+        }
+        // A revoked Channel grant also has to reach the Channel's Sidekick
+        // conversations, which is a Queue send; the drain does it.
+        if (!effect.grant.active && effect.grant.target.kind === "workstream") outbox.push({ envelope, code: null });
+        continue;
+      }
+      try {
+        const applied = this.state.storage.transactionSync(() => applyWorkstreamRegionalEnvelope(
+          this.state.storage,
+          WorkspaceRegionalEffectApplyRequestSchema.parse({
+            workspaceId,
+            envelope,
+            actorUserId: effect.kind === "activity_event" ? effect.actorUserId ?? null : null,
+            targetUserIds: effect.kind === "activity_event" ? effect.targets.map((target) => target.userId) : [],
+            // Delivery checks membership again when it sends; a person this
+            // object has not heard of gets the record and is checked there.
+            recipientIsActiveMember: isPersonNotificationEffect(effect)
+              ? this.memberActiveOrUnknown(effect.recipientUserId) : false,
+          }),
+          Date.now(),
+        ));
+        followUp.syncTopics.push(...(effect.kind === "activity_event"
+          ? ["activity", "work_opportunities"] as const : ["activity", "workstream_directory"] as const));
+        if (effect.kind === "activity_event" && !applied.replayed) followUp.refreshProductAlarm = true;
+        if (isPersonNotificationEffect(effect)) {
+          if (applied.notificationIntentId) outbox.push({ envelope, code: null });
+        } else if (effect.kind === "activity_event" && effect.sourceKind === "workstream_message"
+          && effect.sourceId && effect.targets.length > 0) {
+          outbox.push({ envelope, code: null });
+        }
+      } catch (error) {
+        // The Queue consumer applies it instead and reports why it cannot.
+        outbox.push({ envelope, code: diagnosticErrorCode(error, "regional_effect_apply_failed") });
+      }
+    }
+    followUp.syncTopics = [...new Set(followUp.syncTopics)];
+    const followUpId = this.recordDirectoryFollowUp(followUp);
+    if (followUpId !== null) this.pendingParentFollowUps.push(followUpId);
+    return { outbox };
+  }
+
+  private static emptyDirectoryFollowUp(workspaceId: string): DirectoryFollowUp {
+    return {
+      workspaceId, publishSnapshotAll: false, snapshotUsers: [], reachChangedUsers: [], commonChanges: [],
+      viewerChanges: [], breakoutChanges: [], breakoutViewerChanges: [], reopenBootstrap: false,
+      watchReconciliations: [], archivalChanges: [], refreshTerminal: false, refreshWatchKinds: false,
+      directoryChanged: false, syncTopics: [], refreshProductAlarm: false,
+    };
+  }
+
+  private memberActiveOrUnknown(userId: string): boolean {
+    const row = this.state.storage.sql.exec<{ active: number }>(
+      `SELECT active FROM workspace_member_status WHERE user_id = ?`, userId,
+    ).toArray()[0];
+    return row === undefined || row.active === 1;
   }
 
   /**
@@ -4711,6 +4838,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * nobody who made the write is waiting on.
    */
   private async afterParentWrite(): Promise<void> {
+    const followUps = this.pendingParentFollowUps.splice(0);
+    if (followUps.length > 0) await this.runDirectoryFollowUps(followUps);
     await this.drainParentOutbox({ localOnly: true });
     await this.armNextAlarm();
   }
@@ -5693,8 +5822,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const parentOutbox = hosted ? this.nextParentOutboxDueAt() : null;
     const parentBreakouts = hosted ? HostedParent.nextDueAt(this.state.storage.sql) : null;
     const parentImport = hosted ? nextParentImportDueAt(this.state.storage.sql) : null;
+    const directoryFollowUp = hosted ? this.nextDirectoryFollowUpDueAt() : null;
     return [
       ...(parentOutbox === null ? [] : [parentOutbox]),
+      ...(directoryFollowUp === null ? [] : [directoryFollowUp]),
       ...(parentBreakouts === null ? [] : [parentBreakouts]),
       ...(parentImport === null ? [] : [parentImport]),
       ...(oldest === null ? [] : [Number(oldest) + ACTIVITY_EVENT_RETENTION_MS]),
@@ -5767,6 +5898,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (this.hostedParentSchemaPresent()) {
         await this.instrumentWorkspaceAlarmPhase("parent_outbox", undefined, () => this.drainParentOutbox());
         await this.instrumentWorkspaceAlarmPhase("parent_breakouts", undefined, () => this.drainDueParentBreakouts(now));
+        await this.instrumentWorkspaceAlarmPhase("directory_followup", undefined,
+          () => this.runDirectoryFollowUps(this.dueDirectoryFollowUps(now)));
       }
       try { await flushSearchAuthorizationPush(this.state.storage.sql, this.env, workspaceId); }
       catch { logWarn(this.env, 'search_authorization_push_deferred', { region: this.env.AVALON_REGION }); }
@@ -6966,11 +7099,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * their sidebar.
    */
   private async activeSpaceMember(workspaceId: string, userId: string): Promise<boolean> {
-    return Boolean(await this.env.DB.prepare(
-      `SELECT 1 FROM workspace_members
-        WHERE workspace_id = ? AND user_id = ? AND status = 'active'
-          AND access_class = 'member' LIMIT 1`,
-    ).bind(workspaceId, userId).first());
+    const relationship = await this.readRelationship(workspaceId, userId);
+    return relationship?.status === "active" && relationship.accessClass === "member";
   }
 
   /**
@@ -9104,15 +9234,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
 
-  /** Commit WorkstreamDO-owned facts into the workspace's authoritative directory. */
+  /**
+   * Commit directory effects that arrive from outside this object: a legacy
+   * parent's in-flight Queue message, or a row the local outbox drain retries.
+   * The same synchronous core runs inside a hosted parent's own transaction
+   * (`applyLocalDirectory`); this entry point only resolves anyone the member
+   * table has not heard of first, which is the one step that needs D1.
+   */
   async applyWorkstreamDirectoryEffects(
     input: WorkspaceDirectoryApplyRequest,
   ): Promise<WorkspaceDirectoryApplyResult> {
     await this.initialized;
-    // A Space publishes the same `directory_common` and `directory_user`
-    // effects a Channel does, and both land here. They are kept apart from this
-    // line on: a Space in `channels` would be a Space in
-    // the Channel sidebar, and the two directories answer different questions.
     const request = WorkspaceDirectoryApplyRequestSchema.parse(input);
     if (!this.workspaceId()) {
       this.ensureIdentity(
@@ -9121,6 +9253,40 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       );
     }
     this.assertWorkspace(request.workspaceId);
+    await this.resolveUnknownMembers(request.workspaceId, request.envelopes);
+    const batch = this.state.storage.transactionSync(() => {
+      const applied = this.applyDirectoryBatch(request, { deferUnknownMembers: false });
+      const followUpId = this.recordDirectoryFollowUp(applied.followUp);
+      return { ...applied, followUpId };
+    });
+    await this.runDirectoryFollowUps(batch.followUpId === null ? [] : [batch.followUpId]);
+    return WorkspaceDirectoryApplyResultSchema.parse({
+      accepted: batch.accepted,
+      directoryChanged: batch.followUp.directoryChanged,
+    });
+  }
+
+  /**
+   * The directory write itself: synchronous, so it can run inside a hosted
+   * parent's transaction and land with the parent change that caused it.
+   * Returns what it accepted, what it could not apply yet (a viewer whose
+   * membership this object has not learned, or an envelope whose apply threw,
+   * such as a viewer row whose Channel row is not here yet), and the
+   * post-commit work the batch owes.
+   */
+  private applyDirectoryBatch(
+    request: WorkspaceDirectoryApplyRequest,
+    options: { deferUnknownMembers: boolean },
+  ): {
+    accepted: WorkspaceDirectoryApplyResult["accepted"];
+    deferred: { envelope: ParentEffectEnvelope; code: string }[];
+    followUp: DirectoryFollowUp;
+  } {
+    const deferred: { envelope: ParentEffectEnvelope; code: string }[] = [];
+    // A Space publishes the same `directory_common` and `directory_user`
+    // effects a Channel does, and both land here. They are kept apart from this
+    // line on: a Space in `channels` would be a Space in
+    // the Channel sidebar, and the two directories answer different questions.
     // A directory effect from a legacy parent object — one that was mid-way
     // through delivering when this deploy landed — names a parent this object
     // has to import before it can serve it. A hosted parent's own effects never
@@ -9131,14 +9297,27 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         .toArray().length > 0) continue;
       notePendingParentImport(this.state.storage.sql, envelope.parentId, envelope.parentKind);
     }
-    const spaceEnvelopes = request.envelopes.filter((envelope) => envelope.parentKind === "space");
+    // Membership is answered from this object's member table. A viewer row for
+    // someone it has not heard of waits in the outbox, whose drain asks D1
+    // once and records the answer.
+    const members = this.memberStatuses(request.envelopes);
+    const envelopes = request.envelopes.filter((envelope) => {
+      if (envelope.effect.kind !== "directory_user" || members.has(envelope.effect.userId)) return true;
+      if (options.deferUnknownMembers) {
+        deferred.push({ envelope, code: "directory_member_unknown" });
+        return false;
+      }
+      return true;
+    });
+    const activeUsers = new Set([...members].flatMap(([userId, active]) => (active ? [userId] : [])));
+    const spaceEnvelopes = envelopes.filter((envelope) => envelope.parentKind === "space");
     // A breakout's own projection is a third destination. It names itself on
     // the envelope; a Channel's aggregate names nothing, so the absence of the
     // id is what keeps every existing envelope on the Channel path unchanged.
-    const breakoutEnvelopes = request.envelopes.filter((envelope) => (
+    const breakoutEnvelopes = envelopes.filter((envelope) => (
       envelope.parentKind !== "space" && envelope.substreamId !== undefined
     ));
-    const channelEnvelopes = request.envelopes.filter((envelope) => (
+    const channelEnvelopes = envelopes.filter((envelope) => (
       envelope.parentKind !== "space" && envelope.substreamId === undefined
     ));
     // Read before the loop commits anything, because which of these Channels
@@ -9155,18 +9334,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       && this.spaceStorage().bootstrapStatus().ready
       ? this.directoryChannelsPresent(commonChannelIds)
       : [];
-    const userIds = [...new Set(request.envelopes.flatMap((envelope) => (
-      envelope.effect.kind === "directory_user" ? [envelope.effect.userId] : []
-    )))];
-    const activeUsers = new Set<string>();
-    if (userIds.length > 0) {
-      const placeholders = userIds.map(() => "?").join(",");
-      const members = await this.env.DB.prepare(
-        `SELECT user_id FROM workspace_members
-          WHERE workspace_id = ? AND status = 'active' AND user_id IN (${placeholders})`,
-      ).bind(request.workspaceId, ...userIds).all<{ user_id: string }>();
-      for (const member of members.results ?? []) activeUsers.add(member.user_id);
-    }
     let directoryChanged = false;
     const commonChanges = new Set<string>();
     const archivalChanges = new Set<string>();
@@ -9194,9 +9361,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const reachChangedUsers = new Set<string>();
     const breakoutDirectoryReady = breakoutEnvelopes.length === 0
       || this.breakoutStorage().ready();
+    // Each envelope is its own savepoint: one that throws is rolled back
+    // alone and returned as deferred, and the rest of the batch, and the
+    // parent transaction around it, commit.
+    const attempt = <T>(envelope: ParentEffectEnvelope, apply: () => T): T | undefined => {
+      try {
+        return this.state.storage.transactionSync(apply);
+      } catch (error) {
+        deferred.push({ envelope, code: diagnosticErrorCode(error, "directory_apply_failed") });
+        return undefined;
+      }
+    };
     for (const envelope of spaceEnvelopes) {
-      spaceDirectoryChanged = this.applySpaceDirectoryEnvelope(envelope, activeUsers)
-        || spaceDirectoryChanged;
+      const changed = attempt(envelope, () => this.applySpaceDirectoryEnvelope(envelope, activeUsers));
+      if (changed === undefined) continue;
+      spaceDirectoryChanged = changed || spaceDirectoryChanged;
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
     }
     for (const envelope of breakoutEnvelopes) {
@@ -9206,7 +9385,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // existing incomplete-acceptance path keeps it retryable until migration
       // 63 creates the destination.
       if (!breakoutDirectoryReady) continue;
-      const breakout = this.applyBreakoutDirectoryEnvelope(envelope, activeUsers);
+      const breakout = attempt(envelope, () => this.applyBreakoutDirectoryEnvelope(envelope, activeUsers));
+      if (breakout === undefined) continue;
       if (breakout.moved) {
         if (envelope.effect.kind === "directory_common") breakoutChanges.add(envelope.parentId);
         else if (envelope.effect.kind === "directory_user") {
@@ -9219,7 +9399,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
     }
     for (const envelope of channelEnvelopes) {
-      const applied = this.applyDirectoryEnvelope(envelope, activeUsers);
+      const applied = attempt(envelope, () => this.applyDirectoryEnvelope(envelope, activeUsers));
+      if (applied === undefined) continue;
       directoryChanged = directoryChanged || applied.changed;
       // A replay reconciles as well as a first application, the way the watch
       // registrations below do. The row and its receipt commit inside the call
@@ -9272,63 +9453,151 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
     }
-    // Before the first await below, and outside the `directoryChanged` gate at
-    // the foot of this method. Archiving a work stream is not a project
-    // mutation, so nothing else here touches project state — and without this
-    // the sidebar keeps counting a member it has just stopped being able to
-    // show until the next project write or reconnect. Publishing here means a
-    // rejection further down redelivers the envelope rather than losing the
-    // correction, and the gate below is the one that matters: the call
-    // advances the Space waterline only when one of these Channels is actually
-    // in a Space, which is both what makes the snapshot newer than the one its
-    // readers hold and what keeps this off the path every projection takes. A
-    // Space counts the members it can show, so a Channel arriving in or leaving
-    // the archive changes what its Spaces say about themselves — and a Space
-    // directory at a waterline a client already holds is dropped as a replay,
-    // so the count would stay wrong until the next Space write or reconnect.
-    // Sending to a socket cannot throw — it is caught per socket — so nothing
-    // here can fail the batch.
+    // Space snapshots and the unplaced-Channel check read and advance this
+    // object's own rows, so they are decided here, in the transaction; only
+    // the sends they lead to wait for the commit.
     //
+    // A Space counts the members it can show, so a Channel arriving in or
+    // leaving the archive changes what its Spaces say about themselves, and a
+    // Space directory at a waterline a client already holds is dropped as a
+    // replay. A person's reach into a Space moving (their participation in one
+    // of its Channels) republishes to exactly those people. Both advance the
+    // Space waterline only when one of these Channels is in a Space.
     const spaceStorage = this.spaceStorage();
+    let publishSnapshotAll = false;
+    let snapshotUsers: string[] = [];
     if (spaceDirectoryChanged
       || (archivalChanges.size > 0
         && spaceStorage.noteMemberDirectoryChange([...archivalChanges]))) {
-      this.publishSpaceSnapshot();
+      publishSnapshotAll = true;
     } else if (reachViewers.size > 0 && spaceStorage.noteMemberDirectoryChange([...reachChannels])) {
-      // A Space is visible to somebody who can see one Channel placed in it,
-      // so losing the last such Channel takes the Space out of their sidebar
-      // and gaining one puts it in — and this is the only event that says so.
-      // Without it the withdrawn Space kept its mark and name on their sidebar
-      // until they reconnected, and the desktop mirrors the snapshot into its
-      // local cache, so the name survived a restart. Nothing was *readable*:
-      // the server-side predicate is live on every read. The name is the
-      // disclosure, and it outlived the reach.
-      //
-      // To exactly these people, not to every socket: this is one person's
-      // relationship to one Channel changing, and a whole-Organization
-      // republication rebuilds both directories per socket for a snapshot
-      // identical to the one everybody else already holds. And only when one
-      // of the Channels is in a Space at all — a participant joining a Channel
-      // no Space holds moves nothing, and the same membership test keeps the
-      // archival arm above off the sockets.
-      for (const userId of reachViewers) this.publishSpaceSnapshot(userId);
+      snapshotUsers = [...reachViewers];
     }
-    this.publishReachChanged(reachChangedUsers);
+    // The backstop for the hierarchy invariant: a Channel the Organization
+    // was already holding that is still in no Space is a broken invariant
+    // rather than an unfinished creation, and nothing else will fix it.
+    const reopenBootstrap = settledChannelIds.length > 0
+      && spaceStorage.unplacedChannelExists(settledChannelIds);
+    const common = (envelope: ParentEffectEnvelope) => envelope.effect.kind === "directory_common";
+    return {
+      accepted,
+      deferred,
+      followUp: {
+        workspaceId: request.workspaceId,
+        publishSnapshotAll,
+        snapshotUsers,
+        reachChangedUsers: [...reachChangedUsers],
+        commonChanges: [...commonChanges],
+        viewerChanges: [...viewerChanges].map(([id, users]) => [id, [...users]]),
+        breakoutChanges: [...breakoutChanges],
+        breakoutViewerChanges: [...breakoutViewerChanges].map(([id, users]) => [id, [...users]]),
+        reopenBootstrap,
+        watchReconciliations: [...watchReconciliations],
+        archivalChanges: [...archivalChanges],
+        // Replays repair an arm lost after the directory commit, so any common
+        // effect re-derives the Terminal schedule from current rows.
+        refreshTerminal: commonChanges.size > 0 || channelEnvelopes.some(common),
+        refreshWatchKinds: channelEnvelopes.some((envelope) => (
+          envelope.effect.kind === "directory_common" && (envelope.effect.resourceLinks?.length ?? 0) > 0
+        )),
+        directoryChanged,
+        syncTopics: [],
+        refreshProductAlarm: false,
+      },
+    };
+  }
+
+  /** True when a follow-up has nothing to send, reconcile or re-arm. */
+  private static directoryFollowUpEmpty(followUp: DirectoryFollowUp): boolean {
+    return !followUp.publishSnapshotAll && followUp.snapshotUsers.length === 0
+      && followUp.reachChangedUsers.length === 0 && followUp.commonChanges.length === 0
+      && followUp.viewerChanges.length === 0 && followUp.breakoutChanges.length === 0
+      && followUp.breakoutViewerChanges.length === 0 && !followUp.reopenBootstrap
+      && followUp.watchReconciliations.length === 0 && followUp.archivalChanges.length === 0
+      && !followUp.refreshTerminal && !followUp.refreshWatchKinds && !followUp.directoryChanged
+      && followUp.syncTopics.length === 0 && !followUp.refreshProductAlarm;
+  }
+
+  /**
+   * Record a batch's post-commit work in the transaction that committed the
+   * batch, so a crash between the commit and the sends leaves it for the
+   * alarm rather than losing it. The row is not due until one retry delay has
+   * passed: the write that recorded it runs it straight after the commit, and
+   * the alarm only takes what that run did not finish.
+   */
+  private recordDirectoryFollowUp(followUp: DirectoryFollowUp): number | null {
+    if (WorkspaceDO.directoryFollowUpEmpty(followUp)) return null;
+    const now = Date.now();
+    return this.state.storage.sql.exec<{ id: number }>(
+      `INSERT INTO workspace_directory_followups (followup_json, attempts, not_before, created_at)
+       VALUES (?, 0, ?, ?) RETURNING id`,
+      JSON.stringify(followUp), now + scheduledAlarmRetryDelay(1), now,
+    ).one().id;
+  }
+
+  /**
+   * Run recorded follow-ups and delete each one that finished. One that throws
+   * is put off on the alarm's retry schedule and logged with its reason.
+   */
+  private async runDirectoryFollowUps(ids: readonly number[]): Promise<void> {
+    for (const id of ids) {
+      const row = this.state.storage.sql.exec<{ followup_json: string; attempts: number }>(
+        `SELECT followup_json, attempts FROM workspace_directory_followups WHERE id = ?`, id,
+      ).toArray()[0];
+      if (!row) continue;
+      const followUp = JSON.parse(row.followup_json) as DirectoryFollowUp;
+      try {
+        await this.runDirectoryFollowUp(followUp);
+        this.state.storage.sql.exec(`DELETE FROM workspace_directory_followups WHERE id = ?`, id);
+      } catch (error) {
+        this.state.storage.sql.exec(
+          `UPDATE workspace_directory_followups SET attempts = attempts + 1, not_before = ? WHERE id = ?`,
+          Date.now() + scheduledAlarmRetryDelay(row.attempts + 1), id,
+        );
+        logWarn(this.env, "directory_followup_deferred", {
+          workspace_id: followUp.workspaceId,
+          followup_id: id,
+          attempts: row.attempts + 1,
+          code: diagnosticErrorCode(error, "directory_followup_failed"),
+        });
+      }
+    }
+    await this.armNextAlarm();
+  }
+
+  private dueDirectoryFollowUps(now: number): number[] {
+    return this.state.storage.sql.exec<{ id: number }>(
+      `SELECT id FROM workspace_directory_followups WHERE not_before <= ? ORDER BY id LIMIT ?`,
+      now, SPACE_BOOTSTRAP_PAGE_SIZE,
+    ).toArray().map((row) => row.id);
+  }
+
+  private nextDirectoryFollowUpDueAt(): number | null {
+    return this.state.storage.sql.exec<{ due_at: number | null }>(
+      `SELECT MIN(not_before) AS due_at FROM workspace_directory_followups`,
+    ).one().due_at;
+  }
+
+  /** The sends, reconciliations and re-arms one committed directory batch owes. */
+  private async runDirectoryFollowUp(followUp: DirectoryFollowUp): Promise<void> {
+    const commonChanges = new Set(followUp.commonChanges);
+    const viewerChanges = new Map(followUp.viewerChanges.map(([id, users]) => [id, new Set(users)]));
+    const breakoutChanges = new Set(followUp.breakoutChanges);
+    const breakoutViewerChanges = new Map(followUp.breakoutViewerChanges.map(([id, users]) => [id, new Set(users)]));
+    if (followUp.publishSnapshotAll) this.publishSpaceSnapshot();
+    else for (const userId of followUp.snapshotUsers) this.publishSpaceSnapshot(userId);
+    this.publishReachChanged(new Set(followUp.reachChangedUsers));
     // The Space dashboard's list is ordered by activity and filtered by each
     // conversation's state for the reader, so a member conversation's row
-    // moving *is* that page moving — on every message in every member Channel
-    // and every breakout of one. That is far too frequent for the Space
-    // snapshot, which rebuilds both directories per socket; it goes out as a
-    // nudge of its own, carrying the Spaces to read again and their small
-    // aggregate counts for the sidebar.
+    // moving is that page moving. It goes out as a nudge of its own rather
+    // than as a Space snapshot, which rebuilds both directories per socket.
     this.publishSpaceConversationsChanged({
       channelIds: [...commonChanges, ...breakoutChanges],
       viewerChannelIds: mergeViewerChanges(viewerChanges, breakoutViewerChanges),
     });
     // A Channel row carries its live Breakout total. A child projection does
-    // not advance the parent's directory waterline, so explicitly republish
-    // the parent row; the receiver treats this aggregate like Space placements
-    // and may accept it from an otherwise duplicate parent version.
+    // not advance the parent's directory waterline, so republish the parent
+    // row; the receiver may accept this aggregate from a duplicate version.
     for (const workstreamId of breakoutChanges) {
       await this.publishWorkstreamState(workstreamId);
     }
@@ -9336,81 +9605,151 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (breakoutChanges.has(workstreamId)) continue;
       for (const userId of users) await this.publishWorkstreamState(workstreamId, userId);
     }
-    // The backstop for the hierarchy invariant, on the one event that can break
-    // it without anything noticing. Every non-deleted, non-system Channel
-    // belongs to at least one Space, and the creation paths and the cutover are
-    // what make that true — but a directory row is committed here, and a
-    // `complete` Organization is never walked again, so a Channel that reached
-    // this point unplaced would stay homeless while `spacesReady` went on
-    // saying the hierarchy is renderable. `reopenBootstrap` already names this
-    // event as one of its two reasons to exist; nothing called it on one.
-    //
-    // The question is the close's own predicate, which reads this object's
-    // SQLite and nothing else: no D1, no other object, so an ordinary
-    // projection pays two local queries and a guard that fires pays a reopen it
-    // was going to need anyway.
-    //
-    // **It is asked only of Channels this batch did not introduce**, which is
-    // not a softening. A Channel's *arrival* in the directory is a creation in
-    // flight rather than a Channel nobody is going to place: `reserveChild`
-    // enqueues the provisional row before either creation path is finished, and
-    // the Channel authority's own recovery alarm delivers it straight here when
-    // it wins the race with the coordinator's flush. On a connector path the
-    // reservation comes before the placement and the conversation is
-    // provisioned in between, so that alarm has the whole window and takes it:
-    // firing on an arrival reopened the cutover on every run of
-    // `space-creation.test.ts`'s Slack creation, which is the cost that made
-    // the Slack ordering a bug rather than a slow path. A row the
-    // Organization was already holding that is *still* in no Space is a claim
-    // about a broken invariant rather than an unfinished creation, and it is
-    // the state nothing else is going to fix.
-    if (settledChannelIds.length > 0
-      && this.spaceStorage().unplacedChannelExists(settledChannelIds)) {
-      await this.reopenSpaceBootstrapWalk();
-    }
-    await Promise.all([...watchReconciliations].map((workstreamId) => (
-      this.reconcileWorkstreamResourceRegistrations({
-        workspaceId: request.workspaceId,
-        workstreamId,
-      })
+    if (followUp.reopenBootstrap) await this.reopenSpaceBootstrapWalk();
+    await Promise.all(followUp.watchReconciliations.map((workstreamId) => (
+      this.reconcileWorkstreamResourceRegistrations({ workspaceId: followUp.workspaceId, workstreamId })
     )));
     // Archiving a room is a decision about the room, and the automations it
-    // owns follow it. Each is its own object and is told on its own: one that
-    // cannot be reached is the only one that falls behind, and its next
-    // occurrence finds the room archived through `authority` anyway.
-    if (archivalChanges.size > 0) await this.notifyOwningRoomArchival(request.workspaceId, [...archivalChanges]);
-    if (commonChanges.size > 0 || channelEnvelopes.some((envelope) => envelope.effect.kind === "directory_common")) {
-      // Replays repair an arm lost after the directory commit, even when no
-      // directory row changes this time. Always derive from current rows.
-      // A `directory_common` effect is the only writer of
-      // `next_terminal_action_at`, and it arrives outside any alarm — off the
-      // Queue — so a sandbox deadline created or moved here would otherwise
-      // wait for an unrelated target to reconcile before anything armed it.
-      await this.refreshTerminalSchedule();
+    // owns follow it. Each is its own object and is told on its own.
+    if (followUp.archivalChanges.length > 0) {
+      await this.notifyOwningRoomArchival(followUp.workspaceId, followUp.archivalChanges);
     }
-    if (channelEnvelopes.some((envelope) => (
-      envelope.effect.kind === "directory_common"
-      && (envelope.effect.resourceLinks?.length ?? 0) > 0
-    ))) {
-      await this.refreshScheduleKinds(request.workspaceId, ["maintenance", "watch"]);
+    // A `directory_common` effect is the only writer of
+    // `next_terminal_action_at`, so a deadline created or moved here would
+    // otherwise wait for an unrelated target to reconcile before anything
+    // armed it.
+    if (followUp.refreshTerminal) await this.refreshTerminalSchedule();
+    if (followUp.refreshWatchKinds) {
+      await this.refreshScheduleKinds(followUp.workspaceId, ["maintenance", "watch"]);
     }
-    if (directoryChanged) {
+    if (followUp.directoryChanged) {
       // Scope, participant, generation, and archival effects can invalidate a
       // foreground attachment without another client focus event. Rebuild now,
       // before the async state publications yield, so removed viewers neither
       // contribute to nor receive the next presence snapshot.
       this.broadcastPresence();
-      await Promise.all([
-        ...commonChanges,
-      ].map((workstreamId) => this.publishWorkstreamState(workstreamId)));
+      await Promise.all([...commonChanges].map((workstreamId) => this.publishWorkstreamState(workstreamId)));
       await Promise.all([...viewerChanges].flatMap(([workstreamId, users]) => (
         commonChanges.has(workstreamId)
           ? []
           : [...users].map((userId) => this.publishWorkstreamState(workstreamId, userId))
       )));
     }
-    await this.armNextAlarm();
-    return WorkspaceDirectoryApplyResultSchema.parse({ accepted, directoryChanged });
+    if (followUp.refreshProductAlarm) await this.refreshProductAlarm();
+    if (followUp.syncTopics.length > 0) {
+      await this.publishSync(followUp.syncTopics, followUp.workspaceId,
+        this.placementAffinity() ?? await workspacePlacementAffinity(this.env, followUp.workspaceId));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Workspace membership, as this object last heard it.
+  // ---------------------------------------------------------------------------
+
+  /** What the member table says about each viewer a batch names; absent means never heard of. */
+  private memberStatuses(envelopes: readonly ParentEffectEnvelope[]): Map<string, boolean> {
+    const userIds = [...new Set(envelopes.flatMap((envelope) => (
+      envelope.effect.kind === "directory_user" ? [envelope.effect.userId] : []
+    )))];
+    if (userIds.length === 0) return new Map();
+    return new Map(this.state.storage.sql.exec<{ user_id: string; active: number }>(
+      `SELECT user_id, active FROM workspace_member_status WHERE user_id IN (SELECT value FROM json_each(?))`,
+      JSON.stringify(userIds),
+    ).toArray().map((row) => [row.user_id, row.active === 1]));
+  }
+
+  /**
+   * A person's workspace relationship, answered from this object's table.
+   *
+   * The relationship change events keep the table current (the product
+   * accepts that an answer may trail D1 by the time one takes to arrive; the
+   * team set the tolerance at five minutes and chose to trust the events
+   * rather than re-read on a timer). D1 is read once, for someone the table
+   * has never heard of: a member from before the table existed.
+   */
+  private async readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null> {
+    const row = this.state.storage.sql.exec<{ relationship_json: string | null }>(
+      `SELECT relationship_json FROM workspace_member_status WHERE user_id = ?`, userId,
+    ).toArray()[0];
+    if (row) {
+      return row.relationship_json === null ? null : WorkspaceRelationshipSchema.parse(JSON.parse(row.relationship_json));
+    }
+    const relationship = await readWorkspaceRelationship(this.env.DB, workspaceId, userId);
+    this.recordReadRelationship(userId, relationship);
+    return relationship;
+  }
+
+  /** A relationship this request read from or wrote to D1. It never replaces an event's answer. */
+  private noteRelationship(relationship: WorkspaceRelationship): void {
+    this.recordReadRelationship(relationship.userId, relationship);
+  }
+
+  private recordReadRelationship(userId: string, relationship: WorkspaceRelationship | null): void {
+    this.state.storage.sql.exec(
+      `INSERT INTO workspace_member_status (user_id, relationship_json, active, sequence, updated_at)
+       VALUES (?, ?, ?, 0, ?)
+       ON CONFLICT (user_id) DO UPDATE SET relationship_json = excluded.relationship_json,
+         active = excluded.active, updated_at = excluded.updated_at
+       WHERE workspace_member_status.sequence = 0`,
+      userId,
+      relationship === null ? null : JSON.stringify(relationship),
+      relationship?.status === "active" ? 1 : 0,
+      Date.now(),
+    );
+  }
+
+  /** Learn anyone a directory batch names that the table has not heard of. */
+  private async resolveUnknownMembers(workspaceId: string, envelopes: readonly ParentEffectEnvelope[]): Promise<void> {
+    const known = this.memberStatuses(envelopes);
+    const unknown = [...new Set(envelopes.flatMap((envelope) => (
+      envelope.effect.kind === "directory_user" && !known.has(envelope.effect.userId) ? [envelope.effect.userId] : []
+    )))];
+    await Promise.all(unknown.map((userId) => this.readRelationship(workspaceId, userId)));
+  }
+
+  /**
+   * A workspace relationship change event, applied in D1's order. Someone who
+   * stops being an active member leaves every viewer directory in the same
+   * transaction, so they drop out of other people's participant lists at once
+   * rather than when their next projection arrives.
+   */
+  async applyMemberStatus(input: {
+    workspaceId: string;
+    sequence: number;
+    removed: boolean;
+    relationship: WorkspaceRelationship;
+  }): Promise<{ applied: boolean }> {
+    await this.initialized;
+    const request = z.strictObject({
+      workspaceId: WorkspaceIdSchema,
+      sequence: z.number().int().positive(),
+      removed: z.boolean(),
+      relationship: WorkspaceRelationshipSchema,
+    }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const userId = request.relationship.userId;
+    const active = !request.removed && request.relationship.status === "active";
+    const applied = this.state.storage.transactionSync(() => {
+      const current = this.state.storage.sql.exec<{ sequence: number }>(
+        `SELECT sequence FROM workspace_member_status WHERE user_id = ?`, userId,
+      ).toArray()[0];
+      if (current && current.sequence >= request.sequence) return false;
+      this.state.storage.sql.exec(
+        `INSERT INTO workspace_member_status (user_id, relationship_json, active, sequence, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (user_id) DO UPDATE SET relationship_json = excluded.relationship_json,
+           active = excluded.active, sequence = excluded.sequence, updated_at = excluded.updated_at`,
+        userId, request.removed ? null : JSON.stringify(request.relationship), active ? 1 : 0,
+        request.sequence, Date.now(),
+      );
+      if (!active) {
+        this.state.storage.sql.exec(`DELETE FROM channel_viewers WHERE user_id = ?`, userId);
+        this.state.storage.sql.exec(`DELETE FROM breakout_viewers WHERE user_id = ?`, userId);
+        this.state.storage.sql.exec(`DELETE FROM space_viewers WHERE user_id = ?`, userId);
+      }
+      return true;
+    });
+    return { applied };
   }
 
   /**
