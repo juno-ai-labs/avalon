@@ -18,6 +18,7 @@ attempt at the opposite that the changelog records.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/renderer/screens/new-workstream.tsx` | Both states of the screen, the `launching` state that switches between them, the create mutation, and `launchedWorkstreamDetail` — the one place a launched work stream's cached detail is built. |
+| `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The pending-row rule on the shared list: `addPendingWorkstream`, `confirmPendingWorkstream`, `discardPendingWorkstream`, `keepPendingWorkstreams` (applied by every write that replaces the list), and `releasePendingWorkstreams`, the one path that may remove a pending row. |
 | `apps/desktop/src/renderer/lib/launched-conversation.ts` | `optimisticOpeningTranscript`, the one place either launcher's optimistic turn is built, and the detail a launched substream is seeded with. |
 | `packages/ui/src/styles/app.css` | The `.workstream-launch-screen` block at the end of the file: every geometry difference between the two states, and the two keyframes. Shared with the substream launcher, which renders the same three rows inside a work stream's own column ([`substream-creation.md`](substream-creation.md)). |
 | `apps/desktop/src/renderer/components/composer-input.tsx` | `ComposerInput`, the single composer element the hand-off is built around. |
@@ -121,6 +122,28 @@ work-stream screen uses, with the current user as author so it takes the same
 own-turn treatment. The header shows `TitleSkeleton` — the same skeleton the created work stream shows while the naming agent answers, so
 the header does not change hands at the swap; it is already waiting for the same
 name.
+
+### The Channel is listed before it exists
+
+The sidebar shows the Channel on the keystroke, and the row it shows is the
+Channel's own. `submit` mints the id, lists a row under it with
+`pending: true` in the Space the request names, and sends
+the id as `workstreamId`; the server creates the Channel under it. Every later
+answer (the create's, a directory page, a refetch) carries a row with the same
+id, which replaces the pending one in place, so there is nothing to match up.
+
+A pending row stays until a server row for its id replaces it, and leaves
+otherwise only through `releasePendingWorkstreams`: the create's confirm or
+discard, or an authoritative eviction of the id. It is drawn dimmed and inert,
+skipped by background sockets and the landing route, and never persisted.
+
+The server claims the id with the create receipt, in one statement, only if no
+conversation already has it: the receipt's unique id covers receipt-path
+creates and a `NOT EXISTS` on the `workstreams` anchor covers the rest. A taken
+id is refused `409 workstream_id_unavailable`. Parents anchored without a
+receipt (`bootstrapWorkstreamRuntimeEnvironment`: Spaces, Sidekicks, digests,
+Slack tasks) hold the other half: they anchor first, then refuse if a receipt
+already names the id, so whichever statement runs first owns it.
 
 ### The room snapshot has to describe the run
 
@@ -451,6 +474,15 @@ see
   the hand-off, and the optimistic turn being taken back when the create fails.
   The suite clears the draft cache in `beforeEach` and stubs `ResizeObserver`;
   a test that skips either will see a restored draft from its predecessor.
+- The pending row: `lib/workstreams-cache.test.ts` (kept across a replacing
+  write, replaced by its server row, confirmed under a different id, evicted, discarded),
+  `lib/workstream-state-store.test.ts` (a versioned common half ends it),
+  `lib/use-workstreams-query.test.tsx` (the refetch keeps it and then takes the
+  fetched row), and `components/sidebar.test.tsx` (drawn dimmed and inert).
+  The server half is in `apps/api/test/workstream-scope.test.ts`, on the
+  checked-in migrations: a named id is used and replayed, and one held by a
+  receipt or by a receipt-less anchor is refused, a receipt reserved without the
+  id replays, and bootstrap refuses an id a create has claimed.
 - `apps/desktop/src/renderer/screens/workstream-open.test.tsx` and
   `apps/desktop/src/renderer/lib/transcript.test.ts` cover the destination side:
   a scheduled run cannot paint `Ready to begin`, and an unmatched routed opening
@@ -502,6 +534,41 @@ see
   to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-09-24 — The caller names the Channel's id, so the sidebar lists it on the keystroke
+
+**What changed:** `POST /workstreams` accepts an optional `workstreamId`.
+The launcher mints one, lists a pending row under it in the shared
+work-stream list, and sends it; the server creates the Channel under that id or
+refuses it with `workstream_id_unavailable` if any conversation already has it.
+
+**Why:** The screen opened the Channel on the keystroke while the sidebar said
+"No channels yet" until the list refetched. A row listed early under a local
+id has to be matched to the server's id later, and is stranded if the match
+never comes. Giving the Channel its id before the request removes the matching:
+every later answer is the same row.
+
+**Considered and rejected:** A side store of stand-ins read next to the list,
+which served one screen and needed its own reconciliation. A synthetic row
+with a local id, swapped for the server's id on the answer, which is the same
+two-id problem inside the cache. Letting the receipt's unique index alone guard the id: Channels created without a receipt
+(connectors, imports, Sidekick parents) are only in the `workstreams` anchor,
+so a caller could have aimed a create at one. A Space or Sidekick id can even
+be seen before its anchor exists, when its provisioning is replayed, which is
+why bootstrap checks the receipts too.
+
+**Consequences:** Every writer that replaces the list has to keep pending rows,
+and only `releasePendingWorkstreams` (confirm, discard, eviction) may drop one;
+a new writer that bypasses `setCachedWorkstreams` must call
+`keepPendingWorkstreams`. The id is in the receipt's request hash, so a receipt
+reserved by a Worker from before the field is also matched against the hash
+without it, or a retry across a deploy would read as a conflict. Browser
+import runs in another window with its own cache, so it does not list early
+yet: that needs a message from the import window to the main one, and the
+server field already covers it. The uniqueness check reaches one regional D1,
+so an id already used in another region is not refused. A random UUID does
+not collide, and a client that forces one affects only its own workspace,
+whose objects are named per region.
 
 ### 2026-09-24 — Participants are picked in the header, and every launcher has a Space
 

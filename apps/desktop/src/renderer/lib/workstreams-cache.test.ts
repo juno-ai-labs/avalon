@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { conversationCacheKey, conversationSlice } from './conversation-cache';
 import { clearAllLocalCache, localCacheScope } from './local-cache';
 import {
+  addPendingWorkstream,
+  confirmPendingWorkstream,
+  discardPendingWorkstream,
   evictCachedSubstream,
   evictCachedWorkstream,
   holdCachedWorkstreamArchive,
@@ -217,6 +220,85 @@ describe('setCachedWorkstreams', () => {
       '00000000-0000-7000-8000-000000000002',
       'child-b',
     ])?.isInvalidated).toBe(false);
+  });
+});
+
+describe('a Channel listed before its create answers', () => {
+  const pendingId = '019a0000-0000-7000-8000-00000000c1a1';
+  const rows = (client: QueryClient) => client.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [];
+  function listedPending(): QueryClient {
+    const client = new QueryClient();
+    setCachedWorkstreams(client, [summary()]);
+    addPendingWorkstream(client, {
+      id: pendingId, spaceIds: ['space-1'], scope: 'personal', harnessStatus: 'running', createdAt: '2026-09-24T10:00:00.000Z',
+    });
+    return client;
+  }
+
+  it('survives a directory answer that replaces the list, which cannot contain it yet', () => {
+    const client = listedPending();
+
+    setCachedWorkstreams(client, () => [summary()]);
+
+    expect(rows(client).map((row) => [row.id, row.pending])).toEqual([
+      [pendingId, true],
+      [summary().id, undefined],
+    ]);
+  });
+
+  it('is replaced in place by the server row with its id, from a page or from the create answer', () => {
+    const fromPage = listedPending();
+    mergeCachedWorkstreamPage(fromPage, [{ ...summary(), id: pendingId, title: 'Named by Rally' }]);
+    expect(rows(fromPage).filter((row) => row.id === pendingId))
+      .toEqual([expect.objectContaining({ title: 'Named by Rally' })]);
+    expect(rows(fromPage).find((row) => row.id === pendingId)?.pending).toBeUndefined();
+
+    const fromAnswer = listedPending();
+    confirmPendingWorkstream(fromAnswer, pendingId, { ...summary(), id: pendingId, title: 'Created' });
+    expect(rows(fromAnswer).find((row) => row.id === pendingId))
+      .toEqual(expect.not.objectContaining({ pending: true }));
+  });
+
+  // A server from before `workstreamId` creates the Channel under its own id.
+  it('gives way to the created row even when the server chose a different id', () => {
+    const client = listedPending();
+    const created = { ...summary(), id: '019a0000-0000-7000-8000-00000000c1a2', title: 'Created' };
+
+    confirmPendingWorkstream(client, pendingId, created);
+
+    expect(rows(client).map((row) => [row.id, row.pending])).toEqual([
+      [created.id, undefined],
+      [summary().id, undefined],
+    ]);
+  });
+
+  // A tombstone or revocation for the id is as final for a pending row as for
+  // any other: the rule that keeps pending rows must not carry it back.
+  it('leaves when the server evicts its id', () => {
+    const client = listedPending();
+
+    evictCachedWorkstream(client, pendingId);
+
+    expect(rows(client).map((row) => row.id)).toEqual([summary().id]);
+  });
+
+  // The create's answer can land after the server has already taken the
+  // Channel away; it confirms a pending row, and must not re-list a gone one.
+  it('is not brought back by a create answer that lands after its eviction', () => {
+    const client = listedPending();
+    evictCachedWorkstream(client, pendingId);
+
+    confirmPendingWorkstream(client, pendingId, { ...summary(), id: pendingId, title: 'Created' });
+
+    expect(rows(client).map((row) => row.id)).toEqual([summary().id]);
+  });
+
+  it('leaves when its create fails, and takes nothing else with it', () => {
+    const client = listedPending();
+
+    discardPendingWorkstream(client, pendingId);
+
+    expect(rows(client).map((row) => row.id)).toEqual([summary().id]);
   });
 });
 

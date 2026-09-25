@@ -604,6 +604,34 @@ function WorkstreamHoverPreview({
   );
 }
 
+/**
+ * A Channel whose create is still in flight. Inert: there is nothing to open,
+ * pin, or move until the server has it. Keyed like the row that replaces it —
+ * it is the same Channel under the same id — so the swap is not a move and
+ * nothing travels; only its first arrival plays, as an insert.
+ */
+function PendingWorkstreamRow({ workstream }: { workstream: WorkstreamSummary }): React.JSX.Element {
+  const naming = workstream.titleStatus === 'naming';
+  return (
+    <div
+      className="sidebar-context-target"
+      data-layout-id={workstream.id}
+      data-motion-insert=""
+      data-motion-key={`workstream:${workstream.id}`}
+      data-workstream-id={workstream.id}
+    >
+      <SidebarRow
+        aria-disabled="true"
+        aria-label={naming ? 'Creating channel' : `Creating ${workstream.title}`}
+        as="div"
+        className="workstream-row is-pending"
+      >
+        <NavigationRowContent appearance={workstream.appearance} id={workstream.id} naming={naming} title={workstream.title} />
+      </SidebarRow>
+    </div>
+  );
+}
+
 function WorkstreamRow({
   debugEnabled,
   drag,
@@ -1949,7 +1977,7 @@ export function Sidebar({
     workstream: WorkstreamSummary,
     drag?: WorkstreamRowDrag,
     placementSpaceId?: string,
-  ): React.JSX.Element => (
+  ): React.JSX.Element => workstream.pending ? <PendingWorkstreamRow workstream={workstream} /> : (
     <WorkstreamRow
       {...workstreamRowActions}
       debugEnabled={debugEnabled}
