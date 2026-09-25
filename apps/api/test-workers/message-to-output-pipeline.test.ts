@@ -3275,12 +3275,13 @@ describe("a member's message travels the whole pipeline", () => {
       // The Organization object publishes the owned-Sidekick revocation while
       // it applies the revoked grant's directory row. Refuse that publish until
       // released, so the test can see the row wait in the local outbox.
-      const revocationQueue = Object.getPrototypeOf(env.ACCESS_REVOCATION_QUEUE) as Queue;
+      type RevocationSender = { send: (body: unknown, options?: QueueSendOptions) => Promise<void> };
+      const revocationQueue: RevocationSender = Object.getPrototypeOf(env.ACCESS_REVOCATION_QUEUE);
       const originalRevocationSend = revocationQueue.send;
       let holdSidekickRevocations = true;
       let sidekickRevocationRefusals = 0;
       const isSidekickRevocation = (body: unknown) => (body as { target?: { scope?: string } } | null)?.target?.scope === "workstream_automations";
-      const revocationSend = vi.spyOn(revocationQueue, "send").mockImplementation(async function (this: Queue, body, options) {
+      const revocationSend = vi.spyOn(revocationQueue, "send").mockImplementation(async function (this: RevocationSender, body, options) {
         if (holdSidekickRevocations && isSidekickRevocation(body)) {
           sidekickRevocationRefusals += 1;
           throw new Error("revocation_queue_unavailable");
