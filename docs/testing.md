@@ -928,8 +928,8 @@ has. Assert the property that replaced it, and put the reason in the test.
 
 ## What the objects' RPC surface has, and has not
 
-Every public `async` method on `WorkspaceDO`, `SubstreamAgent`, `WorkstreamDO`,
-and `AutomationDO` is an interface some Worker calls across a stub. Coverage counts are mechanical,
+Every public `async` method on `WorkspaceDO`, `SubstreamAgent`, and
+`AutomationDO` is an interface some Worker calls across a stub. Coverage counts are mechanical,
 so re-derive them rather than trusting a checked-in number after a change:
 
 ```bash
@@ -948,7 +948,8 @@ The remaining methods without a workerd RPC exercise are:
 | --- | --- |
 | `WorkspaceDO` | `activityEventSource`, `applyWorkstreamRegionalEffect`, `dueWorkstreamDirectory`, `existingOpportunities`, `getOpportunity`, `latestActivityEventCursor`, `notificationDirectoryState`, `opportunityWindow`, `resourceAccess`, `workstreamScheduleTargets` |
 | `SubstreamAgent` | `publishEvent` |
-| `WorkstreamDO`, `AutomationDO` | Re-derive with the grep above: the two `WorkstreamDO` methods this row named were deleted with the acknowledge and load-back RPCs, and `AutomationDO` is new. |
+| `AutomationDO` | Re-derive with the grep above: `AutomationDO` is new. |
+| `WorkstreamDO` (legacy) | `receiveChildEffects`, which only forwards to `WorkspaceDO`. Its one other method, `exportParentState`, is driven through the import in `hosted-parent-import.test.ts`; see [`hosted-conversation-parents.md`](hosted-conversation-parents.md). |
 
 **Uncovered here does not mean untested** — several have Node suites over their
 storage class, which is the right rung for what the SQL decides. It means

@@ -156,6 +156,7 @@ import { parseRpcInput } from "../lib/rpc-input";
 import { uuidV7 } from "../lib/uuid-v7";
 import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observability/logger";
 import {
+  publishAccessRevocation,
   revocationClosesSession,
   SocketAccessRevocationSchema,
   type SocketAccessRevocation,
@@ -4714,7 +4715,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return directory.filter((envelope) => accepted.has(`${envelope.messageId}:${envelope.payloadHash}`));
     });
     await deliver(grants, async () => {
-      for (const envelope of grants) await this.applyScopeGrantDirectory(envelope);
+      for (const envelope of grants) {
+        await this.applyScopeGrantDirectory(envelope);
+        if (envelope.effect.kind !== "scope_grant_directory") continue;
+        const { grant } = envelope.effect;
+        if (grant.active || grant.target.kind !== "workstream") continue;
+        // A Channel's Sidekick conversations sit outside its participant
+        // projection, so a revoked Channel grant also has to reach them. The
+        // row stays until the revocation Queue takes the fan-out; applying the
+        // grant again on retry is answered by its receipt.
+        const published = await publishAccessRevocation(this.env, {
+          reason: "workstream_participant_removed", workspaceId: asWorkspaceId(workspaceId),
+          userId: grant.userId, sessionId: null,
+          ...(grant.membershipIncarnation ? { membershipIncarnation: grant.membershipIncarnation } : {}),
+          target: { scope: "workstream_automations", workstreamId: grant.target.parentId },
+        });
+        if (!published) throw new Error("scope_grant_sidekick_revocation_publish_failed");
+      }
       return grants;
     });
     await deliver(queued, async () => {
@@ -13546,6 +13563,11 @@ applyRetirementGate(WorkspaceDO, {
     // closed with this object; its conversations are still separate objects
     // the walk has to find and close.
     "childrenForRetirement",
+    // The `workstream` revocation hop, permitted for the reason
+    // `revokeSocketAccess` is on every gated class: it closes a hosted
+    // Channel's control sockets and names the conversations whose sockets the
+    // consumer revokes next, which a retired workspace still has to reach.
+    "revokeParentSocketAccess",
   ],
   drop: {
     // A conversation's effects for a hosted parent, handed to the Queue before
