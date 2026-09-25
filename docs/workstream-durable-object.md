@@ -1,23 +1,31 @@
 # Workspace, work-stream, automation, and substream Durable Objects
 
-Rally's regional stateful hierarchy is `WorkspaceDO -> {WorkstreamDO | AutomationDO}
--> SubstreamAgent`. There is one `WorkspaceDO` per workspace, one non-agent
-`WorkstreamDO` per work stream, one non-agent `AutomationDO` per automation, and
-one `SubstreamAgent` per independently addressable model context. A
-`SubstreamAgent` has a typed parent, `{kind: "workstream" | "automation", id}`;
-substream `0` is that parent's primary conversation (a work stream's main feed,
-an automation's own chat), and every other substream is a child context under
-it (an automation's runs today, a work stream's side conversations when those
-arrive).
+Rally's regional stateful hierarchy is `WorkspaceDO -> {hosted Channel and Space
+parents | SidekickDO} -> SubstreamAgent`. There is one `WorkspaceDO` per
+workspace, which hosts the parent authority of every Channel and every Space in
+it; one non-agent `SidekickDO` (still exported as `AutomationDO`) per Sidekick;
+and one `SubstreamAgent` per independently addressable model context. A
+`SubstreamAgent` has a typed parent, `{kind: "workstream" | "automation" |
+"space", id}`; substream `0` is that parent's primary conversation (a work
+stream's main feed, an automation's own chat, a Space's hidden conversation),
+and every other substream is a child context under it (an automation's runs, a
+Channel's breakouts and background agents).
 
-`WorkstreamDO` and `AutomationDO` answer one conversation-parent contract
-through one shared base class, `ConversationParentDurableObject`: who may read
-the parent's conversations, which generation and archive state its children
-inherit, reserving a child before it is addressed, receiving the children's
-effects, and listing the children. What differs is the parent's own row, who may
-read it, and which of its children's effects reach the workspace. The
-automation itself, its definition revisions, schedules, and runs, are owned by
-[`automation-lifecycle.md`](automation-lifecycle.md); this document owns the
+A Channel's and a Space's parent used to be its own object — `WorkstreamDO`, and
+`SpaceDO`, which was `WorkstreamDO` under a role. Both now live inside
+`WorkspaceDO` as `HostedParent`, keyed by parent id, and the legacy classes only
+export their rows once. [`hosted-conversation-parents.md`](hosted-conversation-parents.md)
+owns that: the table map, the local outbox, the Channel control socket, and the
+import. Where this document still says `WorkstreamDO` about the parent contract,
+read "the Channel's hosted parent".
+
+The hosted parents and `SidekickDO` answer one conversation-parent contract:
+who may read the parent's conversations, which generation and archive state its
+children inherit, reserving a child before it is addressed, receiving the
+children's effects, and listing the children. What differs is the parent's own
+row, who may read it, and which of its children's effects reach the workspace.
+The automation itself, its definition revisions, schedules, and runs, are owned
+by [`automation-lifecycle.md`](automation-lifecycle.md); this document owns the
 hierarchy, its identity, its effect pipeline, and the conversation object.
 
 All four Durable Object classes in this subsystem (`WorkspaceDO`,
@@ -268,8 +276,9 @@ Names include region for operator clarity and deterministic routing:
 
 ```text
 WorkspaceDO       <region>:<workspace-id>                                in WORKSPACE_DOS
-WorkstreamDO      <region>:<workspace-id>:<workstream-id>                in WORKSTREAM_DOS
-SpaceDO           <region>:<workspace-id>:space:<space-id>               in SPACE_DOS
+                  (hosts every Channel and Space parent, by parent id)
+WorkstreamDO      <region>:<workspace-id>:<workstream-id>                in WORKSTREAM_DOS  (legacy, export only)
+SpaceDO           <region>:<workspace-id>:space:<space-id>               in SPACE_DOS       (legacy, export only)
 AutomationDO      <region>:<workspace-id>:automation:<automation-id>     in AUTOMATION_DOS
 SubstreamAgent 0  <region>:<workspace-id>:<parent-id>                    in SUBSTREAM_AGENTS
 SubstreamAgent N  <region>:<workspace-id>:<parent-id>:<substream-id>
@@ -356,80 +365,27 @@ warmed and must not materialize an object merely because its parent is visible;
 `listChildren` is what access revocation and the parent's own reads walk, and a
 child nobody registered is one nobody can find or close.
 
-### A Space is this class under a role
+### A Space is a hosted parent under a role
 
 A **Space** groups Channels inside an Organization. It carries a name, icon,
 colour, audience, participants, resources and Sidekick recommendations, and it
-has a hidden main conversation that holds the participants and resources — which
-is exactly a work stream, minus every product surface. Rally never opens its
-feed, never runs an agent in it, and never lists its grants.
+has a hidden main conversation that holds the participants and resources —
+which is exactly a work stream, minus every product surface. Rally never opens
+its feed, never runs an agent in it, and never lists its grants.
 
-So `SpaceDO` **is** `WorkstreamDO`, constructed with a different
-`ConversationParentRole` (`durable-objects/conversation-parent-role.ts`) and
-overriding nothing. Every field of that interface is a behavior the base class
-reads; none of it is advisory, so a field added without a reader is not a
-description of a difference that exists:
-
-| Role field | `WORKSTREAM_ROLE` | `SPACE_ROLE` |
-| --- | --- | --- |
-| `kind` | `workstream` | `space` — what `parentIdentity()` stamps on every effect, and what `admitChildEnvelope` holds a child to |
-| `namespace` / `objectName` | `WORKSTREAM_DOS`, `workstreamDOName` | `SPACE_DOS`, `spaceDOName` — the self-registration and every name this object derives |
-| `migration` | `workstream_do`, `WorkstreamDO`, `WORKSTREAM_DO_SCHEMA_MIGRATIONS` | `space_do`, `SpaceDO`, **the same array** — only the component and class name are the Space's own |
-| `admitsClientSockets` | yes | no — `GET /socket` answers 403 `space_socket_refused` before a ticket is read |
-| `publishesGrantDirectory` | yes | no — `ScopeGrantStorage` is handed a no-op writer, so grants commit and nothing reaches the shared grant directory |
-| `forwardsFeedEffects` | yes | no — only `directory_common` and `directory_user` leave the parent; activity events and notifications are dropped here, because anything reaching the outbox is delivered |
-| `wakesMainEagerly` | yes | no — nothing opens a Space's conversation, so warming it buys a cold start for nobody |
-
-**Why a role and not overrides.** The obvious shape is `class SpaceDO extends
-WorkstreamDO` with a dozen `override`s, and it fails on the thing subclassing is
-usually chosen for. A base method that hard-codes `env.WORKSTREAM_DOS`,
-`workstreamDOName`, the migration component, the eager child wake or the
-grant-directory writer is *silently* wrong for the subclass rather than visibly
-absent: every such site would have to be found by reading the class, and the
-four that mattered are spread across three hundred lines and two base classes.
-Making each one a field turns "did we cover every difference" into a question
-one file answers, and turns adding a difference into an addition there rather
-than an override elsewhere.
-
-**What the class itself may hold.** Nothing. `space-do.ts` is a constructor that
-supplies the role and a retirement registration, and a change that wants a
-method belongs in the role. The retirement call is not redundant even though
-dispositions resolve up the prototype chain: it registers the *same policy
-object* `WorkstreamDO` exports, and what it adds is the tombstone wrapping of any
-method `SpaceDO` comes to define itself — which is precisely the omission that
-would be invisible in a class that currently defines none.
-
-**Where a Space's directory effects land.** The same two effects a Channel
-publishes, routed by parent kind at the workspace handoff:
-`applyWorkstreamDirectoryEffects` partitions its envelopes and sends the `space`
-ones to the Space directory rather than to `workspace_workstream_directory`. A
-Space in the Channel directory would be a Space in the Channel sidebar, and the
-two directories answer different questions. Everything else about the Space
-relationship — membership, order, defaults, General — belongs to WorkspaceDO and
-is documented in [`spaces.md`](spaces.md); this class owns only what a Space
-*is*.
-
-**What the Space role does not change.** The schema — and it does not change it
-by running the *same array*. `SPACE_ROLE.migration.migrations` is
-`WORKSTREAM_DO_SCHEMA_MIGRATIONS`, applied under component `space_do`, so a
-Space receipts every version a Channel does in its own
-`_sql_schema_migrations`. That is the whole of it: a table added for a Channel
-exists on every Space without anybody writing it twice, and an inherited method
-cannot meet a missing table. What a Space pays for it is replaying versions
-that describe history it never had, the three `durable_outbox` rebuilds among
-them, once, on its first construction.
-
-One version-numbered statement is not about a Space at all. Version 17 retires
-grant-directory deliveries a Channel had already queued; a Space has never
-queued one, because the role suppresses the directory. The `afterMigrations`
-hook in `workstream-do.ts` that runs it is therefore gated on
-`role.kind === "workstream"`, and that gate is the shape any future
-history-repairing migration has to take.
+It is hosted exactly like a Channel, under `HOSTED_SPACE_ROLE` rather than
+`HOSTED_CHANNEL_ROLE` (`durable-objects/hosted-parent.ts`): no control socket,
+no grant-directory publication, and only its `directory_common` and
+`directory_user` effects leave it. `WorkspaceDO` tells the two apart by the
+parent's own row, or, before the row exists, by whether the id is a Space the
+Space directory reserved. Everything else about the Space relationship —
+membership, order, defaults, General — belongs to `WorkspaceDO` and is
+documented in [`spaces.md`](spaces.md).
 
 ### Control plane and data plane
 
-`WorkspaceDO`, `WorkstreamDO`, and `AutomationDO` are the low-volume control
-plane. They admit workspace commands, own workspace resources/policies/product
+`WorkspaceDO` (with the Channel and Space parents it hosts) and `AutomationDO`
+are the low-volume control plane. They admit workspace commands, own workspace resources/policies/product
 scheduling and directory aggregation, and provide the authoritative
 list/sidebar path plus the parent outboxes for notification and regional
 delivery effects. `SubstreamAgent` is the fine-grained data-plane shard for one
@@ -1252,15 +1208,15 @@ complete relationship map is:
 | Sender | Receiver | Primitive | Durable handoff |
 | --- | --- | --- | --- |
 | WorkspaceDO/Worker | SubstreamAgent | typed RPC | idempotent child product transaction, pending loop input, or subordinate execution receipt |
-| Worker | WorkstreamDO / AutomationDO | typed RPC | the conversation-parent contract: the caller needs the answer (a viewer decision, the generation and archive state, a child reservation at creation) |
+| Worker | WorkspaceDO (hosted Channel or Space parent) / AutomationDO | typed RPC | the conversation-parent contract: the caller needs the answer (a viewer decision, the generation and archive state, a child reservation at creation) |
 | SubstreamAgent | regional Queue | Cloudflare Queue | child `durable_outbox` row, sent with the `conversation_effect` envelope inline and deleted when the Queue accepts it |
-| regional Queue Worker | WorkstreamDO / AutomationDO | typed RPC | `receiveChildEffects`: parent receipt, child projection, aggregate, state row, and outbox row in one transaction; a replay is answered from the receipt |
-| WorkstreamDO / AutomationDO | regional Queue | Cloudflare Queue | parent `durable_outbox` row, sent with the `parent_effect` envelope inline and deleted when the Queue accepts it |
+| regional Queue Worker | WorkspaceDO (hosted parent) / AutomationDO | typed RPC | `receiveChildEffects`: parent receipt, child projection, aggregate, state row, and outbox row in one transaction; a replay is answered from the receipt. A hosted parent's directory rows are then applied in the same `WorkspaceDO` invocation, from its `parent_outbox` |
+| WorkspaceDO (hosted parent) / AutomationDO | regional Queue | Cloudflare Queue | activity and notification rows of the parent outbox (`parent_outbox` for a hosted parent, `durable_outbox` for a Sidekick), sent with the `parent_effect` envelope inline and deleted when the Queue accepts it |
 | regional Queue Worker | WorkspaceDO | typed RPC | `applyWorkstreamDirectoryEffects`: unordered directory/user envelope; generation + per-key waterline, hash receipt, and authoritative directory/index transaction |
 | regional Queue Worker | WorkspaceDO | typed RPC | `applyAutomationDirectory`: one automation's sidebar row, fenced on the automation's own `sourceVersion` |
 | regional Queue Worker | WorkspaceDO | typed RPC | `applyWorkstreamRegionalEffect`: first-party activity event, all target edges, and the replay receipt commit atomically; the object-local sequence is the digest/feed cursor |
 | regional Queue Worker | WorkspaceDO | typed RPC | notification intent, bounded destination payload, and the replay receipt commit atomically; current user/member identity is resolved from D1 before the call and crosses as data |
-| WorkstreamDO | WorkspaceDO | typed RPC | the provisional directory row a `reserveChild("0")` at creation writes. It is synchronous by default; the creation coordinator may overlap it with child initialization, but still fences its response on `flushProvisionalDirectory` because visibility checks read the directory. The alarm uses the same direct delivery if it wins that race. |
+| (none) | | local | the provisional directory row a `reserveChild("0")` at creation writes is applied by `WorkspaceDO` to its own directory before `reserveChild` answers; there is no longer an object boundary to cross |
 | WorkspaceDO | AutomationDO | typed RPC | `setOwningRoomArchived`, fanned out with `Promise.allSettled` when a directory effect archives or unarchives a room that owns automations; a failed call is logged and the next archival change retries it |
 | a run's loop | AutomationDO | typed RPC | `readRunDefinition` at loop start (the definition revision is immutable, so a reference rather than a copy travels in the loop input) and `readRunState` before every provider write |
 | a run's loop | WorkstreamDO, then the room's SubstreamAgent `0` | typed RPC | the `post_result` tool: `authority` for the room's generation and archive state, then `appendAutomationActivation` keyed on the run id |
@@ -1847,6 +1803,25 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-09-25 — Channel and Space parents move into WorkspaceDO
+
+**What changed:** The hierarchy lost a level. `WorkstreamDO` and `SpaceDO` no
+longer hold a parent; `WorkspaceDO` hosts every Channel's and Space's parent
+state keyed by parent id, answers the conversation-parent contract for them, and
+serves the Channel control socket. A conversation's effects reach the
+Organization object in one Queue hop, where the parent step and the directory
+step run back to back. [`hosted-conversation-parents.md`](hosted-conversation-parents.md)
+owns the mechanism and its changelog entry.
+
+**Why:** Every conversation request paid two sequential calls to a parent
+object, every sidebar update crossed a second Queue hop, and Space changes were
+cross-object sagas, for a middle layer whose facts mostly came from or went back
+to the Organization.
+
+**Consequences:** Anything here that says `WorkstreamDO` about the parent
+contract now means the hosted parent. `SubstreamAgent` is unchanged; the
+data-plane split between conversations stands.
 
 ### 2026-09-24 — A message for the room waits behind input queued before it
 

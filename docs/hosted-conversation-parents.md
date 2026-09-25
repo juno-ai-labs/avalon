@@ -125,13 +125,15 @@ in a Worker rather than in the Organization object.
 
 `HostedParent` records every projection it publishes in `parent_outbox` in the
 same transaction as the fact, exactly as the legacy object did. What changed is
-the drain: directory kinds (`directory_common`, `directory_user`,
+the drain. Directory kinds (`directory_common`, `directory_user`,
 `scope_grant_directory`) are applied by `WorkspaceDO` to itself straight after
-the commit, through the same `applyWorkstreamDirectoryEffects` and
+the write returns, through the same `applyWorkstreamDirectoryEffects` and
 `applyScopeGrantDirectory` paths the Queue consumer used, and deleted once
-applied. The row stays until then, so a failure is retried by the alarm rather
-than lost. Every other kind goes to `ACTIVITY_QUEUE` as a `parent_effect`, as
-before.
+applied. Activity and notification kinds wait for the alarm and leave on
+`ACTIVITY_QUEUE` as a `parent_effect`, as they did before: their consumer
+applies the regional effect and delivers the notification in a Worker, and
+nobody who made the write is waiting on it. Either way the row stays until its
+destination has it, so a failure is retried by the alarm rather than lost.
 
 ### Moving an existing parent
 
