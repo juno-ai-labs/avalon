@@ -197,7 +197,7 @@ directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
 | A legacy object that was never created (an id the directory knew but no object held) | Its export returns no metadata; the parent is marked `imported` empty. |
 | The directory apply fails after a parent commit | The `parent_outbox` row stays and the alarm reapplies it; the apply is idempotent on generation, waterline and payload hash. |
 | A Queue message addressed to the legacy object arrives after export | The legacy object forwards it to `WorkspaceDO`. |
-| An Organization held below schema 58 by the meeting-notes cleanup | Migration 71 has not run, so there are no `channels` or `parent_*` tables and every Channel request fails with `no such table`. Every production object was at schema 70 before this change, so none should be held; the error is loud if one is. |
+| An Organization held below schema 58 by the meeting-notes cleanup | Migration 71 has not run, so there are no `channels` or `parent_*` tables and every Channel request fails with `no such table`. The object itself still starts and its alarm skips the hosted-parent phases, so the operator retirement RPCs can finish it. Every production object was at schema 70 before this change, so none should be held; the error is loud if one is. |
 | The Organization object is unavailable | Channels and Spaces cannot be opened, listed or changed. That was already true of the sidebar; it is now true of a Channel's viewer check too. |
 
 ## Testing

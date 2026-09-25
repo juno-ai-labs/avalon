@@ -241,6 +241,12 @@ describe("the shared Durable Object alarm list", () => {
         { phase: "recovery_rearm", alarmKind: undefined },
         { phase: "authority_check", alarmKind: undefined },
         { phase: "stored_target", alarmKind: "schedule_bootstrap" },
+        // Hosted Channel and Space parents run first: an outbox row is a
+        // directory update somebody is waiting on, and a pending import is a
+        // Channel nobody can open until it lands.
+        { phase: "parent_outbox", alarmKind: undefined },
+        { phase: "parent_import", alarmKind: undefined },
+        { phase: "parent_breakouts", alarmKind: undefined },
         // The Space authority's three phases sit where the Project one used to,
         // before the sweep, for the same reason it did: each publishes onto the
         // activity Queue, and a rejected send has to leave its rows claimed and

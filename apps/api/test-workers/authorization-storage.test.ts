@@ -117,7 +117,7 @@ describe('authorization SQLite state', () => {
   // alarm from draining authorization_delivery before the assertion reads it.
   const directoryParent = (stub: DurableObjectStub<WorkspaceDO>) => runInDurableObject(stub, (_instance, state) => {
     state.storage.sql.exec(
-      `INSERT INTO workspace_workstream_directory
+      `INSERT INTO channels
          (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
           title, description, preview, scope, exact_state, last_activity_at,
           origin_type, title_status, latest_attention_ordinal,

@@ -29,6 +29,7 @@ import {
 } from "../src/durable-objects/migration-reporting";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-do-schema";
+import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import type { Env } from "../src/env";
 import {
   applyMigrationCommand,
@@ -189,6 +190,21 @@ describe("forceMigration", () => {
       asWorkspaceId("00000000-0000-7000-8000-000000006101"),
       asSpaceId("00000000-0000-7000-8000-000000006102"),
     )).toString();
+    // A legacy Space object that was never created stays empty rather than
+    // gaining a ledger when asked, so this one is seeded the way a deployed
+    // Space looks one version behind, then restarted so its constructor sees
+    // that ledger and the forced wake has a version left to apply.
+    const space = env.SPACE_DOS.get(env.SPACE_DOS.idFromString(objectId));
+    await runInDurableObject(space, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage,
+        migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS.slice(0, -1),
+        component: "space_do",
+        workerVersionId: "test",
+      });
+    });
+    await expect(runInDurableObject(space, (_instance, state) => state.abort("seeded_space_restart")))
+      .rejects.toThrow("seeded_space_restart");
     const result = await applyMigrationCommand(env, command({ className: "SpaceDO", objectId }));
     expect(result).toMatchObject({
       className: "SpaceDO",
