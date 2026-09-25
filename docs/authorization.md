@@ -433,7 +433,8 @@ attempt. `mutation_to_write_ack_ms` measures the oldest coalesced mutation throu
 successful publication of the selected decisions. It is populated only for a
 completed attempt that wrote keys. Failed attempts report
 `elapsed_since_mutation_ms` instead; no-key and fully superseded attempts are not
-latency successes. `store` distinguishes Global `kv` from `regional_sqlite`.
+latency successes. A superseded key is not a failure: the newer push that took
+it owns its publication and its retries. `store` distinguishes Global `kv` from `regional_sqlite`.
 
 The source attachment/roster outbox persists its first mutation timestamp and
 carries it through discovery into the WorkspaceDO outbox (`timing_origin =
@@ -450,7 +451,9 @@ refreshes decisions, and instrumentation adds no cache-read or authority check.
 Useful fields are `outbox_ms` (source mutation through final queue dispatch,
 including earlier projection hops), `queue_ms` (dispatch through this attempt,
 including retries), `selection_ms`, `resolve_ms`, `kv_write_ms`, `duration_ms`,
-`selected_keys`, `written_keys`, `superseded_keys`, `attempt`, and `outcome`.
+`selected_keys`, `written_keys`, `unchanged_keys`, `superseded_keys`, `attempt`,
+and `outcome`. `unchanged_keys` is the part of `written_keys` whose decision KV
+already held, so no KV write was made.
 Publication RPCs return acknowledged counts; a failed RPC does not claim writes
 whose response was lost. `kv_write_ms` sums acknowledged publication RPCs' KV
 call time; `duration_ms` includes RPC transport and all other processing.
@@ -489,6 +492,36 @@ Worker timestamps; they are not exact replication timestamps. Remove probe deplo
 after the experiment. Pair these results with mutation-to-write-ack queue events.
 
 ## Changelog
+
+### 2026-09-25 — A superseded push completes, and an unchanged decision skips KV
+
+Juno Labs' largest Channel (about 1,426 keys) had up to three pushes running at
+once every working day. Each push raises the generation of every key it
+reaches, so each one dropped the others' writes, and each then failed with
+`search_authorization_push_superseded` and retried, which took the keys back.
+On 2026-09-24, 22 dispatches made 114 attempts, 10 completed, some reached the
+dead-letter queue, and the attempts spent about 84,000 seconds in KV writes
+through the WorkspaceDO. A superseded attempt still wrote most of its keys.
+
+The retry existed because a newer claimant might fail before it published. Of
+the two claimants, a push retries on its own; a search fill does not. A fill now
+claims only keys nobody registered (`claim: 'unregistered'`), so a registered
+key is only ever taken by another push, and a superseded push completes. A
+fill-created resource or conversation key is still backed by the pending-row
+push from migration 46.
+
+Every push also rewrote every decision to KV, though most come out the same.
+`search_authorization_keys.published_decision` records the fingerprint of the
+decision KV last acknowledged: the outcome and each evidence owner and revision,
+without receipt times, which no reader acts on. A matching decision skips the
+KV write. The column is cleared before each put, so a put whose outcome is
+unknown never counts as held, and a KV miss republishes regardless.
+
+Rejected: a per-target lease so only one push runs at a time. It needs an
+expiry for a lost job, which is a number with nothing here to set it from, and
+it leaves the whole-target rewrite in place. Still open: a breakout's roster
+change pushes its whole parent. Narrowing that target is the next step if
+parent pushes stay expensive.
 
 ### 2026-09-21 — Stamp authority evidence on the resolver's clock
 
