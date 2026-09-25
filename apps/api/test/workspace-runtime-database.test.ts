@@ -223,12 +223,13 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "space_viewers",
   "workspace_sidebar_list_state",
   "workspace_socket_ticket_receipts",
+  "workspace_socket_unheard", // The first-frame watch's ledger; socket paths and the alarm only.
   "workspace_sync_events",
   "channels",
   "workspace_workstream_effect_receipts",
   "workspace_workstream_resource_links",
   "channel_viewers",
-  // Hosted Channel and Space parents (WorkspaceDO migration 71). Every row is
+  // Hosted Channel and Space parents (WorkspaceDO migration 72). Every row is
   // read and written by `HostedParent` and the import through the object's own
   // storage, scoped by `parent_id`; no runtime statement names a parent's
   // state.

@@ -643,9 +643,6 @@
     "cmp.row.leading": {
       "$type": "number"
     },
-    "cmp.row.hint-gap": {
-      "$type": "dimension"
-    },
     "cmp.row.height-dense": {
       "$type": "dimension"
     },

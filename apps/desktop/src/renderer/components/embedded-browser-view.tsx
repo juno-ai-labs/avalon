@@ -138,6 +138,18 @@ export function EmbeddedBrowserNavigation({ active, command, className, addressR
   </div>;
 }
 
+/**
+ * Closes a tab, or hands the close to `onCloseLast` when it is the only tab
+ * and blank: main would replace it with another blank tab, so the host closes
+ * the browser instead.
+ */
+function closeTab(state: EmbeddedBrowserState, tabId: string, command: (input: EmbeddedBrowserCommand) => Promise<void>,
+  onCloseLast: (() => void) | undefined): void {
+  const only = state.tabs.length === 1 ? state.tabs[0] : undefined;
+  if (onCloseLast && only?.id === tabId && only.url === 'about:blank') onCloseLast();
+  else void command({ action: 'close', tabId });
+}
+
 /** Focuses and selects the address field, once the host has rendered it. */
 export function focusAddress(addressRef: RefObject<HTMLInputElement | null>): void {
   requestAnimationFrame(() => {
@@ -153,14 +165,18 @@ export function focusAddress(addressRef: RefObject<HTMLInputElement | null>): vo
  * itself is handled in main and arrives here only as a request for the address
  * field.
  */
-export function useEmbeddedBrowserShortcuts({ state, command, addressRef, scope }: {
+export function useEmbeddedBrowserShortcuts({ state, command, addressRef, scope, onCloseLast }: {
   state: EmbeddedBrowserState;
   command: (input: EmbeddedBrowserCommand) => Promise<void>;
   addressRef: RefObject<HTMLInputElement | null>;
   scope?: RefObject<HTMLElement | null>;
+  /** Called instead of closing the only tab when it is blank. */
+  onCloseLast?: () => void;
 }): void {
   const latest = useRef(state);
   latest.current = state;
+  const closeLast = useRef(onCloseLast);
+  closeLast.current = onCloseLast;
   useEffect(() => {
     const mac = /Mac/u.test(navigator.platform);
     const onKey = (event: KeyboardEvent): void => {
@@ -172,7 +188,7 @@ export function useEmbeddedBrowserShortcuts({ state, command, addressRef, scope 
       const { tabs, activeTabId } = latest.current;
       const at = tabs.findIndex((tab) => tab.id === activeTabId);
       if (shortcut.kind === 'new-tab') void command({ action: 'open' }).then(() => focusAddress(addressRef));
-      else if (shortcut.kind === 'close-tab') { if (activeTabId) void command({ action: 'close', tabId: activeTabId }); }
+      else if (shortcut.kind === 'close-tab') { if (activeTabId) closeTab(latest.current, activeTabId, command, closeLast.current); }
       else if (shortcut.kind === 'focus-address') focusAddress(addressRef);
       else if (shortcut.kind === 'reload' || shortcut.kind === 'back' || shortcut.kind === 'forward') void command({ action: shortcut.kind });
       else if (shortcut.kind === 'next-tab' || shortcut.kind === 'previous-tab') {
@@ -210,11 +226,13 @@ function TabMark({ tab }: { tab: EmbeddedBrowserTab }): React.JSX.Element {
  * Home and End move between tabs and Delete closes one; a middle click closes
  * a tab and dragging reorders them. A website's popup opens as a tab too.
  */
-export function EmbeddedBrowserTabs({ state, command, className, onNewTab }: {
+export function EmbeddedBrowserTabs({ state, command, className, onNewTab, onCloseLast }: {
   state: EmbeddedBrowserState;
   command: (input: EmbeddedBrowserCommand) => Promise<void>;
   className?: string;
   onNewTab: () => void;
+  /** Called instead of closing the only tab when it is blank. */
+  onCloseLast?: () => void;
 }): React.JSX.Element {
   const listRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<string | null>(null);
@@ -228,7 +246,7 @@ export function EmbeddedBrowserTabs({ state, command, className, onNewTab }: {
   const focusTab = (index: number): void => {
     listRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[index]?.focus();
   };
-  const close = (tab: EmbeddedBrowserTab): void => { void command({ action: 'close', tabId: tab.id }); };
+  const close = (tab: EmbeddedBrowserTab): void => closeTab(state, tab.id, command, onCloseLast);
 
   return <div className={className ? `embedded-browser-tabstrip ${className}` : 'embedded-browser-tabstrip'}>
     <div aria-label="Browser tabs" className="embedded-browser-tabs" onDragLeave={() => setDropAt(null)} ref={listRef} role="tablist">

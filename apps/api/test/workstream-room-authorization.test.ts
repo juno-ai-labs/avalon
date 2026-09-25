@@ -98,7 +98,7 @@ function seededDatabase(options: { openAuthority?: boolean } = {}): DatabaseSync
   // `get`: pin metadata is no wider than its active, readable Space placement.
   // The object ledger supplies their real shape. Harmless to the socket tests
   // — nothing asserts on their absence. The directory tables are created
-  // under their ledger names and renamed the way WorkspaceDO migration 71
+  // under their ledger names and renamed the way WorkspaceDO migration 72
   // renames them, since the ledger has no `CREATE TABLE` under the new name.
   for (const table of [
     "workspace_space_directory",

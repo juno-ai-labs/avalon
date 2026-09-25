@@ -153,7 +153,7 @@ import {
   type WorkspacePlacementAffinity,
 } from "../lib/durable-object-namespace";
 import { withDurableObjectSelf } from "../lib/durable-object-self";
-import { nextFirstFrameDeadline, socketsMissedWhileInstanceSilent } from "./socket-first-frame-watch";
+import { judgeUnheardSockets, nextFirstFrameDeadline, type UnheardSocket } from "./socket-first-frame-watch";
 import { parseRpcInput } from "../lib/rpc-input";
 import { uuidV7 } from "../lib/uuid-v7";
 import { observedAfterBirthSource, resolveSpaceWorkstreamStart, type ObservedBirthChannel } from "../lib/channel-audience";
@@ -983,6 +983,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "resource_search_versions",
   "onboarding_journeys",
   "workstream_notification_intents",
+  "workspace_socket_unheard", // The first-frame watch's ledger.
   // Converted to typed methods, so a generic statement naming one is a
   // mistake rather than a legacy caller. Refusing it here is what makes the
   // routing entries in `WORKSPACE_LOCAL_TABLES` more than a courtesy: the
@@ -1172,8 +1173,9 @@ const PRODUCT_ALARM_BATCH = 6;
 /** How often a workspace rechecks a region that is closed for maintenance. */
 const MAINTENANCE_RECHECK_MS = 5 * 60_000;
 /**
- * How long a socket this instance accepted may stay silent before the instance
- * is treated as no longer receiving socket events, and reset.
+ * How long an accepted socket may go unheard, whether or not its client has
+ * since given up on it, before the instance is treated as no longer receiving
+ * socket events, and reset.
  *
  * Set 2026-09-24 by the team (two minutes), not derived here; see
  * docs/adding-security-defensive-and-other-limits.md.
@@ -1189,9 +1191,10 @@ const MAINTENANCE_RECHECK_MS = 5 * 60_000;
  *   `workspace_socket_first_frame_missed` at error level and aborts the
  *   instance, which drops every socket; the platform starts a fresh one and
  *   clients reconnect on their own.
- * Derive from: the desktop sends `subscribe` on open and abandons a socket
- *   whose ping goes unanswered after 65 s (`HEARTBEAT_MS` + `PONG_TIMEOUT_MS`
- *   in `workspace-socket.tsx`); two minutes is past that with margin.
+ * Derive from: the desktop sends `subscribe` the moment a socket opens, so a
+ *   healthy object hears it within the round trip. Independent of the
+ *   desktop's 65 s pong timeout, since the watch counts a socket from its
+ *   ledger row rather than from the open socket.
  */
 export const WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS = 2 * 60_000;
 /** `_internal_durable_alarms` identity for this workspace's opportunity and ranking work. */
@@ -3772,6 +3775,16 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   statements: ['ALTER TABLE search_authorization_keys ADD COLUMN published_decision TEXT'],
 }, {
   version: 71,
+  description: "remember accepted workspace sockets until their first frame",
+  statements: [
+    // The first-frame watch's ledger; see docs/realtime-sockets.md.
+    `CREATE TABLE workspace_socket_unheard (
+      connection_id TEXT PRIMARY KEY NOT NULL,
+      accepted_at INTEGER NOT NULL CHECK (accepted_at >= 0)
+    ) STRICT`,
+  ],
+}, {
+  version: 72,
   description: "host channel and space parents; name the directories channels, breakouts and spaces",
   statements: [...HOSTED_PARENT_SCHEMA_STATEMENTS],
 }];
@@ -4427,6 +4440,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * test can shorten it and drive the real accept and alarm paths.
    */
   private socketFirstFrameDeadlineMs = WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS;
+  /**
+   * Whether this object has the first-frame ledger (migration 71). An object
+   * held at schema 57 for meeting-notes retirement does not, and the watch
+   * stays off there until the operator finalizes it.
+   */
+  private unheardLedger = false;
   /** Content-free phase timings for the alarm invocation currently running. */
   private workspaceAlarmInstrumentation: WorkspaceAlarmInstrumentation | null = null;
 
@@ -4458,6 +4477,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         component: MIGRATION_COMPONENT,
         workerVersionId: env.APP_VERSION ?? "unknown",
       }));
+      this.detectUnheardLedger();
       await this.armNextAlarm();
     });
     state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
@@ -5065,7 +5085,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Whether migration 71 has run. An Organization held below schema 58 by the
+   * Whether migration 72 has run. An Organization held below schema 58 by the
    * meeting-notes cleanup has no `parent_*` tables, and its cold start and
    * alarm must still work so the operator retirement RPCs can finish it.
    */
@@ -5584,6 +5604,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const attachment = readAttachment(socket);
     if (attachment && !attachment.subscribed && !attachment.firstFrameReported) {
       socket.serializeAttachment({ ...attachment, firstFrameReported: true } satisfies WorkspaceSocketAttachment);
+      // Safe before `initialized`: the constructor's migrations run under
+      // `blockConcurrencyWhile`, which no socket callback can overtake.
+      if (this.unheardLedger) {
+        this.state.storage.sql.exec(`DELETE FROM workspace_socket_unheard WHERE connection_id = ?`, attachment.connectionId);
+      }
       this.logWorkspaceSocketHandshake(attachment, "frame_received");
     }
     await this.initialized;
@@ -5917,7 +5942,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const search = nextResourceSearchDueAt(this.state.storage.sql, this.env);
     const searchAuthorization = nextSearchAuthorizationPush(this.state.storage.sql);
     const authorization = this.state.storage.sql.exec<{ due: number | null }>('SELECT MIN(not_before) AS due FROM authorization_delivery').one().due;
-    const firstFrame = nextFirstFrameDeadline(this.watchedSockets(), this.socketFirstFrameDeadlineMs);
+    const firstFrame = nextFirstFrameDeadline(this.unheardSockets(), this.socketFirstFrameDeadlineMs);
     const hosted = this.hostedParentSchemaPresent();
     const parentOutbox = hosted ? this.nextParentOutboxDueAt() : null;
     const parentBreakouts = hosted ? HostedParent.nextDueAt(this.state.storage.sql) : null;
@@ -5952,32 +5977,55 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
+  private detectUnheardLedger(): void {
+    this.unheardLedger = this.state.storage.sql.exec(
+      `SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_socket_unheard'`,
+    ).toArray().length > 0;
+  }
+
+  /** Every socket accepted and not yet heard from, open or already gone. */
+  private unheardSockets(): UnheardSocket[] {
+    if (!this.unheardLedger) return [];
+    return this.state.storage.sql.exec<{ connection_id: string; accepted_at: number }>(
+      `SELECT connection_id, accepted_at FROM workspace_socket_unheard`,
+    ).toArray().map((row) => ({ connectionId: row.connection_id, acceptedAt: row.accepted_at }));
+  }
+
   /**
    * Reset this instance when it has stopped receiving socket events: a socket
-   * has stayed silent past the first-frame deadline, and no socket at all has
-   * been heard from since it was accepted.
+   * has gone unheard past the first-frame deadline, and no socket at all has
+   * been heard from since it was accepted. The socket may already be gone;
+   * docs/realtime-sockets.md, "An instance that stops hearing its sockets".
    *
    * Runs from the alarm, the one path such an object still runs. The abort
    * drops every socket (`1006`) and clients reconnect; no close is sent first,
    * because the output gate breaks before a close frame could leave.
    */
   private resetIfSocketsMissedFirstFrame(now: number): void {
-    const sockets = this.watchedSockets();
-    const missed = socketsMissedWhileInstanceSilent(
-      sockets,
+    const open = this.watchedSockets();
+    const { missed, settled } = judgeUnheardSockets(
+      this.unheardSockets(),
+      open,
       now,
       this.socketFirstFrameDeadlineMs,
       this.lastSocketEventAt,
+      now - this.instanceAgeMs(),
     );
+    for (const socket of settled) {
+      this.state.storage.sql.exec(`DELETE FROM workspace_socket_unheard WHERE connection_id = ?`, socket.connectionId);
+    }
     if (missed.length === 0) return;
+    const openIds = new Set(open.map((socket) => socket.connectionId));
     logError(this.env, "workspace_socket_first_frame_missed", {
       workspace_id: this.workspaceId(),
       missed_sockets: missed.length,
-      open_sockets: sockets.length,
-      oldest_silent_ms: now - Math.min(...missed.map((socket) => Date.parse(socket.connectedAt))),
+      missed_closed_sockets: missed.filter((socket) => !openIds.has(socket.connectionId)).length,
+      open_sockets: open.length,
+      oldest_silent_ms: now - Math.min(...missed.map((socket) => socket.acceptedAt)),
       last_socket_event_ms: this.lastSocketEventAt === null ? null : now - this.lastSocketEventAt,
       instance_age_ms: this.instanceAgeMs(),
     });
+    // Rows are left in place: the fresh instance settles them as older than itself.
     this.state.abort("workspace_socket_first_frame_missed");
   }
 
@@ -11044,6 +11092,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       component: MIGRATION_COMPONENT,
       workerVersionId: this.env.APP_VERSION ?? "unknown",
     }));
+    this.detectUnheardLedger();
     return { schemaVersion: 58 };
   }
 
@@ -13280,6 +13329,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       applicationState: "background",
       foregroundWorkstreamId: null,
     };
+    // Before the accept: an accepted socket without a row could never be counted once its client gave up.
+    if (this.unheardLedger) {
+      this.state.storage.sql.exec(
+        `INSERT INTO workspace_socket_unheard (connection_id, accepted_at) VALUES (?, ?)`,
+        attachment.connectionId,
+        connectedAt,
+      );
+    }
     this.state.acceptWebSocket(server, [attachment.workspaceId, attachment.userId]);
     // Register the server end with the hibernation API before attaching the
     // state that handlers will recover after an isolate wake. Both operations

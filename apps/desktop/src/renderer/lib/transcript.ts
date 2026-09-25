@@ -397,7 +397,8 @@ export function orderedTranscriptMessages(
           // plugin's calls do. It also stops closing the plugin run around it,
           // which is the same judgement: a message arriving is not something a
           // person read.
-          const agentMessage = agentMessageActivity(structured);
+          const opening = opensConversationWithAgentMessage(structured, turn.transcriptSequence === 1);
+          const agentMessage = opening ? null : agentMessageActivity(structured);
           if (agentMessage) {
             rememberOrder(block.blockId);
             return {
@@ -434,7 +435,9 @@ export function orderedTranscriptMessages(
           const statusCode = typeof structured['code'] === 'string'
             ? structured['code']
             : 'assistant_turn_interrupted';
-          const messageType: Message['messageType'] = statusKind
+          const messageType: Message['messageType'] = opening
+            ? 'text'
+            : statusKind
             ? 'system'
             // `automation_activation` is carried through rather than folded
             // into 'text'. Folding it made every automation result render as
@@ -451,6 +454,7 @@ export function orderedTranscriptMessages(
           rememberOrder(messageId);
           return {
             ...base,
+            ...(opening ? { authorType: 'agent' as const, contextLabel: OPENING_AGENT_MESSAGE_LABEL } : {}),
             id: messageId,
             messageType,
             text: block.text,
@@ -878,8 +882,17 @@ export function pendingTranscriptInputOverlay(
   // the same row is available here. It also keeps the message off the composer
   // queue: a queued row is something a person wrote and can reorder, and a
   // teammate's message is neither.
-  const agentMessage = agentMessageActivity(input.block.structuredContent);
-  if (agentMessage) {
+  //
+  // The opener is the exception, drawn as it will be once promoted. Every input
+  // admitted before the first turn lands is after sequence 0, so the loop's
+  // first admission is what picks it out: inputs are numbered from 1 and
+  // delivered in that order.
+  const opening = opensConversationWithAgentMessage(
+    input.block.structuredContent,
+    input.afterTranscriptSequence === 0 && input.inputSequence === 1,
+  );
+  const agentMessage = opening ? null : agentMessageActivity(input.block.structuredContent);
+  if (opening || agentMessage) {
     return {
       identity: input.clientMessageId
         ? { type: 'client_message', clientMessageId: input.clientMessageId, turnId: input.futureTurnId }
@@ -897,8 +910,14 @@ export function pendingTranscriptInputOverlay(
         workstreamId,
         sequenceNumber: 0,
         authorType: 'agent',
-        messageType: 'plugin_activity',
-        pluginActivity: agentMessage,
+        ...(agentMessage
+          ? { messageType: 'plugin_activity' as const, pluginActivity: agentMessage }
+          : {
+              messageType: 'text' as const,
+              contextLabel: OPENING_AGENT_MESSAGE_LABEL,
+              text: input.block.text,
+              attachments: input.block.attachments?.map((attachment) => ({ ...attachment })),
+            }),
         createdAt: input.admittedAtUtc,
       },
     };
@@ -1207,6 +1226,22 @@ export function dedupeAdjacentConnectorConnectionCards(messages: readonly Messag
     rows.push(message);
   }
   return rows;
+}
+
+/** The byline beside the agent message that opened a conversation. */
+export const OPENING_AGENT_MESSAGE_LABEL = 'Opening instructions';
+
+/**
+ * Whether this block is the agent message that opened its conversation, which
+ * is drawn as a message rather than counted. Callers say whether the block is
+ * first, since the canonical and pending projections know it differently.
+ */
+function opensConversationWithAgentMessage(
+  structuredContent: Readonly<Record<string, unknown>> | null | undefined,
+  opensConversation: boolean,
+): boolean {
+  return opensConversation && isAgentMessageContent(structuredContent)
+    && agentMessageNotice(structuredContent) === null;
 }
 
 /**

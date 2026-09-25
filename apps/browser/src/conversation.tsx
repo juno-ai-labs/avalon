@@ -1,7 +1,7 @@
 import { createQueryClient } from "../../desktop/src/renderer/lib/query-client";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
+import { QueryClientProvider, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { BrowserRouter, NavLink, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { CookieClientSession } from '@rally/contracts/client-session';
@@ -27,7 +27,7 @@ import {
   SIDEBAR_COLLAPSE_DRAG_THRESHOLD,
   SIDEBAR_EXPAND_DRAG_THRESHOLD,
 } from '@rally/ui/lib/sidebar-geometry';
-import { browserSidebarLayout } from './sidebar-layout';
+import { browserRailVisibility, browserSidebarLayout, type BrowserRailVisibility } from './sidebar-layout';
 import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
 import { ConversationHeader } from '@rally/ui/components/conversation-header';
 import { WorkstreamSidebar } from '@rally/ui/components/workstream-sidebar';
@@ -42,6 +42,32 @@ import { ConversationSurface } from '../../desktop/src/renderer/screens/conversa
 import '@rally/ui/styles/app.css';
 
 const SHARED_CHANNELS_SPACE_ID = 'shared-channels';
+
+type SharedNavigationDirectory = Awaited<ReturnType<RallyApi['getSharedNavigationDirectory']>>;
+
+/**
+ * The account menu, handed to the Breakout rail when neither outer rail is
+ * shown. The Spaces rail is its usual home and the Channels rail its first
+ * fallback; null while either of those holds it.
+ */
+const BreakoutRailAccountMenu = createContext<React.ReactNode>(null);
+
+/** The directory's Spaces, plus a local **Shared channels** group for Channels no visible Space holds. */
+function sharedNavigationSpaces(directory: SharedNavigationDirectory | undefined) {
+  const spaces = directory?.spaces ?? [];
+  const placedWorkstreamIds = new Set(spaces.flatMap((space) => space.workstreamIds));
+  const unplacedWorkstreamIds = (directory?.workstreams ?? [])
+    .map((workstream) => workstream.parentId)
+    .filter((parentId) => !placedWorkstreamIds.has(parentId));
+  return unplacedWorkstreamIds.length === 0 ? spaces : [...spaces, {
+    id: SHARED_CHANNELS_SPACE_ID,
+    name: 'Shared channels',
+    iconKey: 'users' as const,
+    colorKey: 'blue' as const,
+    scope: null,
+    workstreamIds: unplacedWorkstreamIds,
+  }];
+}
 
 function useBrowserSidebar(initiallyCompact: boolean): {
   compact: boolean;
@@ -113,10 +139,25 @@ export function SharedSpaceOverview({ encodedSpaceId, directory }: {
     <h1>{space.name}</h1>
     <p>{channels.length === 0 ? 'There are no shared channels in this Space.' : 'Channels in this Space'}</p>
     {channels.length > 0 && <nav aria-label={`Channels in ${space.name}`}><ul>{channels.map((channel) => {
-      const first = channel.conversations.find((item) => !item.archived) ?? channel.conversations[0];
-      return first && <li key={channel.parentId}><NavLink to={sharedConversationPath(spaceId, channel.parentId, first.substreamId)}>{channel.title ?? first.title}</NavLink></li>;
+      const target = sharedWorkstreamTarget(channel, spaceId);
+      return target && <li key={channel.parentId}><NavLink to={target.path}>{channel.title ?? target.first.title}</NavLink></li>;
     })}</ul></nav>}
   </div>;
+}
+
+/**
+ * Where selecting a Channel lands: its first active conversation, else its
+ * first. The **Shared channels** group has no canonical Space, so it and a
+ * null Space both give the legacy path.
+ */
+function sharedWorkstreamTarget<Conversation extends { substreamId: string; archived: boolean }>(
+  workstream: { parentId: string; conversations: Conversation[] },
+  spaceId: string | null,
+): { first: Conversation; path: string } | null {
+  const first = workstream.conversations.find((item) => !item.archived) ?? workstream.conversations[0];
+  if (!first) return null;
+  const placedSpaceId = spaceId && spaceId !== SHARED_CHANNELS_SPACE_ID ? spaceId : null;
+  return { first, path: sharedConversationPath(placedSpaceId, workstream.parentId, first.substreamId) };
 }
 
 function sharedConversationPath(spaceId: string | null, parentId: string, substreamId: string): string {
@@ -140,6 +181,7 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
   const navigate = useNavigate();
   const { api, session } = useCollaborationSession();
   const queryClient = useQueryClient();
+  const accountMenu = useContext(BreakoutRailAccountMenu);
   const [archiveTarget, setArchiveTarget] = useState<string | null>(null);
   const [sharingSubstream, setSharingSubstream] = useState<string | null>(null);
   const [changingArchive, setChangingArchive] = useState(false);
@@ -186,7 +228,8 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
           onParticipants={context.openParticipantDialog} onFocusTranscript={context.focusTranscript}
           onOpenArtifact={context.openArtifact} onOpenResource={context.openResource} sidekicks={context.sidekicks} sidekickFailure={context.sidekickFailure}
           onSidekickMenuOpen={context.loadSidekickOptions} onRefreshSidekicks={context.refreshSidekicks}
-          addSidekick={<SidekickPicker workstreamId={parentId} substreamId={substreamId} />} />}
+          addSidekick={<SidekickPicker workstreamId={parentId} substreamId={substreamId} />}
+          footerLeading={accountMenu} />}
         renderHeader={(context) => <ConversationHeader grokBotMode workstream={context.detail} socketState={context.socketState}
           substreamId={substreamId} currentUserId={session?.user.id} presentUserIds={context.presentUserIds}
           onAddParticipant={context.openParticipantDialog} onOpenRail={context.openRail}
@@ -201,12 +244,17 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
   </>;
 }
 
-function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => void }): React.JSX.Element {
+function SharedNavigation({ accountMenu, directory, navigationSpaces, rails, shell }: {
+  accountMenu: React.ReactNode;
+  directory: UseQueryResult<SharedNavigationDirectory>;
+  navigationSpaces: ReturnType<typeof sharedNavigationSpaces>;
+  rails: BrowserRailVisibility;
+  shell: HTMLElement | null;
+}): React.JSX.Element {
   const { session } = useCollaborationSession();
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const canonicalHost = !location.pathname.startsWith('/app/workspaces/');
-  const directory = useQuery({ queryKey: ['shared-navigation'], queryFn: ({ signal }) => api.getSharedNavigationDirectory(signal), refetchOnWindowFocus: 'always' });
   const legacyParentId = pathname.match(/^\/workstreams\/([^/]+)/u)?.[1] ?? null;
   const canonicalRoute = /^\/s\/([^/]+)(?:\/c\/([^/]+))?/u.exec(pathname);
   const routeParentId = legacyParentId ?? (canonicalRoute?.[2] ? uuidFromBase58(canonicalRoute[2]) : null);
@@ -218,8 +266,10 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
     channelOpen: routeParentId !== null,
     channelsCollapsed: channelsSidebar.compact,
     channelsPreferredWidth: channelsSidebar.width,
+    channelsVisible: rails.channels,
     spacesCollapsed: spacesSidebar.compact,
     spacesPreferredWidth: spacesSidebar.width,
+    spacesVisible: rails.spaces,
     viewportWidth,
   });
   const spacesDisplayedCompact = spacesSidebar.compact || sidebarLayout.spacesConstrained;
@@ -229,21 +279,6 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
   }, []);
-  const navigationSpaces = useMemo(() => {
-    const spaces = directory.data?.spaces ?? [];
-    const placedWorkstreamIds = new Set(spaces.flatMap((space) => space.workstreamIds));
-    const unplacedWorkstreamIds = (directory.data?.workstreams ?? [])
-      .map((workstream) => workstream.parentId)
-      .filter((parentId) => !placedWorkstreamIds.has(parentId));
-    return unplacedWorkstreamIds.length === 0 ? spaces : [...spaces, {
-      id: SHARED_CHANNELS_SPACE_ID,
-      name: 'Shared channels',
-      iconKey: 'users' as const,
-      colorKey: 'blue' as const,
-      scope: null,
-      workstreamIds: unplacedWorkstreamIds,
-    }];
-  }, [directory.data]);
   useEffect(() => {
     setSelectedSpaceId((current) => {
       const routeSpaceId = canonicalRoute ? uuidFromBase58(canonicalRoute[1]!) : null;
@@ -265,30 +300,35 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
     }
     spacesSidebar.setCompact(true);
   }, [routeParentId, spacesSidebar.setCompact]);
+  // Set on the shell rather than found from a rail, so a hidden rail still
+  // writes its zero width over the theme's default.
   useLayoutEffect(() => {
-    const shell = spacesSidebar.ref.current?.closest<HTMLElement>('.workspace-shell');
     if (!shell) return undefined;
     shell.style.setProperty('--spaces-sidebar-width', `${sidebarLayout.spacesWidth}px`);
     return () => { shell.style.removeProperty('--spaces-sidebar-width'); };
-  }, [sidebarLayout.spacesWidth, spacesSidebar.ref]);
+  }, [sidebarLayout.spacesWidth, shell]);
   useLayoutEffect(() => {
-    const shell = channelsSidebar.ref.current?.closest<HTMLElement>('.workspace-shell');
     if (!shell) return undefined;
     shell.style.setProperty('--av-cmp-sidebar-width', `${sidebarLayout.channelsWidth}px`);
     return () => { shell.style.removeProperty('--av-cmp-sidebar-width'); };
-  }, [channelsSidebar.ref, sidebarLayout.channelsWidth]);
+  }, [shell, sidebarLayout.channelsWidth]);
+  // With neither rail there is nothing to choose from, so the one Channel
+  // opens in place of the empty chooser.
+  const onlyWorkstream = !rails.spaces && !rails.channels ? directory.data?.workstreams[0] : undefined;
+  useEffect(() => {
+    if (!onlyWorkstream || routeParentId) return;
+    const target = sharedWorkstreamTarget(onlyWorkstream, canonicalHost ? navigationSpaces[0]?.id ?? null : null);
+    if (target) navigate(target.path, { replace: true });
+  }, [canonicalHost, navigate, navigationSpaces, onlyWorkstream, routeParentId]);
   if (!session) return <></>;
-  const user = { ...session.user, name: session.user.name ?? session.user.email, timezone: session.user.timezone ?? 'UTC', avatarUrl: session.user.avatarUrl ?? undefined };
   const selectedSpace = navigationSpaces.find((space) => space.id === selectedSpaceId) ?? navigationSpaces[0];
   const workstreams = directory.data?.workstreams.filter((workstream) => selectedSpace?.workstreamIds.includes(workstream.parentId)) ?? [];
   const openWorkstream = (parentId: string, requestedSpaceId = selectedSpaceId) => {
     const workstream = directory.data?.workstreams.find((item) => item.parentId === parentId);
-    const first = workstream?.conversations.find((item) => !item.archived) ?? workstream?.conversations[0];
-    if (!first) return;
+    const target = workstream && sharedWorkstreamTarget(workstream, canonicalHost ? requestedSpaceId : null);
+    if (!target) return;
     spacesSidebar.setCompact(true);
-    const spaceId = canonicalHost && requestedSpaceId && requestedSpaceId !== SHARED_CHANNELS_SPACE_ID ? requestedSpaceId : null;
-    const targetPath = sharedConversationPath(spaceId, parentId, first.substreamId);
-    if (pathname !== targetPath) navigate(targetPath);
+    if (pathname !== target.path) navigate(target.path);
   };
   const selectSpace = (spaceId: string) => {
     setSelectedSpaceId(spaceId);
@@ -308,7 +348,7 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
     if (target) openWorkstream(target.parentId, spaceId);
   };
   return <>
-    <ResizableSidebar
+    {rails.spaces && <ResizableSidebar
       aria-label="Spaces sidebar"
       className="spaces-sidebar browser-spaces-sidebar"
       compact={spacesDisplayedCompact}
@@ -349,16 +389,11 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
         constrained={sidebarLayout.spacesConstrained}
         constrainedTitle="Widen the window to expand spaces"
         expandLabel="Expand spaces"
-        leading={<div className="spaces-account-slot"><DropdownMenu.Root><DropdownMenu.Trigger asChild>
-          <AccountTrigger currentUser={user} workspaceName={session.workspace?.name ?? 'Organization'} />
-        </DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content workspace-menu" align="start" sideOffset={8}>
-          <DropdownMenu.Item className="menu-item" onSelect={() => location.assign('/')}>Switch organization</DropdownMenu.Item>
-          <DropdownMenu.Item className="menu-item" onSelect={onSignOut}>Sign out</DropdownMenu.Item>
-        </DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div>}
+        leading={accountMenu}
         onToggle={spacesSidebar.toggle}
       />
-    </ResizableSidebar>
-    <ResizableSidebar
+    </ResizableSidebar>}
+    {rails.channels && <ResizableSidebar
       aria-label="Rally navigation"
       className="sidebar channels-sidebar browser-channels-sidebar"
       compact={channelsDisplayedCompact}
@@ -381,9 +416,9 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
       <SidebarScroll><SidebarList as="nav" aria-label="Shared channels">
       {!directory.isPending && selectedSpace && workstreams.length === 0 && <p>No shared channels in this space.</p>}
       {workstreams.map((workstream) => {
-        const first = workstream.conversations.find((item) => !item.archived) ?? workstream.conversations[0];
-        if (!first) return null;
-        const rowPath = sharedConversationPath(canonicalHost && selectedSpace?.id !== SHARED_CHANNELS_SPACE_ID ? selectedSpace?.id ?? null : null, workstream.parentId, first.substreamId);
+        const target = sharedWorkstreamTarget(workstream, canonicalHost ? selectedSpace?.id ?? null : null);
+        if (!target) return null;
+        const { first, path: rowPath } = target;
         return <SidebarRow as={NavLink} aria-label={workstream.title ?? first.title} aria-description={workstream.scope === 'workspace' ? 'Public channel' : 'Private channel'} className={`workstream-row${pathname === rowPath ? ' is-active' : ''}`} onClick={() => {
           spacesSidebar.setCompact(true);
         }} key={workstream.parentId} to={rowPath}>
@@ -397,13 +432,36 @@ function SharedNavigation({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
         constrained={sidebarLayout.channelsConstrained}
         constrainedTitle="Widen the window to expand navigation"
         expandLabel="Expand navigation"
+        leading={rails.spaces ? undefined : accountMenu}
         onToggle={channelsSidebar.toggle}
       />
-    </ResizableSidebar>
+    </ResizableSidebar>}
   </>;
 }
 
 function BrowserWorkspace({ api, onSignOut }: { api: RallyApi; onSignOut: () => void }): React.JSX.Element {
+  const { session } = useCollaborationSession();
+  // State rather than a ref: the rails' layout effects run before a parent's
+  // ref is attached, and need a render once the shell exists.
+  const [shell, setShell] = useState<HTMLDivElement | null>(null);
+  const directory = useQuery({ queryKey: ['shared-navigation'], queryFn: ({ signal }) => api.getSharedNavigationDirectory(signal), refetchOnWindowFocus: 'always' });
+  const navigationSpaces = useMemo(() => sharedNavigationSpaces(directory.data), [directory.data]);
+  // A failed refetch keeps the last data; the rails still show so the error
+  // inside the Spaces rail can be seen.
+  const rails = useMemo(() => browserRailVisibility(directory.data && !directory.isError ? {
+    spaceCount: navigationSpaces.length,
+    channelCount: directory.data.workstreams.length,
+  } : undefined), [directory.data, directory.isError, navigationSpaces]);
+  const accountMenu = useMemo(() => {
+    if (!session) return null;
+    const user = { ...session.user, name: session.user.name ?? session.user.email, timezone: session.user.timezone ?? 'UTC', avatarUrl: session.user.avatarUrl ?? undefined };
+    return <div className="spaces-account-slot"><DropdownMenu.Root><DropdownMenu.Trigger asChild>
+      <AccountTrigger currentUser={user} workspaceName={session.workspace?.name ?? 'Organization'} />
+    </DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="menu-content workspace-menu" align="start" sideOffset={8}>
+      <DropdownMenu.Item className="menu-item" onSelect={() => location.assign('/')}>Switch organization</DropdownMenu.Item>
+      <DropdownMenu.Item className="menu-item" onSelect={onSignOut}>Sign out</DropdownMenu.Item>
+    </DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div>;
+  }, [onSignOut, session]);
   const [unsupportedWidth, setUnsupportedWidth] = useState(() => matchMedia('(max-width: 920px)').matches);
   useEffect(() => {
     const query = matchMedia('(max-width: 920px)');
@@ -417,8 +475,13 @@ function BrowserWorkspace({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
       <p>Shared conversations aren’t supported at this width yet.</p>
     </section>
   </main>;
-  return <div className="browser-workspace workspace-shell">
-    <SharedNavigation api={api} onSignOut={onSignOut} />
+  return <div className="browser-workspace workspace-shell" ref={setShell}>
+    <SharedNavigation accountMenu={accountMenu} directory={directory} navigationSpaces={navigationSpaces} rails={rails} shell={shell} />
+    {/* The Breakout rail is absent while a Channel is archived, loading or
+        failed, so the menu also floats here; CSS hides this copy whenever
+        the rail is present. */}
+    {!rails.spaces && !rails.channels && <div className="browser-account-fallback">{accountMenu}</div>}
+    <BreakoutRailAccountMenu.Provider value={rails.spaces || rails.channels ? null : accountMenu}>
     <main className="browser-feed main-pane"><Routes>
       <Route path="/s/:spaceId" element={<SharedSpaceRoute />} />
       <Route path="/s/:spaceId/c/:parentId" element={<SharedConversationRoute />} />
@@ -427,6 +490,7 @@ function BrowserWorkspace({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
       <Route path="/workstreams/:parentId/substreams/:substreamId" element={<SharedConversationRoute />} />
       <Route path="*" element={<div className="browser-empty"><h1>Shared conversations</h1><p>Choose a conversation to start collaborating.</p></div>} />
     </Routes></main>
+    </BreakoutRailAccountMenu.Provider>
   </div>;
 }
 
