@@ -57,7 +57,116 @@ export function setCachedWorkstreams(
     if (current !== undefined) assertWorkstreamList(current);
     const next = typeof update === 'function' ? update(current) : update;
     if (next !== undefined) assertWorkstreamList(next);
-    return next;
+    return keepPendingWorkstreams(current, next);
+  });
+}
+
+/**
+ * Carry every pending row of `current` that `next` leaves out.
+ *
+ * A pending row is a Channel this window has asked for and the server has not
+ * listed yet, so no answer from the server can contain it. A directory page, a
+ * connect payload or a refetch that replaces the list would otherwise take it
+ * off screen while its create is still in flight. It leaves when a row with its
+ * id arrives, which is the server's version of the same Channel, or through
+ * `releasePendingWorkstreams`. The refetch writes its answer without
+ * going through `setCachedWorkstreams`, so it calls this too.
+ */
+export function keepPendingWorkstreams(
+  current: WorkstreamSummary[] | undefined,
+  next: WorkstreamSummary[] | undefined,
+): WorkstreamSummary[] | undefined {
+  if (next === undefined || !current?.some((row) => row.pending)) return next;
+  const listed = new Set(next.map((row) => row.id));
+  const kept = current.filter((row) => row.pending && !listed.has(row.id));
+  return kept.length === 0 ? next : [...kept, ...next];
+}
+
+/**
+ * The one write that may remove a pending row: the create's own confirm or
+ * discard, and an authoritative eviction of that id. Every other write goes
+ * through `setCachedWorkstreams`, whose job for a pending row is to keep it.
+ */
+function releasePendingWorkstreams(
+  queryClient: QueryClient,
+  update: (current: WorkstreamSummary[]) => WorkstreamSummary[],
+): void {
+  queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) => {
+    if (current === undefined) return current;
+    assertWorkstreamList(current);
+    return update(current);
+  });
+}
+
+/**
+ * List a Channel under the id the caller has given it, before its create is
+ * sent. The server creates it under the same id, so the row it lists later
+ * replaces this one in place: same key, same slot, nothing to reconcile.
+ * Without a chosen title it is `naming`, the skeleton the server's own row
+ * shows until Rally names it.
+ */
+export function addPendingWorkstream(queryClient: QueryClient, input: {
+  id: string;
+  title?: string;
+  spaceIds: string[];
+  scope: WorkstreamSummary['scope'];
+  harnessStatus: WorkstreamSummary['harnessStatus'];
+  createdAt: string;
+}): void {
+  const row: WorkstreamSummary = {
+    id: input.id,
+    title: input.title ?? '',
+    titleStatus: input.title ? 'settled' : 'naming',
+    harnessStatus: input.harnessStatus,
+    scope: input.scope,
+    spaceIds: input.spaceIds,
+    createdAt: input.createdAt,
+    lastActivityAt: input.createdAt,
+    latestAttentionSequenceNumber: 0,
+    readThroughSequenceNumber: 0,
+    manualUnreadFromSequenceNumber: null,
+    manualUnreadGeneration: 0,
+    hasUnread: false,
+    firstUnreadSequenceNumber: null,
+    participantUserIds: [],
+    participantExtraCount: 0,
+    nextPendingWakeup: null,
+    pinPosition: null,
+    pending: true,
+  };
+  setCachedWorkstreams(queryClient, (current) => [
+    row,
+    ...(current ?? []).filter((existing) => existing.id !== row.id),
+  ]);
+}
+
+/** The create that listed this row failed; the Channel does not exist. */
+export function discardPendingWorkstream(queryClient: QueryClient, workstreamId: string): void {
+  releasePendingWorkstreams(queryClient, (current) =>
+    current.filter((row) => !(row.pending && row.id === workstreamId)));
+}
+
+/**
+ * The create answered: replace the pending row with the Channel as the server
+ * created it, so the row is actionable now rather than at the next directory
+ * push. A server row that already arrived is newer than the create response
+ * and is left alone.
+ *
+ * Found by the id it was listed under rather than the answer's: a server from
+ * before `workstreamId` existed creates the Channel under an id of its own,
+ * and the row this window listed must not outlive the create either way.
+ */
+export function confirmPendingWorkstream(
+  queryClient: QueryClient,
+  pendingId: string,
+  row: WorkstreamSummary,
+): void {
+  releasePendingWorkstreams(queryClient, (current) => {
+    const listed = current.some((existing) => existing.id === row.id && !existing.pending);
+    return current.flatMap((existing) => {
+      if (!(existing.pending && existing.id === pendingId)) return [existing];
+      return listed ? [] : [row];
+    });
   });
 }
 
@@ -167,8 +276,10 @@ export function evictCachedWorkstream(
   workstreamId: string,
 ): void {
   evictCachedWorkstreamContent(queryClient, workstreamId);
-  setCachedWorkstreams(queryClient, (current) =>
-    current?.filter((workstream) => workstream.id !== workstreamId));
+  // Through the release path: the server has said this Channel is gone, which
+  // is as final for a row listed ahead of its create as for any other.
+  releasePendingWorkstreams(queryClient, (current) =>
+    current.filter((workstream) => workstream.id !== workstreamId));
 }
 
 /**

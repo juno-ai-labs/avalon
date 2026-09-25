@@ -56,6 +56,7 @@ vi.mock("../src/services/workstream-email-routing-service", () => ({
 }));
 
 import { WorkstreamService } from "../src/services/workstream-service";
+import { bootstrapWorkstreamRuntimeEnvironment } from "../src/services/workstream-runtime-database";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import {
   PERSONAL_SPACE_ID,
@@ -323,5 +324,76 @@ describe("the audience a new work stream is created with", () => {
     await expect(service.create(createInput({ clientMessageId, scope: "personal" })))
       .rejects.toMatchObject({ status: 409, code: "workstream_create_idempotency_conflict" });
     expect(initializeInputs).toHaveLength(1);
+  });
+});
+
+describe("a create that names its own id", () => {
+  const namedId = "019a0000-0000-7000-8000-00000000c1a1";
+
+  it("creates the Channel under the id the caller named, and replays a retry of it", async () => {
+    const database = seededDatabase();
+    const { env, initializeInputs } = environment(database);
+    const service = new WorkstreamService(env, auth);
+    const input = createInput({ workstreamId: namedId });
+
+    const first = await service.create(input);
+    expect(initializeInputs).toMatchObject([{ workstreamId: namedId }]);
+    await expect(service.create(input)).resolves.toMatchObject({ workstream: { id: first.workstream.id } });
+    expect(initializeInputs).toHaveLength(1);
+  });
+
+  // A Worker from before the field stripped it, so its receipt hashed the
+  // request without an id. A retry of that create reaching this Worker names
+  // the id and must still replay, not read as a different request.
+  it("replays a receipt reserved without the id when a retry of it names one", async () => {
+    const database = seededDatabase();
+    const { env, initializeInputs } = environment(database);
+    const service = new WorkstreamService(env, auth);
+    const clientMessageId = "client-rolling-deploy";
+    const first = await service.create(createInput({ clientMessageId }));
+
+    await expect(service.create(createInput({ clientMessageId, workstreamId: namedId })))
+      .resolves.toMatchObject({ workstream: { id: first.workstream.id } });
+    expect(initializeInputs).toHaveLength(1);
+  });
+
+  it("refuses an id another create has already claimed", async () => {
+    const database = seededDatabase();
+    const { env, initializeInputs } = environment(database);
+    const service = new WorkstreamService(env, auth);
+    await service.create(createInput({ workstreamId: namedId }));
+
+    await expect(service.create(createInput({ workstreamId: namedId })))
+      .rejects.toMatchObject({ status: 409, code: "workstream_id_unavailable" });
+    expect(initializeInputs).toHaveLength(1);
+  });
+
+  // The other half of the claim. A Space or Sidekick is anchored without a
+  // receipt, and its id can be visible before its anchor exists when its
+  // provisioning is replayed; a create that named it first owns it.
+  it("refuses to anchor a receipt-less parent under an id a create has claimed", async () => {
+    const database = seededDatabase();
+    const { env } = environment(database);
+    await new WorkstreamService(env, auth).create(createInput({ workstreamId: namedId }));
+
+    await expect(bootstrapWorkstreamRuntimeEnvironment(env, workspaceId, namedId, "space"))
+      .rejects.toMatchObject({ status: 409, code: "workstream_id_unavailable" });
+  });
+
+  // A connector, import or Sidekick parent is anchored without a create
+  // receipt, so the receipt's own unique id is not what protects it.
+  it("refuses an id a conversation without a create receipt already has", async () => {
+    const database = seededDatabase();
+    const { env, initializeInputs } = environment(database);
+    database.exec(`
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, harness_status,
+         next_sequence_number, last_activity_at, created_at, updated_at, do_identity_anchor)
+      VALUES ('${namedId}', '${workspaceId}', 'Imported', '', 'ad_hoc', 'idle', 1, '${at}', '${at}', '${at}', 1);
+    `);
+
+    await expect(new WorkstreamService(env, auth).create(createInput({ workstreamId: namedId })))
+      .rejects.toMatchObject({ status: 409, code: "workstream_id_unavailable" });
+    expect(initializeInputs).toHaveLength(0);
   });
 });

@@ -257,9 +257,10 @@ export class WorkstreamObjectCreationService {
     // workspace-readable work stream the first attempt had already committed.
     // In the hash, that mismatch is the 409 the receipt exists to raise.
     const requestedScope = input.scope ?? "personal";
-    const { mentions: requestMentions, ...hashBody } = body;
-    const requestHash = workstreamImportHash({
+    const { mentions: requestMentions, workstreamId: namedId, ...hashBody } = body;
+    const hashOf = (id: typeof namedId) => workstreamImportHash({
       ...hashBody,
+      ...(id ? { workstreamId: id } : {}),
       ...((options.initialization?.kind === "history") ? { initialization: options.initialization?.kind === "history" && options.initialization.identityHash
         ? { kind: "history", identityHash: options.initialization.identityHash } : options.initialization } : {}),
       // Keep empty mentions compatible with receipts reserved by the previous
@@ -269,13 +270,28 @@ export class WorkstreamObjectCreationService {
       descriptionSource: input.descriptionSource ?? "derived",
       scope: requestedScope,
     });
+    const requestHash = hashOf(namedId);
+    // A Worker from before `workstreamId` strips the field, so a receipt it
+    // reserved hashed the request without it. A retry of that same create
+    // reaching this Worker is still the same request, and replays that
+    // receipt (under the id that Worker minted) rather than reading as a
+    // conflict. The same rolling-deploy rule the empty mentions above follow.
+    const legacyRequestHash = namedId ? hashOf(undefined) : requestHash;
     const at = new Date().toISOString();
-    const proposedId = newId();
+    // A caller that listed the Channel before sending names the id it listed
+    // it under. The reservation is where that id is claimed, and it is claimed
+    // only if no conversation already has it: the receipt's own unique id
+    // covers every create that went through a receipt, and the anchor table
+    // covers the ones that did not (connector, import and Sidekick parents).
+    // One statement, so nothing can anchor the id between the check and the
+    // claim.
+    const proposedId = body.workstreamId ?? newId();
     await span.step("workstream.create.receipt.reserve", () => this.env.DB.prepare(
       `INSERT OR IGNORE INTO workstream_create_receipts
          (workspace_id, creator_user_id, client_message_id, workstream_id,
           generation, request_hash, state, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'reserved', ?, ?)`,
+       SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'reserved', ?7, ?8
+        WHERE NOT EXISTS (SELECT 1 FROM workstreams WHERE id = ?4)`,
     ).bind(
       this.auth.workspaceId,
       this.auth.userId,
@@ -287,7 +303,10 @@ export class WorkstreamObjectCreationService {
       at,
     ).run());
     const receipt = await span.step("workstream.create.receipt.read", () => this.receipt(body.clientMessageId));
-    if (!receipt || receipt.request_hash !== requestHash) {
+    if (!receipt && body.workstreamId) {
+      throw new ApiError(409, "workstream_id_unavailable", "This workstream id is already in use");
+    }
+    if (!receipt || (receipt.request_hash !== requestHash && receipt.request_hash !== legacyRequestHash)) {
       throw new ApiError(409, "workstream_create_idempotency_conflict", "This create key was already used");
     }
     if (receipt.generation !== control.generation) {
