@@ -200,17 +200,19 @@ describe("the automations plugin", () => {
     expect(drafts.every((draft) => !("icon" in (draft as object)) && !("color" in (draft as object)))).toBe(true);
   });
 
-  it("refuses a draft with no icon or colour, naming both", async () => {
+  it("refuses a draft with no icon or colour, or a colour outside the palette, naming the field", async () => {
     const tool = toolNamed(createAutomationsPlugin(host()).tools, "submit_draft");
     const bare: Record<string, unknown> = { ...eventDrivenDraft };
     delete bare.icon;
     delete bare.color;
     const issues = (tool.validateInput?.(bare) as z.ZodError | null)?.issues.map((issue) => issue.path.join("."));
     expect(issues).toEqual(expect.arrayContaining(["icon", "color"]));
-    // A colour the picker no longer offers is not one a person could pick.
-    const retired = (tool.validateInput?.({ ...eventDrivenDraft, color: "gray" }) as z.ZodError | null)?.issues
+    // A retired colour parses, so a Sidekick that wears one can keep it;
+    // whether it may is the object's question, about what is stored.
+    expect(tool.validateInput?.({ ...eventDrivenDraft, color: "teal" })).toBeNull();
+    const unknown = (tool.validateInput?.({ ...eventDrivenDraft, color: "#00ff00" }) as z.ZodError | null)?.issues
       .map((issue) => issue.path.join("."));
-    expect(retired).toEqual(["color"]);
+    expect(unknown).toEqual(["color"]);
   });
 
   it("preserves the existing Sidekick scope while explaining its authority", () => {
