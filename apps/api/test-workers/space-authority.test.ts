@@ -1787,6 +1787,67 @@ describe("WorkspaceDO space authority", () => {
       .toEqual([{ workstream_id: CHANNEL_C }]);
   });
 
+  it("given a Sidekick default from a member who cannot manage a member Channel, then that Channel's target takes the Queue", async () => {
+    const sidekickId = "00000000-0000-7000-8000-00000000cf1b";
+    // An Organization-wide Space admits any active member, so the Space's own
+    // check lets MEMBER add a default; OWNER created both Channels and MEMBER
+    // holds no grant on either, so MEMBER manages neither.
+    const spaceId = await reserve("Company");
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO automation_directory
+           (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope,
+            owning_workstream_id, title, description, next_run_at, projected_at)
+         VALUES (?, ?, ?, 1, 'test', 'active', 'workspace', NULL, 'Shared', '', NULL, 0)`,
+        sidekickId, WORKSPACE_ID, MEMBER,
+      );
+    });
+    for (const channel of [CHANNEL_A, CHANNEL_B]) {
+      await openMemberChannel(channel);
+      await publishChannel(channel, null);
+      await place(spaceId, channel);
+    }
+    // Known to the Organization's table, so the in-place check runs rather
+    // than the unknown-person fallback taking the Queue for another reason.
+    await workspace().applyMemberStatus({
+      workspaceId: WORKSPACE_ID, sequence: 1, removed: false,
+      relationship: { workspaceId: WORKSPACE_ID, userId: MEMBER, accessClass: "member", role: "member",
+        status: "active", incarnation: "existing-member", revision: 1 },
+    });
+
+    const added = await workspace().addSpaceDefault({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId, kind: "sidekick", targetId: sidekickId,
+    });
+    expect(added).toMatchObject({ ok: true });
+
+    const rows = async (sql: string) => (await workspace().runInspectionSql({ sql, bindings: [] })).rows;
+    expect(await rows("SELECT parent_id FROM parent_sidekicks")).toEqual([]);
+    expect(await rows("SELECT workstream_id, state FROM space_default_targets ORDER BY workstream_id")).toEqual([
+      { workstream_id: CHANNEL_A, state: "pending" },
+      { workstream_id: CHANNEL_B, state: "pending" },
+    ]);
+    expect(await rows("SELECT workstream_id FROM space_default_publications ORDER BY workstream_id"))
+      .toEqual([{ workstream_id: CHANNEL_A }, { workstream_id: CHANNEL_B }]);
+  });
+
+  it("given a Space id, when a Channel-only grant or invitation method is asked, then it is refused and writes nothing", async () => {
+    // The sharing routes take any parent id, and a Space resolves to the
+    // Space role, which does not refuse these writes on its own.
+    const spaceId = await reserve("Company");
+    const target = { kind: "workstream" as const, workspaceId: WORKSPACE_ID, parentId: spaceId };
+    const grant = await workspace().mutateScopeGrant({
+      operationId: "00000000-0000-7000-8000-00000000cf1c", actorUserId: OWNER, userId: MEMBER,
+      target, active: true, expectedRevision: 0,
+    }).then(() => null, (error: unknown) => error);
+    expect(String(grant)).toContain("channel_parent_required");
+    const invitations = await workspace().listScopeInvitations({ target, actorUserId: OWNER })
+      .then(() => null, (error: unknown) => error);
+    expect(String(invitations)).toContain("channel_parent_required");
+    expect((await workspace().runInspectionSql({
+      sql: "SELECT user_id FROM parent_grants WHERE parent_id = ?", bindings: [spaceId],
+    })).rows).toEqual([]);
+  });
+
   it("given a staged default target, when the default is removed, then delivery is no longer current", async () => {
     const spaceId = await reserve("Company");
     await publishChannel(CHANNEL_A, null);

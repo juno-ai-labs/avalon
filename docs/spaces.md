@@ -519,11 +519,17 @@ the member Channel's `parent_sidekicks` row is in WorkspaceDO's own SQLite, so
 the target is marked `applied` and nothing is published. That needs the
 Channel's parent hosted here (a `parent_metadata` row and no pending import),
 not archived, and the Sidekick live and workspace-scoped in
-`automation_directory`; otherwise the target takes the Queue as before. No
-actor's Channel management access is asked in place: the Space's write check
-admitted whoever added the default or placed the Channel, and recommending a
-workspace Sidekick exposes nothing a member could not already open. Open rails
-are refreshed with the `automations` sync topic after commit.
+`automation_directory`, and the requester able to manage the Channel;
+otherwise the target takes the Queue as before. Management is asked in place
+the way `setSidekickRecommendation` asks it (a grant on the Channel, or the
+participant rule before the grant handoff), from the Organization's relationship
+table and the Channel's rows, so it is SQL in the same transaction. It has to
+be asked: an Organization-wide Space admits any active member, and a default's
+instructions become a skill in every agent in the Channel, including personal
+and restricted Channels that member cannot manage. A requester the relationship
+table has not heard of, or a refusal, takes the Queue, whose canonical path
+asks again and records the reason on the target. Open rails are refreshed with
+the `automations` sync topic after commit.
 
 Resource targets, and Sidekick targets that did not qualify, are published
 through the outbox onto the activity Queue; the consumer rechecks the default
@@ -2118,9 +2124,9 @@ transaction each.
 - A Sidekick default on a Channel hosted in WorkspaceDO is written to
   `parent_sidekicks` inside the transaction that stages it (`addDefault`,
   `stageDefaultsForMember`, a membership move). Resource targets, and Sidekick
-  targets on a Channel not yet imported, archived, or whose Sidekick the
-  directory does not show as a live workspace Sidekick, still take the activity
-  Queue.
+  targets on a Channel not yet imported, archived, whose Sidekick the
+  directory does not show as a live workspace Sidekick, or whose requester
+  cannot manage the Channel, still take the activity Queue.
 - Adding or removing an existing Channel is one Worker call
   (`addSpaceChannel`, `removeSpaceChannel`), and an audience change's, an
   archive's or a restore's walk is one call per page (`walkSpaceMembers`).
