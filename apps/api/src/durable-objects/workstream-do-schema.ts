@@ -7,8 +7,10 @@ import type { DurableObjectSqliteMigration } from "./sqlite-migrations";
 import { WORKSTREAM_ACCESS_SCHEMA_STATEMENTS } from "./workstream-access-storage";
 
 /**
- * The append-only schema ledger every `WorkstreamDO` applies — a Channel under
- * `WORKSTREAM_ROLE` and a Space under `SPACE_ROLE` alike.
+ * The append-only schema ledger every legacy `WorkstreamDO` applies — a Channel
+ * under `WORKSTREAM_ROLE` and a Space under `SPACE_ROLE` alike. The objects now
+ * only export their rows (`docs/hosted-conversation-parents.md`); the ledger
+ * stays because every deployed object holds its receipts.
  *
  * In its own module rather than beside the class because the role names it and
  * a role constant that imported it from `workstream-do.ts` would close a cycle
@@ -488,4 +490,16 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
   // Like version 19, the receipt is the once-only fence for work done in
   // WorkstreamDO's afterMigrations hook, and no schema changes are required.
   statements: ["SELECT 1 AS background_agent_breakout_retraction"],
+}, {
+  version: 21,
+  description: "record the move of this parent into the Organization object",
+  // Written once, by `exportParentState`, in the transaction that reads every
+  // row out. From then on this object answers export and nothing else; see
+  // `docs/hosted-conversation-parents.md`.
+  statements: [`CREATE TABLE parent_authority_moved (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    workspace_id TEXT NOT NULL,
+    parent_id TEXT NOT NULL,
+    moved_at INTEGER NOT NULL
+  ) STRICT`],
 }];

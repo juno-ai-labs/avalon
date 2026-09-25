@@ -24,7 +24,6 @@ import { inFlowSpan } from "../observability/tracing";
 import {
   conversationObjectName,
   workspaceDOName,
-  workstreamDOName,
 } from "../durable-objects/names";
 import {
   durableObjectStubForWorkspace,
@@ -653,7 +652,7 @@ export class WorkspaceSocketService {
   }
 }
 
-/** Edge authentication and regional routing for one WorkstreamDO metadata socket. */
+/** Edge authentication and regional routing for one Channel's control socket, served by its hosted parent. */
 export class WorkstreamControlSocketService {
   constructor(private readonly env: Env) {}
 
@@ -675,11 +674,14 @@ export class WorkstreamControlSocketService {
     if (claims.region !== this.env.AVALON_REGION || claims.workstreamId !== workstreamId) {
       throw new ApiError(403, "socket_ticket_scope_mismatch", "The ticket does not authorize this work stream");
     }
+    // The Channel's parent is hosted by the Organization object, which holds
+    // the Channel's control sockets beside its own; see
+    // `docs/hosted-conversation-parents.md`.
     const stub = await durableObjectStubForWorkspace(
       this.env,
-      this.env.WORKSTREAM_DOS,
+      this.env.WORKSPACE_DOS,
       claims.workspaceId,
-      workstreamDOName(claims.region, claims.workspaceId, claims.workstreamId),
+      workspaceDOName(claims.region, claims.workspaceId),
     );
     const headers = new Headers(request.headers);
     headers.delete("sec-websocket-protocol");
@@ -689,7 +691,7 @@ export class WorkstreamControlSocketService {
     headers.set(RALLY_HEADERS.USER_ID, claims.userId);
     headers.set(RALLY_HEADERS.SOCKET_TICKET_ID, claims.ticketId);
     headers.set(RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT, String(claims.expiresAt));
-    const internalUrl = new URL("https://workstream.internal/socket");
+    const internalUrl = new URL("https://workspace.internal/parent-socket");
     const response = await stub.fetch(
       new Request(internalUrl, { method: "GET", headers }),
     );

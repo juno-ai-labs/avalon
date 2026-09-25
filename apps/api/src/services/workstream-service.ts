@@ -22,7 +22,7 @@ import type {
 import type { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { conversationObjectName } from "../durable-objects/substream-agent";
-import { automationDOName, substreamLoopId, workspaceDOName, workstreamDOName } from "../durable-objects/names";
+import { automationDOName, substreamLoopId, workspaceDOName } from "../durable-objects/names";
 import { WorkspaceOpportunityOriginEventsResultSchema } from "../durable-objects/workspace-opportunity-protocol";
 import { ApiError } from "../lib/api-error";
 import { publishAccessRevocation } from "./access-revocation";
@@ -695,8 +695,8 @@ export class WorkstreamService {
     if (parent.kind !== "workstream") {
       throw new ApiError(422,"sidekick_attachment_parent_kind_unsupported","Sidekick recommendations belong to workstreams");
     }
-    const room = await durableObjectStubForWorkspace(this.env,this.env.WORKSTREAM_DOS,this.auth.workspaceId,
-      workstreamDOName(this.env.AVALON_REGION,this.auth.workspaceId,asWorkstreamId(id)));
+    const room = await durableObjectStubForWorkspace(this.env,this.env.WORKSPACE_DOS,this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
     const workspace = await durableObjectStubForWorkspace(this.env,this.env.WORKSPACE_DOS,this.auth.workspaceId,
       workspaceDOName(this.env.AVALON_REGION,this.auth.workspaceId));
     const [recommended,owned] = await Promise.all([
@@ -712,8 +712,8 @@ export class WorkstreamService {
   private async conversationSidekickIds(id: string, substreamId: string, explicit?: readonly string[]) {
     const workspace = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, this.auth.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId));
-    const room = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS, this.auth.workspaceId,
-      workstreamDOName(this.env.AVALON_REGION, this.auth.workspaceId, asWorkstreamId(id)));
+    const room = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
     const child = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, this.auth.workspaceId,
       conversationObjectName(this.env.AVALON_REGION, this.auth.workspaceId, id, asSubstreamId(substreamId)));
     const [recommended, owned, loaded] = await Promise.all([
@@ -733,8 +733,8 @@ export class WorkstreamService {
     }
     const relationship = await readWorkspaceRelationship(this.env.DB, this.auth.workspaceId, this.auth.userId);
     if (relationship?.status !== "active") throw new ApiError(403, "workspace_membership_required", "Workspace access is required");
-    const room = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS, this.auth.workspaceId,
-      workstreamDOName(this.env.AVALON_REGION, this.auth.workspaceId, asWorkstreamId(id)));
+    const room = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
     const explicit = new Set(await room.recommendedSidekickIds({ workspaceId: this.auth.workspaceId, parentId: id }));
     let sources: SidekickAttachment[];
     if (relationship.accessClass === "member") {
@@ -770,8 +770,8 @@ export class WorkstreamService {
   ): Promise<{ items: SidekickAttachment[] }> {
     const visibleSubstreamId = backgroundExecution ? "0" : substreamId;
     await new ConversationService(this.env, this.auth).writableClient(id, visibleSubstreamId);
-    const room = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS, this.auth.workspaceId,
-      workstreamDOName(this.env.AVALON_REGION, this.auth.workspaceId, asWorkstreamId(id)));
+    const room = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
     const management = await room.readManagementAccess({ workspaceId: this.auth.workspaceId, parentId: id, userId: this.auth.userId });
     if (!management.allowed) throw new ApiError(403, "sidekick_attachment_forbidden", "Workstream management access is required");
     if (!management.writable) throw new ApiError(409, "sidekick_attachment_workstream_archived", "The workstream is archived");

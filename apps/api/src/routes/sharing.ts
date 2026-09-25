@@ -3,7 +3,7 @@ import { listSharedDirectory, listSharedNavigationDirectory } from "../services/
 import { Hono } from "hono";
 import { z } from "zod";
 import { IdSchema } from "@rally/contracts";
-import { UNAVAILABLE_INVITATION, openScopeInvitationCredential, workstreamStub } from "../services/scope-invitation-link";
+import { UNAVAILABLE_INVITATION, openScopeInvitationCredential, parentStub } from "../services/scope-invitation-link";
 import { ScopeSharingOptionsSchema, ListScopeInvitationsSchema, ScopeInvitationsListSchema, CreateScopeInvitationsSchema, AcceptScopeInvitationSchema, RevokeScopeInvitationSchema, ScopeInvitationCredentialSchema,
   SharedDirectorySchema, SharedNavigationDirectorySchema, ScopeInvitationResultSchema, type ScopeInvitationResult } from "@rally/contracts/scope-grants";
 import type { HonoAppEnv } from "../env";
@@ -55,7 +55,7 @@ sharingRoutes.get("/navigation", requireWorkspaceAuth, async (c) => {
 sharingRoutes.get("/:parentId/options", requireWorkspaceAuth, zValidator("param", z.object({ parentId: IdSchema })), async (c) => {
   const auth = getWorkspaceAuth(c);
   const parentId = c.req.valid("param").parentId;
-  const result = await (await workstreamStub(c.env, auth.workspaceId, parentId)).scopeSharingOptions({
+  const result = await (await parentStub(c.env, auth.workspaceId)).scopeSharingOptions({
     workspaceId: auth.workspaceId, parentId, actorUserId: auth.userId,
   });
   c.header("Cache-Control", "no-store");
@@ -65,14 +65,14 @@ sharingRoutes.post("/grants/list", requireWorkspaceAuth,
   zValidator("json", ScopeGrantManagementRequestSchema.omit({ actorUserId: true })), async (c) => {
     const auth = getWorkspaceAuth(c), target = c.req.valid("json").target;
     if (target.workspaceId !== auth.workspaceId) throw new ApiError(400, "scope_address_mismatch", "Choose a scope in this workspace");
-    const result = await (await workstreamStub(c.env, auth.workspaceId, target.parentId)).listManagedScopeGrants({ target, actorUserId: auth.userId });
+    const result = await (await parentStub(c.env, auth.workspaceId)).listManagedScopeGrants({ target, actorUserId: auth.userId });
     c.header("Cache-Control", "no-store");
     return c.json(ManagedScopeGrantsSchema.parse(result));
   });
 sharingRoutes.post("/grants/revoke", requireWorkspaceAuth, zValidator("json", RevokeScopeGrantSchema), async (c) => {
   const auth = getWorkspaceAuth(c), request = c.req.valid("json");
   if (request.target.workspaceId !== auth.workspaceId) throw new ApiError(400, "scope_address_mismatch", "Choose a scope in this workspace");
-  const result = await (await workstreamStub(c.env, auth.workspaceId, request.target.parentId))
+  const result = await (await parentStub(c.env, auth.workspaceId))
     .mutateScopeGrant({ ...request, actorUserId: auth.userId, active: false });
   c.header("Cache-Control", "no-store");
   return c.json(ScopeGrantMutationResultSchema.parse(result));
@@ -82,7 +82,7 @@ sharingRoutes.post("/list", requireWorkspaceAuth,
     const auth = getWorkspaceAuth(c);
     const target = c.req.valid("json").target;
     if (target.workspaceId !== auth.workspaceId) throw new ApiError(400, "scope_address_mismatch", "Choose a scope in this workspace");
-    const result = await (await workstreamStub(c.env, auth.workspaceId, target.parentId)).listScopeInvitations({ target, actorUserId: auth.userId });
+    const result = await (await parentStub(c.env, auth.workspaceId)).listScopeInvitations({ target, actorUserId: auth.userId });
     c.header("Cache-Control", "no-store");
     return c.json(ScopeInvitationsListSchema.parse(result));
   });
@@ -93,7 +93,7 @@ sharingRoutes.post("/", requireWorkspaceAuth, zValidator("json", CreateRequestSc
     throw new ApiError(400, "scope_address_mismatch", "Choose targets in this workstream");
   }
   const request = CreateScopeInvitationsSchema.parse({ ...body, workspaceId: auth.workspaceId, actorUserId: auth.userId });
-  const result = await (await workstreamStub(c.env, request.workspaceId, request.parentId)).createScopeInvitations(request);
+  const result = await (await parentStub(c.env, request.workspaceId)).createScopeInvitations(request);
   c.header("Cache-Control", "no-store");
   return c.json(ScopeInvitationResultSchema.parse(acceptedResult(result)), 201);
 });
@@ -104,7 +104,7 @@ sharingRoutes.post("/accept", zValidator("json", AcceptRequestSchema), async (c)
   const address = await openScopeInvitationCredential(c.env, c.req.valid("json"));
   if (!address) throw new ApiError(403, "scope_invitation_unavailable", UNAVAILABLE_INVITATION);
   const request = AcceptScopeInvitationSchema.parse({ ...address, userId: getIdentityAuth(c).userId });
-  const result = await (await workstreamStub(c.env, request.workspaceId, request.parentId)).acceptScopeInvitation(request);
+  const result = await (await parentStub(c.env, request.workspaceId)).acceptScopeInvitation(request);
   c.header("Cache-Control", "no-store");
   return c.json(ScopeInvitationResultSchema.parse(acceptedResult(result)));
 });
@@ -113,7 +113,7 @@ sharingRoutes.delete("/:parentId/:invitationId", requireWorkspaceAuth,
     const auth = getWorkspaceAuth(c);
     const request = RevokeScopeInvitationSchema.parse({ ...c.req.valid("param"), ...c.req.valid("json"),
       workspaceId: auth.workspaceId, actorUserId: auth.userId });
-    const result = await (await workstreamStub(c.env, request.workspaceId, request.parentId)).revokeScopeInvitation(request);
+    const result = await (await parentStub(c.env, request.workspaceId)).revokeScopeInvitation(request);
     c.header("Cache-Control", "no-store");
     return c.json(ScopeInvitationResultSchema.parse(acceptedResult(result)));
   });

@@ -1,10 +1,9 @@
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
-import { asAutomationId, asSpaceId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asAutomationId, asWorkspaceId } from "@rally/contracts";
 
 import type { AutomationDO } from "../durable-objects/automation-do";
-import { automationDOName, spaceDOName, workstreamDOName } from "../durable-objects/names";
-import type { SpaceDO } from "../durable-objects/space-do";
-import type { WorkstreamDO } from "../durable-objects/workstream-do";
+import { automationDOName, workspaceDOName } from "../durable-objects/names";
+import type { WorkspaceDO } from "../durable-objects/workspace-do";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 
@@ -17,23 +16,16 @@ export interface ConversationParentAddress {
 /**
  * The stub for whichever object is a conversation's parent.
  *
- * All three classes answer the conversation-parent contract, so a caller that
- * only needs that contract (the Queue consumer carrying a child's effects, the
- * Worker authorizing a viewer, revocation walking the hierarchy) asks here
- * and never branches on the kind itself.
- *
- * This is the one dispatch point, and deliberately: `SpaceDO` and `WorkstreamDO`
- * are the same class under different roles, so a caller that resolved the
- * binding itself would reach a *real object* under the wrong namespace rather
- * than failing — an empty Space where a Channel was meant, with no error on
- * either side.
+ * A Channel's and a Space's parent authority lives in the Organization's
+ * `WorkspaceDO`, which answers the conversation-parent contract for every one
+ * of them by parent id (`docs/hosted-conversation-parents.md`). A Sidekick's
+ * parent is still its own `SidekickDO`. A caller that only needs the contract
+ * asks here and never branches on the kind itself.
  */
 export async function conversationParentStub(
   env: Env,
   address: ConversationParentAddress,
-): Promise<
-  DurableObjectStub<WorkstreamDO> | DurableObjectStub<AutomationDO> | DurableObjectStub<SpaceDO>
-> {
+): Promise<DurableObjectStub<WorkspaceDO> | DurableObjectStub<AutomationDO>> {
   const workspaceId = asWorkspaceId(address.workspaceId);
   if (address.parentKind === "automation") {
     return durableObjectStubForWorkspace(
@@ -43,18 +35,11 @@ export async function conversationParentStub(
       automationDOName(env.AVALON_REGION, workspaceId, asAutomationId(address.parentId)),
     );
   }
-  if (address.parentKind === "space") {
-    return durableObjectStubForWorkspace(
-      env,
-      env.SPACE_DOS,
-      workspaceId,
-      spaceDOName(env.AVALON_REGION, workspaceId, asSpaceId(address.parentId)),
-    );
-  }
-  return durableObjectStubForWorkspace(
-    env,
-    env.WORKSTREAM_DOS,
-    workspaceId,
-    workstreamDOName(env.AVALON_REGION, workspaceId, asWorkstreamId(address.parentId)),
-  );
+  return hostedParentStub(env, workspaceId);
+}
+
+/** The Organization object that hosts every Channel and Space parent of one workspace. */
+export async function hostedParentStub(env: Env, workspaceId: string): Promise<DurableObjectStub<WorkspaceDO>> {
+  const id = asWorkspaceId(workspaceId);
+  return durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, id, workspaceDOName(env.AVALON_REGION, id));
 }

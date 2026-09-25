@@ -129,7 +129,7 @@ import {
   type ResolvedConnectorAdapter,
 } from "@rally/connectors";
 import { z } from "zod";
-import { automationDOName, conversationObjectName, workspaceDOName, workstreamDOName } from "../durable-objects/names";
+import { automationDOName, conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import { AutomationService, createAutomation } from "./automation-service";
 import { WorkstreamService } from "./workstream-service";
 import { ResourceService } from "./resource-service";
@@ -6461,9 +6461,9 @@ function createAutomationPostResultPlugin(
       const workspaceId = asWorkspaceId(input.workspaceId);
       const room = await durableObjectStubForWorkspace(
         env,
-        env.WORKSTREAM_DOS,
+        env.WORKSPACE_DOS,
         workspaceId,
-        workstreamDOName(env.AVALON_REGION, workspaceId, asWorkstreamId(owningWorkstreamId)),
+        workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
       );
       const authority = await room.authority({ workspaceId, parentId: owningWorkstreamId });
       if (!authority.exists) throw new Error("sidekick_owning_room_missing");

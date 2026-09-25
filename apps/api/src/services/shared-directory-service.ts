@@ -1,4 +1,4 @@
-import { asWorkspaceId, asWorkstreamId, type UserId, type WorkspaceId } from "@rally/contracts";
+import { asWorkspaceId, type UserId, type WorkspaceId } from "@rally/contracts";
 import {
   SharedDirectorySchema,
   SharedNavigationDirectorySchema,
@@ -7,7 +7,7 @@ import {
   SharedWorkstreamSchema,
 } from "@rally/contracts/scope-grants";
 import { ScopeGrantCandidatesSchema } from "../durable-objects/scope-grant-directory";
-import { workspaceDOName, workstreamDOName } from "../durable-objects/names";
+import { workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { readWorkspaceRelationship } from "./workspace-relationship-service";
 import type { Env } from "../env";
@@ -22,8 +22,8 @@ export async function listSharedDirectory(env: Env, workspaceId: WorkspaceId, us
     workspaceId, userId, membershipIncarnation: relationship.incarnation,
   }));
   const items = await Promise.all(candidates.map(async (parentId) => {
-    const parent = await durableObjectStubForWorkspace(env, env.WORKSTREAM_DOS, workspaceId,
-      workstreamDOName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(parentId)));
+    const parent = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
+      workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)));
     const item = SharedNavigationWorkstreamSchema.nullable().parse(await parent.readSharedWorkstream({
       workspaceId, parentId, userId, membershipIncarnation: relationship.incarnation,
     }));
@@ -58,8 +58,8 @@ export async function listSharedNavigationDirectory(env: Env, workspaceId: Works
     workspaceId, userId, membershipIncarnation: relationship.incarnation,
   }));
   const items = await Promise.all(candidates.map(async (parentId) => {
-    const parent = await durableObjectStubForWorkspace(env, env.WORKSTREAM_DOS, workspaceId,
-      workstreamDOName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(parentId)));
+    const parent = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
+      workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)));
     return SharedNavigationWorkstreamSchema.nullable().parse(await parent.readSharedWorkstream({
       workspaceId, parentId, userId, membershipIncarnation: relationship.incarnation, includeAttention,
     }));

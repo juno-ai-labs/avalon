@@ -1,8 +1,8 @@
 import { newId } from "@rally/db";
-import { asSubstreamId, asWorkspaceId, asWorkstreamId, asAutomationId } from "@rally/contracts";
+import { asAutomationId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
 
-import { automationDOName, conversationObjectName, workstreamDOName } from "../durable-objects/names";
+import { automationDOName, conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
@@ -41,22 +41,24 @@ export class ConversationService {
   /**
    * Which kind of parent this id names.
    *
-   * Work streams first, because they are most of the traffic; an id neither
-   * knows is a 404 rather than a guess. Both reads are the parent's own
-   * `authority`, which also carries the generation and archive state the
-   * ticket needs.
+   * The Organization object first: it hosts every Channel and Space parent and
+   * says which kind an id is in the same read that returns its authority, so a
+   * Channel costs one warm call and nothing is asked of an object that does
+   * not hold the id. A Space is not a conversation this route opens. An id
+   * neither knows is a 404 rather than a guess.
    */
   async resolveParent(parentId: string): Promise<ResolvedConversationParent> {
-    const workstream = await durableObjectStubForWorkspace(
+    const workspace = await durableObjectStubForWorkspace(
       this.env,
-      this.env.WORKSTREAM_DOS,
+      this.env.WORKSPACE_DOS,
       this.auth.workspaceId,
-      workstreamDOName(this.env.AVALON_REGION, this.auth.workspaceId, asWorkstreamId(parentId)),
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)),
     );
-    const asWorkstream = await workstream.authority({ workspaceId: this.auth.workspaceId, parentId });
-    if (asWorkstream.exists) {
-      return { kind: "workstream", id: parentId, membershipVersion: 0, ...asWorkstream };
+    const hosted = await workspace.resolveHostedParent({ workspaceId: this.auth.workspaceId, parentId });
+    if (hosted.kind === "workstream") {
+      return { kind: "workstream", id: parentId, membershipVersion: 0, ...hosted.authority };
     }
+    if (hosted.kind === "space") throw new ApiError(404, "conversation_not_found", "Conversation not found");
     const automation = await durableObjectStubForWorkspace(
       this.env,
       this.env.AUTOMATION_DOS,
@@ -304,9 +306,9 @@ export class ConversationService {
     }
     return durableObjectStubForWorkspace(
       this.env,
-      this.env.WORKSTREAM_DOS,
+      this.env.WORKSPACE_DOS,
       workspaceId,
-      workstreamDOName(this.env.AVALON_REGION, workspaceId, asWorkstreamId(parent.id)),
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId)),
     );
   }
 }

@@ -1,14 +1,14 @@
 import {
-  SidelineCatalogSchema,
-  SidelineSendResponseSchema,
-  UserIdSchema,
-  WorkstreamIdSchema,
+  asWorkspaceId,
   type SidelineCatalog,
+  SidelineCatalogSchema,
   type SidelineSendRequest,
   type SidelineSendResponse,
+  SidelineSendResponseSchema,
+  UserIdSchema,
 } from "@rally/contracts";
 
-import { workspaceDOName, workstreamDOName } from "../durable-objects/names";
+import { workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
@@ -125,9 +125,9 @@ export class ImpersonationService {
         };
         const parent = await durableObjectStubForWorkspace(
           this.env,
-          this.env.WORKSTREAM_DOS,
+          this.env.WORKSPACE_DOS,
           this.operator.workspaceId,
-          workstreamDOName(this.env.AVALON_REGION, this.operator.workspaceId, WorkstreamIdSchema.parse(workstream.id)),
+          workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.operator.workspaceId)),
         );
         const children = await parent.listVisiblePrivateChildren({
           workspaceId: this.operator.workspaceId,

@@ -1,10 +1,10 @@
 import { z } from "zod";
-import { IdSchema, WorkspaceIdSchema, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asWorkspaceId, IdSchema, WorkspaceIdSchema } from "@rally/contracts";
 import { ScopeInvitationDescriptionSchema, type ScopeInvitationCredential } from "@rally/contracts/scope-grants";
 import { defineLinkPayload, discardLinkPayloads, issueLinkPayload, openLinkPayload } from "@rally/db/link-payloads";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { workstreamDOName } from "../durable-objects/names";
+import { workspaceDOName } from "../durable-objects/names";
 
 /**
  * Where the emailed link points, and nothing else.
@@ -78,9 +78,10 @@ export async function openScopeInvitationCredential(
   return target && { ...target, token: credential.link };
 }
 
-export function workstreamStub(env: Env, workspaceId: string, parentId: string) {
-  return durableObjectStubForWorkspace(env, env.WORKSTREAM_DOS, workspaceId,
-    workstreamDOName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(parentId)));
+/** The Organization object, which hosts the parent that owns every invitation. */
+export function parentStub(env: Env, workspaceId: string) {
+  return durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)));
 }
 
 /**
@@ -95,6 +96,6 @@ export async function describeScopeInvitation(
   const address = await openScopeInvitationCredential(env, credential);
   if (!address) return null;
   const description = ScopeInvitationDescriptionSchema.parse(
-    await (await workstreamStub(env, address.workspaceId, address.parentId)).describeScopeInvitation(address));
+    await (await parentStub(env, address.workspaceId)).describeScopeInvitation(address));
   return description.status === "ready" ? { email: description.email } : null;
 }
