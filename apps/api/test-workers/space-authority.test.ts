@@ -78,7 +78,7 @@ async function establishWorkspace(): Promise<void> {
     // RPC refuses a guest, and a fixture without the column would prove the
     // membership check and not the guest one.
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspace_members (
-      incarnation TEXT DEFAULT 'existing-member',
+      incarnation TEXT DEFAULT 'existing-member', revision INTEGER NOT NULL DEFAULT 1,
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
       role TEXT, access_class TEXT NOT NULL DEFAULT 'member',
       last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
@@ -108,7 +108,7 @@ async function establishWorkspace(): Promise<void> {
       (workspace_id, user_id, status, role, access_class) VALUES (?, ?, 'active', NULL, 'guest')`)
       .bind(WORKSPACE_ID, GUEST),
     env.DB.prepare(`INSERT OR REPLACE INTO workspace_members
-      (workspace_id, user_id, status, role, access_class) VALUES (?, ?, 'removed', 'member', 'member')`)
+      (workspace_id, user_id, status, role, access_class) VALUES (?, ?, 'suspended', 'member', 'member')`)
       .bind(WORKSPACE_ID, INACTIVE),
     env.DB.prepare(`INSERT OR REPLACE INTO sessions
       (id, user_id, workspace_id, region, revoked_at, expires_at)
@@ -1781,6 +1781,51 @@ describe("WorkspaceDO space authority", () => {
              WHERE space_id = ? AND state = 'pending' ORDER BY workstream_id`,
       bindings: [spaceId],
     })).toMatchObject({ rows: [{ workstream_id: CHANNEL_A }, { workstream_id: CHANNEL_B }] });
+  });
+
+  it("given a Sidekick default, when hosted Channels are or become members, then each gets it in the same write", async () => {
+    const sidekickId = "00000000-0000-7000-8000-00000000cf1a";
+    const spaceId = await reserve("Company");
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO automation_directory
+           (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope,
+            owning_workstream_id, title, description, next_run_at, projected_at)
+         VALUES (?, ?, ?, 1, 'test', 'active', 'workspace', NULL, 'Shared', '', NULL, 0)`,
+        sidekickId, WORKSPACE_ID, OWNER,
+      );
+    });
+    // Parent rows first: a directory row for a Channel with none notes it as
+    // a legacy parent still to import, which Channel C below is.
+    for (const channel of [CHANNEL_A, CHANNEL_B]) {
+      await openMemberChannel(channel);
+      await publishChannel(channel, null);
+    }
+    await place(spaceId, CHANNEL_A);
+
+    const added = await workspace().addSpaceDefault({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, kind: "sidekick", targetId: sidekickId,
+    });
+    expect(added).toMatchObject({ ok: true, targets: [{ workstreamId: CHANNEL_A, kind: "sidekick" }] });
+    // Channel B joins after the default exists: `finalizeSpaceMembership`
+    // stages it, and the same in-place write applies. Channel C's parent is
+    // not imported here yet, so its target keeps the Queue.
+    await place(spaceId, CHANNEL_B);
+    await publishChannel(CHANNEL_C, null);
+    await place(spaceId, CHANNEL_C);
+
+    const rows = async (sql: string) => (await workspace().runInspectionSql({ sql, bindings: [] })).rows;
+    expect(await rows("SELECT parent_id, sidekick_id FROM parent_sidekicks ORDER BY parent_id")).toEqual([
+      { parent_id: CHANNEL_A, sidekick_id: sidekickId },
+      { parent_id: CHANNEL_B, sidekick_id: sidekickId },
+    ]);
+    expect(await rows("SELECT workstream_id, state FROM space_default_targets ORDER BY workstream_id")).toEqual([
+      { workstream_id: CHANNEL_A, state: "applied" },
+      { workstream_id: CHANNEL_B, state: "applied" },
+      { workstream_id: CHANNEL_C, state: "pending" },
+    ]);
+    expect(await rows("SELECT workstream_id FROM space_default_publications ORDER BY workstream_id"))
+      .toEqual([{ workstream_id: CHANNEL_C }]);
   });
 
   it("given a staged default target, when the default is removed, then delivery is no longer current", async () => {
