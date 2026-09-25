@@ -359,4 +359,29 @@ export const HOSTED_PARENT_SCHEMA_STATEMENTS: readonly string[] = [
     created_at INTEGER NOT NULL,
     PRIMARY KEY (parent_id, operation_id)
   ) STRICT`,
+
+  // Post-commit work a directory batch owes: written in the batch's own
+  // transaction, run straight after the commit, taken by the alarm if that run
+  // did not finish.
+  `CREATE TABLE workspace_directory_followups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    followup_json TEXT NOT NULL CHECK (json_valid(followup_json)),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    not_before INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  ) STRICT`,
+  `CREATE INDEX workspace_directory_followups_due_idx ON workspace_directory_followups(not_before)`,
+
+  // Each person's workspace relationship as this object last heard it: from a
+  // relationship change event (sequence > 0, in D1's order) or, for someone it
+  // had never heard of, from one D1 read (sequence 0, never replacing an
+  // event). Access checks read it instead of D1; the events keep it current.
+  // `relationship_json` is null for someone with no relationship.
+  `CREATE TABLE workspace_member_status (
+    user_id TEXT PRIMARY KEY,
+    relationship_json TEXT CHECK (relationship_json IS NULL OR json_valid(relationship_json)),
+    active INTEGER NOT NULL CHECK (active IN (0, 1)),
+    sequence INTEGER NOT NULL CHECK (sequence >= 0),
+    updated_at INTEGER NOT NULL
+  ) STRICT`,
 ];

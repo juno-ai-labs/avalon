@@ -14,6 +14,7 @@ export type WorkspaceScheduledAlarmPhase =
   | "schedule_reconcile"
   | "parent_outbox"
   | "parent_breakouts"
+  | "directory_followup"
   | "parent_import"
   | "final_rearm";
 

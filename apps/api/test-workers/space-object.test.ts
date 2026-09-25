@@ -172,6 +172,12 @@ function outboxKinds(state: DurableObjectState, parentId: string): string[] {
   ).toArray().map((row) => row.effect_kind);
 }
 
+function activityKeys(state: DurableObjectState): { audience_workstream_id: string; dedupe_key: string }[] {
+  return state.storage.sql.exec<{ audience_workstream_id: string; dedupe_key: string }>(
+    "SELECT audience_workstream_id, dedupe_key FROM workspace_activity_events ORDER BY dedupe_key",
+  ).toArray();
+}
+
 function childEffect(
   parentKind: "space" | "workstream",
   parentId: string,
@@ -381,6 +387,7 @@ describe("a Space's hosted parent", () => {
       // asked for that nothing can navigate to. It is dropped rather than
       // queued because anything that reaches this outbox is delivered.
       expect(outboxKinds(state, SPACE_ID)).toEqual([]);
+      expect(activityKeys(state)).toEqual([]);
       expect(state.storage.sql.exec("SELECT space_id, title FROM spaces").toArray())
         .toEqual([{ space_id: SPACE_ID, title: "Hiring" }]);
       // Still recorded by the parent: it aggregates its child's state whether
@@ -391,8 +398,8 @@ describe("a Space's hosted parent", () => {
     });
 
     // A Channel forwards both, which is what makes the list above a decision:
-    // its directory row lands locally and its activity waits in the outbox
-    // for the alarm that sends it to the activity Queue.
+    // its directory row and its feed row land in the parent write, and with
+    // no mention to snapshot nothing is left in the outbox.
     await workspace().receiveChildEffects({
       substreamId: "0",
       envelopes: [
@@ -401,7 +408,8 @@ describe("a Space's hosted parent", () => {
       ],
     });
     await runInDurableObject(workspace(), (_instance, state) => {
-      expect(outboxKinds(state, CHANNEL_ID)).toEqual(["activity_event"]);
+      expect(outboxKinds(state, CHANNEL_ID)).toEqual([]);
+      expect(activityKeys(state)).toEqual([{ audience_workstream_id: CHANNEL_ID, dedupe_key: "space-activity-1" }]);
       expect(state.storage.sql.exec("SELECT workstream_id FROM channels").toArray())
         .toEqual([{ workstream_id: CHANNEL_ID }]);
     });
