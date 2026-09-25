@@ -144,6 +144,18 @@ overview. A Channel with no visible Space placement
 stays reachable in a local **Shared channels** group. Workspace identity uses the
 existing account/badge treatment; no workspace icon/color settings are introduced.
 The browser does not install desktop background subscriptions. See [shared UI](shared-ui.md).
+
+A rail that would list exactly one row is left out, since it offers no choice.
+One Space (the **Shared channels** group counts as one) hides the Spaces rail;
+one Channel hides the Channels rail. The account menu lives in the Spaces rail
+footer, moves to the Channels rail footer when the Spaces rail is gone, and to
+the Breakout rail footer (`WorkstreamSidebar`'s `footerLeading`) when both are.
+With neither outer rail, a route with no Channel opens the one Channel in place
+of the empty chooser. Both rails stay while the directory is loading, has
+failed, or is empty, because they carry those states. `sidebar-layout.ts`
+gives a hidden rail zero width, and the shell's width variables are written
+from the shell element rather than found from a rail, so a hidden rail still
+overrides the theme's default width.
 It holds one workspace socket per tab, through `watchWorkspaceReach`, and reads
 the shared navigation again when that socket reports this person's reach
 changed ([`realtime-sockets.md`](realtime-sockets.md)).
@@ -396,6 +408,25 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-09-25 — Rails with one row are hidden
+
+**What changed:** The Spaces rail is hidden when the directory holds one Space,
+and the Channels rail when it holds one Channel. The account menu moves to the
+next rail inward, and with neither outer rail the lone Channel opens directly.
+
+**Why:** Most browser visitors are guests shared into one Channel. For them the
+two outer rails each held a single row and took width from the conversation for no choice.
+
+**Considered and rejected:** Hiding the rails while the directory loads. It
+avoids a shift for guests, but moves the loading and error text nowhere and
+makes multi-Space members watch rails slide in; the existing width transition
+already softens the shift the other way.
+
+**Consequences:** The account menu depends on some rail being present. A lone
+Channel that is archived shows the archived notice with no rail, so no account
+menu, until the channel is restored or a second share arrives. The Breakout rail
+gained an optional `footerLeading` slot for this, which desktop does not use.
 
 ### 2026-09-24 — The sidebar follows grants without focus
 
