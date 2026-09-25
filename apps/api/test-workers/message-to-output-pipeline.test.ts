@@ -2751,9 +2751,6 @@ describe("a member's message travels the whole pipeline", () => {
       const main = agentStub();
       const opened = await initializeWorkstream(main,"first message");
       await settledRun(main,opened.body.harnessRunId as string);
-      await env.DB.batch([
-        env.DB.prepare("ALTER TABLE workspace_members ADD COLUMN revision INTEGER DEFAULT 1"),
-      ]);
       const substreamId = asSubstreamId(crypto.randomUUID());
       const child = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global",WORKSPACE_ID,WORKSTREAM_ID,substreamId));
       expect((await child.bootstrapRuntime({ workspaceId:WORKSPACE_ID,parentKind:"workstream",parentId:WORKSTREAM_ID,
@@ -3585,9 +3582,6 @@ describe("a member's message travels the whole pipeline", () => {
       const main = agentStub();
       const opened = await initializeWorkstream(main, "first message");
       await settledRun(main, opened.body.harnessRunId as string);
-      await env.DB.batch([
-        env.DB.prepare("ALTER TABLE workspace_members ADD COLUMN revision INTEGER DEFAULT 1"),
-      ]);
       const substreamId = asSubstreamId(crypto.randomUUID());
       const child = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID, substreamId));
       expect((await child.bootstrapRuntime({ workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID,
@@ -3622,9 +3616,6 @@ describe("a member's message travels the whole pipeline", () => {
       const stub = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID));
       const opened = await initializeWorkstream(stub, "first message");
       await settledRun(stub, opened.body.harnessRunId as string);
-      await env.DB.batch([
-        env.DB.prepare("ALTER TABLE workspace_members ADD COLUMN revision INTEGER DEFAULT 1"),
-      ]);
       const parent = hostedParentStub(env, WORKSPACE_ID);
       await parent.authority({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID });
       await runInDurableObject(parent, (_instance, state) => {
@@ -3773,9 +3764,6 @@ describe("a member's message travels the whole pipeline", () => {
       const stub = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID));
       const opened = await initializeWorkstream(stub, "first message", null, [OTHER_USER_ID]);
       await settledRun(stub, opened.body.harnessRunId as string);
-      await env.DB.batch([
-        env.DB.prepare("ALTER TABLE workspace_members ADD COLUMN revision INTEGER DEFAULT 1"),
-      ]);
       const parent = hostedParentStub(env, WORKSPACE_ID);
       await parent.authority({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID });
       const target = { kind: "workstream" as const, workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID };

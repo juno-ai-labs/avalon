@@ -33,6 +33,7 @@ import { WorkstreamObjectClient } from "../src/services/workstream-object-client
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
+import { changeRelationships } from "./helpers/workspace-relationship-events";
 import { hostedParentStub } from "./helpers/hosted-parent";
 
 useSelectedModel();
@@ -189,7 +190,9 @@ describe("creating a work stream", () => {
       expect(await parent.mutateScopeGrant({ operationId: crypto.randomUUID(), target, userId: recipient,
         actorUserId: USER_ID, active: false, expectedRevision: revision })).toMatchObject({ status: "committed" });
     } else {
-      await env.DB.prepare("UPDATE workspace_members SET access_class='member',revision=2 WHERE user_id=?").bind(recipient).run();
+      // A promotion, and the relationship event the product sends for it.
+      await changeRelationships(env, WORKSPACE_ID, [recipient],
+        env.DB.prepare("UPDATE workspace_members SET access_class='member',revision=2 WHERE user_id=?").bind(recipient));
     }
     await admit(input.eventId);
     expect(await parent.readScopeAccess({ userId: recipient, target })).toMatchObject({ allowed: false });

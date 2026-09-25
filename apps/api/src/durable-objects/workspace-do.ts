@@ -4674,6 +4674,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ? (() => {
         const applied = this.applyDirectoryBatch({ workspaceId, envelopes: directory }, { deferUnknownMembers: true });
         outbox.push(...applied.deferred);
+        const taken = new Set(applied.accepted.map((entry) => entry.messageId));
+        this.releaseDeferredViewerRows(new Set(directory.flatMap((envelope) => (
+          envelope.effect.kind === "directory_common" && taken.has(envelope.messageId) ? [envelope.parentId] : []
+        ))));
         return applied.followUp;
       })()
       : WorkspaceDO.emptyDirectoryFollowUp(workspaceId);
@@ -4909,7 +4913,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const deliver = async (batch: ParentEffectEnvelope[], send: () => Promise<readonly ParentEffectEnvelope[]>) => {
       if (batch.length === 0) return;
       try {
-        this.deleteParentOutboxRows(await send());
+        const delivered = await send();
+        this.deleteParentOutboxRows(delivered);
+        // A row the destination did not take (a viewer row whose Channel row is
+        // not here yet) waits out the retry delay rather than being due again
+        // at once, which would drain it on every pass.
+        const taken = new Set(delivered.map((envelope) => envelope.messageId));
+        const refused = batch.filter((envelope) => !taken.has(envelope.messageId));
+        if (refused.length > 0) {
+          this.deferParentOutboxRows(refused);
+          logWarn(this.env, "parent_effect_delivery_deferred", {
+            workspace_id: workspaceId,
+            message_ids: refused.map((envelope) => envelope.messageId),
+            effect_kinds: refused.map((envelope) => envelope.effect.kind),
+            code: "parent_effect_not_accepted",
+          });
+        }
       } catch (error) {
         this.deferParentOutboxRows(batch);
         logWarn(this.env, "parent_effect_delivery_deferred", {
@@ -10128,9 +10147,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       removed: z.boolean(),
       relationship: WorkspaceRelationshipSchema,
     }).parse(input);
-    this.assertWorkspace(request.workspaceId);
+    // An object that has not learned its own identity yet still records the
+    // relationship; refusing would block the revocation that follows it.
+    if (this.workspaceId()) this.assertWorkspace(request.workspaceId);
     const userId = request.relationship.userId;
     const active = !request.removed && request.relationship.status === "active";
+    let followUpId: number | null = null;
     const applied = this.state.storage.transactionSync(() => {
       const current = this.state.storage.sql.exec<{ sequence: number }>(
         `SELECT sequence FROM workspace_member_status WHERE user_id = ?`, userId,
@@ -10145,12 +10167,33 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         request.sequence, Date.now(),
       );
       if (!active) {
-        this.state.storage.sql.exec(`DELETE FROM channel_viewers WHERE user_id = ?`, userId);
-        this.state.storage.sql.exec(`DELETE FROM breakout_viewers WHERE user_id = ?`, userId);
-        this.state.storage.sql.exec(`DELETE FROM space_viewers WHERE user_id = ?`, userId);
+        // Leaving a Channel's participants changes its facepile for everyone,
+        // leaving any row changes this person's reach, and leaving a Space's
+        // viewers changes that Space's snapshot: the same sends a directory
+        // batch that dropped these rows would owe.
+        const channels = this.state.storage.sql.exec<{ workstream_id: string; is_participant: number }>(
+          `DELETE FROM channel_viewers WHERE user_id = ? RETURNING workstream_id, is_participant`, userId,
+        ).toArray();
+        const breakouts = this.state.storage.sql.exec<{ workstream_id: string }>(
+          `DELETE FROM breakout_viewers WHERE user_id = ? RETURNING workstream_id`, userId,
+        ).toArray();
+        const spaces = this.state.storage.sql.exec(
+          `DELETE FROM space_viewers WHERE user_id = ? RETURNING space_id`, userId,
+        ).toArray();
+        if (channels.length + breakouts.length + spaces.length > 0) {
+          const followUp = WorkspaceDO.emptyDirectoryFollowUp(request.workspaceId);
+          followUp.reachChangedUsers = [userId];
+          followUp.commonChanges = [...new Set(channels.flatMap((row) => (row.is_participant === 1 ? [row.workstream_id] : [])))];
+          followUp.breakoutChanges = [...new Set(breakouts.map((row) => row.workstream_id))];
+          followUp.publishSnapshotAll = spaces.length > 0
+            || this.spaceStorage().noteMemberDirectoryChange(channels.map((row) => row.workstream_id));
+          followUp.directoryChanged = true;
+          followUpId = this.recordDirectoryFollowUp(followUp);
+        }
       }
       return true;
     });
+    if (followUpId !== null) await this.runDirectoryFollowUps([followUpId]);
     return { applied };
   }
 

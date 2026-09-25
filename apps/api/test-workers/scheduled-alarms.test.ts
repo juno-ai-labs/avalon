@@ -268,8 +268,13 @@ describe("the shared Durable Object alarm list", () => {
   it("finishes phase instrumentation when authority defers alarm work", async () => {
     await seedAuthority("maintenance_draining");
     const stub = await initializedWorkspace();
+    // Setting the workspace up arms a real alarm. Left in place it can fire
+    // while the patched hooks below are installed and count as a second
+    // finish, so it runs now and is then removed.
+    await runDurableObjectAlarm(stub);
 
     await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
+      await state.storage.deleteAlarm();
       const phases: string[] = [];
       let finished = 0;
       const instrumentPhase = async <T>(
