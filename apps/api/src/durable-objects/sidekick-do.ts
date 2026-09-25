@@ -216,6 +216,8 @@ interface AutomationRow extends Record<string, SqlStorageValue> {
   loadable: number;
   /** The chosen icon and colour as `WorkstreamAppearance` JSON; null until picked. */
   appearance_json: string | null;
+  /** The icon and colour the setup chat last submitted; null until it first does. */
+  chat_appearance_json: string | null;
   authority_generation: number;
   created_at: number;
   updated_at: number;
@@ -397,6 +399,16 @@ export const AUTOMATION_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
   "DROP TABLE \"_region_copy_automation\"",
   "PRAGMA defer_foreign_keys = OFF"
 ]
+}, {
+  version: 9,
+  description: "the appearance the setup chat last submitted",
+  statements: [
+    // What the chat last asked for, kept apart from what the Sidekick wears so
+    // a repeat of that request is not mistaken for a new one. Null until the
+    // chat first submits; see `submitDefinition`.
+    `ALTER TABLE automation ADD COLUMN chat_appearance_json TEXT
+       CHECK (chat_appearance_json IS NULL OR json_valid(chat_appearance_json))`,
+  ],
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -595,19 +607,28 @@ export class SidekickDO extends ConversationParentDurableObject {
       const scope = latest.lifecycle === "draft" && latest.scope !== "workstream" && request.draft.suggestedScope !== "workstream"
         ? request.draft.suggestedScope
         : latest.scope;
-      // The appearance is written the way the title is, on every submission
-      // that carries one: the chat was told the current one and to keep it
-      // unless asked, so a submission's value is a choice, not a default.
+      // A submitted appearance is a new choice only when it differs from the
+      // last one the chat knew of: its own previous submission, or what the
+      // Sidekick wore when it first submitted. A repeat of that is the chat
+      // copying its own earlier call, and writing it would undo whatever a
+      // person picked since. Nothing stored means nobody has chosen.
+      const submittedAppearance = request.appearance ? JSON.stringify(request.appearance) : null;
+      const knownAppearance = latest.chat_appearance_json ?? latest.appearance_json;
+      const appearance = submittedAppearance !== null
+        && (latest.appearance_json === null || submittedAppearance !== knownAppearance)
+        ? submittedAppearance
+        : latest.appearance_json;
       this.state.storage.sql.exec(
         `UPDATE automation
             SET current_definition_revision = ?, title = ?, description = ?, scope = ?,
-                appearance_json = COALESCE(?, appearance_json), updated_at = ?
+                appearance_json = ?, chat_appearance_json = COALESCE(?, chat_appearance_json), updated_at = ?
           WHERE id = 1`,
         definitionRevision,
         request.draft.name,
         request.draft.description,
         scope,
-        request.appearance ? JSON.stringify(request.appearance) : null,
+        appearance,
+        submittedAppearance,
         now,
       );
       this.enqueueDirectory(now);
