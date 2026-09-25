@@ -12,7 +12,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
 import { asUserId, asWorkspaceId } from "@rally/contracts";
@@ -124,6 +124,13 @@ async function silentSocketDeadline(): Promise<{ deadline: number; alarm: number
   });
 }
 
+/** The connection IDs the object still remembers as unheard. */
+async function unheardIds(): Promise<string[]> {
+  return runInDurableObject(workspace(), (_instance: WorkspaceDO, state) =>
+    state.storage.sql.exec<{ connection_id: string }>(`SELECT connection_id FROM workspace_socket_unheard`)
+      .toArray().map((row) => row.connection_id));
+}
+
 async function currentInstance(): Promise<WorkspaceDO> {
   return runInDurableObject(workspace(), (instance: WorkspaceDO) => instance);
 }
@@ -169,6 +176,69 @@ describe("WorkspaceDO first-frame watch", () => {
     }));
   });
 
+  // The 2026-09-24 gap: the desktop abandons a silent socket after 65 s, the
+  // runtime drops it from `getWebSockets()` without running a close callback,
+  // and a watch that read only open sockets never saw it reach its deadline.
+  it("resets when the unheard socket's client has already given up on it", async () => {
+    const socket = await openSilentSocket();
+    socket.close(1000, "gave up");
+    await vi.waitFor(async () => {
+      expect(await runInDurableObject(workspace(), (_instance: WorkspaceDO, state) => state.getWebSockets().length)).toBe(0);
+    });
+    const before = await currentInstance();
+    await setDeadline(0);
+    // The close callback runs on a healthy object; a stuck one runs none.
+    await runInDurableObject(workspace(), (instance: WorkspaceDO) => {
+      watch(instance).lastSocketEventAt = null;
+    });
+
+    await runDurableObjectAlarm(workspace()).catch(() => undefined);
+
+    expect(await currentInstance()).not.toBe(before);
+    expect(errors).toHaveBeenCalledWith(expect.objectContaining({
+      event: "workspace_socket_first_frame_missed",
+      missed_sockets: 1,
+      missed_closed_sockets: 1,
+      open_sockets: 0,
+    }));
+  });
+
+  it("does not reset the fresh instance over the sockets the reset dropped", async () => {
+    await openSilentSocket();
+    await setDeadline(0);
+    await runDurableObjectAlarm(workspace()).catch(() => undefined);
+    expect(resetLogged()).toBe(true);
+    errors.mockClear();
+    const fresh = await currentInstance();
+    await setDeadline(0);
+
+    await runDurableObjectAlarm(workspace());
+
+    expect(await currentInstance()).toBe(fresh);
+    expect(resetLogged()).toBe(false);
+    expect(await unheardIds()).toEqual([]);
+  });
+
+  // A healthy object ran the close callback, then was evicted before the
+  // deadline: the fresh instance never heard it, and must not read the row as
+  // a socket it failed to hear.
+  it("does not reset after an eviction over a socket an earlier instance heard close", async () => {
+    const socket = await openSilentSocket();
+    socket.close(1000, "gave up");
+    await vi.waitFor(async () => {
+      expect(await runInDurableObject(workspace(), (_instance: WorkspaceDO, state) => state.getWebSockets().length)).toBe(0);
+    });
+    await evictDurableObject(workspace());
+    const fresh = await currentInstance();
+    await setDeadline(0);
+
+    await runDurableObjectAlarm(workspace());
+
+    expect(await currentInstance()).toBe(fresh);
+    expect(resetLogged()).toBe(false);
+    expect(await unheardIds()).toEqual([]);
+  });
+
   it("still resets while the region is closed for maintenance", async () => {
     const socket = await openSilentSocket();
     const socketClosed = closed(socket);
@@ -200,6 +270,8 @@ describe("WorkspaceDO first-frame watch", () => {
 
     expect(await currentInstance()).toBe(before);
     expect(resetLogged()).toBe(false);
+    // Judged, so its deadline, now past, no longer holds the alarm at `now + 1`.
+    expect(await unheardIds()).toEqual([]);
     idle.close(1000, "done");
     silent.close(1000, "done");
   });
@@ -247,6 +319,19 @@ describe("WorkspaceDO first-frame watch", () => {
     expect(await currentInstance()).toBe(before);
     expect(resetLogged()).toBe(false);
     silent.close(1000, "done");
+  });
+
+  // A row left behind for a socket that spoke would outlive it: once it
+  // closes, a hibernation wake forgets the callback, and the row alone would
+  // read as a socket the object never heard.
+  it("forgets a socket once it has spoken", async () => {
+    const socket = await openSilentSocket();
+    expect(await unheardIds()).toHaveLength(1);
+
+    await subscribe(socket);
+
+    expect(await unheardIds()).toEqual([]);
+    socket.close(1000, "done");
   });
 
   it("pulls the alarm in to a new socket's deadline", async () => {
