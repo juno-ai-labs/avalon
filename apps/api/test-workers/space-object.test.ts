@@ -40,6 +40,7 @@ import { RALLY_HEADERS } from "@rally/contracts/http-headers";
 import { latestMigrationVersion } from "../src/durable-objects/migration-reporting";
 import { conversationObjectName, spaceDOName } from "../src/durable-objects/names";
 import type { ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
+import type { Env } from "../src/env";
 import { SpaceDO } from "../src/durable-objects/space-do";
 import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-do-schema";
@@ -122,6 +123,25 @@ function seedIdentity(
     parentId,
     ACTOR_ID,
   );
+}
+
+/**
+ * Refuse every send to the activity Queue from the Organization object.
+ *
+ * An activity row leaves the parent outbox when the alarm sends it, which in
+ * this pool can be at any moment. Refused, it stays in the outbox, deferred,
+ * so what the parent forwarded can be read off the outbox without racing the
+ * alarm. Directory rows never use the Queue, so they are unaffected.
+ */
+async function parkActivityQueue(): Promise<void> {
+  await runInDurableObject(workspace(), (instance) => {
+    const target = instance as unknown as { env: Env };
+    const refused = () => Promise.reject(new Error("activity_queue_parked_by_test"));
+    target.env = new Proxy(target.env, {
+      get: (current, property, receiver) => property === "ACTIVITY_QUEUE"
+        ? { send: refused, sendBatch: refused } : Reflect.get(current, property, receiver),
+    });
+  });
 }
 
 /** Both parents, seeded into the one Organization object that hosts them. */
@@ -343,6 +363,7 @@ describe("a Space's hosted parent", () => {
 
   it("applies its directory effects to the Space directory and drops everything else", async () => {
     await seedParents();
+    await parkActivityQueue();
 
     await workspace().receiveChildEffects({
       substreamId: "0",
