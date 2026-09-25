@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 
 import { RailResizeHandle } from './rail-resize-handle';
 
@@ -57,6 +57,8 @@ interface RailSurfaceProps {
   width: number;
   onResize: (width: number) => void;
   onClose: () => void;
+  /** Lets the panel reach the surface, which holds focus when the rail opens. */
+  surfaceRef?: RefObject<HTMLElement | null>;
   /** True while this panel is fading out over the one that replaced it. */
   leaving?: boolean;
   dropTarget?: {
@@ -83,9 +85,11 @@ export function RailSurface({
   onClose,
   leaving = false,
   dropTarget,
+  surfaceRef: hostRef,
   children,
 }: RailSurfaceProps): React.JSX.Element {
-  const surfaceRef = useRef<HTMLElement>(null);
+  const ownRef = useRef<HTMLElement>(null);
+  const surfaceRef = hostRef ?? ownRef;
   const previousFocus = useRef<HTMLElement | null>(null);
   // A panel only ever becomes the leaving one after it has held the slot, so
   // this is what it was when it arrived, and the focus below is its arrival.
