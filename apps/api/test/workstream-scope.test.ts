@@ -162,13 +162,14 @@ function environment(database: DatabaseSync): {
         },
       },
     }),
-    WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
-      extra: { ...parentCreationRpcs(), ...room },
-    }),
+    // The Organization object hosts the Channel's room, so the parent's
+    // creation RPCs answer on the same stub as the Space's.
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
       extra: {
         opportunityOriginEvents: vi.fn(async () => []),
         ...spaceCreationWorkspaceRpcs(),
+        ...parentCreationRpcs(),
+        ...room,
       },
     }),
   });

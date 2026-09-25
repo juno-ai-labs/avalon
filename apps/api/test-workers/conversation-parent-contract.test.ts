@@ -3,7 +3,6 @@ import { pushSearchAuthorization } from '../src/services/search-authorization';
 import { WorkstreamDirectoryService } from '../src/services/workstream-directory-service';
 import { createResourceObjectPort } from '../src/runtime/resource-port';
 import { ResourceService } from '../src/services/resource-service';
-import type { WorkstreamDO } from '../src/durable-objects/workstream-do';
 import { WorkstreamIdentityStorage } from '../src/durable-objects/workstream-identity-storage';
 import { WorkspaceDO } from '../src/durable-objects/workspace-do';
 import { SubstreamAgent } from '../src/durable-objects/substream-agent';
@@ -16,8 +15,8 @@ import { searchDocumentId } from '../src/services/text-search';
  * The conversation-parent contract, answered by both parents.
  *
  * A `SubstreamAgent` does not decide who may read it or whether it may still
- * be written; its parent does. `WorkstreamDO` answers from the room's scope
- * and participants, `AutomationDO` from the automation's author and scope and,
+ * be written; its parent does. A room's parent, hosted in the Organization's
+ * `WorkspaceDO`, answers from the room's scope and participants, `AutomationDO` from the automation's author and scope and,
  * for a room's automation, from the room's participants through WorkspaceDO.
  * Both report an archive rather than folding it into the answer: an archived
  * parent's conversations stay readable and refuse every write, so a child
@@ -32,7 +31,7 @@ import { searchDocumentId } from '../src/services/text-search';
 
 import { env } from "cloudflare:workers";
 import { holdLoopExecuting } from "./helpers/substream-fixture";
-import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
+import { reset, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type UserId } from "@rally/contracts";
@@ -43,7 +42,6 @@ import {
   conversationObjectName,
   substreamLoopId,
   workspaceDOName,
-  workstreamDOName,
 } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
@@ -62,6 +60,7 @@ import {
 } from "../src/services/workstream-runtime-database";
 import { consumeEffectBodies, pendingChildEffects, deliverChildEffects, deliverEffectsToWorkspace, deliverParentEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
+import { hostedParentStub } from "./helpers/hosted-parent";
 import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 /** Its own workspace: object names are shared across files, storage is not. */
@@ -107,10 +106,27 @@ function workspaceStub() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
 }
 
-function roomParent(roomId: string) {
-  return env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-    workstreamDOName("global", WORKSPACE_ID, asWorkstreamId(roomId)),
-  ));
+/** The Organization object, which answers the parent contract for every room by parent id. */
+function roomParent() {
+  return hostedParentStub(env, WORKSPACE_ID);
+}
+
+/** The newest waterline a hosted parent recorded for one of its state keys. */
+function latestStateWaterline(parentId: string, stateKey: string): Promise<number> {
+  return runInDurableObject(roomParent(), (_instance, state) =>
+    state.storage.sql.exec<{ waterline: number }>(
+      `SELECT waterline FROM parent_state_changes WHERE parent_id = ? AND state_key = ?
+        ORDER BY waterline DESC LIMIT 1`,
+      parentId, stateKey,
+    ).one().waterline);
+}
+
+/** A hosted parent's own title, which its children's renames must not touch. */
+function parentTitle(parentId: string): Promise<string> {
+  return runInDurableObject(roomParent(), (_instance, state) =>
+    state.storage.sql.exec<{ title: string }>(
+      `SELECT title FROM parent_metadata WHERE parent_id = ?`, parentId,
+    ).one().title);
 }
 
 function conversation(parentId: string, substreamId = "0") {
@@ -163,7 +179,7 @@ async function seedRegionalDatabase(): Promise<void> {
  * workspace so every participant is in the workspace's viewer set.
  */
 async function seedRoom(roomId: string, scope: "personal" | "workspace", participants: readonly string[]): Promise<void> {
-  await roomParent(roomId).reserveChild({
+  await roomParent().reserveChild({
     workspaceId: WORKSPACE_ID,
     parentId: roomId,
     substreamId: asSubstreamId("0"),
@@ -227,12 +243,12 @@ async function seedAutomation(scope: "personal" | "workspace" | "workstream", ow
 
 /** Delay/observe delivery on the caller side; every fact still comes from the real DO. */
 function observeParentReads(observe: () => Promise<void>): Env {
-  return { ...TEST_ENV, WORKSTREAM_DOS: new Proxy(TEST_ENV.WORKSTREAM_DOS, {
+  return { ...TEST_ENV, WORKSPACE_DOS: new Proxy(TEST_ENV.WORKSPACE_DOS, {
     get(namespace, key) {
       if (key === 'get') return (...args: Parameters<typeof namespace.get>) => {
         const stub = namespace.get(...args);
         return new Proxy(stub, { get(target, method) {
-          if (method === 'readAuthorizationFacts') return async (input: Parameters<WorkstreamDO['readAuthorizationFacts']>[0]) => {
+          if (method === 'readAuthorizationFacts') return async (input: Parameters<WorkspaceDO['readAuthorizationFacts']>[0]) => {
             const facts = await target.readAuthorizationFacts(input);
             await observe();
             return facts;
@@ -255,7 +271,7 @@ function observeParentReads(observe: () => Promise<void>): Env {
  * not about how it got ready.
  */
 async function seedPrivateChild(roomId: string, title: string, operationId: string): Promise<string> {
-  const parent = roomParent(roomId);
+  const parent = roomParent();
   const recipe = {
     policy: { revision: "test-empty-v1", strategy: { id: "empty", version: 1 }, config: {} },
     capture: "none" as const,
@@ -330,12 +346,6 @@ beforeEach(async () => {
 describe("conversation parent contract", () => {
   it('persists workspace Sidekick recommendations idempotently and rejects other scopes', async () => {
     await seedRoom(WORKSPACE_ROOM_ID, 'workspace', [AUTHOR_ID]);
-    // Upgrade a populated v12 parent, retaining its roster and identity.
-    await runInDurableObject(roomParent(WORKSPACE_ROOM_ID), (_instance, state) => {
-      state.storage.sql.exec('DROP TABLE workstream_sidekick_attachments');
-      state.storage.sql.exec('DELETE FROM _sql_schema_migrations WHERE version = 13');
-    });
-    await evictDurableObject(roomParent(WORKSPACE_ROOM_ID));
     const shared = await seedAutomation('workspace', null);
     const personal = await seedAutomation('personal', null);
     const service = new WorkstreamService(TEST_ENV, AUTH);
@@ -356,7 +366,7 @@ describe("conversation parent contract", () => {
     const viewer = new WorkstreamService(TEST_ENV, { ...AUTH, userId: MEMBER_ID });
     await expect(viewer.setSidekickRecommendation(WORKSPACE_ROOM_ID, shared, false)).rejects.toMatchObject({ status: 403, code: 'sidekick_attachment_forbidden' });
     expect((await service.recommendedSidekicks(WORKSPACE_ROOM_ID)).items.map((item) => item.id)).toEqual([shared]);
-    await runInDurableObject(roomParent(WORKSPACE_ROOM_ID), async (instance) => {
+    await runInDurableObject(roomParent(), async (instance) => {
       await expect(instance.setSidekickRecommendation({ workspaceId: WORKSPACE_ID, parentId: WORKSPACE_ROOM_ID,
         userId: MEMBER_ID, sidekickId: shared, attached: true })).rejects.toThrow('sidekick_attachment_participant_required');
     });
@@ -381,7 +391,7 @@ describe("conversation parent contract", () => {
       state.storage.sql.exec("UPDATE participants SET status = 'removed', removed_at = ? WHERE user_id = ?", Date.now(), MEMBER_ID);
     });
     // The parent still has the previous projection. Fresh authorization must use the child roster.
-    expect(await roomParent(PERSONAL_ROOM_ID).authorizeViewer(viewer(PERSONAL_ROOM_ID, MEMBER_ID)))
+    expect(await roomParent().authorizeViewer(viewer(PERSONAL_ROOM_ID, MEMBER_ID)))
       .toMatchObject({ authorized: true });
     const access = createAccessContext(TEST_ENV, { ...AUTH, userId: MEMBER_ID });
     const address = { kind: 'conversation' as const, workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, substreamId: asSubstreamId('0') };
@@ -395,12 +405,12 @@ describe("conversation parent contract", () => {
     await seedRoom(WORKSPACE_ROOM_ID, "workspace", [AUTHOR_ID]);
     await runInDurableObject(workspaceStub(), (_instance, state) => {
       const row = state.storage.sql.exec<Record<string, string | number | null>>(
-        "SELECT * FROM workspace_workstream_directory WHERE workstream_id = ?", WORKSPACE_ROOM_ID).one();
+        "SELECT * FROM channels WHERE workstream_id = ?", WORKSPACE_ROOM_ID).one();
       const columns = Object.keys(row);
       for (let i = 0; i < 100; i++) {
         const copy: Record<string, string | number | null> = { ...row, workstream_id: `00000000-0000-7000-8000-${String(i + 1000).padStart(12, '0')}`,
           source_event_id: `search-scope-${i}` };
-        state.storage.sql.exec(`INSERT INTO workspace_workstream_directory (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`,
+        state.storage.sql.exec(`INSERT INTO channels (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`,
           ...columns.map((column) => copy[column]!));
       }
     });
@@ -678,7 +688,7 @@ describe("conversation parent contract", () => {
 
   it("publishes only ready private children to their exact roster and revokes them durably", async () => {
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
-    const parent = roomParent(PERSONAL_ROOM_ID);
+    const parent = roomParent();
     const recipe = {
       policy: { revision: "test-empty-v1", strategy: { id: "empty", version: 1 }, config: {} },
       capture: "none" as const,
@@ -736,11 +746,7 @@ describe("conversation parent contract", () => {
       }
     });
     expect(cancellationError).toContain("private_child_confirmation_in_progress");
-    const viewerWaterlineBeforeReady = await runInDurableObject(parent, (_instance, state) =>
-      state.storage.sql.exec<{ waterline: number }>(
-        `SELECT waterline FROM workstream_state_changes WHERE state_key = ? ORDER BY waterline DESC LIMIT 1`,
-        `user:${AUTHOR_ID}`,
-      ).one().waterline);
+    const viewerWaterlineBeforeReady = await latestStateWaterline(PERSONAL_ROOM_ID, `user:${AUTHOR_ID}`);
     await bootstrapConversationChildRuntime(
       TEST_ENV, WORKSPACE_ID, "workstream", PERSONAL_ROOM_ID, reserved.substreamId,
     );
@@ -883,21 +889,11 @@ describe("conversation parent contract", () => {
     ]);
     expect(mixed.map((decision) => decision.status)).toEqual(['allowed', 'allowed']);
 
-    const viewerWaterlineAfterReady = await runInDurableObject(parent, (_instance, state) =>
-      state.storage.sql.exec<{ waterline: number }>(
-        `SELECT waterline FROM workstream_state_changes WHERE state_key = ? ORDER BY waterline DESC LIMIT 1`,
-        `user:${AUTHOR_ID}`,
-      ).one().waterline);
+    const viewerWaterlineAfterReady = await latestStateWaterline(PERSONAL_ROOM_ID, `user:${AUTHOR_ID}`);
     expect(viewerWaterlineAfterReady).toBe(viewerWaterlineBeforeReady);
-    expect(await runInDurableObject(parent, (_instance, state) =>
-      state.storage.sql.exec<{ waterline: number }>(
-        `SELECT waterline FROM workstream_state_changes WHERE state_key = ? ORDER BY waterline DESC LIMIT 1`,
-        `children:${AUTHOR_ID}`,
-      ).one().waterline)).toBeGreaterThan(0);
+    expect(await latestStateWaterline(PERSONAL_ROOM_ID, `children:${AUTHOR_ID}`)).toBeGreaterThan(0);
     await deliverChildEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID, reserved.substreamId));
-    const parentTitle = await runInDurableObject(parent, (_instance, state) =>
-      state.storage.sql.exec<{ title: string }>(`SELECT title FROM workstream_metadata WHERE id = 1`).one().title);
-    expect(parentTitle).toBe("Private room");
+    expect(await parentTitle(PERSONAL_ROOM_ID)).toBe("Private room");
 
     expect(await parent.authorizeViewer({
       ...viewer(PERSONAL_ROOM_ID, AUTHOR_ID), substreamId: reserved.substreamId,
@@ -981,7 +977,7 @@ describe("conversation parent contract", () => {
 
   it("archives a substream out of every member's sidebar, refuses its writes, and restores it whole", async () => {
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID, MEMBER_ID]);
-    const parent = roomParent(PERSONAL_ROOM_ID);
+    const parent = roomParent();
     const substreamId = await seedPrivateChild(PERSONAL_ROOM_ID, "Private branch", "archive-child");
     await parent.addPrivateChildParticipant({
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, substreamId: asSubstreamId(substreamId),
@@ -1070,7 +1066,7 @@ describe("conversation parent contract", () => {
     const socket = response.webSocket!;
     socket.accept();
     try {
-      await roomParent(PERSONAL_ROOM_ID).setPrivateChildArchived({ workspaceId: WORKSPACE_ID,
+      await roomParent().setPrivateChildArchived({ workspaceId: WORKSPACE_ID,
         parentId: PERSONAL_ROOM_ID, substreamId: asSubstreamId(substreamId), actorUserId: AUTHOR_ID, archived: true });
       const failed = nextFrameOfType(socket, "client_command_failed");
       socket.send(JSON.stringify({ type: "create_message", operationId: "00000000-0000-7000-8000-00000000ad3f",
@@ -1087,7 +1083,7 @@ describe("conversation parent contract", () => {
     // listed it by the conversation directory, and gains neither Main nor a
     // sibling breakout.
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
-    const parent = roomParent(PERSONAL_ROOM_ID);
+    const parent = roomParent();
     const substreamId = await seedPrivateChild(PERSONAL_ROOM_ID, "Private branch", "outsider-child");
     const siblingId = await seedPrivateChild(PERSONAL_ROOM_ID, "Sibling branch", "outsider-sibling");
     await expect(new SubstreamCreationService(TEST_ENV, AUTH).changeParticipant(
@@ -1113,7 +1109,10 @@ describe("conversation parent contract", () => {
     // Losing the work stream closes Main and what they cannot read, never the
     // breakout their own roster still admits; a membership that ended closes all.
     const revoked = (reason: "workstream_participant_removed" | "workspace_membership_removed") =>
-      parent.revokeSocketAccess({ reason, workspaceId: WORKSPACE_ID, userId: MEMBER_ID, sessionId: null });
+      parent.revokeParentSocketAccess({
+        parentId: PERSONAL_ROOM_ID,
+        revocation: { reason, workspaceId: WORKSPACE_ID, userId: MEMBER_ID, sessionId: null },
+      });
     expect((await revoked("workstream_participant_removed")).substreamIds).toEqual(
       expect.arrayContaining(["0", siblingId]));
     expect((await revoked("workstream_participant_removed")).substreamIds).not.toContain(substreamId);
@@ -1140,7 +1139,7 @@ describe("conversation parent contract", () => {
 
   it("renames a substream through the conversation that owns its title", async () => {
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
-    const parent = roomParent(PERSONAL_ROOM_ID);
+    const parent = roomParent();
     const substreamId = await seedPrivateChild(PERSONAL_ROOM_ID, "Private branch", "rename-child");
     const client = await new ConversationService(TEST_ENV, AUTH).writableClient(PERSONAL_ROOM_ID, substreamId);
     await client.update({ title: "Intermediate branch" });
@@ -1155,14 +1154,12 @@ describe("conversation parent contract", () => {
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, userId: AUTHOR_ID,
     })).children).toEqual([expect.objectContaining({ substreamId, title: "Renamed branch" })]);
     // And the parent's own title is untouched by its child's rename.
-    expect(await runInDurableObject(parent, (_instance, state) =>
-      state.storage.sql.exec<{ title: string }>(`SELECT title FROM workstream_metadata WHERE id = 1`).one().title,
-    )).toBe("Private room");
+    expect(await parentTitle(PERSONAL_ROOM_ID)).toBe("Private room");
   });
 
   it("projects a private child's stored appearance into its parent-owned row", async () => {
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
-    const parent = roomParent(PERSONAL_ROOM_ID);
+    const parent = roomParent();
     const substreamId = await seedPrivateChild(PERSONAL_ROOM_ID, "Private branch", "appearance-child");
     const response = await post(conversation(PERSONAL_ROOM_ID, substreamId), "/internal/product", {
       operation: "set_appearance",
@@ -1171,18 +1168,10 @@ describe("conversation parent contract", () => {
       patch: { icon: "rocket", color: "purple" },
     });
     expect(response.status).toBe(200);
-    const waterlineBeforeAppearance = await runInDurableObject(parent, (_instance, state) =>
-      state.storage.sql.exec<{ waterline: number }>(
-        `SELECT waterline FROM workstream_state_changes WHERE state_key = ? ORDER BY waterline DESC LIMIT 1`,
-        `children:${AUTHOR_ID}`,
-      ).one().waterline);
+    const waterlineBeforeAppearance = await latestStateWaterline(PERSONAL_ROOM_ID, `children:${AUTHOR_ID}`);
     await deliverChildEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID, substreamId));
 
-    expect(await runInDurableObject(parent, (_instance, state) =>
-      state.storage.sql.exec<{ waterline: number }>(
-        `SELECT waterline FROM workstream_state_changes WHERE state_key = ? ORDER BY waterline DESC LIMIT 1`,
-        `children:${AUTHOR_ID}`,
-      ).one().waterline)).toBeGreaterThan(waterlineBeforeAppearance);
+    expect(await latestStateWaterline(PERSONAL_ROOM_ID, `children:${AUTHOR_ID}`)).toBeGreaterThan(waterlineBeforeAppearance);
     expect((await parent.listVisiblePrivateChildren({
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, userId: AUTHOR_ID,
     })).children).toEqual([expect.objectContaining({
@@ -1192,13 +1181,13 @@ describe("conversation parent contract", () => {
     })]);
   });
 
-  it("WorkstreamDO admits the creator of a personal room before the child's first effect arrives", async () => {
+  it("the hosted Channel parent admits the creator of a personal room before the child's first effect arrives", async () => {
     // What creation looks like from the desktop's side: `POST /workstreams`
     // returns and the client opens the room at once. The parent has reserved
     // the main conversation and nothing else; the child's `directory_user`
     // effect, the only writer of the per-user projection, is still on the
     // Queue. The creator must be readable in that window, and nobody else.
-    await roomParent(PERSONAL_ROOM_ID).reserveChild({
+    await roomParent().reserveChild({
       workspaceId: WORKSPACE_ID,
       parentId: PERSONAL_ROOM_ID,
       substreamId: asSubstreamId("0"),
@@ -1216,9 +1205,9 @@ describe("conversation parent contract", () => {
       },
     });
 
-    expect(await roomParent(PERSONAL_ROOM_ID).authorizeViewer(viewer(PERSONAL_ROOM_ID, AUTHOR_ID)))
+    expect(await roomParent().authorizeViewer(viewer(PERSONAL_ROOM_ID, AUTHOR_ID)))
       .toEqual({ authorized: true, archived: false });
-    expect(await roomParent(PERSONAL_ROOM_ID).authorizeViewer(viewer(PERSONAL_ROOM_ID, PARTICIPANT_ID)))
+    expect(await roomParent().authorizeViewer(viewer(PERSONAL_ROOM_ID, PARTICIPANT_ID)))
       .toEqual({ authorized: false, archived: false });
 
     // Once the child reports its participants, its word replaces the
@@ -1242,35 +1231,35 @@ describe("conversation parent contract", () => {
     });
     await deliverEffectsToWorkspace(TEST_ENV, conversation(PERSONAL_ROOM_ID));
 
-    expect(await roomParent(PERSONAL_ROOM_ID).authorizeViewer(viewer(PERSONAL_ROOM_ID, PARTICIPANT_ID)))
+    expect(await roomParent().authorizeViewer(viewer(PERSONAL_ROOM_ID, PARTICIPANT_ID)))
       .toEqual({ authorized: true, archived: false });
-    expect(await roomParent(PERSONAL_ROOM_ID).authorizeViewer(viewer(PERSONAL_ROOM_ID, AUTHOR_ID)))
+    expect(await roomParent().authorizeViewer(viewer(PERSONAL_ROOM_ID, AUTHOR_ID)))
       .toEqual({ authorized: false, archived: false });
   });
 
-  it("WorkstreamDO admits a personal room's participants and every member of a workspace room", async () => {
+  it("the hosted Channel parent admits a personal room's participants and every member of a workspace room", async () => {
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
     await seedRoom(WORKSPACE_ROOM_ID, "workspace", [AUTHOR_ID]);
 
-    expect(await roomParent(PERSONAL_ROOM_ID).authorizeViewer(viewer(PERSONAL_ROOM_ID, AUTHOR_ID)))
+    expect(await roomParent().authorizeViewer(viewer(PERSONAL_ROOM_ID, AUTHOR_ID)))
       .toEqual({ authorized: true, archived: false });
-    expect(await roomParent(PERSONAL_ROOM_ID).authorizeViewer(viewer(PERSONAL_ROOM_ID, PARTICIPANT_ID)))
+    expect(await roomParent().authorizeViewer(viewer(PERSONAL_ROOM_ID, PARTICIPANT_ID)))
       .toEqual({ authorized: true, archived: false });
-    expect(await roomParent(PERSONAL_ROOM_ID).authorizeViewer(viewer(PERSONAL_ROOM_ID, MEMBER_ID)))
+    expect(await roomParent().authorizeViewer(viewer(PERSONAL_ROOM_ID, MEMBER_ID)))
       .toEqual({ authorized: false, archived: false });
-    expect(await roomParent(WORKSPACE_ROOM_ID).authorizeViewer(viewer(WORKSPACE_ROOM_ID, MEMBER_ID)))
+    expect(await roomParent().authorizeViewer(viewer(WORKSPACE_ROOM_ID, MEMBER_ID)))
       .toEqual({ authorized: true, archived: false });
-    expect(await roomParent(PERSONAL_ROOM_ID).authority({ workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID }))
+    expect(await roomParent().authority({ workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID }))
       .toEqual({ exists: true, authorityGeneration: 1, archived: false });
-    expect(await roomParent(PERSONAL_ROOM_ID).listChildren({ workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID }))
+    expect(await roomParent().listChildren({ workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID }))
       .toEqual({ children: [{ substreamId: "0", kind: "main", createdAt: expect.any(Number) }] });
 
     await archiveRoom(PERSONAL_ROOM_ID);
 
     // Reported, not folded in: an archived room is still its participants' to read.
-    expect(await roomParent(PERSONAL_ROOM_ID).authorizeViewer(viewer(PERSONAL_ROOM_ID, AUTHOR_ID)))
+    expect(await roomParent().authorizeViewer(viewer(PERSONAL_ROOM_ID, AUTHOR_ID)))
       .toEqual({ authorized: true, archived: true });
-    expect(await roomParent(PERSONAL_ROOM_ID).authority({ workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID }))
+    expect(await roomParent().authority({ workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID }))
       .toEqual({ exists: true, authorityGeneration: 1, archived: true });
   });
 

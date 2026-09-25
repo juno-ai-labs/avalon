@@ -97,7 +97,9 @@ function seededDatabase(options: { openAuthority?: boolean } = {}): DatabaseSync
   // Every test's database gets the WorkspaceDO tables traversed by the product
   // `get`: pin metadata is no wider than its active, readable Space placement.
   // The object ledger supplies their real shape. Harmless to the socket tests
-  // — nothing asserts on their absence.
+  // — nothing asserts on their absence. The directory tables are created
+  // under their ledger names and renamed the way WorkspaceDO migration 71
+  // renames them, since the ledger has no `CREATE TABLE` under the new name.
   for (const table of [
     "workspace_space_directory",
     "workspace_space_viewers",
@@ -106,6 +108,12 @@ function seededDatabase(options: { openAuthority?: boolean } = {}): DatabaseSync
     "workspace_workstream_viewers",
     "workspace_workstream_pins",
   ]) createWorkspaceObjectTable(database, table);
+  database.exec(`
+    ALTER TABLE workspace_workstream_directory RENAME TO channels;
+    ALTER TABLE workspace_workstream_viewers RENAME TO channel_viewers;
+    ALTER TABLE workspace_space_directory RENAME TO spaces;
+    ALTER TABLE workspace_space_viewers RENAME TO space_viewers;
+  `);
   if (options.openAuthority !== false) openWorkstreamAuthorityForTest(database, at);
   return database;
 }
@@ -577,7 +585,7 @@ describe("what authority the product API accepts", () => {
     const privateSpace = "00000000-0000-7000-8000-0000000000d3";
     const inactiveSpace = "00000000-0000-7000-8000-0000000000d4";
     database.prepare(
-      `INSERT INTO workspace_workstream_directory
+      `INSERT INTO channels
          (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
           title, description, preview, scope, exact_state, system_kind, last_activity_at,
           completed_at, archived_at, email_address, origin_type, origin_label,
@@ -597,7 +605,7 @@ describe("what authority the product API accepts", () => {
       [inactiveSpace, "workspace", null, "removed"],
     ] as const) {
       database.prepare(
-        `INSERT INTO workspace_space_directory
+        `INSERT INTO spaces
            (space_id, title, scope, appearance_json, archived_at, created_by_user_id,
             system_role, authority_generation, source_version, payload_hash, revision,
             created_at, updated_at, source_created_at, source_updated_at)
