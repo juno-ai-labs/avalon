@@ -1693,9 +1693,17 @@ pre {
    same quiet fill a selected row uses, and it separates from the ground in
    both appearances. */
 .skeleton-bar { background: var(--av-ref-color-neutral-4); border-radius: var(--av-sys-size-radius-pill); display: block; }
-.skeleton-row-marker { border-radius: 50%; flex: 0 0 10px; height: 10px; margin: 0 4px; }
-.skeleton-row-line { height: 0.72em; width: 74%; }
-.skeleton-row-subline { height: 0.62em; margin-top: var(--av-cmp-row-hint-gap); width: 45%; }
+/* A row's placeholders sit in the real row's boxes: the mark fills the 36px
+   icon slot in the shape of what lands there, the title bar is centred in the
+   title's 20px line and the activity bar in the activity's 16px line, so the
+   list does not shift when the rows arrive. */
+.skeleton-row-mark { height: 36px; width: 36px; }
+.skeleton-row-mark.is-glyph { border-radius: 50%; }
+/* A Space's mark is a tile with the same corner as `.spaces-sidebar-mark`. */
+.skeleton-row-mark.is-tile { border-radius: 10px; }
+.skeleton-row .sidebar-row-main { justify-content: center; }
+.skeleton-row-line { flex: 0 0 auto; height: 9px; margin-block: 5.5px; width: 74%; }
+.skeleton-row-subline { flex: 0 0 auto; height: 7px; margin-block: 4.5px; width: 45%; }
 
 /* Unequal titles, the way a real list is. Three widths on a five-row cycle so
    the repeat does not line up with either skeleton group's row count. */
@@ -1712,36 +1720,84 @@ pre {
   width: 7ch;
 }
 
+/* A sidebar title whose Space or Channel has not arrived: the 20px mark the
+   header draws, and a name-length bar. The header pulses as one. */
+.skeleton-title-header { animation: skeleton-pulse 1.5s ease-in-out infinite; }
+.skeleton-title-mark { border-radius: 50%; display: block; height: 20px; width: 20px; }
+.skeleton-title-line { height: 0.72em; width: 12ch; }
+.skeleton-section-label { animation: skeleton-pulse 1.5s ease-in-out infinite; height: 8px; margin-block: 5px; width: 16ch; }
+/* A participants row: overlapping small avatars, as `AvatarStack` draws. */
+.skeleton-avatar-stack { display: inline-flex; }
+.skeleton-avatar-stack > .skeleton-bar { border: 2px solid var(--av-sys-color-surface-default); border-radius: 50%; height: 24px; width: 24px; }
+.skeleton-avatar-stack > .skeleton-bar + .skeleton-bar { margin-left: -7px; }
+/* Compact, the settled stack is limited to two. Its size, overlap and centring
+   are the settled stack's own rules, which name the placeholder too. */
+.workstream-context-sidebar.is-compact .skeleton-avatar-stack > .skeleton-bar:nth-child(n+3) { display: none; }
+
 /* The first frame of an opening conversation already has the room's final
    geometry. Its placeholders occupy the channel rail, feed and composer rather
    than replacing all three with a centered status message, so the snapshot can
    fill them in without a full-pane layout change. */
 .conversation-opening-skeleton { min-height: 0; }
-.conversation-opening-sidebar-mark,
-.conversation-opening-header-mark,
-.conversation-opening-avatar { border-radius: 50%; }
-.conversation-opening-sidebar-mark { display: block; height: 20px; width: 20px; }
-.conversation-opening-sidebar-title { height: 0.72em; width: 12ch; }
+.conversation-opening-header-mark { border-radius: 50%; }
 .conversation-opening-sidebar-scroll { overflow: hidden; }
-.conversation-opening-sidebar-scroll > .skeleton-group-label { margin-top: 22px; }
 .conversation-opening-feed { overflow: hidden; }
 .conversation-opening-header { min-width: 0; }
 .conversation-opening-channel-title { gap: 8px; }
 .conversation-opening-header-mark { height: 20px; width: 20px; }
 .conversation-opening-header-title { height: 0.78em; width: min(24ch, 42%); }
 .conversation-opening-header-action { display: block; height: 28px; width: 68px; }
-.conversation-opening-messages { display: grid; gap: 44px; }
-.conversation-opening-message { display: grid; gap: 9px; max-width: 82%; }
-.conversation-opening-byline { align-items: center; display: flex; gap: 8px; }
-.conversation-opening-avatar { height: 22px; width: 22px; }
-.conversation-opening-name { height: 0.7em; width: 13ch; }
-.conversation-opening-name.is-short { width: 9ch; }
-.conversation-opening-line { height: 0.72em; width: 100%; }
-.conversation-opening-line.is-medium { width: 84%; }
-.conversation-opening-line.is-short { width: 58%; }
-.conversation-opening-message.is-human { justify-self: end; max-width: 62%; width: 100%; }
-.conversation-opening-bubble { border-radius: 14px; height: 40px; justify-self: end; width: 100%; }
-.conversation-opening-bubble.is-short { height: 12px; width: 46%; }
+/* The feed placeholders are drawn in the settled turn's own units, so the
+   snapshot replaces them without the column jumping: a byline at the byline's
+   size with no avatar (the feed has none), prose lines one prose line-height
+   apart, and a person's turn as a bubble on the right holding its own lines.
+   Turns sit `--space-8` apart: the stack gap plus the action row a settled
+   turn lays out beneath itself. */
+.conversation-opening-messages { align-content: start; display: grid; gap: var(--space-8); }
+.conversation-opening-message { display: grid; max-width: min(88%, var(--turn-width-cap), calc(100% - 82px)); }
+.conversation-opening-byline {
+  align-items: center;
+  display: flex;
+  font-size: var(--av-cmp-feed-byline-font-size);
+  gap: var(--space-2);
+  height: 1em;
+  margin-bottom: var(--space-2);
+}
+.conversation-opening-name { height: 0.85em; width: 5ch; }
+.conversation-opening-name.is-long { width: 9ch; }
+.conversation-opening-time { background: var(--av-ref-color-neutral-3); height: 0.85em; width: 14ch; }
+.conversation-opening-prose,
+.conversation-opening-bubble {
+  /* Grid, so each bar's block margins stay whole instead of collapsing into
+     the next bar's and packing the lines two-thirds of a line apart. */
+  display: grid;
+  font-size: var(--av-sys-font-size-prose);
+  line-height: var(--av-sys-font-leading-prose);
+}
+.conversation-opening-prose + .conversation-opening-prose { margin-top: var(--av-sys-space-prose-gap); }
+/* A bar as tall as a lowercase letter, centred in one line box. */
+.conversation-opening-line { height: 0.6em; margin-block: calc((1lh - 0.6em) / 2); width: 100%; }
+.conversation-opening-line.is-long { width: 94%; }
+.conversation-opening-line.is-medium { width: 72%; }
+.conversation-opening-line.is-short { width: 46%; }
+.conversation-opening-message.is-human {
+  --turn-bubble-radius: calc(var(--av-sys-size-radius-xl) + 6px);
+  justify-items: end;
+  justify-self: end;
+  width: 100%;
+}
+.conversation-opening-message.is-human > .conversation-opening-byline {
+  margin-bottom: var(--space-1);
+  padding-inline-end: var(--turn-bubble-radius);
+}
+.conversation-opening-bubble {
+  background: var(--av-ref-color-neutral-3);
+  border-radius: var(--turn-bubble-radius);
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  width: 100%;
+}
+.conversation-opening-bubble > .conversation-opening-line { background: var(--av-ref-color-neutral-5); }
 .conversation-opening-composer-dock { pointer-events: none; }
 .conversation-opening-composer {
   border-radius: 22px;
@@ -3376,7 +3432,7 @@ pre {
    `justify-content`, which cannot. */
 .workstream-context-sidebar .workstream-context-row > .avatar-stack,
 .workstream-context-sidebar .workstream-context-row > svg { transition: transform var(--sidebar-layout-motion); }
-.workstream-context-sidebar.is-compact .workstream-context-row > .avatar-stack,
+.workstream-context-sidebar.is-compact .workstream-context-row > :is(.avatar-stack, .skeleton-avatar-stack),
 .workstream-context-sidebar.is-compact .workstream-context-row > svg { transform: translateX(calc(18px - 50%)); }
 .workstream-context-sidebar.is-compact .workstream-context-presence { bottom: 8px; position: absolute; right: 10px; width: 6px; }
 .workstream-screen { display: grid; grid-template-rows: 55px minmax(0, 1fr) auto; height: 100%; min-width: 0; position: relative; }
@@ -6238,6 +6294,7 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
    restates the corner on the token rather than on the bubble, so the identity
    line and the action row move with it; writing the number on `border-radius`
    here left both of them inset by the shared 14px against an 18px corner. */
+.workstream-screen .conversation-opening-message.is-human,
 .workstream-screen .human-message { --turn-bubble-radius: 18px; }
 
 .workstream-screen .human-message-bubble {
@@ -7686,8 +7743,10 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 .workstream-context-sidebar .avatar-overflow { transition: font-size var(--sidebar-layout-motion), height var(--sidebar-layout-motion), margin-left var(--sidebar-layout-motion), width var(--sidebar-layout-motion); }
 .workstream-context-sidebar .avatar-stack-item + .avatar-stack-item { transition: margin-left var(--sidebar-layout-motion); }
 .workstream-context-sidebar.is-compact .avatar-stack .avatar,
+.workstream-context-sidebar.is-compact .skeleton-avatar-stack > .skeleton-bar,
 .workstream-context-sidebar.is-compact .avatar-overflow { width: 20px; height: 20px; font-size: 8px; }
 .workstream-context-sidebar.is-compact .avatar-stack-item + .avatar-stack-item,
+.workstream-context-sidebar.is-compact .skeleton-avatar-stack > .skeleton-bar + .skeleton-bar,
 .workstream-context-sidebar.is-compact .avatar-overflow { margin-left: -12px; }
 .sidebar-workstream-public { align-items: center; background: var(--av-sys-color-surface-default); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-muted); display: flex; height: 17px; justify-content: center; position: absolute; right: -1px; top: -2px; width: 17px; }
 .sidebar-footer { display: flex; align-items: center; justify-content: flex-end; flex: 0 0 56px; gap: 4px; margin-top: auto; padding: 8px 12px; transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
