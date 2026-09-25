@@ -22,12 +22,14 @@
     "lucide-react": "1.34.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "ws": "8.21.0",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@types/node": "26.4.0",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",
+    "@types/ws": "8.18.1",
     "@vitejs/plugin-react": "5.2.0",
     "electron": "43.2.0",
     "electron-builder": "26.15.3",

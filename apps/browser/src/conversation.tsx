@@ -5,7 +5,9 @@ import { QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-q
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { BrowserRouter, NavLink, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { CookieClientSession } from '@rally/contracts/client-session';
+import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { uuidFromBase58, uuidToBase58 } from '@rally/contracts/uuid-base58';
+import { watchWorkspaceReach } from '@rally/contracts/workspace-reach-watch';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import { AccountTrigger } from '@rally/ui/components/account-trigger';
 import { NavigationRowContent, SidebarNavigationRowContent } from '@rally/ui/components/navigation';
@@ -31,6 +33,7 @@ import { ConversationHeader } from '@rally/ui/components/conversation-header';
 import { WorkstreamSidebar } from '@rally/ui/components/workstream-sidebar';
 import { Button, InlineError, Modal } from '@rally/ui/components/primitives';
 import { RallyApi } from '../../desktop/src/renderer/lib/api';
+import { logWarn } from '../../desktop/src/common/logger';
 import { ShareConversationButton, ShareConversationDialog } from '../../desktop/src/renderer/components/scope-sharing-panel';
 import { SidekickPicker } from '../../desktop/src/renderer/components/sidekick-picker';
 import { useCollaborationSession, CollaborationSessionProvider } from '../../desktop/src/renderer/lib/collaboration-session';
@@ -427,7 +430,10 @@ function BrowserWorkspace({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
   </div>;
 }
 
-/** A tab owns only its visible feed. It never installs the desktop socket swarm. */
+/**
+ * A tab owns its visible feed and one workspace socket for membership nudges.
+ * It never installs the desktop socket swarm.
+ */
 export default function BrowserConversation({ session, onSignOut }: { session: CookieClientSession; onSignOut: () => void }): React.JSX.Element {
   const [queryClient] = useState(() => createQueryClient());
   // Metadata/expiry reconciliation must preserve pending commands and the live socket.
@@ -436,6 +442,21 @@ export default function BrowserConversation({ session, onSignOut }: { session: C
     session.workspace?.role, session.workspace?.accessClass,
   ]);
   useLayoutEffect(() => { api.setSession(session); }, [api, session]);
+  // The tab's one workspace socket, and the only thing it listens for: this
+  // person joining or leaving a Channel or Breakout. Without it the sidebar
+  // learns of a new grant only on focus or from the open conversation's own
+  // metadata, and a guest is sent no Space snapshot to stand in.
+  const workspaceId = session.workspace?.id;
+  useEffect(() => {
+    if (!workspaceId) return;
+    return watchWorkspaceReach({
+      ticket: () => api.getWorkspaceSocketTicket(),
+      open: (url, ticket) => new WebSocket(url, socketTicketProtocols(ticket)),
+      onStale: () => { void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] }); },
+      onDiagnostic: (diagnostic) => logWarn('rally', 'membership updates paused', diagnostic.code,
+        'closeCode' in diagnostic ? diagnostic.closeCode : diagnostic.error),
+    });
+  }, [api, queryClient, workspaceId]);
   if (!session.workspace) return <p>Open a shared conversation to continue.</p>;
   const canonicalBase = `/app/${session.workspace.region}/${uuidToBase58(session.workspace.id)}`;
   const basename = location.pathname.startsWith(`${canonicalBase}/`)

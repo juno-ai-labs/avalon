@@ -18,6 +18,12 @@ export interface SidelineCardModel {
   message: string;
   state: SidelineCardState;
   result?: string;
+  /**
+   * The names the card chose under, kept so a notice can say what went away
+   * when a refreshed catalog no longer lists the choice.
+   */
+  representedName?: string;
+  destinationLabel?: string;
 }
 
 export interface SearchSelectOption {
@@ -135,6 +141,16 @@ export function SidelineComposer(props: {
             item.workstreamId === card.workstreamId && item.substreamId === card.substreamId
           ));
           const messageTooLong = card.message.length > MESSAGE_MAX_CHARACTERS;
+          // A refreshed catalog can drop a choice this card already made: the
+          // participant left a Channel or Breakout, or stopped being one this
+          // operator may act as. Keep the choice and say why it cannot send; the
+          // notice arrives after a background read, so it is a live status.
+          const unsent = card.state !== "sent";
+          const participantGone = unsent && Boolean(props.catalog && card.representedUserId && !participant);
+          const destinationGone = unsent && Boolean(participant && card.workstreamId && !selectedDestination);
+          const noticeId = participantGone || destinationGone ? `${card.id}-gone` : undefined;
+          const representedName = participant?.name ?? card.representedName ?? "This participant";
+          const destinationLabel = selectedDestination?.label ?? card.destinationLabel;
           const canSend = catalogReady && card.state !== "sending" && Boolean(
             participant && selectedDestination && card.message.trim() && !messageTooLong,
           );
@@ -157,12 +173,19 @@ export function SidelineComposer(props: {
                   options={props.catalog?.participants.map((item) => ({ value: item.userId, label: item.name })) ?? []}
                   onChange={(value) => props.onChange(card.id, {
                       representedUserId: value,
+                      representedName: props.catalog?.participants.find((item) => item.userId === value)?.name,
                       workstreamId: "",
                       substreamId: "0",
+                      destinationLabel: undefined,
                       state: "idle",
                       result: undefined,
                     })}
                 />
+                {participantGone && (
+                  <p id={noticeId} className="sideline-field-message sideline-field-message-warning" role="status">
+                    {`You can no longer send as ${representedName}. Choose another participant.`}
+                  </p>
+                )}
                 <SearchSelect
                   label="Destination"
                   value={card.workstreamId ? `${card.workstreamId}:${card.substreamId}` : ""}
@@ -178,12 +201,18 @@ export function SidelineComposer(props: {
                       props.onChange(card.id, destination ? {
                         workstreamId: destination.workstreamId,
                         substreamId: destination.substreamId,
+                        destinationLabel: destination.label,
                         state: "idle",
                         result: undefined,
-                      } : { workstreamId: "", substreamId: "0" });
+                      } : { workstreamId: "", substreamId: "0", destinationLabel: undefined });
                     }}
                 />
-                {participant && destinations.length === 0 && (
+                {destinationGone && (
+                  <p id={noticeId} className="sideline-field-message sideline-field-message-warning" role="status">
+                    {`${representedName} is no longer in ${destinationLabel ?? "this destination"}. Choose another destination.`}
+                  </p>
+                )}
+                {participant && destinations.length === 0 && !destinationGone && (
                   <p className="sideline-field-message sideline-field-message-warning">
                     This participant has no eligible destination.
                   </p>
@@ -205,7 +234,7 @@ export function SidelineComposer(props: {
                 )}
               </div>
               <div className="sideline-summary">
-                Sending as <strong>{participant?.name ?? "participant"}</strong> to <strong>{selectedDestination?.label ?? "destination"}</strong>
+                Sending as <strong>{participant?.name ?? card.representedName ?? "participant"}</strong> to <strong>{destinationLabel ?? "destination"}</strong>
               </div>
               <div className="sideline-card-footer">
                 <div className={`sideline-result sideline-result-${card.state}`} aria-live="polite">
@@ -215,7 +244,7 @@ export function SidelineComposer(props: {
                   {card.state === "sent" && (
                     <button className="button button-secondary" type="button" onClick={() => props.onOpenInRally(card.id)}>Open in Rally</button>
                   )}
-                  <button className="button button-primary" type="button" disabled={!canSend} onClick={() => props.onSend(card.id)}>
+                  <button className="button button-primary" type="button" disabled={!canSend} aria-describedby={noticeId} onClick={() => props.onSend(card.id)}>
                     <Send size={15} /> Send
                   </button>
                 </div>

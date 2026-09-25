@@ -46,6 +46,12 @@ describe('dual-domain deployment', () => {
     expect(origins(fileName)).toEqual(expect.arrayContaining(['app://rallywithai', 'app://avalon']));
   });
 
+  it.each(REGIONS)('%s admits the Sideline workspace-socket origin', (fileName) => {
+    // Sideline's main process opens the workspace socket with this fixed
+    // Origin to hear membership changes; without it every handshake is 403.
+    expect(origins(fileName)).toContain('app://sideline');
+  });
+
   it('admits every served public-site origin on Global', () => {
     // The site answers on four hostnames; the browser sends whichever one it is
     // on, and an unlisted origin fails as a transport error with no request log.
