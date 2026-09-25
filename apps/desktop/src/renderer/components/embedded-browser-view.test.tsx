@@ -2,7 +2,10 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { describe, expect, it, vi } from 'vitest';
 import type { EmbeddedBrowserCommand, EmbeddedBrowserState, EmbeddedBrowserTab } from '../../common/embedded-browser';
-import { EmbeddedBrowserTabs } from './embedded-browser-view';
+import { useRef } from 'react';
+import { EmbeddedBrowserTabs, useEmbeddedBrowserShortcuts } from './embedded-browser-view';
+
+vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ onEmbeddedBrowserFocusAddress: () => () => undefined }) }));
 
 const tab = (id: string, title: string, extra: Partial<EmbeddedBrowserTab> = {}): EmbeddedBrowserTab => ({
   id, title, url: `https://${id}.example/`, loading: false, canGoBack: false, canGoForward: false, favicon: null, ...extra,
@@ -47,6 +50,47 @@ describe('the browser tab strip', () => {
     expect(command).toHaveBeenLastCalledWith({ action: 'close', tabId: 'a' });
     fireEvent.click(screen.getByRole('button', { name: 'New tab' }));
     expect(onNewTab).toHaveBeenCalledOnce();
+  });
+
+  it('hands closing the only blank tab to the host, and closes any other tab', () => {
+    const command = vi.fn<(input: EmbeddedBrowserCommand) => Promise<void>>(async () => undefined);
+    const onCloseLast = vi.fn();
+    const only = (extra: Partial<EmbeddedBrowserTab>): EmbeddedBrowserState => ({ activeTabId: 'a', tabs: [tab('a', '', extra)] });
+    const { rerender } = render(<Tooltip.Provider>
+      <EmbeddedBrowserTabs command={command} onCloseLast={onCloseLast} onNewTab={vi.fn()} state={only({ url: 'about:blank' })} />
+    </Tooltip.Provider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Close New tab' }));
+    fireEvent(screen.getByRole('tab').closest('.embedded-browser-tab')!, new MouseEvent('auxclick', { bubbles: true, button: 1 }));
+    fireEvent.keyDown(screen.getByRole('tab'), { key: 'Delete' });
+    expect(onCloseLast).toHaveBeenCalledTimes(3);
+    expect(command).not.toHaveBeenCalled();
+    rerender(<Tooltip.Provider>
+      <EmbeddedBrowserTabs command={command} onCloseLast={onCloseLast} onNewTab={vi.fn()} state={only({})} />
+    </Tooltip.Provider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Close New tab' }));
+    expect(command).toHaveBeenLastCalledWith({ action: 'close', tabId: 'a' });
+    expect(onCloseLast).toHaveBeenCalledTimes(3);
+  });
+
+  it('hands the close shortcut on the only blank tab to the host, and closes any other tab', () => {
+    const command = vi.fn<(input: EmbeddedBrowserCommand) => Promise<void>>(async () => undefined);
+    const onCloseLast = vi.fn();
+    function Host({ state }: { state: EmbeddedBrowserState }): React.JSX.Element {
+      const scope = useRef<HTMLDivElement>(null);
+      const addressRef = useRef<HTMLInputElement>(null);
+      useEmbeddedBrowserShortcuts({ state, command, addressRef, scope, onCloseLast });
+      return <div ref={scope}><input aria-label="Website address" ref={addressRef} /></div>;
+    }
+    const only = (extra: Partial<EmbeddedBrowserTab>): EmbeddedBrowserState => ({ activeTabId: 'a', tabs: [tab('a', '', extra)] });
+    const { rerender } = render(<Host state={only({ url: 'about:blank' })} />);
+    screen.getByRole('textbox', { name: 'Website address' }).focus();
+    fireEvent.keyDown(window, { key: 'w', code: 'KeyW', ctrlKey: true, metaKey: true });
+    expect(onCloseLast).toHaveBeenCalledOnce();
+    expect(command).not.toHaveBeenCalled();
+    rerender(<Host state={only({})} />);
+    fireEvent.keyDown(window, { key: 'w', code: 'KeyW', ctrlKey: true, metaKey: true });
+    expect(command).toHaveBeenLastCalledWith({ action: 'close', tabId: 'a' });
+    expect(onCloseLast).toHaveBeenCalledOnce();
   });
 
   it('moves a dragged tab to where it is dropped', () => {
