@@ -207,6 +207,37 @@ const QUEUE_BATCH_MAX_BYTES = 250_000;
 
 const effectBytes = new TextEncoder();
 
+/**
+ * Split parent effects into `sendBatch` calls the Queue accepts, and set aside
+ * any single effect too large for one Queue message: it would be refused on
+ * every attempt, and nothing that holds it can shrink it.
+ */
+export function planParentEffectBatches(effects: readonly ParentEffectEnvelope[]): {
+  batches: ParentEffectEnvelope[][];
+  oversized: { effect: ParentEffectEnvelope; bytes: number }[];
+} {
+  const batches: ParentEffectEnvelope[][] = [];
+  const oversized: { effect: ParentEffectEnvelope; bytes: number }[] = [];
+  let current: ParentEffectEnvelope[] = [];
+  let currentBytes = 0;
+  for (const effect of effects) {
+    const bytes = effectBytes.encode(JSON.stringify(effect)).byteLength;
+    if (bytes > EFFECT_QUEUE_MESSAGE_MAX_BYTES) {
+      oversized.push({ effect, bytes });
+      continue;
+    }
+    if (current.length >= QUEUE_BATCH_MAX_MESSAGES || currentBytes + bytes > QUEUE_BATCH_MAX_BYTES) {
+      batches.push(current);
+      current = [];
+      currentBytes = 0;
+    }
+    current.push(effect);
+    currentBytes += bytes;
+  }
+  if (current.length > 0) batches.push(current);
+  return { batches, oversized };
+}
+
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
   return cursor.toArray()[0] ?? null;
 }

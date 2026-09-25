@@ -4,7 +4,7 @@ import {
   SharedNavigationSpaceSchema,
   SharedNavigationSpacesRequestSchema,
 } from "@rally/contracts/scope-grants";
-import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
+import { EFFECT_QUEUE_MESSAGE_MAX_BYTES, ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
 import { ConversationEffectEnvelopeSchema, type ConversationEffectEnvelope } from "@rally/contracts/conversation-effects";
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
 
@@ -692,6 +692,7 @@ import {
   readControlSocketAttachment,
   type HostedParentHost,
 } from "./hosted-parent";
+import { planParentEffectBatches } from "./conversation-parent-object";
 import {
   deferParentImport,
   dueParentImports,
@@ -699,7 +700,6 @@ import {
   LegacyParentExportSchema,
   nextParentImportDueAt,
   notePendingParentImport,
-  parentImportState,
 } from "./hosted-parent-import";
 import {
   HostedParticipantProjectionAlarmSchema,
@@ -4635,8 +4635,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /** Import a parent still held by its legacy object, once, before it is served. */
   private async ensureParentImported(parentId: string): Promise<void> {
-    if (parentImportState(this.state.storage.sql, parentId) !== "pending") return;
+    const ledger = this.state.storage.sql.exec<{ state: string; not_before: number; last_error_code: string | null }>(
+      "SELECT state, not_before, last_error_code FROM parent_imports WHERE parent_id = ?", parentId,
+    ).toArray()[0];
+    if (ledger?.state !== "pending") return;
     let inFlight = this.parentImportsInFlight.get(parentId);
+    // A failed import waits out its backoff on the request path too, so an
+    // unreachable legacy object is asked once per step of the schedule rather
+    // than once per viewer check. The caller gets the reason it failed.
+    if (!inFlight && ledger.not_before > Date.now()) {
+      throw new Error("parent_import_unavailable", {
+        cause: new Error(ledger.last_error_code ?? "parent_import_deferred"),
+      });
+    }
     if (!inFlight) {
       inFlight = this.importHostedParent(parentId).finally(() => this.parentImportsInFlight.delete(parentId));
       this.parentImportsInFlight.set(parentId, inFlight);
@@ -4665,7 +4676,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       throw new Error("parent_import_unavailable", { cause: error });
     }
     const now = Date.now();
-    const result = importLegacyParent(this.state.storage, this.scheduledAlarms, parentId, kind, exported, now);
+    let result;
+    try {
+      result = importLegacyParent(this.state.storage, this.scheduledAlarms, parentId, kind, exported, now);
+    } catch (error) {
+      // The rows arrived but did not fit: an identity mismatch or a target
+      // that is not empty. Retrying at once would only repeat it.
+      const code = diagnosticErrorCode(error, "parent_import_failed");
+      deferParentImport(this.state.storage.sql, parentId, code, now);
+      logWarn(this.env, "hosted_parent_import_deferred", {
+        workspace_id: workspaceId, parent_id: parentId, parent_kind: kind, code,
+      });
+      throw new Error("parent_import_unavailable", { cause: error });
+    }
     // The legacy migrations 19 and 20 replayed breakout projections once
     // across the fleet; running them here makes an object that missed that
     // pass converge, and costs nothing on one that did.
@@ -4701,7 +4724,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * and delivers the notification in a Worker. A row is deleted only once its
    * destination has it, and a failure defers it for the alarm.
    */
+  private parentOutboxDrain: Promise<void> | null = null;
+
+  /**
+   * Drains run one at a time. Rows are not claimed, so a drain started by a
+   * request's import while the alarm drains would send the same rows twice.
+   */
   private async drainParentOutbox(options: { localOnly?: boolean } = {}): Promise<void> {
+    while (this.parentOutboxDrain) await this.parentOutboxDrain;
+    const drain = this.drainParentOutboxOnce(options);
+    this.parentOutboxDrain = drain.finally(() => { this.parentOutboxDrain = null; });
+    await this.parentOutboxDrain;
+  }
+
+  private async drainParentOutboxOnce(options: { localOnly?: boolean }): Promise<void> {
     const workspaceId = this.workspaceId();
     if (!workspaceId) return;
     const rows = this.state.storage.sql.exec<{ payload_json: string; effect_kind: string }>(
@@ -4736,14 +4772,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     };
     // One apply accepts at most MAX_DIRECTORY_APPLY_ENVELOPES, and a burst can
     // leave more due than that. The chunks keep the common-before-user order.
+    const commonApplied = new Set<string>();
     for (let start = 0; start < directory.length; start += MAX_DIRECTORY_APPLY_ENVELOPES) {
       const chunk = directory.slice(start, start + MAX_DIRECTORY_APPLY_ENVELOPES);
       await deliver(chunk, async () => {
         const result = await this.applyWorkstreamDirectoryEffects({ workspaceId, envelopes: chunk });
         const accepted = new Set(result.accepted.map((entry) => `${entry.messageId}:${entry.payloadHash}`));
-        return chunk.filter((envelope) => accepted.has(`${envelope.messageId}:${envelope.payloadHash}`));
+        const applied = chunk.filter((envelope) => accepted.has(`${envelope.messageId}:${envelope.payloadHash}`));
+        for (const envelope of applied) {
+          if (envelope.effect.kind === "directory_common") commonApplied.add(envelope.parentId);
+        }
+        return applied;
       });
     }
+    // A viewer row that reached an earlier drain before its Channel's row did
+    // was refused on the missing row and put off. Its Channel row is here now,
+    // so it is due now rather than at the end of its retry delay.
+    if (this.releaseDeferredViewerRows(commonApplied)) await this.drainParentOutboxOnce({ localOnly: true });
     await deliver(grants, async () => {
       for (const envelope of grants) {
         await this.applyScopeGrantDirectory(envelope);
@@ -4764,10 +4809,41 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
       return grants;
     });
-    await deliver(queued, async () => {
-      await this.env.ACTIVITY_QUEUE.sendBatch(queued.map((envelope) => ({ body: envelope })));
-      return queued;
-    });
+    const plan = planParentEffectBatches(queued);
+    if (plan.oversized.length > 0) {
+      this.deleteParentOutboxRows(plan.oversized.map((entry) => entry.effect));
+      for (const { effect, bytes } of plan.oversized) {
+        logWarn(this.env, "parent_effect_oversized", {
+          workspace_id: workspaceId,
+          workstream_id: effect.parentId,
+          message_id: effect.messageId,
+          effect_kind: effect.effect.kind,
+          bytes,
+          limit_bytes: EFFECT_QUEUE_MESSAGE_MAX_BYTES,
+          outcome: "dropped",
+        });
+      }
+    }
+    for (const batch of plan.batches) {
+      await deliver(batch, async () => {
+        await this.env.ACTIVITY_QUEUE.sendBatch(batch.map((envelope) => ({ body: envelope })));
+        return batch;
+      });
+    }
+  }
+
+  /** Make the deferred viewer rows of these parents due; true when any were waiting. */
+  private releaseDeferredViewerRows(parentIds: ReadonlySet<string>): boolean {
+    let released = 0;
+    const now = Date.now();
+    for (const parentId of parentIds) {
+      released += this.state.storage.sql.exec(
+        `UPDATE parent_outbox SET not_before = ?
+          WHERE parent_id = ? AND effect_kind = 'directory_user' AND state = 'pending' AND not_before > ?`,
+        now, parentId, now,
+      ).rowsWritten;
+    }
+    return released > 0;
   }
 
   private deleteParentOutboxRows(envelopes: readonly ParentEffectEnvelope[]): void {
@@ -4861,14 +4937,29 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * `null` kind is an id this object hosts no parent for — a Sidekick, or
    * nothing — which the caller then asks its own object about.
    */
-  async resolveHostedParent(input: { workspaceId: string; parentId: string }): Promise<{
+  /**
+   * Which kind of parent an id names, with its authority, and, when a viewer
+   * is named, that viewer's decision too: opening a Channel conversation is
+   * then one call to this object rather than a resolve and a check in turn.
+   */
+  async resolveHostedParent(input: {
+    workspaceId: string;
+    parentId: string;
+    viewer?: Omit<Parameters<HostedParent["authorizeViewer"]>[0], "workspaceId" | "parentId">;
+  }): Promise<{
     kind: "workstream" | "space" | null;
     authority: Awaited<ReturnType<HostedParent["authority"]>>;
+    viewer?: Awaited<ReturnType<HostedParent["authorizeViewer"]>>;
   }> {
-    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema }).parse(input);
+    const request = z.object({ workspaceId: WorkspaceIdSchema, parentId: IdSchema }).parse(input);
     const parent = await this.hostedParent(request.parentId, request.workspaceId);
     const authority = await parent.authority({ workspaceId: request.workspaceId, parentId: request.parentId });
-    return { kind: authority.exists ? parent.role.kind : null, authority };
+    const kind = authority.exists ? parent.role.kind : null;
+    if (!input.viewer || kind === null) return { kind, authority };
+    const viewer = await parent.authorizeViewer({
+      ...input.viewer, workspaceId: request.workspaceId, parentId: request.parentId,
+    });
+    return { kind, authority, viewer };
   }
 
   async authority(input: Parameters<HostedParent["authority"]>[0]) {
@@ -4923,6 +5014,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (envelope.parentKind !== "workstream" && envelope.parentKind !== "space") {
       throw new Error("conversation_effect_parent_kind_unhosted");
     }
+    await this.initialized;
+    // Every parent created here has its row before its first child effect, so
+    // an effect for a parent with no row and no ledger entry names one a
+    // legacy object may still hold: a Channel whose provisional directory row
+    // never reached this object before the move. Creating an empty row would
+    // lose that object's creator, grants and reservations, so it is imported
+    // first; an id no legacy object holds imports empty, once.
+    const known = this.state.storage.sql.exec(
+      `SELECT 1 FROM parent_metadata WHERE parent_id = ?
+       UNION ALL SELECT 1 FROM parent_imports WHERE parent_id = ? LIMIT 1`,
+      envelope.parentId, envelope.parentId,
+    ).toArray().length > 0;
+    if (!known) notePendingParentImport(this.state.storage.sql, envelope.parentId, envelope.parentKind);
     const parent = await this.hostedParent(envelope.parentId, envelope.workspaceId);
     const accepted = parent.receiveChildEffects(input);
     await this.afterParentWrite();
@@ -5657,10 +5761,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const workspaceId = this.workspaceId();
     if (workspaceId) {
       // Hosted parents first: an outbox row is a directory update somebody is
-      // waiting to see, and an import is a Channel nobody can open until it lands.
+      // waiting to see. Background imports run last instead: a page is up to
+      // one cold legacy RPC per parent, and a Channel someone opens imports on
+      // that request without waiting for the alarm.
       if (this.hostedParentSchemaPresent()) {
         await this.instrumentWorkspaceAlarmPhase("parent_outbox", undefined, () => this.drainParentOutbox());
-        await this.instrumentWorkspaceAlarmPhase("parent_import", undefined, () => this.importDueParents(now));
         await this.instrumentWorkspaceAlarmPhase("parent_breakouts", undefined, () => this.drainDueParentBreakouts(now));
       }
       try { await flushSearchAuthorizationPush(this.state.storage.sql, this.env, workspaceId); }
@@ -5745,6 +5850,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       await this.instrumentWorkspaceAlarmPhase("schedule_reconcile", undefined, async () => {
         await this.refreshSchedule(workspaceId);
       });
+      if (this.hostedParentSchemaPresent()) {
+        await this.instrumentWorkspaceAlarmPhase("parent_import", undefined, () => this.importDueParents(now));
+      }
     }
   }
 
