@@ -8,10 +8,10 @@
  * deletes the row the moment `sendBatch` accepts it, so what is proved there
  * is the bookkeeping around the send: the row exists before the drain, is gone
  * after it, and the projection version survives it. A Channel's parent lives
- * in `WorkspaceDO`, whose outbox drain splits by kind: directory rows are
- * applied to the Organization's own tables right after the parent write, and
- * activity and notification rows wait for the alarm and leave on
- * `ACTIVITY_QUEUE`. This file is the one place that proves the real drain; the
+ * in `WorkspaceDO`, which applies directory and activity rows to its own
+ * tables in the parent write's transaction; only the work that has to leave
+ * the object (a mention to snapshot, a notification to deliver) waits in the
+ * outbox for the alarm and leaves on `ACTIVITY_QUEUE`. This file is the one place that proves the real drain; the
  * consumer is the production one, and the test Worker only binds the Queue as
  * a producer, so `helpers/conversation-effects` hands queued bodies to it by
  * hand.
@@ -485,9 +485,9 @@ describe("a parent with two children", () => {
 });
 
 describe("the Organization's parent outbox", () => {
-  it("applies directory kinds in the write and leaves activity for the alarm to send to ACTIVITY_QUEUE", async () => {
+  it("applies directory and activity rows in the write and leaves a mention for the alarm to send to ACTIVITY_QUEUE", async () => {
     const workspace = workspaceStub();
-    // Refused while parked, so an alarm that fires early defers the activity
+    // Refused while parked, so an alarm that fires early defers the mention
     // row instead of sending it; recorded once unparked.
     const gate = await captureEffectQueue(workspace);
     await workspace.reserveChild({
@@ -521,19 +521,37 @@ describe("the Organization's parent outbox", () => {
       sourceVersion: 2,
       effect: activityEffect("channel-activity-1"),
     });
-    // The directory is applied before the write returns; only the activity
-    // row is left, because nothing has sent it yet. Read in the same
-    // invocation as the writes, so the alarm, which would apply the directory
-    // rows too, cannot be what put them there.
+    // A message that names somebody: its feed row lands in the write too, and
+    // the consumer still has to snapshot the mention, which only it can do.
+    const mention = childEnvelope({
+      parentKind: "workstream",
+      parentId: ACTIVITY_WORKSTREAM_ID,
+      substreamId: "0",
+      sourceVersion: 3,
+      effect: {
+        ...activityEffect("channel-mention-1"),
+        eventId: "00000000-0000-7000-8000-000000000bc3",
+        sourceKind: "workstream_message",
+        sourceId: "00000000-0000-7000-8000-000000000bc4",
+        targets: [{ userId: USER_ID, relation: "mentioned" }],
+      } as ConversationEffect,
+    });
+    // Read in the same invocation as the writes, so the alarm, which could
+    // apply an outbox row too, cannot be what put these rows there.
     const before = await runInDurableObject(workspace, async (instance, state) => {
       await instance.receiveChildEffects({ substreamId: asSubstreamId("0"), envelopes: [viewer] });
       await instance.receiveChildEffects({ substreamId: asSubstreamId("0"), envelopes: [activity] });
+      await instance.receiveChildEffects({ substreamId: asSubstreamId("0"), envelopes: [mention] });
       return {
         viewers: state.storage.sql.exec<{ unread_count: number }>(
           `SELECT unread_count FROM channel_viewers WHERE workstream_id = ? AND user_id = ?`,
           ACTIVITY_WORKSTREAM_ID,
           USER_ID,
         ).toArray(),
+        feed: state.storage.sql.exec<{ dedupe_key: string }>(
+          `SELECT dedupe_key FROM workspace_activity_events WHERE audience_workstream_id = ? ORDER BY dedupe_key`,
+          ACTIVITY_WORKSTREAM_ID,
+        ).toArray().map((row) => row.dedupe_key),
         outbox: state.storage.sql.exec<{ effect_kind: string; message_id: string }>(
           `SELECT effect_kind, message_id FROM parent_outbox WHERE parent_id = ?`,
           ACTIVITY_WORKSTREAM_ID,
@@ -541,7 +559,8 @@ describe("the Organization's parent outbox", () => {
       };
     });
     expect(before.viewers).toEqual([{ unread_count: 4 }]);
-    expect(before.outbox).toEqual([{ effect_kind: "activity_event", message_id: `substream:0:${activity.messageId}` }]);
+    expect(before.feed).toEqual(["channel-activity-1", "channel-mention-1"]);
+    expect(before.outbox).toEqual([{ effect_kind: "activity_event", message_id: `substream:0:${mention.messageId}` }]);
     expect(gate.sent).toEqual([]);
 
     // Hand the Queue back, make the row due, and let the real alarm send it.
@@ -565,8 +584,8 @@ describe("the Organization's parent outbox", () => {
       kind: "parent_effect",
       parentKind: "workstream",
       parentId: ACTIVITY_WORKSTREAM_ID,
-      messageId: `substream:0:${activity.messageId}`,
-      effect: { kind: "activity_event", dedupeKey: "channel-activity-1" },
+      messageId: `substream:0:${mention.messageId}`,
+      effect: { kind: "activity_event", dedupeKey: "channel-mention-1" },
     });
   });
 });

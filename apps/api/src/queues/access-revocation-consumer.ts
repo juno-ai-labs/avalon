@@ -328,6 +328,13 @@ export async function consumeAccessRevocationQueue(
 export async function applyWorkspaceRelationshipChange(env: Env, message: WorkspaceRelationshipChangeMessage): Promise<void> {
   const { relationship, removed } = message;
   try {
+    // The Organization object answers access checks from its own copy of each
+    // relationship; this event is what keeps that copy current.
+    const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, relationship.workspaceId,
+      workspaceDOName(env.AVALON_REGION, asWorkspaceId(relationship.workspaceId)));
+    await workspace.applyMemberStatus({
+      workspaceId: relationship.workspaceId, sequence: message.sequence, removed, relationship,
+    });
     if (removed || relationship.status !== "active") {
       await applyAccessRevocation(env, {
         kind: "access_revoked", reason: "workspace_membership_removed",
