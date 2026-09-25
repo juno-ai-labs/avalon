@@ -198,14 +198,15 @@ it('reconciles the union of source kinds in one runtime SQL batch', async () => 
   });
 });
 
-it('repairs a terminal deadline on exact directory replay after a post-commit failure', async () => {
+it('repairs a terminal deadline from its recorded follow-up when the post-commit run fails', async () => {
   const stub = env.WORKSPACE_DOS.getByName(workspaceDOName('global', workspaceId));
+  const workstreamId = asWorkstreamId('00000000-0000-7000-8000-000000009d08');
+  const dueAt = '2096-09-08T00:00:00.000Z';
+  const before = Date.now();
   await runInDurableObject(stub, async (instance, state) => {
     const sql = state.storage.sql;
     seed(sql);
     const resourceId = '00000000-0000-7000-8000-000000009d07';
-    const workstreamId = asWorkstreamId('00000000-0000-7000-8000-000000009d08');
-    const dueAt = '2096-09-08T00:00:00.000Z';
     sql.exec(`INSERT INTO resources(id, workspace_id, resource_type, provider, title, slug,
       attachment_status, created_at, updated_at)
       VALUES (?, ?, 'document', 'avalon_upload', 'Replay fixture', 'replay-fixture', 'attached', ?, ?)`,
@@ -225,7 +226,8 @@ it('repairs a terminal deadline on exact directory replay after a post-commit fa
       messageId: '00000000-0000-7000-8000-000000009d10', partitionKey: 'common', sourceVersion: 1,
       requiredProjectionVersion: null, payloadHash: conversationEffectHash(effect), effect,
     }] };
-    // Fault injection at the post-commit boundary; replay executes the real reconciliation.
+    // Fault injection at the post-commit boundary: the directory row commits,
+    // the reconciliation after it throws.
     const exec = sql.exec.bind(sql);
     const failure = vi.spyOn(sql, 'exec').mockImplementation(
       <T extends Record<string, SqlStorageValue>>(query: string, ...bindings: SqlStorageValue[]) => {
@@ -235,20 +237,44 @@ it('repairs a terminal deadline on exact directory replay after a post-commit fa
         return exec<T>(query, ...bindings);
       },
     );
+    let result: unknown;
     try {
-      await expect(instance.applyWorkstreamDirectoryEffects(request)).rejects.toThrow('injected_post_commit_failure');
+      result = await instance.applyWorkstreamDirectoryEffects(request);
     } finally { failure.mockRestore(); }
+    // The caller is not failed for work its commit no longer depends on.
+    expect(result).toMatchObject({ accepted: [{ messageId: request.envelopes[0]!.messageId }] });
     expect(sql.exec('SELECT next_terminal_action_at FROM channels WHERE workstream_id = ?', workstreamId).one())
       .toEqual({ next_terminal_action_at: Date.parse(dueAt) });
     expect(sql.exec("SELECT alarm_key FROM _internal_durable_alarms WHERE kind = 'terminal'").toArray()).toEqual([]);
-    await instance.applyWorkstreamDirectoryEffects(request);
+    // What it still owes is kept, put off on the retry schedule, and armed.
+    const kept = sql.exec<{ followup_json: string; attempts: number; not_before: number }>(
+      'SELECT followup_json, attempts, not_before FROM workspace_directory_followups',
+    ).toArray();
+    expect(kept).toHaveLength(1);
+    expect(kept[0]!.attempts).toBe(1);
+    expect(kept[0]!.not_before).toBeGreaterThan(before);
+    expect(JSON.parse(kept[0]!.followup_json)).toMatchObject({ refreshTerminal: true, refreshWatchKinds: true });
+    const alarm = await state.storage.getAlarm();
+    expect(alarm).not.toBeNull();
+    expect(alarm!).toBeLessThanOrEqual(kept[0]!.not_before);
+    // Make it due now rather than wait out the retry delay.
+    sql.exec('UPDATE workspace_directory_followups SET not_before = 0');
+    await state.storage.setAlarm(Date.now());
+  });
+  // The alarm's own phase runs it, with nothing replayed. The real alarm
+  // fires on its own, so this waits for its result rather than racing it.
+  await vi.waitFor(() => runInDurableObject(stub, (_instance, state) => {
+    const sql = state.storage.sql;
+    expect(sql.exec('SELECT id FROM workspace_directory_followups').toArray()).toEqual([]);
     expect(sql.exec("SELECT alarm_key, due_at FROM _internal_durable_alarms WHERE kind = 'terminal'").toArray())
       .toEqual([{ alarm_key: workstreamId, due_at: Date.parse(dueAt) }]);
-    // Mutation publication can wake the shared alarm before the repaired deadline.
+  }), { timeout: 10_000, interval: 50 });
+  // Mutation publication can wake the shared alarm before the repaired deadline.
+  await vi.waitFor(() => runInDurableObject(stub, async (_instance, state) => {
     const alarm = await state.storage.getAlarm();
     expect(alarm).not.toBeNull();
     expect(alarm!).toBeLessThanOrEqual(Date.parse(dueAt));
-  });
+  }), { timeout: 10_000, interval: 50 });
 });
 
 
