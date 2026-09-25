@@ -3,7 +3,7 @@
 Every surface that points at a Space, Channel, or Breakout from outside the desktop app uses
 `https://rallywith.ai/app/<region>/<organization-base58>/s/<space-base58>/`,
 with `/c/<channel-base58>` and optional `/b/<breakout-base58>` appended.
-A Sidekick uses `https://rallywith.ai/app/<region>/<organization-base58>/sidekicks/<sidekick-base58>/`.
+A Sidekick uses `https://rallywith.ai/app/<region>/<organization-base58>/sk/<sidekick-base58>/`.
 Each Base58 segment encodes the corresponding 16-byte UUID; the Organization ID
 immediately follows the environment/region segment.
 The `rallywithai://` deep link
@@ -45,7 +45,7 @@ Breakout links append `/b/<breakout-base58>` to the canonical HTTPS path. Writer
 | **Space** | `https://rallywith.ai/app/<region>/<organization-base58>/s/<space-base58>/` | Space sharing and handoff |
 | **Channel** | Space URL plus `c/<channel-base58>` | Current Channel link writers |
 | **Breakout** | Channel URL plus `/b/<breakout-base58>` | Current Breakout link writers |
-| **Sidekick** | `https://rallywith.ai/app/<region>/<organization-base58>/sidekicks/<sidekick-base58>/` | The Sidekick screen's menu; hands off to `rallywithai://workspace/<region>/<organization-base58>/sidekicks/<sidekick-base58>` |
+| **Sidekick** | `https://rallywith.ai/app/<region>/<organization-base58>/sk/<sidekick-base58>/` | The Sidekick screen's menu; hands off to `rallywithai://workspace/<region>/<organization-base58>/sidekicks/<sidekick-base58>` |
 | **Deep link** | `rallywithai://workspace/<region>/<organization-base58>/spaces/<space-base58>/channels/<channel-base58>` | The canonical page's last hop; Breakout adds `/breakouts/<breakout-base58>` |
 | **Legacy reader** | `/app/workspaces/.../workstreams/...`, `/app/workstreams/...`, or older deep links | Compatibility for already-shared links |
 
@@ -355,18 +355,20 @@ use the same adapter with notification attribution. See [push](push-notification
 ### 2026-09-25 — Sidekicks get a shareable link
 
 **What changed:** The Sidekick screen's menu copies
-`/app/<region>/<organization>/sidekicks/<sidekick>/`. The site page, the
+`/app/<region>/<organization>/sk/<sidekick>/`. The site page, the
 desktop HTTPS adapter, and the shared deep-link grammar read it and open the
 Sidekick's own screen in the addressed Organization.
 
 **Why:** There was no way to point a teammate at a Sidekick. A Sidekick belongs to
 the Organization rather than to a Space, so it hangs off the Organization
-segment instead of nesting under `/s/`. It uses a spelled-out `sidekicks`
-segment because the one-letter `s` already means Space.
+segment instead of nesting under `/s/`. It uses `sk` because the one-letter
+`s` already means Space, and `sk` stays short like the other segments while
+still reading as "Sidekick". The desktop deep link keeps the spelled-out
+`sidekicks` host, matching `spaces` and `channels` there.
 
 **Considered and rejected:** A custom-scheme-only link, for the same reasons the
-Channel link left it. A one-letter segment such as `/k/`, which saves a few
-characters and reads as noise.
+Channel link left it. A spelled-out `sidekicks` segment, which breaks the short
+segment style of `s`, `c` and `b`.
 
 **What a future change has to respect:** A desktop build older than this change
 rejects the `sidekicks` deep link as unrecognized, and a site older than it

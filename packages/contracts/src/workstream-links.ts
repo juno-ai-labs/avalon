@@ -156,13 +156,13 @@ export function sidekickDeepLink(target: SidekickLinkTarget): string {
  */
 export function sidekickCanonicalUrl(webBaseUrl: string, target: SidekickLinkTarget): string {
   assertSidekickLinkTarget(target);
-  return new URL(`${WORKSTREAM_LINK_PATH_PREFIX}${target.region}/${uuidToBase58(target.workspaceId)}/sidekicks/${uuidToBase58(target.sidekickId)}/`, webBaseUrl).toString();
+  return new URL(`${WORKSTREAM_LINK_PATH_PREFIX}${target.region}/${uuidToBase58(target.workspaceId)}/sk/${uuidToBase58(target.sidekickId)}/`, webBaseUrl).toString();
 }
 
 /** Parse the canonical Sidekick path. */
 export function parseSidekickLinkPathTarget(pathname: string): SidekickLinkTarget | null {
   const normalized = pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
-  const match = /^\/app\/([a-z][a-z0-9-]*)\/([^/]+)\/sidekicks\/([^/]+)$/u.exec(normalized);
+  const match = /^\/app\/([a-z][a-z0-9-]*)\/([^/]+)\/sk\/([^/]+)$/u.exec(normalized);
   if (!match) return null;
   const workspaceId = uuidFromBase58(match[2]!);
   const sidekickId = uuidFromBase58(match[3]!);
