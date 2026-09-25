@@ -1,9 +1,7 @@
 import {
   asAutomationId,
-  asSpaceId,
   asSubstreamId,
   asWorkspaceId,
-  asWorkstreamId,
   type WorkspaceId,
 } from "@rally/contracts";
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
@@ -13,9 +11,7 @@ import { ApiError } from "../lib/api-error";
 import {
   automationDOName,
   conversationObjectName,
-  spaceDOName,
   workspaceDOName,
-  workstreamDOName,
 } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { markDemoWorkspaceRetired } from "./demo-workspace-register";
@@ -146,20 +142,15 @@ export async function retireWorkspaceGraph(
     if (node.retired) continue;
     try {
       // The recorded graph stores ids as text; the branded constructors are the
-      // boundary that turns them back into the kind each namespace expects.
-      // Three kinds, three namespaces, resolved together. A Space is closed
-      // exactly like a work stream — it is the same class, and its hidden main
-      // conversation is an ordinary child of it — but it lives under its own
-      // binding, and addressing it through `WORKSTREAM_DOS` would tombstone a
-      // *different*, empty object while leaving the Space open.
-      const parent = node.parentKind === "automation"
-        ? await durableObjectStubForWorkspace(env, env.AUTOMATION_DOS, input.workspaceId,
-          automationDOName(region, input.workspaceId, asAutomationId(node.parentId)))
-        : node.parentKind === "space"
-          ? await durableObjectStubForWorkspace(env, env.SPACE_DOS, input.workspaceId,
-            spaceDOName(region, input.workspaceId, asSpaceId(node.parentId)))
-          : await durableObjectStubForWorkspace(env, env.WORKSTREAM_DOS, input.workspaceId,
-            workstreamDOName(region, input.workspaceId, asWorkstreamId(node.parentId)));
+      // boundary that turns them back into the kind each namespace expects. A
+      // Channel's and a Space's parent is hosted by this workspace's own
+      // object, which is already closed and answers only the retirement read;
+      // a Sidekick's parent is still its own object and is closed like a child.
+      const hosted = node.parentKind !== "automation";
+      const parent = hosted
+        ? workspace
+        : await durableObjectStubForWorkspace(env, env.AUTOMATION_DOS, input.workspaceId,
+          automationDOName(region, input.workspaceId, asAutomationId(node.parentId)));
 
       // Asked before the parent is closed, so its children go first. The read
       // is permitted on a retired parent as well: a pass that died between
@@ -203,8 +194,12 @@ export async function retireWorkspaceGraph(
         receipt.retiredChildren += 1;
       }
 
-      const parentReceipt = await parent.retireObject(tombstone);
-      receipt.retainedOutbox += parentReceipt.retainedOutbox;
+      if (!hosted) {
+        const automation = await durableObjectStubForWorkspace(env, env.AUTOMATION_DOS, input.workspaceId,
+          automationDOName(region, input.workspaceId, asAutomationId(node.parentId)));
+        const parentReceipt = await automation.retireObject(tombstone);
+        receipt.retainedOutbox += parentReceipt.retainedOutbox;
+      }
       receipt.retiredParents += 1;
       // Written only after the parent and all of its children confirmed. A
       // throw anywhere above leaves the node unreceipted and the walk resumable.

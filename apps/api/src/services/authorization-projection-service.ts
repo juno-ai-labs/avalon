@@ -1,10 +1,10 @@
-import { asAutomationId, asSpaceId, asWorkstreamId } from '@rally/contracts';
+import { asAutomationId } from '@rally/contracts';
 import { ConversationParentKindSchema } from '@rally/contracts/conversation-parent';
 import type { Env } from '../env';
 import type { AuthorizationProjectionJob } from '../durable-objects/authorization-projection';
 import { authorizationWorkspace } from './authorization-service';
 import { durableObjectStubForWorkspace } from '../lib/durable-object-namespace';
-import { automationDOName, spaceDOName, workstreamDOName } from '../durable-objects/names';
+import { automationDOName } from '../durable-objects/names';
 import { createIdentityObjectPort } from '../runtime/identity-port';
 import { createResourceObjectPort } from '../runtime/resource-port';
 
@@ -13,16 +13,13 @@ export async function projectAuthorization(env: Env, job: AuthorizationProjectio
   if (job.region !== env.AVALON_REGION) throw new Error('authorization_projection_region_mismatch');
   const workspace = await authorizationWorkspace(env, job.workspaceId);
   {
-    const space = await durableObjectStubForWorkspace(env, env.SPACE_DOS, job.workspaceId,
-      spaceDOName(env.AVALON_REGION, job.workspaceId, asSpaceId(job.parentId)));
-    const spaceAuthority = await space.authority({ workspaceId: job.workspaceId, parentId: job.parentId });
-    if (spaceAuthority.exists) throw new Error('authorization_projection_space_parent_unsupported');
-    const parent = await durableObjectStubForWorkspace(env, env.WORKSTREAM_DOS, job.workspaceId,
-      workstreamDOName(env.AVALON_REGION, job.workspaceId, asWorkstreamId(job.parentId)));
-    const authority = await parent.authority({ workspaceId: job.workspaceId, parentId: job.parentId });
+    // The Organization object hosts every Channel and Space parent and knows
+    // which kind this id is without creating anything to find out.
+    const resolved = await workspace.resolveHostedParent({ workspaceId: job.workspaceId, parentId: job.parentId });
+    if (resolved.kind === 'space') throw new Error('authorization_projection_space_parent_unsupported');
     const request = { workspaceId: job.workspaceId, parentId: job.parentId };
     let substreamIds: string[];
-    if (authority.exists) substreamIds = (await parent.listAuthorizationChildren(request)).substreamIds;
+    if (resolved.kind === 'workstream') substreamIds = (await workspace.listAuthorizationChildren(request)).substreamIds;
     else {
       const automation = await durableObjectStubForWorkspace(env, env.AUTOMATION_DOS, job.workspaceId,
         automationDOName(env.AVALON_REGION, job.workspaceId, asAutomationId(job.parentId)));

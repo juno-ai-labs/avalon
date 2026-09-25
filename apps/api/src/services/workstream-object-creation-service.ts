@@ -1,4 +1,4 @@
-import { WorkstreamCreationFieldsSchema } from "@rally/contracts";
+import { asWorkspaceId, WorkstreamCreationFieldsSchema } from "@rally/contracts";
 import type { ConversationInitialization, PreparedConversation } from "@rally/contracts";
 import { CreateWorkstreamRequestSchema, asSubstreamId, asUserId, asWorkstreamId } from "@rally/contracts";
 import type {
@@ -15,7 +15,7 @@ import type {
 import { newId } from "@rally/db";
 import type { z } from "zod";
 
-import { workspaceDOName, workstreamDOName } from "../durable-objects/names";
+import { workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
 import { workstreamImportHash } from "../durable-objects/workstream-import-hash";
@@ -431,13 +431,9 @@ export class WorkstreamObjectCreationService {
       // already registered and enqueues nothing twice.
       const workstream = await durableObjectStubForWorkspace(
         this.env,
-        this.env.WORKSTREAM_DOS,
+        this.env.WORKSPACE_DOS,
         this.auth.workspaceId,
-        workstreamDOName(
-          this.env.AVALON_REGION,
-          this.auth.workspaceId,
-          asWorkstreamId(receipt.workstream_id),
-        ),
+        workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)),
       );
       await span.step("workstream.create.parent.reserve", () => workstream.reserveChild({
         workspaceId: this.auth.workspaceId,

@@ -67,7 +67,10 @@ import {
   WorkspaceExternalEventDeliveryQueueMessageSchema,
   WorkspaceExternalEventMatchResultSchema,
   asAutomationId,
+  asSpaceId,
+  asSubstreamId,
   asWorkspaceId,
+  asWorkstreamId,
   automationTriggersAdmitResourceType,
   IdSchema,
   SpaceConversationSchema,
@@ -161,7 +164,6 @@ import { resolveClientFeatureFlagsForSubject } from "../services/client-feature-
 import { evaluateExternalEventPredicate } from "../services/external-event-evaluator";
 import { SIDEBAR_LIST_LIMIT } from "../services/sidebar-reads";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
-import { conversationParentStub } from "../services/conversation-parent-client";
 import {
   recordWorkspaceScheduleFailure,
   runWorkspaceScheduleTarget,
@@ -669,6 +671,7 @@ import {
 } from "./workspace-space-protocol";
 import {
   spaceVisibleToViewerSql,
+  SPACE_BOOTSTRAP_PAGE_SIZE,
   WORKSPACE_SPACE_SCHEMA_STATEMENTS,
   WorkspaceSpaceStorage,
 } from "./workspace-space-storage";
@@ -4536,11 +4539,545 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { agentIds: new AgentTeamStorage(this.state.storage).ownedDescendants(request.agentId) };
   }
 
+  // ---------------------------------------------------------------------------
+  // Hosted conversation parents.
+  //
+  // Every Channel's and Space's parent authority lives in this object, keyed by
+  // parent id; `hosted-parent.ts` holds the logic and
+  // `docs/hosted-conversation-parents.md` owns the design. The methods below
+  // keep the names and shapes the parent objects answered to, so a caller
+  // changes which stub it holds and nothing else.
+  //
+  // A parent that still lives in a legacy object is imported before anything
+  // reads it. A write drains the parent outbox before it answers, which is
+  // where the directory step now runs: in this object, straight after the
+  // commit, rather than over a Queue and back.
+  // ---------------------------------------------------------------------------
+
+  private readonly parentImportsInFlight = new Map<string, Promise<void>>();
+
+  private hostedParentHost(): HostedParentHost {
+    return {
+      env: this.env,
+      storage: this.state.storage,
+      alarms: this.scheduledAlarms,
+      armNextAlarm: async () => { await this.armNextAlarm(); },
+      controlSockets: (parentId) => this.state.getWebSockets(parentControlSocketTag(parentId)),
+      acceptControlSocket: (server, parentId, userId) => {
+        this.state.acceptWebSocket(server, [parentControlSocketTag(parentId), userId]);
+      },
+    };
+  }
+
+  /**
+   * Which kind of parent an id names. The row says once it exists; before
+   * that the import ledger does; before that a Space is the id the Space
+   * directory reserved, and anything else is a Channel. Never a probe of
+   * another object: asking a namespace whether something is there creates it.
+   */
+  private hostedParentKind(parentId: string): "workstream" | "space" {
+    const known = this.state.storage.sql.exec<{ parent_kind: "workstream" | "space" }>(
+      `SELECT parent_kind FROM parent_metadata WHERE parent_id = ?
+       UNION ALL SELECT parent_kind FROM parent_imports WHERE parent_id = ?
+       LIMIT 1`,
+      parentId, parentId,
+    ).toArray()[0]?.parent_kind;
+    if (known) return known;
+    return this.state.storage.sql.exec("SELECT 1 FROM spaces WHERE space_id = ?", parentId).toArray().length > 0
+      ? "space" : "workstream";
+  }
+
+  private async hostedParent(parentId: string, workspaceId?: string): Promise<HostedParent> {
+    await this.initialized;
+    if (workspaceId !== undefined) await this.ensureParentWorkspace(workspaceId);
+    await this.ensureParentImported(parentId);
+    const kind = this.hostedParentKind(parentId);
+    return new HostedParent(this.hostedParentHost(), parentId, kind === "space" ? HOSTED_SPACE_ROLE : HOSTED_CHANNEL_ROLE);
+  }
+
+  /**
+   * An Organization object that has never been initialized learns its own id
+   * from the first parent request, as it did from the first directory effect
+   * when the parents were other objects. An id that disagrees is refused.
+   */
+  private async ensureParentWorkspace(workspaceId: string): Promise<void> {
+    if (!this.workspaceId()) {
+      this.ensureIdentity(workspaceId, await workspacePlacementAffinity(this.env, workspaceId));
+    }
+    this.assertWorkspace(workspaceId);
+  }
+
+  /** Import a parent still held by its legacy object, once, before it is served. */
+  private async ensureParentImported(parentId: string): Promise<void> {
+    if (parentImportState(this.state.storage.sql, parentId) !== "pending") return;
+    let inFlight = this.parentImportsInFlight.get(parentId);
+    if (!inFlight) {
+      inFlight = this.importHostedParent(parentId).finally(() => this.parentImportsInFlight.delete(parentId));
+      this.parentImportsInFlight.set(parentId, inFlight);
+    }
+    await inFlight;
+  }
+
+  private async importHostedParent(parentId: string): Promise<void> {
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) throw new Error("parent_import_workspace_unknown");
+    const kind = this.hostedParentKind(parentId);
+    const namespace = kind === "space" ? this.env.SPACE_DOS : this.env.WORKSTREAM_DOS;
+    const name = kind === "space"
+      ? spaceDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), asSpaceId(parentId))
+      : workstreamDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(parentId));
+    let exported;
+    try {
+      const legacy = await durableObjectStubForWorkspace(this.env, namespace, workspaceId, name);
+      exported = LegacyParentExportSchema.parse(await legacy.exportParentState({ workspaceId: asWorkspaceId(workspaceId), parentId }));
+    } catch (error) {
+      const code = diagnosticErrorCode(error, "parent_export_failed");
+      deferParentImport(this.state.storage.sql, parentId, code, Date.now());
+      logWarn(this.env, "hosted_parent_import_deferred", {
+        workspace_id: workspaceId, parent_id: parentId, parent_kind: kind, code,
+      });
+      throw new Error("parent_import_unavailable", { cause: error });
+    }
+    const now = Date.now();
+    const result = importLegacyParent(this.state.storage, this.scheduledAlarms, parentId, kind, exported, now);
+    // The legacy migrations 19 and 20 replayed breakout projections once
+    // across the fleet; running them here makes an object that missed that
+    // pass converge, and costs nothing on one that did.
+    const parent = new HostedParent(this.hostedParentHost(), parentId, kind === "space" ? HOSTED_SPACE_ROLE : HOSTED_CHANNEL_ROLE);
+    this.state.storage.transactionSync(() => {
+      parent.replayStoredBreakoutProjections(now);
+      parent.republishDirectGrants(now);
+    });
+    logInfo(this.env, "hosted_parent_imported", {
+      workspace_id: workspaceId, parent_id: parentId, parent_kind: kind, rows: result.rows, found: result.found,
+    });
+    await this.drainParentOutbox();
+    await this.armNextAlarm();
+  }
+
+  /** After a parent write: apply what it put in the outbox, and arm what it scheduled. */
+  private async afterParentWrite(): Promise<void> {
+    await this.drainParentOutbox();
+    await this.armNextAlarm();
+  }
+
+  private static readonly LOCAL_PARENT_EFFECT_KINDS = new Set(["directory_common", "directory_user", "scope_grant_directory"]);
+
+  /**
+   * Deliver every due `parent_outbox` row. Directory and grant-directory rows
+   * are applied here, through the same paths the Queue consumer used; the rest
+   * leave on the activity Queue, whose consumer applies the regional effect
+   * and delivers the notification in a Worker. A row is deleted only once its
+   * destination has it, and a failure defers it for the alarm.
+   */
+  private async drainParentOutbox(): Promise<void> {
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) return;
+    const rows = this.state.storage.sql.exec<{ payload_json: string; effect_kind: string }>(
+      `SELECT payload_json, effect_kind FROM parent_outbox
+        WHERE state IN ('pending', 'inflight') AND not_before <= ?
+        ORDER BY CASE effect_kind WHEN 'directory_common' THEN 0 WHEN 'directory_user' THEN 1 ELSE 2 END,
+                 created_at, message_id
+        LIMIT 100`,
+      Date.now(),
+    ).toArray();
+    if (rows.length === 0) return;
+    const envelopes = rows.map((row) => ParentEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
+    const directory = envelopes.filter((envelope) => envelope.effect.kind === "directory_common"
+      || envelope.effect.kind === "directory_user");
+    const grants = envelopes.filter((envelope) => envelope.effect.kind === "scope_grant_directory");
+    const queued = envelopes.filter((envelope) => !WorkspaceDO.LOCAL_PARENT_EFFECT_KINDS.has(envelope.effect.kind));
+    const deliver = async (batch: ParentEffectEnvelope[], send: () => Promise<readonly ParentEffectEnvelope[]>) => {
+      if (batch.length === 0) return;
+      try {
+        this.deleteParentOutboxRows(await send());
+      } catch (error) {
+        this.deferParentOutboxRows(batch);
+        logWarn(this.env, "parent_effect_delivery_deferred", {
+          workspace_id: workspaceId,
+          message_ids: batch.map((envelope) => envelope.messageId),
+          effect_kinds: batch.map((envelope) => envelope.effect.kind),
+          code: diagnosticErrorCode(error, "parent_effect_delivery_failed"),
+        });
+      }
+    };
+    await deliver(directory, async () => {
+      const result = await this.applyWorkstreamDirectoryEffects({ workspaceId, envelopes: directory });
+      const accepted = new Set(result.accepted.map((entry) => `${entry.messageId}:${entry.payloadHash}`));
+      return directory.filter((envelope) => accepted.has(`${envelope.messageId}:${envelope.payloadHash}`));
+    });
+    await deliver(grants, async () => {
+      for (const envelope of grants) await this.applyScopeGrantDirectory(envelope);
+      return grants;
+    });
+    await deliver(queued, async () => {
+      await this.env.ACTIVITY_QUEUE.sendBatch(queued.map((envelope) => ({ body: envelope })));
+      return queued;
+    });
+  }
+
+  private deleteParentOutboxRows(envelopes: readonly ParentEffectEnvelope[]): void {
+    this.state.storage.transactionSync(() => {
+      for (const envelope of envelopes) {
+        this.state.storage.sql.exec(`DELETE FROM parent_outbox WHERE message_id = ? AND payload_hash = ?`,
+          envelope.messageId, envelope.payloadHash);
+      }
+    });
+  }
+
+  private deferParentOutboxRows(envelopes: readonly ParentEffectEnvelope[]): void {
+    const retryAt = Date.now() + 5_000;
+    this.state.storage.transactionSync(() => {
+      for (const envelope of envelopes) {
+        this.state.storage.sql.exec(
+          `UPDATE parent_outbox SET state = 'pending', attempts = attempts + 1, not_before = ?
+            WHERE message_id = ? AND payload_hash = ?`,
+          retryAt, envelope.messageId, envelope.payloadHash,
+        );
+      }
+    });
+  }
+
+  private nextParentOutboxDueAt(): number | null {
+    return this.state.storage.sql.exec<{ due_at: number | null }>(
+      `SELECT MIN(not_before) AS due_at FROM parent_outbox WHERE state IN ('pending', 'inflight')`,
+    ).toArray()[0]?.due_at ?? null;
+  }
+
+  /** Import pending parents in pages, so an Organization converges without anyone opening anything. */
+  private async importDueParents(now: number): Promise<void> {
+    // One page of a cross-object walk, for the reason `SPACE_BOOTSTRAP_PAGE_SIZE`
+    // gives: an alarm has to finish the page. An import is one RPC per parent.
+    for (const due of dueParentImports(this.state.storage.sql, now, SPACE_BOOTSTRAP_PAGE_SIZE)) {
+      try {
+        await this.ensureParentImported(due.parentId);
+      } catch {
+        // Deferred and logged by the import itself; the next page moves on.
+      }
+    }
+  }
+
+  private async drainDueParentBreakouts(now: number): Promise<void> {
+    for (const parentId of HostedParent.dueParentIds(this.state.storage.sql, now)) {
+      const parent = await this.hostedParent(parentId);
+      await parent.drainPrivateChildMembershipEffects().catch(() => undefined);
+      await parent.drainPrivateChildLifecycleEffects();
+    }
+  }
+
+  private async runHostedParentAlarm(alarm: ScheduledAlarm): Promise<boolean> {
+    if (alarm.kind === PARTICIPANT_PROJECTION_ALARM) {
+      const payload = HostedParticipantProjectionAlarmSchema.parse(JSON.parse(alarm.payload ?? "null"));
+      const parent = await this.hostedParent(payload.parentId);
+      await parent.deliverParticipantProjection(payload.delivery.substreamId, payload.delivery.projection.userId,
+        payload.delivery.projection.revision);
+      return true;
+    }
+    if (alarm.kind === PARTICIPANT_MIGRATION_ALARM) {
+      const [parentId, substreamId] = alarm.key.split(":");
+      if (!parentId || !substreamId) throw new Error("parent_participant_migration_key_invalid");
+      await (await this.hostedParent(parentId)).runParticipantMigration(asSubstreamId(substreamId));
+      await this.afterParentWrite();
+      return true;
+    }
+    if (alarm.kind === SCOPE_INVITATION_DELIVERY_ALARM) {
+      const [parentId, invitationId] = alarm.key.split(":");
+      if (!parentId || !invitationId) throw new Error("parent_invitation_delivery_key_invalid");
+      await (await this.hostedParent(parentId)).deliverInvitation(invitationId);
+      return true;
+    }
+    return false;
+  }
+
+  // The conversation-parent contract.
+
+  /**
+   * Which kind of hosted parent an id names, with its authority, in one call.
+   * `null` kind is an id this object hosts no parent for — a Sidekick, or
+   * nothing — which the caller then asks its own object about.
+   */
+  async resolveHostedParent(input: { workspaceId: string; parentId: string }): Promise<{
+    kind: "workstream" | "space" | null;
+    authority: Awaited<ReturnType<HostedParent["authority"]>>;
+  }> {
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema }).parse(input);
+    const parent = await this.hostedParent(request.parentId, request.workspaceId);
+    const authority = await parent.authority({ workspaceId: request.workspaceId, parentId: request.parentId });
+    return { kind: authority.exists ? parent.role.kind : null, authority };
+  }
+
+  async authority(input: Parameters<HostedParent["authority"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).authority(input);
+  }
+
+  async authorizeViewer(input: Parameters<HostedParent["authorizeViewer"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).authorizeViewer(input);
+  }
+
+  async reserveChild(input: Parameters<HostedParent["reserveChild"]>[0]) {
+    const result = (await this.hostedParent(input.parentId, input.workspaceId)).reserveChild(input);
+    await this.afterParentWrite();
+    return result;
+  }
+
+  async reserveAgentChild(input: Parameters<HostedParent["reserveAgentChild"]>[0]) {
+    const result = await (await this.hostedParent(input.parentId, input.workspaceId)).reserveAgentChild(input);
+    await this.afterParentWrite();
+    return result;
+  }
+
+  /** The provisional row is applied by `reserveChild` itself now; this finishes anything a failure left. */
+  async flushProvisionalDirectory(input: { workspaceId: string; parentId: string }): Promise<void> {
+    await this.hostedParent(input.parentId, input.workspaceId);
+    await this.afterParentWrite();
+  }
+
+  async listChildren(input: Parameters<HostedParent["listChildren"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).listChildren(input);
+  }
+
+  async childTerminalDeadlines(input: Parameters<HostedParent["childTerminalDeadlines"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).childTerminalDeadlines(input);
+  }
+
+  /** The children a hosted parent knows, for the retirement walk. */
+  async childrenForRetirement(input: { workspaceId: string; parentId: string }) {
+    const parent = await this.hostedParent(input.parentId, input.workspaceId);
+    if (!parent.metadataRow()) return { status: "missing" as const };
+    return { status: "ok" as const, children: parent.childrenForRetirement() };
+  }
+
+  /**
+   * The parent step of a conversation's effects, delivered by the activity
+   * Queue consumer. The directory step follows in the same invocation, from
+   * the outbox, instead of a second Queue hop.
+   */
+  async receiveChildEffects(input: Parameters<HostedParent["receiveChildEffects"]>[0]) {
+    const envelope = input.envelopes[0];
+    if (!envelope) throw new Error("conversation_effects_empty");
+    if (envelope.parentKind !== "workstream" && envelope.parentKind !== "space") {
+      throw new Error("conversation_effect_parent_kind_unhosted");
+    }
+    const parent = await this.hostedParent(envelope.parentId, envelope.workspaceId);
+    const accepted = parent.receiveChildEffects(input);
+    await this.afterParentWrite();
+    await parent.afterChildEffects();
+    return { accepted };
+  }
+
+  async listAuthorizationChildren(input: Parameters<HostedParent["listAuthorizationChildren"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).listAuthorizationChildren(input);
+  }
+
+  async readAuthorizationFacts(input: Parameters<HostedParent["readAuthorizationFacts"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).readAuthorizationFacts(input);
+  }
+
+  // Sidekick recommendations.
+
+  async recommendedSidekickIds(input: Parameters<HostedParent["recommendedSidekickIds"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).recommendedSidekickIds(input);
+  }
+
+  async readManagementAccess(input: Parameters<HostedParent["readManagementAccess"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).readManagementAccess(input);
+  }
+
+  async setSidekickRecommendation(input: Parameters<HostedParent["setSidekickRecommendation"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).setSidekickRecommendation(input);
+  }
+
+  // Space access provenance.
+
+  async readAccessSources(input: Parameters<HostedParent["readAccessSources"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).readAccessSources(input);
+  }
+
+  async readPersistedSpaceAccessSources(input: Parameters<HostedParent["readPersistedSpaceAccessSources"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).readPersistedSpaceAccessSources(input);
+  }
+
+  async setDirectScope(input: Parameters<HostedParent["setDirectScope"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).setDirectScope(input);
+  }
+
+  async noteDirectReader(input: Parameters<HostedParent["noteDirectReader"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).noteDirectReader(input);
+  }
+
+  async applySpaceAccessSource(input: Parameters<HostedParent["applySpaceAccessSource"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).applySpaceAccessSource(input);
+  }
+
+  async confirmSpaceAccessSource(input: Parameters<HostedParent["confirmSpaceAccessSource"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).confirmSpaceAccessSource(input);
+  }
+
+  async replaceEquivalentSpaceAccessSource(input: Parameters<HostedParent["replaceEquivalentSpaceAccessSource"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).replaceEquivalentSpaceAccessSource(input);
+  }
+
+  async retractSpaceAccessSource(input: Parameters<HostedParent["retractSpaceAccessSource"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).retractSpaceAccessSource(input);
+  }
+
+  // Grants, invitations and the participant handoff.
+
+  async scopeSharingOptions(input: Parameters<HostedParent["scopeSharingOptions"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).scopeSharingOptions(input);
+  }
+
+  async listManagedScopeGrants(input: Parameters<HostedParent["listManagedScopeGrants"]>[0]) {
+    return (await this.hostedParent(input.target.parentId, input.target.workspaceId)).listManagedScopeGrants(input);
+  }
+
+  async listScopeInvitations(input: Parameters<HostedParent["listScopeInvitations"]>[0]) {
+    return (await this.hostedParent(input.target.parentId, input.target.workspaceId)).listScopeInvitations(input);
+  }
+
+  async createScopeInvitations(input: Parameters<HostedParent["createScopeInvitations"]>[0]) {
+    const result = await (await this.hostedParent(input.parentId, input.workspaceId)).createScopeInvitations(input);
+    await this.afterParentWrite();
+    return result;
+  }
+
+  async acceptScopeInvitation(input: Parameters<HostedParent["acceptScopeInvitation"]>[0]) {
+    const result = await (await this.hostedParent(input.parentId, input.workspaceId)).acceptScopeInvitation(input);
+    await this.afterParentWrite();
+    return result;
+  }
+
+  async describeScopeInvitation(input: Parameters<HostedParent["describeScopeInvitation"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).describeScopeInvitation(input);
+  }
+
+  async revokeScopeInvitation(input: Parameters<HostedParent["revokeScopeInvitation"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).revokeScopeInvitation(input);
+  }
+
+  async readScopeAccess(input: Parameters<HostedParent["readScopeAccess"]>[0]) {
+    return (await this.hostedParent(input.target.parentId, input.target.workspaceId)).readScopeAccess(input);
+  }
+
+  async readSharedWorkstream(input: Parameters<HostedParent["readSharedWorkstream"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).readSharedWorkstream(input);
+  }
+
+  async mutateScopeGrant(input: Parameters<HostedParent["mutateScopeGrant"]>[0]) {
+    const result = await (await this.hostedParent(input.target.parentId, input.target.workspaceId)).mutateScopeGrant(input);
+    await this.afterParentWrite();
+    return result;
+  }
+
+  async mutateParticipantGrant(input: Parameters<HostedParent["mutateParticipantGrant"]>[0]) {
+    const result = await (await this.hostedParent(input.target.parentId, input.target.workspaceId))
+      .mutateParticipantGrant(input);
+    await this.afterParentWrite();
+    return result;
+  }
+
+  async admitConnectorParticipants(input: Parameters<HostedParent["admitConnectorParticipants"]>[0]) {
+    const result = await (await this.hostedParent(input.parentId, input.workspaceId)).admitConnectorParticipants(input);
+    await this.afterParentWrite();
+    return result;
+  }
+
+  async joinConversation(input: Parameters<HostedParent["joinConversation"]>[0]) {
+    const result = await (await this.hostedParent(input.target.parentId, input.target.workspaceId)).joinConversation(input);
+    await this.afterParentWrite();
+    return result;
+  }
+
+  async beginMainParticipantMigration(input: Parameters<HostedParent["beginMainParticipantMigration"]>[0]) {
+    const result = await (await this.hostedParent(input.parentId, input.workspaceId)).beginMainParticipantMigration(input);
+    await this.afterParentWrite();
+    return result;
+  }
+
+  async beginChildParticipantMigration(input: Parameters<HostedParent["beginChildParticipantMigration"]>[0]) {
+    const result = await (await this.hostedParent(input.parentId, input.workspaceId)).beginChildParticipantMigration(input);
+    await this.afterParentWrite();
+    return result;
+  }
+
+  // Private breakouts.
+
+  async beginPrivateChildPreparation(input: Parameters<HostedParent["beginPrivateChildPreparation"]>[0]) {
+    const result = await (await this.hostedParent(input.parentId, input.workspaceId)).beginPrivateChildPreparation(input);
+    await this.afterParentWrite();
+    return result;
+  }
+
+  async readPrivateChildPreparation(input: Parameters<HostedParent["readPrivateChildPreparation"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).readPrivateChildPreparation(input);
+  }
+
+  async claimPrivateChildConfirmation(input: Parameters<HostedParent["claimPrivateChildConfirmation"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).claimPrivateChildConfirmation(input);
+  }
+
+  async savePrivateChildCapture(input: Parameters<HostedParent["savePrivateChildCapture"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).savePrivateChildCapture(input);
+  }
+
+  async savePrivateChildPart(input: Parameters<HostedParent["savePrivateChildPart"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).savePrivateChildPart(input);
+  }
+
+  async savePreparedPrivateChildContext(input: Parameters<HostedParent["savePreparedPrivateChildContext"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).savePreparedPrivateChildContext(input);
+  }
+
+  async setPrivateChildTerminalStatus(input: Parameters<HostedParent["setPrivateChildTerminalStatus"]>[0]) {
+    const result = await (await this.hostedParent(input.parentId, input.workspaceId)).setPrivateChildTerminalStatus(input);
+    await this.afterParentWrite();
+    return result;
+  }
+
+  async listVisiblePrivateChildren(input: Parameters<HostedParent["listVisiblePrivateChildren"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).listVisiblePrivateChildren(input);
+  }
+
+  async addPrivateChildParticipant(input: Parameters<HostedParent["addPrivateChildParticipant"]>[0]) {
+    const result = await (await this.hostedParent(input.parentId, input.workspaceId)).addPrivateChildParticipant(input);
+    await this.afterParentWrite();
+    return result;
+  }
+
+  async removePrivateChildParticipant(input: Parameters<HostedParent["removePrivateChildParticipant"]>[0]) {
+    const result = await (await this.hostedParent(input.parentId, input.workspaceId)).removePrivateChildParticipant(input);
+    await this.afterParentWrite();
+    return result;
+  }
+
+  async setPrivateChildArchived(input: Parameters<HostedParent["setPrivateChildArchived"]>[0]) {
+    const result = await (await this.hostedParent(input.parentId, input.workspaceId)).setPrivateChildArchived(input);
+    await this.afterParentWrite();
+    return result;
+  }
+
+  // Socket revocation for a parent's Channel control sockets.
+
+  async revokeNarrowedAudienceAccess(input: Parameters<HostedParent["revokeNarrowedAudienceAccess"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).revokeNarrowedAudienceAccess(input);
+  }
+
+  /** The `workstream` revocation hop: close this Channel's control sockets and name its conversations. */
+  async revokeParentSocketAccess(input: { parentId: string; revocation: SocketAccessRevocation }) {
+    const parentId = IdSchema.parse(input.parentId);
+    return (await this.hostedParent(parentId)).revokeSocketAccess(input.revocation);
+  }
+
   override async fetch(request: Request): Promise<Response> {
     await this.initialized;
     const path = new URL(request.url).pathname;
     if (request.method === "GET" && (path === "/socket" || path === "/")) {
       return this.acceptSocket(request);
+    }
+    if (request.method === "GET" && path === "/parent-socket") {
+      const parentId = WorkstreamIdSchema.safeParse(readRallyHeader(request.headers, RALLY_HEADERS.WORKSTREAM_ID));
+      if (!parentId.success) return json({ error: "invalid_socket_identity" }, 400);
+      return (await this.hostedParent(parentId.data)).acceptSocket(request);
     }
     if (request.method === "GET" && path === "/health") {
       return json({
@@ -4633,6 +5170,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   override async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
+    // A Channel control socket belongs to its hosted parent. Its attachment is
+    // one the workspace reader refuses, so it is recognized first.
+    const control = readControlSocketAttachment(socket);
+    if (control) {
+      const parent = await this.hostedParent(control.workstreamId);
+      await parent.onSocketMessage(socket, control, message);
+      return;
+    }
     // Record callback ingress before initialization can stall; parse the
     // attachment only once because this callback also handles presence frames.
     this.lastSocketEventAt = Date.now();
@@ -4973,7 +5518,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const searchAuthorization = nextSearchAuthorizationPush(this.state.storage.sql);
     const authorization = this.state.storage.sql.exec<{ due: number | null }>('SELECT MIN(not_before) AS due FROM authorization_delivery').one().due;
     const firstFrame = nextFirstFrameDeadline(this.watchedSockets(), this.socketFirstFrameDeadlineMs);
+    const parentOutbox = this.nextParentOutboxDueAt();
+    const parentBreakouts = HostedParent.nextDueAt(this.state.storage.sql);
+    const parentImport = nextParentImportDueAt(this.state.storage.sql);
     return [
+      ...(parentOutbox === null ? [] : [parentOutbox]),
+      ...(parentBreakouts === null ? [] : [parentBreakouts]),
+      ...(parentImport === null ? [] : [parentImport]),
       ...(oldest === null ? [] : [Number(oldest) + ACTIVITY_EVENT_RETENTION_MS]),
       ...(spacePublication === null ? [] : [spacePublication]),
       ...(spaceIntent === null ? [] : [spaceIntent]),
@@ -5037,6 +5588,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   protected override async runDueAlarmWork(now: number): Promise<void> {
     const workspaceId = this.workspaceId();
     if (workspaceId) {
+      // Hosted parents first: an outbox row is a directory update somebody is
+      // waiting to see, and an import is a Channel nobody can open until it lands.
+      await this.instrumentWorkspaceAlarmPhase("parent_outbox", undefined, () => this.drainParentOutbox());
+      await this.instrumentWorkspaceAlarmPhase("parent_import", undefined, () => this.importDueParents(now));
+      await this.instrumentWorkspaceAlarmPhase("parent_breakouts", undefined, () => this.drainDueParentBreakouts(now));
       try { await flushSearchAuthorizationPush(this.state.storage.sql, this.env, workspaceId); }
       catch { logWarn(this.env, 'search_authorization_push_deferred', { region: this.env.AVALON_REGION }); }
       try { await flushAuthorizationDeliveries(this.state.storage.sql, this.env.ACTIVITY_QUEUE, now); }
@@ -5129,6 +5685,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       async () => {
         const workspaceId = this.workspaceId();
         if (!workspaceId) return;
+        if (await this.runHostedParentAlarm(alarm)) return;
         if (alarm.kind === PRODUCT_ALARM_KIND) {
           await this.runProductAlarm(workspaceId);
           return;
@@ -5285,16 +5842,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       workspaceId,
       directory: this,
       notificationIntents: this,
-      // The directory row is this object's; which conversation the deadline
-      // belongs to is the work stream's own knowledge, read from its parent
-      // object rather than copied here.
+      // The directory row carries one deadline per Channel; which
+      // conversation it belongs to is the Channel's hosted parent's knowledge,
+      // read from its rows in this object.
       dueTerminalSubstreams: async (workstreamId, through) => {
-        const parent = await conversationParentStub(this.env, {
-          workspaceId: asWorkspaceId(workspaceId),
-          parentKind: "workstream",
-          parentId: workstreamId,
-        });
-        const { items } = await parent.childTerminalDeadlines({
+        const parent = await this.hostedParent(workstreamId);
+        const { items } = parent.childTerminalDeadlines({
           workspaceId: asWorkspaceId(workspaceId),
           parentId: workstreamId,
         });
@@ -8390,6 +8943,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       );
     }
     this.assertWorkspace(request.workspaceId);
+    // A directory effect from a legacy parent object — one that was mid-way
+    // through delivering when this deploy landed — names a parent this object
+    // has to import before it can serve it. A hosted parent's own effects never
+    // reach this line with its metadata missing.
+    for (const envelope of request.envelopes) {
+      if (envelope.parentKind !== "workstream" && envelope.parentKind !== "space") continue;
+      if (this.state.storage.sql.exec("SELECT 1 FROM parent_metadata WHERE parent_id = ?", envelope.parentId)
+        .toArray().length > 0) continue;
+      notePendingParentImport(this.state.storage.sql, envelope.parentId, envelope.parentKind);
+    }
     const spaceEnvelopes = request.envelopes.filter((envelope) => envelope.parentKind === "space");
     // A breakout's own projection is a third destination. It names itself on
     // the envelope; a Channel's aggregate names nothing, so the absence of the
@@ -12972,8 +13535,16 @@ applyRetirementGate(WorkspaceDO, {
     "beginWorkspaceRetirement",
     "recordRetiredNode",
     "workspaceRetirementProgress",
+    // The walk's read of a hosted Channel's or Space's children. The parent is
+    // closed with this object; its conversations are still separate objects
+    // the walk has to find and close.
+    "childrenForRetirement",
   ],
   drop: {
+    // A conversation's effects for a hosted parent, handed to the Queue before
+    // the tombstone landed. Acknowledged as the legacy parents did, so the
+    // message stops redelivering an effect nothing will apply.
+    receiveChildEffects: ([input]) => ({ accepted: droppedEnvelopeReceipts(input) }),
     // Already handed to the Queue before the tombstone landed. The consumer
     // parses `accepted` to decide the message is done; anything else leaves it
     // redelivering an effect no object will ever apply.

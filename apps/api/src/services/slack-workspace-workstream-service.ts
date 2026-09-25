@@ -1,14 +1,15 @@
 import {
-  ExternalActorSchema,
   asSubstreamId,
   asUserId,
+  asWorkspaceId,
   asWorkstreamId,
-  type UserId,
-  type WorkspaceId,
   type ExternalActor,
+  ExternalActorSchema,
   type Scope,
   type SlackOriginContext,
   type SlackSearchAuthorization,
+  type UserId,
+  type WorkspaceId,
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
@@ -38,7 +39,7 @@ import {
 } from "./workstream-runtime-database";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { workstreamDOName } from "../durable-objects/names";
+import { workspaceDOName } from "../durable-objects/names";
 
 const OpenElicitationRowSchema = z.object({
   id: z.string().min(1),
@@ -136,9 +137,9 @@ export class SlackWorkspaceWorkstreamService {
     // in no Space is a state no surface may render.
     const workstream = await durableObjectStubForWorkspace(
       this.env,
-      this.env.WORKSTREAM_DOS,
+      this.env.WORKSPACE_DOS,
       this.workspaceId,
-      workstreamDOName(this.env.AVALON_REGION, this.workspaceId, asWorkstreamId(workstreamId)),
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.workspaceId)),
     );
     await workstream.reserveChild({
       workspaceId: this.workspaceId,

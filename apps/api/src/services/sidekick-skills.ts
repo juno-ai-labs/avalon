@@ -1,7 +1,7 @@
-import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type SidekickSkillSource, type WorkstreamWorkflowInput } from "@rally/contracts";
+import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, type SidekickSkillSource, type WorkstreamWorkflowInput } from "@rally/contracts";
 import { codeSkillRef, type HarnessSkill } from "@rally/agent-harness";
 import type { Env } from "../env";
-import { automationDOName, conversationObjectName, workspaceDOName, workstreamDOName } from "../durable-objects/names";
+import { automationDOName, conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 
@@ -11,7 +11,7 @@ export const sidekickSkillRef = (id: string): string => codeSkillRef(`sidekick-$
 export async function recommendedSidekickRefs(env: Env, input: WorkstreamWorkflowInput): Promise<string[]> {
   if (input.parentKind !== "workstream") return [];
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, input.workspaceId, workspaceDOName(env.AVALON_REGION, input.workspaceId));
-  const room = await durableObjectStubForWorkspace(env, env.WORKSTREAM_DOS, input.workspaceId, workstreamDOName(env.AVALON_REGION, input.workspaceId, asWorkstreamId(input.parentId)));
+  const room = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, input.workspaceId, workspaceDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId)));
   const [owned, attached] = await Promise.all([
     workspace.automationIdsOwnedByWorkstream({ workspaceId: input.workspaceId, workstreamId: input.parentId }),
     room.recommendedSidekickIds({ workspaceId: input.workspaceId, parentId: input.parentId }),

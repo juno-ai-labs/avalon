@@ -20,7 +20,7 @@ import { drainSearchProjectionOutbox, nextSearchProjectionDueAt, SearchConversat
 import { searchDocumentId } from '../services/text-search';
 import { ConversationParentKindSchema } from "@rally/contracts/conversation-parent";
 import { SubstreamAddressSchema, type SubstreamContextCapture } from "@rally/contracts/substream-creation";
-import { workstreamDOName } from "./names";
+import { workspaceDOName } from "./names";
 import { initialContextFrames } from "./substream-context-transfer";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { pendingBindToolBatch, type HarnessToolResult } from "@rally/agent-harness";
@@ -2432,8 +2432,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       || source.substreamId !== "0" || this.externalSubstreamId() !== "0") {
       throw new Error("substream_source_identity_mismatch");
     }
-    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS,
-      source.workspaceId, workstreamDOName(this.env.AVALON_REGION, source.workspaceId, source.workstreamId));
+    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
+      source.workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(source.workspaceId)));
     const authorization = await parent.authorizeViewer({
       workspaceId: source.workspaceId, parentId: source.workstreamId,
       substreamId: asSubstreamId("0"), userId: asUserId(input.userId),
@@ -2463,8 +2463,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       || address.substreamId === "0" || this.externalSubstreamId() !== address.substreamId) {
       throw new Error("substream_target_identity_mismatch");
     }
-    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS,
-      address.workspaceId, workstreamDOName(this.env.AVALON_REGION, address.workspaceId, address.workstreamId));
+    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
+      address.workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(address.workspaceId)));
     const operation = await parent.readPrivateChildPreparation({
       workspaceId: address.workspaceId, parentId: address.workstreamId, operationId: input.operationId,
     });
@@ -2491,8 +2491,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const identity = this.objectStore.identity();
     if (!identity || identity.workspaceId !== input.workspaceId || identity.parentId !== input.workstreamId
       || this.externalSubstreamId() !== input.substreamId || input.substreamId === "0") throw new Error("substream_target_identity_mismatch");
-    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS,
-      asWorkspaceId(input.workspaceId), workstreamDOName(this.env.AVALON_REGION, asWorkspaceId(input.workspaceId), asWorkstreamId(input.workstreamId)));
+    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
+      asWorkspaceId(input.workspaceId), workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(input.workspaceId)));
     const conversation = parseRpcInput(PreparedConversationSchema, input.conversation, "prepared_conversation");
     const operation = await parent.readPrivateChildPreparation({ workspaceId: asWorkspaceId(input.workspaceId), parentId: input.workstreamId, operationId: input.operationId });
     if (!operation || operation.substreamId !== input.substreamId || !["confirming", "ready"].includes(operation.status)) throw new Error("substream_preparation_not_ready");
@@ -3526,8 +3526,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         && new ParticipantAuthorityTransferStorage(this.state.storage).currentTransferId() !== null) {
         const active = request.operation === "add_participant";
         if (active) await this.product.authorizeParticipantAddition(current, request.userId);
-        const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS,
-          identity.workspaceId, workstreamDOName(this.env.AVALON_REGION, identity.workspaceId, asWorkstreamId(identity.parentId)));
+        const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
+          identity.workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)));
         const substreamId = this.externalSubstreamId();
         const result = await parent.mutateParticipantGrant({ operationId: request.operationId ?? uuidV7(),
           actorUserId: current.userId, userId: UserIdSchema.parse(request.userId), active,

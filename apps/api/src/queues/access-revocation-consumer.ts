@@ -1,7 +1,6 @@
 import {
   asArtifactId,
   asAutomationId,
-  asSpaceId,
   asWorkspaceId,
   asWorkstreamId,
   type SubstreamId,
@@ -11,9 +10,7 @@ import {
   artifactHostDOName,
   automationDOName,
   conversationObjectName,
-  spaceDOName,
   workspaceDOName,
-  workstreamDOName,
 } from "../durable-objects/names";
 import type { Env } from "../env";
 import {
@@ -65,14 +62,16 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
     // substreams and the automations the room owns. Nobody holding a socket
     // means nobody to publish for — the members who lost access and were not
     // connected have nothing open to close.
-    const workstream = await durableObjectStubForWorkspace(
+    // The room's parent is hosted by the Organization object, which holds its
+    // control sockets too.
+    const workspace = await durableObjectStubForWorkspace(
       env,
-      env.WORKSTREAM_DOS,
+      env.WORKSPACE_DOS,
       workspaceId,
-      workstreamDOName(env.AVALON_REGION, workspaceId, asWorkstreamId(target.workstreamId)),
+      workspaceDOName(env.AVALON_REGION, workspaceId),
       placementAffinity,
     );
-    const { closedUserIds = [] } = await workstream.revokeNarrowedAudienceAccess({
+    const { closedUserIds = [] } = await workspace.revokeNarrowedAudienceAccess({
       workspaceId,
       parentId: target.workstreamId,
     });
@@ -171,14 +170,14 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
     // is nothing here to close and asking would be a subrequest whose answer is
     // always empty. Its children are addressed by the Space id exactly as a
     // work stream's substreams are addressed by its own.
-    const space = await durableObjectStubForWorkspace(
+    const workspace = await durableObjectStubForWorkspace(
       env,
-      env.SPACE_DOS,
+      env.WORKSPACE_DOS,
       workspaceId,
-      spaceDOName(env.AVALON_REGION, workspaceId, asSpaceId(target.spaceId)),
+      workspaceDOName(env.AVALON_REGION, workspaceId),
       placementAffinity,
     );
-    const { children } = await space.listChildren({
+    const { children } = await workspace.listChildren({
       workspaceId,
       parentId: target.spaceId,
     });
@@ -213,14 +212,16 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
   const workstreamId = asWorkstreamId(target.workstreamId);
 
   if (target.scope === "workstream") {
-    const workstream = await durableObjectStubForWorkspace(
+    // The Channel's parent — and its control sockets — live in the
+    // Organization object.
+    const workspace = await durableObjectStubForWorkspace(
       env,
-      env.WORKSTREAM_DOS,
+      env.WORKSPACE_DOS,
       workspaceId,
-      workstreamDOName(env.AVALON_REGION, workspaceId, workstreamId),
+      workspaceDOName(env.AVALON_REGION, workspaceId),
       placementAffinity,
     );
-    const { substreamIds } = await workstream.revokeSocketAccess(revocation);
+    const { substreamIds } = await workspace.revokeParentSocketAccess({ parentId: workstreamId, revocation });
     await publishDescendantRevocations(env, [
       ...substreamIds.map((substreamId) => descendantRevocation(revocation, {
         scope: "substream",

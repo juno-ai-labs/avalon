@@ -1,11 +1,11 @@
 import { workstreamImportHash } from "../durable-objects/workstream-import-hash";
 import type { PreparedConversation } from "@rally/contracts";
-import { asSubstreamId, asUserId, asWorkstreamId, type AgentModelOverride } from "@rally/contracts";
+import { type AgentModelOverride, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { PrivateChildPreparationOperationSchema, type PrivateChildPreparationOperation } from "@rally/contracts/conversation-parent";
 import type { SubstreamCreationResult, SubstreamOpeningMessage } from "@rally/contracts/substream-creation";
 import type { AuthContext, Env } from "../env";
-import type { WorkstreamDO } from "../durable-objects/workstream-do";
-import { conversationObjectName, workstreamDOName } from "../durable-objects/names";
+import type { WorkspaceDO } from "../durable-objects/workspace-do";
+import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { ApiError } from "../lib/api-error";
 import { ConversationService } from "./conversation-service";
@@ -70,8 +70,8 @@ export class SubstreamCreationService {
     if (parent.kind !== "workstream" || (parent.archived && !substreamId)) {
       throw new ApiError(409, "substream_parent_unavailable", "Substreams require an active work stream.");
     }
-    return durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS, this.auth.workspaceId,
-      workstreamDOName(this.env.AVALON_REGION, this.auth.workspaceId, asWorkstreamId(parentId)));
+    return durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
   }
 
   async prepare(parentId: string, input: { operationId: string; title?: string | undefined; throughTurnId: string | null }, span: FlowSpan = noFlowSpan): Promise<PrivateChildPreparationOperation> {
@@ -290,7 +290,7 @@ export class SubstreamCreationService {
    * work stream: a substream seats them on its own.
    */
   private async assertParticipantsAdmitted(
-    parent: DurableObjectStub<WorkstreamDO>,
+    parent: DurableObjectStub<WorkspaceDO>,
     parentId: string,
     opening: SubstreamOpeningMessage | null,
   ): Promise<void> {

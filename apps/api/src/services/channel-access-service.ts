@@ -1,17 +1,16 @@
 import {
   asUserId,
   asWorkspaceId,
-  asWorkstreamId,
   type ChannelAccessSources,
-  type SpaceId,
   type SpaceErrorCode,
+  type SpaceId,
   type SpaceScope,
   type UserId,
   type WorkspaceId,
   type WorkstreamDetail,
 } from "@rally/contracts";
 
-import { workspaceDOName, workstreamDOName } from "../durable-objects/names";
+import { workspaceDOName } from "../durable-objects/names";
 import type {
   ConfirmedAccessSource,
   ObservedChannel,
@@ -70,16 +69,13 @@ export class ChannelAccessService {
     return new WorkstreamObjectClient(this.env, this.auth, workstreamId);
   }
 
-  private async room(workstreamId: string) {
+  /** The Organization object, which hosts every Channel's parent. */
+  private async room() {
     return durableObjectStubForWorkspace(
       this.env,
-      this.env.WORKSTREAM_DOS,
+      this.env.WORKSPACE_DOS,
       this.auth.workspaceId,
-      workstreamDOName(
-        this.env.AVALON_REGION,
-        asWorkspaceId(this.auth.workspaceId),
-        asWorkstreamId(workstreamId),
-      ),
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)),
     );
   }
 
@@ -152,7 +148,7 @@ export class ChannelAccessService {
       operationId: string;
     },
   ): Promise<void> {
-    const result = await (await this.room(workstreamId)).replaceEquivalentSpaceAccessSource({
+    const result = await (await this.room()).replaceEquivalentSpaceAccessSource({
       ...this.address(workstreamId),
       ...input,
       participantUserIds: [...input.participantUserIds],
@@ -171,7 +167,7 @@ export class ChannelAccessService {
    * disclosure the rest of this surface does not make.
    */
   async readSources(workstreamId: string): Promise<ChannelAccessSources> {
-    const room = await this.room(workstreamId);
+    const room = await this.room();
     const management = await room.readManagementAccess({
       ...this.address(workstreamId),
       userId: asUserId(this.auth.userId),
@@ -192,7 +188,7 @@ export class ChannelAccessService {
    * rechecked after the move may already have changed Channel provenance.
    */
   async readPersistedSpaceSources(workstreamId: string): Promise<ChannelAccessSources["spaces"]> {
-    return (await this.room(workstreamId)).readPersistedSpaceAccessSources(
+    return (await this.room()).readPersistedSpaceAccessSources(
       this.address(workstreamId),
     );
   }
@@ -211,7 +207,7 @@ export class ChannelAccessService {
     const suppliers = sources.spaces.filter((space) => space.participantUserIds.includes(reader));
     const client = this.client(workstreamId);
     await client.removeParticipant(userId);
-    const room = await this.room(workstreamId);
+    const room = await this.room();
     for (const supplier of suppliers) {
       await client.addParticipant(userId, { spaceSourceId: supplier.spaceId });
       const confirmed = await room.confirmSpaceAccessSource({
@@ -238,7 +234,7 @@ export class ChannelAccessService {
     scope: SpaceScope,
     observed = true,
   ): Promise<SetChannelDirectScopeResult> {
-    return (await this.room(workstreamId)).setDirectScope({
+    return (await this.room()).setDirectScope({
       ...this.address(workstreamId),
       scope,
       observed,
@@ -324,7 +320,7 @@ export class ChannelAccessService {
     }
     // Attribute them to the source that supplied them, per Space, or the next
     // retraction reads them as the Channel's own and leaves them behind.
-    const room = await this.room(workstreamId);
+    const room = await this.room();
     for (const space of sources.spaces) {
       const supplied = newlySeated.filter((userId) => space.participantUserIds.includes(userId));
       if (supplied.length === 0) continue;
@@ -348,7 +344,7 @@ export class ChannelAccessService {
 
   /** A direct add makes this reader the Channel's own, whichever Space seated them. */
   async noteDirectReader(workstreamId: string, userId: string): Promise<void> {
-    await (await this.room(workstreamId)).noteDirectReader({
+    await (await this.room()).noteDirectReader({
       ...this.address(workstreamId),
       userId: asUserId(userId),
     });
@@ -373,7 +369,7 @@ export class ChannelAccessService {
     const detail = known ? null : await client.get();
     const observed = known?.channel ?? this.observed(detail!);
     const title = known?.title ?? detail!.title;
-    const room = await this.room(workstreamId);
+    const room = await this.room();
     const applied = await room.applySpaceAccessSource({
       ...this.address(workstreamId),
       spaceId: source.spaceId,
@@ -462,7 +458,7 @@ export class ChannelAccessService {
     born: ObservedChannel,
     channelTitle: string,
   ): Promise<ObservedChannel> {
-    const room = await this.room(workstreamId);
+    const room = await this.room();
     const applied = await room.applySpaceAccessSource({
       ...this.address(workstreamId),
       spaceId: source.spaceId,
@@ -507,7 +503,7 @@ export class ChannelAccessService {
   ): Promise<void> {
     const observation = await this.observation(workstreamId);
     const observed = observation.channel;
-    const room = await this.room(workstreamId);
+    const room = await this.room();
     const retracted = await room.retractSpaceAccessSource({
       ...this.address(workstreamId),
       spaceId,
@@ -551,7 +547,7 @@ export class ChannelAccessService {
   ): Promise<void> {
     if (seated.length === 0) return;
     try {
-      const room = await this.room(workstreamId);
+      const room = await this.room();
       await room.confirmSpaceAccessSource({
         ...this.address(workstreamId),
         spaceId,
@@ -645,7 +641,7 @@ export class ChannelAccessService {
       const supplier = remaining.find((space) => space.participantUserIds.includes(userId));
       await client.addParticipant(userId, supplier ? { spaceSourceId: supplier.spaceId } : {});
     }
-    const room = await this.room(workstreamId);
+    const room = await this.room();
     for (const space of remaining) {
       const supplied = plan.seatUserIds.filter((userId) => space.participantUserIds.includes(userId));
       if (supplied.length === 0) continue;

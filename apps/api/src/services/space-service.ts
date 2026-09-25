@@ -1,30 +1,29 @@
 import {
   asAutomationId,
-  asSpaceId,
   asSubstreamId,
   asUserId,
   asWorkspaceId,
+  type ContainerOrder,
   ContainerOrderSchema,
-  SpaceChannelPageSchema,
-  MoveChannelBetweenSpacesResultSchema,
-  SpaceRefusalDetailsSchema,
-  SpaceSummarySchema,
   type CreateSpaceRequest,
+  MoveChannelBetweenSpacesResultSchema,
   type SpaceChannelPage,
+  SpaceChannelPageSchema,
   type SpaceDefaultKind,
   type SpaceErrorCode,
   type SpaceId,
+  SpaceRefusalDetailsSchema,
   type SpaceScope,
   type SpaceSummary,
-  type ContainerOrder,
+  SpaceSummarySchema,
   type UpdateSpaceAudienceRequest,
   type UpdateSpacePresentationRequest,
   type UserId,
-  type WorkstreamId,
   type WorkspaceId,
+  type WorkstreamId,
 } from "@rally/contracts";
 
-import { automationDOName, conversationObjectName, spaceDOName, workspaceDOName } from "../durable-objects/names";
+import { automationDOName, conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceSpaceChannelPageResultSchema,
   WorkspaceSpaceDefaultResultSchema,
@@ -882,7 +881,7 @@ export class SpaceService {
       spaceId,
       spaceName,
       attached ? "attach_default_sidekick" : "detach_default_sidekick",
-      async () => (await this.spaceParent(spaceId)).setSidekickRecommendation({
+      async () => (await this.spaceParent()).setSidekickRecommendation({
         workspaceId: this.auth.workspaceId,
         parentId: spaceId,
         userId: this.auth.userId,
@@ -1380,7 +1379,7 @@ export class SpaceService {
     const now = Date.now();
     await bootstrapWorkstreamRuntimeEnvironment(this.env, this.auth.workspaceId, spaceId, "space");
     const authority = await readWorkstreamAuthorityControl(this.env);
-    await (await this.spaceParent(spaceId)).reserveChild({
+    await (await this.spaceParent()).reserveChild({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       parentId: spaceId,
       substreamId: asSubstreamId("0"),
@@ -1520,12 +1519,13 @@ export class SpaceService {
     );
   }
 
-  private spaceParent(spaceId: SpaceId) {
+  /** The Organization object, which hosts every Space's parent. */
+  private spaceParent() {
     return durableObjectStubForWorkspace(
       this.env,
-      this.env.SPACE_DOS,
+      this.env.WORKSPACE_DOS,
       this.auth.workspaceId,
-      spaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId), asSpaceId(spaceId)),
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)),
     );
   }
 
