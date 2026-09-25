@@ -3,6 +3,7 @@ import { parseDesktopDeepLinkIntent } from "./desktop-deep-link-intent";
 import { describe, expect, it } from "vitest";
 import {
   isWorkstreamId,
+  parseSidekickLinkPathTarget,
   parseSpaceLinkPathTarget,
   parseWorkstreamLink,
   parseWorkstreamLinkTarget,
@@ -10,6 +11,8 @@ import {
   workstreamCanonicalUrl,
   workstreamDeepLink,
   spaceCanonicalUrl,
+  sidekickCanonicalUrl,
+  sidekickDeepLink,
   spaceDeepLink,
 } from "./workstream-links";
 import { uuidFromBase58, uuidToBase58 } from "./uuid-base58";
@@ -107,6 +110,21 @@ describe("canonical work-stream links", () => {
     expect(parseSpaceLinkPathTarget(`/app/enterprise/${WORKSPACE_ID}/s/${ENCODED_SPACE_ID}/`)).toBeNull();
     expect(spaceDeepLink(space))
       .toBe(`rallywithai://workspace/enterprise/${ENCODED_WORKSPACE_ID}/spaces/${ENCODED_SPACE_ID}`);
+  });
+
+  it("mints and reads a Sidekick URL under the Organization", () => {
+    const sidekick = { region: TARGET.region, workspaceId: WORKSPACE_ID, sidekickId: WORKSTREAM_ID };
+    expect(sidekickCanonicalUrl(WEB_BASE_URL, sidekick))
+      .toBe(`${WEB_BASE_URL}/app/enterprise/${ENCODED_WORKSPACE_ID}/sk/${ENCODED_WORKSTREAM_ID}/`);
+    expect(parseSidekickLinkPathTarget(new URL(sidekickCanonicalUrl(WEB_BASE_URL, sidekick)).pathname)).toEqual(sidekick);
+    expect(parseSidekickLinkPathTarget(`/app/enterprise/${ENCODED_WORKSPACE_ID}/sk/${WORKSTREAM_ID}/`)).toBeNull();
+    expect(parseSidekickLinkPathTarget(`/app/enterprise/${ENCODED_WORKSPACE_ID}/s/${ENCODED_SPACE_ID}/`)).toBeNull();
+    expect(sidekickDeepLink(sidekick))
+      .toBe(`rallywithai://workspace/enterprise/${ENCODED_WORKSPACE_ID}/sidekicks/${ENCODED_WORKSTREAM_ID}`);
+    expect(parseDesktopDeepLinkIntent(sidekickDeepLink(sidekick)))
+      .toEqual({ kind: "sidekick", sidekickId: WORKSTREAM_ID, target: { region: TARGET.region, workspaceId: WORKSPACE_ID } });
+    expect(parseDesktopDeepLinkIntent(`rallywithai://sidekicks/${ENCODED_WORKSTREAM_ID}`)).toBeNull();
+    expect(() => sidekickCanonicalUrl(WEB_BASE_URL, { ...sidekick, sidekickId: "not-a-sidekick" })).toThrow();
   });
 });
 

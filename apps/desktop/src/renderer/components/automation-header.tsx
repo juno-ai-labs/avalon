@@ -1,7 +1,7 @@
 import { AutomationGlyph } from './workstream-glyph';
 import { AppearancePicker } from './appearance-picker';
 import { useState } from 'react';
-import { Archive, CirclePause, Ellipsis, History, Mail, Play } from 'lucide-react';
+import { Archive, CirclePause, Copy, Ellipsis, History, Mail, Play } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { ArchiveAutomationDialog } from './archive-automation-dialog';
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
@@ -35,6 +35,8 @@ export interface AutomationHeaderProps {
    * its own later.
    */
   onAppearanceChange: (patch: WorkstreamAppearancePatch) => Promise<void>;
+  /** Copies the Sidekick's shareable link. Rejecting shows the failure under the description. */
+  onCopyLink: () => Promise<void>;
 }
 
 const lifecycleLabel: Record<AutomationDetail['lifecycle'], string> = {
@@ -73,6 +75,7 @@ export function AutomationHeader({
   onArchive,
   onRunNow,
   onAppearanceChange,
+  onCopyLink,
 }: AutomationHeaderProps): React.JSX.Element {
   const definition = automation.currentDefinition;
   const name = definition?.name ?? automation.name;
@@ -84,6 +87,7 @@ export function AutomationHeader({
   const canRun = automation.lifecycle === 'active' && hasTriggers;
   const [confirmingArchive, setConfirmingArchive] = useState(false);
   const [showRunHistory, setShowRunHistory] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   return (
     <div className="automation-header">
       <span className="sidekick-profile-glyph">
@@ -108,6 +112,7 @@ export function AutomationHeader({
             <div className="automation-description">
               {description}
               {error && <InlineError>{error}</InlineError>}
+              {copyFailed && <InlineError>The Sidekick link could not be copied.</InlineError>}
             </div>
           </div>
         </div>
@@ -134,7 +139,13 @@ export function AutomationHeader({
                 {(hasTriggers || listedRuns.length > 0) && <DropdownMenu.Item className="menu-item" onSelect={() => setShowRunHistory(true)}>
                   <History size={14} /> Run history
                 </DropdownMenu.Item>}
-                {(hasTriggers || listedRuns.length > 0) && <DropdownMenu.Separator className="menu-separator" />}
+                <DropdownMenu.Item className="menu-item" onSelect={() => {
+                  setCopyFailed(false);
+                  void onCopyLink().catch(() => setCopyFailed(true));
+                }}>
+                  <Copy size={14} /> Copy sidekick link
+                </DropdownMenu.Item>
+                <DropdownMenu.Separator className="menu-separator" />
                 <DropdownMenu.Item
                   className="menu-item menu-item-danger"
                   disabled={pending !== null}
