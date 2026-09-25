@@ -14,7 +14,11 @@ export async function projectAuthorization(env: Env, job: AuthorizationProjectio
   const workspace = await authorizationWorkspace(env, job.workspaceId);
   {
     // The Organization object hosts every Channel and Space parent and knows
-    // which kind this id is without creating anything to find out.
+    // which kind this id is without creating anything to find out. A parent
+    // job for a hosted Channel is registered by that object when it enqueues
+    // one, so a Channel parent reaches here only when its legacy import was
+    // still pending, from a job queued before that change, or as a
+    // conversation job whose conversation is not registered yet.
     const resolved = await workspace.resolveHostedParent({ workspaceId: job.workspaceId, parentId: job.parentId });
     if (resolved.kind === 'space') throw new Error('authorization_projection_space_parent_unsupported');
     const request = { workspaceId: job.workspaceId, parentId: job.parentId };

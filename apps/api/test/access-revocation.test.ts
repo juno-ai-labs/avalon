@@ -636,6 +636,9 @@ describe("carrying one revocation to the objects", () => {
     automationChildren?: string[];
     ownedAutomationIds?: string[];
     narrowedUserIds?: string[];
+    /** What an Organization object that runs the Channel step itself answers with. */
+    channels?: Array<{ workstreamId: string; substreamIds: string[] }>;
+    narrowedLeaves?: { substreams: Array<{ userId: string; substreamIds: string[] }>; automationIds: string[] };
     failAt?: boolean;
   } = {}) {
     const visits: Visit[] = [];
@@ -670,7 +673,7 @@ describe("carrying one revocation to the objects", () => {
           revokeNarrowedAudienceAccess: async (request: unknown) => {
             listed.push({ name: id.toString(), request });
             if (options.failAt) throw new Error("object unreachable");
-            return { closedUserIds: options.narrowedUserIds ?? [] };
+            return { closedUserIds: options.narrowedUserIds ?? [], ...options.narrowedLeaves };
           },
           automationIdsOwnedByWorkstream: async (request: unknown) => {
             listed.push({ name: id.toString(), request });
@@ -700,6 +703,7 @@ describe("carrying one revocation to the objects", () => {
       WORKSPACE_DOS: namespace(() => ({
         workstreamIds: options.workstreamIds ?? [],
         automationIds: options.automationIds ?? [],
+        ...(options.channels ? { channels: options.channels } : {}),
       }), () => ({ automationIds: options.ownedAutomationIds ?? [] }), () => ({
         substreamIds: options.substreamIds ?? [],
       })),
@@ -837,6 +841,50 @@ describe("carrying one revocation to the objects", () => {
     expect(targetsOf(sent)).toEqual([
       { scope: "workstream", workstreamId: WORKSTREAM },
       { scope: "workstream_automations", workstreamId: WORKSTREAM },
+    ]);
+    expect(sent.map((published) => AccessRevocationMessageSchema.parse(published.body).userId))
+      .toEqual([READER, READER]);
+  });
+
+  it("publishes a Channel's conversations directly when the workspace ran its hop, and a hop for the rest", async () => {
+    const IMPORTING = "00000000-0000-7000-8000-0000000000a2";
+    const { env, visits, sent } = fanOut({
+      workstreamIds: [WORKSTREAM, IMPORTING],
+      channels: [{ workstreamId: WORKSTREAM, substreamIds: ["0", SUBSTREAM] }],
+    });
+    await applyAccessRevocation(env, message({ scope: "workspace" }));
+
+    // The Organization object closed the Channel's control sockets and named
+    // its conversations in the same call, so no `workstream` hop goes out for
+    // it. A Channel it did not run (its legacy import is pending) keeps one.
+    expect(visits).toHaveLength(1);
+    expect(targetsOf(sent)).toEqual([
+      { scope: "workstream", workstreamId: IMPORTING },
+      { scope: "substream", workstreamId: WORKSTREAM, substreamId: "0" },
+      { scope: "substream", workstreamId: WORKSTREAM, substreamId: SUBSTREAM },
+    ]);
+  });
+
+  it("publishes only the leaves of a narrowing when the workspace ran each reader's Channel step", async () => {
+    const READER = "00000000-0000-7000-8000-0000000000b1";
+    const OWNED = "00000000-0000-7000-8000-0000000000d2";
+    const { env, sent } = fanOut({
+      narrowedUserIds: [READER],
+      narrowedLeaves: { substreams: [{ userId: READER, substreamIds: ["0"] }], automationIds: [OWNED] },
+    });
+    await applyAccessRevocation(env, AccessRevocationMessageSchema.parse({
+      kind: "access_revoked",
+      reason: "workstream_participant_removed",
+      workspaceId: WORKSPACE,
+      userId: null,
+      sessionId: null,
+      target: { scope: "workstream_audience_narrowed", workstreamId: WORKSTREAM },
+      occurredAt: NOW,
+    }));
+
+    expect(targetsOf(sent)).toEqual([
+      { scope: "substream", workstreamId: WORKSTREAM, substreamId: "0" },
+      { scope: "automation", automationId: OWNED },
     ]);
     expect(sent.map((published) => AccessRevocationMessageSchema.parse(published.body).userId))
       .toEqual([READER, READER]);

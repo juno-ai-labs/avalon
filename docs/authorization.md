@@ -289,6 +289,16 @@ cleanup is revision-fenced so an accepted send cannot erase newer intent, and
 new intent preserves Queue failure backoff. Parent discovery prunes retired
 children; even delayed child jobs check the current parent registry.
 
+Parent discovery for a Channel hosted in WorkspaceDO runs where it is enqueued:
+the Channel's `parent_children` rows are in the same database, so
+`enqueueAuthorizationDiscovery` registers them (the same reconcile
+`registerAuthorizationChildren` runs) in the caller's transaction and queues
+only the per-conversation jobs. The Queue still carries conversation jobs,
+which read a `SubstreamAgent`; Sidekick parents, whose children are in
+`AutomationDO`; and a Channel whose legacy import is still pending, since
+serving it needs the async import. The Worker's parent branch in
+`projectAuthorization` stays for those and for jobs queued before this change.
+
 Deployment enables the core member read path for every workspace. There is no
 legacy/shadow mode, activation flag or comparison gate. `backfill` queues parent
 discovery followed by child inventories; `status` reports completion receipts.
@@ -495,6 +505,19 @@ Worker timestamps; they are not exact replication timestamps. Remove probe deplo
 after the experiment. Pair these results with mutation-to-write-ack queue events.
 
 ## Changelog
+
+### 2026-09-25 — A hosted Channel's parent discovery runs in WorkspaceDO
+
+A parent discovery job for a Channel hosted in WorkspaceDO no longer goes
+WorkspaceDO to Queue to Worker and back for `resolveHostedParent`,
+`listAuthorizationChildren` and `registerAuthorizationChildren`, three calls
+into the object that enqueued it. The registration now runs in the enqueueing
+transaction and only per-conversation jobs are queued. Conversation jobs keep
+the Queue because they read a `SubstreamAgent`, and Sidekick parents because
+their children are in `AutomationDO`. A Channel whose legacy import is pending
+keeps the Queue too: importing it needs an await, which a transaction cannot
+hold. The Worker's parent branch is kept for those and for messages already
+queued at deploy.
 
 ### 2026-09-25 — A superseded push completes, and an unchanged decision skips KV
 

@@ -3272,21 +3272,41 @@ describe("a member's message travels the whole pipeline", () => {
       expect((await recommendationMutation(unselectedSidekick.automationId, "PUT")).status).toBe(403);
       expect((await recommendationMutation(recommendedSidekick.automationId, "PUT")).status).toBe(200);
       expect((await recommendationMutation(recommendedSidekick.automationId, "DELETE")).status).toBe(200);
-      // The Organization object publishes the owned-Sidekick revocation while
-      // it applies the revoked grant's directory row. Refuse that publish until
-      // released, so the test can see the row wait in the local outbox.
-      type RevocationSender = { send: (body: unknown, options?: QueueSendOptions) => Promise<void> };
+      // The Organization object publishes the owned Sidekicks' `automation`
+      // hops itself while it applies the revoked grant's directory row, since
+      // it holds the list of Sidekicks the Channel owns. Refuse that publish
+      // until released, so the test can see the row wait in the local outbox.
+      type RevocationSender = {
+        sendBatch: (messages: Iterable<MessageSendRequest<unknown>>, options?: QueueSendBatchOptions) => Promise<void>;
+      };
       const revocationQueue: RevocationSender = Object.getPrototypeOf(env.ACCESS_REVOCATION_QUEUE);
-      const originalRevocationSend = revocationQueue.send;
+      // Every Queue binding shares this prototype, and the held effect queue
+      // (`helpers/effect-queue-hold.ts`) already spies on its `sendBatch`.
+      // Spying again returns that same spy, so this layers on top of its
+      // implementation and puts it back afterwards rather than restoring the
+      // real binding under it.
+      const heldSendBatch = vi.isMockFunction(revocationQueue.sendBatch)
+        ? revocationQueue.sendBatch.getMockImplementation()
+        : undefined;
+      const originalRevocationSendBatch = heldSendBatch ?? revocationQueue.sendBatch;
       let holdSidekickRevocations = true;
       let sidekickRevocationRefusals = 0;
-      const isSidekickRevocation = (body: unknown) => (body as { target?: { scope?: string } } | null)?.target?.scope === "workstream_automations";
-      const revocationSend = vi.spyOn(revocationQueue, "send").mockImplementation(async function (this: RevocationSender, body, options) {
-        if (holdSidekickRevocations && isSidekickRevocation(body)) {
-          sidekickRevocationRefusals += 1;
-          throw new Error("revocation_queue_unavailable");
+      const isSidekickRevocation = (body: unknown) => {
+        const target = (body as { target?: { scope?: string; automationId?: string } } | null)?.target;
+        return target?.scope === "automation" && target.automationId === ownedSidekick.automationId;
+      };
+      const publishedSidekickRevocations: unknown[] = [];
+      const revocationSend = vi.spyOn(revocationQueue, "sendBatch").mockImplementation(async function (this: RevocationSender, messages, options) {
+        const requests = [...messages];
+        const bodies = requests.map((message) => message.body);
+        if (bodies.some(isSidekickRevocation)) {
+          if (holdSidekickRevocations) {
+            sidekickRevocationRefusals += 1;
+            throw new Error("revocation_queue_unavailable");
+          }
+          publishedSidekickRevocations.push(...bodies.filter(isSidekickRevocation));
         }
-        return originalRevocationSend.call(this, body, options);
+        return originalRevocationSendBatch.call(this, requests, options);
       });
       await withParentGrants(parent, address, (store) => {
         expect(store.mutate({ operationId: crypto.randomUUID(), actorUserId: OTHER_USER_ID, userId: USER_ID,
@@ -3338,8 +3358,8 @@ describe("a member's message travels the whole pipeline", () => {
           await drainParentOutboxNow();
           return (await revokedGrantRows()).length;
         }, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(0);
-        const published = revocationSend.mock.calls.map(([body]) => body).filter(isSidekickRevocation);
-        expect(published.length).toBeGreaterThan(sidekickRevocationRefusals);
+        const published = publishedSidekickRevocations;
+        expect(published.length).toBeGreaterThan(0);
         const pending: unknown[] = [published.at(-1)];
         let batchOffset = 0;
         while (pending.length) {
@@ -3355,7 +3375,8 @@ describe("a member's message travels the whole pipeline", () => {
         }
         await expect.poll(() => authoringClosed, { timeout: SUBSCRIPTION_SETTLE_TIMEOUT_MS }).toBe(true);
       } finally {
-        revocationSend.mockRestore();
+        if (heldSendBatch) revocationSend.mockImplementation(heldSendBatch);
+        else revocationSend.mockRestore();
         revocationBatch.mockRestore();
         authoringSocket.socket.close(1000, "done");
       }

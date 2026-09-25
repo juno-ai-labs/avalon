@@ -457,11 +457,26 @@ A resource and a Sidekick recommendation are one mechanism with two consumers,
 keyed by `kind` through every row and every message. `addDefault` attaches the
 thing to the Space's own authority — the attachment a person sees — after
 checking that every effective reader can reach it, then registers it in
-WorkspaceDO, which is what stages, fences and settles delivery. Targets are
-published through the outbox onto the activity Queue; the consumer rechecks the
-default generation, the membership generation and the Space's lifecycle before
+WorkspaceDO, which is what stages, fences and settles delivery.
+
+A Sidekick target is written in the same transaction that stages it, by
+`addDefault`, `stageDefaultsForMember` (a Channel joining) or a membership move:
+the member Channel's `parent_sidekicks` row is in WorkspaceDO's own SQLite, so
+the target is marked `applied` and nothing is published. That needs the
+Channel's parent hosted here (a `parent_metadata` row and no pending import),
+not archived, and the Sidekick live and workspace-scoped in
+`automation_directory`; otherwise the target takes the Queue as before. No
+actor's Channel management access is asked in place: the Space's write check
+admitted whoever added the default or placed the Channel, and recommending a
+workspace Sidekick exposes nothing a member could not already open. Open rails
+are refreshed with the `automations` sync topic after commit.
+
+Resource targets, and Sidekick targets that did not qualify, are published
+through the outbox onto the activity Queue; the consumer rechecks the default
+generation, the membership generation and the Space's lifecycle before
 attaching through `WorkstreamService.attachResource` or
-`setSidekickRecommendation`.
+`setSidekickRecommendation`. A resource keeps the Queue because attaching one
+writes the Channel's main conversation, a `SubstreamAgent`.
 
 Removing a default advances its generation, which makes every queued target
 stale. It does **not** detach it from Channels that already have it: a Channel's
@@ -1973,6 +1988,31 @@ or on the `space_intents` row holds the same word for whoever reads it
 afterwards.
 
 ## Changelog
+
+### 2026-09-25 — A Sidekick default is written with the write that stages it
+
+**What changed:** A Sidekick default target whose member Channel is hosted in
+WorkspaceDO is applied inside the staging transaction (`addDefault`,
+`stageDefaultsForMember`, a membership move) by writing `parent_sidekicks`
+directly. Resource targets, and Sidekick targets on a Channel not yet imported,
+archived, or whose Sidekick the directory does not show as a live workspace
+Sidekick, still take the activity Queue.
+
+**Why:** Channel parents moved into WorkspaceDO, so the Queue round trip went
+from WorkspaceDO to a Worker, through `WorkstreamService.setSidekickRecommendation`
+(a conversation check, a D1 actor read, an AutomationDO read) and back into the
+same object to insert one row. Low latency is a product goal, and the staging
+transaction already holds everything the row needs.
+
+**Considered and rejected:** Keeping the actor's Channel management check in
+place. It is async (a relationship read) and cannot run inside the staging
+transaction; the Space's write check already authorized the person, and a
+workspace Sidekick recommendation grants nothing.
+
+**Consequences:** The in-place path trusts `automation_directory` for the
+Sidekick's scope and lifecycle. A directory row that lags a Sidekick's creation
+sends the target through the Queue, which checks AutomationDO; a row that lags
+a Sidekick narrowing to personal would still recommend it on the Channel.
 
 ### 2026-09-23 — Resume internal Space creation under a stable identity
 
