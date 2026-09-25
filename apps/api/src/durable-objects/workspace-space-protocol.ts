@@ -1,8 +1,10 @@
 import { RegionSchema } from "@rally/contracts/regions";
 import {
   ContainerOrderSchema,
+  ConversationParentReserveChildRequestSchema,
   CreateSpaceRequestSchema,
   IdSchema,
+  ScopeSchema,
   SpaceChannelPageSchema,
   SpaceErrorCodeSchema,
   SpaceIconKeySchema,
@@ -219,6 +221,55 @@ export const WorkspaceSpaceMembershipPlanResultSchema = z.union([
   WorkspaceSpaceAudienceFailureSchema,
 ]);
 export type WorkspaceSpaceMembershipPlanResult = z.infer<typeof WorkspaceSpaceMembershipPlanResultSchema>;
+
+/**
+ * A new Channel's whole Organization-side birth, in one call.
+ *
+ * Every row a creation needs from this object is in this object's database:
+ * the memberships, the Space defaults a new member inherits, the Channel's
+ * parent row and provisional directory row, and the record of which Space
+ * supplied which reader. They commit in one transaction, so a Channel is never
+ * listed outside a Space and a refused Space leaves nothing behind.
+ *
+ * Empty `spaceIds` means General. `requestedScope` and
+ * `requestedParticipantUserIds` are what the caller asked for; the scope the
+ * directory row carries is derived from them and the Spaces, by the same pure
+ * function the coordinator opens the conversation with.
+ */
+export const WorkspaceChannelReservationRequestSchema = SpaceActorSchema.extend({
+  workstreamId: WorkstreamIdSchema,
+  spaceIds: z.array(SpaceIdSchema),
+  requestedScope: ScopeSchema,
+  requestedParticipantUserIds: z.array(UserIdSchema),
+  authorityGeneration: z.number().int().positive(),
+  directory: ConversationParentReserveChildRequestSchema.shape.directory.unwrap().omit({
+    scope: true,
+    systemKind: true,
+  }),
+}).strict();
+export type WorkspaceChannelReservationRequest = z.infer<typeof WorkspaceChannelReservationRequestSchema>;
+
+export const WorkspaceChannelReservationResultSchema = z.discriminatedUnion("status", [
+  z.strictObject({
+    status: z.literal("reserved"),
+    authorityGeneration: z.number().int().positive(),
+    /** Each Space the Channel is now in, as the transaction read it. */
+    spaces: z.array(SpaceSummarySchema).min(1),
+  }),
+  /**
+   * The request named no Space and this Organization has no General yet.
+   * Making one provisions its own conversation, which is not a write this
+   * object can take in a transaction, so the caller makes it and asks again.
+   */
+  z.strictObject({ status: z.literal("general_missing") }),
+  z.strictObject({
+    status: z.literal("refused"),
+    code: SpaceErrorCodeSchema,
+    /** The Space refused, or null when the refusal is the caller's own membership. */
+    spaceId: SpaceIdSchema.nullable(),
+  }),
+]);
+export type WorkspaceChannelReservationResult = z.infer<typeof WorkspaceChannelReservationResultSchema>;
 
 export const WorkspaceSpaceMembershipMovePlanResultSchema = z.union([
   z.strictObject({

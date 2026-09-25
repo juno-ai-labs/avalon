@@ -99,7 +99,7 @@ async function establishWorkspace(): Promise<void> {
       incarnation TEXT DEFAULT 'existing-member',
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
       role TEXT, access_class TEXT NOT NULL DEFAULT 'member',
-      last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
+      last_seen_at TEXT, revision INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (workspace_id, user_id)
     )`),
     // The dashboard nudge is a socket message and nothing else, so this suite
     // opens real workspace sockets — which authenticate against this table.

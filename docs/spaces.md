@@ -187,7 +187,9 @@ same mistake in the other direction.
 
 ### Membership
 
-Adding a Channel is staged. `prepareSpaceMembership` writes a `joining` row and
+Adding a Channel that already exists is staged; a Channel being created is not
+(see [A Channel's first Space](#a-channels-first-space)).
+`prepareSpaceMembership` writes a `joining` row and
 returns the Space and the membership generation; `ChannelAccessService.applySpaceSource`
 applies the audience that membership implies; `finalizeSpaceMembership` activates
 it, re-reading both the Space revision and the membership generation, and stages
@@ -624,7 +626,8 @@ participants the connector's record may not — and the Organization is not
 holding a Channel in no Space.
 
 **Both of those paths have to make the Channel's own authority exist before they
-place it**, which the coordinator gets for free. A placement addresses the
+place it**, which the coordinator gets for free by reserving and placing in one
+transaction. A placement addresses the
 Channel's hosted parent in `WorkspaceDO`, which learns the Channel exists
 either from `reserveChild` — which writes its identity row synchronously — or
 from an effect that drifts up the conversation's outbox some time later.
@@ -633,7 +636,7 @@ Provisioning the conversation alone and placing immediately is refused
 cutover, that is not a lost placement but every member's sidebar behind the
 opening card until the walk catches up.
 
-The Slack path calls `reserveChild` first, exactly as the coordinator does
+The Slack path calls `reserveChild` first, as the coordinator's one call does
 before `initialize`, and defers the provisional directory delivery until after
 the placement so the Channel is never listed while it is in no Space. Nothing
 polls: a production ingest path must not wait for a projection to appear. The
@@ -668,8 +671,8 @@ directory is a creation in flight. `reserveChild` enqueues the provisional
 the placement — but the Channel authority's own recovery alarm delivers that
 row directly if it wins the race with the coordinator's flush, which is exactly
 what `drainParentOutboxWithCreationFence` is for. On the coordinator path the
-memberships are already settled by the time `reserveChild` runs, so the row can
-only arrive placed; on a connector path the reservation comes *before*
+memberships and the row commit in one transaction, so the row can only arrive
+placed; on a connector path the reservation comes *before*
 `placeConnectorChannelInGeneral` and the conversation is provisioned in
 between, so that alarm has a wide window in which to deliver a row for a
 Channel whose placement has not started — and it takes it: a guard that fired
@@ -687,19 +690,33 @@ creates is caught on its next common projection rather than its first.
 Creation is the other half of "every Channel belongs to at least one Space", and
 it is the half that has to hold for every Channel made after the cutover.
 `WorkstreamCreationFields` carries `spaceIds`, defaulted to empty, and empty
-means General: the creation coordinator resolves it, stages a membership per
-Space, and **settles them before the Channel's main conversation is reserved**.
-Reserving one arms the parent's recovery alarm, which delivers the deferred
-provisional directory row itself if it wins the race with the coordinator, so a
-settlement any later could publish a Channel that is Organization-wide and in no
-Space at all. [`workstream-creation.md`](workstream-creation.md) owns the
-ordering and the audience the named Spaces imply.
+means General. **The whole Organization-side birth is one WorkspaceDO call,
+`reserveChannelInSpaces`, in one transaction**: it resolves General, writes each
+membership straight to `active` (`WorkspaceSpaceStorage.enterMembershipAtBirth`),
+stages every current default for the new member, reserves the Channel's parent
+with its provisional directory row, and records which Space supplied which
+reader in the birth mode of `applySpaceAccessSource`. The Space summaries it
+read come back, so the coordinator opens the conversation with the audience
+they imply.
+
+There is no `joining` row, no `add` intent and no cancellation on this path,
+because nothing runs between the stages any more: every row the staged calls
+wrote lives in this one database, so a Channel is never listed outside a Space
+and a refused Space leaves nothing behind. The staged membership RPCs above stay
+for adding a Channel that already exists, where the Channel's canonical
+operations widen its audience between the plan and the commit. The one case the
+call cannot finish alone is an Organization with no General yet: making one
+provisions General's own conversation, so the call answers `general_missing`,
+the coordinator runs `SpaceService.ensureGeneral`, and asks again.
+[`workstream-creation.md`](workstream-creation.md) owns the ordering and the
+audience the named Spaces imply.
 
 ### Resuming an interrupted operation
 
 Every cross-object Space operation — an add, a removal, an audience change, an
 archive and a restore — stages an intent in WorkspaceDO before it touches
-another object. A request that dies between the two leaves that intent
+another object. A Channel's birth stages none: it touches no other object before
+it commits (see [A Channel's first Space](#a-channels-first-space)). A request that dies between the two leaves that intent
 `pending`, and nothing else would notice — the caller is gone and the Channel was
 never asked. The WorkspaceDO alarm claims unsettled intents, advancing their
 retry gate before the send, and republishes them as `space_intent_resume`
@@ -2006,42 +2023,55 @@ afterwards.
 
 ## Changelog
 
-### 2026-09-25 — Space creation and equal-audience moves commit in one WorkspaceDO transaction
+### 2026-09-25 — Space creation, equal-audience moves and a Channel's birth commit in one WorkspaceDO transaction
 
-**What changed:** `SpaceService.create` and `ensureGeneral` write the D1 anchor
-first and then one WorkspaceDO call (`reserveSpace` with `reserveParent`,
-`openGeneralSpace`) that writes the Space and its hosted parent in one
-transaction; the `reserveChild` RPC and the `cancelSpaceReservation`
-compensation are gone from the product path. An equal-audience Channel move is
-one `moveSpaceMembership` RPC that swaps the Channel's provenance and both
-memberships in one transaction; the staged `move` intent, the separate
-provenance RPC, the settlement and the replan fallback are gone from the request
-path, and `cancelSpaceMembershipMove`, which nothing called, is deleted.
+**What changed:** Three Space flows that were staged across several WorkspaceDO
+calls are now one call and one transaction each.
+
+- Creating a Space: `SpaceService.create` and `ensureGeneral` write the D1
+  anchor first and then one call (`reserveSpace` with `reserveParent`,
+  `openGeneralSpace`) that writes the Space and its hosted parent together. The
+  `reserveChild` RPC and the `cancelSpaceReservation` compensation are gone from
+  the product path.
+- Moving a Channel between equal-audience Spaces: one `moveSpaceMembership` call
+  swaps the Channel's provenance and both memberships. The staged `move` intent,
+  the separate provenance RPC, the settlement and the replan fallback are gone
+  from the request path, and `cancelSpaceMembershipMove`, which nothing called,
+  is deleted.
+- A Channel's birth: `reserveChannelInSpaces` writes each membership straight
+  to `active`, stages the Space defaults, reserves the parent and records the
+  Space sources. Creation no longer calls `prepareSpaceMembership`,
+  `finalizeSpaceMembership` or `cancelSpaceMembership`, stages no `add` intent,
+  and never leaves a `joining` row.
 
 **Why:** Space and Channel parents moved into WorkspaceDO
-([hosted conversation parents](hosted-conversation-parents.md)), so the
-reservation, the parent, both memberships and the Channel's provenance are rows
-in one SQLite database. The sagas between them were built when they were
-different objects; each step was a round trip into the same object and each
-compensation covered a partial state a transaction cannot produce. Creating a
-Space makes one WorkspaceDO RPC instead of two, and an equal-audience move one
-instead of three. General's first creation keeps two, because the first only
-reads; every later `ensureGeneral` is one, as before.
+([hosted conversation parents](hosted-conversation-parents.md)), so the Space
+rows, the memberships, the parent and the Channel's provenance are rows in one
+SQLite database. The sagas between them were built when they were different
+objects: each step was a round trip into the same object, and each compensation
+covered a partial state a transaction cannot produce. Creating a Space makes
+one WorkspaceDO call instead of two, an equal-audience move one instead of
+three, and a Channel's creation one instead of five sequential calls and a
+concurrent flush. General's first creation keeps two, because the first only
+reads.
 
-**Considered and rejected:** Reserving in WorkspaceDO first and anchoring in D1
-after, as before. With the reservation and the parent now committed together,
-a D1 failure after them would leave a Space in every member's sidebar with no
-cancel able to remove it (the row is already at version one); anchoring first
-leaves only an unused anchor. General pays one extra read RPC on the
-Organization's first call for this, because its id is decided in WorkspaceDO.
+**Considered and rejected:** Reserving a Space in WorkspaceDO first and
+anchoring in D1 after, as before: with the Space and its parent committed
+together, a D1 failure after them would leave a Space in every member's sidebar
+that no cancel could remove, while anchoring first leaves only an unused
+anchor. Keeping the staged placement RPCs and batching them into one call:
+that keeps the `joining` state and its intent for no reader.
 
-**Consequences:** A refused creation can leave an anchor row and a bootstrapped
-hidden conversation under an id no Space uses; both are inert. The version-zero
-`reserveSpace`, `ensureGeneralSpace`, `cancelSpaceReservation`,
-`prepareSpaceMembershipMove` and the `replaceEquivalentSpaceAccessSource` RPC
-stay for a Worker from before this change during the rollout, and can be deleted
-once none is serving. `replanSpaceMembershipMoveForAudience` and
-`finalizeSpaceMembershipMove` stay as long as a `move` intent may be stored.
+**Consequences:** A refused Space creation can leave an anchor row and a
+bootstrapped hidden conversation under an id no Space uses; both are inert. The
+staged placement RPCs stay for adding a Channel that already exists, where its
+canonical operations run between plan and commit; that path must not be routed
+through the birth call, whose source recording assumes the audience is already
+written. The version-zero `reserveSpace`, `ensureGeneralSpace`,
+`cancelSpaceReservation`, `prepareSpaceMembershipMove` and the
+`replaceEquivalentSpaceAccessSource` RPC stay for a Worker from before this
+change during the rollout. `replanSpaceMembershipMoveForAudience` and
+`finalizeSpaceMembershipMove` stay while a `move` intent may be stored.
 
 ### 2026-09-23 — Resume internal Space creation under a stable identity
 

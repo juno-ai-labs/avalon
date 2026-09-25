@@ -41,7 +41,7 @@ beforeEach(async () => {
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT, region TEXT, abandoned_at TEXT)`),
     env.DB.prepare(`CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT, name TEXT)`),
-    env.DB.prepare(`CREATE TABLE workspace_members (access_class TEXT NOT NULL DEFAULT 'member', workspace_id TEXT, user_id TEXT, status TEXT, role TEXT)`),
+    env.DB.prepare(`CREATE TABLE workspace_members (access_class TEXT NOT NULL DEFAULT 'member', workspace_id TEXT, user_id TEXT, status TEXT, role TEXT, revision INTEGER NOT NULL DEFAULT 1, incarnation TEXT NOT NULL DEFAULT 'existing-member')`),
     env.DB.prepare(`CREATE TABLE sessions (id TEXT PRIMARY KEY, user_id TEXT, revoked_at TEXT, expires_at TEXT)`),
     env.DB.prepare(`INSERT INTO workspaces VALUES (?, 'Test', 'global', NULL)`).bind(workspaceId),
     env.DB.prepare(`INSERT INTO users VALUES (?, 'person@example.test', 'Person')`).bind(userId),
