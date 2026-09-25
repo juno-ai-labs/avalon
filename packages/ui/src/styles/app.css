@@ -1142,13 +1142,13 @@ pre {
 .sidebar-account-slot { flex: 1; min-width: 0; }
 .spaces-account-slot .account-trigger,
 .sidebar-account-slot .account-trigger { margin: 0; width: 100%; }
-.spaces-sidebar.is-compact .spaces-account-slot .account-trigger {
+:is(.spaces-sidebar, .channels-sidebar, .workstream-context-sidebar).is-compact .spaces-account-slot .account-trigger {
   gap: 0;
   justify-content: center;
   min-height: 38px;
   padding: 6px;
 }
-.spaces-sidebar.is-compact .spaces-account-slot .account-copy { display: none; }
+:is(.spaces-sidebar, .channels-sidebar, .workstream-context-sidebar).is-compact .spaces-account-slot .account-copy { display: none; }
 .spaces-sidekick-slot { flex: 0 0 auto; min-width: 0; overflow: hidden; }
 .spaces-sidebar.is-compact .spaces-sidekick-slot .sidebar-automation-strip { gap: 0; padding: 8px calc((100% - 54px) / 2) 12px; }
 .spaces-sidebar.is-compact .spaces-sidekick-slot .sidebar-automation-strip > .sidebar-context-target { flex-basis: 54px; max-width: 54px; min-width: 54px; }
