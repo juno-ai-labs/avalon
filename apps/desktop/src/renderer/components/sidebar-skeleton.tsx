@@ -11,10 +11,10 @@ import { SidebarList, SidebarRow } from '@rally/ui/components/resizable-sidebar'
  * Space's square tile. Both are the 36px slot the real row draws its icon in,
  * so a compact rail shows the same column of marks it resolves into.
  */
-export type SidebarSkeletonMark = 'glyph' | 'tile';
+type SidebarSkeletonMark = 'glyph' | 'tile';
 
 /** Every row, or only some, carries the activity line, as a real list does. */
-export type SidebarSkeletonHint = boolean | 'some';
+type SidebarSkeletonHint = boolean | 'some';
 
 /**
  * One row's worth of placeholder, in the geometry of the row it stands in for.
