@@ -203,6 +203,15 @@ agent failed" would name nothing anybody can act on, which is the generic code
 than a fallback. Aggregating two reasons into one row would have to drop one of
 them, so the reason is part of the group key.
 
+**The message that opens a conversation is not counted.** When an agent message
+is the conversation's first turn (transcript sequence 1, or a pending input with
+nothing before it), `opensConversationWithAgentMessage` routes it to an ordinary
+Rally text row with the byline label **Opening instructions**
+(`OPENING_AGENT_MESSAGE_LABEL`), body and attachments shown. That message is the
+reason the conversation exists: a Sidekick created by another conversation's
+agent is set up from it, and a worker is assigned by it. Every later message,
+and every host notice, is counted as above.
+
 **These rows are drawn before the message is promoted, too.** A message reaches
 its recipient through the mailbox and can sit there until the next safe
 execution boundary, which for a busy recipient is a whole step;
@@ -769,6 +778,29 @@ stack cannot run a real turn, so the way to get a multi-plugin transcript on
 screen is to write a hand-built `WorkstreamTranscriptSnapshot` into the
 renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
+
+### 2026-09-25 — The agent message that opens a conversation is shown
+
+**What changed:** An agent message that is a conversation's first turn renders
+as a Rally text row labelled **Opening instructions** rather than as "1 message
+from a background agent". Both the canonical projection and the pending-input
+overlay apply the rule; later messages and host notices are still counted.
+
+**Why:** A Sidekick created by a coordinating agent through `create_sidekick`
+is set up from the one message that agent sends its authoring conversation.
+Counting it left the Sidekick's own conversation opening on Rally drafting in
+reply to a request nobody could read. The 2026-09-19 entry below reasoned that
+agent prose was written for a reader who is not its audience, and that a body
+worth reading belongs on a surface built to hold it. In the conversation it
+opened, the reader is its audience and the feed is that surface.
+
+**Considered and rejected:** Scoping the rule to Sidekick authoring
+conversations by parent kind. A worker's conversation opens the same way and
+the same reasoning holds; it is simply never opened today. One rule about
+position in the transcript needs no knowledge of what owns the conversation.
+Also rejected: naming the sending conversation in the byline. The sender is an
+agent address, and resolving it to a name is a read this row does not
+otherwise need.
 
 ### 2026-09-19 — A background agent's messages and its two ends are counted rows
 

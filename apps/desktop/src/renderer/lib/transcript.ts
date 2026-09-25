@@ -397,7 +397,8 @@ export function orderedTranscriptMessages(
           // plugin's calls do. It also stops closing the plugin run around it,
           // which is the same judgement: a message arriving is not something a
           // person read.
-          const agentMessage = agentMessageActivity(structured);
+          const opening = opensConversationWithAgentMessage(structured, turn.transcriptSequence === 1);
+          const agentMessage = opening ? null : agentMessageActivity(structured);
           if (agentMessage) {
             rememberOrder(block.blockId);
             return {
@@ -434,7 +435,9 @@ export function orderedTranscriptMessages(
           const statusCode = typeof structured['code'] === 'string'
             ? structured['code']
             : 'assistant_turn_interrupted';
-          const messageType: Message['messageType'] = statusKind
+          const messageType: Message['messageType'] = opening
+            ? 'text'
+            : statusKind
             ? 'system'
             // `automation_activation` is carried through rather than folded
             // into 'text'. Folding it made every automation result render as
@@ -451,6 +454,7 @@ export function orderedTranscriptMessages(
           rememberOrder(messageId);
           return {
             ...base,
+            ...(opening ? { authorType: 'agent' as const, contextLabel: OPENING_AGENT_MESSAGE_LABEL } : {}),
             id: messageId,
             messageType,
             text: block.text,
@@ -878,6 +882,34 @@ export function pendingTranscriptInputOverlay(
   // the same row is available here. It also keeps the message off the composer
   // queue: a queued row is something a person wrote and can reorder, and a
   // teammate's message is neither.
+  // The brief that opens a conversation is drawn as it will be once promoted,
+  // and stays off the composer queue for the same reason as the counted row.
+  if (opensConversationWithAgentMessage(input.block.structuredContent, input.afterTranscriptSequence === 0)) {
+    return {
+      identity: input.clientMessageId
+        ? { type: 'client_message', clientMessageId: input.clientMessageId, turnId: input.futureTurnId }
+        : { type: 'loop_input', inputId: input.inputId, futureTurnId: input.futureTurnId },
+      provenance,
+      position: {
+        afterTranscriptSequence: input.afterTranscriptSequence,
+        eventSequence: provenance.source === 'socket_event'
+          ? provenance.eventSequence
+          : input.inputSequence,
+      },
+      message: {
+        id: input.futureTurnId,
+        ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
+        workstreamId,
+        sequenceNumber: 0,
+        authorType: 'agent',
+        messageType: 'text',
+        contextLabel: OPENING_AGENT_MESSAGE_LABEL,
+        text: input.block.text,
+        attachments: input.block.attachments?.map((attachment) => ({ ...attachment })),
+        createdAt: input.admittedAtUtc,
+      },
+    };
+  }
   const agentMessage = agentMessageActivity(input.block.structuredContent);
   if (agentMessage) {
     return {
@@ -1207,6 +1239,32 @@ export function dedupeAdjacentConnectorConnectionCards(messages: readonly Messag
     rows.push(message);
   }
   return rows;
+}
+
+/** The byline beside the agent message that opened a conversation. */
+export const OPENING_AGENT_MESSAGE_LABEL = 'Opening instructions';
+
+/**
+ * Whether this block is the agent message that opened its conversation.
+ *
+ * Every other agent message is machinery written for another agent, and
+ * `agentMessageActivity` counts it. The opening one is not: it is the reason
+ * the conversation exists. A Sidekick created by another conversation's agent
+ * is set up from exactly this message, and counting it left the Sidekick's own
+ * conversation starting with Rally answering a request nobody could read.
+ * A worker's conversation opens the same way, but nobody opens it.
+ *
+ * `opensConversation` is the caller's, because the two projections know it
+ * differently: a canonical turn by its sequence, a pending input by having no
+ * turn before it. A host notice never opens a conversation, and is kept out
+ * all the same so the rule reads as what it means.
+ */
+function opensConversationWithAgentMessage(
+  structuredContent: Readonly<Record<string, unknown>> | null | undefined,
+  opensConversation: boolean,
+): boolean {
+  return opensConversation && isAgentMessageContent(structuredContent)
+    && agentMessageNotice(structuredContent) === null;
 }
 
 /**
