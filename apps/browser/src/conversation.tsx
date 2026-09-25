@@ -139,10 +139,25 @@ export function SharedSpaceOverview({ encodedSpaceId, directory }: {
     <h1>{space.name}</h1>
     <p>{channels.length === 0 ? 'There are no shared channels in this Space.' : 'Channels in this Space'}</p>
     {channels.length > 0 && <nav aria-label={`Channels in ${space.name}`}><ul>{channels.map((channel) => {
-      const first = channel.conversations.find((item) => !item.archived) ?? channel.conversations[0];
-      return first && <li key={channel.parentId}><NavLink to={sharedConversationPath(spaceId, channel.parentId, first.substreamId)}>{channel.title ?? first.title}</NavLink></li>;
+      const target = sharedWorkstreamTarget(channel, spaceId);
+      return target && <li key={channel.parentId}><NavLink to={target.path}>{channel.title ?? target.first.title}</NavLink></li>;
     })}</ul></nav>}
   </div>;
+}
+
+/**
+ * Where selecting a Channel lands: its first active conversation, else its
+ * first. The **Shared channels** group has no canonical Space, so it and a
+ * null Space both give the legacy path.
+ */
+function sharedWorkstreamTarget<Conversation extends { substreamId: string; archived: boolean }>(
+  workstream: { parentId: string; conversations: Conversation[] },
+  spaceId: string | null,
+): { first: Conversation; path: string } | null {
+  const first = workstream.conversations.find((item) => !item.archived) ?? workstream.conversations[0];
+  if (!first) return null;
+  const placedSpaceId = spaceId && spaceId !== SHARED_CHANNELS_SPACE_ID ? spaceId : null;
+  return { first, path: sharedConversationPath(placedSpaceId, workstream.parentId, first.substreamId) };
 }
 
 function sharedConversationPath(spaceId: string | null, parentId: string, substreamId: string): string {
@@ -302,23 +317,18 @@ function SharedNavigation({ accountMenu, directory, navigationSpaces, rails, she
   const onlyWorkstream = !rails.spaces && !rails.channels ? directory.data?.workstreams[0] : undefined;
   useEffect(() => {
     if (!onlyWorkstream || routeParentId) return;
-    const first = onlyWorkstream.conversations.find((item) => !item.archived) ?? onlyWorkstream.conversations[0];
-    if (!first) return;
-    const spaceId = navigationSpaces[0]?.id;
-    navigate(sharedConversationPath(canonicalHost && spaceId && spaceId !== SHARED_CHANNELS_SPACE_ID ? spaceId : null,
-      onlyWorkstream.parentId, first.substreamId), { replace: true });
+    const target = sharedWorkstreamTarget(onlyWorkstream, canonicalHost ? navigationSpaces[0]?.id ?? null : null);
+    if (target) navigate(target.path, { replace: true });
   }, [canonicalHost, navigate, navigationSpaces, onlyWorkstream, routeParentId]);
   if (!session) return <></>;
   const selectedSpace = navigationSpaces.find((space) => space.id === selectedSpaceId) ?? navigationSpaces[0];
   const workstreams = directory.data?.workstreams.filter((workstream) => selectedSpace?.workstreamIds.includes(workstream.parentId)) ?? [];
   const openWorkstream = (parentId: string, requestedSpaceId = selectedSpaceId) => {
     const workstream = directory.data?.workstreams.find((item) => item.parentId === parentId);
-    const first = workstream?.conversations.find((item) => !item.archived) ?? workstream?.conversations[0];
-    if (!first) return;
+    const target = workstream && sharedWorkstreamTarget(workstream, canonicalHost ? requestedSpaceId : null);
+    if (!target) return;
     spacesSidebar.setCompact(true);
-    const spaceId = canonicalHost && requestedSpaceId && requestedSpaceId !== SHARED_CHANNELS_SPACE_ID ? requestedSpaceId : null;
-    const targetPath = sharedConversationPath(spaceId, parentId, first.substreamId);
-    if (pathname !== targetPath) navigate(targetPath);
+    if (pathname !== target.path) navigate(target.path);
   };
   const selectSpace = (spaceId: string) => {
     setSelectedSpaceId(spaceId);
@@ -406,9 +416,9 @@ function SharedNavigation({ accountMenu, directory, navigationSpaces, rails, she
       <SidebarScroll><SidebarList as="nav" aria-label="Shared channels">
       {!directory.isPending && selectedSpace && workstreams.length === 0 && <p>No shared channels in this space.</p>}
       {workstreams.map((workstream) => {
-        const first = workstream.conversations.find((item) => !item.archived) ?? workstream.conversations[0];
-        if (!first) return null;
-        const rowPath = sharedConversationPath(canonicalHost && selectedSpace?.id !== SHARED_CHANNELS_SPACE_ID ? selectedSpace?.id ?? null : null, workstream.parentId, first.substreamId);
+        const target = sharedWorkstreamTarget(workstream, canonicalHost ? selectedSpace?.id ?? null : null);
+        if (!target) return null;
+        const { first, path: rowPath } = target;
         return <SidebarRow as={NavLink} aria-label={workstream.title ?? first.title} aria-description={workstream.scope === 'workspace' ? 'Public channel' : 'Private channel'} className={`workstream-row${pathname === rowPath ? ' is-active' : ''}`} onClick={() => {
           spacesSidebar.setCompact(true);
         }} key={workstream.parentId} to={rowPath}>
@@ -436,11 +446,12 @@ function BrowserWorkspace({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
   const [shell, setShell] = useState<HTMLDivElement | null>(null);
   const directory = useQuery({ queryKey: ['shared-navigation'], queryFn: ({ signal }) => api.getSharedNavigationDirectory(signal), refetchOnWindowFocus: 'always' });
   const navigationSpaces = useMemo(() => sharedNavigationSpaces(directory.data), [directory.data]);
-  const rails = useMemo(() => browserRailVisibility(directory.data && {
-    spaces: directory.data.spaces,
-    unplacedChannels: navigationSpaces.length > directory.data.spaces.length,
+  // A failed refetch keeps the last data; the rails still show so the error
+  // inside the Spaces rail can be seen.
+  const rails = useMemo(() => browserRailVisibility(directory.data && !directory.isError ? {
+    spaceCount: navigationSpaces.length,
     channelCount: directory.data.workstreams.length,
-  }), [directory.data, navigationSpaces]);
+  } : undefined), [directory.data, directory.isError, navigationSpaces]);
   const accountMenu = useMemo(() => {
     if (!session) return null;
     const user = { ...session.user, name: session.user.name ?? session.user.email, timezone: session.user.timezone ?? 'UTC', avatarUrl: session.user.avatarUrl ?? undefined };

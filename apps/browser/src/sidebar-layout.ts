@@ -21,17 +21,11 @@ export interface BrowserRailVisibility {
 /**
  * A rail with exactly one row offers no choice, so it is left out. Until the
  * directory answers, and when it holds nothing, both rails stay: they carry the
- * loading, error and empty states. `unplacedChannels` is the local
- * **Shared channels** group, which counts as a Space row of its own.
+ * loading, error and empty states.
  */
-export function browserRailVisibility(directory: {
-  spaces: readonly unknown[];
-  unplacedChannels: boolean;
-  channelCount: number;
-} | undefined): BrowserRailVisibility {
-  if (!directory) return { channels: true, spaces: true };
-  const spaceCount = directory.spaces.length + (directory.unplacedChannels ? 1 : 0);
-  return { channels: directory.channelCount !== 1, spaces: spaceCount !== 1 };
+export function browserRailVisibility(counts: { spaceCount: number; channelCount: number } | undefined): BrowserRailVisibility {
+  if (!counts) return { channels: true, spaces: true };
+  return { channels: counts.channelCount !== 1, spaces: counts.spaceCount !== 1 };
 }
 
 /** Preserve Electron's conversation minimum while sizing the two outer hierarchy rails. */
