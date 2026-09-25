@@ -466,6 +466,10 @@ function BrowserWorkspace({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
   </main>;
   return <div className="browser-workspace workspace-shell" ref={setShell}>
     <SharedNavigation accountMenu={accountMenu} directory={directory} navigationSpaces={navigationSpaces} rails={rails} shell={shell} />
+    {/* The Breakout rail is absent while a Channel is archived, loading or
+        failed, so the menu also floats here; CSS hides this copy whenever
+        the rail is present. */}
+    {!rails.spaces && !rails.channels && <div className="browser-account-fallback">{accountMenu}</div>}
     <BreakoutRailAccountMenu.Provider value={rails.spaces || rails.channels ? null : accountMenu}>
     <main className="browser-feed main-pane"><Routes>
       <Route path="/s/:spaceId" element={<SharedSpaceRoute />} />

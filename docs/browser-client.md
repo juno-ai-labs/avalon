@@ -150,6 +150,9 @@ One Space (the **Shared channels** group counts as one) hides the Spaces rail;
 one Channel hides the Channels rail. The account menu lives in the Spaces rail
 footer, moves to the Channels rail footer when the Spaces rail is gone, and to
 the Breakout rail footer (`WorkstreamSidebar`'s `footerLeading`) when both are.
+The Breakout rail is absent while its Channel is archived, loading or failed,
+so with both outer rails hidden the shell also floats a copy of the menu at the
+bottom left, which CSS hides whenever `.workstream-context-sidebar` is present.
 With neither outer rail, a route with no Channel opens the one Channel in place
 of the empty chooser. Both rails stay while the directory is loading, has
 failed, or is empty, because they carry those states. `sidebar-layout.ts`
@@ -423,10 +426,10 @@ avoids a shift for guests, but moves the loading and error text nowhere and
 makes multi-Space members watch rails slide in; the existing width transition
 already softens the shift the other way.
 
-**Consequences:** The account menu depends on some rail being present. A lone
-Channel that is archived shows the archived notice with no rail, so no account
-menu, until the channel is restored or a second share arrives. The Breakout rail
-gained an optional `footerLeading` slot for this, which desktop does not use.
+**Consequences:** With both outer rails hidden the account menu has two homes:
+the Breakout rail footer, and a floating copy for when that rail is not mounted
+(an archived, loading or failed Channel). The Breakout rail gained an optional
+`footerLeading` slot for this, which desktop does not use.
 
 ### 2026-09-24 — The sidebar follows grants without focus
 
