@@ -269,7 +269,7 @@ describe('composer width', () => {
     // choice somebody made.
     expect([...stylesheet.matchAll(/--turn-width-cap:/gu)]).toHaveLength(1);
     expect([...stylesheet.matchAll(/max-width: min\(88%, ([^,]+), calc\(100% - 82px\)\)/gu)].map(([, cap]) => cap))
-      .toEqual(['var(--turn-width-cap)', 'var(--turn-width-cap)', 'var(--turn-width-cap)']);
+      .toEqual(Array(4).fill('var(--turn-width-cap)'));
   });
 
   /**

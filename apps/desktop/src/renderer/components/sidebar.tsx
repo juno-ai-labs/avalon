@@ -52,7 +52,7 @@ import { ContextNestedMenu } from './nested-menu';
 import { SpacesSidebar } from './spaces-sidebar';
 import { RelativeTime } from './relative-time';
 import { SidebarSearch } from './sidebar-search';
-import { SidebarSkeletonGroup } from './sidebar-skeleton';
+import { SidebarSkeletonGroup, SidebarSkeletonRows } from './sidebar-skeleton';
 import { AutomationGlyph, HexagonGlyph, SIDEKICK_RUNNING_MARKER, WorkstreamGlyph } from './workstream-glyph';
 
 interface SidebarProps {
@@ -2284,7 +2284,24 @@ export function Sidebar({
           <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
             <ChevronsLeft size={16} />
           </IconButton>
-        </SidebarTitleHeader> : <SidebarHeader className="sidebar-titlebar window-drag">
+        </SidebarTitleHeader> : spaces !== undefined && loading ? (
+          // The first answer, which carries the Space that heads this rail, is
+          // in flight: its mark and name are drawn as placeholders rather than
+          // the New header below, which only an answered rail with no Space
+          // falls through to. Gated on `loading` alone: an Organization that is
+          // still opening (`!spacesReady`) can stay so for a whole backfill,
+          // and keeps its working New channel for that time.
+          <SidebarTitleHeader
+            className="sidebar-titlebar window-drag channels-sidebar-titlebar skeleton-title-header"
+            icon={<span className="skeleton-bar skeleton-title-mark" />}
+            title={<><span aria-hidden="true" className="skeleton-bar skeleton-title-line" /><span className="sr-only">Space</span></>}
+            titleClassName="channels-sidebar-title"
+          >
+            <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
+              <ChevronsLeft size={16} />
+            </IconButton>
+          </SidebarTitleHeader>
+        ) : <SidebarHeader className="sidebar-titlebar window-drag">
           <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
             <ChevronsLeft size={16} />
           </IconButton>
@@ -2523,7 +2540,9 @@ export function Sidebar({
               </div>
             )}
             {loading && visibleWorkstreams.length === 0 ? (
-              <>
+              // Under a Space the list has no group headings, so neither does
+              // its placeholder; only the time-grouped list is drawn in groups.
+              spacesEnabled ? <SidebarSkeletonRows count={7} hint="some" /> : <>
                 <SidebarSkeletonGroup count={4} />
                 <SidebarSkeletonGroup count={3} />
               </>
