@@ -1730,12 +1730,9 @@ pre {
 .skeleton-avatar-stack { display: inline-flex; }
 .skeleton-avatar-stack > .skeleton-bar { border: 2px solid var(--av-sys-color-surface-default); border-radius: 50%; height: 24px; width: 24px; }
 .skeleton-avatar-stack > .skeleton-bar + .skeleton-bar { margin-left: -7px; }
-/* Compact, the settled stack is limited to two, shrinks, overlaps further and
-   is centred in the rail; the placeholder takes the same geometry. */
+/* Compact, the settled stack is limited to two. Its size, overlap and centring
+   are the settled stack's own rules, which name the placeholder too. */
 .workstream-context-sidebar.is-compact .skeleton-avatar-stack > .skeleton-bar:nth-child(n+3) { display: none; }
-.workstream-context-sidebar.is-compact .skeleton-avatar-stack > .skeleton-bar { height: 20px; width: 20px; }
-.workstream-context-sidebar.is-compact .skeleton-avatar-stack > .skeleton-bar + .skeleton-bar { margin-left: -12px; }
-.workstream-context-sidebar.is-compact .workstream-context-row > .skeleton-avatar-stack { transform: translateX(calc(18px - 50%)); }
 
 /* The first frame of an opening conversation already has the room's final
    geometry. Its placeholders occupy the channel rail, feed and composer rather
@@ -1757,7 +1754,7 @@ pre {
    Turns sit `--space-8` apart: the stack gap plus the action row a settled
    turn lays out beneath itself. */
 .conversation-opening-messages { align-content: start; display: grid; gap: var(--space-8); }
-.conversation-opening-message { display: grid; }
+.conversation-opening-message { display: grid; max-width: min(88%, var(--turn-width-cap), calc(100% - 82px)); }
 .conversation-opening-byline {
   align-items: center;
   display: flex;
@@ -1787,7 +1784,6 @@ pre {
   --turn-bubble-radius: calc(var(--av-sys-size-radius-xl) + 6px);
   justify-items: end;
   justify-self: end;
-  max-width: min(88%, var(--turn-width-cap), calc(100% - 82px));
   width: 100%;
 }
 .conversation-opening-message.is-human > .conversation-opening-byline {
@@ -3436,7 +3432,7 @@ pre {
    `justify-content`, which cannot. */
 .workstream-context-sidebar .workstream-context-row > .avatar-stack,
 .workstream-context-sidebar .workstream-context-row > svg { transition: transform var(--sidebar-layout-motion); }
-.workstream-context-sidebar.is-compact .workstream-context-row > .avatar-stack,
+.workstream-context-sidebar.is-compact .workstream-context-row > :is(.avatar-stack, .skeleton-avatar-stack),
 .workstream-context-sidebar.is-compact .workstream-context-row > svg { transform: translateX(calc(18px - 50%)); }
 .workstream-context-sidebar.is-compact .workstream-context-presence { bottom: 8px; position: absolute; right: 10px; width: 6px; }
 .workstream-screen { display: grid; grid-template-rows: 55px minmax(0, 1fr) auto; height: 100%; min-width: 0; position: relative; }
@@ -6298,6 +6294,7 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
    restates the corner on the token rather than on the bubble, so the identity
    line and the action row move with it; writing the number on `border-radius`
    here left both of them inset by the shared 14px against an 18px corner. */
+.workstream-screen .conversation-opening-message.is-human,
 .workstream-screen .human-message { --turn-bubble-radius: 18px; }
 
 .workstream-screen .human-message-bubble {
@@ -7746,8 +7743,10 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 .workstream-context-sidebar .avatar-overflow { transition: font-size var(--sidebar-layout-motion), height var(--sidebar-layout-motion), margin-left var(--sidebar-layout-motion), width var(--sidebar-layout-motion); }
 .workstream-context-sidebar .avatar-stack-item + .avatar-stack-item { transition: margin-left var(--sidebar-layout-motion); }
 .workstream-context-sidebar.is-compact .avatar-stack .avatar,
+.workstream-context-sidebar.is-compact .skeleton-avatar-stack > .skeleton-bar,
 .workstream-context-sidebar.is-compact .avatar-overflow { width: 20px; height: 20px; font-size: 8px; }
 .workstream-context-sidebar.is-compact .avatar-stack-item + .avatar-stack-item,
+.workstream-context-sidebar.is-compact .skeleton-avatar-stack > .skeleton-bar + .skeleton-bar,
 .workstream-context-sidebar.is-compact .avatar-overflow { margin-left: -12px; }
 .sidebar-workstream-public { align-items: center; background: var(--av-sys-color-surface-default); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-muted); display: flex; height: 17px; justify-content: center; position: absolute; right: -1px; top: -2px; width: 17px; }
 .sidebar-footer { display: flex; align-items: center; justify-content: flex-end; flex: 0 0 56px; gap: 4px; margin-top: auto; padding: 8px 12px; transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }

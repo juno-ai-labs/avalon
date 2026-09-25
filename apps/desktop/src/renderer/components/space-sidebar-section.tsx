@@ -356,7 +356,7 @@ export function SpaceSidebarSection({
           // The same placeholder rows the lists below use. Spaces arrive on the
           // same answer they do, so a line of prose here read as a third kind
           // of wait next to two sections already showing their shape.
-          <SidebarSkeletonRows count={3} mark="tile" />
+          <SidebarSkeletonRows count={3} />
         ) : spaces.length === 0 ? (
           <p className="sidebar-empty">No spaces yet</p>
         ) : (
