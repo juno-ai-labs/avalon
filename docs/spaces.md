@@ -7,11 +7,12 @@ least one. A Channel may belong to several at once; each is a *placement* of the
 same Channel rather than a copy, so opening any of them opens the same
 transcript.
 
-A Space is not a second container implementation. It is Rally's work-stream
-primitive under a role: `SpaceDO` is `WorkstreamDO` with the differences
-enumerated as fields (`docs/workstream-durable-object.md` owns that), and its
-hidden main conversation holds its participants and resources exactly as a
-Channel's does. What makes it a Space is that nothing in the product opens that
+A Space is not a second container implementation. It is Rally's conversation
+parent under a role: its parent state is hosted in `WorkspaceDO` beside every
+Channel's, keyed by parent id, with the differences enumerated as fields of its
+role ([`hosted-conversation-parents.md`](hosted-conversation-parents.md) owns
+that), and its hidden main conversation holds its participants and resources
+exactly as a Channel's does. What makes it a Space is that nothing in the product opens that
 conversation — no feed, no transcript, no agent loop, no search result.
 
 Spaces replace [Projects](projects.md), which WorkspaceDO migration 64 has
@@ -52,8 +53,10 @@ them; the product design is in
 
 ### Three authorities, in one order
 
-A Space is the agreement of three objects, and `SpaceService` is where that
-agreement is ordered.
+A Space is the agreement of three authorities, and `SpaceService` is where that
+agreement is ordered. The relationship, the Space's parent rows and each
+Channel's parent rows all live in `WorkspaceDO`, but each is still reached by
+its own RPC and keeps its own rows.
 
 **WorkspaceDO owns the relationship.** It holds the Space directory projection,
 each person's Space order, the many-to-many Channel memberships with their
@@ -62,13 +65,13 @@ operation intents, and the General identity. Neither endpoint of a membership
 can answer whether a Channel has *another* Space, so the invariant that every
 Channel has a home lives here and nowhere else.
 
-**The Space's own object owns what the Space is.** Its name, appearance, scope,
-participants and attachments are written on `SpaceDO` and its hidden main
-conversation, and reach WorkspaceDO as the same `directory_common` and
+**The Space's parent owns what the Space is.** Its name, appearance, scope,
+participants and attachments are written on the Space's hosted parent rows in
+`WorkspaceDO` and its hidden main conversation, and reach WorkspaceDO as the same `directory_common` and
 `directory_user` effects a Channel publishes — routed by parent kind in
 `applyWorkstreamDirectoryEffects`.
 
-**Each Channel owns its own audience.** A Space never writes one. Every
+**Each Channel's parent owns its own audience.** A Space never writes one. Every
 membership, audience change, archive and restore goes through
 `ChannelAccessService`, which asks the Channel's own authority for the delta its
 provenance implies and applies it through the Channel's canonical scope and
@@ -98,8 +101,8 @@ the same version under a different payload hash.
 
 It then provisions the object: the same D1 anchor and `workstream_authority_routes`
 row a Channel's creation writes, under `parentKind: "space"`; `reserveChild("0",
-kind: "main")` on the `SpaceDO`, which enqueues and synchronously delivers the
-provisional directory projection; `provisionWorkstreamObject` for the
+kind: "main")` on the Space's hosted parent in `WorkspaceDO`, which applies the
+provisional directory projection in the same call; `provisionWorkstreamObject` for the
 conversation's title, scope and creator — **with no opening message and no run
 admitted**; and finally the appearance, through the same writer a Channel's icon
 and colour go through. A failed first creation cancels only the reservation it
@@ -337,9 +340,8 @@ answer is one this object already holds:
   decide what it may name — answers the Channel's. A membership cannot answer
   the second: a placement is the Organization's fact about a Channel, and
   visibility is the reader's.
-- `channel` **is stored as given.** A Channel's Breakouts are its own object's
-  children and WorkspaceDO has never seen one, so there is nothing here to
-  validate against. The client drops the ids it is not drawing. Storing an id
+- `channel` **is stored as given.** Nothing checks the ids against the
+  Channel's Breakouts. The client drops the ids it is not drawing. Storing an id
   that names nothing costs this person one row and nobody else anything: the
   rows are theirs, and the only reader is their own sidebar.
 
@@ -419,7 +421,7 @@ one of them:
 
 **Nothing prunes a `channel` container, because nothing deletes a Channel.** A
 Channel is archived, never removed: there is no delete path on
-`workspace_workstream_directory` outside migration 64's one-time automation
+`channels` outside migration 64's one-time automation
 sweep, and there is no foreign key to cascade from if there were. So a person's
 Breakout arrangements accumulate one container per Channel they have ever
 arranged Breakouts in, and are read whole onto every socket payload. That is a
@@ -601,7 +603,7 @@ holding a Channel in no Space.
 
 **Both of those paths have to make the Channel's own authority exist before they
 place it**, which the coordinator gets for free. A placement addresses the
-Channel's `WorkstreamDO` directly, and that object learns the Channel exists
+Channel's hosted parent in `WorkspaceDO`, which learns the Channel exists
 either from `reserveChild` — which writes its identity row synchronously — or
 from an effect that drifts up the conversation's outbox some time later.
 Provisioning the conversation alone and placing immediately is refused
@@ -1018,13 +1020,12 @@ builds — not to reshape the row.
 
 ### Breakouts reach the Organization
 
-`WorkstreamDO.aggregatesChildProjection` folds only the main conversation into
-the Channel's own row, and until migration 65 a breakout's `directory_common`
-and `directory_user` projections were stored in the Channel object's
-`substream_directory` and stopped there. A Channel now **forwards** them as
-well, through the hook `forwardsChildProjection` beside that one: the child's
-own payload, under its own projection key (`substream:<id>:common` and
-`substream:<id>:user:<userId>`), over the same outbox → `parent_effect` →
+A Channel's hosted parent folds only the main conversation into the Channel's
+own row; a breakout's `directory_common` and `directory_user` projections are
+stored in `parent_child_projections`. Until migration 65 they stopped there. A
+Channel now **forwards** them as well, through `HostedParent.forwardsChildProjection`:
+the child's own payload, under its own projection key (`substream:<id>:common`
+and `substream:<id>:user:<userId>`), through the same `parent_outbox` →
 `applyWorkstreamDirectoryEffects` path every Channel projection takes, with the
 substream id on the envelope. The two hooks are separate questions and a parent
 answers them independently — a breakout must not move its Channel's title or
@@ -1050,10 +1051,10 @@ flagged `backgroundAgent` arrives, so it never counts toward the Channel's
 badge.
 [`workstream-durable-object.md`](workstream-durable-object.md) has the detail.
 
-WorkspaceDO stores them in **two new tables beside the Channel ones**,
-`workspace_breakout_directory` and `workspace_breakout_viewers`, keyed by
+WorkspaceDO stores them in **two tables beside the Channel ones**,
+`breakouts` and `breakout_viewers`, keyed by
 `(workstream_id, substream_id[, user_id])`. Not a `substream_id` column on
-`workspace_workstream_directory`: every sidebar page, pin, watch registration,
+`channels`: every sidebar page, pin, watch registration,
 retirement enumeration and cutover query reads that table as "one row per
 Channel", and the first one that forgot the new filter would have listed a
 breakout as a Channel. Redelivery stays idempotent through the receipt the
@@ -1165,7 +1166,7 @@ they go through the same row — so a Channel in two Spaces is one record shown
 twice, with one unread state, one running state and one destination. Dropping a
 Channel from the selected Channel rail onto another Space is one server-side
 move request. When both Spaces grant the same scope and participant roster,
-WorkspaceDO stages one durable move, WorkstreamDO replaces the source Space id
+WorkspaceDO stages one durable move, the Channel's hosted parent replaces the source Space id
 while preserving the exact supplied-reader attribution, and WorkspaceDO
 switches both memberships in one transaction. The Channel's effective audience
 never changes, so the path neither reads its conversation nor runs the
@@ -1380,7 +1381,7 @@ Space to move its placement or into the pinned section to pin it.
 - **One person's order for one container is stored under that container, and
   delivered to nobody else.** The rows are per viewer and reach only that
   viewer's own sockets. Compatibility Channel-container order is accepted
-  unchecked because this object cannot see a Channel's children; current React
+  unchecked; current React
   rails ignore it, and any future consumer must continue to treat ids absent
   from its own authorized directory as nonexistent.
 - **A membership is invisible until it is finalized.** A `joining` row is not
@@ -1429,8 +1430,8 @@ Space to move its placement or into the pinned section to pin it.
   `space-conversation-page.test.ts`. A change to either without the other is a
   list whose rows disagree with the rows it contains.
 - **A breakout is never a row in the Channel directory.** Its projection lands
-  in `workspace_breakout_directory`, and every query that reads
-  `workspace_workstream_directory` may go on assuming one row per Channel. A
+  in `breakouts`, and every query that reads
+  `channels` may go on assuming one row per Channel. A
   `substream_id` column there would make that assumption a filter every
   existing query has to learn.
 - **A viewer sees a breakout only if they see its parent Channel.** The
@@ -1449,8 +1450,9 @@ directory projection, per-person order, membership, the default registry and its
 delivery, and the staged intents that make a cross-object operation resumable.
 
 It does **not** own what a Space *is* — the name, appearance, scope,
-participants and attachments belong to `SpaceDO` and its hidden main
-conversation, documented in
+participants and attachments belong to the Space's hosted parent and its
+hidden main conversation, documented in
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md) and
 [`workstream-durable-object.md`](workstream-durable-object.md). It does not own
 a Channel's audience; that is the Channel's own authority, reached through
 `ChannelAccessService` and documented in
@@ -1552,8 +1554,7 @@ changes, against what abandoning one costs.
 Nothing caps the `itemIds` a person may store for one container. In practice the
 list is what one person dragged — the `organization` and `space` lists are
 filtered to what that person can see, so they cannot exceed the Spaces or the
-Channels they can read, and only `channel` is stored unchecked, because
-WorkspaceDO cannot see a Channel's Breakouts. What a cap would cost is a person
+Channels they can read, and only `channel` is stored unchecked. What a cap would cost is a person
 whose real list is longer than it silently losing its tail, which is worse than
 the row it would prevent; what deciding one needs is the largest list somebody
 would actually arrange, against what one socket payload can carry. The guard is
@@ -1715,11 +1716,13 @@ when one of them refuses.
 
 Ten tables in WorkspaceDO's migration 63, and two more in migration 65.
 
-`workspace_space_directory` is one row per Space: the name, appearance and scope
+`spaces` (created as `workspace_space_directory` and renamed by migration 71;
+see [`hosted-conversation-parents.md`](hosted-conversation-parents.md#table-map))
+is one row per Space: the name, appearance and scope
 a projection wrote, the archive timestamp, the protected `system_role`, the
 generation/source-version/payload-hash triple every projection is fenced on, and
 one `revision` that advances on every accepted change. A unique partial index on
-`system_role` makes General singular. `workspace_space_viewers` is the
+`system_role` makes General singular. `space_viewers` is the
 per-person half of the same projection and is where a Space's participants live.
 `workspace_container_order` is `(user_id, container_kind, container_id,
 item_id) → position` — every list a person arranges by hand, keyed by the
@@ -1763,11 +1766,11 @@ CHECK admits `'space'`, carrying its rows — and their `retired_at` receipts �
 through a scratch table. Migration 42 is released and is not edited.
 
 **Migration 63 adds the two tables the dashboard list needs.**
-`workspace_breakout_directory` is one row per `(workstream_id, substream_id)`
+`breakouts` is one row per `(workstream_id, substream_id)`
 carrying what the forwarded effect carries — title, description, scope, state,
 `last_activity_at`, `completed_at`, `archived_at`, the attention ordinals, the
 created and updated instants — under the same generation/waterline/payload-hash
-fence the Channel directory applies. `workspace_breakout_viewers` is the
+fence the Channel directory applies. `breakout_viewers` is the
 per-person half, keyed by that pair plus `user_id`, holding `is_participant`,
 `unread_count`, `you_are_mentioned`, `unseen`, `listable`,
 `seen_attention_ordinal`, the manual-unread pair and the mention ordinal. The
@@ -1780,9 +1783,9 @@ is the decision rather than an omission: the dashboard is told to re-read
 itself, and nothing about that is worth a row.
 
 Neither breakout table is a node in `workspace_retirement_graph`. That graph
-enumerates *objects* to close — a Channel's `WorkstreamDO`, a Sidekick's
-`AutomationDO`, a Space's `SpaceDO` — and a breakout is a conversation inside a
-Channel's object, already walked as one of its children. These are projections
+enumerates parents whose conversations must be closed (a Channel, a Sidekick,
+a Space), and a breakout is a conversation under a Channel, already walked as
+one of its children. These are projections
 in WorkspaceDO's own database, closed by WorkspaceDO's own tombstone like every
 other row in it. What a new WorkspaceDO table does owe is a routing decision in
 `apps/api/test/workspace-runtime-database.test.ts`, and both are declared there
@@ -1799,7 +1802,7 @@ it.
 A Space lives in the same configured deployment as its Organization and its
 Channels. Its id, membership, projections, grants, resources and Sidekicks do
 not cross the regional boundary, and the Global identity service routes an
-Organization before any `SpaceDO` is addressed. No global Space index and no
+Organization before its `WorkspaceDO`, which hosts every Space, is addressed. No global Space index and no
 cross-region Space exists. Every external hop a Space path makes is to the same
 region's D1:
 
@@ -1956,7 +1959,7 @@ render, because it declares a contract and can read the answer; the PRD's
 is satisfied by refusing rather than by what the old build draws.
 
 The engineering MCP reaches a Space through `list_spaces` and `run_space_sql`,
-both fenced on `workspace_space_directory` rather than on naming the object — see
+both fenced on `spaces` rather than on naming the object — see
 [`engineering-mcp.md`](engineering-mcp.md). A Space's hidden main conversation
 is reachable through the substream tools because
 `bootstrapWorkstreamRuntimeEnvironment` writes its `workstream_authority_routes`

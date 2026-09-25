@@ -87,7 +87,7 @@ content:
   content — but it is the full statement, and a future inlined literal would
   appear here with no code review flagging it as a logging change.
 - **`cloudflare.durable_object.query.bindings`** on `durable_object_storage_exec`
-  — **the bound parameter values**. WorkstreamDO and SubstreamAgent write
+  — **the bound parameter values**. WorkspaceDO and SubstreamAgent write
   message text, titles, objectives, and tool payloads into embedded SQLite
   through exactly this API, so message content is in these spans.
 

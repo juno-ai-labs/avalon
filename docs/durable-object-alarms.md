@@ -8,9 +8,9 @@ covers the shared capability that makes that decision once: a SQLite-backed list
 of scheduled alarms per object, and a base class that keeps the object's single
 alarm pointed at the earliest thing on it.
 
-Read this before adding a wake reason to `WorkspaceDO`, `WorkstreamDO`,
-`SubstreamAgent`, or `AutomationDO`, before changing when any of them fires,
-and before giving a fifth object its own alarm. The objects themselves — their
+Read this before adding a wake reason to `WorkspaceDO`, `SubstreamAgent`, or
+`AutomationDO`, before changing when any of them fires, and before giving a
+fourth object its own alarm. The objects themselves — their
 hierarchy, schemas, sockets, and effects — belong to
 [`workstream-durable-object.md`](workstream-durable-object.md) and, for
 automations, [`automation-lifecycle.md`](automation-lifecycle.md).
@@ -35,8 +35,8 @@ remain separate from this effect-ordering fence.
 | `apps/api/src/durable-objects/workspace-alarm-instrumentation.ts` | Content-free WorkspaceDO alarm phase spans and structured rows: fixed phase/kind enums, elapsed times, and the slowest-phase summary. |
 | `apps/api/src/services/workspace-schedule-execution.ts` | What a workspace target actually *does* when it fires — connector polls, digests, watch polls, maintenance, Terminal lifecycle — as plain functions over a context. Automations are no longer among them; each has its own alarm. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Adopts it for a work stream's agent: `agent_timer` entries index `workstream_wakeups`, while execution, external settlement, projection, realtime, and keep-alive deadlines remain derived from their owning rows or lease. |
-| `apps/api/src/durable-objects/workstream-do.ts` | Adopts it for the parent outbox, whose deadline stays derived, stored `participant_projection` deliveries independently retried per conversation/user/revision, and resumable `main_participant_migration` / `child_participant_migration` handoffs. |
-| `apps/api/src/durable-objects/automation-do.ts` | Adopts it for one automation: two stored kinds, `automation_schedule` and `automation_run`, and the same derived parent-outbox lane `WorkstreamDO` has. |
+| `apps/api/src/durable-objects/hosted-parent.ts` | Channel and Space parents, which share the `WorkspaceDO` alarm: the `parent_outbox` lane, whose deadline stays derived, stored `parent_participant_projection` deliveries retried per parent/conversation/user/revision, resumable `parent_participant_migration` handoffs, and `parent_invitation_delivery`. The same alarm imports pending legacy parents and drains due breakout effects. See [`hosted-conversation-parents.md`](hosted-conversation-parents.md). |
+| `apps/api/src/durable-objects/automation-do.ts` | Adopts it for one automation: two stored kinds, `automation_schedule` and `automation_run`, and a derived parent-outbox lane like the hosted parents' one. |
 
 ### Two kinds of wake reason
 
@@ -216,7 +216,7 @@ post-drain refresh reconcile all four kinds:
 | `schedule` | schedule id | `schedules`, enabled with a `next_run_at` |
 | `watch` | watch id | `resource_watches`, enabled with a `next_poll_at` |
 | `maintenance` | task name | the oldest row of whichever tables that task still owes work on |
-| `terminal` | work-stream id | `workspace_workstream_directory.next_terminal_action_at` |
+| `terminal` | work-stream id | `channels.next_terminal_action_at` |
 
 Runtime writes map `schedules` to `schedule`, `resource_watches` to `watch`,
 and `resources` to both `maintenance` and `watch` (deletion cascades).
@@ -248,8 +248,8 @@ schedule must not hold a run. Neither is reconciled from a canonical table the
 way `WorkspaceDO.refreshSchedule` works: apply, pause, resume, and delete
 schedule and cancel schedule entries explicitly, every admitted occurrence arms
 its own run entry for now, and `executeSchedule` writes its own next occurrence
-and re-arms before it returns. The outbox lane is the shared parent drain
-`WorkstreamDO` runs, so a run that cannot be provisioned cannot stop the
+and re-arms before it returns. The outbox lane is the shared conversation-parent
+drain, so a run that cannot be provisioned cannot stop the
 automation's sidebar row from reaching the workspace.
 
 ## Invariants
@@ -423,7 +423,7 @@ time moved, go reconcile" entry points.
 
 ## Data model
 
-`_internal_durable_alarms`, identical in all four objects:
+`_internal_durable_alarms`, identical in every adopting object:
 
 | Column | Meaning |
 | --- | --- |
@@ -514,8 +514,9 @@ field.
 
 ### Scoped invitation email delivery
 
-WorkstreamDO schedules `scope_invitation_delivery` keyed by invitation ID in the
-same transaction as its invitation receipt. The handler decrypts the frozen mail
+`WorkspaceDO` schedules `parent_invitation_delivery` keyed by
+`<parentId>:<invitationId>` in the same transaction as the parent's invitation
+receipt. The handler decrypts the frozen mail
 payload, sends through the existing transactional sender with a stable provider
 key, and records delivery. Revoked, expired or already accepted invitations stop
 pending sends; revocation during a provider await can still deliver an unusable
@@ -524,10 +525,10 @@ link. The ordinary alarm retry handles transport failures. See
 
 ### Scope grant discovery delivery
 
-WorkstreamDO schedules `scope_grant_directory` with key `pending` in the grant
-transaction. Its handler atomically transfers undelivered grant intents into the
-parent outbox and acknowledges them. Queue retries remain the outbox's job. See
-[scope grant directory](scope-grant-directory.md).
+A Channel's grant write adds a `scope_grant_directory` row to `parent_outbox` in
+the grant transaction; there is no separate alarm kind. `WorkspaceDO` applies the
+row to its own grant directory right after the write, and the outbox lane of the
+alarm retries a failed apply. See [scope grant directory](scope-grant-directory.md).
 
 ## Changelog
 

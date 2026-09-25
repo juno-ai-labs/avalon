@@ -766,7 +766,7 @@ its owner's lease from another conversation until it yields, are in
 `test-workers/terminal-authority.test.ts` proves the lease SQL for a holder
 that ran elsewhere and that a factory bound to the owner's conversation leaves
 the agent's object, and `test-workers/durable-object-runtime.test.ts` proves
-`WorkstreamDO` forwards the earliest conversation deadline and lists the
+a Channel's parent forwards the earliest conversation deadline and lists the
 conversations that own one. The per-call lease is `terminal-runtime.test.ts`:
 one run's writes release between calls and re-run readiness when the row moved,
 and a read proceeds while another run's write holds the lease where a write

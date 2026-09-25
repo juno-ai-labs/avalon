@@ -184,9 +184,10 @@ Everything. `POST /workstreams` finishes the participant and attachment checks,
 the Space placement below, the address reservation, the authoritative
 SubstreamAgent work-stream/opening
 turn/run write, the canonical `transcript_turn_upserted` publication, and the
-Workflows round trip that starts the run. It then synchronously drains the committed directory facts
-through WorkstreamDO into WorkspaceDO, verifies the workspace directory row,
-changes the minimal
+Workflows round trip that starts the run. The main conversation's reservation
+already applied the provisional `channels` row, since the Channel's parent and
+the directory are both in `WorkspaceDO`; `flushProvisionalDirectory` then
+finishes any directory write a failure left, and the create changes the minimal
 D1 route from `verified` to `active`, and activates email —
 only then does it answer. The one thing off the path is the naming call, which
 was already deferred before this module existed.
@@ -207,7 +208,7 @@ repeats once per Space the Channel is being born into:
    the main conversation is reserved — see the section below for why that order
    is load-bearing rather than incidental.
 4. **Recording the provenance** on the Channel's own authority
-   (`WorkstreamDO.applySpaceAccessSource`, in its `bornWithSourceApplied` mode),
+   (`WorkspaceDO.applySpaceAccessSource`, in its `bornWithSourceApplied` mode),
    after the reservation, because the Channel's authority asserts a parent
    identity the reservation is what writes. **One call, not two**: the plan and
    the commit are normally split so the caller can run the canonical operations

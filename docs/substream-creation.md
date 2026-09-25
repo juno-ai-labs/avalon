@@ -202,7 +202,7 @@ or replace the child's creator-only conversation membership.
 
 1. The renderer assigns one operation ID and freezes the optional message
    cutoff. Retrying the same attempt keeps that ID.
-2. WorkstreamDO reserves one child ID and pins the resolved context recipe and
+2. The Channel's parent in `WorkspaceDO` reserves one child ID and pins the resolved context recipe and
    membership initializer receipt. Reserved children are not discoverable or
    readable as conversations. The title it reserves them under is a placeholder:
    preparation is about the context, and the message that names the substream
@@ -384,7 +384,7 @@ the first model context without becoming executable historical work.
   same question.** Parent visibility is neither required nor enough: parent
   participants cannot enumerate or open someone else's private child, and
   adding a child member does not grant Main or sibling access.
-  `WorkstreamDO.canReadConversation` is the one predicate for one conversation
+  `HostedParent.canReadConversation` is the one predicate for one conversation
   — a grant, or for an unmigrated conversation a member's legacy roster — and
   `/sharing/navigation` releases only what it admits. A guest is shared a
   breakout rather than seated on a legacy roster.
