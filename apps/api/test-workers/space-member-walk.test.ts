@@ -77,10 +77,6 @@ function workspace() {
   return env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID));
 }
 
-/** A member Channel's authority, hosted by the Organization object like every Channel parent. */
-function memberChannel(_workstreamId: WorkstreamId) {
-  return workspace();
-}
 
 function conversation(workstreamId: WorkstreamId) {
   return env.SUBSTREAM_AGENTS.getByName(
@@ -210,15 +206,14 @@ const observedChannel = {
  * One member Channel, in both places a Space step reaches.
  *
  * The authority (hosted by the Organization object) holds the provenance the
- * retraction acts on; the hidden
- * conversation is what `ChannelAccessService` reads the Channel's own audience
- * from before it asks for a plan. Written directly rather than created through
+ * retraction acts on; the hidden conversation is what `ChannelAccessService`
+ * reads the Channel's own audience from before it asks for a plan. Written directly rather than created through
  * the coordinator, because this file is about the walk over them rather than
  * about how a Channel comes to be — and fifty-one real creations would be a
  * fixture nobody could run.
  */
 async function openMemberChannel(workstreamId: WorkstreamId): Promise<void> {
-  await runInDurableObject(memberChannel(workstreamId), (_instance, state) => {
+  await runInDurableObject(workspace(), (_instance, state) => {
     state.storage.sql.exec(
       `INSERT INTO parent_metadata
          (parent_id, parent_kind, workspace_id, region, authority_generation, title, description,
@@ -253,11 +248,11 @@ async function seatSpaceSource(
     membershipGeneration: 1,
     channel: observedChannel,
   };
-  const applied = await memberChannel(workstreamId).applySpaceAccessSource({
+  const applied = await workspace().applySpaceAccessSource({
     ...address, spaceId, ...source, operationId: crypto.randomUUID(),
   });
   if (!applied.ok) throw new Error(`applySpaceAccessSource refused: ${applied.code}`);
-  const confirmed = await memberChannel(workstreamId).confirmSpaceAccessSource({
+  const confirmed = await workspace().confirmSpaceAccessSource({
     ...address, spaceId, operationId: crypto.randomUUID(), seatedUserIds: [], source,
   });
   if (!confirmed.ok) throw new Error(`confirmSpaceAccessSource refused: ${confirmed.code}`);
@@ -273,9 +268,10 @@ async function seatSpaceSource(
 async function operationCounts(workstreamIds: readonly WorkstreamId[]): Promise<number[]> {
   const counts: number[] = [];
   for (const workstreamId of workstreamIds) {
-    counts.push(await runInDurableObject(memberChannel(workstreamId), (_instance, state) => (
+    counts.push(await runInDurableObject(workspace(), (_instance, state) => (
       state.storage.sql.exec<{ total: number }>(
-        "SELECT COUNT(*) AS total FROM workstream_access_operations",
+        "SELECT COUNT(*) AS total FROM parent_access_operations WHERE parent_id = ?",
+        workstreamId,
       ).one().total
     )));
   }
@@ -290,14 +286,14 @@ async function operationCounts(workstreamIds: readonly WorkstreamId[]): Promise<
  * source itself in place.
  */
 async function spaceSource(workstreamId: WorkstreamId, spaceId: SpaceId) {
-  const sources = await memberChannel(workstreamId).readAccessSources({
+  const sources = await workspace().readAccessSources({
     workspaceId: WORKSPACE_ID, parentId: workstreamId, channel: observedChannel,
   });
   return sources.spaces.find((source) => source.spaceId === spaceId);
 }
 
 async function spaceSourceIds(workstreamId: WorkstreamId): Promise<string[]> {
-  const sources = await memberChannel(workstreamId).readAccessSources({
+  const sources = await workspace().readAccessSources({
     workspaceId: WORKSPACE_ID, parentId: workstreamId, channel: observedChannel,
   });
   return sources.spaces.map((source) => source.spaceId);

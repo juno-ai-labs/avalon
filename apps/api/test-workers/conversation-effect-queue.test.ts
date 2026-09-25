@@ -460,10 +460,10 @@ describe("a parent with two children", () => {
     });
 
     // Any facade write drains the directory kinds locally; this one writes
-    // nothing else.
-    await workspace.flushProvisionalDirectory({ workspaceId: WORKSPACE_ID, parentId: SIBLING_WORKSTREAM_ID });
-
-    await runInDurableObject(workspace, (_instance, state) => {
+    // nothing else. Read in the same invocation, so the alarm's own drain
+    // cannot be what applied them.
+    await runInDurableObject(workspace, async (instance, state) => {
+      await instance.flushProvisionalDirectory({ workspaceId: WORKSPACE_ID, parentId: SIBLING_WORKSTREAM_ID });
       expect(state.storage.sql.exec<{ unread_count: number; waterline: number }>(
         `SELECT unread_count, waterline FROM channel_viewers WHERE workstream_id = ? AND user_id = ?`,
         SIBLING_WORKSTREAM_ID,
@@ -521,22 +521,25 @@ describe("the Organization's parent outbox", () => {
       sourceVersion: 2,
       effect: activityEffect("channel-activity-1"),
     });
-    await workspace.receiveChildEffects({ substreamId: asSubstreamId("0"), envelopes: [viewer] });
-    await workspace.receiveChildEffects({ substreamId: asSubstreamId("0"), envelopes: [activity] });
-
     // The directory is applied before the write returns; only the activity
-    // row is left, because nothing has sent it yet.
-    const before = await runInDurableObject(workspace, (_instance, state) => ({
-      viewers: state.storage.sql.exec<{ unread_count: number }>(
-        `SELECT unread_count FROM channel_viewers WHERE workstream_id = ? AND user_id = ?`,
-        ACTIVITY_WORKSTREAM_ID,
-        USER_ID,
-      ).toArray(),
-      outbox: state.storage.sql.exec<{ effect_kind: string; message_id: string }>(
-        `SELECT effect_kind, message_id FROM parent_outbox WHERE parent_id = ?`,
-        ACTIVITY_WORKSTREAM_ID,
-      ).toArray(),
-    }));
+    // row is left, because nothing has sent it yet. Read in the same
+    // invocation as the writes, so the alarm, which would apply the directory
+    // rows too, cannot be what put them there.
+    const before = await runInDurableObject(workspace, async (instance, state) => {
+      await instance.receiveChildEffects({ substreamId: asSubstreamId("0"), envelopes: [viewer] });
+      await instance.receiveChildEffects({ substreamId: asSubstreamId("0"), envelopes: [activity] });
+      return {
+        viewers: state.storage.sql.exec<{ unread_count: number }>(
+          `SELECT unread_count FROM channel_viewers WHERE workstream_id = ? AND user_id = ?`,
+          ACTIVITY_WORKSTREAM_ID,
+          USER_ID,
+        ).toArray(),
+        outbox: state.storage.sql.exec<{ effect_kind: string; message_id: string }>(
+          `SELECT effect_kind, message_id FROM parent_outbox WHERE parent_id = ?`,
+          ACTIVITY_WORKSTREAM_ID,
+        ).toArray(),
+      };
+    });
     expect(before.viewers).toEqual([{ unread_count: 4 }]);
     expect(before.outbox).toEqual([{ effect_kind: "activity_event", message_id: `substream:0:${activity.messageId}` }]);
     expect(gate.sent).toEqual([]);

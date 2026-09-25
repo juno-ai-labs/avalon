@@ -202,7 +202,7 @@ async function createChannel(clientMessageId: string, spaceIds: SpaceId[] = []):
 async function spaceDirectoryRow(spaceId: string): Promise<Record<string, unknown>> {
   const read = await workspace().runInspectionSql({
     sql: `SELECT title, scope, source_version, archived_at
-            FROM workspace_space_directory WHERE space_id = ?`,
+            FROM spaces WHERE space_id = ?`,
     bindings: [spaceId],
   });
   return read.rows[0] as Record<string, unknown>;

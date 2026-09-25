@@ -16,7 +16,6 @@ import {
 } from "@rally/contracts";
 import {
   conversationEffectHash,
-  ParentEffectEnvelopeSchema,
   type ConversationEffect,
   type ConversationEffectEnvelope,
   type ParentEffect,
@@ -55,7 +54,6 @@ import {
 import {
   consumeEffectBodies,
   deliverEffectsToWorkspaceInOrder,
-  deliverParentEffectsInOrder,
 } from "./helpers/conversation-effects";
 import {
   automationDOName,
