@@ -319,22 +319,34 @@ export class WorkspaceBreakoutStorage {
    * projection is discovery state for somebody who can no longer discover
    * anything here, and leaving it would list a breakout for an account that
    * has been removed.
+   *
+   * `participationChanged` says the person joined or left the breakout, the
+   * same flip the Channel viewer write reports; everything else a projection
+   * carries (unread, mention, first open) moves only `moved`.
    */
-  applyViewer(envelope: ParentEffectEnvelope, activeMember: boolean, now: number): boolean {
-    if (!this.ready()) return false;
-    if (envelope.effect.kind !== "directory_user" || envelope.substreamId === undefined) return false;
+  applyViewer(
+    envelope: ParentEffectEnvelope,
+    activeMember: boolean,
+    now: number,
+  ): { moved: boolean; participationChanged: boolean } {
+    const unchanged = { moved: false, participationChanged: false };
+    if (!this.ready()) return unchanged;
+    if (envelope.effect.kind !== "directory_user" || envelope.substreamId === undefined) return unchanged;
     const effect = envelope.effect;
     if (!activeMember) {
-      return this.storage.sql.exec<{ user_id: string } & Record<string, SqlStorageValue>>(
+      const deleted = this.storage.sql.exec<{ is_participant: number } & Record<string, SqlStorageValue>>(
         `DELETE FROM workspace_breakout_viewers
-          WHERE workstream_id = ? AND substream_id = ? AND user_id = ? RETURNING user_id`,
+          WHERE workstream_id = ? AND substream_id = ? AND user_id = ? RETURNING is_participant`,
         envelope.parentId,
         envelope.substreamId,
         effect.userId,
-      ).toArray().length === 1;
+      ).toArray()[0];
+      return { moved: deleted !== undefined, participationChanged: deleted?.is_participant === 1 };
     }
-    const current = this.storage.sql.exec<StoredProjection & Record<string, SqlStorageValue>>(
-      `SELECT authority_generation, waterline, payload_hash
+    const current = this.storage.sql.exec<StoredProjection & {
+      is_participant: number;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT authority_generation, waterline, payload_hash, is_participant
          FROM workspace_breakout_viewers
         WHERE workstream_id = ? AND substream_id = ? AND user_id = ?`,
       envelope.parentId,
@@ -342,7 +354,7 @@ export class WorkspaceBreakoutStorage {
       effect.userId,
     ).toArray()[0];
     if (!projectionSupersedes(envelope, current, "workspace_breakout_viewer_version_conflict")) {
-      return false;
+      return unchanged;
     }
     this.storage.sql.exec(
       `INSERT INTO workspace_breakout_viewers
@@ -384,7 +396,7 @@ export class WorkspaceBreakoutStorage {
       effect.latestMentionAttentionOrdinal ?? 0,
       now,
     );
-    return true;
+    return { moved: true, participationChanged: (current?.is_participant === 1) !== effect.isParticipant };
   }
 }
 

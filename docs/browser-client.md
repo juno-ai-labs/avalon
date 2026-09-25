@@ -15,7 +15,7 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | `apps/browser/src/entry.tsx` | Email/OTP and explicit magic-link redemption, invitation acceptance, session restore and workspace list. |
 | `apps/browser/src/invitation.ts` | Tokenized and addressed invitation fragments, and exact canonical scope destinations. |
 | `apps/browser/src/transport.ts` | Same-origin entry requests and runtime response validation. |
-| `apps/browser/src/conversation.tsx` | Browser router and providers for the shared feed; no desktop background socket pool. |
+| `apps/browser/src/conversation.tsx` | Browser router and providers for the shared feed, and the tab's one workspace socket for membership nudges; no desktop background socket pool. |
 | `apps/browser/src/session.ts`, `packages/contracts/src/client-session.ts` | Credential-free collaboration session metadata and its cookie adapter. |
 | `apps/desktop/src/renderer/lib/api.ts` | Existing product API client, shared by native bearer and browser cookie sessions. |
 | `apps/desktop/src/renderer/lib/collaboration-session.tsx` | Collaboration-only identity/API context and optional setup capabilities. |
@@ -144,6 +144,9 @@ overview. A Channel with no visible Space placement
 stays reachable in a local **Shared channels** group. Workspace identity uses the
 existing account/badge treatment; no workspace icon/color settings are introduced.
 The browser does not install desktop background subscriptions. See [shared UI](shared-ui.md).
+It holds one workspace socket per tab, through `watchWorkspaceReach`, and reads
+the shared navigation again when that socket reports this person's reach
+changed ([`realtime-sockets.md`](realtime-sockets.md)).
 
 ### Shared collaboration transport
 
@@ -393,6 +396,29 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-09-24 — The sidebar follows grants without focus
+
+**What changed:** Each tab opens one workspace socket, through the same
+`/regional/<region>/socket/` forwarding the conversation feed uses, and rereads
+the shared navigation on `workspace_reach_changed` or any subscribe answer. It subscribes
+and ignores the sidebar payload the subscribe answer carries.
+
+**Why:** A person shared into a Channel or Breakout while their tab was open saw
+nothing until they refocused the window. Guests are sent no Space snapshot, and
+the open conversation's metadata only nudges when that one conversation moves.
+
+**Considered and rejected:** Polling adds a timer number nobody set and still
+lags. Mounting the desktop's workspace-socket provider would bring presence,
+directory paging and the sidebar store the lite client deliberately does not
+carry.
+
+**Consequences:** A tab holds one socket more than it did, for as long as a
+workspace is selected. The subscribe answer is built per socket and discarded here; a
+lighter subscribe for listen-only hosts would remove that cost if it matters.
+Nothing is replayed, so a missed event is covered by the reread on each
+subscribe answer, including the first: the opening navigation read can finish
+before the socket subscribes.
 
 ### 2026-09-22 — Read hierarchical shared-resource URLs
 

@@ -311,11 +311,12 @@ export function useWorkstreamControlSocket(
     };
     const applyMetadata = (metadata: WorkstreamControlMetadata): void => {
       if (metadata.id !== workstreamId) return;
-      // The browser has no Organization socket. Its open conversation's
-      // metadata frame is therefore the low-cost nudge to refresh associative
-      // Space and ancestor presentation without polling — for a Channel that
-      // directory lists, and only then: a member's ordinary Channel is not in
-      // it, and refetching it on every frame there would buy nothing.
+      // The browser's Organization socket carries only membership changes.
+      // Its open conversation's metadata frame is therefore still the
+      // low-cost nudge to refresh associative Space and ancestor presentation
+      // without polling — for a Channel that directory lists, and only then: a
+      // member's ordinary Channel is not in it, and refetching it on every
+      // frame there would buy nothing.
       const directories = queryClient.getQueriesData<SharedNavigationDirectory>({ queryKey: ['shared-navigation'] });
       if (directories.some(([, directory]) => directory?.workstreams.some((item) => item.parentId === workstreamId))) {
         void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });

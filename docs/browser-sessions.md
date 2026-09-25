@@ -81,8 +81,9 @@ cookies or accept arbitrary API hosts. This adapter forwards HTTP business
 requests, not WebSocket frames. The browser host forwards the existing purpose-bound ticket upgrades through its
 regional service binding, stripping cookies and Authorization from that path.
 The shared product API client supports cookie sessions without bearer renewal;
-the browser mounts only the selected conversation feed and does not install
-the desktop background socket swarm.
+the browser mounts only the selected conversation feed, plus one workspace
+socket it reads only for membership nudges, and does not install the desktop
+background socket swarm.
 
 ## Failure modes and limits
 

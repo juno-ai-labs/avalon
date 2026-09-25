@@ -1772,6 +1772,40 @@ describe('WorkspaceSocketProvider', () => {
     expect(queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY)?.items[0]?.attentionCount).toBe(3);
   });
 
+  it('reads the guest navigation again when a reach change arrives, and nothing else', async () => {
+    const queryClient = new QueryClient();
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <div />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    invalidate.mockClear();
+
+    act(() => socket.message({
+      type: 'workspace_reach_changed',
+      occurredAt: '2026-09-24T00:00:00.000Z',
+      userIds: ['00000000-0000-7000-8000-000000000003'],
+    }));
+
+    // A member's Channel rows and Space pages are pushed on the same flip, so
+    // the associative read a guest's sidebar is drawn from is the one to redo.
+    expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([['shared-navigation']]);
+  });
+
   it('fails an in-flight directory page immediately when the desktop goes offline', async () => {
     let online = true;
     vi.spyOn(navigator, 'onLine', 'get').mockImplementation(() => online);
