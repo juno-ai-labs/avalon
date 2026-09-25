@@ -125,7 +125,7 @@ async function establishWorkspace(): Promise<void> {
       (workspace_id, user_id, status, role, access_class) VALUES (?, ?, 'active', 'member', 'member')`)
       .bind(WORKSPACE_ID, MEMBER),
     env.DB.prepare(`INSERT OR REPLACE INTO workspace_members
-      (workspace_id, user_id, status, role, access_class) VALUES (?, ?, 'active', 'guest', 'guest')`)
+      (workspace_id, user_id, status, role, access_class) VALUES (?, ?, 'active', NULL, 'guest')`)
       .bind(WORKSPACE_ID, GUEST),
     env.DB.prepare(`INSERT OR REPLACE INTO sessions
       (id, user_id, workspace_id, region, revoked_at, expires_at)

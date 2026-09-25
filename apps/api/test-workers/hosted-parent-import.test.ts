@@ -350,6 +350,10 @@ describe("hosted parent import", () => {
   it("defers an import that fails after the export, with its code, instead of retrying it per request", async () => {
     const workspaceId = "00000000-0000-7000-8000-00000000f801";
     const parentId = "00000000-0000-7000-8000-00000000f802";
+    // Counted from before the Organization exists: its alarm's import phase
+    // can take the pending import before the first request does, and that
+    // export is the one attempt this case allows.
+    const exports = vi.spyOn(WorkstreamDO.prototype, "exportParentState");
     await seedLegacyChannel(workspaceId, parentId);
     const workspace = await hostedWorkspace(workspaceId, parentId);
     await runInDurableObject(workspace, (_instance, state) => {
@@ -360,7 +364,6 @@ describe("hosted parent import", () => {
         parentId, workspaceId, REGION,
       );
     });
-    const exports = vi.spyOn(WorkstreamDO.prototype, "exportParentState");
     const request = { workspaceId: asWorkspaceId(workspaceId), parentId };
 
     const first = await workspace.listChildren(request).then(() => null, (error: unknown) => error);
