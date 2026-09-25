@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PROJECT_COLOR_KEYS_STORABLE, PROJECT_ICON_KEYS } from "./projects";
+import { PROJECT_COLOR_KEYS_STORABLE, PROJECT_COLOR_RING, PROJECT_ICON_KEYS } from "./projects";
 
 export const WORKSTREAM_ICON_KEYS = [
   "aperture", "atom", "boxes", "circle-dot", "circuit-board", "component",
@@ -116,3 +116,17 @@ export const WorkstreamAppearanceSchema = z.strictObject({
 export const WorkstreamAppearancePatchSchema = WorkstreamAppearanceSchema.partial();
 export type WorkstreamAppearance = z.infer<typeof WorkstreamAppearanceSchema>;
 export type WorkstreamAppearancePatch = z.infer<typeof WorkstreamAppearancePatchSchema>;
+
+/**
+ * An icon and a colour both chosen, each from what the picker offers.
+ *
+ * Narrower than {@link WorkstreamAppearanceSchema} on purpose: that one parses
+ * stored rows, so it admits null and every retired colour. This one is for a
+ * new choice — the Sidekick setup chat's — where a null or a colour nobody can
+ * pick any more would be a choice no person could have made.
+ */
+export const PickedAppearanceSchema = z.strictObject({
+  icon: WorkstreamIconKeySchema,
+  color: z.enum(PROJECT_COLOR_RING),
+});
+export type PickedAppearance = z.infer<typeof PickedAppearanceSchema>;

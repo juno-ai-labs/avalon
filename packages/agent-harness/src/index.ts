@@ -18,7 +18,11 @@ import {
   withoutUnusableAutomationResourceIds,
   AutomationDraftSchema,
   ConnectorConnectionCardInputSchema,
+  PickedAppearanceSchema,
+  PROJECT_COLOR_RING,
+  WORKSTREAM_ICON_KEYS,
   type AutomationDraft,
+  type PickedAppearance,
 } from "@rally/contracts";
 import { AzureInferenceEndpointSchema } from "@rally/contracts/url-schemas";
 import { createParser, type EventSourceMessage } from "eventsource-parser";
@@ -53,6 +57,7 @@ import { runHarnessWithBind } from "./bind-runtime";
 import {
   limitAddressingRecentMessages,
   renderAddressingMessages,
+  WORKSTREAM_ICON_CATALOG,
   type AddressingContextMessage,
 } from "./prompts";
 import type {
@@ -2367,6 +2372,16 @@ const automationDraftSubmissionJsonSchema = {
     },
     name: { type: "string", description: "A short name for the Sidekick as it appears in the person's list, for example \"Weekly release notes\"." },
     description: { type: "string", description: "One sentence saying what the Sidekick does, for the list beside its name." },
+    icon: {
+      type: "string",
+      enum: [...WORKSTREAM_ICON_KEYS],
+      description: `The Sidekick's icon, drawn inside its hexagon wherever it is listed, as the exact key of one mark below. Each line is a key and a description of the mark it draws. A Sidekick that already has one keeps it unless the person asks for another: sidekicks_list shows the current one.\n\n${WORKSTREAM_ICON_CATALOG}`,
+    },
+    color: {
+      type: "string",
+      enum: [...PROJECT_COLOR_RING],
+      description: "The color of the Sidekick's hexagon. A Sidekick that already has one keeps it unless the person asks for another: sidekicks_list shows the current one.",
+    },
     overview: { type: "string", description: "A few sentences for the person approving it: what it watches, what it does each time, and where the result goes. This is what somebody reads to decide whether to accept the draft." },
     instructions: { type: "string", description: "What each run should actually do, written for a run that cannot see this conversation. Name the steps, the tools, and what finishing looks like. A result meant to reach an inbox, a channel, or a document is only sent if a step here says to send it." },
     triggers: {
@@ -2494,6 +2509,8 @@ const automationDraftSubmissionJsonSchema = {
   required: [
     "name",
     "description",
+    "icon",
+    "color",
     "overview",
     "instructions",
     "triggers",
@@ -2836,9 +2853,28 @@ export function asRecord(value: unknown): Record<string, unknown> {
  * naming a field the executor is fine with is the same unwinnable loop with a
  * different field's name on it.
  */
-export function parseAutomationSubmission(raw: unknown): z.ZodSafeParseResult<AutomationDraft> {
-  return AutomationDraftSchema.safeParse(normalizeAutomationDraft(raw));
+export function parseAutomationSubmission(raw: unknown): z.ZodSafeParseResult<AutomationSubmission> {
+  return AutomationSubmissionSchema.safeParse(normalizeAutomationDraft(raw));
 }
+
+/** A submitted draft, and the icon and colour submitted beside it. */
+export interface AutomationSubmission {
+  draft: AutomationDraft;
+  appearance: PickedAppearance;
+}
+
+/**
+ * The draft and its appearance parsed as one object, then split.
+ *
+ * One parse, so a submission missing both an icon and a trigger field hears
+ * about both at once, each under the path the model wrote it at. Split after,
+ * because the two are stored in different places: the draft is an immutable
+ * definition revision, while the appearance is the Sidekick's own identity,
+ * which a person can change from the picker without a revision.
+ */
+const AutomationSubmissionSchema = z.object(PickedAppearanceSchema.shape)
+  .and(AutomationDraftSchema)
+  .transform(({ icon, color, ...draft }): AutomationSubmission => ({ draft, appearance: { icon, color } }));
 
 /**
  * Which existing automation a submission names, if any.

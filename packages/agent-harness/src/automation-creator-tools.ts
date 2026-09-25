@@ -7,6 +7,7 @@ import {
   automationDraftAcceptanceBlocker,
   automationTriggersAdmitResourceType,
   type AutomationDraft,
+  type PickedAppearance,
   type AutomationSetEvaluatorRulesInputV1,
 } from "@rally/contracts";
 
@@ -75,11 +76,14 @@ export interface AutomationCreatorToolHost {
     setAttached(sidekickId: string, attached: boolean): Promise<unknown>;
   };
   draftMutationPort?: {
-    /** `target` names an automation from `listAutomations`; null creates one. */
+    /**
+     * `target` names an automation from `listAutomations`; null creates one.
+     * Its appearance is the icon and colour the draft was submitted with.
+     */
     submitDraft(
       draft: AutomationDraft,
       context: HarnessToolContext,
-      target: { automationId: string | null },
+      target: { automationId: string | null; appearance: PickedAppearance },
     ): Promise<unknown>;
     setEvaluatorRules(
       rules: unknown,
@@ -331,9 +335,10 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
             : {}),
         });
         if (!parsed.success) throw parsed.error;
-        if (parsed.data.ready) {
-          const sourcePluginIds = Object.values(automationActivitySourcePluginIds(parsed.data.triggers));
-          const unloadedPluginId = [...sourcePluginIds, ...parsed.data.recommendedPlugins.map((plugin) => plugin.pluginId)]
+        const { draft, appearance } = parsed.data;
+        if (draft.ready) {
+          const sourcePluginIds = Object.values(automationActivitySourcePluginIds(draft.triggers));
+          const unloadedPluginId = [...sourcePluginIds, ...draft.recommendedPlugins.map((plugin) => plugin.pluginId)]
             .find((pluginId) => (
               !loadedAutomationPluginIds.has(pluginId) || !inspectedAutomationPluginIds.has(pluginId)
             ));
@@ -349,7 +354,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
           // resubmitting the same draft until the loop runs out. The same
           // predicate the object applies, so the two cannot disagree about
           // which drafts are refused; only the wording is this side's.
-          const blocker = automationDraftAcceptanceBlocker(parsed.data, draftState.evaluatorRules ?? null);
+          const blocker = automationDraftAcceptanceBlocker(draft, draftState.evaluatorRules ?? null);
           if (blocker === "sidekick_evaluator_rules_required") {
             throw new Error(
               "Call set_evaluator_rules with at least one rule before submitting a ready draft "
@@ -364,7 +369,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
             // and a binding key is invented, so neither side is discoverable
             // from a catalog. Naming the two sets is what turns the refusal
             // into an edit.
-            const { declared, unbound } = unboundEvaluatorRules(parsed.data.triggers, draftState.evaluatorRules ?? null);
+            const { declared, unbound } = unboundEvaluatorRules(draft.triggers, draftState.evaluatorRules ?? null);
             throw new Error(
               "Every rule's sourceBindingKey and suggestedSourcePluginId must match a connector_activity, "
               + "semantic_activity or webhook trigger in this draft. "
@@ -375,10 +380,11 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
             );
           }
         }
-        await input.draftMutationPort?.submitDraft(parsed.data, context, {
+        await input.draftMutationPort?.submitDraft(draft, context, {
           automationId: automationSubmissionTarget(raw),
+          appearance,
         });
-        draftState.submitted = parsed.data;
+        draftState.submitted = draft;
         await input.onDiagnostic?.({
           stage: "complete",
           schemaName: "automation_draft",
