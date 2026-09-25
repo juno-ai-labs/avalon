@@ -77,21 +77,12 @@ describe('browserRailVisibility', () => {
   });
 
   it('hides a rail that would list exactly one row', () => {
-    expect(browserRailVisibility({ spaces: [{}], unplacedChannels: false, channelCount: 1 }))
-      .toEqual({ channels: false, spaces: false });
-    expect(browserRailVisibility({ spaces: [{}], unplacedChannels: false, channelCount: 3 }))
-      .toEqual({ channels: true, spaces: false });
-    expect(browserRailVisibility({ spaces: [], unplacedChannels: true, channelCount: 2 }))
-      .toEqual({ channels: true, spaces: false });
-  });
-
-  it('counts the Shared channels group as a Space row', () => {
-    expect(browserRailVisibility({ spaces: [{}], unplacedChannels: true, channelCount: 2 }))
-      .toEqual({ channels: true, spaces: true });
+    expect(browserRailVisibility({ spaceCount: 1, channelCount: 1 })).toEqual({ channels: false, spaces: false });
+    expect(browserRailVisibility({ spaceCount: 1, channelCount: 3 })).toEqual({ channels: true, spaces: false });
+    expect(browserRailVisibility({ spaceCount: 2, channelCount: 2 })).toEqual({ channels: true, spaces: true });
   });
 
   it('keeps both rails when there is nothing to list, so the empty state shows', () => {
-    expect(browserRailVisibility({ spaces: [], unplacedChannels: false, channelCount: 0 }))
-      .toEqual({ channels: true, spaces: true });
+    expect(browserRailVisibility({ spaceCount: 0, channelCount: 0 })).toEqual({ channels: true, spaces: true });
   });
 });

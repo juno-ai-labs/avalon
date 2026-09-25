@@ -144,24 +144,15 @@ overview. A Channel with no visible Space placement
 stays reachable in a local **Shared channels** group. Workspace identity uses the
 existing account/badge treatment; no workspace icon/color settings are introduced.
 The browser does not install desktop background subscriptions. See [shared UI](shared-ui.md).
-
-A rail that would list exactly one row is left out, since it offers no choice.
-One Space (the **Shared channels** group counts as one) hides the Spaces rail;
-one Channel hides the Channels rail. The account menu lives in the Spaces rail
-footer, moves to the Channels rail footer when the Spaces rail is gone, and to
-the Breakout rail footer (`WorkstreamSidebar`'s `footerLeading`) when both are.
-The Breakout rail is absent while its Channel is archived, loading or failed,
-so with both outer rails hidden the shell also floats a copy of the menu at the
-bottom left, which CSS hides whenever `.workstream-context-sidebar` is present.
-With neither outer rail, a route with no Channel opens the one Channel in place
-of the empty chooser. Both rails stay while the directory is loading, has
-failed, or is empty, because they carry those states. `sidebar-layout.ts`
-gives a hidden rail zero width, and the shell's width variables are written
-from the shell element rather than found from a rail, so a hidden rail still
-overrides the theme's default width.
 It holds one workspace socket per tab, through `watchWorkspaceReach`, and reads
 the shared navigation again when that socket reports this person's reach
 changed ([`realtime-sockets.md`](realtime-sockets.md)).
+
+A rail that would list exactly one row is hidden: one Space hides the Spaces
+rail, one Channel the Channels rail. The account menu moves to the next rail
+inward, and with both hidden it also floats at the bottom left for when no
+Breakout rail is mounted. With both hidden, the lone Channel opens directly.
+Both rails stay while the directory is loading, failed or empty.
 
 ### Shared collaboration transport
 
