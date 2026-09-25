@@ -502,7 +502,7 @@ export { MESSAGE_MAX_CHARACTERS,MESSAGE_TOO_LONG_MESSAGE } from "./message-limit
  * reads that have nothing to do with the work stream it describes.
  *
  * Changing this number means changing the `length(description) <= 4000` CHECK on
- * `workspace_workstream_directory` and the producer-side bound in
+ * `channels` and the producer-side bound in
  * `workstream-regional-effect.ts` in the same breath, or a description this
  * accepts commits into an outbox whose delivery can never succeed.
  */

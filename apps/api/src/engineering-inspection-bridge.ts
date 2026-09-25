@@ -211,7 +211,7 @@ async function resolveInspectionSidekickRoute(
  * A Space is fenced by its workspace and then by the Organization's own record
  * of it.
  *
- * The same fence a Sidekick has: `workspace_space_directory` is the row that
+ * The same fence a Sidekick has: `spaces` is the row that
  * proves the object exists, read from an object that is already open, so a miss
  * is answered without naming anything in `SPACE_DOS`. Naming a Durable Object
  * creates it, and an id that is not a Space would otherwise leave an empty
@@ -235,7 +235,7 @@ async function resolveInspectionSpaceRoute(
   if (!route) return null;
   const workspace = await workspaceStub(env, input.workspaceId);
   const directory = await workspace.runInspectionSql({
-    sql: `SELECT space_id FROM workspace_space_directory WHERE space_id = ?`,
+    sql: `SELECT space_id FROM spaces WHERE space_id = ?`,
     bindings: [input.spaceId],
   });
   return directory.rows.length === 0 ? null : route;
@@ -338,7 +338,7 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     const result = await workspace.runInspectionSql({
       sql: `SELECT workstream_id, title, scope, exact_state, system_kind,
                    last_activity_at, archived_at
-              FROM workspace_workstream_directory
+              FROM channels
              ORDER BY last_activity_at DESC, workstream_id`,
       bindings: [],
     });
@@ -429,7 +429,7 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
   /**
    * Every Space in a workspace, archived ones included.
    *
-   * Read from `workspace_space_directory` the way `listSidekicks` reads
+   * Read from `spaces` the way `listSidekicks` reads
    * `automation_directory`: the Organization's projection is what says a Space
    * exists, and an archived Space is a common inspection target even though no
    * product list shows it.
@@ -442,7 +442,7 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     const workspace = await workspaceStub(this.env, request.workspaceId);
     const result = await workspace.runInspectionSql({
       sql: `SELECT space_id, title, scope, system_role, archived_at
-              FROM workspace_space_directory
+              FROM spaces
              ORDER BY created_at, space_id`,
       bindings: [],
     });
