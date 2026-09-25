@@ -10,7 +10,7 @@
  * does, and nothing but a join or a leave sends it.
  */
 import { env } from "cloudflare:workers";
-import { reset } from "cloudflare:test";
+import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -57,6 +57,7 @@ async function establishWorkspace(): Promise<void> {
       incarnation TEXT DEFAULT 'existing-member',
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
       role TEXT, access_class TEXT NOT NULL DEFAULT 'member',
+      revision INTEGER NOT NULL DEFAULT 1,
       last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
     )`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (
@@ -268,8 +269,28 @@ describe("workspace_reach_changed", () => {
     await project(CHANNEL, [breakoutCommon(), viewer(REPRESENTED, true)], 1, BREAKOUT);
     const operator = await connect(OPERATOR);
 
-    await env.DB.prepare("UPDATE workspace_members SET status = 'removed' WHERE workspace_id = ? AND user_id = ?")
+    // Removal the way the product does it: D1 deletes the row and the
+    // relationship change event tells the Organization object, whose member
+    // table is what the directory reads.
+    await env.DB.prepare("DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?")
       .bind(WORKSPACE_ID, REPRESENTED).run();
+    expect(await workspace().applyMemberStatus({
+      workspaceId: WORKSPACE_ID,
+      sequence: 1,
+      removed: true,
+      relationship: {
+        workspaceId: WORKSPACE_ID, userId: REPRESENTED, accessClass: "member", role: "member",
+        status: "active", incarnation: "existing-member", revision: 1,
+      },
+    })).toEqual({ applied: true });
+    // The event drops their rows itself, in its own transaction, so the drop
+    // is the moment the operator is owed the notice.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      expect(state.storage.sql.exec(
+        "SELECT user_id FROM breakout_viewers WHERE user_id = ?", REPRESENTED,
+      ).toArray()).toEqual([]);
+    });
+    // A projection still in flight for them is refused and moves nothing.
     await project(CHANNEL, [viewer(REPRESENTED, true, 1)], 2, BREAKOUT);
     await project(CHANNEL, [viewer(OPERATOR, true)], 1, BREAKOUT);
     await vi.waitFor(() => expect(operator.reach).toContainEqual([OPERATOR]));
