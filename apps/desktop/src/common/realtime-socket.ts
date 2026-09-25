@@ -8,8 +8,10 @@ import {
 
 export const RALLY_RENDERER_ORIGIN = 'app://rallywithai';
 
+// A conversation feed is the only socket the renderer dials through main. The
+// Channel control socket it also dialed is gone: its state rides the
+// Organization socket, which the renderer opens itself.
 export const DesktopRealtimeSocketKindSchema = z.enum([
-  'workstream_control',
   'substream_feed',
 ]);
 export type DesktopRealtimeSocketKind = z.infer<typeof DesktopRealtimeSocketKindSchema>;

@@ -139,7 +139,8 @@ Every realtime socket reports its own connection transitions. The renderer is th
 authoritative source because it is the only party that can tell a first
 connection from a reconnection, and how many attempts one took: the room sees an
 admission either way. One `realtime_socket_state` names which socket
-(`workspace`, `workstream_control`, `substream_feed`), whether it is connected,
+(`workspace`, `workstream_control` from desktops released before the Channel
+control socket was retired, `substream_feed`), whether it is connected,
 retrying, or stopped, the bounded cause, and the retry depth as a count bucket.
 Dictation's audio socket is deliberately outside this contract: it is an Azure
 transport with its own lifecycle, not one of the room sockets.

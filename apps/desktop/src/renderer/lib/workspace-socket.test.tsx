@@ -12,7 +12,7 @@ import { act, render, screen } from '@testing-library/react';
 import { useEffect, type JSX } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSummary } from './types';
-import { useWorkstreamControlSocket } from './use-workstream-control-socket';
+import { applyBreakoutAppearanceReceipt, type WorkstreamChildDirectory } from './channel-viewer-state';
 import { WorkspaceSocketProvider, useWorkspaceSocket } from './workspace-socket';
 import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { conversationCacheKey, conversationSlice } from './conversation-cache';
@@ -1845,192 +1845,201 @@ describe('WorkspaceSocketProvider', () => {
   });
 });
 
-describe('the organization and channel sockets over one store', () => {
+describe('a Channel\'s breakouts and background agents on the organization socket', () => {
   /**
-   * Both sockets carry the same state change, and both write it into the one
-   * waterline ledger. That redundancy is the point: whichever authority
-   * reaches this client first updates it, and the copy that arrives second is
-   * ignored on its waterline rather than by anyone knowing which socket it
-   * came from. These two tests exist because nothing else pins the seam —
-   * the ledger is covered with synthetic calls and each socket is covered
-   * alone, so a handler that stopped populating a real `stateVersion` would
-   * pass every one of them and reintroduce the flicker on the surface.
+   * These used to arrive on one Channel control socket per held Channel. They
+   * now ride the Organization socket's Channel rows, so these tests drive the
+   * real provider with the frames the server sends and read the caches the
+   * Channel screen and the composer observe.
    */
   const workstreamId = '00000000-0000-7000-8000-000000000002';
   const workspaceId = '00000000-0000-7000-8000-000000000001';
+  const creator = '00000000-0000-7000-8000-000000000013';
+  const kept = '00000000-0000-7000-8000-000000000021';
+  const dropped = '00000000-0000-7000-8000-000000000022';
 
-  function controlMetadata(waterline: number): Record<string, unknown> {
+  function child(substreamId: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
     return {
-      stateVersion: {
-        commonEventId: '00000000-0000-7000-8000-000000000007',
-        viewerEventId: '00000000-0000-7000-8001-000000000004',
-        authorityGeneration: 1,
-        commonWaterline: waterline,
-        viewerWaterline: 4,
-      },
-      revision: waterline,
-      id: workstreamId,
-      workspaceId,
-      title: 'Finished',
-      description: 'Objective',
-      preview: 'Preview',
-      emailAddress: null,
-      createdByUserId: null,
-      titleStatus: 'settled',
-      exactState: 'completed',
-      harnessStatus: 'completed',
-      latestAttentionSequenceNumber: 4,
-      unreadTrackingStartSequenceNumber: 0,
-      lastActivityAt: '2026-08-17T20:00:00.000Z',
-      completedAt: '2026-08-17T20:00:00.000Z',
-      archivedAt: null,
-      createdAt: '2026-08-17T19:00:00.000Z',
-      updatedAt: '2026-08-17T20:00:00.000Z',
-      scope: 'workspace',
-      systemKind: null,
-      nextPendingWakeup: null,
-      nextTerminalActionAt: null,
-      viewer: {
-        isParticipant: true,
-        listable: true,
-        unreadCount: 0,
-        youAreMentioned: false,
-        readThroughSequenceNumber: 2,
-        manualUnreadFromSequenceNumber: null,
-        manualUnreadGeneration: 0,
-        latestMentionSequenceNumber: 0,
-      },
+      substreamId, title: 'Breakout', createdByUserId: creator,
+      createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z', ...extra,
     };
   }
 
-  function workspaceStateFrame(waterline: number, harnessStatus: string): Record<string, unknown> {
+  function row(extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: workstreamId, workspaceId, title: 'Channel', titleStatus: 'settled', objective: '',
+      emailAddress: null, createdByUserId: null, harnessStatus: 'completed',
+      latestAttentionSequenceNumber: 4, readThroughSequenceNumber: 2, manualUnreadFromSequenceNumber: null,
+      manualUnreadGeneration: 0, hasUnread: false, youAreMentioned: false, firstUnreadSequenceNumber: null,
+      lastActivityAt: '2026-08-17T20:00:00.000Z', createdAt: '2026-08-17T19:00:00.000Z',
+      updatedAt: '2026-08-17T20:00:00.000Z', archivedAt: null, scope: 'workspace', systemKind: null,
+      nextPendingWakeup: null, pinPosition: null, participantUserIds: [], participantExtraCount: 0, spaceIds: [],
+      ...extra,
+    };
+  }
+
+  function version(commonWaterline: number): Record<string, unknown> {
+    return {
+      commonEventId: `00000000-0000-7000-8000-${commonWaterline.toString(16).padStart(12, '0')}`,
+      viewerEventId: '00000000-0000-7000-8001-000000000004',
+      authorityGeneration: 1,
+      commonWaterline,
+      viewerWaterline: 4,
+    };
+  }
+
+  function stateFrame(commonWaterline: number, extra: Record<string, unknown> | null): Record<string, unknown> {
     return {
       type: 'workspace_workstream_state',
       occurredAt: '2026-08-17T20:00:00.000Z',
       workstreamId,
-      stateVersion: {
-        commonEventId: '00000000-0000-7000-8000-000000000007',
-        viewerEventId: '00000000-0000-7000-8001-000000000004',
-        authorityGeneration: 1,
-        commonWaterline: waterline,
-        viewerWaterline: 4,
-      },
-      workstream: {
-        id: workstreamId,
-        workspaceId,
-        title: 'Finished',
-        titleStatus: 'settled',
-        objective: 'Objective',
-        emailAddress: null,
-        createdByUserId: null,
-        harnessStatus,
-        latestAttentionSequenceNumber: 4,
-        readThroughSequenceNumber: 2,
-        manualUnreadFromSequenceNumber: null,
-        manualUnreadGeneration: 0,
-        hasUnread: false,
-        youAreMentioned: false,
-        firstUnreadSequenceNumber: null,
-        lastActivityAt: '2026-08-17T20:00:00.000Z',
-        createdAt: '2026-08-17T19:00:00.000Z',
-        updatedAt: '2026-08-17T20:00:00.000Z',
-        archivedAt: null,
-        scope: 'workspace',
-        systemKind: null,
-        nextPendingWakeup: null,
-        pinPosition: null,
-        participantUserIds: [],
-        participantExtraCount: 0,
-        spaceIds: [],
+      stateVersion: version(commonWaterline),
+      workstream: extra === null ? null : row(extra),
+    };
+  }
+
+  function sidebarFrame(extra: Record<string, unknown>): Record<string, unknown> {
+    return {
+      type: 'workspace_sync',
+      eventId: '00000000-0000-7000-8000-000000000017',
+      waterline: 4,
+      occurredAt: '2026-08-17T20:00:00.000Z',
+      topics: ['workstream_directory'],
+      reason: 'initial',
+      sidebar: {
+        workstreams: {
+          directoryWaterline: 7, nextCursor: null,
+          stateVersions: [{ workstreamId, ...version(7) }],
+          items: [row(extra)],
+        },
+        automations: { waterline: 1, items: [] },
+        notes: { waterline: 1, items: [], nextCursor: null },
       },
     };
   }
 
-  async function renderBothSockets(queryClient: QueryClient): Promise<{
-    workspaceSocket: FakeWebSocket;
-    controlSocket: FakeWebSocket;
-  }> {
+  async function connect(queryClient: QueryClient, scope: string | null = null): Promise<FakeWebSocket> {
     const api = {
       getWorkspaceSocketTicket: vi.fn(async () => ({
         url: 'wss://api.rally.test/socket/workspaces/workspace-1',
         ticket: 'workspace-ticket',
         protocols: socketTicketProtocols('workspace-ticket'),
       })),
-      getWorkstreamControlSocketTicket: vi.fn(async () => ({
-        url: 'wss://api.rally.test/socket/workstreams/control',
-        ticket: 'control-ticket',
-        protocols: socketTicketProtocols('control-ticket'),
-      })),
     };
-    function ControlSocket(): null {
-      useWorkstreamControlSocket(api, workstreamId, true);
-      return null;
-    }
+    const provider = (
+      <WorkspaceSocketProvider api={api} workspaceId={workspaceId}><div /></WorkspaceSocketProvider>
+    );
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider api={api} workspaceId={workspaceId}>
-          <ControlSocket />
-        </WorkspaceSocketProvider>
+        {scope === null ? provider : <LocalCacheScopeProvider scope={scope}>{provider}</LocalCacheScopeProvider>}
       </QueryClientProvider>,
     );
     await flushPromises();
-    // Selected by URL, not by index: the two hooks each await their own ticket
-    // and the order they reach the constructor is not the order they mount in.
-    const socketFor = (marker: string): FakeWebSocket => {
-      const found = FakeWebSocket.instances.find((instance) => String(instance.url).includes(marker));
-      if (!found) throw new Error(`no socket opened for ${marker}`);
-      return found;
-    };
-    const workspaceSocket = socketFor('/workspaces/');
-    const controlSocket = socketFor('/workstreams/');
-    act(() => workspaceSocket.open());
-    act(() => controlSocket.open());
-    await flushPromises();
-    return { workspaceSocket, controlSocket };
+    // One socket for the Organization, and nothing else: no Channel socket.
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    return socket;
   }
 
-  function storedStatus(queryClient: QueryClient): string | undefined {
-    return queryClient.getQueryData<{ id: string; harnessStatus: string }[]>(WORKSTREAMS_QUERY_KEY)
-      ?.find((item) => item.id === workstreamId)?.harnessStatus;
+  function children(queryClient: QueryClient): WorkstreamChildDirectory | undefined {
+    return queryClient.getQueryData<WorkstreamChildDirectory>(['workstream-children', workstreamId]);
   }
 
-  it('takes the transition from whichever socket reports it first', async () => {
+  it('takes the breakouts and running agents from the connect sidebar and keeps them with no screen open', async () => {
+    vi.useFakeTimers();
     const queryClient = new QueryClient();
-    setCachedWorkstreams(queryClient, [summary({ id: workstreamId, harnessStatus: 'running' })]);
-    const { workspaceSocket, controlSocket } = await renderBothSockets(queryClient);
-
-    // The work-stream socket wins the race.
-    act(() => controlSocket.message({
-      type: 'workstream_metadata',
-      occurredAt: '2026-08-17T20:00:00.000Z',
-      metadata: controlMetadata(7),
-    }));
-    expect(storedStatus(queryClient)).toBe('completed');
-
-    // The workspace socket's copy of the same change lands afterwards. It is
-    // dropped on its waterline, and the value it would have written is not
-    // what makes that safe — this frame deliberately disagrees, so a store
-    // that applied it would read 'running' again.
-    act(() => workspaceSocket.message(workspaceStateFrame(7, 'running')));
-    expect(storedStatus(queryClient)).toBe('completed');
+    const socket = await connect(queryClient);
+    act(() => socket.message(sidebarFrame({
+      privateChildren: [child(kept)], privateChildrenWaterline: 2, backgroundAgentCounts: { [kept]: 1 },
+    })));
+    // Nothing observes either entry, which is the Channel nobody has opened
+    // yet. Default garbage collection would drop both after five minutes.
+    await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000); });
+    expect(children(queryClient)?.privateChildren).toEqual([child(kept)]);
+    expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toEqual({ [kept]: 1 });
   });
 
-  it('takes it from the other socket when that one arrives first', async () => {
+  it('applies a pushed roster in waterline order and leaves it alone when a row does not say', async () => {
     const queryClient = new QueryClient();
-    setCachedWorkstreams(queryClient, [summary({ id: workstreamId, harnessStatus: 'running' })]);
-    const { workspaceSocket, controlSocket } = await renderBothSockets(queryClient);
+    const socket = await connect(queryClient);
+    act(() => socket.message(stateFrame(5, { privateChildren: [child(kept)], privateChildrenWaterline: 2 })));
+    expect(children(queryClient)?.privateChildren).toEqual([child(kept)]);
+    // Older roster: dropped on its own waterline even though the row is newer.
+    act(() => socket.message(stateFrame(6, { privateChildren: [], privateChildrenWaterline: 1 })));
+    expect(children(queryClient)?.privateChildren).toEqual([child(kept)]);
+    // A row with no roster (an older server, or a parent not imported yet) is silent about it.
+    act(() => socket.message(stateFrame(7, {})));
+    expect(children(queryClient)?.privateChildren).toEqual([child(kept)]);
+    act(() => socket.message(stateFrame(8, { privateChildren: [], privateChildrenWaterline: 3 })));
+    expect(children(queryClient)?.privateChildren).toEqual([]);
+  });
 
-    // The order this change made likely: WorkspaceDO is pushed eagerly now, so
-    // the sidebar copy can beat the work stream's own socket.
-    act(() => workspaceSocket.message(workspaceStateFrame(7, 'completed')));
-    expect(storedStatus(queryClient)).toBe('completed');
+  it('evicts the roster and the running count when the Channel is withdrawn from this viewer', async () => {
+    const queryClient = new QueryClient();
+    const socket = await connect(queryClient);
+    act(() => socket.message(stateFrame(5, {
+      privateChildren: [child(kept)], privateChildrenWaterline: 2, backgroundAgentCounts: { '0': 2 },
+    })));
+    expect(children(queryClient)?.privateChildren).toHaveLength(1);
+    // The revocation the control socket used to send as a 1008 close is the
+    // row's tombstone here; the Organization socket stays open for the sidebar.
+    act(() => socket.message(stateFrame(6, null)));
+    expect(children(queryClient)).toBeUndefined();
+    expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toBeUndefined();
+    expect(socket.readyState).toBe(FakeWebSocket.OPEN);
+  });
 
-    act(() => controlSocket.message({
-      type: 'workstream_metadata',
-      occurredAt: '2026-08-17T20:00:00.000Z',
-      metadata: { ...controlMetadata(7), harnessStatus: 'running', exactState: 'running' },
-    }));
-    expect(storedStatus(queryClient)).toBe('completed');
+  it('holds a receipt-backed breakout appearance until the parent projection catches up', async () => {
+    const queryClient = new QueryClient();
+    const socket = await connect(queryClient);
+    const original = child(kept, { appearance: { icon: 'orbit', color: 'green' } });
+    act(() => socket.message(stateFrame(4, { privateChildren: [original], privateChildrenWaterline: 2 })));
+    applyBreakoutAppearanceReceipt(queryClient, workstreamId, kept, {
+      baseline: { icon: 'orbit', color: 'green' },
+      expected: { icon: 'orbit', color: 'purple' },
+    });
+    // An equal-waterline row may have been serialized before the receipt.
+    act(() => socket.message(stateFrame(5, { privateChildren: [original], privateChildrenWaterline: 2 })));
+    expect(children(queryClient)?.privateChildren?.[0]?.appearance).toEqual({ icon: 'orbit', color: 'purple' });
+    expect(children(queryClient)?.appearanceOverlays).toHaveProperty(kept);
+    const projected = child(kept, { appearance: { icon: 'orbit', color: 'purple' } });
+    act(() => socket.message(stateFrame(6, { privateChildren: [projected], privateChildrenWaterline: 3 })));
+    expect(children(queryClient)?.privateChildren?.[0]?.appearance).toEqual({ icon: 'orbit', color: 'purple' });
+    expect(children(queryClient)?.appearanceOverlays).toBeUndefined();
+  });
+
+  it('forgets a cached breakout the roster no longer lists, and keeps the ones it does', async () => {
+    const scope = 'global:00000000-0000-7000-8000-000000000001';
+    await clearAllLocalCache();
+    const cached = {
+      detail: {
+        ...summary({ id: workstreamId }), createdAt: '2026-08-17T18:00:00.000Z',
+        participants: [], viewers: [], resources: [], connections: [], backgroundTasks: [],
+      },
+      transcript: {
+        snapshotId: '00000000-0000-7000-8000-000000000777', snapshotThrough: 0, eventSequence: 0,
+        snapshotAtUtc: '2026-08-17T19:00:00.000Z', unreadAnchorSequence: null, unreadReason: 'no_unread' as const,
+        ranges: [], activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
+      },
+      initialContext: null,
+      cachedAt: '',
+    };
+    for (const substreamId of ['0', kept, dropped]) {
+      await conversationSlice.write(scope, conversationCacheKey(workstreamId, substreamId), cached, workstreamId);
+    }
+    const queryClient = new QueryClient();
+    const socket = await connect(queryClient, scope);
+    act(() => socket.message(stateFrame(4, { privateChildren: [child(kept)], privateChildrenWaterline: 2 })));
+    const expected = [conversationCacheKey(workstreamId, '0'), conversationCacheKey(workstreamId, kept)].sort();
+    await vi.waitFor(async () => {
+      expect((await conversationSlice.entries(scope)).map((entry) => entry.key).sort()).toEqual(expected);
+    }, { timeout: 2_000 });
+    // A stale row the guard rejects lists nothing; the disk follows the kept roster.
+    act(() => socket.message(stateFrame(5, { privateChildren: [], privateChildrenWaterline: 1 })));
+    await flushPromises();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect((await conversationSlice.entries(scope)).map((entry) => entry.key).sort()).toEqual(expected);
   });
 });
 

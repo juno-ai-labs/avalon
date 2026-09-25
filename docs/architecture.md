@@ -248,20 +248,22 @@ The socket responsibilities are deliberately not interchangeable:
 - `WorkspaceDO` accepts idempotent user commands, including new work-stream and
   message creation, serves cursor-paged authoritative work-stream lists, and
   publishes current work-stream rows plus waterlined workspace-topic invalidations.
-- The Channel control socket (a hosted parent in `WorkspaceDO`) publishes
-  complete independently waterlined common/viewer snapshots, but carries
-  neither transcript parts nor model tokens.
+- Each Channel row `WorkspaceDO` sends a viewer is a complete, independently
+  waterlined common/viewer snapshot, plus that viewer's breakouts and running
+  background agents; it carries neither transcript parts nor model tokens. The
+  Channel control socket that used to carry the extra fields is retired and
+  served only for older clients.
 - `SubstreamAgent` is a read-only direct conversation feed plus correlated
   transcript-page download. Its object-local SQL owns canonical parts, tool
   calls/results, active compaction, and the accumulated output checkpoint.
 
 Electron's header/detail/sidebar use one shared work-stream cache and one
 per-work-stream ledger keyed by authority generation plus separate common and
-viewer waterlines. The Channel control socket event gives an open work stream
-the fast path; the workspace socket event gives inactive rows and global
-sidebar/discovery surfaces the complete path. Whichever copy arrives second is
-field-wise ignored unless its corresponding waterline is newer. UUIDv7 makes
-the same event searchable and millisecond-time-sortable across both paths, but
+viewer waterlines. The workspace socket's Channel rows serve the open work
+stream, inactive rows and global sidebar/discovery surfaces alike. A row that
+arrives again, or late, is field-wise ignored unless its corresponding
+waterline is newer. UUIDv7 makes the same event searchable and
+millisecond-time-sortable across republishes, but
 does not replace authority-local waterlines for causal correctness.
 
 A hosted parent's directory effects are applied by `WorkspaceDO` to itself
@@ -327,8 +329,8 @@ no list response becomes transcript authority.
 
 Cloudflare's WebSocket auto-response answers exact text `ping` frames with `pong`
 without waking a hibernated object. The SubstreamAgent feed jitters its heartbeat
-across 45–55 seconds; the workspace and Channel control sockets use a
-fixed 50-second interval. Every role closes after 15 seconds without `pong`,
+across 45–55 seconds; the workspace socket (and the retired Channel control
+socket) use a fixed 50-second interval. Every role closes after 15 seconds without `pong`,
 reconnects with equal-jitter exponential backoff capped at 30 seconds, pauses
 while offline, and resumes from its own topic waterline, metadata waterlines,
 feed sequence/stream cursor, or active-output checkpoint.

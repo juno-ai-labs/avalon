@@ -15,8 +15,8 @@ A Channel's and a Space's parent used to be its own object — `WorkstreamDO`, a
 `SpaceDO`, which was `WorkstreamDO` under a role. Both now live inside
 `WorkspaceDO` as `HostedParent`, keyed by parent id, and the legacy classes only
 export their rows once. [`hosted-conversation-parents.md`](hosted-conversation-parents.md)
-owns that: the table map, the local outbox, the Channel control socket, and the
-import. Where this document still says `WorkstreamDO` about the parent contract,
+owns that: the table map, the local outbox, what a Channel's workspace-socket
+row carries per viewer, the retired Channel control socket, and the import. Where this document still says `WorkstreamDO` about the parent contract,
 read "the Channel's hosted parent".
 
 The hosted parents and `SidekickDO` answer one conversation-parent contract:

@@ -21,7 +21,7 @@ stream forever.
 | `packages/agent-harness/src/prompts/workstream-description.ts` | The prompt and its judgment. Byte-stable and golden-hashed. |
 | `apps/api/src/durable-objects/substream-agent.ts` — run settlement | Where an evaluation is triggered from. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` — `update` | The authored-edit path that marks a person's description `authored`. |
-| `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Maps both workspace-feed and direct work-stream snapshots onto the directory model's `objective` alias. |
+| `apps/desktop/src/renderer/lib/api.ts` (`mapWorkstreamSummary`) | Maps every workspace-socket Channel row onto the directory model's `objective` alias. |
 | `apps/desktop/src/renderer/components/sidebar.tsx` | Preserves the last non-empty description while directory metadata catches up, and uses it for search. Navigation rows and hover cards do not display descriptions. |
 | `packages/db/migrations/0058_workstream_description_refresh.sql` | The refresh table and the one-time `description_source` backfill. |
 | `apps/api/test/workstream-description-refresh.test.ts` | Asserts against the exported constants. |

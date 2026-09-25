@@ -2,8 +2,8 @@
 
 A **Channel** and a **Space** are conversation parents: each owns who may read
 its conversations, its breakout registry, its grants, invitations and Space
-access provenance, and the per-viewer state the sidebar and the Channel control
-socket draw. Until this change each parent was its own Durable Object
+access provenance, and the per-viewer state the sidebar and the Channel screen
+draw. Until this change each parent was its own Durable Object
 (`WorkstreamDO`, and `SpaceDO`, which was `WorkstreamDO` under a role). This
 document owns how that state now lives inside the Organization's `WorkspaceDO`,
 keyed by parent id, and how existing objects were moved there.
@@ -48,10 +48,10 @@ separately.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/src/durable-objects/hosted-parent.ts` | `HostedParent`: one Channel's or Space's parent authority, scoped to a `parent_id` inside `WorkspaceDO`'s SQLite. The port of what `WorkstreamDO` and `ConversationParentDurableObject` did for one object. |
+| `apps/api/src/durable-objects/hosted-parent.ts` | `HostedParent`: one Channel's or Space's parent authority, scoped to a `parent_id` inside `WorkspaceDO`'s SQLite. The port of what `WorkstreamDO` and `ConversationParentDurableObject` did for one object. Also the batch readers for what a Channel row adds per viewer (`visiblePrivateChildren`, `runningBackgroundAgents`, `channelViewerStates`). |
 | `apps/api/src/durable-objects/hosted-parent-schema.ts` | `WorkspaceDO` migration 72: the `parent_*` tables, the directory renames, and the seeded import ledger. |
 | `apps/api/src/durable-objects/hosted-parent-import.ts` | Moving one legacy object's rows into the hosted tables, and the ledger that says which parents still need it. |
-| `apps/api/src/durable-objects/workspace-do.ts` | The RPC facade: every conversation-parent method now answers here, dispatching to `HostedParent` for its `parentId`. Also the Channel control socket, the in-transaction apply of what a parent publishes, the outbox drain, and the workspace relationship table. |
+| `apps/api/src/durable-objects/workspace-do.ts` | The RPC facade: every conversation-parent method now answers here, dispatching to `HostedParent` for its `parentId`. Also the Channel rows on the workspace socket (with each viewer's breakouts and running background agents), the retired Channel control socket kept for older clients, the in-transaction apply of what a parent publishes, the outbox drain, and the workspace relationship table. |
 | `apps/api/src/durable-objects/workstream-do.ts`, `space-do.ts` | **Legacy.** Kept deployed only so existing objects can be exported. Everything but `exportParentState`, the receive-forward, and fleet operations is gone. |
 | `apps/api/src/durable-objects/scope-grant-storage.ts`, `scope-invitation-storage.ts`, `scope-invitation-service.ts`, `workstream-access-storage.ts` | The grant, invitation and Space-provenance repositories, now scoped by `parent_id`. |
 | `apps/api/src/services/conversation-parent-client.ts` | `conversationParentStub`: `WorkspaceDO` for a Channel or a Space, `SidekickDO` for a Sidekick. |
@@ -164,6 +164,34 @@ message is deleted with a `parent_effect_oversized` warning. One drain runs at
 a time, so a drain started by a request's import and one started by the alarm
 cannot send the same rows.
 
+### A Channel's state reaches its readers as its row
+
+A reader learns a Channel's state from its row on the workspace socket, not
+from a socket of the Channel's own. The row the directory already sent every
+reader (common and viewer state, waterlined) also carries, for that reader,
+`privateChildren` with `privateChildrenWaterline` and `backgroundAgentCounts`.
+`channelViewerStates` reads both for any number of Channels in three queries,
+so the connect sidebar costs the same per Channel as one row, and leaves out a
+Channel whose parent is still `pending` import: its rows are not here yet, and
+an empty list would read as "no breakouts".
+
+Most changes reach the row through the directory apply. Two do not, and the
+parent republishes the row itself when they happen: a breakout list that moved
+for someone (`advancePrivateChildrenVersion` notes whom; the row goes to that
+person's sockets), and the running background agents changing across a batch of
+child effects (compared before and after; the row goes to every socket). An
+import republishes the Channel's row once it lands, and a reader bringing a
+Channel to the foreground wakes its Main.
+
+Losing a Channel needs nothing new: the row is republished as a tombstone to a
+reader who can no longer see it, the client evicts its cached Channel, and the
+workspace socket stays open for the sidebar.
+
+The Channel control socket (`/parent-socket`, tagged `parent-control:<id>`)
+still works for desktops released before this and for the iOS client, and its
+revocation paths (`revokeNarrowedAudienceAccess`, `revokeSocketAccess`) still
+close it. No current desktop opens one.
+
 ### Workspace relationships are local
 
 `workspace_member_status` holds each person's workspace relationship
@@ -230,13 +258,17 @@ receipts already fell back to past their retention.
   transaction, as a follow-up row or an outbox row.
 - **An event's relationship is never replaced by a D1 read.** Events carry D1's
   sequence; a D1 read is only for someone never heard of.
+- **A per-viewer Channel fact rides the Channel's row.** A second socket or
+  subscription per Channel would bring back the second copy of the row, and its
+  second authorization path, that retiring the control socket removed.
 - **Parent-kind is carried, never probed.** A lookup that tries a namespace to
   see whether something is there creates the object it asked about.
 
 ## Boundary
 
-This module owns Channel and Space parent state inside `WorkspaceDO`, the
-Channel control socket, and the move out of the legacy objects. It does not own
+This module owns Channel and Space parent state inside `WorkspaceDO`, what a
+Channel's workspace-socket row carries for each viewer, the retired Channel
+control socket, and the move out of the legacy objects. It does not own
 the conversations ([`workstream-durable-object.md`](workstream-durable-object.md)),
 Space membership, ordering and defaults ([`spaces.md`](spaces.md)), the grant
 directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
@@ -262,6 +294,12 @@ workerd that the first request to the Organization object imports it, that the
 legacy object is frozen and answers 410, and that a parent whose legacy object
 never existed closes its ledger row without creating that object. A Space uses
 the same code with a different namespace and is not covered separately.
+`channel-viewer-state.test.ts` proves a Channel's row on a real workspace
+socket: each viewer's own breakouts per Channel, a roster change reaching only
+that breakout's members, running agents reaching every reader counted where
+each can look, a lost Channel tombstoned while the socket stays open, the
+current list after a resubscribe, nothing said for a pending parent, and Main
+woken by a foreground.
 `conversation-effect-queue.test.ts` proves the outbox drain: directory rows
 applied in the object, activity and notification rows sent to the Queue. The
 conversation-parent contract tests (`conversation-parent-contract.test.ts` and
@@ -273,6 +311,11 @@ its neighbours) run against the hosted parent. Run with
 - Retiring the legacy classes: once every Organization reports no `pending`
   row, a follow-up change deletes `WorkstreamDO` and `SpaceDO` with a
   `deleted_classes` migration.
+- Retiring the Channel control socket: `/parent-socket`,
+  `HostedParent.acceptSocket`/`onSocketMessage`/`broadcastMetadata`'s socket
+  loop, `WorkstreamControlSocketService` and `GET /workstreams/:id/control-socket`
+  can go once the oldest supported desktop is the one that stopped opening it
+  and the iOS client reads its child directory from its workspace socket.
 - A Space's hidden conversation still holds its participants and resources.
   Moving them into `spaces` is the next step, and removes a `SubstreamAgent` per
   Space.
@@ -305,9 +348,18 @@ the move were rejected for the per-parent export: a parent is frozen for one
 RPC, which is cheaper to build and to verify.
 
 **Consequences:** The Organization object now answers every Channel viewer
-check, so its handlers have to stay short. The Channel control socket is served
-by the Organization object, which is also where it is revoked. The legacy
-parent warmed a Channel's Main conversation whenever it woke; the Organization
-object is rarely asleep, so it now warms Main when a Channel control socket
-opens instead. The legacy
-classes stay deployed until every Organization has imported.
+check, so its handlers have to stay short. The legacy parent warmed a Channel's
+Main conversation whenever it woke; the Organization object is rarely asleep,
+so it now warms Main when a reader brings the Channel to the foreground. The
+legacy classes stay deployed until every Organization has imported.
+
+With the Channel control socket and the workspace socket landing in the same
+object, the control socket was retired in the same change: what it added to
+the Channel's row (the viewer's breakouts and the running background agents)
+now rides the row on the workspace socket, so a desktop holds one feed per
+Channel and no second socket. Per-Channel subscriptions on the workspace socket
+were considered and rejected: the row already reaches every reader, and the
+added fields are a few breakouts per viewer that change when breakouts are
+created, archived or rejoined, and agent counts that change when a run starts
+or ends. The control socket stays served for released desktops and iOS until
+they stop opening it.

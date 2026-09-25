@@ -238,6 +238,8 @@ export interface HostedParentHost {
   controlSockets(parentId: string): WebSocket[];
   /** Accept a hibernating control socket under this parent's tags. */
   acceptControlSocket(server: WebSocket, parentId: string, userId: string): void;
+  /** Push this Channel's workspace-socket row to one viewer, or to every socket. */
+  publishChannelRow(parentId: string, userId?: string): Promise<void>;
   /**
    * Apply published effects inside the caller's transaction, and name the
    * ones that still need an outbox row: a directory row the Organization
@@ -255,6 +257,148 @@ export interface HostedParentHost {
 /** The hibernation tag every control socket of one parent carries. */
 export function parentControlSocketTag(parentId: string): string {
   return `parent-control:${parentId}`;
+}
+
+/**
+ * The breakouts one viewer may open under each of these parents: ready,
+ * unarchived, and with the viewer active on the roster. One read for any
+ * number of parents, so the sidebar's page costs the same as one Channel.
+ */
+export function visiblePrivateChildren(
+  sql: SqlStorage,
+  userId: string,
+  parentIds: readonly string[],
+): Map<string, ListVisiblePrivateChildrenResult["children"]> {
+  const result = new Map<string, ListVisiblePrivateChildrenResult["children"]>();
+  if (parentIds.length === 0) return result;
+  const rows = sql.exec<{
+    parent_id: string; substream_id: string; title: string; effect_json: string | null; user_effect_json: string | null;
+    created_by_user_id: string; created_at: number; updated_at: number;
+  }>(
+    `SELECT child.parent_id, child.substream_id, child.title, directory.effect_json,
+            viewer.effect_json AS user_effect_json,
+            child.created_by_user_id, child.created_at, child.updated_at
+       FROM parent_children child
+       JOIN parent_breakout_members member
+         ON member.parent_id = child.parent_id AND member.substream_id = child.substream_id
+       LEFT JOIN parent_child_projections directory
+         ON directory.parent_id = child.parent_id AND directory.substream_id = child.substream_id
+       LEFT JOIN parent_child_viewer_projections viewer
+         ON viewer.parent_id = child.parent_id AND viewer.substream_id = child.substream_id
+        AND viewer.user_id = member.user_id
+      WHERE child.parent_id IN (SELECT value FROM json_each(?))
+        AND child.kind = 'child' AND child.status = 'ready' AND child.archived_at IS NULL
+        AND member.user_id = ? AND member.active = 1
+      ORDER BY child.parent_id, child.created_at, child.substream_id`,
+    JSON.stringify(parentIds), userId,
+  ).toArray();
+  for (const child of rows) {
+    const list = result.get(child.parent_id) ?? [];
+    list.push({
+      substreamId: asSubstreamId(child.substream_id),
+      title: child.title,
+      ...(child.effect_json
+        ? (() => {
+          const common = WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(child.effect_json));
+          return { ...(common.appearance ? { appearance: common.appearance } : {}), harnessStatus: harnessStatus(common.state) };
+        })()
+        : {}),
+      ...(child.user_effect_json
+        ? (() => {
+          const viewer = WorkstreamDirectoryUserEffectSchema.parse(JSON.parse(child.user_effect_json));
+          return { unreadCount: viewer.unreadCount, youAreMentioned: viewer.youAreMentioned, unseen: viewer.unseen ?? false };
+        })()
+        : {}),
+      createdByUserId: UserIdSchema.parse(child.created_by_user_id),
+      createdAt: child.created_at,
+      updatedAt: child.updated_at,
+    });
+    result.set(child.parent_id, list);
+  }
+  return result;
+}
+
+/** Running background agents per parent, by the conversation each works for. */
+export function runningBackgroundAgents(sql: SqlStorage, parentIds: readonly string[]): Map<string, Map<string, number>> {
+  const result = new Map<string, Map<string, number>>();
+  if (parentIds.length === 0) return result;
+  for (const row of sql.exec<{ parent_id: string; root: string; n: number }>(
+    `SELECT parent_id, COALESCE(json_extract(effect_json, '$.backgroundAgentRootSubstreamId'), '0') AS root,
+            COUNT(*) AS n
+       FROM parent_child_projections
+      WHERE parent_id IN (SELECT value FROM json_each(?)) AND substream_id <> '0'
+        AND json_extract(effect_json, '$.backgroundAgent') = 1
+        AND json_extract(effect_json, '$.state') = 'running'
+        AND json_extract(effect_json, '$.archivedAt') IS NULL
+      GROUP BY parent_id, root
+      ORDER BY parent_id, root`,
+    JSON.stringify(parentIds),
+  ).toArray()) {
+    const counts = result.get(row.parent_id) ?? new Map<string, number>();
+    counts.set(row.root, row.n);
+    result.set(row.parent_id, counts);
+  }
+  return result;
+}
+
+/** Only the conversations this viewer can open: Main and their breakouts. */
+export function visibleBackgroundAgentCounts(
+  counts: ReadonlyMap<string, number>,
+  visibleRoots: ReadonlySet<string>,
+): Record<string, number> {
+  return Object.fromEntries([...counts].filter(([root]) => visibleRoots.has(root)));
+}
+
+/** What a workspace-socket Channel row adds for its viewer. */
+export interface ChannelViewerState {
+  privateChildren: Array<Omit<ListVisiblePrivateChildrenResult["children"][number], "createdAt" | "updatedAt">
+    & { createdAt: string; updatedAt: string }>;
+  privateChildrenWaterline: number;
+  backgroundAgentCounts: Record<string, number>;
+}
+
+/**
+ * The per-viewer Channel state the control socket used to send, for every
+ * listed Channel this object has imported. A parent still waiting for its
+ * import is left out rather than answered empty: its rows are not here yet,
+ * and an empty list would read as "no breakouts".
+ */
+export function channelViewerStates(
+  sql: SqlStorage,
+  userId: string,
+  parentIds: readonly string[],
+  background?: ReadonlyMap<string, ReadonlyMap<string, number>>,
+): Map<string, ChannelViewerState> {
+  const result = new Map<string, ChannelViewerState>();
+  if (parentIds.length === 0) return result;
+  const hosted = sql.exec<{ parent_id: string }>(
+    `SELECT metadata.parent_id FROM parent_metadata metadata
+      WHERE metadata.parent_id IN (SELECT value FROM json_each(?)) AND metadata.parent_kind = 'workstream'
+        AND NOT EXISTS (SELECT 1 FROM parent_imports ledger
+                         WHERE ledger.parent_id = metadata.parent_id AND ledger.state = 'pending')`,
+    JSON.stringify(parentIds),
+  ).toArray().map((row) => row.parent_id);
+  if (hosted.length === 0) return result;
+  const children = visiblePrivateChildren(sql, userId, hosted);
+  const waterlines = new Map(sql.exec<{ parent_id: string; waterline: number }>(
+    `SELECT parent_id, MAX(waterline) AS waterline FROM parent_state_changes
+      WHERE parent_id IN (SELECT value FROM json_each(?)) AND state_key = ?
+      GROUP BY parent_id`,
+    JSON.stringify(hosted), `children:${userId}`,
+  ).toArray().map((row) => [row.parent_id, row.waterline]));
+  const agents = background ?? runningBackgroundAgents(sql, hosted);
+  for (const parentId of hosted) {
+    const listed = children.get(parentId) ?? [];
+    result.set(parentId, {
+      privateChildren: listed.map((child) => ({
+        ...child, createdAt: new Date(child.createdAt).toISOString(), updatedAt: new Date(child.updatedAt).toISOString(),
+      })),
+      privateChildrenWaterline: waterlines.get(parentId) ?? 0,
+      backgroundAgentCounts: visibleBackgroundAgentCounts(agents.get(parentId) ?? new Map(),
+        new Set(["0", ...listed.map((child) => child.substreamId)])),
+    });
+  }
+  return result;
 }
 
 const PRIVATE_CHILD_EFFECT_RETRY_MS = 5_000;
@@ -441,6 +585,11 @@ export class HostedParent {
     return this.host.storage.sql;
   }
 
+  /** Viewers whose breakout list moved in this call, for `publishChannelRow`. */
+  private readonly childrenMovedFor = new Set<string>();
+  /** The running background agents before this call's child effects, when it applied any. */
+  private publishedBackgroundAgents: string | null = null;
+
   /** Effects published in the open transaction, applied just before it commits. */
   private localEffects: ParentEffectEnvelope[] = [];
   private txDepth = 0;
@@ -578,6 +727,7 @@ export class HostedParent {
    */
   receiveChildEffects(input: ReceiveChildEffectsRequest): { messageId: string; payloadHash: string }[] {
     const request = parseRpcInput(ReceiveChildEffectsRequestSchema, input, "receive_child_effects");
+    this.publishedBackgroundAgents ??= JSON.stringify([...runningBackgroundAgents(this.sql, [this.parentId]).get(this.parentId) ?? []]);
     const accepted: { messageId: string; payloadHash: string }[] = [];
     for (const envelope of request.envelopes) {
       if (envelope.region !== this.env.AVALON_REGION) throw new Error("conversation_effect_region_mismatch");
@@ -2831,48 +2981,13 @@ export class HostedParent {
   }
 
   private visiblePrivateChildrenForUser(userId: string): ListVisiblePrivateChildrenResult["children"] {
-    return this.sql.exec<{
-      substream_id: string; title: string; effect_json: string | null; user_effect_json: string | null;
-      created_by_user_id: string; created_at: number; updated_at: number;
-    }>(
-      `SELECT child.substream_id, child.title, directory.effect_json,
-              viewer.effect_json AS user_effect_json,
-              child.created_by_user_id, child.created_at, child.updated_at
-         FROM parent_children child
-         JOIN parent_breakout_members member
-           ON member.parent_id = child.parent_id AND member.substream_id = child.substream_id
-         LEFT JOIN parent_child_projections directory
-           ON directory.parent_id = child.parent_id AND directory.substream_id = child.substream_id
-         LEFT JOIN parent_child_viewer_projections viewer
-           ON viewer.parent_id = child.parent_id AND viewer.substream_id = child.substream_id
-          AND viewer.user_id = member.user_id
-        WHERE child.parent_id = ? AND child.kind = 'child' AND child.status = 'ready' AND child.archived_at IS NULL
-          AND member.user_id = ? AND member.active = 1
-        ORDER BY child.created_at, child.substream_id`,
-      this.parentId, userId,
-    ).toArray().map((child) => ({
-      substreamId: asSubstreamId(child.substream_id),
-      title: child.title,
-      ...(child.effect_json
-        ? (() => {
-          const common = WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(child.effect_json));
-          return { ...(common.appearance ? { appearance: common.appearance } : {}), harnessStatus: harnessStatus(common.state) };
-        })()
-        : {}),
-      ...(child.user_effect_json
-        ? (() => {
-          const viewer = WorkstreamDirectoryUserEffectSchema.parse(JSON.parse(child.user_effect_json));
-          return { unreadCount: viewer.unreadCount, youAreMentioned: viewer.youAreMentioned, unseen: viewer.unseen ?? false };
-        })()
-        : {}),
-      createdByUserId: UserIdSchema.parse(child.created_by_user_id),
-      createdAt: child.created_at,
-      updatedAt: child.updated_at,
-    }));
+    return visiblePrivateChildren(this.sql, userId, [this.parentId]).get(this.parentId) ?? [];
   }
 
   private advancePrivateChildrenVersion(userId: string, now: number): void {
-    this.advanceLocalStateVersion(`children:${userId}`, this.visiblePrivateChildrenForUser(userId), now);
+    if (this.advanceLocalStateVersion(`children:${userId}`, this.visiblePrivateChildrenForUser(userId), now)) {
+      this.childrenMovedFor.add(userId);
+    }
   }
 
   private advancePrivateChildrenVersionsFor(substreamId: string, now: number): void {
@@ -3044,18 +3159,10 @@ export class HostedParent {
   private backgroundAgentCounts(visibleRoots: ReadonlySet<string>): {
     backgroundAgentCount: number; backgroundAgentCounts: Record<string, number>;
   } {
-    const rows = this.sql.exec<{ root: string; n: number }>(
-      `SELECT COALESCE(json_extract(effect_json, '$.backgroundAgentRootSubstreamId'), '0') AS root, COUNT(*) AS n
-         FROM parent_child_projections
-        WHERE parent_id = ? AND substream_id <> '0' AND json_extract(effect_json, '$.backgroundAgent') = 1
-          AND json_extract(effect_json, '$.state') = 'running'
-          AND json_extract(effect_json, '$.archivedAt') IS NULL
-        GROUP BY root`,
-      this.parentId,
-    ).toArray();
+    const counts = runningBackgroundAgents(this.sql, [this.parentId]).get(this.parentId) ?? new Map<string, number>();
     return {
-      backgroundAgentCount: rows.reduce((total, row) => total + row.n, 0),
-      backgroundAgentCounts: Object.fromEntries(rows.filter((row) => visibleRoots.has(row.root)).map((row) => [row.root, row.n])),
+      backgroundAgentCount: [...counts.values()].reduce((total, n) => total + n, 0),
+      backgroundAgentCounts: visibleBackgroundAgentCounts(counts, visibleRoots),
     };
   }
 
@@ -3120,6 +3227,7 @@ export class HostedParent {
    * person may still read is answered from these rows alone.
    */
   async broadcastMetadata(): Promise<void> {
+    await this.publishChannelRow();
     const sockets = this.host.controlSockets(this.parentId);
     if (sockets.length === 0) return;
     const occurredAt = new Date().toISOString();
@@ -3138,6 +3246,23 @@ export class HostedParent {
         // A socket that cannot take a frame is reconnecting.
       }
     }
+  }
+
+  /**
+   * Republish this Channel's workspace-socket row to whoever the change moved
+   * that the directory follow-up does not already cover: a viewer whose
+   * breakout list moved, or everyone when the running background agents did.
+   * Main's own row changes arrive as directory rows and are published there.
+   */
+  private async publishChannelRow(): Promise<void> {
+    if (!this.role.admitsClientSockets) return;
+    const counts = JSON.stringify([...runningBackgroundAgents(this.sql, [this.parentId]).get(this.parentId) ?? []]);
+    const everyone = this.publishedBackgroundAgents !== null && counts !== this.publishedBackgroundAgents;
+    this.publishedBackgroundAgents = counts;
+    const users = [...this.childrenMovedFor];
+    this.childrenMovedFor.clear();
+    if (everyone) await this.host.publishChannelRow(this.parentId);
+    else for (const userId of users) await this.host.publishChannelRow(this.parentId, userId);
   }
 
   /** Drop the sockets this parent can no longer admit, and say whose they were. */
