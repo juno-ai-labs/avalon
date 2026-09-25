@@ -2851,7 +2851,7 @@ export class HostedParent {
     const row = this.metadataRow();
     if (!row || row.archived_at !== null) return false;
     if (row.scope === "workspace") return true;
-    return Date.now() > 0 || this.isParticipant(userId);
+    return this.isParticipant(userId);
   }
 
   async acceptSocket(request: Request): Promise<Response> {

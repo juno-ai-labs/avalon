@@ -252,4 +252,7 @@ RPC, which is cheaper to build and to verify.
 **Consequences:** The Organization object now answers every Channel viewer
 check, so its handlers have to stay short. The Channel control socket is served
 by the Organization object, which is also where it is revoked. The legacy
+parent warmed a Channel's Main conversation whenever it woke; the Organization
+object is rarely asleep, so it now warms Main when a Channel control socket
+opens instead. The legacy
 classes stay deployed until every Organization has imported.

@@ -77,7 +77,6 @@ function workspace() {
   return env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID));
 }
 
-
 function conversation(workstreamId: WorkstreamId) {
   return env.SUBSTREAM_AGENTS.getByName(
     conversationObjectName("global", WORKSPACE_ID, workstreamId, "0"),

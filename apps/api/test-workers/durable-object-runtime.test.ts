@@ -4125,6 +4125,72 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
+  it("warms the Channel's Main conversation when someone opens the Channel", async () => {
+    await seedOpenAuthority();
+    const stub = hostedParentStub(env, WORKSPACE_ID);
+    const at = "2026-08-22T12:00:00.000Z";
+    await stub.receiveChildEffects({
+      substreamId: "0",
+      envelopes: [childEffectEnvelope({
+        kind: "directory_common" as const,
+        title: "Warm on open",
+        description: "Main wakes before it is read",
+        preview: "idle",
+        scope: "workspace",
+        state: "idle",
+        systemKind: null,
+        lastActivityAt: at,
+        completedAt: null,
+        archivedAt: null,
+        emailAddress: "workstream@automation.with-avalon.com",
+        createdByUserId: USER_ID,
+        titleStatus: "settled" as const,
+        latestAttentionOrdinal: 1,
+        unreadTrackingStartOrdinal: 0,
+        nextWakeupDueAt: null,
+        nextWakeupPrompt: null,
+        nextTerminalActionAt: null,
+        createdAt: at,
+        updatedAt: at,
+      }, "00000000-0000-7000-8000-000000000711")],
+    });
+    const main = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+
+    const response = await stub.fetch("https://workspace.test/parent-socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000712",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    response.webSocket!.accept();
+
+    // Whether Main is *running* is the observable, and eviction is what asks:
+    // the harness refuses to evict an object that was never started. The wake
+    // is not awaited by the open, so give it a few turns to land. Nothing in
+    // this test addresses Main.
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        await evictDurableObject(main);
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
+    expect(lastError).toBeNull();
+    response.webSocket!.close(1000, "done");
+  });
+
   it("closes a metadata socket when the work stream itself stops admitting its reader", async () => {
     await seedOpenAuthority();
     const stub = hostedParentStub(env, WORKSPACE_ID);
