@@ -4,11 +4,23 @@
  * `sidebar.tsx` would close a cycle with `space-sidebar-section.tsx`.
  */
 
+import { SidebarList, SidebarRow } from '@rally/ui/components/resizable-sidebar';
+
+/**
+ * The shape of the mark a row stands in for: a Channel's round glyph, or a
+ * Space's square tile. Both are the 36px slot the real row draws its icon in,
+ * so a compact rail shows the same column of marks it resolves into.
+ */
+export type SidebarSkeletonMark = 'glyph' | 'tile';
+
+/** Every row, or only some, carries the activity line, as a real list does. */
+export type SidebarSkeletonHint = boolean | 'some';
+
 /**
  * One row's worth of placeholder, in the geometry of the row it stands in for.
  *
  * Shaped rather than a single block because the sidebar's lists arrive
- * together now: the reader sees the layout they are about to get — a marker, a
+ * together now: the reader sees the layout they are about to get — a mark, a
  * title, sometimes a second line — and the rows fill in where the bars already
  * are, instead of a grey rectangle collapsing into a different shape. Widths
  * vary by position in CSS rather than here, so the set reads as a list of
@@ -16,12 +28,12 @@
  *
  * Decorative: the label for the wait is said once, by the section.
  */
-import { SidebarList, SidebarRow } from '@rally/ui/components/resizable-sidebar';
-
-export function SidebarSkeletonRow({ hint = false }: { hint?: boolean }): React.JSX.Element {
+export function SidebarSkeletonRow({ hint = false, mark = 'glyph' }: { hint?: boolean; mark?: SidebarSkeletonMark }): React.JSX.Element {
   return (
     <SidebarRow as="div" aria-hidden="true" className="skeleton-row">
-      <span className="skeleton-bar skeleton-row-marker" />
+      <span className="sidebar-row-icon">
+        <span className={`skeleton-bar skeleton-row-mark is-${mark}`} />
+      </span>
       <span className="sidebar-row-main">
         <span className="skeleton-bar skeleton-row-line" />
         {hint && <span className="skeleton-bar skeleton-row-subline" />}
@@ -30,10 +42,16 @@ export function SidebarSkeletonRow({ hint = false }: { hint?: boolean }): React.
   );
 }
 
-export function SidebarSkeletonRows({ count, hint = false }: { count: number; hint?: boolean }): React.JSX.Element {
+export function SidebarSkeletonRows({ count, hint = false, mark }: {
+  count: number;
+  hint?: SidebarSkeletonHint;
+  mark?: SidebarSkeletonMark;
+}): React.JSX.Element {
   return (
     <SidebarList>
-      {Array.from({ length: count }, (_, index) => <SidebarSkeletonRow hint={hint} key={index} />)}
+      {Array.from({ length: count }, (_, index) => (
+        <SidebarSkeletonRow hint={hint === 'some' ? index % 3 === 1 : hint} key={index} mark={mark} />
+      ))}
     </SidebarList>
   );
 }

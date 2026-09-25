@@ -102,7 +102,7 @@ import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, Button, EmptyState, IconButton, InlineError, LoadingState, Modal } from '../components/primitives';
 import { SidebarSkeletonRows } from '../components/sidebar-skeleton';
 import { useWorkstreamSidebarGeometry } from '@rally/ui/components/workstream-sidebar';
-import { SidebarScroll, SidebarTitleHeader } from '@rally/ui/components/resizable-sidebar';
+import { SidebarHorizontalLine, SidebarScroll, SidebarTitleHeader } from '@rally/ui/components/resizable-sidebar';
 import { CopyButton } from '../components/copy-button';
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
 import { ConnectorConnectionsProvider } from '../components/connector-mentions';
@@ -166,13 +166,25 @@ function ConversationOpeningSidebar(): React.JSX.Element {
     >
       <SidebarTitleHeader
         className="workstream-context-toolbar window-drag conversation-opening-sidebar-header"
-        icon={<span className="skeleton-bar conversation-opening-sidebar-mark" />}
-        title={<span className="skeleton-bar conversation-opening-sidebar-title" />}
+        icon={<span className="skeleton-bar skeleton-title-mark" />}
+        title={<span className="skeleton-bar skeleton-title-line" />}
       />
       <SidebarScroll className="workstream-context-scroll conversation-opening-sidebar-scroll">
-        <SidebarSkeletonRows count={4} />
-        <span className="skeleton-bar skeleton-group-label" />
+        {/* The main conversation and its Breakouts, then the participants
+            section under its rule: the rail's own order, with no group
+            headings because the real rail has none above its rows. */}
         <SidebarSkeletonRows count={3} />
+        <section className="workstream-context-section">
+          <SidebarHorizontalLine />
+          <h2><span className="skeleton-bar skeleton-section-label" /></h2>
+          <div className="sidebar-row workstream-context-row skeleton-row">
+            <span className="skeleton-avatar-stack">
+              <span className="skeleton-bar" />
+              <span className="skeleton-bar" />
+              <span className="skeleton-bar" />
+            </span>
+          </div>
+        </section>
       </SidebarScroll>
     </aside>
   );

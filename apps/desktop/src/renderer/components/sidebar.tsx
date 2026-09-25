@@ -52,7 +52,7 @@ import { ContextNestedMenu } from './nested-menu';
 import { SpacesSidebar } from './spaces-sidebar';
 import { RelativeTime } from './relative-time';
 import { SidebarSearch } from './sidebar-search';
-import { SidebarSkeletonGroup } from './sidebar-skeleton';
+import { SidebarSkeletonGroup, SidebarSkeletonRows } from './sidebar-skeleton';
 import { AutomationGlyph, HexagonGlyph, SIDEKICK_RUNNING_MARKER, WorkstreamGlyph } from './workstream-glyph';
 
 interface SidebarProps {
@@ -2284,7 +2284,18 @@ export function Sidebar({
           <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
             <ChevronsLeft size={16} />
           </IconButton>
-        </SidebarTitleHeader> : <SidebarHeader className="sidebar-titlebar window-drag">
+        </SidebarTitleHeader> : spaces !== undefined && (loading || !spacesReady) ? (
+          // The Space this rail will be headed by has not arrived. Its mark and
+          // name are drawn as placeholders rather than falling through to the
+          // header below, whose New button a Space rail never shows.
+          <SidebarTitleHeader
+            aria-hidden="true"
+            className="sidebar-titlebar window-drag channels-sidebar-titlebar skeleton-title-header"
+            icon={<span className="skeleton-bar skeleton-title-mark" />}
+            title={<span className="skeleton-bar skeleton-title-line" />}
+            titleClassName="channels-sidebar-title"
+          />
+        ) : <SidebarHeader className="sidebar-titlebar window-drag">
           <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
             <ChevronsLeft size={16} />
           </IconButton>
@@ -2523,7 +2534,9 @@ export function Sidebar({
               </div>
             )}
             {loading && visibleWorkstreams.length === 0 ? (
-              <>
+              // Under a Space the list has no group headings, so neither does
+              // its placeholder; only the time-grouped list is drawn in groups.
+              spacesEnabled ? <SidebarSkeletonRows count={7} hint="some" /> : <>
                 <SidebarSkeletonGroup count={4} />
                 <SidebarSkeletonGroup count={3} />
               </>
