@@ -281,6 +281,10 @@ above remain the record of the first discussion.
   and post with a scope; a Channel or Breakout agent can read its own Channel
   and Breakout. `sidekick_post_result` is removed so it is not confused with
   the post tool.
+- **Rebased on hosted conversation parents ([#984](https://github.com/juno-ai-labs/avalon/pull/984)).** Channel and Space
+  parents now live in WorkspaceDO, so a spawned Channel's birth, placement and
+  binding commit together, and conversation attachments get their own
+  WorkspaceDO table instead of reusing the skill attachment tables.
 - **Sidekick scope.** Runs can list, read, and post to attached Channels and
   Breakouts. The Sidekick's config conversation (substream `"0"`) has all
   four tools, and is the only place that can attach.
