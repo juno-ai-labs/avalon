@@ -220,6 +220,20 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-25 — `cmp.row.hint-gap` is retired
+
+**What changed:** the token is gone from the registry and the base theme. Its
+last reader was the sidebar's placeholder row, which now centres its title and
+activity bars in the real row's 20px and 16px line boxes rather than spacing
+them with a gap.
+
+**Why:** the real two-line rows do not read it; they lay out their lines by
+line-height alone. When they stopped was not recorded. The token only kept the
+placeholder a different shape from the row that replaces it. A token with no
+reader is a theme knob that moves nothing, and `themes.css.node.test.ts`
+refuses one. A theme that needs that spacing back should add it to the real
+row first, and give the placeholder the same reader.
+
 ### 2026-09-21 — Elicitation hover belongs to the reader
 
 **What changed:** the hover over an elicitation option now layers a half-strength
