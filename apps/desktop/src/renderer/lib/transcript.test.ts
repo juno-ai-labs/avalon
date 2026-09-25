@@ -35,6 +35,7 @@ import {
   isComposerQueueOverlay,
   pendingOverlayInputId,
   pendingTranscriptInputOverlay,
+  OPENING_AGENT_MESSAGE_LABEL,
   type TranscriptOverlay,
 } from './transcript';
 
@@ -3599,17 +3600,19 @@ describe('agent messages as counted rows', () => {
         attachmentIds: [],
       },
     };
+    // Past the first turn: the message that opens a conversation is its brief
+    // and is drawn as one; this is a teammate answering mid-conversation.
     const turn = {
-      transcriptSequence: 1, turnId: 'turn-agent-message', entryKind: 'conversation' as const,
+      transcriptSequence: 2, turnId: 'turn-agent-message', entryKind: 'conversation' as const,
       actor: 'system' as const, authorUserId: null, authorSnapshot: null, attentionOrdinal: null,
       createdAtUtc: createdAt, revision: 1, blocks: [block], activityId: null,
     };
     const snapshot: WorkstreamTranscriptSnapshot = {
-      snapshotId: 'agent-message', snapshotThrough: 1, eventSequence: 1, snapshotAtUtc: createdAt,
+      snapshotId: 'agent-message', snapshotThrough: 2, eventSequence: 1, snapshotAtUtc: createdAt,
       unreadAnchorSequence: null, unreadReason: 'no_unread',
       ranges: [{
-        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 },
-        covered: { startInclusive: 1, endExclusive: 2 }, turns: [turn], activities: [], pluginRuns: [],
+        purpose: 'latest', requested: { startInclusive: 2, endExclusive: 3 },
+        covered: { startInclusive: 2, endExclusive: 3 }, turns: [turn], activities: [], pluginRuns: [],
       }],
       pluginRuns: [], activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
     };
@@ -3714,16 +3717,16 @@ describe('a background worker starting and ending', () => {
 
   it('separates the host notices from a teammate\'s own messages', () => {
     const turns = [
-      noticeTurn(1, 't1', null, 'Here is what I found.'),
-      noticeTurn(2, 't2', 'finished_without_reply', 'Agent Prospector finished without replying.'),
-      noticeTurn(3, 't3', 'failed', 'Agent failed due to harness_execution_failed.'),
+      noticeTurn(2, 't2', null, 'Here is what I found.'),
+      noticeTurn(3, 't3', 'finished_without_reply', 'Agent Prospector finished without replying.'),
+      noticeTurn(4, 't4', 'failed', 'Agent failed due to harness_execution_failed.'),
     ];
     const snapshot: WorkstreamTranscriptSnapshot = {
-      snapshotId: 'notices', snapshotThrough: 3, eventSequence: 1, snapshotAtUtc: createdAt,
+      snapshotId: 'notices', snapshotThrough: 4, eventSequence: 1, snapshotAtUtc: createdAt,
       unreadAnchorSequence: null, unreadReason: 'no_unread',
       ranges: [{
-        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 4 },
-        covered: { startInclusive: 1, endExclusive: 4 }, turns, activities: [], pluginRuns: [],
+        purpose: 'latest', requested: { startInclusive: 2, endExclusive: 5 },
+        covered: { startInclusive: 2, endExclusive: 5 }, turns, activities: [], pluginRuns: [],
       }],
       pluginRuns: [], activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
     };
@@ -3916,12 +3919,12 @@ describe('an agent message before promotion, and the unread it carries', () => {
     // ordinal is null. With no row carrying it, the unread dot survives reading
     // the stream and only a sent message clears it.
     const snapshot: WorkstreamTranscriptSnapshot = {
-      snapshotId: 'unread', snapshotThrough: 2, eventSequence: 1, snapshotAtUtc: createdAt,
+      snapshotId: 'unread', snapshotThrough: 3, eventSequence: 1, snapshotAtUtc: createdAt,
       unreadAnchorSequence: null, unreadReason: 'no_unread',
       ranges: [{
-        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 3 },
-        covered: { startInclusive: 1, endExclusive: 3 },
-        turns: [noticeTurn(1, 't1', exchange(), 7), noticeTurn(2, 't2', exchange(), 9)],
+        purpose: 'latest', requested: { startInclusive: 2, endExclusive: 4 },
+        covered: { startInclusive: 2, endExclusive: 4 },
+        turns: [noticeTurn(2, 't2', exchange(), 7), noticeTurn(3, 't3', exchange(), 9)],
         activities: [], pluginRuns: [],
       }],
       pluginRuns: [], activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
@@ -4009,6 +4012,83 @@ describe('an agent message before promotion, and the unread it carries', () => {
     expect(overlay.message.pluginActivity?.completedVerb).toBe('1 message from a background agent');
     // Not the reader's prose, and not a row they can reorder.
     expect(overlay.message.text).toBeUndefined();
+    expect(overlay.message.deliveryState).toBeUndefined();
+    expect(isComposerQueueOverlay(overlay, { harnessRunning: true })).toBe(false);
+  });
+});
+
+describe('the agent message that opens a conversation', () => {
+  // A Sidekick created by another conversation's agent is set up from the
+  // message that agent sends it. Counted away like every other agent message,
+  // the Sidekick's own conversation opened on Rally answering a request
+  // nobody could read.
+  const createdAt = '2026-09-25T12:00:00.000Z';
+  const brief = 'Set up a Sidekick that posts the weekly sales digest to #sales every Monday.';
+  const exchange = {
+    kind: 'agent_message',
+    teamId: 'workstream/workstream-one/0',
+    messageId: '0199bbbb-0000-7000-8000-000000000001',
+    senderAgentId: 'workstream/workstream-one/0',
+    attachmentIds: [],
+  };
+  const agentTurn = (seq: number, text: string) => ({
+    transcriptSequence: seq, turnId: `t${seq}`, entryKind: 'conversation' as const,
+    actor: 'system' as const, authorUserId: null, authorSnapshot: null, attentionOrdinal: seq,
+    createdAtUtc: createdAt, revision: 1, activityId: null,
+    blocks: [{
+      type: 'text' as const, blockId: `t${seq}:text:0`, blockIndex: 0, text, streaming: false,
+      messageType: 'system' as const, structuredContent: exchange,
+    }],
+  });
+
+  it('reads the opening message as the conversation\'s brief, and counts the ones after it', () => {
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 'brief', snapshotThrough: 2, eventSequence: 1, snapshotAtUtc: createdAt,
+      unreadAnchorSequence: null, unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 3 },
+        covered: { startInclusive: 1, endExclusive: 3 },
+        turns: [agentTurn(1, brief), agentTurn(2, 'Also send it to Dana.')],
+        activities: [], pluginRuns: [],
+      }],
+      pluginRuns: [], activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
+    };
+
+    const [opening, followUp] = groupPluginToolMessages(orderedTranscriptMessages(snapshot, 'workstream-one'));
+
+    expect(opening?.messageType).toBe('text');
+    expect(opening?.authorType).toBe('agent');
+    expect(opening?.text).toBe(brief);
+    expect(opening?.contextLabel).toBe(OPENING_AGENT_MESSAGE_LABEL);
+    expect(opening?.attentionSequenceNumber).toBe(1);
+    expect(followUp?.pluginActivity?.completedVerb).toBe('1 message from a background agent');
+  });
+
+  it('draws the brief the same way while it is still a pending input', () => {
+    const input: PendingTranscriptInput = {
+      inputId: 'turn-future',
+      futureTurnId: 'turn-future',
+      afterTranscriptSequence: 0,
+      inputSequence: 1,
+      actor: 'system',
+      authorUserId: null,
+      authorSnapshot: null,
+      externalActor: null,
+      clientMessageId: null,
+      deliveryMode: 'steer',
+      admittedAtUtc: createdAt,
+      block: {
+        type: 'text', blockId: 'turn-future:text:0', blockIndex: 0, streaming: false,
+        messageType: 'system', text: brief, structuredContent: exchange,
+      },
+    };
+
+    const overlay = pendingTranscriptInputOverlay(input, 'workstream-one', { source: 'socket_snapshot', snapshotId: 'snap' });
+
+    expect(overlay.message.messageType).toBe('text');
+    expect(overlay.message.text).toBe(brief);
+    expect(overlay.message.contextLabel).toBe(OPENING_AGENT_MESSAGE_LABEL);
+    // Rally wrote it, not the reader: it is not theirs to reorder.
     expect(overlay.message.deliveryState).toBeUndefined();
     expect(isComposerQueueOverlay(overlay, { harnessRunning: true })).toBe(false);
   });
