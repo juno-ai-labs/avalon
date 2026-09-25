@@ -26,3 +26,5 @@ a { color: inherit; }
 .browser-width-warning section { max-width: 360px; }
 .browser-width-warning h1 { margin: 0 0 8px; font-size: 24px; font-weight: 600; letter-spacing: -.4px; }
 .browser-width-warning p { margin: 0; color: var(--av-sys-color-text-muted); line-height: 1.5; }
+.browser-account-fallback { position: fixed; left: 12px; bottom: 12px; width: 256px; z-index: 5; }
+.workspace-shell:has(.workstream-context-sidebar) .browser-account-fallback { display: none; }
