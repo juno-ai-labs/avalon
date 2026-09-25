@@ -720,13 +720,22 @@ check runs at the start of every alarm, before the maintenance deferral can end
 it early. When an alarm finds a row past its deadline, whether or not its socket
 is still open, **and** the object has heard from no socket at all since that
 socket was accepted, it logs `workspace_socket_first_frame_missed` at error
-level (counts and ages only), clears the ledger, waits for storage to sync, and
-calls `state.abort()`. The abort drops every socket (clients see `1006` and
-reconnect) and the platform starts a fresh instance. The clear has to be synced
-first: the abort discards unflushed writes, and rows describing sockets the
-abort dropped would otherwise reset the fresh instance on every alarm until
-someone connected. A row past its deadline that the object *has* heard past is
-deleted as answered, so it cannot pin the alarm to a deadline already gone.
+level (counts and ages only) and calls `state.abort()`. The abort drops every
+socket (clients see `1006` and reconnect) and the platform starts a fresh
+instance. A row past its deadline that the object *has* heard past is deleted
+as answered, so it cannot pin the alarm to a deadline already gone.
+
+**A row an earlier instance accepted, for a socket now gone, is answered too.**
+That instance was either reset by this watch or evicted, and an evicted
+instance was not stuck. This is what lets a fresh instance settle the rows a
+reset left behind without the reset writing anything first, and what keeps a
+healthy object that heard a close and then hibernated from reading the row as
+a socket it never heard: the close callback's evidence lived only in the
+evicted instance's memory. A stuck instance keeps accepting upgrades, so it is
+never replaced in the middle of a wedge.
+
+An object held at schema 57 for meeting-notes retirement has no ledger table;
+the watch is off there until an operator finalizes it.
 
 **One silent socket is never enough on its own.** Its client controls it, so a
 silent socket alone would let any member reset the whole Organization every two
@@ -750,9 +759,11 @@ awaits anything, so a slow `subscribe` does not look silent.
 go silent: the server only has to accept it and never hear a frame, which is
 what happens when a connection drops after the upgrade and before `subscribe`
 arrives, on a Wi-Fi drop or a laptop lid closed just after a resume reconnect.
-Since the ledger, such a socket counts even after it closes. That socket resets the object only when no other socket answers a
-ping, speaks, or closes in the following two minutes, which in practice means
-nobody else is connected; then the reset interrupts only background work
+Since the ledger, such a socket counts even after it closes, as long as the same
+instance is still running at its deadline. It resets the object only when no
+other socket answers a ping, speaks, or closes in the following two minutes,
+which in practice means nobody else is connected; then the reset interrupts
+only background work
 (alarms retry, and Queue-delivered RPC redelivers). A member who is the only
 one connected can cause the same on purpose. Either shows up as a
 `workspace_socket_first_frame_missed` row with few `open_sockets` and a
@@ -778,7 +789,7 @@ receipt.
 | `apps/api/test/workstream-socket-warm.test.ts` | `pnpm --filter @rally/api test` | `ConversationService.socketTicket`: the parent's viewer decision gating the ticket, the parent kind and archive decision on it, and the deferred main-substream warm-up. |
 | `apps/api/test-workers/socket-subprotocol-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | The runtime constraint, on real workerd. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, and SubstreamAgent attachments/snapshots; authoritative workspace directory application/page/resource queries; eviction; native-RPC envelopes; workspace protocol/session/access close-code separation and payload-free diagnostics; truthful bounded transcript ranges; indivisible-turn payload-free envelopes; revocation; compaction recovery; queued-run coalescing; and ticket replay on real workerd. |
-| `apps/api/test-workers/workspace-socket-first-frame.test.ts`, `apps/api/test/socket-first-frame-watch.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts`; `pnpm --filter @rally/api test` | The first-frame watch, through the real accept and alarm paths: a silent socket on a silent object resets it, logs, and is dropped, also while the region is closed for maintenance and after its client has already closed it; each of the three "still hearing sockets" signals alone prevents a reset, including after a hibernation wake; the ledger forgets a socket once it speaks, lets go of a judged row, and does not reset the fresh instance after a reset; accepting pulls the alarm in. |
+| `apps/api/test-workers/workspace-socket-first-frame.test.ts`, `apps/api/test/socket-first-frame-watch.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts`; `pnpm --filter @rally/api test` | The first-frame watch, through the real accept and alarm paths: a silent socket on a silent object resets it, logs, and is dropped, also while the region is closed for maintenance and after its client has already closed it; each of the three "still hearing sockets" signals alone prevents a reset, including after a hibernation wake; the ledger forgets a socket once it speaks, lets go of a judged row, and does not reset a fresh instance after a reset or an eviction; accepting pulls the alarm in. |
 | `apps/api/test-workers/message-to-output-pipeline.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Fresh message admission and its private receipt on the authenticated SubstreamAgent socket, stable turn identity after hibernation/resend, and the message-to-provider pipeline on real workerd. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx`, `workstream-state-store.test.ts` | `pnpm --filter @rally/desktop test` | One persistent workspace connection, truthful terminal errors for access/session/protocol closes, correlated directory pages/pagination, immediate offline page rejection, waterline resume, stale/duplicate rejection across both sockets, independent common/viewer ordering, and idempotent command resend. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.test.tsx` | `pnpm --filter @rally/desktop test` | Complete aggregate snapshots, stale waterline rejection, nullable-field clearing, revocation, and reconnect. |
@@ -855,11 +866,11 @@ and archives are not nudged.
 ### 2026-09-25 — The first-frame watch counts sockets their clients gave up on
 
 **What changed:** WorkspaceDO records each accepted socket in
-`workspace_socket_unheard` (migration 70) until its first frame, and the alarm
-judges those rows rather than the open sockets. A reset clears the ledger and
-syncs storage before the abort; a row the object has heard past is deleted. The
-log row gains `missed_closed_sockets`. The table is refused on the generic SQL
-port.
+`workspace_socket_unheard` (migration 71) until its first frame, and the alarm
+judges those rows rather than the open sockets. A row the object has heard
+past, or one an earlier instance accepted for a socket now gone, is deleted as
+answered. The log row gains `missed_closed_sockets`. The table is refused on the
+generic SQL port, and the watch is off on an object held at schema 57.
 
 **Why:** On 2026-09-24 two organizations wedged, each on the first instance
 after a deploy's code-update reset. Forward Search sat stuck for 85 minutes
@@ -877,7 +888,12 @@ ones, since its past deadline stayed a candidate.
 a client timer, so a change to the heartbeat reopens the gap without anyone
 noticing, and a late alarm can miss a socket dropped at 65 s anyway. Keeping the
 ledger in memory: a hibernation wake loses it, the reason the earlier
-review required stored evidence.
+review required stored evidence. Clearing the ledger and awaiting
+`storage.sync()` before the abort, so the fresh instance would not reset over
+the rows: the wedge's cause is unknown, and an await on a storage flush could
+keep the one recovery path from reaching `state.abort()`. Deleting the row in
+the close and error callbacks: the earlier-instance rule already covers a
+healthy close followed by an eviction, without a write on those paths.
 
 **Consequences:** One insert per accept and one delete per first frame. A
 connection that drops before `subscribe` now counts after it closes, so the

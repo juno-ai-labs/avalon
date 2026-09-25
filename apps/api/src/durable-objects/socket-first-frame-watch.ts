@@ -40,11 +40,14 @@ export function nextFirstFrameDeadline(unheard: readonly UnheardSocket[], deadli
  * Which of the unheard sockets past their deadline this object has settled,
  * and which it missed. Missed means nothing was heard from any socket since
  * that one was accepted: the object has stopped receiving socket events.
- * Settled means something was, or the socket itself has spoken, so the ledger
- * can let it go. An unheard socket still inside its deadline is neither.
+ * Settled means something was, or the socket was accepted by an earlier
+ * instance and is gone: that instance was reset or evicted, and either way
+ * nothing silent carried over. An unheard socket still inside its deadline is
+ * neither.
  *
  * `lastSocketEventAt` is when this instance last ran a socket callback of any
- * kind, or `null` if it never has.
+ * kind, or `null` if it never has; `instanceStartedAt` is when it was
+ * constructed.
  */
 export function judgeUnheardSockets<T extends UnheardSocket>(
   unheard: readonly T[],
@@ -52,24 +55,24 @@ export function judgeUnheardSockets<T extends UnheardSocket>(
   now: number,
   deadlineMs: number,
   lastSocketEventAt: number | null,
+  instanceStartedAt: number,
 ): { missed: T[]; settled: T[] } {
-  const spoke = (other: FirstFrameWatchedSocket): boolean => other.subscribed || other.firstFrameReported;
+  const openIds = new Set(open.map((socket) => socket.connectionId));
   const heardFromSince = (acceptedAt: number): boolean =>
     (lastSocketEventAt !== null && lastSocketEventAt > acceptedAt)
     || open.some((other) =>
       // At or after, for both: the clock is millisecond-grained, and a ping
       // answered or a frame sent by a socket accepted in the same millisecond
-      // was still heard no earlier than the silent socket's accept.
+      // was still heard no earlier than the silent socket's accept. A socket
+      // that has itself spoken matches here too.
       (other.lastAutoResponseAt !== null && other.lastAutoResponseAt >= acceptedAt)
-      || (spoke(other) && Date.parse(other.connectedAt) >= acceptedAt));
+      || ((other.subscribed || other.firstFrameReported) && Date.parse(other.connectedAt) >= acceptedAt));
   const missed: T[] = [];
   const settled: T[] = [];
   for (const socket of unheard) {
     if (socket.acceptedAt + deadlineMs > now) continue;
-    // The ledger row is cleared on the first frame, but the attachment is the
-    // older record of it; either one says this socket was heard.
-    const itself = open.find((candidate) => candidate.connectionId === socket.connectionId);
-    if ((itself && spoke(itself)) || heardFromSince(socket.acceptedAt)) settled.push(socket);
+    const fromEarlierInstance = socket.acceptedAt < instanceStartedAt && !openIds.has(socket.connectionId);
+    if (fromEarlierInstance || heardFromSince(socket.acceptedAt)) settled.push(socket);
     else missed.push(socket);
   }
   return { missed, settled };
