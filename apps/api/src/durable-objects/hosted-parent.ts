@@ -1396,6 +1396,14 @@ export class HostedParent {
       userId: UserIdSchema }), input, "workstream_management_access");
     this.assertParent(request.workspaceId, request.parentId);
     const relationship = await this.host.readRelationship(request.workspaceId, request.userId);
+    return this.managementAccess(request, relationship);
+  }
+
+  /** {@link readManagementAccess} for a relationship already in hand: SQL only, so it runs inside a transaction. */
+  managementAccess(
+    request: { workspaceId: WorkspaceId; parentId: string; userId: UserId },
+    relationship: WorkspaceRelationship | null,
+  ): ScopeAccessResult {
     const target = { kind: "workstream" as const, workspaceId: request.workspaceId, parentId: request.parentId };
     const access = this.resolveScopeAccess({ userId: request.userId, target }, relationship);
     if (access.allowed || access.reason !== "grant_required") return access;

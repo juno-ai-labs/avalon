@@ -171,13 +171,41 @@ cannot send the same rows.
 it. The relationship change events keep it current: the relationship consumer
 calls `WorkspaceDO.applyMemberStatus` in D1's sequence order, and someone who
 stops being an active member leaves every viewer directory in that
-transaction. `readRelationship` answers access checks, Space checks and the
+transaction. The consumer applies the event before it walks a revocation, so
+a walk that fails and retries (or dead-letters) has not left the table saying
+active. `readRelationship` answers access checks, Space checks and the
 directory's member filter from it; D1 is read once, for someone it has never
-heard of (a member from before the table existed), and that answer never
-replaces an event's. The team accepts up to five minutes between a D1 change
-and this table and chose to trust the events rather than re-read on a timer. A
-request that has just written a relationship to D1 (accepting an invitation)
-records it here itself, so its own next checks see it.
+heard of (a member from before the table existed). The team accepts up to five
+minutes between a D1 change and this table and chose to trust the events
+rather than re-read on a timer.
+
+A request that has just read a relationship from D1 or written one there
+(accepting an invitation creates a guest relationship) records it with
+`noteRelationship`, so its own next checks see it. That replaces the stored
+row only when it is provably newer: the stored relationship was removed and
+this is a different incarnation (a guest removed and invited again), or it is
+the same incarnation at a higher revision. A removed incarnation never comes
+back, which is why a removal keeps `removed_incarnation`; a live row of another
+incarnation is left alone, since an event may have landed while the request
+waited on D1. The row keeps its sequence, so the events after it still apply,
+and an event carrying an older revision of the incarnation the row holds
+advances the sequence without moving the answer back. The invitation route
+also dispatches the relationship's delivery as soon as it responds, rather
+than leaving it to the five-minute cron.
+
+A Sidekick default a Space applies in place asks the requester's management
+of each member Channel from this table and the Channel's grants, in the same
+transaction (`canManageChannelNow`). Somebody the table has not heard of, or a
+refusal, takes the Queue's canonical path instead.
+
+Abandoning a workspace (its last active member leaving) suspends that member
+in D1, which bumps the relationship's revision and dispatches its event, so
+the table learns it like any other suspension. Access checks here do not read
+`workspaces.abandoned_at`. An operator retirement or an abandoned demo
+preparation sets `abandoned_at` with no member change; both then retire the
+Organization object itself, whose tombstone refuses every request, so the
+table is never asked. The window between the D1 write and the tombstone (one
+RPC, repeated by the operator's retry if it fails) is accepted.
 
 ### Moving an existing parent
 
@@ -228,8 +256,12 @@ receipts already fell back to past their retention.
   transaction; anything that cannot be (a follow-up send, a row that has to
   wait, work that leaves the object) is recorded durably in that same
   transaction, as a follow-up row or an outbox row.
-- **An event's relationship is never replaced by a D1 read.** Events carry D1's
-  sequence; a D1 read is only for someone never heard of.
+- **A D1 read replaces a stored relationship only when provably newer.** Events
+  carry D1's sequence; a read or write a request made replaces a row only with
+  a new incarnation over a removed one or a higher revision of the same one.
+- **Grants, invitations and sharing are Channel-only.** The facade refuses
+  them for a Space id with `channel_parent_required`; the Space role does not
+  refuse them itself.
 - **Parent-kind is carried, never probed.** A lookup that tries a namespace to
   see whether something is there creates the object it asked about.
 
@@ -265,7 +297,11 @@ the same code with a different namespace and is not covered separately.
 `conversation-effect-queue.test.ts` proves the outbox drain: directory rows
 applied in the object, activity and notification rows sent to the Queue. The
 conversation-parent contract tests (`conversation-parent-contract.test.ts` and
-its neighbours) run against the hosted parent. Run with
+its neighbours) run against the hosted parent.
+`workspace-member-status.test.ts` proves which writer may replace a
+relationship row (a removed incarnation never returns, a new one replaces it,
+an older event does not move a newer revision back) and that the consumer
+records a removal even when the revocation walk fails. Run with
 `pnpm --filter @rally/api test:workers`.
 
 ## Open questions
@@ -309,5 +345,8 @@ check, so its handlers have to stay short. The Channel control socket is served
 by the Organization object, which is also where it is revoked. The legacy
 parent warmed a Channel's Main conversation whenever it woke; the Organization
 object is rarely asleep, so it now warms Main when a Channel control socket
-opens instead. The legacy
+opens instead. Access checks read the object's own relationship table, so a
+removal is applied there before its revocation walk, and a request's own D1
+answer replaces a row only when provably newer (a guest invited again after
+removal would otherwise be refused until the next event). The legacy
 classes stay deployed until every Organization has imported.
