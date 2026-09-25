@@ -108,8 +108,9 @@ describe("hosted parent import", () => {
     const parentId = "00000000-0000-7000-8000-00000000f302";
     const workspace = await hostedWorkspace(workspaceId, parentId);
 
-    await expect(workspace.listChildren({ workspaceId: asWorkspaceId(workspaceId), parentId }))
-      .rejects.toThrow("conversation_parent_missing");
+    const refused = await workspace.listChildren({ workspaceId: asWorkspaceId(workspaceId), parentId })
+      .then(() => null, (error: unknown) => error);
+    expect(String(refused)).toContain("conversation_parent_missing");
 
     await runInDurableObject(workspace, (_instance, state) => {
       expect(parentImportState(state.storage.sql, parentId)).toBe("imported");
