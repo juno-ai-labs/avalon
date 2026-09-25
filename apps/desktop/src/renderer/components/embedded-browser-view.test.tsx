@@ -49,6 +49,24 @@ describe('the browser tab strip', () => {
     expect(onNewTab).toHaveBeenCalledOnce();
   });
 
+  it('hands closing the only blank tab to the host, and closes any other tab', () => {
+    const command = vi.fn<(input: EmbeddedBrowserCommand) => Promise<void>>(async () => undefined);
+    const onCloseLast = vi.fn();
+    const only = (extra: Partial<EmbeddedBrowserTab>): EmbeddedBrowserState => ({ activeTabId: 'a', tabs: [tab('a', '', extra)] });
+    const { rerender } = render(<Tooltip.Provider>
+      <EmbeddedBrowserTabs command={command} onCloseLast={onCloseLast} onNewTab={vi.fn()} state={only({ url: 'about:blank' })} />
+    </Tooltip.Provider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Close New tab' }));
+    expect(onCloseLast).toHaveBeenCalledOnce();
+    expect(command).not.toHaveBeenCalled();
+    rerender(<Tooltip.Provider>
+      <EmbeddedBrowserTabs command={command} onCloseLast={onCloseLast} onNewTab={vi.fn()} state={only({})} />
+    </Tooltip.Provider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Close New tab' }));
+    expect(command).toHaveBeenLastCalledWith({ action: 'close', tabId: 'a' });
+    expect(onCloseLast).toHaveBeenCalledOnce();
+  });
+
   it('moves a dragged tab to where it is dropped', () => {
     const { command } = renderTabs();
     const [alpha, , gamma] = screen.getAllByRole('tab').map((element) => element.closest('.embedded-browser-tab') as HTMLElement);
