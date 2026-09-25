@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, expect, it } from "vitest";
 import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
-import type { ScopeGrantTarget } from "@rally/contracts/scope-grants";
+import { WorkspaceRelationshipSchema, type ScopeGrantTarget, type WorkspaceRelationship } from "@rally/contracts/scope-grants";
 import { seedOpenWorkstreamAuthority } from "./helpers/substream-fixture";
 import { listSharedDirectory, listSharedNavigationDirectory } from "../src/services/shared-directory-service";
 import { AuthorizationService } from "../src/services/authorization-service";
@@ -77,8 +77,35 @@ async function parkEffectQueue(stub: ReturnType<typeof room>) {
   });
 }
 
+let relationshipSequence = 0;
+const lastRelationship = new Map<string, WorkspaceRelationship>();
+
+/**
+ * A D1 relationship write, then the relationship change event the product
+ * dispatches for each person it touched. The Organization answers access
+ * checks from its own copy of each relationship, and the event is what keeps
+ * that copy current; a D1 write alone is not seen until one arrives.
+ */
+async function changeRelationships(userIds: string[], ...statements: D1PreparedStatement[]) {
+  await env.DB.batch(statements);
+  for (const userId of userIds) {
+    const row = await env.DB.prepare(`SELECT workspace_id AS workspaceId, user_id AS userId, access_class AS accessClass,
+      role, status, incarnation, revision FROM workspace_members WHERE workspace_id = ? AND user_id = ?`)
+      .bind(workspaceId, userId).first();
+    const relationship = row ? WorkspaceRelationshipSchema.parse(row) : lastRelationship.get(userId)!;
+    relationshipSequence += 1;
+    await room().applyMemberStatus({ workspaceId, sequence: relationshipSequence, removed: row === null, relationship });
+    lastRelationship.set(userId, relationship);
+  }
+}
+
 beforeEach(async () => {
   await reset();
+  relationshipSequence = 0;
+  lastRelationship.clear();
+  for (const id of [actorId, recipientId]) {
+    lastRelationship.set(id, { workspaceId, userId: id, accessClass: "guest", role: null, status: "active", incarnation: id, revision: 1 });
+  }
   await env.DB.batch([
     env.DB.prepare(LINK_PAYLOADS_TABLE),
     env.DB.prepare("CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT, email TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT)"),
@@ -90,6 +117,9 @@ beforeEach(async () => {
     ...[actorId,recipientId].map((id) => env.DB.prepare("INSERT INTO workspace_members VALUES (?,?,'guest',NULL,'active',?,1)")
       .bind(workspaceId,id,id)),
   ]);
+  // A live Organization object knows its identity; a relationship change
+  // event is refused by one that does not.
+  await room().initializeWorkspace(workspaceId, "wnam");
   await runInDurableObject(room(), (_instance, state) => {
     insertParentMetadata(state, parentId, "Private parent");
     state.storage.sql.exec("INSERT INTO parent_children (parent_id,substream_id,kind,created_at) VALUES (?,'0','main',0), (?,?,'child',0)",
@@ -105,7 +135,7 @@ it("admits and shares an independent child without granting Main or parent mutat
     expect(await room().readScopeAccess({ userId: recipientId, target })).toEqual({ allowed: false, reason: "grant_required" });
     expect(await room().mutateScopeGrant(mutation(target))).toEqual({ status: "denied", reason: "sharing_required" });
   }
-  await env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(recipientId).run();
+  await changeRelationships([recipientId], env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(recipientId));
   expect(await room().readScopeAccess({ userId: recipientId, target: child })).toEqual({ allowed: false, reason: "relationship_required" });
 });
 
@@ -128,7 +158,7 @@ it("refuses a legacy child migration over an existing conversation grant ledger"
 });
 
 it("does not turn workspace-public member reading into sharing authority", async () => {
-  await env.DB.prepare("UPDATE workspace_members SET access_class='member',role='member' WHERE user_id=?").bind(actorId).run();
+  await changeRelationships([actorId], env.DB.prepare("UPDATE workspace_members SET access_class='member',role='member' WHERE user_id=?").bind(actorId));
   await exec("UPDATE parent_metadata SET scope='workspace' WHERE parent_id=?", parentId);
   expect(await room().readScopeAccess({ userId: actorId, target: main })).toMatchObject({ allowed: true, workspaceMemberAccess: true });
   expect(await room().readScopeAccess({ userId: recipientId, target: main })).toMatchObject({ allowed: false });
@@ -165,16 +195,19 @@ it("inherits a whole-workstream grant only into Main and explicitly inheriting c
 
 it("rejects inactive actors, inactive recipients, archived scopes and abandoned workspaces", async () => {
   await seedActorGrant(child);
-  await env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(recipientId).run();
+  await changeRelationships([recipientId], env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(recipientId));
   expect(await room().mutateScopeGrant(mutation())).toEqual({ status: "denied", reason: "recipient_relationship_required" });
-  await env.DB.prepare("UPDATE workspace_members SET status='active'").run();
-  await env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(actorId).run();
+  await changeRelationships([actorId, recipientId], env.DB.prepare("UPDATE workspace_members SET status='active'"));
+  await changeRelationships([actorId], env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(actorId));
   expect(await room().mutateScopeGrant(mutation())).toEqual({ status: "denied", reason: "sharing_required" });
-  await env.DB.prepare("UPDATE workspace_members SET status='active'").run();
+  await changeRelationships([actorId, recipientId], env.DB.prepare("UPDATE workspace_members SET status='active'"));
   await exec("UPDATE parent_metadata SET archived_at=1 WHERE parent_id=?", parentId);
   expect(await room().mutateScopeGrant(mutation())).toEqual({ status: "denied", reason: "sharing_required" });
   expect(await room().readScopeAccess({ userId: actorId, target: child })).toMatchObject({ allowed: true, writable: false });
-  await env.DB.prepare("UPDATE workspaces SET abandoned_at='now'").run();
+  // Closing a workspace suspends its last active member in the same batch,
+  // and that suspension is the event the Organization hears.
+  await changeRelationships([actorId], env.DB.prepare("UPDATE workspaces SET abandoned_at='now'"),
+    env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(actorId));
   expect(await room().readScopeAccess({ userId: actorId, target: child })).toEqual({ allowed: false, reason: "relationship_required" });
 });
 
@@ -217,7 +250,7 @@ it("serves migrated child grants without reading Main and retains admission revi
   expect(await authorization.checkMany(subject,[resource])).toMatchObject([{ status:"denied" }]);
   expect(await room().readAuthorizationFacts({ workspaceId,parentId,userId:recipientId,substreamIds:[childId] }))
     .toMatchObject({ authority:"grants",scopes:[{ access:{ allowed:false,reason:"grant_required" } }] });
-  await env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(actorId).run();
+  await changeRelationships([actorId], env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(actorId));
   expect(await room().authorizeViewer({ ...request,userId:actorId })).toMatchObject({ authorized:false });
 });
 
@@ -227,8 +260,9 @@ it("requires a fresh grant after membership removal and rejoin", async () => {
   const added = await room().mutateScopeGrant(command);
   if (added.status !== "committed") throw new Error("Expected grant");
   expect(await room().readScopeAccess({ userId:recipientId,target:child })).toMatchObject({ allowed:true });
-  await env.DB.prepare("DELETE FROM workspace_members WHERE user_id=?").bind(recipientId).run();
-  await env.DB.prepare("INSERT INTO workspace_members VALUES (?,?,'guest',NULL,'active','replacement',1)").bind(workspaceId,recipientId).run();
+  await changeRelationships([recipientId], env.DB.prepare("DELETE FROM workspace_members WHERE user_id=?").bind(recipientId));
+  await changeRelationships([recipientId],
+    env.DB.prepare("INSERT INTO workspace_members VALUES (?,?,'guest',NULL,'active','replacement',1)").bind(workspaceId,recipientId));
   expect(await room().readScopeAccess({ userId:recipientId,target:child })).toMatchObject({ allowed:false });
   // Replaying the old operation is a receipt, never admission for the new membership.
   expect(await room().mutateScopeGrant(command)).toEqual(added);
@@ -394,7 +428,7 @@ it("releases canonical Channel and shared conversation labels without granting M
     conversations: [{ substreamId: "0", title: "Main", scope: "personal", archived: false,
       appearance: { icon: "briefcase", color: "blue" } }, { substreamId: childId, title: "Visible child", scope: "personal", archived: false,
       appearance: { icon: "star", color: "red" } }] });
-  await env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(recipientId).run();
+  await changeRelationships([recipientId], env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(recipientId));
   expect(await room().readSharedWorkstream(request)).toBeNull();
 });
 
@@ -472,13 +506,13 @@ it("requires a parent grant for guest recommendation management and observes its
 it("does not count grants from a previous relationship as remaining participants", async () => {
   await seedActorGrant(child);
   await room().mutateScopeGrant(mutation());
-  await env.DB.prepare("UPDATE workspace_members SET incarnation='replacement' WHERE user_id=?").bind(recipientId).run();
+  await changeRelationships([recipientId], env.DB.prepare("UPDATE workspace_members SET incarnation='replacement' WHERE user_id=?").bind(recipientId));
   expect(await room().mutateScopeGrant({ ...mutation(), userId: actorId, active: false,
     expectedRevision: 1 })).toEqual({ status: "denied", reason: "participant_required" });
 });
 
 it("retains implicit Main member admission after participant authority transfer", async () => {
-  await env.DB.prepare("UPDATE workspace_members SET access_class='member',role='member' WHERE user_id=?").bind(recipientId).run();
+  await changeRelationships([recipientId], env.DB.prepare("UPDATE workspace_members SET access_class='member',role='member' WHERE user_id=?").bind(recipientId));
   const source = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", workspaceId, parentId));
   await seedOpenWorkstreamAuthority(env.DB);
   await source.bootstrapRuntime({ workspaceId, parentId, substreamId: asSubstreamId("0"), parentKind: "workstream", generation: 1 });

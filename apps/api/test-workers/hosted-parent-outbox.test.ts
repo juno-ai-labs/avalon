@@ -288,8 +288,11 @@ describe("the Organization's parent outbox drain", () => {
     const workspace = workspaceStub();
     await recordQueue(workspace);
     // Common and viewer effects travel on different partitions, so the
-    // viewer's can reach the parent first. Its row is applied before the
-    // Channel has a directory row, refused on the missing row, and put off.
+    // viewer's can reach the parent first. Its local apply in the parent write
+    // is refused on the missing Channel row and rolled back alone, leaving an
+    // outbox row; the drain after the write is refused the same way, and has
+    // to put the row off rather than leave it due, which would spin the alarm
+    // until the Channel row arrived.
     await workspace.receiveChildEffects({
       substreamId: "0",
       envelopes: [childEnvelope(LATE_CHANNEL_ID, 1, "user", {
@@ -325,8 +328,8 @@ describe("the Organization's parent outbox drain", () => {
       })],
     });
 
-    // Before the viewer row's retry delay ran out: the Channel row's own
-    // drain applied it.
+    // Before the viewer row's retry delay ran out: the Channel row landed in
+    // its own parent write, and that is what makes the viewer row due.
     expect(Date.now()).toBeLessThan(retryAt);
     expect(await viewerUnread(workspace)).toEqual([{ unread_count: 3 }]);
     expect(await outboxRows(workspace, LATE_CHANNEL_ID)).toEqual([]);
