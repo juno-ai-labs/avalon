@@ -6385,8 +6385,6 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 .embedded-browser-page { min-height: 0; min-width: 0; position: relative; }
 .embedded-browser-start { align-items: center; color: var(--av-sys-color-text-muted); display: flex; flex-direction: column; gap: 10px; justify-content: center; min-height: 100%; text-align: center; }
 .embedded-browser-start p { margin: 0; }
-.embedded-browser-start > div { display: flex; gap: 8px; }
-.embedded-browser-start button { background: var(--av-sys-color-surface-subtle); border: 1px solid var(--av-sys-color-border-subtle); border-radius: 7px; color: var(--av-sys-color-text-default); font: inherit; padding: 6px 11px; }
 .embedded-browser-error { background: var(--av-sys-color-surface-raised); color: var(--av-sys-color-text-default); left: 12px; padding: 12px; position: absolute; right: 12px; top: 88px; z-index: 1; }
 
 /* The import window: the browser's own toolbar is the title bar, with Import

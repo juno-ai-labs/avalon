@@ -3,7 +3,6 @@ import { useRef } from 'react';
 import {
   EmbeddedBrowserNavigation,
   EmbeddedBrowserTabs,
-  embeddedBrowserAddress,
   focusAddress,
   useEmbeddedBrowser,
   useEmbeddedBrowserPlacement,
@@ -31,11 +30,6 @@ export function EmbeddedBrowserRail({
   useEmbeddedBrowserShortcuts({ state, command, addressRef, scope: controlsRef });
   useEmbeddedBrowserPlacement(pageRef, !leaving && error === null && active !== undefined && active.url !== 'about:blank');
 
-  const navigate = (raw: string): void => {
-    const url = embeddedBrowserAddress(raw);
-    if (url) void command({ action: 'navigate', url });
-  };
-
   return (
     <RailSurface className="embedded-browser-rail" label="Browser" leaving={leaving} onClose={onClose}
       onResize={onResize} resizeLabel="Resize browser" scrimLabel="Close browser" width={width}>
@@ -51,10 +45,6 @@ export function EmbeddedBrowserRail({
         {active?.url === 'about:blank' && <div className="embedded-browser-start">
           <Globe2 aria-hidden="true" size={24} />
           <p>Enter a website address to browse here</p>
-          <div>
-            <button onClick={() => navigate('https://chatgpt.com/')} type="button">ChatGPT</button>
-            <button onClick={() => navigate('https://claude.ai/')} type="button">Claude</button>
-          </div>
         </div>}
       </div>
     </RailSurface>
