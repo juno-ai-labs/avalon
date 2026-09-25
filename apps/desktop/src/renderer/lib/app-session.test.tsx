@@ -10,6 +10,7 @@ import type {
   RuntimeConfig,
 } from '../../common/desktop';
 import { accountReconnectRequiredFailure, workspaceActivationFailure } from '../../common/workspace-activation-error';
+import { sidekickDeepLink } from '@rally/contracts/workstream-links';
 import {
   AccountSignInFailedError,
   AccountSignInSupersededError,
@@ -1262,6 +1263,16 @@ describe('single-platform desktop identity routing', () => {
       // addresses a workspace, and that workspace is activated before anything
       // navigates.
       assertDestination: async () => expect(window.location.hash).toBe('#/'),
+    },
+    {
+      name: 'Sidekick',
+      url: sidekickDeepLink({
+        region: 'enterprise',
+        workspaceId: '00000000-0000-7000-8000-000000000030',
+        sidekickId: '00000000-0000-7000-8000-000000000033',
+      }),
+      assertDestination: async () => expect(window.location.hash)
+        .toBe('#/sidekicks/00000000-0000-7000-8000-000000000033'),
     },
     {
       name: 'connector result',
