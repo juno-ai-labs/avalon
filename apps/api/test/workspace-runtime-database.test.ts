@@ -242,6 +242,8 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "parent_state_clock",
   "parent_state_changes",
   "parent_outbox",
+  "workspace_directory_followups", // Written only by the directory apply in the same transaction.
+  "workspace_member_status", // Written only by relationship events and the relationship reader.
   "parent_breakout_preparations",
   "parent_breakout_members",
   "parent_breakout_member_effects",

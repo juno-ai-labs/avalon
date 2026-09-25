@@ -24,7 +24,7 @@ it('streams committed profile changes to another member even when enterprise dis
     env.DB.prepare(`INSERT INTO users VALUES (?, 'subject', 'alex@example.com', 'Alex Morgan', NULL, 'UTC', '2026-09-08T00:00:00.000Z', '2026-09-08T00:00:00.000Z', ?, 0, 1, 0, NULL)`).bind(userId, userId),
     env.DB.prepare(`CREATE TABLE workspaces (id TEXT PRIMARY KEY, region TEXT, placement_affinity TEXT, analytics_workspace_id TEXT, abandoned_at TEXT)`),
     env.DB.prepare(`INSERT INTO workspaces VALUES (?, 'global', 'wnam', NULL, NULL)`).bind(workspaceId),
-    env.DB.prepare(`CREATE TABLE workspace_members (access_class TEXT NOT NULL DEFAULT 'member', incarnation TEXT DEFAULT 'existing-member', workspace_id TEXT, user_id TEXT, role TEXT, status TEXT, last_seen_at TEXT)`),
+    env.DB.prepare(`CREATE TABLE workspace_members (access_class TEXT NOT NULL DEFAULT 'member', incarnation TEXT DEFAULT 'existing-member', workspace_id TEXT, user_id TEXT, role TEXT, status TEXT, last_seen_at TEXT, revision INTEGER NOT NULL DEFAULT 1)`),
     env.DB.prepare(`INSERT INTO workspace_members (workspace_id,user_id,role,status,last_seen_at) VALUES (?, ?, 'owner', 'active', NULL), (?, ?, 'member', 'active', NULL)`).bind(workspaceId, userId, workspaceId, peerId),
     env.DB.prepare(`INSERT INTO workspaces VALUES ('abandoned', 'global', 'invalid', NULL, '2026-09-08'), ('foreign', 'enterprise', 'invalid', NULL, NULL)`),
     env.DB.prepare(`INSERT INTO workspace_members (workspace_id,user_id,role,status,last_seen_at) VALUES ('abandoned', ?, 'owner', 'active', NULL), ('foreign', ?, 'owner', 'active', NULL)`).bind(userId, userId),

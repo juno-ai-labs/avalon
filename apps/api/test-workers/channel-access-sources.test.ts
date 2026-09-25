@@ -126,7 +126,7 @@ beforeEach(async () => {
   // The Organization object learns its placement from D1 on the first parent
   // request, as it does in production.
   await env.DB.batch([
-    env.DB.prepare("CREATE TABLE workspaces (id TEXT PRIMARY KEY, region TEXT DEFAULT 'global', placement_affinity TEXT DEFAULT 'wnam')"),
+    env.DB.prepare("CREATE TABLE workspaces (id TEXT PRIMARY KEY, region TEXT DEFAULT 'global', placement_affinity TEXT DEFAULT 'wnam', abandoned_at TEXT)"),
     env.DB.prepare("INSERT INTO workspaces (id) VALUES (?)").bind(WORKSPACE_ID),
   ]);
   await runInDurableObject(channel(), (_instance, state) => {
