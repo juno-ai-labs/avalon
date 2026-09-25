@@ -497,10 +497,13 @@ export type SpaceIntentKind = z.infer<typeof SpaceIntentKindSchema>;
 /**
  * One unsettled Space intent, republished so an interrupted operation finishes.
  *
- * The alarm publishes these; the activity consumer re-runs the service step the
- * intent names. Everything the consumer needs to address the work is on the
- * message, because by the time it runs the request that created the intent is
- * long gone.
+ * The alarm publishes these only for a stored `move`, which the Worker's
+ * `SpaceService.resumeIntent` finishes; every other kind is resumed in
+ * WorkspaceDO itself. The consumer still accepts every kind, so messages queued
+ * before that finish (for anything but a `move`, by asking WorkspaceDO to
+ * resume the intent from its row). Everything the consumer needs to address
+ * the work is on the message, because by the time it runs the request that
+ * created the intent is long gone.
  */
 export const SpaceIntentResumeQueueMessageSchema = z.strictObject({
   type: z.literal("space_intent_resume"),
@@ -685,3 +688,119 @@ export const WorkspaceSpaceIntentFailureRequestSchema = SpaceActorSchema.extend(
   errorCode: z.string().min(1).max(200),
 }).strict();
 export type WorkspaceSpaceIntentFailureRequest = z.infer<typeof WorkspaceSpaceIntentFailureRequestSchema>;
+
+/**
+ * The person a Space operation acts as when WorkspaceDO drives a Channel's
+ * canonical audience operations itself.
+ *
+ * The same fields `WorkstreamObjectClient` sends on every product request, and
+ * nothing more: the conversation re-verifies them (a login session against its
+ * `sessions` row, any other principal against current membership), so passing
+ * them through WorkspaceDO adds no authority the Worker did not already have.
+ */
+export const SpaceActorAuthSchema = z.strictObject({
+  sessionId: z.string().min(1).max(200),
+  userId: UserIdSchema,
+  workspaceId: WorkspaceIdSchema,
+  region: RegionSchema,
+  role: z.enum(["owner", "admin", "member"]).nullable(),
+  principal: z.enum(["connector", "demo_seed", "impersonation", "resource_authorization"]).optional(),
+});
+export type SpaceActorAuth = z.infer<typeof SpaceActorAuthSchema>;
+
+/** `addSpaceChannel` and `removeSpaceChannel`: one existing Channel, one Space. */
+export const WorkspaceSpaceChannelChangeRequestSchema = z.strictObject({
+  auth: SpaceActorAuthSchema,
+  spaceId: SpaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
+});
+export type WorkspaceSpaceChannelChangeRequest = z.infer<typeof WorkspaceSpaceChannelChangeRequestSchema>;
+
+/**
+ * Why a Space operation that reached a Channel did not finish, with what the
+ * caller needs to say so.
+ *
+ * `space` is a refusal about the Space (rendered by `spaceRefusal`), `channel`
+ * one about the Channel it reached (rendered by `spaceAccessError`, with the
+ * Channel's title as `subject`), and `conversation` a refusal the Channel's
+ * own conversation answered, passed on as it was given. That last one is the
+ * product refusal that reached the route when the Worker made these calls; a
+ * Durable Object RPC would otherwise reduce it to a bare `Error` with no code.
+ */
+export const SpaceChannelRefusalSchema = z.discriminatedUnion("about", [
+  z.strictObject({
+    about: z.literal("space"),
+    code: SpaceErrorCodeSchema,
+    subject: z.string(),
+    unreachableUserIds: z.array(UserIdSchema).default([]),
+    blockedWorkstreamIds: z.array(WorkstreamIdSchema).default([]),
+  }),
+  z.strictObject({ about: z.literal("channel"), code: SpaceErrorCodeSchema, subject: z.string() }),
+  z.strictObject({
+    about: z.literal("conversation"),
+    status: z.number().int().min(400).max(599),
+    code: z.string().min(1).max(200),
+    message: z.string(),
+    details: z.record(z.string(), z.unknown()).optional(),
+  }),
+]);
+export type SpaceChannelRefusal = z.input<typeof SpaceChannelRefusalSchema>;
+export type ParsedSpaceChannelRefusal = z.infer<typeof SpaceChannelRefusalSchema>;
+
+export const WorkspaceSpaceChannelChangeResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), space: SpaceSummarySchema }),
+  z.strictObject({ ok: z.literal(false), refusal: SpaceChannelRefusalSchema }),
+]);
+export type WorkspaceSpaceChannelChangeResult = z.input<typeof WorkspaceSpaceChannelChangeResultSchema>;
+
+/** The walks an audience change, an archive and a restore take over their member Channels. */
+export const SpaceMemberWalkKindSchema = z.enum(["audience", "archive", "restore"]);
+export type SpaceMemberWalkKind = z.infer<typeof SpaceMemberWalkKindSchema>;
+
+/**
+ * `walkSpaceMembers`: one page of a staged walk, run by WorkspaceDO.
+ *
+ * `expectedSpaceRevision` is the request path's fence: an audience change
+ * abandons its walk when the Space moves under it, because the change that
+ * overtook it walks every member itself. `null` converges on the Space as it
+ * is now, which is what a resume does.
+ */
+export const WorkspaceSpaceMemberWalkRequestSchema = z.strictObject({
+  auth: SpaceActorAuthSchema,
+  spaceId: SpaceIdSchema,
+  operationId: IdSchema,
+  kind: SpaceMemberWalkKindSchema,
+  cursor: z.string().min(1).nullable(),
+  expectedSpaceRevision: z.number().int().positive().nullable(),
+});
+export type WorkspaceSpaceMemberWalkRequest = z.infer<typeof WorkspaceSpaceMemberWalkRequestSchema>;
+
+/**
+ * `page` names where the next page starts, already written to the intent.
+ * `walked` and `abandoned` mean the intent is settled (an archive also
+ * finalized) and carry the Space as the actor now sees it.
+ */
+export const WorkspaceSpaceMemberWalkResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), outcome: z.literal("page"), cursor: z.string().min(1) }),
+  z.strictObject({ ok: z.literal(true), outcome: z.enum(["walked", "abandoned"]), space: SpaceSummarySchema }),
+  z.strictObject({ ok: z.literal(false), refusal: SpaceChannelRefusalSchema }),
+]);
+export type WorkspaceSpaceMemberWalkResult = z.input<typeof WorkspaceSpaceMemberWalkResultSchema>;
+
+/**
+ * `resumeSpaceIntent`: finish one staged intent in WorkspaceDO as the actor
+ * the caller authenticated. The intent row, not the message that named it, is
+ * what is resumed, because its cursor and fences are the current ones.
+ */
+export const WorkspaceSpaceIntentResumeRequestSchema = z.strictObject({
+  auth: SpaceActorAuthSchema,
+  operationId: IdSchema,
+});
+export type WorkspaceSpaceIntentResumeRequest = z.infer<typeof WorkspaceSpaceIntentResumeRequestSchema>;
+
+export const WorkspaceSpaceIntentResumeResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), outcome: z.literal("settled") }),
+  z.strictObject({ ok: z.literal(true), outcome: z.literal("abandoned"), reason: z.string().min(1).max(200) }),
+  z.strictObject({ ok: z.literal(false), refusal: SpaceChannelRefusalSchema }),
+]);
+export type WorkspaceSpaceIntentResumeResult = z.input<typeof WorkspaceSpaceIntentResumeResultSchema>;

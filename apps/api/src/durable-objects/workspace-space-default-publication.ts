@@ -69,17 +69,20 @@ export async function publishSpaceDefaultTargets(input: SpacePublicationInput): 
 }
 
 /**
- * Republish the cross-object operations that never settled.
+ * Claim the cross-object operations that never settled, and hand each to
+ * whoever finishes it.
  *
  * A Space audience change, a membership, an archive: each stages an intent in
  * WorkspaceDO before touching another object, and a request that dies between
- * the two leaves the intent `pending`. Nothing else notices — the caller is
- * gone and the Channel was never asked — so the alarm is what finishes it, by
- * putting the operation back on the activity Queue for the consumer to re-run.
+ * the two leaves the intent `pending`. Nothing else notices (the caller is
+ * gone and the Channel was never asked), so the alarm is what finishes it.
+ * WorkspaceDO finishes an intent itself when `inPlace` says it can, and those
+ * come back to the caller; every other one goes onto the activity Queue for
+ * the consumer to re-run.
  *
- * Claimed the way a default target is: the retry gate advances before the send,
- * so a rejected batch is retried later rather than immediately, and a duplicate
- * delivery is safe because every step it re-runs is fenced on the Space
+ * Claimed the way a default target is: the retry gate advances before the send
+ * or the in-place run, so a failure is retried later rather than immediately,
+ * and a duplicate is safe because every step it re-runs is fenced on the Space
  * revision and membership generation the intent recorded.
  */
 export async function publishSpaceIntentResumes(input: {
@@ -89,9 +92,15 @@ export async function publishSpaceIntentResumes(input: {
   region: Region;
   now: number;
   retryAt: (attempt: number) => number;
-}): Promise<number> {
-  return publishFencedTargets({
-    claim: (now, retryAt) => input.storage.claimIntentResumes(now, retryAt),
+  inPlace?: (intent: WorkspaceSpaceIntentClaim) => boolean;
+}): Promise<{ published: number; inPlace: WorkspaceSpaceIntentClaim[] }> {
+  const local: WorkspaceSpaceIntentClaim[] = [];
+  const published = await publishFencedTargets({
+    claim: (now, retryAt) => input.storage.claimIntentResumes(now, retryAt).filter((intent) => {
+      if (!input.inPlace?.(intent)) return true;
+      local.push(intent);
+      return false;
+    }),
     // The claim already advanced each intent's gate, and the intent settles
     // when the consumer's work finishes rather than when the Queue takes the
     // message, so acceptance records nothing here.
@@ -116,6 +125,7 @@ export async function publishSpaceIntentResumes(input: {
     now: input.now,
     retryAt: input.retryAt,
   });
+  return { published, inPlace: local };
 }
 
 /**

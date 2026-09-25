@@ -6,7 +6,6 @@ import {
   type SpaceId,
   type SpaceScope,
   type UserId,
-  type WorkspaceId,
   type WorkstreamDetail,
 } from "@rally/contracts";
 
@@ -23,8 +22,15 @@ import { effectiveChannelAudience } from "../lib/channel-audience";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
 import { logWarn } from "../observability/logger";
-import { publishAccessRevocation } from "./access-revocation";
+import {
+  publishChannelNarrowing,
+  runSpaceSourceApplication,
+  runSpaceSourceRetraction,
+  type SpaceSourceApplicationInterrupted,
+} from "./space-source-operations";
 import { WorkstreamObjectClient } from "./workstream-object-client";
+
+export { publishChannelNarrowing };
 
 /**
  * The audience a Space supplies to one Channel.
@@ -371,22 +377,17 @@ export class ChannelAccessService {
       channel: observed,
     };
 
-    const seated: UserId[] = [];
+    let seated: UserId[];
     try {
-      // The widening and the seating are mutually exclusive by construction: a
-      // plan that widens seats nobody, because everybody can read afterwards.
-      if (applied.plan.widenScope) await client.update({ scope: "workspace" });
-      for (const userId of applied.plan.seatUserIds) {
-        await client.addParticipant(userId, { spaceSourceId: source.spaceId });
-        seated.push(userId);
-      }
+      seated = await runSpaceSourceApplication(client, source.spaceId, applied.plan);
     } catch (error) {
-      await this.rollbackSpaceSource(workstreamId, source.spaceId, seated, confirmedSource);
-      const refusal = asApiError(error);
+      const interrupted = error as SpaceSourceApplicationInterrupted;
+      await this.rollbackSpaceSource(workstreamId, source.spaceId, interrupted.seated, confirmedSource);
+      const refusal = asApiError(interrupted.cause);
       if (refusal?.code === "workstream_audience_restricted_content") {
         throw spaceAccessError("space_membership_content_fence", title);
       }
-      throw error;
+      throw interrupted.cause;
     }
 
     const confirmed = await room.confirmSpaceAccessSource({
@@ -551,101 +552,35 @@ export class ChannelAccessService {
     plan: SpaceAccessRetraction,
     remaining: ChannelAccessSources["spaces"],
   ): Promise<void> {
-    const client = this.client(workstreamId);
-    for (const userId of plan.seatUserIds) {
-      const supplier = remaining.find((space) => space.participantUserIds.includes(userId));
-      await client.addParticipant(userId, supplier ? { spaceSourceId: supplier.spaceId } : {});
-    }
     const room = await this.room();
-    for (const space of remaining) {
-      const supplied = plan.seatUserIds.filter((userId) => space.participantUserIds.includes(userId));
-      if (supplied.length === 0) continue;
-      const confirmed = await room.confirmSpaceAccessSource({
-        ...this.address(workstreamId),
-        spaceId: space.spaceId,
-        operationId: uuidV7(),
-        seatedUserIds: supplied,
-      });
-      if (!confirmed.ok) {
-        // Named rather than thrown, for the reason `narrowDirectScope` names
-        // its own: the readers are seated and can read, and failing here would
-        // leave the Channel in the Space it has already been taken out of.
-        logWarn(this.env, "channel_retraction_attribution_refused", {
-          workstream_id: workstreamId, space_id: space.spaceId, code: confirmed.code,
-        });
-      }
-    }
-    // The announcement's own outcome, kept until the retraction is otherwise
-    // finished. A narrowing that was not announced leaves every non-participant
-    // reader's socket open until they reconnect, and this path *can* retry —
-    // every caller of a retraction has a `space_intents` row behind it, so
-    // failing the step leaves that intent unsettled and the alarm republishes
-    // the whole operation. The throw is last rather than here because the
-    // removals below are the access changes themselves: giving up before them
-    // would leave a reader who should have lost the Channel holding it until
-    // the resume, which is strictly worse than a socket that outlives a
-    // narrowing by one alarm interval.
-    let announced = true;
-    if (plan.narrowScope) {
-      await client.update({ scope: "personal" });
-      announced = await publishChannelNarrowing(
-        this.env, asWorkspaceId(this.auth.workspaceId), workstreamId,
-      );
-    }
-    for (const userId of plan.removeUserIds) {
-      await client.removeParticipant(userId, { spaceSourceId: spaceId });
-      // The room closes its own sockets for somebody it removed. The
-      // automations it owns admitted them through the room and nothing there
-      // reaches those objects, so whoever writes the fact publishes it, in the
-      // same request — exactly as `WorkstreamService.removeParticipant` does.
-      await publishAccessRevocation(this.env, {
-        reason: "workstream_participant_removed",
-        workspaceId: asWorkspaceId(this.auth.workspaceId),
-        userId,
-        sessionId: null,
-        target: { scope: "workstream_automations", workstreamId },
-      });
-    }
-    if (!announced) {
-      throw new ApiError(503, "channel_narrowing_publish_failed",
-        "The Channel's narrowing could not be announced; it will be retried");
-    }
+    await runSpaceSourceRetraction({
+      env: this.env,
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      workstreamId,
+      client: this.client(workstreamId),
+      spaceId,
+      plan,
+      remaining,
+      attribute: async (attributions) => {
+        for (const { spaceId: supplierId, userIds } of attributions) {
+          const confirmed = await room.confirmSpaceAccessSource({
+            ...this.address(workstreamId),
+            spaceId: supplierId,
+            operationId: uuidV7(),
+            seatedUserIds: userIds,
+          });
+          if (!confirmed.ok) {
+            // Named rather than thrown, for the reason `narrowDirectScope` names
+            // its own: the readers are seated and can read, and failing here would
+            // leave the Channel in the Space it has already been taken out of.
+            logWarn(this.env, "channel_retraction_attribution_refused", {
+              workstream_id: workstreamId, space_id: supplierId, code: confirmed.code,
+            });
+          }
+        }
+      },
+    });
   }
-}
-
-/**
- * Announce that a Channel stopped admitting the whole Organization.
- *
- * The narrowing counterpart of the removal every participant write already
- * publishes, and it exists for the same reason: the room closes sockets for
- * somebody it was *told* about, and nothing tells it that the audience it just
- * took no longer covers whoever is reading. Whoever writes the fact publishes
- * it, in the same request.
- *
- * It names nobody. The readers a narrowing drops are every member who is not a
- * participant, which is the Organization; the hop asks the room which of them
- * still has a socket open, which is the only part of that set anybody can act
- * on. Shared by both narrowings — a Space's retraction and the Channel's own
- * scope change — so there is one announcement rather than two that can drift.
- *
- * Returns whether the message went out, and every caller reads it.
- * `publishAccessRevocation` is deliberately not fatal to its own caller — the
- * fact it announces has already committed — so the flag is the only signal a
- * caller that *can* still retry ever gets, and dropping it records a retraction
- * as delivered when nothing was sent.
- */
-export async function publishChannelNarrowing(
-  env: Env,
-  workspaceId: WorkspaceId,
-  workstreamId: string,
-): Promise<boolean> {
-  return publishAccessRevocation(env, {
-    reason: "workstream_participant_removed",
-    workspaceId,
-    userId: null,
-    sessionId: null,
-    target: { scope: "workstream_audience_narrowed", workstreamId },
-  });
 }
 
 /** One refusal per closed code, each naming the Channel it is about. */
