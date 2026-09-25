@@ -1,6 +1,10 @@
 import { newId } from "@rally/db";
 import { asAutomationId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
-import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
+import type {
+  ConversationParentAuthorizeViewerRequest,
+  ConversationParentAuthorizeViewerResult,
+  ConversationParentKind,
+} from "@rally/contracts/conversation-parent";
 
 import { automationDOName, conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
@@ -48,15 +52,31 @@ export class ConversationService {
    * neither knows is a 404 rather than a guess.
    */
   async resolveParent(parentId: string): Promise<ResolvedConversationParent> {
+    return (await this.resolveParentFor(parentId)).parent;
+  }
+
+  /**
+   * `resolveParent`, and for a hosted Channel the viewer's decision from the
+   * same call when a viewer is named.
+   */
+  private async resolveParentFor(
+    parentId: string,
+    viewer?: Omit<ConversationParentAuthorizeViewerRequest, "workspaceId" | "parentId">,
+  ): Promise<{ parent: ResolvedConversationParent; decision?: ConversationParentAuthorizeViewerResult }> {
     const workspace = await durableObjectStubForWorkspace(
       this.env,
       this.env.WORKSPACE_DOS,
       this.auth.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)),
     );
-    const hosted = await workspace.resolveHostedParent({ workspaceId: this.auth.workspaceId, parentId });
+    const hosted = await workspace.resolveHostedParent({
+      workspaceId: this.auth.workspaceId, parentId, ...(viewer ? { viewer } : {}),
+    });
     if (hosted.kind === "workstream") {
-      return { kind: "workstream", id: parentId, membershipVersion: 0, ...hosted.authority };
+      return {
+        parent: { kind: "workstream", id: parentId, membershipVersion: 0, ...hosted.authority },
+        ...(hosted.viewer ? { decision: hosted.viewer } : {}),
+      };
     }
     if (hosted.kind === "space") throw new ApiError(404, "conversation_not_found", "Conversation not found");
     const automation = await durableObjectStubForWorkspace(
@@ -67,7 +87,7 @@ export class ConversationService {
     );
     const asAutomation = await automation.authority({ workspaceId: this.auth.workspaceId, parentId });
     if (asAutomation.exists) {
-      return { kind: "automation", id: parentId, membershipVersion: 0, ...asAutomation };
+      return { parent: { kind: "automation", id: parentId, membershipVersion: 0, ...asAutomation } };
     }
     throw new ApiError(404, "conversation_not_found", "Conversation not found");
   }
@@ -83,14 +103,20 @@ export class ConversationService {
    * conversation's list, and this is what carries the parent's decision down.
    */
   async authorizeViewer(parentId: string, substreamId = "0"): Promise<ResolvedConversationParent> {
-    const parent = await this.resolveParent(parentId);
-    const decision = await this.parentStub(parent).then((stub) => stub.authorizeViewer({
-      workspaceId: this.auth.workspaceId,
-      parentId,
+    const viewer: Omit<ConversationParentAuthorizeViewerRequest, "workspaceId" | "parentId"> = {
       userId: this.auth.userId,
       substreamId: asSubstreamId(substreamId),
-      ...(this.auth.role === null ? { requireGrantAuthority:true } : {}),
-    }));
+      ...(this.auth.role === null ? { requireGrantAuthority: true } : {}),
+    };
+    const resolved = await this.resolveParentFor(parentId, viewer);
+    const parent = resolved.parent;
+    // A hosted Channel answered in the resolve; a Sidekick parent is asked now.
+    const decision: ConversationParentAuthorizeViewerResult = resolved.decision
+      ?? await this.parentStub(parent).then((stub) => stub.authorizeViewer({
+        workspaceId: this.auth.workspaceId,
+        parentId,
+        ...viewer,
+      }));
     if (!decision.authorized) throw new ApiError(404, "conversation_not_found", "Conversation not found");
     if (parent.kind === "automation") {
       try {

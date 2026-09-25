@@ -241,11 +241,9 @@ describe("the shared Durable Object alarm list", () => {
         { phase: "recovery_rearm", alarmKind: undefined },
         { phase: "authority_check", alarmKind: undefined },
         { phase: "stored_target", alarmKind: "schedule_bootstrap" },
-        // Hosted Channel and Space parents run first: an outbox row is a
-        // directory update somebody is waiting on, and a pending import is a
-        // Channel nobody can open until it lands.
+        // Hosted parents' outbox runs first: a row there is a directory update
+        // somebody is waiting on.
         { phase: "parent_outbox", alarmKind: undefined },
-        { phase: "parent_import", alarmKind: undefined },
         { phase: "parent_breakouts", alarmKind: undefined },
         // The Space authority's three phases sit where the Project one used to,
         // before the sweep, for the same reason it did: each publishes onto the
@@ -256,6 +254,9 @@ describe("the shared Durable Object alarm list", () => {
         { phase: "space_intent_resume", alarmKind: undefined },
         { phase: "activity_reap", alarmKind: undefined },
         { phase: "schedule_reconcile", alarmKind: undefined },
+        // Background imports last: a page is up to one cold RPC per parent,
+        // and a Channel someone opens imports on that request instead.
+        { phase: "parent_import", alarmKind: undefined },
         { phase: "final_rearm", alarmKind: undefined },
       ]);
       expect(finished).toBe(1);
