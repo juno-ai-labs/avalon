@@ -583,14 +583,19 @@ export class SidekickDO extends ConversationParentDurableObject {
       const scope = latest.lifecycle === "draft" && latest.scope !== "workstream" && request.draft.suggestedScope !== "workstream"
         ? request.draft.suggestedScope
         : latest.scope;
+      // The appearance is written the way the title is, on every submission
+      // that carries one: the chat was told the current one and to keep it
+      // unless asked, so a submission's value is a choice, not a default.
       this.state.storage.sql.exec(
         `UPDATE automation
-            SET current_definition_revision = ?, title = ?, description = ?, scope = ?, updated_at = ?
+            SET current_definition_revision = ?, title = ?, description = ?, scope = ?,
+                appearance_json = COALESCE(?, appearance_json), updated_at = ?
           WHERE id = 1`,
         definitionRevision,
         request.draft.name,
         request.draft.description,
         scope,
+        request.appearance ? JSON.stringify(request.appearance) : null,
         now,
       );
       this.enqueueDirectory(now);

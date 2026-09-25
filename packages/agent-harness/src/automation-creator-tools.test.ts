@@ -1,5 +1,6 @@
 import { AutomationSetEvaluatorRulesInputV1Schema } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
+import type { z } from "zod";
 
 import {
   AUTOMATIONS_PLUGIN_ID,
@@ -27,6 +28,8 @@ function host(overrides: Partial<AutomationCreatorToolHost> = {}): AutomationCre
 const eventDrivenDraft = {
   name: "Report on new pages",
   description: "Report when a page is created.",
+  icon: "file-text",
+  color: "blue",
   overview: "Reports newly created pages.",
   instructions: "Report the page.",
   triggers: [{
@@ -153,7 +156,7 @@ describe("the automations plugin", () => {
   });
 
   it("hands the named automation to the host beside the draft, and never inside it", async () => {
-    const targets: Array<{ automationId: string | null }> = [];
+    const targets: Array<{ automationId: string | null; appearance: unknown }> = [];
     const drafts: unknown[] = [];
     const state = host({
       loadedPluginIds: new Set(["plugin_notion"]),
@@ -183,16 +186,31 @@ describe("the automations plugin", () => {
     await toolNamed(tools, "submit_draft")
       .execute({ ...eventDrivenDraft, sidekickId: "00000000-0000-4000-8000-000000000000" }, toolContext);
 
+    const appearance = { icon: "file-text", color: "blue" };
     expect(targets).toEqual([
-      { automationId: named },
-      { automationId: null },
-      { automationId: null },
-      { automationId: null },
-      { automationId: null },
+      { automationId: named, appearance },
+      { automationId: null, appearance },
+      { automationId: null, appearance },
+      { automationId: null, appearance },
+      { automationId: null, appearance },
     ]);
     // The draft is the definition an automation stores; the address it is
-    // stored at is not part of it.
+    // stored at, and the icon and colour it wears, are not part of it.
     expect(drafts.every((draft) => !("sidekickId" in (draft as object)))).toBe(true);
+    expect(drafts.every((draft) => !("icon" in (draft as object)) && !("color" in (draft as object)))).toBe(true);
+  });
+
+  it("refuses a draft with no icon or colour, naming both", async () => {
+    const tool = toolNamed(createAutomationsPlugin(host()).tools, "submit_draft");
+    const bare: Record<string, unknown> = { ...eventDrivenDraft };
+    delete bare.icon;
+    delete bare.color;
+    const issues = (tool.validateInput?.(bare) as z.ZodError | null)?.issues.map((issue) => issue.path.join("."));
+    expect(issues).toEqual(expect.arrayContaining(["icon", "color"]));
+    // A colour the picker no longer offers is not one a person could pick.
+    const retired = (tool.validateInput?.({ ...eventDrivenDraft, color: "gray" }) as z.ZodError | null)?.issues
+      .map((issue) => issue.path.join("."));
+    expect(retired).toEqual(["color"]);
   });
 
   it("preserves the existing Sidekick scope while explaining its authority", () => {
@@ -634,6 +652,8 @@ describe("set_evaluator_rules echoes the bindings the submitted draft declares",
   const partialDraft = {
     name: "Deploy watcher",
     description: "Watches deploys.",
+    icon: "file-text",
+    color: "blue",
     overview: "Watches deploys.",
     instructions: "Report the deploy.",
     triggers: [{
@@ -747,6 +767,8 @@ describe("a composed source binding key is enough on its own", () => {
   const composedDraft = {
     name: "Meeting recap emailer",
     description: "Emails a recap when a meeting is summarized.",
+    icon: "file-text",
+    color: "blue",
     overview: "Watches Fireflies and emails a recap.",
     instructions: "Read the summary and send a recap email.",
     triggers: [{

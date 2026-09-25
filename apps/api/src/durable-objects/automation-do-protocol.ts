@@ -4,6 +4,7 @@ import {
   AutomationSetEvaluatorRulesInputV1Schema,
   DemoSeedSchema,
   IdSchema,
+  PickedAppearanceSchema,
   UserIdSchema,
   WorkspaceExternalEventSchema,
   WorkspaceIdSchema,
@@ -55,6 +56,12 @@ export const AutomationSubmitDefinitionRequestSchema = z.strictObject({
   draft: AutomationDraftSchema,
   evaluatorRules: AutomationSetEvaluatorRulesInputV1Schema.nullable(),
   submittedByRunId: IdSchema.nullable(),
+  /**
+   * The icon and colour the setup chat chose, written over the stored ones.
+   * Optional because only the chat has to choose: a seeded or scripted
+   * definition leaves the appearance as it is.
+   */
+  appearance: PickedAppearanceSchema.optional(),
 });
 export type AutomationSubmitDefinitionRequest = z.infer<typeof AutomationSubmitDefinitionRequestSchema>;
 

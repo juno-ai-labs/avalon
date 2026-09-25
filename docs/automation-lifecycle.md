@@ -673,9 +673,21 @@ chat published a revision, and the page refetches its detail on it, so the icon
 travels the path that exists rather than a second one built for it. The sidebar
 tiles and the library list read the appearance straight off the pushed row.
 
+The setup chat chooses one too. `submit_draft` requires an `icon`, from the
+same catalog with the same drawing descriptions, and a `color` from the ring.
+Neither is part of the draft: the tool splits them off after one parse and they
+travel beside it to `saveDefinition`, which writes them to `appearance_json` in
+the same statement that writes the title. That is also how often they are
+written, on every submission, so `sidekicks_list` returns the current
+appearance and the field descriptions tell the chat to keep it unless the
+person asks for another. The RPC field is optional, so a seeded or scripted
+definition leaves the appearance alone.
+
 A Sidekick nobody has chosen for stores `NULL`, which is not the same as
 choosing the default: the glyph falls back to the mark derived from the
 Sidekick's id, exactly what every Sidekick showed before the picker existed.
+Since the chat chooses on its first submission, that now means a Sidekick
+created before this, or one that has never had a draft submitted.
 
 ## Invariants
 
@@ -930,6 +942,35 @@ Desktop and browser request management options only when their controls open, no
 on every transcript update.
 
 ## Changelog
+
+### 2026-09-25 — The setup chat chooses a Sidekick's icon and color
+
+**What changed:** `submit_draft` requires `icon` and `color`. The icon is an
+exact key from the Channel icon catalog, with each key's drawing description
+rendered into the field; the color is one of the fourteen ring colors the picker
+offers. They ride beside the draft, not inside it, and `submitDefinition`
+writes them to `automation.appearance_json` alongside the title.
+`sidekicks_list` now returns each Sidekick's current appearance.
+
+**Why:** The chat named a Sidekick but left its look to the id hash, so a new
+Sidekick's hexagon said nothing about what it does until somebody opened the
+picker. Channels already get a chosen icon from the naming pass; Sidekicks now
+choose from the same list, so Channels, Breakouts and Sidekicks share one icon
+library and one set of descriptions.
+
+**Considered and rejected:** Putting the two fields in `AutomationDraftSchema`.
+That schema also parses every stored revision, so a required field there would
+fail on every revision written before it, and the appearance is not part of a
+definition anyway: a person changes it from the picker without a revision.
+Writing only when nothing is stored, as the Channel naming pass does, was also
+rejected: that pass has no person's intent behind it, while the chat does, and
+"make it red" has to work. No fallback icon is named to the chat; the catalog
+carries descriptions only.
+
+**Consequences:** A submission rewrites a person's hand-picked appearance if
+the chat does not repeat it. That rests on the chat reading `sidekicks_list`
+first, as it already must before revising. Adding an icon key means adding its
+description, which the exhaustive `Record` already enforces.
 
 ### 2026-09-22 — Empty rooms keep the Sidekicks heading
 
