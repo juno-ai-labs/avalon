@@ -1308,47 +1308,6 @@ describe("WorkspaceDO space authority", () => {
     })).toMatchObject({ rows: [{ state: "active", generation: 1 }] });
   });
 
-  it("given a staged move, when another actor tries to cancel it, then the durable owner fence refuses", async () => {
-    const source = await reserve("Source", "workspace");
-    const target = await reserve("Target", "workspace");
-    await publishChannel(CHANNEL_A, null);
-    await place(source, CHANNEL_A);
-    const plan = await workspace().prepareSpaceMembershipMove({
-      workspaceId: WORKSPACE_ID,
-      userId: OWNER,
-      sourceSpaceId: source,
-      targetSpaceId: target,
-      workstreamId: CHANNEL_A,
-    });
-    if (!plan.ok || !plan.equivalentAudience) throw new Error("move was not staged");
-    const settle = {
-      workspaceId: WORKSPACE_ID,
-      userId: OWNER,
-      sourceSpaceId: source,
-      targetSpaceId: target,
-      workstreamId: CHANNEL_A,
-      operationId: plan.operationId,
-      sourceSpaceRevision: plan.source.revision,
-      sourceMembershipGeneration: plan.sourceMembershipGeneration,
-      targetSpaceRevision: plan.target.revision,
-      targetMembershipGeneration: plan.targetMembershipGeneration,
-    };
-
-    await expect(workspace().cancelSpaceMembershipMove({ ...settle, userId: MEMBER }))
-      .resolves.toEqual({ cancelled: false });
-    expect(await workspace().runInspectionSql({
-      sql: "SELECT state FROM space_intents WHERE operation_id = ?",
-      bindings: [plan.operationId],
-    })).toMatchObject({ rows: [{ state: "pending" }] });
-
-    await expect(workspace().cancelSpaceMembershipMove(settle))
-      .resolves.toEqual({ cancelled: true });
-    expect(await workspace().runInspectionSql({
-      sql: "SELECT state FROM space_intents WHERE operation_id = ?",
-      bindings: [plan.operationId],
-    })).toMatchObject({ rows: [{ state: "cancelled" }] });
-  });
-
   it("given a prepared move whose actor loses target reach, when it finalizes, then the intent still completes", async () => {
     const source = await reserve("Source", "personal");
     const target = await reserve("Target", "personal");
