@@ -6,7 +6,7 @@ import { env } from "cloudflare:workers";
 import { reset, runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
 import { beforeEach, expect, it, vi } from "vitest";
 import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
-import type { ScopeGrantTarget } from "@rally/contracts/scope-grants";
+import { WorkspaceRelationshipSchema, type ScopeGrantTarget } from "@rally/contracts/scope-grants";
 import { ScopeInvitationStorage } from "../src/durable-objects/scope-invitation-storage";
 import { decryptString } from "../src/lib/crypto";
 import { openScopeInvitationCredential } from "../src/services/scope-invitation-link";
@@ -14,6 +14,7 @@ import { BrowserSessionService } from "../src/services/browser-session-service";
 import { openEmailLoginSecret } from "../src/services/email-login-service";
 import { promoteWorkspaceGuest } from "../src/services/workspace-relationship-service";
 import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
+import { changeRelationships } from "./helpers/workspace-relationship-events";
 import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
 import { conversationObjectName } from "../src/durable-objects/names";
 import { boot, seedParticipantMessage, seedOpenWorkstreamAuthority, seedWorkstreamRoot } from "./helpers/substream-fixture";
@@ -143,7 +144,7 @@ it("never restores a revoked grant or a removed membership when acceptance is re
   });
   expect(await room().acceptScopeInvitation(request)).toEqual(accepted);
   expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: false });
-  await env.DB.prepare("DELETE FROM workspace_members WHERE user_id=?").bind(recipientId).run();
+  await changeRelationships(env, workspaceId, [recipientId], env.DB.prepare("DELETE FROM workspace_members WHERE user_id=?").bind(recipientId));
   expect(await room().acceptScopeInvitation(request)).toMatchObject({ status: "denied", reason: "relationship_required" });
   expect(await env.DB.prepare("SELECT 1 FROM workspace_members WHERE user_id=?").bind(recipientId).first()).toBeNull();
 });
@@ -181,7 +182,7 @@ it("does not use an invitation after the sharer's membership is replaced", async
   const request = await create();
   expect(await room().describeScopeInvitation({ workspaceId, parentId, invitationId: request.invitationId, token: request.token }))
     .toMatchObject({ status: "ready" });
-  await env.DB.prepare("UPDATE workspace_members SET incarnation='replacement' WHERE user_id=?").bind(actorId).run();
+  await changeRelationships(env, workspaceId, [actorId], env.DB.prepare("UPDATE workspace_members SET incarnation='replacement' WHERE user_id=?").bind(actorId));
   expect(await room().acceptScopeInvitation(request)).toMatchObject({ status: "denied", reason: "sharing_required" });
   // The preview goes with it. It answers what acceptance would answer, or it is
   // a mailbox oracle: a name for an invitation nobody can accept any more, and
@@ -609,7 +610,7 @@ it("lists invitation summaries only when the actor can share every target", asyn
   if (childOnly.status !== "created") throw new Error("expected invitation");
   expect(await room().listScopeInvitations(request)).toEqual({ status: "ready", invitations: childOnly.invitations });
   expect(await room().listScopeInvitations({ actorUserId: actorId, target: main })).toEqual({ status: "denied", reason: "sharing_required" });
-  await env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(actorId).run();
+  await changeRelationships(env, workspaceId, [actorId], env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(actorId));
   expect(await room().listScopeInvitations(request)).toEqual({ status: "denied", reason: "sharing_required" });
 });
 
@@ -684,7 +685,7 @@ it("manages accepted grants by exact scope and preserves later shares on retry",
   expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: true });
   expect(await room().mutateScopeGrant({ ...request, operationId: crypto.randomUUID(), actorUserId: actorId, active: false }))
     .toMatchObject({ status: "conflict" });
-  await env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(actorId).run();
+  await changeRelationships(env, workspaceId, [actorId], env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(actorId));
   expect(await room().listManagedScopeGrants({ actorUserId: actorId, target: child }))
     .toEqual({ status: "denied", reason: "sharing_required" });
 });
@@ -724,6 +725,13 @@ it("rechecks management authority after profile reads interleave with suspension
       try {
         await reading;
         await original.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(actorId).run();
+        // The suspension's relationship event reaches the object while the
+        // listing is still waiting on its profile read.
+        const suspended = await original.prepare(`SELECT workspace_id AS workspaceId, user_id AS userId,
+          access_class AS accessClass, role, status, incarnation, revision FROM workspace_members WHERE user_id = ?`)
+          .bind(actorId).first();
+        expect(await instance.applyMemberStatus({ workspaceId, sequence: 1, removed: false,
+          relationship: WorkspaceRelationshipSchema.parse(suspended) })).toEqual({ applied: true });
       } finally { release(); }
       expect(await listing).toEqual({ status: "denied", reason: "sharing_required" });
     } finally { target.env = originalEnv; }
