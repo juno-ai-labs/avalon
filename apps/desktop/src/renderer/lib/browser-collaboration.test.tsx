@@ -145,13 +145,17 @@ it('groups a guest’s authorized Channels by Space and opens the shared Breakou
   } finally { view.unmount(); }
 });
 
-it('keeps an authorized Channel reachable when no visible Space contains it', async () => {
+it('keeps authorized Channels reachable when no visible Space contains them', async () => {
   fetchHandler = async (input: string) => {
     const path = new URL(String(input), 'http://localhost').pathname;
     if (path.endsWith('/sharing/navigation')) return Response.json({
       spaces: [],
-      workstreams: [{ parentId: parent, title: 'Channel Alpha', scope: 'personal', archived: false,
-        conversations: [{ substreamId: child, title: 'Breakout Alpha', scope: 'personal', archived: false }] }],
+      workstreams: [
+        { parentId: parent, title: 'Channel Alpha', scope: 'personal', archived: false,
+          conversations: [{ substreamId: child, title: 'Breakout Alpha', scope: 'personal', archived: false }] },
+        { parentId: otherParent, title: 'Channel Beta', scope: 'workspace', archived: false,
+          conversations: [{ substreamId: otherChild, title: 'Breakout Beta', scope: 'workspace', archived: false }] },
+      ],
     });
     return Response.json({ error: { message: `Unexpected request: ${path}` } }, { status: 404 });
   };
@@ -159,9 +163,35 @@ it('keeps an authorized Channel reachable when no visible Space contains it', as
   const session = cookieClientSession('global', { user, workspace, expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
   const view = render(<BrowserConversation session={session} onSignOut={vi.fn()} />);
   try {
-    expect(await screen.findByRole('button', { name: 'Shared channels' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByText('1 channel')).toBeVisible();
+    expect(await screen.findByRole('link', { name: 'Channel Alpha' })).toHaveAttribute('aria-description', 'Private channel');
+    expect(screen.getByRole('link', { name: 'Channel Beta' })).toHaveAttribute('aria-description', 'Public channel');
+    // The Shared channels group is the only Space row, so its rail is hidden
+    // and the Channels rail names it instead.
+    expect(screen.queryByRole('complementary', { name: 'Spaces sidebar' })).not.toBeInTheDocument();
+    expect(screen.getByRole('complementary', { name: 'Rally navigation' })).toHaveTextContent('Shared channels');
     expect(screen.queryByText(/Associated/u)).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Channel Alpha' })).toHaveAttribute('aria-description', 'Private channel');
+  } finally { view.unmount(); }
+});
+
+it('opens a lone Channel with no hierarchy rails and keeps the account menu reachable', async () => {
+  fetchHandler = async (input: string) => {
+    const path = new URL(String(input), 'http://localhost').pathname;
+    if (path.endsWith('/sharing/navigation')) return Response.json({
+      spaces: [],
+      workstreams: [{ parentId: parent, title: 'Channel Alpha', scope: 'personal', archived: true,
+        conversations: [{ substreamId: child, title: 'Breakout Alpha', scope: 'personal', archived: true }] }],
+    });
+    return Response.json({ error: { message: `Unexpected request: ${path}` } }, { status: 404 });
+  };
+  history.replaceState(null, '', `/app/workspaces/global/${workspace.id}`);
+  const session = cookieClientSession('global', { user, workspace, expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
+  const view = render(<BrowserConversation session={session} onSignOut={vi.fn()} />);
+  try {
+    // An archived Channel mounts no Breakout rail, the other home for the menu.
+    expect(await screen.findByRole('heading', { name: 'Archived channel' })).toBeVisible();
+    expect(location.pathname).toBe(`/app/workspaces/global/${workspace.id}/workstreams/${parent}/substreams/${child}`);
+    expect(screen.queryByRole('complementary', { name: 'Spaces sidebar' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('complementary', { name: 'Rally navigation' })).not.toBeInTheDocument();
+    expect(view.container.querySelector('.browser-account-fallback')).toHaveTextContent('Design team');
   } finally { view.unmount(); }
 });

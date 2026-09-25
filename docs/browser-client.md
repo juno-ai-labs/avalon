@@ -148,6 +148,12 @@ It holds one workspace socket per tab, through `watchWorkspaceReach`, and reads
 the shared navigation again when that socket reports this person's reach
 changed ([`realtime-sockets.md`](realtime-sockets.md)).
 
+A rail that would list exactly one row is hidden: one Space hides the Spaces
+rail, one Channel the Channels rail. The account menu moves to the next rail
+inward, and with both hidden it also floats at the bottom left for when no
+Breakout rail is mounted. With both hidden, the lone Channel opens directly.
+Both rails stay while the directory is loading, failed or empty.
+
 ### Shared collaboration transport
 
 `ClientSession` holds identity/workspace presentation without credentials.
@@ -396,6 +402,25 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-09-25 — Rails with one row are hidden
+
+**What changed:** The Spaces rail is hidden when the directory holds one Space,
+and the Channels rail when it holds one Channel. The account menu moves to the
+next rail inward, and with neither outer rail the lone Channel opens directly.
+
+**Why:** Most browser visitors are guests shared into one Channel. For them the
+two outer rails each held a single row and took width from the conversation for no choice.
+
+**Considered and rejected:** Hiding the rails while the directory loads. It
+avoids a shift for guests, but moves the loading and error text nowhere and
+makes multi-Space members watch rails slide in; the existing width transition
+already softens the shift the other way.
+
+**Consequences:** With both outer rails hidden the account menu has two homes:
+the Breakout rail footer, and a floating copy for when that rail is not mounted
+(an archived, loading or failed Channel). The Breakout rail gained an optional
+`footerLeading` slot for this, which desktop does not use.
 
 ### 2026-09-24 — The sidebar follows grants without focus
 
