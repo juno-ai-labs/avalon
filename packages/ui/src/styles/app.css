@@ -1728,7 +1728,7 @@ pre {
 .skeleton-section-label { animation: skeleton-pulse 1.5s ease-in-out infinite; height: 8px; margin-block: 5px; width: 16ch; }
 /* A participants row: overlapping small avatars, as `AvatarStack` draws. */
 .skeleton-avatar-stack { display: inline-flex; }
-.skeleton-avatar-stack > .skeleton-bar { border: 2px solid var(--av-sys-color-surface-default); border-radius: 50%; box-sizing: content-box; height: 24px; width: 24px; }
+.skeleton-avatar-stack > .skeleton-bar { border: 2px solid var(--av-sys-color-surface-default); border-radius: 50%; height: 24px; width: 24px; }
 .skeleton-avatar-stack > .skeleton-bar + .skeleton-bar { margin-left: -7px; }
 /* Compact, the settled stack is limited to two, shrinks, overlaps further and
    is centred in the rail; the placeholder takes the same geometry. */

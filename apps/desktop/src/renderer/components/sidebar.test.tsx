@@ -1056,6 +1056,9 @@ describe('Sidebar channel markers', () => {
     // The Channel rail is headed by its Space's placeholder, never New.
     expect(container.querySelector('.channels-sidebar .skeleton-title-header')).not.toBeNull();
     expect(container.querySelector('.channels-sidebar .sidebar-titlebar .sidebar-new-button')).toBeNull();
+    // The mobile close control stays reachable while the Space loads.
+    expect(within(container.querySelector<HTMLElement>('.channels-sidebar .skeleton-title-header')!)
+      .getByRole('button', { name: 'Close navigation' })).toBeInTheDocument();
     // Said once for the whole wait, not once per section and not once per row.
     expect(screen.getAllByRole('status')).toHaveLength(1);
     expect(screen.getByText('Loading your spaces and channels')).toBeInTheDocument();
