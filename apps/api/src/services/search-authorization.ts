@@ -27,6 +27,19 @@ export async function searchAuthorizationKey(subject: AuthorizationSubject, reso
   return `search-authz:v1:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 }
 
+/**
+ * What a reader of a published decision acts on: the outcome and the owner
+ * revisions behind it. Receipt times, the generation and job timing are left
+ * out, so a push that re-derives the same decision matches what KV already holds.
+ */
+export function searchDecisionFingerprint(decision: AuthorizationDecision) {
+  const evidence = decision.status === 'unavailable' ? [] : decision.evidence;
+  return JSON.stringify([{ ...decision, evidence: undefined }, evidence.map((item) => [item.owner, item.revision])]);
+}
+
+type PublicationStats = { written: number; unchanged: number; superseded: number; kvWriteMs: number };
+type ProjectionStats = PublicationStats & { resolveMs: number };
+
 /** Work a request hands past its own response, typically `ExecutionContext.waitUntil`. */
 export type DeferredWork = (work: Promise<unknown>) => void;
 
@@ -41,21 +54,37 @@ export class SearchAuthorizationResolver implements AuthorizationResolver {
     private readonly defer?: DeferredWork) {}
 
   private async write(snapshots: z.infer<typeof SearchAuthorizationSnapshotSchema>[]) {
-    if (!snapshots.length) return { written: 0, superseded: 0, kvWriteMs: 0 };
+    if (!snapshots.length) return { written: 0, unchanged: 0, superseded: 0, kvWriteMs: 0 };
     return (await authorizationWorkspace(this.env, snapshots[0]!.subject.workspaceId)).writeSearchAuthorizationSnapshots(snapshots);
   }
 
-  async project(subject: AuthorizationSubject, resources: readonly AuthorizationResource[], stats?: { written: number; superseded: number; kvWriteMs: number; resolveMs: number }, timing?: z.infer<typeof SearchAuthorizationTimingSchema>) {
+  /**
+   * Resolve and publish decisions. A push claims every key it is given. A
+   * search fill claims only keys nobody registered yet: a registered key
+   * already belongs to a push, which retries on its own, so a fill that took
+   * it over could drop that push's write and then fail with no retry behind it.
+   */
+  async project(subject: AuthorizationSubject, resources: readonly AuthorizationResource[], options: {
+    stats?: ProjectionStats; timing?: z.infer<typeof SearchAuthorizationTimingSchema>; claim?: 'all' | 'unregistered';
+  } = {}) {
+    const { stats, timing } = options;
     const startedAt = Date.now();
-    const generations = await (await authorizationWorkspace(this.env, subject.workspaceId)).registerSearchAuthorization({ subject, resources });
+    const generations = await (await authorizationWorkspace(this.env, subject.workspaceId)).registerSearchAuthorization({
+      subject, resources, ...(options.claim === 'unregistered' ? { unregisteredOnly: true } : {}) });
     const observedAt = Date.now();
     const decisions = await this.authority.checkMany(subject, resources);
     // An unavailable owner does not revoke an existing projected decision.
     if (stats) stats.resolveMs += Date.now() - startedAt;
-    const publication = await this.write(decisions.flatMap((decision, index) => decision.status === 'unavailable' ? [] : [{
-      version: 1 as const, generation: generations[index]!, ...(timing ? { timing } : {}), subject, resource: resources[index]!, decision, observedAt,
-    }]));
-    if (stats) { stats.written += publication.written; stats.superseded += publication.superseded; stats.kvWriteMs += publication.kvWriteMs; }
+    const publication = await this.write(decisions.flatMap((decision, index) => {
+      const generation = generations[index];
+      return decision.status === 'unavailable' || generation === null || generation === undefined ? [] : [{
+        version: 1 as const, generation, ...(timing ? { timing } : {}), subject, resource: resources[index]!, decision, observedAt,
+      }];
+    }));
+    if (stats) {
+      stats.written += publication.written; stats.unchanged += publication.unchanged;
+      stats.superseded += publication.superseded; stats.kvWriteMs += publication.kvWriteMs;
+    }
     return decisions;
   }
 
@@ -97,7 +126,8 @@ export class SearchAuthorizationResolver implements AuthorizationResolver {
           // so the next search reads it there instead of missing again. A
           // failed put is already queued for retry by the object.
           const republish = stored.filter((snapshot) => snapshot !== null);
-          if (republish.length) await workspace.writeSearchAuthorizationSnapshots(republish).catch(() => undefined);
+          // KV missed, so it lacks the decision whatever the object last recorded.
+          if (republish.length) await workspace.writeSearchAuthorizationSnapshots(republish, { republish: true }).catch(() => undefined);
         } catch {
           // An unavailable projection store must not trigger a more expensive authority walk.
           for (const index of pending) resolved.set(index, unavailable());
@@ -106,7 +136,7 @@ export class SearchAuthorizationResolver implements AuthorizationResolver {
       }
       if (pending.length) {
         try {
-          const loaded = await this.project(subject, pending.map((index) => resources[index]!));
+          const loaded = await this.project(subject, pending.map((index) => resources[index]!), { claim: 'unregistered' });
           pending.forEach((index, offset) => resolved.set(index, loaded[offset]!));
         } catch { for (const index of pending) resolved.set(index, unavailable()); }
       }
@@ -137,7 +167,7 @@ export function createSearchAccessContext(env: Env, auth: AuthContext, defer?: D
 export async function pushSearchAuthorization(env: Env, job: z.infer<typeof SearchAuthorizationPushJobSchema>, attempt = 1) {
   if (job.region !== env.AVALON_REGION) throw new Error('search_authorization_region_mismatch');
   const startedAt = Date.now();
-  const stats = { written: 0, superseded: 0, kvWriteMs: 0, resolveMs: 0 };
+  const stats: ProjectionStats = { written: 0, unchanged: 0, superseded: 0, kvWriteMs: 0, resolveMs: 0 };
   let selected = 0;
   let registered = 0;
   let selectionMs = 0;
@@ -163,12 +193,13 @@ export async function pushSearchAuthorization(env: Env, job: z.infer<typeof Sear
     let failure: unknown;
     for (const { subject, resources } of subjects.values()) {
       try {
-        const decisions = await new SearchAuthorizationResolver(env).project(subject, resources, stats, job.timing);
+        const decisions = await new SearchAuthorizationResolver(env).project(subject, resources, { stats, ...(job.timing ? { timing: job.timing } : {}) });
         if (decisions.some((decision) => decision.status === 'unavailable')) failure = new Error('search_authorization_push_unavailable');
       } catch (error) { failure = error; }
     }
-    // A newer attempt may itself fail before publication; do not retire the mutation's retry intent.
-    if (stats.superseded > 0) failure ??= new Error('search_authorization_push_superseded');
+    // A superseded key belongs to a newer push, which read owners later and
+    // retries its own failures. Only pushes claim registered keys, so
+    // retrying here would only take the key back and supersede that push.
     if (failure) throw failure;
     outcome = selected === 0 ? 'no_registered_keys' : 'completed';
   } catch (error) {
@@ -185,7 +216,7 @@ export async function pushSearchAuthorization(env: Env, job: z.infer<typeof Sear
       outbox_ms: job.timing ? job.timing.enqueuedAt - job.timing.mutationAt : null,
       queue_ms: job.timing ? startedAt - job.timing.enqueuedAt : null,
       duration_ms: completedAt - startedAt, selection_ms: selectionMs, resolve_ms: stats.resolveMs,
-      kv_write_ms: stats.kvWriteMs, registered_keys: registered, selected_keys: selected, written_keys: stats.written, superseded_keys: stats.superseded };
+      kv_write_ms: stats.kvWriteMs, registered_keys: registered, selected_keys: selected, written_keys: stats.written, unchanged_keys: stats.unchanged, superseded_keys: stats.superseded };
     if (outcome === 'failed') logWarn(env, 'authz_push_timing', fields);
     else logInfo(env, 'authz_push_timing', fields);
   }
