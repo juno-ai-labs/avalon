@@ -3,7 +3,8 @@
  *
  * Seeding writes through the room objects, and what a presenter sees — the
  * sidebar, the mention badge, the home screen's "waiting for you" — is a
- * projection that arrives later, through two Queue hops. Ready is therefore not
+ * projection that arrives later, through the effect Queue: one hop for a room,
+ * whose parent the Organization object hosts, and two for a Sidekick. Ready is therefore not
  * "the seeder finished": it is "every intended viewer's projection matches the
  * pack". This module states what should match and reads whether it does.
  *

@@ -345,6 +345,7 @@ import {
   workspaceDigestTerminalContext,
 } from "./workspace-digests-storage";
 import {
+  MAX_DIRECTORY_APPLY_ENVELOPES,
   WorkspaceDirectoryApplyRequestSchema,
   WorkspaceAttentionRequestSchema,
   WorkspaceDirectoryBatchTargetsRequestSchema,
@@ -4733,11 +4734,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         });
       }
     };
-    await deliver(directory, async () => {
-      const result = await this.applyWorkstreamDirectoryEffects({ workspaceId, envelopes: directory });
-      const accepted = new Set(result.accepted.map((entry) => `${entry.messageId}:${entry.payloadHash}`));
-      return directory.filter((envelope) => accepted.has(`${envelope.messageId}:${envelope.payloadHash}`));
-    });
+    // One apply accepts at most MAX_DIRECTORY_APPLY_ENVELOPES, and a burst can
+    // leave more due than that. The chunks keep the common-before-user order.
+    for (let start = 0; start < directory.length; start += MAX_DIRECTORY_APPLY_ENVELOPES) {
+      const chunk = directory.slice(start, start + MAX_DIRECTORY_APPLY_ENVELOPES);
+      await deliver(chunk, async () => {
+        const result = await this.applyWorkstreamDirectoryEffects({ workspaceId, envelopes: chunk });
+        const accepted = new Set(result.accepted.map((entry) => `${entry.messageId}:${entry.payloadHash}`));
+        return chunk.filter((envelope) => accepted.has(`${envelope.messageId}:${envelope.payloadHash}`));
+      });
+    }
     await deliver(grants, async () => {
       for (const envelope of grants) {
         await this.applyScopeGrantDirectory(envelope);
