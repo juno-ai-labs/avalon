@@ -87,8 +87,8 @@ describe('desktop realtime socket adapter', () => {
     const firstId = crypto.randomUUID();
     const secondId = crypto.randomUUID();
     const shared = {
-      kind: 'workstream_control' as const,
-      url: 'wss://api.rallywith.ai/socket/workstreams/00000000-0000-7000-8000-000000000001',
+      kind: 'substream_feed' as const,
+      url: 'wss://api.rallywith.ai/socket/conversations/00000000-0000-7000-8000-000000000001/0',
       protocols: ['rally.ticket.v1', 't'.repeat(40)] as [string, string],
     };
     const first = createBrokeredRealtimeSocket(bridge, { ...shared, socketId: firstId });
@@ -152,8 +152,8 @@ describe('desktop realtime socket adapter', () => {
     } satisfies RealtimeSocketBridge;
     const input = {
       socketId: crypto.randomUUID(),
-      kind: 'workstream_control' as const,
-      url: 'wss://api.rallywith.ai/socket/workstreams/00000000-0000-7000-8000-000000000001',
+      kind: 'substream_feed' as const,
+      url: 'wss://api.rallywith.ai/socket/conversations/00000000-0000-7000-8000-000000000001/0',
       protocols: ['rally.ticket.v1', 't'.repeat(40)] as [string, string],
     };
     const invalidCode = createBrokeredRealtimeSocket(bridge, input);

@@ -202,8 +202,8 @@ arrangement is shared. `Alt`+`ArrowUp` / `Alt`+`ArrowDown` on a focused pinned r
 it one step, and each row announces its position to a screen reader, so the
 order is not reachable by pointer alone. Plain arrows are left to move focus.
 
-In Electron, every pinned row also keeps its Channel control socket and
-substream `0` feed socket proactively connected. It joins the active work
+In Electron, every pinned row also keeps its substream `0` feed socket
+proactively connected. It joins the active work
 stream, the five most recently active unpinned rows, and any running work stream
 in the socket pool; pin order does not sequence their handshakes. WorkspaceDO
 supplements the first 250-row recent page with every visible running row, so an

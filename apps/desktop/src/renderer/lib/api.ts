@@ -2111,21 +2111,6 @@ export class RallyApi {
     );
   }
 
-  getWorkstreamControlSocketTicket(
-    id: string,
-    requestId?: string,
-    signal?: AbortSignal,
-  ): Promise<SocketTicket> {
-    return requestSocketTicket(
-      (attemptSignal) => this.request(`/workstreams/${encodeURIComponent(id)}/control-socket`, {
-        schema: this.socketSchema,
-        signal: attemptSignal,
-        ...(requestId ? { requestId } : {}),
-      }),
-      { ownerSignal: signal },
-    );
-  }
-
   async getTranscriptionSocketTicket(signal?: AbortSignal): Promise<SocketTicket> {
     signal?.throwIfAborted();
     const request = this.request('/realtime/transcription/socket', { schema: this.socketSchema, signal });

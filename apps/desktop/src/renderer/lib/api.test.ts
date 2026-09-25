@@ -1185,7 +1185,6 @@ describe('socket ticket transport', () => {
     const api = new RallyApi('https://api.rally.test', session);
     const tickets = [
       api.getWorkspaceSocketTicket(),
-      api.getWorkstreamControlSocketTicket(workstreamId),
       api.getSocketTicket(workstreamId),
     ];
     const rejections = tickets.map((ticket) => expect(ticket).rejects.toMatchObject({
@@ -1196,7 +1195,7 @@ describe('socket ticket transport', () => {
     await vi.advanceTimersByTimeAsync(SOCKET_TICKET_REQUEST_TIMEOUT_MS);
 
     await Promise.all(rejections);
-    expect(signals).toHaveLength(3);
+    expect(signals).toHaveLength(2);
     expect(signals.every((signal) => signal.aborted)).toBe(true);
     expect(signals.every((signal) => signal.reason instanceof DOMException
       && signal.reason.name === 'AbortError')).toBe(true);
@@ -1296,25 +1295,6 @@ describe('socket ticket transport', () => {
     });
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/workspace/socket');
   });
-
-  it('requests a WorkstreamDO control socket ticket separately from its breakout feed', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      void input;
-      return json({
-        url: `wss://api.rally.test/socket/workstreams/${workstreamId}?ticket=control-ticket`,
-        ticket: 'control-ticket',
-      });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const api = new RallyApi('https://api.rally.test', session);
-
-    await expect(api.getWorkstreamControlSocketTicket(workstreamId)).resolves.toEqual({
-      url: `wss://api.rally.test/socket/workstreams/${workstreamId}`,
-      ticket: 'control-ticket',
-      protocols: socketTicketProtocols('control-ticket'),
-    });
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(`/workstreams/${workstreamId}/control-socket`);
-  });
 });
 
 describe('request correlation', () => {
@@ -1361,28 +1341,26 @@ describe('request correlation', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       sent.push(init);
       urls.push(String(input));
-      return String(input).endsWith('/control-socket')
-        ? json({ url: 'wss://api.rally.test/control', ticket: 'ticket' })
+      return String(input).endsWith('/socket')
+        ? json({ url: `wss://api.rally.test/socket/conversations/${workstreamId}/0`, ticket: 'ticket' })
         : json(detail);
     }));
     const api = new RallyApi('https://api.rally.test', session);
 
     await api.getConversation(workstreamId, undefined, 'feed-visible-operation');
-    await api.getWorkstreamControlSocketTicket(workstreamId, 'control-start-operation');
+    await api.getSocketTicket(workstreamId, '0', 'feed-start-operation');
 
     const requestIds = sent.map((init) => new Headers(init?.headers).get('x-request-id'));
     expect(requestIds[0]).toMatch(/^[A-Za-z0-9._:-]{1,100}$/u);
     expect(requestIds[0]).not.toBe('feed-visible-operation');
-    expect(requestIds[1]).toBe('control-start-operation');
+    expect(requestIds[1]).toBe('feed-start-operation');
     expect(sent.map((init) => new Headers(init?.headers).get('x-rally-operation-id'))).toEqual([
       'feed-visible-operation',
       null,
     ]);
-    // The boot moved to the parent-agnostic route; the control socket did not,
-    // because only a work stream has one.
     expect(urls).toEqual([
       `https://api.rally.test/conversations/${workstreamId}`,
-      `https://api.rally.test/workstreams/${workstreamId}/control-socket`,
+      `https://api.rally.test/conversations/${workstreamId}/substreams/0/socket`,
     ]);
   });
 });

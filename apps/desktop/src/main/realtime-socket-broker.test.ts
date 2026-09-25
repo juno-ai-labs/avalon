@@ -24,14 +24,12 @@ const socketId = '00000000-0000-4000-8000-000000000002';
 const ticket = 't'.repeat(40);
 
 function openInput(
-  kind: DesktopRealtimeSocketOpenInput['kind'] = 'workstream_control',
+  kind: DesktopRealtimeSocketOpenInput['kind'] = 'substream_feed',
 ): DesktopRealtimeSocketOpenInput {
   return {
     socketId,
     kind,
-    url: kind === 'workstream_control'
-      ? `wss://api.rallywith.ai/socket/workstreams/${workstreamId}`
-      : `wss://api.rallywith.ai/socket/conversations/${workstreamId}/0`,
+    url: `wss://api.rallywith.ai/socket/conversations/${workstreamId}/0`,
     protocols: ['rally.ticket.v1', ticket],
   };
 }
@@ -75,18 +73,23 @@ describe('realtimeSocketTargetAllowed', () => {
 
   it('allows only the declared channel socket shape on configured regional origins', () => {
     expect(realtimeSocketTargetAllowed(openInput(), apiBaseUrls)).toBe(true);
-    expect(realtimeSocketTargetAllowed(openInput('substream_feed'), apiBaseUrls)).toBe(true);
     expect(realtimeSocketTargetAllowed({
       ...openInput(),
-      url: `wss://attacker.example/socket/workstreams/${workstreamId}`,
+      url: `wss://attacker.example/socket/conversations/${workstreamId}/0`,
     }, apiBaseUrls)).toBe(false);
     expect(realtimeSocketTargetAllowed({
       ...openInput(),
       url: `${openInput().url}?ticket=leaked`,
     }, apiBaseUrls)).toBe(true);
+    // The retired Channel control socket, under either kind name.
     expect(realtimeSocketTargetAllowed({
-      ...openInput('substream_feed'),
-      kind: 'workstream_control',
+      ...openInput(),
+      url: `wss://api.rallywith.ai/socket/workstreams/${workstreamId}`,
+    }, apiBaseUrls)).toBe(false);
+    expect(realtimeSocketTargetAllowed({
+      ...openInput(),
+      kind: 'workstream_control' as DesktopRealtimeSocketOpenInput['kind'],
+      url: `wss://api.rallywith.ai/socket/workstreams/${workstreamId}`,
     }, apiBaseUrls)).toBe(false);
     expect(realtimeSocketTargetAllowed({
       ...openInput(),
@@ -94,7 +97,7 @@ describe('realtimeSocketTargetAllowed', () => {
     }, apiBaseUrls)).toBe(false);
   });
 
-  it.each(['workstream_control', 'substream_feed'] as const)('ignores query configuration for %s', (kind) => {
+  it.each(['substream_feed'] as const)('ignores query configuration for %s', (kind) => {
     for (const query of ['workstreamAppearance=1', 'futureFeature=1', 'ticket=legacy']) {
       expect(realtimeSocketTargetAllowed({ ...openInput(kind), url: `${openInput(kind).url}?${query}` }, apiBaseUrls)).toBe(true);
     }

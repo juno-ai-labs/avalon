@@ -652,7 +652,14 @@ export class WorkspaceSocketService {
   }
 }
 
-/** Edge authentication and regional routing for one Channel's control socket, served by its hosted parent. */
+/**
+ * Edge authentication and regional routing for one Channel's control socket,
+ * served by its hosted parent.
+ *
+ * Retired for the current desktop, which reads a Channel's state from its row
+ * on the workspace socket. Kept for desktops released before that and for the
+ * iOS client; `docs/hosted-conversation-parents.md` says when it can go.
+ */
 export class WorkstreamControlSocketService {
   constructor(private readonly env: Env) {}
 
