@@ -1,6 +1,8 @@
 import {
+  parseSidekickLinkPathTarget,
   parseSpaceLinkPathTarget,
   parseWorkstreamLinkPathTarget,
+  sidekickDeepLink,
   spaceDeepLink,
   workstreamDeepLinkFromParsedTarget,
   type ParsedWorkstreamLinkTarget,
@@ -27,7 +29,8 @@ function initializeWorkstreamHandoff(): void {
 
   const workstreamTarget = parseWorkstreamLinkPathTarget(window.location.pathname);
   const spaceTarget = parseSpaceLinkPathTarget(window.location.pathname);
-  if (!workstreamTarget && !spaceTarget) {
+  const sidekickTarget = parseSidekickLinkPathTarget(window.location.pathname);
+  if (!workstreamTarget && !spaceTarget && !sidekickTarget) {
     reportDesktopHandoff('workstream', 'presented', 'invalid');
     button.setAttribute('hidden', '');
     help?.setAttribute('hidden', '');
@@ -39,18 +42,19 @@ function initializeWorkstreamHandoff(): void {
 
   reportDesktopHandoff('workstream', 'presented', 'valid');
 
-  const kind = spaceTarget ? 'Space' : workstreamTarget?.substreamId ? 'Breakout' : 'Channel';
+  const kind = spaceTarget ? 'Space' : sidekickTarget ? 'Sidekick' : workstreamTarget?.substreamId ? 'Breakout' : 'Channel';
   document.title = `Open ${kind.toLowerCase()} in Rally`;
   if (kindLabel) kindLabel.textContent = kind;
   if (title) title.textContent = `Opening this ${kind.toLowerCase()} in Rally`;
   if (status) status.textContent = `This ${kind.toLowerCase()} opens with your existing Rally session and organization permissions.`;
 
-  // iOS has Channel and Breakout views but no Space screen. Leave a Space URL
-  // on the web instead of launching the app into an unrelated conversation.
-  if (spaceTarget && isIosDevice(navigator.userAgent, navigator.platform, navigator.maxTouchPoints)) {
-    document.title = 'Open this Space on desktop';
-    if (title) title.textContent = 'Open this Space on desktop';
-    if (status) status.textContent = 'Space dashboards are available in Rally for Mac.';
+  // iOS has Channel and Breakout views but no Space or Sidekick screen. Leave
+  // those URLs on the web instead of launching the app into an unrelated
+  // conversation.
+  if ((spaceTarget || sidekickTarget) && isIosDevice(navigator.userAgent, navigator.platform, navigator.maxTouchPoints)) {
+    document.title = `Open this ${kind} on desktop`;
+    if (title) title.textContent = `Open this ${kind} on desktop`;
+    if (status) status.textContent = spaceTarget ? 'Space dashboards are available in Rally for Mac.' : 'Sidekicks are available in Rally for Mac.';
     button.setAttribute('hidden', '');
     help?.setAttribute('hidden', '');
     return;
@@ -60,7 +64,7 @@ function initializeWorkstreamHandoff(): void {
     ? isIosDevice(navigator.userAgent, navigator.platform, navigator.maxTouchPoints)
       ? legacyIosWorkstreamHandoff(workstreamTarget)
       : workstreamDeepLinkFromParsedTarget(workstreamTarget)
-    : spaceDeepLink(spaceTarget!);
+    : spaceTarget ? spaceDeepLink(spaceTarget) : sidekickDeepLink(sidekickTarget!);
   button.href = target;
   button.setAttribute('aria-disabled', 'false');
 
