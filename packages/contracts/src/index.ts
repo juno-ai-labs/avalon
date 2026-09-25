@@ -508,6 +508,29 @@ export { MESSAGE_MAX_CHARACTERS,MESSAGE_TOO_LONG_MESSAGE } from "./message-limit
  */
 export const WORKSTREAM_DESCRIPTION_MAX_CHARACTERS = 4_000;
 
+/**
+ * One breakout its viewer may open, as the Channel's rail draws it. Only ready,
+ * unarchived breakouts with that viewer on their roster are listed.
+ */
+export const WorkstreamPrivateChildSchema = z.strictObject({
+  substreamId: SubstreamIdSchema.refine((value) => value !== "0", "A private child must be nonzero"),
+  title: z.string().min(1).max(500),
+  appearance: WorkstreamAppearanceSchema.optional(),
+  harnessStatus: HarnessStatusSchema.optional(),
+  unreadCount: z.number().int().nonnegative().optional(),
+  youAreMentioned: z.boolean().optional(),
+  unseen: z.boolean().optional(),
+  createdByUserId: UserIdSchema,
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+
+/**
+ * Running background agents by the conversation they work for, keyed by
+ * substream id. A conversation with none is absent.
+ */
+export const WorkstreamBackgroundAgentCountsSchema = z.record(SubstreamIdSchema, z.number().int().positive());
+
 export const WorkstreamSchema = z.object({
   appearance: WorkstreamAppearanceSchema.optional(),
   id: IdSchema,
@@ -648,6 +671,23 @@ export const WorkstreamSchema = z.object({
     .default([]),
   /** Breakouts under this Channel that currently need this viewer. */
   breakoutAttentionCount: z.number().int().nonnegative().optional(),
+  /**
+   * The breakouts this viewer may open, on workspace-socket rows only.
+   *
+   * This and the two fields below are what the Channel control socket added to
+   * the directory row. They ride the row so one socket carries a Channel's
+   * whole state. Absent means this row does not say (a REST answer, an older
+   * server, or a Channel whose parent has not been imported yet), never that
+   * the list is empty.
+   */
+  privateChildren: z.array(WorkstreamPrivateChildSchema).optional(),
+  /**
+   * Orders `privateChildren` for this viewer. Independent of the row's state
+   * version: the list moves with breakout rosters, which do not advance it.
+   */
+  privateChildrenWaterline: z.number().int().nonnegative().optional(),
+  /** See {@link WorkstreamBackgroundAgentCountsSchema}; workspace-socket rows only. */
+  backgroundAgentCounts: WorkstreamBackgroundAgentCountsSchema.optional(),
 });
 
 export const ExternalActorSchema = z.object({
@@ -2692,7 +2732,7 @@ export const WorkstreamControlMetadataSchema = z.strictObject({
    * substream id. A conversation with none is absent. Omission of the whole
    * field means this snapshot does not know the current counts.
    */
-  backgroundAgentCounts: z.record(SubstreamIdSchema, z.number().int().positive()).optional(),
+  backgroundAgentCounts: WorkstreamBackgroundAgentCountsSchema.optional(),
   latestAttentionSequenceNumber: z.number().int().nonnegative(),
   unreadTrackingStartSequenceNumber: z.number().int().nonnegative(),
   lastActivityAt: TimestampSchema,
@@ -2708,18 +2748,7 @@ export const WorkstreamControlMetadataSchema = z.strictObject({
   }).nullable(),
   nextTerminalActionAt: TimestampSchema.nullable(),
   /** Ready non-main conversations this authenticated viewer may open. */
-  privateChildren: z.array(z.strictObject({
-    substreamId: SubstreamIdSchema.refine((value) => value !== "0", "A private child must be nonzero"),
-    title: z.string().min(1).max(500),
-    appearance: WorkstreamAppearanceSchema.optional(),
-    harnessStatus: HarnessStatusSchema.optional(),
-    unreadCount: z.number().int().nonnegative().optional(),
-    youAreMentioned: z.boolean().optional(),
-    unseen: z.boolean().optional(),
-    createdByUserId: UserIdSchema,
-    createdAt: TimestampSchema,
-    updatedAt: TimestampSchema,
-  })).optional(),
+  privateChildren: z.array(WorkstreamPrivateChildSchema).optional(),
   viewer: z.strictObject({
     isParticipant: z.boolean(),
     listable: z.boolean(),

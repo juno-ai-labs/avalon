@@ -84,8 +84,7 @@ import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-
 import {
   applyBreakoutAppearanceReceipt,
   captureBreakoutAppearanceUpdate,
-  useWorkstreamControlSocket,
-} from './use-workstream-control-socket';
+} from './channel-viewer-state';
 import {
   conversationSeededFromLocalCache,
   hydrateConversation,
@@ -108,7 +107,7 @@ export type WorkstreamMessageDeliveryMode = 'steer' | 'queue';
 /** The exact API capability the realtime cache reconciler is allowed to use. */
 export type WorkstreamSocketApi = Pick<
   RallyApi,
-  'getSocketTicket' | 'getWorkstreamControlSocketTicket' | 'messageMentionPayload'
+  'getSocketTicket' | 'messageMentionPayload'
   // Read, not called: which arriving turns are the reader's own.
   | 'viewerUserId'
 >;
@@ -726,21 +725,15 @@ export function useWorkstreamSocket(
   api: WorkstreamSocketApi | null,
   parentId: string,
   enabled: boolean,
-  // The pool owns this separately so a hover-warmed control socket survives
-  // the later transition that enables the presence-publishing feed.
-  controlSocketOwnedExternally = false,
   initialReason: Exclude<WorkstreamSocketStartReason, 'reconnect'> = 'active_workstream',
   socketLeaseId?: string,
   openCommitted = true,
   substreamId = '0',
-  // Only a work stream has a WorkstreamDO control socket; an automation's
-  // metadata rides its own detail and the sidebar list, so the control socket
-  // is not mounted for it.
   parentKind: ConversationParentKind = 'workstream',
 ): WorkstreamSocketConnection {
   // Main of a Channel this person reaches only through some of its
   // conversations is not theirs to open; every Main feed, pooled or direct,
-  // passes here. The control socket makes the same check for itself.
+  // passes here.
   const conversationScoped = conversationScopedChannelIds(useConversationDirectory());
   const mainOutOfReach = parentKind === 'workstream' && substreamId === '0' && conversationScoped.has(parentId);
   enabled = enabled && !mainOutOfReach;
@@ -760,13 +753,6 @@ export function useWorkstreamSocket(
   useEffect(() => {
     if (effectiveOpenCommitted) markOpenedRef.current();
   }, [effectiveOpenCommitted]);
-  useWorkstreamControlSocket(
-    api,
-    parentId,
-    enabled && !controlSocketOwnedExternally && parentKind === 'workstream',
-    initialReason,
-    resolvedSocketLeaseId,
-  );
   const resumeState = useWorkstreamSocketResumeState(parentId, substreamId);
   const [state, setState] = useState<SocketState>('idle');
   const [openingError, setOpeningError] = useState<string>();

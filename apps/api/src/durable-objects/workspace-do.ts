@@ -724,8 +724,11 @@ import {
   HOSTED_CHANNEL_ROLE,
   HOSTED_SPACE_ROLE,
   HostedParent,
+  channelViewerStates,
   parentControlSocketTag,
   readControlSocketAttachment,
+  runningBackgroundAgents,
+  type ChannelViewerState,
   type HostedParentHost,
 } from "./hosted-parent";
 import { planParentEffectBatches } from "./conversation-parent-object";
@@ -4225,6 +4228,12 @@ function mapDirectoryWorkstreams(
   spaces: WorkspaceSpaceStorage,
   userId: string,
   accessClass: "member" | "guest" = "member",
+  /**
+   * Add each row's breakouts and background agents for this viewer. Only the
+   * workspace socket asks: it is the one reader that keeps a Channel's rail
+   * current, and a REST answer has no way to be told when the list moves.
+   */
+  withViewerState = false,
 ): Workstream[] {
   const personalIds = [...new Set(
     rows.filter((row) => row.scope === "personal").map((row) => row.workstream_id),
@@ -4239,10 +4248,16 @@ function mapDirectoryWorkstreams(
     rows.map((row) => row.workstream_id),
     accessClass,
   );
-  return rows.map((row) => directoryWorkstream(
-    row, workspaceId, previews.get(row.workstream_id), spaceIds.get(row.workstream_id) ?? [],
-    pins.get(row.workstream_id) ?? [], breakoutAttentionCounts.get(row.workstream_id) ?? 0,
-  ));
+  const viewerStates = withViewerState
+    ? channelViewerStates(sql, userId, rows.map((row) => row.workstream_id))
+    : new Map<string, ChannelViewerState>();
+  return rows.map((row) => ({
+    ...directoryWorkstream(
+      row, workspaceId, previews.get(row.workstream_id), spaceIds.get(row.workstream_id) ?? [],
+      pins.get(row.workstream_id) ?? [], breakoutAttentionCounts.get(row.workstream_id) ?? 0,
+    ),
+    ...viewerStates.get(row.workstream_id),
+  }));
 }
 
 function loadSpacePins(
@@ -4681,6 +4696,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       acceptControlSocket: (server, parentId, userId) => {
         this.state.acceptWebSocket(server, [parentControlSocketTag(parentId), userId]);
       },
+      publishChannelRow: (parentId, userId) => this.publishWorkstreamState(parentId, userId),
       applyLocalEffects: (envelopes) => this.applyLocalEffects(envelopes),
       readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
       noteRelationship: (relationship) => this.noteRelationship(relationship),
@@ -4892,6 +4908,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
     await this.drainParentOutbox();
     await this.armNextAlarm();
+    // Rows sent before the import left this Channel's breakouts out, because
+    // they were not here yet; this is the push that fills them in.
+    if (kind === "workstream") await this.publishWorkstreamState(parentId);
   }
 
   /**
@@ -5492,6 +5511,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (request.method === "GET" && (path === "/socket" || path === "/")) {
       return this.acceptSocket(request);
     }
+    // The retired Channel control socket, for clients released before a
+    // Channel's state moved onto its workspace-socket row.
     if (request.method === "GET" && path === "/parent-socket") {
       const parentId = WorkstreamIdSchema.safeParse(readRallyHeader(request.headers, RALLY_HEADERS.WORKSTREAM_ID));
       if (!parentId.success) return json({ error: "invalid_socket_identity" }, 400);
@@ -5713,6 +5734,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         && parsed.data.foregroundWorkstreamId !== null) {
         const now = Date.now();
         const workstreamId = parsed.data.foregroundWorkstreamId;
+        // Opening a Channel is the moment its Main is about to be read. The
+        // Channel control socket used to start this wake; a desktop that no
+        // longer opens one says it here instead, ahead of its feed ticket.
+        this.wakeMainConversation(workstreamId);
         this.state.storage.transactionSync(() => {
           this.state.storage.sql.exec(
             `INSERT INTO workspace_workstream_access(user_id, workstream_id, last_accessed_at)
@@ -5732,7 +5757,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           workstream: mapDirectoryWorkstreams(
             this.state.storage.sql, [row], currentAttachment.workspaceId,
             this.spaceStorage(), currentAttachment.userId,
-            currentAttachment.accessClass,
+            currentAttachment.accessClass, true,
           ).map((item) => currentAttachment.accessClass === "guest"
             ? { ...item, spaceIds: [] }
             : item)[0],
@@ -5767,7 +5792,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         limit: parsed.data.limit,
         ...(parsed.data.before ? { before: parsed.data.before } : {}),
         includeSystem: parsed.data.includeSystem,
-      }, attachment.accessClass);
+      }, attachment.accessClass, true);
       socket.send(JSON.stringify(WorkspaceWorkstreamPageEventSchema.parse({
         type: "workspace_workstream_page",
         requestId: parsed.data.requestId,
@@ -13741,6 +13766,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private listDirectory(
     request: WorkspaceDirectoryListRequest,
     accessClass: "member" | "guest" = "member",
+    withViewerState = false,
   ): WorkspaceDirectoryPage {
     let cursor = request.before ? directoryCursor(request.before) : null;
     if (cursor) {
@@ -13796,7 +13822,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return {
       items: mapDirectoryWorkstreams(
         this.state.storage.sql, rows, request.workspaceId, this.spaceStorage(), request.userId,
-        accessClass,
+        accessClass, withViewerState,
       ),
       stateVersions: rows.map(directoryStateVersion),
       nextCursor,
@@ -13927,6 +13953,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // *this* viewer may see, and a personal Space's id on somebody else's row
     // is the existence of a private Space leaking through a shared Channel.
     const spaces = this.spaceStorage();
+    // Viewer-independent too; each viewer's row keeps the conversations they can open.
+    const background = runningBackgroundAgents(this.state.storage.sql, [workstreamId]);
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
@@ -13954,18 +13982,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           viewerWaterline: stateVersion.viewerWaterline,
         },
         workstream: visible
-          ? directoryWorkstream(
-            row, attachment.workspaceId, preview,
-            attachment.accessClass === "guest"
-              ? []
-              : spaces.spaceIdsByChannel(attachment.userId, [workstreamId]).get(workstreamId) ?? [],
-            [],
-            spaces.breakoutAttentionCounts(
-              attachment.userId,
-              [workstreamId],
-              attachment.accessClass,
-            ).get(workstreamId) ?? 0,
-          )
+          ? {
+            ...directoryWorkstream(
+              row, attachment.workspaceId, preview,
+              attachment.accessClass === "guest"
+                ? []
+                : spaces.spaceIdsByChannel(attachment.userId, [workstreamId]).get(workstreamId) ?? [],
+              [],
+              spaces.breakoutAttentionCounts(
+                attachment.userId,
+                [workstreamId],
+                attachment.accessClass,
+              ).get(workstreamId) ?? 0,
+            ),
+            ...channelViewerStates(this.state.storage.sql, attachment.userId, [workstreamId], background).get(workstreamId),
+          }
           : null,
       }));
       try {
@@ -13992,7 +14023,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       userId: attachment.userId,
       limit: SIDEBAR_LIST_LIMIT,
       includeSystem: false,
-    }, attachment.accessClass);
+    }, attachment.accessClass, true);
     return WorkspaceSidebarSchema.parse({
       workstreams: attachment.accessClass === "guest"
         ? { ...workstreams, items: workstreams.items.map((item) => ({ ...item, spaceIds: [] })) }
