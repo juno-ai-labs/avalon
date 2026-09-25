@@ -108,7 +108,7 @@ The parent state moved in under a `parent_` prefix, one row set per parent:
 
 | Flow | Before | Now |
 | --- | --- | --- |
-| A viewer check on a conversation request | two calls to the parent object, after probing which namespace owns the id | one call to `WorkspaceDO` |
+| A viewer check on a conversation request | two calls to the parent object, after probing which namespace owns the id | one call to `WorkspaceDO`, which resolves the kind and answers the viewer together |
 | A conversation's title, preview or unread reaching the sidebar | conversation → Queue → parent → Queue → `WorkspaceDO` | conversation → Queue → `WorkspaceDO`, which applies the parent step and the directory step back to back |
 | A grant reaching the grant directory | grant in the parent, Queue message, directory in `WorkspaceDO` | both in `WorkspaceDO`, the directory applied from the local outbox |
 | Creating a Channel | reserve in the parent, a synchronous call back to `WorkspaceDO` for the provisional directory row | one `WorkspaceDO` call |
@@ -135,13 +135,26 @@ applies the regional effect and delivers the notification in a Worker, and
 nobody who made the write is waiting on it. Either way the row stays until its
 destination has it, so a failure is retried by the alarm rather than lost.
 
+The drain keeps the legacy drain's limits: directory rows are applied at most
+`MAX_DIRECTORY_APPLY_ENVELOPES` at a time, Queue rows go in `sendBatch` calls
+under the Queue's per-call size, and a single row too large for one Queue
+message is deleted with a `parent_effect_oversized` warning, because it would be
+refused on every attempt and stall every row behind it. One drain runs at a
+time: rows are not claimed, so a drain started by a request's import and one
+started by the alarm would otherwise send the same rows. A viewer row applied
+before its Channel's row existed is refused and put off; when that Channel's row
+lands, its waiting viewer rows are made due in the same drain.
+
 ### Moving an existing parent
 
 Migration 71 seeds `parent_imports` with one `pending` row for every Channel and
 Space the Organization's directory already held. A legacy parent effect for an
 id the ledger does not know (from a legacy object that was mid-delivery at
-deploy) adds a `pending` row too. A parent id with no row is new, and is
-created directly in `WorkspaceDO` with no legacy object at all.
+deploy) adds a `pending` row too, and so does a child effect for a parent with
+no row: every parent created in `WorkspaceDO` has its row before its first child
+effect, so such an effect names a Channel whose provisional directory row never
+arrived before the move, and creating an empty row would lose what its legacy
+object holds. An id no legacy object holds imports empty, once.
 
 Importing one parent:
 
@@ -156,8 +169,12 @@ Importing one parent:
 
 This is the write freeze: one parent at a time, for the length of one RPC. A
 request for a `pending` parent imports it before it is served. The alarm also
-imports pending parents in pages, so an Organization converges without anyone
-opening anything. Child-effect receipts are not imported: a replay older than
+imports pending parents in pages, last in its run so a page of cold legacy
+calls does not hold up the rest of its work, and an Organization converges
+without anyone opening anything. A failed import, before or after the export,
+records its code and backs off; a request that arrives during the backoff fails
+with `parent_import_unavailable` and that code rather than asking the legacy
+object again. Child-effect receipts are not imported: a replay older than
 the import converges on the per-key waterlines, which is the rule the legacy
 receipts already fell back to past their retention.
 
