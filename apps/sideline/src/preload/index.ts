@@ -13,6 +13,11 @@ const bridge: SidelineBridge = {
     ipcRenderer.on("sideline:session-changed", handler);
     return () => ipcRenderer.removeListener("sideline:session-changed", handler);
   },
+  onCatalogStale: (listener) => {
+    const handler = (): void => listener();
+    ipcRenderer.on("sideline:catalog-stale", handler);
+    return () => ipcRenderer.removeListener("sideline:catalog-stale", handler);
+  },
 };
 
 contextBridge.exposeInMainWorld("sideline", bridge);

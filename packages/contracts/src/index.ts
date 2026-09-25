@@ -28,7 +28,7 @@ import {
   ResourceDirectionSchema,
   WireResourceRelationshipTypeSchema,
 } from "./resource-relationships";
-import { HttpsUrlSchema, HttpUrlSchema, httpUrlSchema } from "./url-schemas";
+import { HttpsUrlSchema, HttpUrlSchema, httpUrlSchema, WebSocketUrlSchema } from "./url-schemas";
 import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, WorkstreamIconKeySchema } from "./workstream-appearance";
 import {
   TranscriptActivitySchema,
@@ -2490,6 +2490,29 @@ export const WorkspacePresenceEventSchema = z.strictObject({
   workstreamId: WorkstreamIdSchema.nullable(),
   userIds: z.array(UserIdSchema),
 });
+
+/**
+ * A purpose-bound socket ticket as the Worker issues it: where to connect, and
+ * the single-use credential to present in `Sec-WebSocket-Protocol`.
+ */
+export const SocketTicketSchema = z.object({ url: WebSocketUrlSchema, ticket: z.string().min(1) });
+
+/**
+ * These people joined or left a Channel or a Breakout.
+ *
+ * Addressed rather than broadcast: a socket is told a person's id only when
+ * its own user is that person or may act as them through an active
+ * impersonation relationship. It names no conversation, so it discloses no
+ * membership the receiver could not already read; a receiver that cares
+ * rereads its own view. Outside the waterline and never replayed — a client
+ * rereads on reconnect instead. Older clients ignore the unknown `type`.
+ */
+export const WorkspaceReachChangedEventSchema = z.strictObject({
+  type: z.literal("workspace_reach_changed"),
+  occurredAt: TimestampSchema,
+  userIds: z.array(UserIdSchema).min(1),
+});
+export type WorkspaceReachChangedEvent = z.infer<typeof WorkspaceReachChangedEventSchema>;
 
 /**
  * User-specific flags sent outside the workspace waterline. Two people in one

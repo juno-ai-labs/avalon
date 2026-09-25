@@ -93,6 +93,7 @@ import {
   WorkspaceSocketClientEventSchema,
   WorkspaceFeatureFlagsEventSchema,
   WorkspacePresenceEventSchema,
+  WorkspaceReachChangedEventSchema,
   WorkspaceSocketSyncEventSchema,
   WorkspaceSyncTopicSchema,
   WORKSTREAM_NAMING_GRACE_MS,
@@ -4370,10 +4371,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = UpsertImpersonationRelationshipsRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    return new WorkspaceImpersonationStorage(this.state.storage).upsert({
+    const result = new WorkspaceImpersonationStorage(this.state.storage).upsert({
       ...request,
       now: new Date().toISOString(),
     });
+    // Who an operator may act as is their reach too: their Sideline catalog
+    // lists these people. Each operator is told about themselves.
+    this.publishReachChanged(new Set(request.relationships.map((relationship) => relationship.impersonatorUserId)));
+    return result;
   }
 
   /** Exact directed authorization read for an impersonation-aware surface. */
@@ -4413,13 +4418,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = RevokeImpersonationRelationshipsRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    return new WorkspaceImpersonationStorage(this.state.storage).revoke({
+    const { revoked, impersonatorUserIds } = new WorkspaceImpersonationStorage(this.state.storage).revoke({
       workspaceId: request.workspaceId,
       ...(request.authorityBasis ? { authorityBasis: request.authorityBasis } : {}),
       ...(request.impersonatorUserId ? { impersonatorUserId: request.impersonatorUserId } : {}),
       ...(request.representedUserId ? { representedUserId: request.representedUserId } : {}),
       now: new Date().toISOString(),
     });
+    this.publishReachChanged(new Set(impersonatorUserIds));
+    return { revoked };
   }
 
   /** Internal host RPCs: callers resolve execution/resource authority before changing membership. */
@@ -8405,6 +8412,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // reconciliation, none of which a breakout has or wants.
     const breakoutChanges = new Set<string>();
     const breakoutViewerChanges = new Map<string, Set<string>>();
+    // Everyone who joined or left a Channel or a Breakout in this batch. Wider
+    // than `reachViewers`, which is Channels only because a breakout moves no
+    // Space; this set feeds `publishReachChanged`, which is about the person.
+    const reachChangedUsers = new Set<string>();
     const breakoutDirectoryReady = breakoutEnvelopes.length === 0
       || this.breakoutStorage().ready();
     for (const envelope of spaceEnvelopes) {
@@ -8419,12 +8430,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // existing incomplete-acceptance path keeps it retryable until migration
       // 63 creates the destination.
       if (!breakoutDirectoryReady) continue;
-      if (this.applyBreakoutDirectoryEnvelope(envelope, activeUsers)) {
+      const breakout = this.applyBreakoutDirectoryEnvelope(envelope, activeUsers);
+      if (breakout.moved) {
         if (envelope.effect.kind === "directory_common") breakoutChanges.add(envelope.parentId);
         else if (envelope.effect.kind === "directory_user") {
           const users = breakoutViewerChanges.get(envelope.parentId) ?? new Set<string>();
           users.add(envelope.effect.userId);
           breakoutViewerChanges.set(envelope.parentId, users);
+          if (breakout.participationChanged) reachChangedUsers.add(envelope.effect.userId);
         }
       }
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
@@ -8455,6 +8468,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           commonChanges.add(envelope.parentId);
           reachChannels.add(envelope.parentId);
           reachViewers.add(envelope.effect.userId);
+          reachChangedUsers.add(envelope.effect.userId);
         } else {
           const users = viewerChanges.get(envelope.parentId) ?? new Set<string>();
           users.add(envelope.effect.userId);
@@ -8523,6 +8537,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // archival arm above off the sockets.
       for (const userId of reachViewers) this.publishSpaceSnapshot(userId);
     }
+    this.publishReachChanged(reachChangedUsers);
     // The Space dashboard's list is ordered by activity and filtered by each
     // conversation's state for the reader, so a member conversation's row
     // moving *is* that page moving — on every message in every member Channel
@@ -11546,7 +11561,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private applyBreakoutDirectoryEnvelope(
     envelope: ParentEffectEnvelope,
     activeUsers: ReadonlySet<string>,
-  ): boolean {
+  ): { moved: boolean; participationChanged: boolean } {
     return this.state.storage.transactionSync(() => {
       const receipt = this.state.storage.sql.exec<{ payload_hash: string }>(
         `SELECT payload_hash FROM workspace_workstream_effect_receipts WHERE message_id = ?`,
@@ -11556,19 +11571,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         if (receipt.payload_hash !== envelope.payloadHash) {
           throw new Error("workspace_directory_effect_idempotency_conflict");
         }
-        return false;
+        return { moved: false, participationChanged: false };
       }
       const now = Date.now();
       const breakouts = this.breakoutStorage();
-      let moved = false;
+      let result = { moved: false, participationChanged: false };
       if (envelope.effect.kind === "directory_common") {
         // Shared: a breakout's title, state and activity reorder or remove the
         // row on every reader's page at once.
-        moved = breakouts.applyCommon(envelope, now);
+        result = { moved: breakouts.applyCommon(envelope, now), participationChanged: false };
       } else if (envelope.effect.kind === "directory_user") {
         // Personal: one person's unread, mention or first open, which only
-        // they are nudged about.
-        moved = breakouts.applyViewer(envelope, activeUsers.has(envelope.effect.userId), now);
+        // they are nudged about — or their joining or leaving it.
+        result = breakouts.applyViewer(envelope, activeUsers.has(envelope.effect.userId), now);
       }
       insertWorkstreamEffectReceipt(
         this.state.storage,
@@ -11577,7 +11592,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         envelope.payloadHash,
         now,
       );
-      return moved;
+      return result;
     });
   }
 
@@ -12155,6 +12170,52 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       } catch {
         // Hibernation owns close cleanup, and a reconnect asks for the whole
         // sidebar again, so a socket that missed this list is not left stale.
+      }
+    }
+  }
+
+  /**
+   * Tell each socket whose reach includes a person that the person's reach
+   * moved: they joined or left a Channel or Breakout, or the people they may
+   * act as changed.
+   *
+   * Addressed to the person and to whoever can act as them — the authority the
+   * Sideline catalog reads the person's destinations under. It names people and
+   * no conversation, so it discloses no membership the receiver could not
+   * already list; the receiver rereads its own view. Not on the waterline and
+   * never replayed: a client that was away rereads when it subscribes.
+   *
+   * One relationship read per publish, whatever the number of sockets.
+   */
+  private publishReachChanged(userIds: ReadonlySet<string>): void {
+    if (userIds.size === 0) return;
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) return;
+    const actsFor = new WorkspaceImpersonationStorage(this.state.storage)
+      .impersonatorsOf(workspaceId, [...userIds]);
+    const occurredAt = new Date().toISOString();
+    const payloads = new Map<string, string | null>();
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed) continue;
+      let payload = payloads.get(attachment.userId);
+      if (payload === undefined) {
+        const named = [...new Set([
+          ...(userIds.has(attachment.userId) ? [attachment.userId] : []),
+          ...(actsFor.get(attachment.userId) ?? []),
+        ])];
+        payload = named.length === 0 ? null : JSON.stringify(WorkspaceReachChangedEventSchema.parse({
+          type: "workspace_reach_changed",
+          occurredAt,
+          userIds: named,
+        }));
+        payloads.set(attachment.userId, payload);
+      }
+      if (payload === null) continue;
+      try {
+        socket.send(payload);
+      } catch {
+        // Hibernation owns cleanup; a reconnecting client rereads.
       }
     }
   }
