@@ -647,6 +647,20 @@ import {
   WorkspaceSpaceReserveRequestSchema,
   WorkspaceChannelReservationRequestSchema,
   WorkspaceChannelReservationResultSchema,
+  WorkspaceSpaceChannelChangeRequestSchema,
+  WorkspaceSpaceChannelChangeResultSchema,
+  WorkspaceSpaceIntentResumeRequestSchema,
+  WorkspaceSpaceIntentResumeResultSchema,
+  WorkspaceSpaceMemberWalkRequestSchema,
+  WorkspaceSpaceMemberWalkResultSchema,
+  type SpaceActorAuth,
+  type SpaceChannelRefusal,
+  type WorkspaceSpaceChannelChangeRequest,
+  type WorkspaceSpaceChannelChangeResult,
+  type WorkspaceSpaceIntentResumeRequest,
+  type WorkspaceSpaceIntentResumeResult,
+  type WorkspaceSpaceMemberWalkRequest,
+  type WorkspaceSpaceMemberWalkResult,
   type WorkspaceChannelReservationRequest,
   type WorkspaceChannelReservationResult,
   type SpaceDefaultQueueMessage,
@@ -695,7 +709,10 @@ import {
   SPACE_BOOTSTRAP_PAGE_SIZE,
   WORKSPACE_SPACE_SCHEMA_STATEMENTS,
   WorkspaceSpaceStorage,
+  type WorkspaceSpaceIntentClaim,
 } from "./workspace-space-storage";
+import { SpaceChannelAccess } from "./workspace-space-channel-access";
+import { ObservedChannelSchema } from "./workstream-access-protocol";
 import {
   SELECT_WORKSPACE_BREAKOUT,
   WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS,
@@ -1198,7 +1215,7 @@ function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTa
  * How long a staged Space operation waits before the alarm republishes it.
  *
  * Bounds: how long an interrupted membership, audience change or archive can
- *   sit half-applied before the activity Queue is asked to finish it.
+ *   sit half-applied before the alarm finishes it.
  * Without it: a request that died between staging an intent in WorkspaceDO and
  *   applying it on the Channel leaves the Channel without the Space's audience
  *   and the Space without a settled membership, and nothing ever notices —
@@ -1206,8 +1223,9 @@ function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTa
  * Direction: a lower bound on the wait, so a healthy request that finishes in
  *   the ordinary way settles its intent before this fires and nothing is
  *   published at all.
- * Trips: one `space_intent_resume` message per unsettled intent, re-run by the
- *   consumer against the same fences, which converges rather than repeating.
+ * Trips: one in-place resume per unsettled intent (a `space_intent_resume`
+ *   message for a stored `move`), re-run against the same fences, which
+ *   converges rather than repeating.
  * Derive from: how long the slowest healthy operation takes end to end — a
  *   Space audience change walks every member Channel — against how long a
  *   half-applied audience may persist. Thirty seconds is comfortably past the
@@ -6011,17 +6029,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       });
       // An interrupted Space operation finishes here. Nothing else would: the
       // request that staged the intent is gone, and the Channel it was about to
-      // reach was never told the operation existed.
+      // reach was never told the operation existed. Every kind but a legacy
+      // `move` is finished in place, through the path its request takes; a
+      // `move` still goes to the Worker, which owns that recovery.
       await this.instrumentWorkspaceAlarmPhase("space_intent_resume", undefined, async () => {
         try {
-          await publishSpaceIntentResumes({
+          const claimed = await publishSpaceIntentResumes({
             storage: this.spaceStorage(),
             queue: this.env.ACTIVITY_QUEUE,
             workspaceId,
             region: this.env.AVALON_REGION,
             now,
             retryAt: (attempt) => now + scheduledAlarmRetryDelay(attempt),
+            inPlace: (intent) => intent.kind !== "move",
           });
+          await this.resumeSpaceIntentsInPlace(workspaceId, claimed.inPlace);
         } catch (error) {
           logWarn(this.env, "space_intent_resume_publication_failed", {
             workspace_id: workspaceId,
@@ -7685,6 +7707,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       workstreamId: WorkstreamIdSchema,
     }).parse(input);
     this.assertWorkspace(request.workspaceId);
+    return this.channelDirectoryObservation(request.workstreamId);
+  }
+
+  private channelDirectoryObservation(workstreamId: string):
+    | { found: false }
+    | { found: true; archived: boolean; title: string; channel: {
+      readers: { scope: "workspace" } | { scope: "personal"; userIds: string[] };
+      participantUserIds: string[];
+    } } {
+    const request = { workstreamId };
     const row = this.state.storage.sql.exec<{
       title: string;
       scope: "personal" | "workspace";
@@ -8243,6 +8275,173 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
 
+  /**
+   * Put an existing Channel in a Space: the whole operation, in one call.
+   *
+   * WorkspaceDO stages the membership and plans the Channel's source in one
+   * transaction, asks the Channel's conversation for the canonical audience
+   * operations as the caller (it is the audience authority: the
+   * retained-content fence and the roster live there), then confirms the
+   * source and activates the membership in a second transaction. This
+   * replaces the Worker's `canReadWorkstream`, `prepareSpaceMembership`,
+   * `applySpaceAccessSource`, `confirmSpaceAccessSource` and
+   * `finalizeSpaceMembership`, which stay for a Worker from before this call.
+   */
+  async addSpaceChannel(input: WorkspaceSpaceChannelChangeRequest): Promise<WorkspaceSpaceChannelChangeResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceChannelChangeRequestSchema, input, "add_space_channel");
+    this.assertWorkspace(request.auth.workspaceId);
+    const refusal = await this.spaceRefusalCode(
+      request.auth.workspaceId, request.auth.userId, "write", request.spaceId,
+    );
+    if (refusal) return this.spaceChannelRefusal(refusal);
+    if (!this.directoryVisible(request.auth.userId, request.workstreamId)) {
+      return {
+        ok: false,
+        refusal: { about: "conversation", status: 404, code: "workstream_not_found", message: "Channel not found" },
+      };
+    }
+    return WorkspaceSpaceChannelChangeResultSchema.parse(await this.spaceChannelAccess().addChannel(
+      request.auth, request.spaceId, request.workstreamId, null,
+    ));
+  }
+
+  /**
+   * Take a Channel out of a Space, in one call: stage the removal and plan the
+   * retraction, run the Channel's canonical operations, then settle. Replaces
+   * `prepareSpaceMembershipRemoval`, `retractSpaceAccessSource`,
+   * `readAccessSources`, one `confirmSpaceAccessSource` per surviving Space
+   * and `finalizeSpaceMembershipRemoval`, which stay for an older Worker.
+   */
+  async removeSpaceChannel(input: WorkspaceSpaceChannelChangeRequest): Promise<WorkspaceSpaceChannelChangeResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceChannelChangeRequestSchema, input, "remove_space_channel");
+    this.assertWorkspace(request.auth.workspaceId);
+    const refusal = await this.spaceRefusalCode(
+      request.auth.workspaceId, request.auth.userId, "write", request.spaceId,
+    );
+    if (refusal) return this.spaceChannelRefusal(refusal);
+    return WorkspaceSpaceChannelChangeResultSchema.parse(await this.spaceChannelAccess().removeChannel(
+      request.auth, request.spaceId, request.workstreamId, null,
+    ));
+  }
+
+  /**
+   * One page of an audience change's, an archive's or a restore's member
+   * walk, run here: each member Channel's source is planned, changed through
+   * its conversation and confirmed without a round trip back to the Worker,
+   * and the page's cursor is written to the intent before the answer.
+   */
+  async walkSpaceMembers(input: WorkspaceSpaceMemberWalkRequest): Promise<WorkspaceSpaceMemberWalkResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceMemberWalkRequestSchema, input, "walk_space_members");
+    this.assertWorkspace(request.auth.workspaceId);
+    const refusal = await this.spaceRefusalCode(request.auth.workspaceId, request.auth.userId, "read");
+    if (refusal) return this.spaceChannelRefusal(refusal);
+    return WorkspaceSpaceMemberWalkResultSchema.parse(await this.spaceChannelAccess().walkPage(request.auth, request));
+  }
+
+  /**
+   * Finish one staged intent as the caller, through the path the request
+   * takes. The alarm resumes intents in place itself; this is for a
+   * `space_intent_resume` message a Worker is still consuming.
+   */
+  async resumeSpaceIntent(input: WorkspaceSpaceIntentResumeRequest): Promise<WorkspaceSpaceIntentResumeResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceIntentResumeRequestSchema, input, "resume_space_intent");
+    this.assertWorkspace(request.auth.workspaceId);
+    const intent = this.spaceStorage().unsettledIntent(request.operationId);
+    // Settled or cancelled already, by the request or an earlier resume.
+    if (!intent) return { ok: true, outcome: "settled" };
+    return WorkspaceSpaceIntentResumeResultSchema.parse(await this.spaceChannelAccess().resume(request.auth, intent));
+  }
+
+  /**
+   * Resume the staged intents the alarm claimed, here rather than through the
+   * Queue, as the person who staged each one.
+   *
+   * The requester is read from the local relationship table, which the
+   * relationship events keep current. Somebody who is no longer an active
+   * member gets the failure written on the row, as the Queue consumer wrote
+   * it; every other failure is named on the row too, and the retry gate the
+   * claim advanced brings the intent back.
+   */
+  private async resumeSpaceIntentsInPlace(workspaceId: string, intents: readonly WorkspaceSpaceIntentClaim[]): Promise<void> {
+    const storage = this.spaceStorage();
+    for (const intent of intents) {
+      try {
+        const relationship = await this.readRelationship(workspaceId, intent.requestedByUserId);
+        if (relationship?.status !== "active" || relationship.accessClass !== "member") {
+          storage.recordIntentFailure(intent.operationId, "space_intent_requester_inactive");
+          continue;
+        }
+        const actor: SpaceActorAuth = {
+          sessionId: `space-intent:${intent.operationId}`,
+          userId: asUserId(intent.requestedByUserId),
+          workspaceId: asWorkspaceId(workspaceId),
+          region: this.env.AVALON_REGION,
+          role: relationship.role,
+          principal: "connector",
+        };
+        const current = storage.unsettledIntent(intent.operationId);
+        if (!current) continue;
+        const resumed = await this.spaceChannelAccess().resume(actor, current);
+        if (!resumed.ok) {
+          storage.recordIntentFailure(intent.operationId, resumed.refusal.code);
+          logWarn(this.env, "space_intent_resume_failed", {
+            workspace_id: workspaceId, space_id: intent.spaceId, operation_id: intent.operationId,
+            kind: intent.kind, reason: resumed.refusal.code,
+          });
+        } else if (resumed.outcome === "abandoned") {
+          logWarn(this.env, "space_intent_resume_abandoned", {
+            workspace_id: workspaceId, space_id: intent.spaceId, operation_id: intent.operationId,
+            kind: intent.kind, reason: resumed.reason,
+          });
+        }
+      } catch (error) {
+        const reason = diagnosticErrorCode(error, "space_intent_resume_failed");
+        storage.recordIntentFailure(intent.operationId, reason);
+        logWarn(this.env, "space_intent_resume_failed", {
+          workspace_id: workspaceId, space_id: intent.spaceId, operation_id: intent.operationId,
+          kind: intent.kind, reason,
+        });
+      }
+    }
+  }
+
+  private spaceChannelRefusal(code: SpaceErrorCode): { ok: false; refusal: SpaceChannelRefusal } {
+    return { ok: false, refusal: { about: "space", code, subject: "", unreachableUserIds: [], blockedWorkstreamIds: [] } };
+  }
+
+  /** The Space source coordinator, over this object's storage and publications. */
+  private spaceChannelAccess(): SpaceChannelAccess {
+    return new SpaceChannelAccess({
+      env: this.env,
+      storage: this.state.storage,
+      spaceStorage: () => this.spaceStorage(),
+      hostedParent: (parentId, workspaceId) => this.hostedParent(parentId, workspaceId),
+      archivedChannel: (workstreamId) => {
+        const projected = this.channelDirectoryObservation(workstreamId);
+        return projected.found && projected.archived
+          ? { channel: ObservedChannelSchema.parse(projected.channel), title: projected.title }
+          : null;
+      },
+      intentResumeAt: () => Date.now() + SPACE_INTENT_RESUME_DELAY_MS,
+      armNextAlarm: async () => {
+        await this.armNextAlarm();
+      },
+      publishSpaceSnapshot: () => this.publishSpaceSnapshot(),
+      publishMembershipChanged: (workstreamId, spaceIds) => this.publishSpaceConversationsChanged({
+        spaceIdsThroughChannel: new Map([[workstreamId, [...spaceIds]]]),
+      }),
+      deferSpaceMembershipConvergence: (workspaceId, workstreamId, includeDirectory) =>
+        this.deferSpaceMembershipConvergence(workspaceId, workstreamId, includeDirectory),
+      afterSidekickDefaultsApplied: (storage, workspaceId) => this.afterSidekickDefaultsApplied(storage, workspaceId),
+      finalizeArchive: (workspaceId, userId, spaceId, operationId) =>
+        this.finalizeArchiveAs(workspaceId, userId, spaceId, operationId),
+    });
+  }
+
   /** Stage an archive, refusing one that would strand any member Channel. */
   async prepareSpaceArchive(input: WorkspaceSpaceStagedRequest): Promise<WorkspaceSpaceMutationResult> {
     await this.initialized;
@@ -8275,6 +8474,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceStagedRequestSchema, input, "finalize_space_archive");
     this.assertWorkspace(request.workspaceId);
+    return this.finalizeArchiveAs(request.workspaceId, request.userId, request.spaceId, request.operationId);
+  }
+
+  /** Archive a Space whose member walk has finished, and settle its intent. */
+  private async finalizeArchiveAs(
+    workspaceId: string,
+    userId: string,
+    spaceId: string,
+    operationId: string,
+  ): Promise<WorkspaceSpaceMutationResult> {
+    const request = { workspaceId, userId, spaceId, operationId };
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const storage = this.spaceStorage();
