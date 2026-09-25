@@ -104,10 +104,10 @@ export {
 LEGACY_WORKSTREAM_LINK_ORIGINS,LEGACY_WORKSTREAM_LINK_PATH_PREFIX,WORKSTREAM_LINK_PATH_PREFIX,
 isWorkstreamId,
 parseWorkstreamLink,parseWorkstreamLinkPath,
-parseSpaceLinkPathTarget,parseWorkstreamLinkPathTarget,parseWorkstreamLinkTarget,spaceCanonicalUrl,spaceDeepLink,workstreamCanonicalUrl,
+parseSidekickLinkPathTarget,parseSpaceLinkPathTarget,parseWorkstreamLinkPathTarget,parseWorkstreamLinkTarget,sidekickCanonicalUrl,sidekickDeepLink,spaceCanonicalUrl,spaceDeepLink,workstreamCanonicalUrl,
 workstreamDeepLink,
 workstreamDeepLinkFromParsedTarget,
-type ParsedWorkstreamLinkTarget,type SpaceLinkTarget,
+type ParsedWorkstreamLinkTarget,type SidekickLinkTarget,type SpaceLinkTarget,
 type WorkstreamLinkTarget
 } from "./workstream-links";
 export { uuidFromBase58, uuidToBase58 } from "./uuid-base58";

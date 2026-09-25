@@ -23,6 +23,7 @@ export type DesktopDeepLinkIntent =
   | { kind: "new-workstream" }
   | ({ kind: "settings"; section: "workspace" | "connections" | "digest" } & Targeted)
   | ({ kind: "new-automation" } & Targeted)
+  | { kind: "sidekick"; sidekickId: string; target: WorkspaceTarget }
   | ({ kind: "slack-link"; token: string } & Targeted)
   | { kind: "invitation"; token: string; region: WorkspaceTargetRegion }
   | ({
@@ -192,6 +193,11 @@ export function parseDesktopDeepLinkIntent(raw: string | URL): DesktopDeepLinkIn
   }
   if (url.hostname === "automations" && url.pathname === "/new") {
     return !url.search ? { kind: "new-automation", target } : null;
+  }
+  if (url.hostname === "sidekicks") {
+    const [encodedSidekickId = "", ...extra] = url.pathname.slice(1).split("/");
+    const sidekickId = uuidFromBase58(encodedSidekickId);
+    return target && sidekickId && !extra.length && !url.search ? { kind: "sidekick", sidekickId, target } : null;
   }
   if (url.hostname === "slack" && url.pathname === "/link") {
     const token = url.searchParams.get("token");

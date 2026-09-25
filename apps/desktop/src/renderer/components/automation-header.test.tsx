@@ -46,6 +46,7 @@ function actions() {
     onArchive: vi.fn<() => Promise<void>>(async () => undefined),
     onRunNow: vi.fn<() => void>(),
     onAppearanceChange: vi.fn<AutomationHeaderProps['onAppearanceChange']>(async () => undefined),
+    onCopyLink: vi.fn<() => Promise<void>>(async () => undefined),
   };
 }
 
@@ -160,6 +161,15 @@ describe('AutomationHeader', () => {
     fireEvent.pointerDown(screen.getByRole('button', { name: 'More Sidekick actions' }), { button: 0, ctrlKey: false });
     expect(await screen.findByRole('menuitem', { name: 'Run now' })).toHaveAttribute('aria-disabled', 'true');
     expect(paused.onRunNow).not.toHaveBeenCalled();
+  });
+
+  it('copies the Sidekick link from the menu and names a failed copy', async () => {
+    const onCopyLink = vi.fn<() => Promise<void>>(async () => { throw new Error('denied'); });
+    renderHeader(draft, { onCopyLink });
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More Sidekick actions' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy sidekick link' }));
+    expect(await screen.findByText('The Sidekick link could not be copied.')).toBeVisible();
+    expect(onCopyLink).toHaveBeenCalledOnce();
   });
 
   it('archives only after confirmation, explains retention, and keeps a failure in the dialog', async () => {

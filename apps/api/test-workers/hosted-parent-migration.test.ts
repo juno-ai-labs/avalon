@@ -9,7 +9,7 @@ import type { MigrationProbeDO } from "../src/durable-objects/migration-probe-do
 import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 
-// Migration 71 renames the six directory tables WorkspaceDO held at v70 and
+// Migration 72 renames the six directory tables WorkspaceDO held at v70 and
 // seeds `parent_imports` from two of them. Every assertion below starts from a
 // populated v70 object committed in its own event, because a fresh schema has
 // no rows to lose, no foreign keys to leave pointing at an old name, and no
@@ -64,7 +64,7 @@ function rows<T extends Record<string, SqlStorageValue>>(sql: SqlStorage, query:
 
 /**
  * Builds WorkspaceDO through v70 in one object event, populates every table
- * migration 71 renames and every table that references one, then upgrades in a
+ * migration 72 renames and every table that references one, then upgrades in a
  * second event, as a deployed object is woken by a new worker. Returns the v70
  * indexes and triggers on the renamed tables, read before the upgrade.
  */

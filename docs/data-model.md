@@ -459,7 +459,7 @@ SQL joins.
   [`projects.md`](projects.md).
 - WorkspaceDO migration 63 adds the Space authority that replaced those rows:
   `spaces` and `space_viewers` (created as `workspace_space_directory` and
-  `workspace_space_viewers`, renamed by migration 71) are the *projection*
+  `workspace_space_viewers`, renamed by migration 72) are the *projection*
   a Space's parent publishes, so they carry the generation, source version
   and payload hash each effect is fenced on rather than being written by a
   mutation; a reservation is written at source version zero so the first real
@@ -487,7 +487,7 @@ SQL joins.
   `breakouts` is one row per `(workstream_id, substream_id)`
   and `breakout_viewers` is its per-person half (created as
   `workspace_breakout_directory` and `workspace_breakout_viewers`, renamed by
-  migration 71), both applied from
+  migration 72), both applied from
   the `directory_common` and `directory_user` effects a Channel now forwards on
   its breakouts' behalf, under the same generation-then-version fence and the
   same `workspace_workstream_effect_receipts` receipt the Channel directory
@@ -498,7 +498,7 @@ SQL joins.
   is rendered against both. The dashboard's refresh signal has **no** table of
   its own: a client is told to read its page again over the socket and nothing
   is written. See [`spaces.md`](spaces.md#the-refresh-signal).
-- **WorkspaceDO migration 71 hosts Channel and Space conversation parents.** It
+- **WorkspaceDO migration 72 hosts Channel and Space conversation parents.** It
   renames the directory tables to the product's names (`channels`,
   `channel_viewers`, `breakouts`, `breakout_viewers`, `spaces`,
   `space_viewers`), adds the `parent_*` tables that hold what each legacy
