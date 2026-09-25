@@ -371,6 +371,40 @@ async function deliveredEffects(
   return (await pendingParentEffects(parent)).filter((envelope) => envelope.parentId === workstreamId);
 }
 
+interface FeedActivity {
+  body: string;
+  actorUserId: string | null;
+  digestible: number;
+  dedupeKey: string;
+  targets: { userId: string; relation: string }[];
+}
+
+/**
+ * The participant-added rows in the Organization's activity feed.
+ *
+ * Read from `workspace_activity_events` rather than the outbox: a hosted
+ * parent writes the feed row in the same transaction as the add, so an
+ * activity event with no mention to snapshot never waits in the outbox.
+ */
+async function participantAddedActivity(workstreamId = WORKSTREAM_ID): Promise<FeedActivity[]> {
+  return runInDurableObject(parentStub(), (_instance, state) => state.storage.sql.exec<{
+    event_id: string; body: string; actor_user_id: string | null; digestible: number; dedupe_key: string;
+  }>(
+    `SELECT event_id, body, actor_user_id, digestible, dedupe_key FROM workspace_activity_events
+      WHERE audience_workstream_id = ? AND event_type = 'workstream_participant_added' ORDER BY body`,
+    workstreamId,
+  ).toArray().map((row) => ({
+    body: row.body,
+    actorUserId: row.actor_user_id,
+    digestible: row.digestible,
+    dedupeKey: row.dedupe_key,
+    targets: state.storage.sql.exec<{ user_id: string; relation: string }>(
+      `SELECT user_id, relation FROM workspace_activity_event_targets WHERE event_id = ? ORDER BY user_id`,
+      row.event_id,
+    ).toArray().map((target) => ({ userId: target.user_id, relation: target.relation })),
+  })));
+}
+
 /**
  * The version a recipient's directory row was written at, read from the parent's
  * own `parent_projection_keys` rather than from an outbox row.
@@ -518,19 +552,18 @@ describe("adding somebody to a work stream", () => {
 
     const envelopes = await deliveredEffects(stub);
     const viewer = await viewerProjectionEffect(INVITEE_ID);
-    const activity = envelopes.filter((envelope) => (
-      envelope.effect.kind === "activity_event"
-      && envelope.effect.eventType === "workstream_participant_added"
-    ));
+    // The activity row is in the feed already, written with the add; only
+    // the notification waits in the outbox, for the Queue that delivers it.
+    const activity = await participantAddedActivity();
     const notification = envelopes.filter((envelope) => envelope.effect.kind === "participant_notification");
     expect(viewer).toMatchObject({ kind: "directory_user", userId: INVITEE_ID });
+    expect(envelopes.filter((envelope) => envelope.effect.kind === "activity_event")).toEqual([]);
     expect([activity.length, notification.length]).toEqual([1, 1]);
 
-    const activityEffect = activity[0]!.effect;
-    if (activityEffect.kind !== "activity_event") throw new Error("expected an activity event");
+    const activityEffect = activity[0]!;
     expect(activityEffect.targets).toEqual([{ userId: INVITEE_ID, relation: "added" }]);
     expect(activityEffect.actorUserId).toBe(CREATOR_ID);
-    expect(activityEffect.digestible).toBe(true);
+    expect(activityEffect.digestible).toBe(1);
     expect(activityEffect.body).toBe("Creator added Invitee to this work stream.");
 
     const notificationEffect = notification[0]!.effect;
@@ -621,10 +654,7 @@ describe("adding somebody to a work stream", () => {
 
     const envelopes = await deliveredEffects(stub);
     expect(envelopes.filter((envelope) => envelope.effect.kind === "participant_notification")).toHaveLength(0);
-    expect(envelopes.filter((envelope) => (
-      envelope.effect.kind === "activity_event"
-      && envelope.effect.eventType === "workstream_participant_added"
-    ))).toHaveLength(0);
+    expect(await participantAddedActivity()).toHaveLength(0);
   });
 });
 
@@ -786,10 +816,7 @@ describe("naming somebody when the work stream is created", () => {
 
     const envelopes = await deliveredEffects(stub);
     const viewer = await viewerProjectionEffect(INVITEE_ID);
-    const activity = envelopes.filter((envelope) => (
-      envelope.effect.kind === "activity_event"
-      && envelope.effect.eventType === "workstream_participant_added"
-    ));
+    const activity = await participantAddedActivity();
     const notification = envelopes.filter((envelope) => envelope.effect.kind === "participant_notification");
     expect(viewer).toMatchObject({ kind: "directory_user", userId: INVITEE_ID });
     expect([activity.length, notification.length]).toEqual([1, 1]);
@@ -808,8 +835,7 @@ describe("naming somebody when the work stream is created", () => {
     expect(notificationEffect.workstreamTitleSnapshot).toBe("Quarterly planning");
     expect(notificationEffect.workstreamObjectiveSnapshot).toBe("Draft the quarterly plan");
 
-    const activityEffect = activity[0]!.effect;
-    if (activityEffect.kind !== "activity_event") throw new Error("expected an activity event");
+    const activityEffect = activity[0]!;
     expect(activityEffect.targets).toEqual([{ userId: INVITEE_ID, relation: "added" }]);
     expect(activityEffect.body).toBe("Creator added Invitee to this work stream.");
 
@@ -828,10 +854,7 @@ describe("naming somebody when the work stream is created", () => {
 
     const envelopes = await deliveredEffects(stub);
     expect(envelopes.filter((envelope) => envelope.effect.kind === "participant_notification")).toHaveLength(0);
-    expect(envelopes.filter((envelope) => (
-      envelope.effect.kind === "activity_event"
-      && envelope.effect.eventType === "workstream_participant_added"
-    ))).toHaveLength(0);
+    expect(await participantAddedActivity()).toHaveLength(0);
   });
 
   it("does not tell somebody twice when they are also added afterwards", async () => {
@@ -1114,10 +1137,7 @@ describe("who a create is allowed to tell", () => {
     const envelopes = await deliveredEffects(stub, CREATE_WITHOUT_NOTIFY_ID);
     expect(envelopes.filter((envelope) => envelope.effect.kind === "participant_notification"))
       .toHaveLength(0);
-    expect(envelopes.filter((envelope) => (
-      envelope.effect.kind === "activity_event"
-      && envelope.effect.eventType === "workstream_participant_added"
-    ))).toHaveLength(0);
+    expect(await participantAddedActivity(CREATE_WITHOUT_NOTIFY_ID)).toHaveLength(0);
     // Seated all the same: not telling somebody is not leaving them out.
     await expect(Promise.all([
       viewerProjectionEffect(INVITEE_ID, CREATE_WITHOUT_NOTIFY_ID),
@@ -1155,11 +1175,7 @@ describe("who a create is allowed to tell", () => {
         await viewerProjectionVersion(entry.effect.recipientUserId, CREATE_WITH_NOTIFY_ID),
       );
     }
-    expect(envelopes.flatMap((envelope) => (
-      envelope.effect.kind === "activity_event"
-      && envelope.effect.eventType === "workstream_participant_added"
-        ? [envelope.effect.body] : []
-    )).sort()).toEqual([
+    expect((await participantAddedActivity(CREATE_WITH_NOTIFY_ID)).map((row) => row.body)).toEqual([
       "Creator added Invitee to this work stream.",
       "Creator added Second Invitee to this work stream.",
     ]);

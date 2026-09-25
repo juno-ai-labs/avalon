@@ -245,6 +245,8 @@ describe("the shared Durable Object alarm list", () => {
         // somebody is waiting on.
         { phase: "parent_outbox", alarmKind: undefined },
         { phase: "parent_breakouts", alarmKind: undefined },
+        // Post-commit work a directory write recorded and did not finish.
+        { phase: "directory_followup", alarmKind: undefined },
         // The Space authority's three phases sit where the Project one used to,
         // before the sweep, for the same reason it did: each publishes onto the
         // activity Queue, and a rejected send has to leave its rows claimed and
