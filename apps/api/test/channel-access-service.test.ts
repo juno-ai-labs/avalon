@@ -25,9 +25,9 @@ import {
  *
  * Doubles rather than the real pipeline, because what is being proved is the
  * *order and the recovery*: which canonical operation runs before which, and
- * what the service does when one of them refuses. Both objects are exercised
+ * what the service does when one of them refuses. Both halves are exercised
  * for real elsewhere — the plans in `test-workers/channel-access-sources.test.ts`,
- * the containment fence in the work-stream object's own suites.
+ * the containment fence in the hosted parent's own suites.
  */
 const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-0000000ca100");
 const CHANNEL = asWorkstreamId("00000000-0000-7000-8000-0000000ca101");

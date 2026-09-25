@@ -111,7 +111,8 @@ function workspaceDouble(overrides: Partial<WorkspaceDouble> = {}): WorkspaceDou
  *
  * Both halves are needed for a fan-out to run at all:
  * `ChannelAccessService` reads the conversation for the Channel's readers and
- * then asks `WorkstreamDO` for the delta its provenance implies. The plans are
+ * then asks the Channel's parent, hosted in `WorkspaceDO`, for the delta its
+ * provenance implies. The plans are
  * empty on purpose — what this file can prove is which authority is asked,
  * about which Channel, and in what order.
  */
@@ -207,6 +208,21 @@ function namespaceDouble<
   return createCloudflareTestBinding<T>(namespace as never);
 }
 
+/**
+ * The Organization object as one stub: its own Space methods and the hosted
+ * Channel parent's, which production reaches on the same `WorkspaceDO`.
+ *
+ * Resolved on each read, because a test reassigns a room method after the
+ * fixture is built, and the room wins so a Channel double is never shadowed.
+ */
+function organizationObject(workspace: object, room: object | undefined): object {
+  return new Proxy(workspace, {
+    get: (target, property) => (room && property in room
+      ? (room as Record<PropertyKey, unknown>)[property]
+      : (target as Record<PropertyKey, unknown>)[property]),
+  });
+}
+
 function serviceEnv(input: {
   workspace: WorkspaceDouble;
   conversation?: object;
@@ -230,11 +246,13 @@ function serviceEnv(input: {
       }),
       batch: input.batch ?? (async () => []),
     }),
-    WORKSPACE_DOS: namespaceDouble<Env["WORKSPACE_DOS"]>(input.workspace),
+    WORKSPACE_DOS: namespaceDouble<Env["WORKSPACE_DOS"]>(organizationObject(input.workspace, input.room)),
     SUBSTREAM_AGENTS: namespaceDouble<Env["SUBSTREAM_AGENTS"]>(conversation),
     SPACE_DOS: namespaceDouble<Env["SPACE_DOS"]>({}),
     AUTOMATION_DOS: namespaceDouble<Env["AUTOMATION_DOS"]>({}),
-    WORKSTREAM_DOS: namespaceDouble<Env["WORKSTREAM_DOS"]>(input.room ?? {}),
+    // The legacy parent objects answer nothing: every Channel and Space parent
+    // is hosted in WorkspaceDO, so a call that still reached one would throw.
+    WORKSTREAM_DOS: namespaceDouble<Env["WORKSTREAM_DOS"]>({}),
     ACCESS_REVOCATION_QUEUE: createCloudflareTestBinding<Env["ACCESS_REVOCATION_QUEUE"]>(
       (input.revocationQueue ?? { send: vi.fn(async () => undefined) }) as never,
     ),

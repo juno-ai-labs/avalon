@@ -194,17 +194,19 @@ export function writeObjectRetirement(
  * spike could not make when it found three of these stranded behind a cleared
  * alarm.
  *
- * A class with no outbox answers zero rather than failing: `WorkspaceDO` is the
- * end of the chain and publishes nothing onward.
+ * `durable_outbox` is a conversation's or a Sidekick's; `parent_outbox` is the
+ * one `WorkspaceDO` holds for the Channel and Space parents it hosts. A class
+ * with neither answers zero rather than failing.
  */
 export function countRetainedOutbox(sql: SqlStorage): number {
-  try {
-    const rows = sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM durable_outbox").toArray();
-    return rows[0]?.n ?? 0;
-  } catch (error) {
-    if (error instanceof Error && /no such table: durable_outbox/u.test(error.message)) return 0;
-    throw error;
+  const present = sql.exec<{ name: string }>(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('durable_outbox', 'parent_outbox')",
+  ).toArray().map((row) => row.name);
+  let retained = 0;
+  for (const table of present) {
+    retained += sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`).toArray()[0]?.n ?? 0;
   }
+  return retained;
 }
 
 export function objectRetirementState(sql: SqlStorage): ObjectRetirementState {

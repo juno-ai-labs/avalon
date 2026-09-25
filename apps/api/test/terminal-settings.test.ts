@@ -96,12 +96,15 @@ function fixture(role: AuthContext["role"] = "owner") {
   const env = createTestEnv({
     DB: sqliteD1(database), AVALON_REGION: "global", TERMINAL_REGION_CAPABILITY: "supported",
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
-    // Which conversations of a work stream own a sandbox is the work stream's
-    // parent object's knowledge. The stub answers from the conversation stores
-    // this fixture seeded: the main one under the work stream's own id, a
-    // side thread under `<workstreamId>:<substreamId>`.
-    WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
+    // The cross-workstream directory the settings walk lives in WorkspaceDO;
+    // the stub serves it from the regional index the fixture seeds.
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
       extra: {
+        // Which conversations of a work stream own a sandbox is the work
+        // stream's parent's knowledge, hosted in this same object. The stub
+        // answers from the conversation stores this fixture seeded: the main
+        // one under the work stream's own id, a side thread under
+        // `<workstreamId>:<substreamId>`.
         childTerminalDeadlines: async (input: { parentId: string }) => ({
           items: [...objectStores.keys()]
             .filter((key) => !unprojected.has(key)
@@ -111,12 +114,6 @@ function fixture(role: AuthContext["role"] = "owner") {
               nextTerminalActionAt: "2026-08-13T00:00:00.000Z",
             })),
         }),
-      },
-    }),
-    // The cross-workstream directory the settings walk lives in WorkspaceDO;
-    // the stub serves it from the regional index the fixture seeds.
-    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
-      extra: {
         // The Terminal network policy is decided by a real WorkspaceDO over its
         // own schema, so these tests assert the object's revision fencing and
         // claim atomicity rather than a re-implementation of them.

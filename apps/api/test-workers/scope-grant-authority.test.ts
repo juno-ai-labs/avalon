@@ -1,6 +1,6 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env } from "cloudflare:workers";
-import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, expect, it } from "vitest";
 import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { ScopeGrantTarget } from "@rally/contracts/scope-grants";
@@ -8,8 +8,9 @@ import { seedOpenWorkstreamAuthority } from "./helpers/substream-fixture";
 import { listSharedDirectory, listSharedNavigationDirectory } from "../src/services/shared-directory-service";
 import { AuthorizationService } from "../src/services/authorization-service";
 import type { Env } from "../src/env";
-import { consumeEffectBodies, pendingParentEffects } from "./helpers/conversation-effects";
-import { conversationObjectName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import { pendingParentEffects } from "./helpers/conversation-effects";
+import { conversationObjectName } from "../src/durable-objects/names";
+import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
 import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
 
 const workspaceId = asWorkspaceId("00000000-0000-4000-8000-000000000071");
@@ -27,33 +28,44 @@ const child: ScopeGrantTarget = { kind: "conversation", workspaceId, parentId, s
 const secondChild: ScopeGrantTarget = { kind: "conversation", workspaceId, parentId: secondParentId, substreamId: secondChildId };
 const main: ScopeGrantTarget = { ...child, substreamId: asSubstreamId("0") };
 const parent: ScopeGrantTarget = { kind: "workstream", workspaceId, parentId };
-const room = () => env.WORKSTREAM_DOS.getByName(workstreamDOName("global", workspaceId, parentId));
-const secondRoom = () => env.WORKSTREAM_DOS.getByName(workstreamDOName("global", workspaceId, secondParentId));
+// Both Channels' parents, and the Organization directory, are one object now.
+const room = () => hostedParentStub(env, workspaceId);
+const secondRoom = room;
 const mutation = (target: ScopeGrantTarget = child) => ({ operationId: crypto.randomUUID(), actorUserId: actorId,
   userId: recipientId, target, active: true, expectedRevision: 0 });
 
+/** Runs `sql` against the Organization object that hosts every parent here. */
+async function exec(sql: string, ...bindings: unknown[]) {
+  await runInDurableObject(room(), (_instance, state) => { state.storage.sql.exec(sql, ...bindings); });
+}
+
+function insertParentMetadata(state: DurableObjectState, id: string, title: string): void {
+  state.storage.sql.exec(`INSERT INTO parent_metadata
+    (parent_id,parent_kind,workspace_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
+    VALUES (?,'workstream',?,'global',1,?,'','','personal','idle',0,0,0)`, id, workspaceId, title);
+}
+
 async function seedActorGrant(target: ScopeGrantTarget) {
-  await runInDurableObject(room(), (_instance) => {
-    _instance['scopeGrants']({ workspaceId, parentId }).mutate({
+  await withHostedParent(room(), parentId, (hosted) => {
+    hosted['scopeGrants']({ workspaceId, parentId }).mutate({
       operationId: crypto.randomUUID(), actorUserId: actorId, userId: actorId, target, active: true, expectedRevision: 0,
     }, actorId);
   });
 }
 
 async function initializeSecondRoom() {
-  await secondRoom().authority({ workspaceId, parentId: secondParentId });
-  await runInDurableObject(secondRoom(), (_instance, state) => {
-    state.storage.sql.exec(`INSERT INTO workstream_metadata
-      (id,workspace_id,workstream_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
-      VALUES (1,?,?,'global',1,'Research channel','','','personal','idle',0,0,0)`,workspaceId,secondParentId);
-    state.storage.sql.exec("INSERT INTO conversation_children (substream_id,kind,created_at,title) VALUES ('0','main',0,'Main'), (?,'child',0,'Research breakout')", secondChildId);
-    _instance['scopeGrants']({ workspaceId, parentId: secondParentId }).mutate({
+  await withHostedParent(secondRoom(), secondParentId, (hosted, state) => {
+    insertParentMetadata(state, secondParentId, "Research channel");
+    state.storage.sql.exec(`INSERT INTO parent_children (parent_id,substream_id,kind,created_at,title)
+      VALUES (?,'0','main',0,'Main'), (?,?,'child',0,'Research breakout')`, secondParentId, secondParentId, secondChildId);
+    hosted['scopeGrants']({ workspaceId, parentId: secondParentId }).mutate({
       operationId: crypto.randomUUID(), actorUserId: actorId, userId: actorId,
       target: secondChild, active: true, expectedRevision: 0,
     }, actorId);
   });
 }
 
+/** Directory rows never cross the Queue now; refusing it proves the directory does not depend on it. */
 async function parkEffectQueue(stub: ReturnType<typeof room>) {
   await runInDurableObject(stub, (instance) => {
     const target = instance as unknown as { env: Env };
@@ -78,12 +90,10 @@ beforeEach(async () => {
     ...[actorId,recipientId].map((id) => env.DB.prepare("INSERT INTO workspace_members VALUES (?,?,'guest',NULL,'active',?,1)")
       .bind(workspaceId,id,id)),
   ]);
-  await room().authority({ workspaceId, parentId });
   await runInDurableObject(room(), (_instance, state) => {
-    state.storage.sql.exec(`INSERT INTO workstream_metadata
-      (id,workspace_id,workstream_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
-      VALUES (1,?,?,'global',1,'Private parent','','','personal','idle',0,0,0)`,workspaceId,parentId);
-    state.storage.sql.exec("INSERT INTO conversation_children (substream_id,kind,created_at) VALUES ('0','main',0), (?,'child',0)", childId);
+    insertParentMetadata(state, parentId, "Private parent");
+    state.storage.sql.exec("INSERT INTO parent_children (parent_id,substream_id,kind,created_at) VALUES (?,'0','main',0), (?,?,'child',0)",
+      parentId, parentId, childId);
   });
 });
 
@@ -102,24 +112,24 @@ it("admits and shares an independent child without granting Main or parent mutat
 it("refuses a legacy Main migration over an existing parent grant ledger", async () => {
   await seedActorGrant(parent);
   expect(await room().beginMainParticipantMigration({ workspaceId,parentId })).toEqual({ status:"conflict" });
-  await runInDurableObject(room(), (_instance,state) => {
-    expect(state.storage.sql.exec("SELECT 1 FROM main_participant_migration").toArray()).toEqual([]);
-    expect(_instance['scopeGrants'](parent).forUser(actorId)).toHaveLength(1);
+  await withHostedParent(room(), parentId, (hosted,state) => {
+    expect(state.storage.sql.exec("SELECT 1 FROM parent_participant_migrations WHERE parent_id=? AND substream_id='0'", parentId).toArray()).toEqual([]);
+    expect(hosted['scopeGrants'](parent).forUser(actorId)).toHaveLength(1);
   });
 });
 
 it("refuses a legacy child migration over an existing conversation grant ledger", async () => {
   await seedActorGrant(child);
   expect(await room().beginChildParticipantMigration({ workspaceId,parentId,substreamId:childId })).toEqual({ status:"conflict" });
-  await runInDurableObject(room(), (_instance,state) => {
-    expect(state.storage.sql.exec("SELECT 1 FROM child_participant_migrations").toArray()).toEqual([]);
-    expect(_instance['scopeGrants'](parent).forUser(actorId)).toHaveLength(1);
+  await withHostedParent(room(), parentId, (hosted,state) => {
+    expect(state.storage.sql.exec("SELECT 1 FROM parent_participant_migrations WHERE parent_id=? AND substream_id=?", parentId, childId).toArray()).toEqual([]);
+    expect(hosted['scopeGrants'](parent).forUser(actorId)).toHaveLength(1);
   });
 });
 
 it("does not turn workspace-public member reading into sharing authority", async () => {
   await env.DB.prepare("UPDATE workspace_members SET access_class='member',role='member' WHERE user_id=?").bind(actorId).run();
-  await runInDurableObject(room(), (_instance,state) => { state.storage.sql.exec("UPDATE workstream_metadata SET scope='workspace'"); });
+  await exec("UPDATE parent_metadata SET scope='workspace' WHERE parent_id=?", parentId);
   expect(await room().readScopeAccess({ userId: actorId, target: main })).toMatchObject({ allowed: true, workspaceMemberAccess: true });
   expect(await room().readScopeAccess({ userId: recipientId, target: main })).toMatchObject({ allowed: false });
   expect(await room().mutateScopeGrant(mutation(main))).toEqual({ status: "denied", reason: "sharing_required" });
@@ -139,8 +149,8 @@ it("does not turn workspace-public member reading into sharing authority", async
     operationId: crypto.randomUUID(), emails: ["invitee@example.test"], expiresAt: null, targets: [main] }))
     .toMatchObject({ status: "denied" });
   await runInDurableObject(room(), (_instance, state) => {
-    expect(state.storage.sql.exec("SELECT 1 FROM main_participant_migration").toArray()).toEqual([]);
-    expect(state.storage.sql.exec("SELECT 1 FROM scope_invitations").toArray()).toEqual([]);
+    expect(state.storage.sql.exec("SELECT 1 FROM parent_participant_migrations WHERE parent_id=? AND substream_id='0'", parentId).toArray()).toEqual([]);
+    expect(state.storage.sql.exec("SELECT 1 FROM parent_invitations WHERE parent_id=?", parentId).toArray()).toEqual([]);
   });
 });
 
@@ -149,7 +159,7 @@ it("inherits a whole-workstream grant only into Main and explicitly inheriting c
   expect(await room().mutateScopeGrant(mutation(parent))).toMatchObject({ status: "committed" });
   expect(await room().readScopeAccess({ userId: recipientId, target: main })).toMatchObject({ allowed: true });
   expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: false });
-  await runInDurableObject(room(), (_instance,state) => { state.storage.sql.exec("UPDATE conversation_children SET audience='inherits_workstream' WHERE substream_id=?",childId); });
+  await exec("UPDATE parent_children SET audience='inherits_workstream' WHERE parent_id=? AND substream_id=?", parentId, childId);
   expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: true, writable: true });
 });
 
@@ -161,7 +171,7 @@ it("rejects inactive actors, inactive recipients, archived scopes and abandoned 
   await env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(actorId).run();
   expect(await room().mutateScopeGrant(mutation())).toEqual({ status: "denied", reason: "sharing_required" });
   await env.DB.prepare("UPDATE workspace_members SET status='active'").run();
-  await runInDurableObject(room(), (_instance,state) => { state.storage.sql.exec("UPDATE workstream_metadata SET archived_at=1"); });
+  await exec("UPDATE parent_metadata SET archived_at=1 WHERE parent_id=?", parentId);
   expect(await room().mutateScopeGrant(mutation())).toEqual({ status: "denied", reason: "sharing_required" });
   expect(await room().readScopeAccess({ userId: actorId, target: child })).toMatchObject({ allowed: true, writable: false });
   await env.DB.prepare("UPDATE workspaces SET abandoned_at='now'").run();
@@ -174,9 +184,9 @@ it("serves migrated child grants without reading Main and retains admission revi
   const added = await room().mutateScopeGrant(mutation());
   if (added.status !== "committed") throw new Error("Expected child grant");
   const transferId = crypto.randomUUID();
-  const revision = await runInDurableObject(room(), (_instance,state) => {
-    state.storage.sql.exec("INSERT INTO child_participant_migrations(substream_id,transfer_id,phase) VALUES (?,?,'pending')",childId,transferId);
-    const store = _instance['scopeGrants'](parent);
+  const revision = await withHostedParent(room(), parentId, (hosted,state) => {
+    state.storage.sql.exec("INSERT INTO parent_participant_migrations(parent_id,substream_id,transfer_id,phase) VALUES (?,?,?,'pending')",parentId,childId,transferId);
+    const store = hosted['scopeGrants'](parent);
     store.registerParticipantProjection(childId,transferId);
     const projection = store.participantProjection(childId,recipientId)!;
     store.acknowledgeParticipantProjection(childId,recipientId,projection.revision);
@@ -184,9 +194,7 @@ it("serves migrated child grants without reading Main and retains admission revi
   });
   const request = { workspaceId,parentId,userId:recipientId,substreamId:childId };
   expect(await room().authorizeViewer(request)).toMatchObject({ authorized:false });
-  await runInDurableObject(room(), (_instance,state) => {
-    state.storage.sql.exec("UPDATE child_participant_migrations SET phase='complete' WHERE substream_id=?",childId);
-  });
+  await exec("UPDATE parent_participant_migrations SET phase='complete' WHERE parent_id=? AND substream_id=?", parentId, childId);
   expect(await room().authorizeViewer(request)).toMatchObject({ authorized:true,membershipVersion:revision });
   const authorization = new AuthorizationService(env);
   const subject = { workspaceId,userId:recipientId,delegation:null };
@@ -231,39 +239,28 @@ it("requires a fresh grant after membership removal and rejoin", async () => {
 });
 
 
-it("hands committed grants to the durable parent outbox even when Queue delivery fails", async () => {
-  await runInDurableObject(room(), (instance) => {
-    const target = instance as unknown as { env: Env };
-    const refused = () => Promise.reject(new Error("effect_queue_parked_by_test"));
-    target.env = new Proxy(target.env, {
-      get: (current, property, receiver) => property === "ACTIVITY_QUEUE"
-        ? { send: refused, sendBatch: refused } : Reflect.get(current, property, receiver),
-    });
-  });
+it("applies committed grants to the grant directory in the same object even when Queue delivery fails", async () => {
+  // The grant directory used to be a Queue hop away, and this test proved the
+  // grant waited in the parent outbox while the Queue refused it. The
+  // directory is now in the same object, applied straight after the write, so
+  // a refused Queue must not keep the grant from being discoverable.
+  await parkEffectQueue(room());
   await seedActorGrant(child);
   const added = await room().mutateScopeGrant(mutation());
   expect(added).toMatchObject({ status: "committed" });
   if (added.status !== "committed") throw new Error("expected committed grant");
-  await runDurableObjectAlarm(room());
-  const effects = (await pendingParentEffects(room())).filter((item) => item.effect.kind === "scope_grant_directory");
-  expect(effects).toHaveLength(2);
-  expect(effects).toEqual(expect.arrayContaining([expect.objectContaining({
-    parentId, workspaceId, effect: expect.objectContaining({ grant: expect.objectContaining({
-      userId: recipientId, active: true, membershipIncarnation: recipientId, target: child,
-    }) }),
-  })]));
-  await runInDurableObject(room(), (_instance) => {
-    expect(_instance['scopeGrants']({ workspaceId, parentId }).pendingDeliveries()).toEqual([]);
-  });
-  const directory = env.WORKSPACE_DOS.getByName(workspaceDOName("global", workspaceId));
+  // Nothing is left waiting for the Queue: both grants were applied locally.
+  expect((await pendingParentEffects(room())).filter((item) => item.effect.kind === "scope_grant_directory")).toEqual([]);
+  const directory = room();
   await directory.initializeWorkspace(workspaceId, "wnam");
-  expect(await consumeEffectBodies(env, effects)).toEqual({ acked: 2, retried: 0 });
+  expect(await directory.listScopeGrantCandidates({ workspaceId, userId: actorId,
+    membershipIncarnation: actorId })).toEqual([parentId]);
   await runInDurableObject(directory, (_instance, state) => {
     for (const [spaceId, title, appearance, createdAt] of [
       [firstSpaceId, "Product", '{"icon":"rocket","color":"violet"}', 1],
       [secondSpaceId, "Research", '{"icon":"lightbulb","color":"teal"}', 2],
     ] as const) {
-      state.storage.sql.exec(`INSERT INTO workspace_space_directory (
+      state.storage.sql.exec(`INSERT INTO spaces (
         space_id, title, scope, appearance_json, archived_at, created_by_user_id,
         system_role, authority_generation, source_version, payload_hash, revision,
         created_at, updated_at, source_created_at, source_updated_at
@@ -289,9 +286,15 @@ it("hands committed grants to the durable parent outbox even when Queue delivery
   });
   expect((await listSharedNavigationDirectory(env, workspaceId, recipientId, true))
     .workstreams[0]?.conversations[0]?.needsAttention).toBe(false);
+  // Hold the candidate index stale: the revocation's directory apply fails and
+  // waits in the outbox for the alarm, which is the window this test covers.
+  await exec(`CREATE TRIGGER hold_grant_directory BEFORE UPDATE ON scope_grant_directory
+    BEGIN SELECT RAISE(ABORT, 'grant directory held by test'); END`);
   await room().mutateScopeGrant({ ...mutation(), active: false, expectedRevision: added.grant.revision });
+  expect((await pendingParentEffects(room())).filter((item) => item.effect.kind === "scope_grant_directory"))
+    .toMatchObject([{ effect: { grant: { userId: recipientId, active: false } } }]);
   // The workspace still contains the added candidate, but the canonical grant
-  // has already been revoked. No Queue flush is needed to stop exposing labels.
+  // has already been revoked. No directory apply is needed to stop exposing labels.
   expect(await directory.listScopeGrantCandidates({ workspaceId, userId: recipientId,
     membershipIncarnation: recipientId })).toEqual([parentId]);
   expect(await listSharedDirectory(env, workspaceId, recipientId)).toEqual({ workstreams: [] });
@@ -301,7 +304,6 @@ it("hands committed grants to the durable parent outbox even when Queue delivery
 it("shows every containing Space when a guest has shared Breakouts", async () => {
   await initializeSecondRoom();
   await parkEffectQueue(room());
-  await parkEffectQueue(secondRoom());
   await seedActorGrant(child);
   expect(await room().mutateScopeGrant(mutation())).toMatchObject({ status: "committed" });
   expect(await secondRoom().mutateScopeGrant({
@@ -309,19 +311,16 @@ it("shows every containing Space when a guest has shared Breakouts", async () =>
     target: secondChild,
   })).toMatchObject({ status: "committed" });
 
-  const directory = env.WORKSPACE_DOS.getByName(workspaceDOName("global", workspaceId));
+  const directory = room();
   await directory.initializeWorkspace(workspaceId, "wnam");
-  const effects = [
-    ...await pendingParentEffects(room()),
-    ...await pendingParentEffects(secondRoom()),
-  ].filter((item) => item.effect.kind === "scope_grant_directory");
-  expect((await consumeEffectBodies(env, effects)).retried).toBe(0);
+  // Both Channels' grants reached the directory without the Queue.
+  expect((await pendingParentEffects(room())).filter((item) => item.effect.kind === "scope_grant_directory")).toEqual([]);
   await runInDurableObject(directory, (_instance, state) => {
     for (const [spaceId, title, appearance, workstreamId, createdAt] of [
       [firstSpaceId, "Product", '{"icon":"rocket","color":"violet"}', parentId, 1],
       [secondSpaceId, "Research", '{"icon":"lightbulb","color":"teal"}', secondParentId, 2],
     ] as const) {
-      state.storage.sql.exec(`INSERT INTO workspace_space_directory (
+      state.storage.sql.exec(`INSERT INTO spaces (
         space_id, title, scope, appearance_json, archived_at, created_by_user_id,
         system_role, authority_generation, source_version, payload_hash, revision,
         created_at, updated_at, source_created_at, source_updated_at
@@ -331,7 +330,7 @@ it("shows every containing Space when a guest has shared Breakouts", async () =>
         (space_id, workstream_id, state, generation, joined_at, updated_at, removed_at)
         VALUES (?, ?, 'active', 1, 1, 1, NULL)`, spaceId, workstreamId);
     }
-    state.storage.sql.exec(`INSERT INTO workspace_space_directory (
+    state.storage.sql.exec(`INSERT INTO spaces (
       space_id, title, scope, appearance_json, archived_at, created_by_user_id,
       system_role, authority_generation, source_version, payload_hash, revision,
       created_at, updated_at, source_created_at, source_updated_at
@@ -362,11 +361,11 @@ it("releases canonical Channel and shared conversation labels without granting M
   await seedActorGrant(parent);
   await seedActorGrant(child);
   await runInDurableObject(room(), (_instance, state) => {
-    state.storage.sql.exec("UPDATE conversation_children SET title='Visible child' WHERE substream_id=?", childId);
+    state.storage.sql.exec("UPDATE parent_children SET title='Visible child' WHERE parent_id=? AND substream_id=?", parentId, childId);
     for (const [substreamId, icon, color] of [["0", "briefcase", "blue"], [childId, "star", "red"]] as const) {
-      state.storage.sql.exec(`INSERT INTO substream_directory
-        (substream_id, source_version, payload_hash, effect_json, updated_at)
-        VALUES (?, 1, ?, json(?), 1)`, substreamId, `hash-${substreamId}`, JSON.stringify({
+      state.storage.sql.exec(`INSERT INTO parent_child_projections
+        (parent_id, substream_id, source_version, payload_hash, effect_json, updated_at)
+        VALUES (?, ?, 1, ?, json(?), 1)`, parentId, substreamId, `hash-${substreamId}`, JSON.stringify({
         kind: "directory_common",
         appearance: { icon, color },
         title: substreamId === "0" ? "Private parent" : "Visible child",
@@ -403,12 +402,12 @@ it("opts guest navigation into attention for each granted Breakout without relea
   const sibling = { kind: "conversation" as const, workspaceId, parentId, substreamId: siblingId };
   await runInDurableObject(room(), (_instance, state) => {
     state.storage.sql.exec(
-      "INSERT INTO conversation_children (substream_id,kind,created_at,title) VALUES (?,'child',2,'Second shared breakout')",
-      siblingId,
+      "INSERT INTO parent_children (parent_id,substream_id,kind,created_at,title) VALUES (?,?,'child',2,'Second shared breakout')",
+      parentId, siblingId,
     );
-    state.storage.sql.exec(`INSERT INTO substream_user_directory
-      (substream_id,user_id,source_version,payload_hash,effect_json,updated_at)
-      VALUES (?,?,1,'sibling-attention',json(?),2)`, siblingId, recipientId, JSON.stringify({
+    state.storage.sql.exec(`INSERT INTO parent_child_viewer_projections
+      (parent_id,substream_id,user_id,source_version,payload_hash,effect_json,updated_at)
+      VALUES (?,?,?,1,'sibling-attention',json(?),2)`, parentId, siblingId, recipientId, JSON.stringify({
       kind: "directory_user", userId: recipientId, isParticipant: true,
       unreadCount: 1, youAreMentioned: true, unseen: false, listable: true,
     }));
@@ -433,22 +432,16 @@ it("lists inherited and archived readable children but omits restricted and unre
   await room().mutateScopeGrant(mutation(parent));
   const request = { workspaceId, parentId, userId: recipientId, membershipIncarnation: recipientId };
   expect((await room().readSharedWorkstream(request))?.conversations).toEqual([{ substreamId: "0", title: "Main", scope: "personal", archived: false }]);
-  await runInDurableObject(room(), (_instance, state) => {
-    state.storage.sql.exec("UPDATE conversation_children SET audience='inherits_workstream' WHERE substream_id=?", childId);
-  });
+  await exec("UPDATE parent_children SET audience='inherits_workstream' WHERE parent_id=? AND substream_id=?", parentId, childId);
   expect((await room().readSharedWorkstream(request))?.conversations).toHaveLength(2);
   for (const status of ["reserved", "failed"]) {
-    await runInDurableObject(room(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE conversation_children SET status=? WHERE substream_id=?", status, childId);
-    });
+    await exec("UPDATE parent_children SET status=? WHERE parent_id=? AND substream_id=?", status, parentId, childId);
     expect((await room().readSharedWorkstream(request))?.conversations).toEqual([{ substreamId: "0", title: "Main", scope: "personal", archived: false }]);
   }
-  await runInDurableObject(room(), (_instance, state) => {
-    state.storage.sql.exec("UPDATE conversation_children SET status='ready', archived_at=1 WHERE substream_id=?", childId);
-  });
+  await exec("UPDATE parent_children SET status='ready', archived_at=1 WHERE parent_id=? AND substream_id=?", parentId, childId);
   expect((await room().readSharedWorkstream(request))?.conversations).toHaveLength(2);
   expect((await room().readSharedWorkstream(request))?.archived).toBe(false);
-  await runInDurableObject(room(), (_instance, state) => { state.storage.sql.exec("UPDATE workstream_metadata SET archived_at=1"); });
+  await exec("UPDATE parent_metadata SET archived_at=1 WHERE parent_id=?", parentId);
   expect((await room().readSharedWorkstream(request))?.archived).toBe(true);
   expect((await room().readSharedWorkstream(request))?.conversations).toHaveLength(2);
 });
@@ -466,8 +459,8 @@ it("requires a parent grant for guest recommendation management and observes its
   // Another collaborator retains parent access; last-participant protection
   // must not be the reason this later management mutation is rejected.
   expect(await room().mutateScopeGrant(mutation(parent))).toMatchObject({ status: "committed" });
-  const revision = await runInDurableObject(room(), (_instance) =>
-    _instance['scopeGrants'](parent).read(actorId, parent)!.revision);
+  const revision = await withHostedParent(room(), parentId, (hosted) =>
+    hosted['scopeGrants'](parent).read(actorId, parent)!.revision);
   const removed = await room().mutateScopeGrant({ operationId: crypto.randomUUID(), actorUserId: actorId,
     userId: actorId, target: parent, active: false, expectedRevision: revision });
   expect(removed).toMatchObject({ status: "committed" });
@@ -494,11 +487,9 @@ it("retains implicit Main member admission after participant authority transfer"
       scope: "workspace", originType: "ad_hoc", createdByUserId: actorId, participantUserIds: [actorId], harnessStatus: "idle",
       emailAddress: null, emailRouteStatus: null, systemKind: null, automationRunId: null, plannedFor: null,
       modelOverride: null, now: Date.now() }] });
-  await runInDurableObject(room(), (_instance, state) => {
-    state.storage.sql.exec("UPDATE workstream_metadata SET scope='workspace'");
-  });
+  await exec("UPDATE parent_metadata SET scope='workspace' WHERE parent_id=?", parentId);
   await room().beginMainParticipantMigration({ workspaceId, parentId });
-  await runInDurableObject(room(), async (instance) => { await instance['runMainParticipantMigration'](); });
+  await withHostedParent(room(), parentId, async (hosted) => { await hosted['runMainParticipantMigration'](); });
   const admission = await room().authorizeViewer({ workspaceId, parentId, substreamId: asSubstreamId('0'), userId: recipientId });
   expect(admission).toMatchObject({ authorized: true, membershipVersion: 0 });
   await runInDurableObject(source, (instance) => {

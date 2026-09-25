@@ -369,8 +369,10 @@ describe("socket ticket transport", () => {
       AVALON_REGION: "global",
       ALLOWED_ORIGINS: "app://avalon",
       SESSION_SIGNING_KEY: "socket-ticket-test-signing-key",
-      WORKSTREAM_DOS: createCloudflareTestBinding<Env["WORKSTREAM_DOS"]>({
-        idFromName: () => createTestDurableObjectId("workstream-do-id"),
+      // The Channel control socket is served by the Organization object that
+      // hosts the Channel's parent.
+      WORKSPACE_DOS: createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+        idFromName: () => createTestDurableObjectId("workspace-do-id"),
         get: () => ({ fetch: workstreamFetch }),
       }),
     });
