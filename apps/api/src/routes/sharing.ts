@@ -10,6 +10,8 @@ import type { HonoAppEnv } from "../env";
 import { getIdentityAuth, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
 import { ApiError } from "../lib/api-error";
+import { diagnosticErrorCode, logWarn } from "../observability/logger";
+import { dispatchWorkspaceRelationshipChanges } from "../services/workspace-relationship-delivery";
 
 const CreateRequestSchema = z.strictObject({
   operationId: CreateScopeInvitationsSchema.shape.operationId,
@@ -105,6 +107,17 @@ sharingRoutes.post("/accept", zValidator("json", AcceptRequestSchema), async (c)
   if (!address) throw new ApiError(403, "scope_invitation_unavailable", UNAVAILABLE_INVITATION);
   const request = AcceptScopeInvitationSchema.parse({ ...address, userId: getIdentityAuth(c).userId });
   const result = await (await parentStub(c.env, request.workspaceId)).acceptScopeInvitation(request);
+  // Acceptance may have created the recipient's guest relationship. Publish
+  // its change now rather than on the next cron sweep, so the rest of the
+  // Organization (member lists, other checks) hears of it in seconds. After
+  // the response: the acceptance itself already recorded it where it checks.
+  const delivery = dispatchWorkspaceRelationshipChanges(c.env, { workspaceId: request.workspaceId, userId: request.userId })
+    .catch((error: unknown) => {
+      logWarn(c.env, "workspace_relationship_dispatch_failed", {
+        workspace_id: request.workspaceId, error: diagnosticErrorCode(error, "workspace_relationship_dispatch_failed"),
+      });
+    });
+  try { c.executionCtx.waitUntil(delivery); } catch { void delivery; }
   c.header("Cache-Control", "no-store");
   return c.json(ScopeInvitationResultSchema.parse(acceptedResult(result)));
 });

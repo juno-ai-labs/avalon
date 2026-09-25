@@ -506,6 +506,22 @@ SQL joins.
   `parent_imports` with one `pending` row per Channel and Space the directory
   already knew. The table map and the import are in
   [`hosted-conversation-parents.md`](hosted-conversation-parents.md).
+- Migration 72 also adds `workspace_member_status`, one row per person: their
+  workspace relationship as `relationship_json` (null for someone with none or
+  removed), `active`, the D1 delivery `sequence` of the last relationship event
+  applied (0 when only a D1 read has been recorded), and `removed_incarnation`,
+  the incarnation a removal event ended. It is a projection of D1's
+  `workspace_members`, fed by `workspace_relationship_changed` events; access
+  checks inside `WorkspaceDO` read it instead of D1. A D1 read or write a
+  request makes replaces a row only when provably newer (a new incarnation over
+  a removed one, or a higher revision of the same one), and a removed
+  incarnation never comes back. See
+  [`hosted-conversation-parents.md`](hosted-conversation-parents.md#workspace-relationships-are-local).
+- `workspace_directory_followups` holds the post-commit work a directory change
+  owes (socket publishes, Space snapshots, schedule and watch refreshes) as
+  `followup_json`, written in the same transaction as the change, run straight
+  after the commit and deleted once it has run; `attempts` and `not_before`
+  let the alarm retry one whose run failed. Nothing reads it but that runner.
 - Object-local `participants` records explicit participation reasons, and
   `first_opened_at` — null until that person opens the work stream, which is
   what makes "you were added to this and have never been here" a state the

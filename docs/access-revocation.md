@@ -17,7 +17,12 @@ five-minute freshness is a design goal, not a permission lease or request timeou
 Canonical permission checks share observations only within one batch; persisted grants are not
 reused. Queue-maintained attachment discovery can lag source changes, while a
 positive result still requires its canonical grant. New requests pass session and
-workspace-membership middleware. This does not relax mutation checks, socket
+workspace-membership middleware, which reads D1. Checks inside `WorkspaceDO`
+(grants, invitations, Space writes, breakout creation, Channel viewer checks)
+read its local copy, `workspace_member_status`, which the
+`workspace_relationship_changed` consumer updates before it walks a revocation
+([`hosted-conversation-parents.md`](hosted-conversation-parents.md#workspace-relationships-are-local)).
+This does not relax mutation checks, socket
 admission, or local socket visibility/revocation. Missing authority remains a
 retryable failure for direct reads and explicit partial status for search/lists.
 
@@ -55,8 +60,12 @@ the D1 intent for the existing scheduled recovery path.
 Membership changes now also write `workspace_relationship_deliveries` through
 database triggers in the same transaction. The existing immediate revocation
 publishers remain; the cron retries the durable intent if a request failed to
-publish. A `workspace_relationship_changed` message revokes removed/suspended
-relationships and publishes workspace profile, member and directory invalidation.
+publish. A `workspace_relationship_changed` message first applies the
+relationship to `WorkspaceDO`'s `workspace_member_status` (sequence-fenced, so
+a redelivery changes nothing), then revokes removed/suspended relationships and
+publishes workspace profile, member and directory invalidation. The table goes
+first so that a revocation hop that throws, retries or dead-letters has not left
+the Organization's own checks answering active for the person it removes.
 Promotion invalidates those views without closing otherwise valid conversations.
 
 `dispatched_at` records Queue acceptance; `processed_at` records root handling.
@@ -345,7 +354,10 @@ own:
   and none should: it is not a D1 fact, and routing it through a queue would put
   a round trip between a scope change and the reader it excludes.
 - **Authorization queries.** Membership and session validity are D1 facts owned
-  by `middleware/auth.ts` and the services that write them.
+  by `middleware/auth.ts` and the services that write them. `WorkspaceDO`'s
+  local copy of each relationship, `workspace_member_status`, is owned by
+  [`hosted-conversation-parents.md`](hosted-conversation-parents.md); this
+  module's consumer only feeds it.
 - **What flows over a socket while it is open.** That is
   [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md).
 - **The object hierarchy itself.** [`hosted-conversation-parents.md`](hosted-conversation-parents.md)
@@ -499,7 +511,11 @@ answers `channels`; the consumer publishes substream leaves for those and a
 and the Channel's owned Sidekicks, so the consumer publishes leaves instead of a
 `workstream` and a `workstream_automations` hop per reader. A revoked Channel
 grant applied from WorkspaceDO's outbox publishes `automation` hops from its own
-`automation_directory`, and nothing when the Channel owns none.
+`automation_directory`, and nothing when the Channel owns none. The
+relationship consumer applies the event to `workspace_member_status` before the
+revocation walk rather than after it: WorkspaceDO's checks now read that table,
+and after the walk a failing hop left it saying active for as long as the
+message retried.
 
 **Why:** Channel parents moved into WorkspaceDO, so each of those intermediate
 messages was a Queue round trip from WorkspaceDO back into WorkspaceDO before a
