@@ -1047,10 +1047,15 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    // The Space rail reserves four rows while its directory arrives; the
-    // Channel rail keeps the two groups that settle into four and three rows.
+    // The Space rail reserves four tiles while its directory arrives; the
+    // Channel rail seven glyph rows, ungrouped as the list under a Space is.
     expect(container.querySelectorAll('.skeleton-row')).toHaveLength(11);
-    expect(container.querySelectorAll('.skeleton-group-label')).toHaveLength(2);
+    expect(container.querySelectorAll('.skeleton-row-mark.is-tile')).toHaveLength(4);
+    expect(container.querySelectorAll('.skeleton-row-mark.is-glyph')).toHaveLength(7);
+    expect(container.querySelector('.skeleton-group-label')).toBeNull();
+    // The Channel rail is headed by its Space's placeholder, never New.
+    expect(container.querySelector('.channels-sidebar .skeleton-title-header')).not.toBeNull();
+    expect(container.querySelector('.channels-sidebar .sidebar-titlebar .sidebar-new-button')).toBeNull();
     // Said once for the whole wait, not once per section and not once per row.
     expect(screen.getAllByRole('status')).toHaveLength(1);
     expect(screen.getByText('Loading your spaces and channels')).toBeInTheDocument();
@@ -1076,6 +1081,7 @@ describe('Sidebar channel markers', () => {
     );
 
     expect(container.querySelectorAll('.skeleton-row')).toHaveLength(0);
+    expect(container.querySelector('.skeleton-title-header')).toBeNull();
     expect(screen.getByText('Launch brief')).toBeInTheDocument();
   });
 
