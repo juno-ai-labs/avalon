@@ -7,9 +7,10 @@ import { runInDurableObject } from 'cloudflare:test';
 import { flushSearchAuthorizationPush } from '../src/durable-objects/search-authorization-projection';
 import { createCloudflareTestBinding } from '../test/helpers/cloudflare-test';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { asUserId, asWorkspaceId } from '@rally/contracts';
+import { asSubstreamId, asUserId, asWorkspaceId } from '@rally/contracts';
 import { workspaceDOName } from '../src/durable-objects/names';
-import { SearchAuthorizationResolver, searchAuthorizationKey } from '../src/services/search-authorization';
+import { AuthorizationService } from '../src/services/authorization-service';
+import { SearchAuthorizationResolver, pushSearchAuthorization, searchAuthorizationKey } from '../src/services/search-authorization';
 import type { AuthorizationDecision, AuthorizationResource, AuthorizationSubject } from '../src/services/authorization-policy';
 
 const subject: AuthorizationSubject = { workspaceId: asWorkspaceId('00000000-0000-7000-8000-000000000b71'),
@@ -294,6 +295,89 @@ describe('projected search authorization', () => {
     });
   });
 
+
+  it('lets a search fill claim only keys no push has registered', async () => {
+    const workspace = env.WORKSPACE_DOS.getByName(workspaceDOName('global', subject.workspaceId));
+    await workspace.initializeWorkspace(subject.workspaceId, 'wnam');
+    const claimed = { ...resource, resourceId: crypto.randomUUID() };
+    const [generation] = await workspace.registerSearchAuthorization({ subject, resources: [claimed] });
+    // A fill that raced the push resolves the pair but leaves the key with the push.
+    const fill = new SearchAuthorizationResolver(env, { checkMany: async () => [allowed] });
+    expect(await fill.project(subject, [claimed], { claim: 'unregistered' })).toEqual([allowed]);
+    const denied: AuthorizationDecision = { status: 'denied', reason: 'not_participant', evidence: allowed.evidence };
+    expect(await workspace.writeSearchAuthorizationSnapshots([{ version: 1, generation, subject, resource: claimed, decision: denied, observedAt: 10 }]))
+      .toMatchObject({ written: 1, superseded: 0 });
+    expect(await env.AUTHORIZATION_CACHE!.get(await searchAuthorizationKey(subject, claimed), 'json')).toMatchObject({ decision: denied });
+  });
+
+  it('completes a push whose keys a newer push took over', async () => {
+    const workspace = env.WORKSPACE_DOS.getByName(workspaceDOName('global', subject.workspaceId));
+    await workspace.initializeWorkspace(subject.workspaceId, 'wnam');
+    const parentId = crypto.randomUUID();
+    const conversation: AuthorizationResource = { kind: 'conversation', workspaceId: subject.workspaceId, parentId, substreamId: asSubstreamId('0') };
+    await workspace.registerSearchAuthorization({ subject, resources: [conversation] });
+    // The newer push registers between this push's registration and its write.
+    const newer = new SearchAuthorizationResolver(env, { checkMany: async () => [allowed] });
+    vi.spyOn(AuthorizationService.prototype, 'checkMany').mockImplementation(async () => {
+      await newer.project(subject, [conversation]);
+      return [allowed];
+    });
+    await expect(pushSearchAuthorization(env, { type: 'search_authorization_push_v1', region: 'global',
+      workspaceId: subject.workspaceId, target: { kind: 'parent', id: parentId } })).resolves.toBeUndefined();
+  });
+
+  it('skips the KV write for a decision KV already holds', async () => {
+    const stub = env.WORKSPACE_DOS.getByName('search-authorization-unchanged');
+    await stub.initializeWorkspace(subject.workspaceId, 'wnam');
+    let puts = 0;
+    await runInDurableObject(stub, (instance) => {
+      const target = instance as unknown as { env: Env };
+      const original = target.env.AUTHORIZATION_CACHE!;
+      target.env = { ...target.env, AUTHORIZATION_CACHE: createCloudflareTestBinding<KVNamespace>({ put: async (key, value) => {
+        puts++; await original.put(key, value);
+      } }) };
+    });
+    const publish = async (decision: AuthorizationDecision, options?: { republish: boolean }) => {
+      const [generation] = await stub.registerSearchAuthorization({ subject, resources: [resource] });
+      return stub.writeSearchAuthorizationSnapshots([{ version: 1, generation, subject, resource, decision, observedAt: Date.now() }], options);
+    };
+    await publish(allowed);
+    expect(puts).toBe(1);
+    // A later receipt of the same owner revision is the same decision to a reader.
+    expect(await publish({ status: 'allowed', evidence: [{ ...allowed.evidence[0]!, validatedAt: 2 }] })).toMatchObject({ written: 1, unchanged: 1 });
+    expect(puts).toBe(1);
+    await publish({ status: 'allowed', evidence: [{ ...allowed.evidence[0]!, revision: '2' }] });
+    expect(puts).toBe(2);
+    await publish({ status: 'allowed', evidence: [{ ...allowed.evidence[0]!, revision: '2' }] }, { republish: true });
+    expect(puts).toBe(3);
+  });
+  it('writes KV again after a put whose outcome was unknown', async () => {
+    const stub = env.WORKSPACE_DOS.getByName('search-authorization-unknown-put');
+    await stub.initializeWorkspace(subject.workspaceId, 'wnam');
+    const revised: AuthorizationDecision = { status: 'allowed', evidence: [{ ...allowed.evidence[0]!, revision: '2' }] };
+    let puts = 0;
+    let landThenThrow = false;
+    await runInDurableObject(stub, (instance) => {
+      const target = instance as unknown as { env: Env };
+      const original = target.env.AUTHORIZATION_CACHE!;
+      target.env = { ...target.env, AUTHORIZATION_CACHE: createCloudflareTestBinding<KVNamespace>({ put: async (key, value) => {
+        puts++; await original.put(key, value);
+        if (landThenThrow) throw new Error('kv outcome unknown');
+      } }) };
+    });
+    const publish = async (decision: AuthorizationDecision) => {
+      const [generation] = await stub.registerSearchAuthorization({ subject, resources: [resource] });
+      return stub.writeSearchAuthorizationSnapshots([{ version: 1, generation, subject, resource, decision, observedAt: Date.now() }]);
+    };
+    await publish(allowed);
+    // KV keeps the revised decision although the put reported failure.
+    landThenThrow = true;
+    await expect(publish(revised)).rejects.toThrow('kv outcome unknown');
+    landThenThrow = false;
+    await publish(allowed);
+    expect(puts).toBe(3);
+    expect(await env.AUTHORIZATION_CACHE!.get(await searchAuthorizationKey(subject, resource), 'json')).toMatchObject({ decision: allowed });
+  });
 });
 
 describe('deferred first fills', () => {
