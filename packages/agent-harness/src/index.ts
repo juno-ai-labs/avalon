@@ -19,6 +19,7 @@ import {
   AutomationDraftSchema,
   ConnectorConnectionCardInputSchema,
   PickedAppearanceSchema,
+  PROJECT_COLOR_KEYS_STORABLE,
   PROJECT_COLOR_RING,
   WORKSTREAM_ICON_KEYS,
   type AutomationDraft,
@@ -2379,8 +2380,8 @@ const automationDraftSubmissionJsonSchema = {
     },
     color: {
       type: "string",
-      enum: [...PROJECT_COLOR_RING],
-      description: "The color of the Sidekick's hexagon. A Sidekick that already has one keeps it unless the person asks for another: sidekicks_list shows the current one.",
+      enum: [...PROJECT_COLOR_KEYS_STORABLE],
+      description: `The color of the Sidekick's hexagon. A Sidekick that already has one keeps it unless the person asks for another: sidekicks_list shows the current one. A new choice is one of ${PROJECT_COLOR_RING.join(", ")}. The other values are accepted only to keep a Sidekick's current color.`,
     },
     overview: { type: "string", description: "A few sentences for the person approving it: what it watches, what it does each time, and where the result goes. This is what somebody reads to decide whether to accept the draft." },
     instructions: { type: "string", description: "What each run should actually do, written for a run that cannot see this conversation. Name the steps, the tools, and what finishing looks like. A result meant to reach an inbox, a channel, or a document is only sent if a step here says to send it." },

@@ -681,7 +681,10 @@ the same statement that writes the title. That is also how often they are
 written, on every submission, so `sidekicks_list` returns the current
 appearance and the field descriptions tell the chat to keep it unless the
 person asks for another. The RPC field is optional, so a seeded or scripted
-definition leaves the appearance alone.
+definition leaves the appearance alone. The tool accepts every storable color,
+because a Sidekick may wear `black` or a retired one and has to be able to keep
+it; `submitDefinition` refuses a color outside the ring unless it is the one
+already stored, so a new choice still comes from the ring.
 
 A Sidekick nobody has chosen for stores `NULL`, which is not the same as
 choosing the default: the glyph falls back to the mark derived from the
@@ -948,8 +951,9 @@ on every transcript update.
 **What changed:** `submit_draft` requires `icon` and `color`. The icon is an
 exact key from the Channel icon catalog, with each key's drawing description
 rendered into the field; the color is one of the fourteen ring colors the picker
-offers. They ride beside the draft, not inside it, and `submitDefinition`
-writes them to `automation.appearance_json` alongside the title.
+offers, or the Sidekick's current color when that is `black` or a retired one.
+They ride beside the draft, not inside it, and `submitDefinition` writes them
+to `automation.appearance_json` alongside the title.
 `sidekicks_list` now returns each Sidekick's current appearance.
 
 **Why:** The chat named a Sidekick but left its look to the id hash, so a new
@@ -965,7 +969,9 @@ definition anyway: a person changes it from the picker without a revision.
 Writing only when nothing is stored, as the Channel naming pass does, was also
 rejected: that pass has no person's intent behind it, while the chat does, and
 "make it red" has to work. No fallback icon is named to the chat; the catalog
-carries descriptions only.
+carries descriptions only. Limiting the tool's color to the ring was rejected in
+review: a Sidekick wearing a retired color could not echo it, so every edit
+would have overwritten it.
 
 **Consequences:** A submission rewrites a person's hand-picked appearance if
 the chat does not repeat it. That rests on the chat reading `sidekicks_list`
