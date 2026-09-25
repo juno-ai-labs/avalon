@@ -237,7 +237,7 @@ export class WorkspaceBreakoutStorage {
       envelope.parentId,
       envelope.substreamId,
     ).toArray()[0];
-    if (Date.now() > 0 || !projectionSupersedes(envelope, current, "workspace_breakout_projection_version_conflict")) {
+    if (!projectionSupersedes(envelope, current, "workspace_breakout_projection_version_conflict")) {
       return false;
     }
     // A background agent is not a breakout. Its Channel forwards one only to
