@@ -13,7 +13,7 @@
 
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
-import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type UserId } from "@rally/contracts";
 import type { ScopeGrantTarget } from "@rally/contracts/scope-grants";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -41,7 +41,7 @@ const main = (parentId: string): ScopeGrantTarget => ({
 const organization = () => hostedParentStub(env, workspaceId);
 
 /** A grant written straight into the parent's store, as its creator's would be. */
-async function seedGrant(parentId: string, userId: string): Promise<void> {
+async function seedGrant(parentId: string, userId: UserId): Promise<void> {
   await withHostedParent(organization(), parentId, (hosted) => {
     const result = hosted["scopeGrants"]({ workspaceId, parentId }).mutate({
       operationId: crypto.randomUUID(), actorUserId: userId, userId, target: whole(parentId),
@@ -51,12 +51,12 @@ async function seedGrant(parentId: string, userId: string): Promise<void> {
   });
 }
 
-async function grantRevision(parentId: string, userId: string): Promise<number> {
+async function grantRevision(parentId: string, userId: UserId): Promise<number> {
   return withHostedParent(organization(), parentId, (hosted) =>
-    hosted["scopeGrants"]({ workspaceId, parentId }).read(asUserId(userId), whole(parentId))!.revision);
+    hosted["scopeGrants"]({ workspaceId, parentId }).read(userId, whole(parentId))!.revision);
 }
 
-function share(parentId: string, userId: string, active: boolean, expectedRevision: number) {
+function share(parentId: string, userId: UserId, active: boolean, expectedRevision: number) {
   return organization().mutateScopeGrant({
     operationId: crypto.randomUUID(), actorUserId: shared, userId, target: whole(parentId), active, expectedRevision,
   });
@@ -131,7 +131,7 @@ describe("hosted parent isolation", () => {
   });
 
   it("lists only Channel A's own conversations to a reader of both, and nothing of it to a reader of B alone", async () => {
-    const read = (parentId: string, userId: string) => organization().readSharedWorkstream({
+    const read = (parentId: string, userId: UserId) => organization().readSharedWorkstream({
       workspaceId, parentId, userId, membershipIncarnation: userId,
     });
 
