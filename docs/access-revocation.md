@@ -47,7 +47,7 @@ the D1 intent for the existing scheduled recovery path.
 | `apps/api/src/services/auth-service.ts` | `logout` — publishes for each session row it revoked. |
 | `apps/api/src/worker-events.ts` | Queue dispatch by name — ahead of the work-stream maintenance gate — and session expiry plus durable relationship dispatch on the existing cron. |
 | `apps/api/src/services/workspace-relationship-delivery.ts` | Retries D1-recorded membership changes through the existing revocation queue. Queue acceptance marks dispatch, not application. |
-| `apps/api/src/durable-objects/{workspace-do,workstream-do,substream-agent,artifact-host-do}.ts` | `revokeSocketAccess` on each socket-holding object. `AutomationDO` holds no socket; the consumer asks it `listChildren` instead. |
+| `apps/api/src/durable-objects/{workspace-do,substream-agent,artifact-host-do}.ts` | `revokeSocketAccess` on each socket-holding object. `WorkspaceDO` also closes one Channel's control sockets through `revokeParentSocketAccess`, which runs `HostedParent.revokeSocketAccess` in `hosted-parent.ts`. `AutomationDO` holds no socket; the consumer asks it `listChildren` instead. |
 | `packages/db/migrations/0091_seed_expired_session_revocations.sql` | Marks the expired-session backlog older than seven days revoked so the sweep starts clean, and indexes the query it runs every five minutes. The cutoff matters: marking a row suppresses its announcement forever, and migrations run before the Worker deploys, so anything recent is left for the sweep to announce properly. |
 
 ### The producer writes the fact and publishes it
@@ -119,11 +119,11 @@ about; each child becomes its own message on the same queue.
 ```
 workspace              ──▶ WorkspaceDO    ──▶ [workstreamIds] + [automationIds] + [artifactIds]
 workstream_automations ──▶ WorkspaceDO    ──▶ [automationIds the room owns]  (automationIdsOwnedByWorkstream)
-workstream             ──▶ WorkstreamDO   ──▶ [substreamIds]
+workstream             ──▶ WorkspaceDO    ──▶ [substreamIds]   (revokeParentSocketAccess)
 workstream_audience_narrowed
-                       ──▶ WorkstreamDO   ──▶ [closedUserIds]  (revokeNarrowedAudienceAccess)
+                       ──▶ WorkspaceDO    ──▶ [closedUserIds]  (revokeNarrowedAudienceAccess)
 automation             ──▶ AutomationDO   ──▶ [substreamIds]   (listChildren; it holds no socket)
-space                  ──▶ SpaceDO        ──▶ [substreamIds]   (listChildren; it holds no socket)
+space                  ──▶ WorkspaceDO    ──▶ [substreamIds]   (listChildren; a Space holds no socket)
 substream              ──▶ SubstreamAgent ──▶ (leaf)
 artifact               ──▶ ArtifactHostDO ──▶ (leaf)
 ```
@@ -193,29 +193,31 @@ reconnect would run; and a holder it cannot confidently admit is closed rather
 than spared, which costs a reconnect where sparing keeps a reader reading a
 room that no longer admits them.
 
-A **Space** is the third sibling, and the simplest hop here. It is
-`WorkstreamDO` under a role whose `admitsClientSockets` is false, so it admits
-no client socket and there is nothing on it to close — the hop does not call
-`revokeSocketAccess` at all, because asking would be a subrequest whose answer
-is always empty. What it does hold is a hidden main conversation, an ordinary
-`SubstreamAgent` that *does* hold whatever was opened against it, and only the
-Space can name it. So the hop is `SpaceDO.listChildren` and one `substream`
-message per child, keyed by the Space id as the parent, exactly as an
-automation's conversations are keyed by its own. A Space is enumerated from the
-workspace hop once WorkspaceDO holds the Space directory; until then no product
-path creates one.
+A **Space** is the third sibling, and the simplest hop here. Its parent state
+is hosted in `WorkspaceDO` under a role whose `admitsClientSockets` is false
+([`hosted-conversation-parents.md`](hosted-conversation-parents.md)), so it
+admits no client socket and there is nothing on it to close. The hop does not
+ask it to revoke anything. What it does hold is a hidden main conversation, an
+ordinary `SubstreamAgent` that *does* hold whatever was opened against it, and
+only the Space's parent rows name it. So the hop is `WorkspaceDO.listChildren`
+for the Space id and one `substream` message per child, keyed by the Space id
+as the parent, exactly as an automation's conversations are keyed by its own.
 
 **Only the object knows its own children.** A work stream's participants and a
-dashboard's blocks live in that object's SQL storage, not in D1, so no query the
+dashboard's blocks live in Durable Object SQL storage, not in D1, so no query the
 producer could write would enumerate them. That is why the walk exists at all
 rather than the producer publishing a flat list.
 
 The lists are deliberately generous. `WorkspaceDO` returns the person's own
 viewer rows plus every workspace-scoped work stream, because a workspace-scoped
 work stream is readable by any member and can therefore hold a socket the object
-never wrote a viewer row for. `WorkstreamDO` names every registered child from `conversation_children`,
-which always includes `"0"`, plus any substream that spoke before the registry
-existed. A hop that finds nothing to close costs one call.
+never wrote a viewer row for. For a `workstream` hop, `WorkspaceDO` closes that
+Channel's control sockets (tagged `parent-control:<id>`) and names every child
+in the Channel's `parent_children` rows, which always include `"0"`, plus any
+substream in `parent_child_projections`. When the reason is
+`workstream_participant_removed`, it keeps `"0"` and drops breakouts the person
+can still read, because a breakout's roster is its own. A hop that finds nothing
+to close costs one call.
 
 ### What each object does
 
@@ -316,16 +318,18 @@ own:
   [`realtime-sockets.md`](realtime-sockets.md) and the objects' own connect
   paths. This module never re-runs admission; it only closes.
 - **Object-local visibility.** Whether one work stream still admits one reader
-  is held in that object's SQL — `WorkstreamDO.canRead`, `product.canRead` — and
-  the object enforces it itself when it publishes. No message here carries it,
+  is held in that parent's rows — `HostedParent.canRead`, `product.canRead` —
+  and the object enforces it itself when it publishes. No message here carries it,
   and none should: it is not a D1 fact, and routing it through a queue would put
   a round trip between a scope change and the reader it excludes.
 - **Authorization queries.** Membership and session validity are D1 facts owned
   by `middleware/auth.ts` and the services that write them.
 - **What flows over a socket while it is open.** That is
   [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md).
-- **The object hierarchy itself.** [`workstream-durable-object.md`](workstream-durable-object.md)
-  owns the conversation parents and the conversations under them, and
+- **The object hierarchy itself.** [`hosted-conversation-parents.md`](hosted-conversation-parents.md)
+  owns Channel and Space parents inside `WorkspaceDO`,
+  [`workstream-durable-object.md`](workstream-durable-object.md) owns the
+  conversations under them, and
   [`automation-lifecycle.md`](automation-lifecycle.md) owns `AutomationDO`;
   this module adds one method to each socket-holding object and reads the
   parent contract's `listChildren` from the one that holds none.
@@ -389,7 +393,7 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
   participation in, or visibility of, one work stream. Those are facts in the
   object's *own* SQL, not in D1, so no producer here can publish them — and the
   object that holds them enforces them itself, synchronously, on its own publish
-  paths (`WorkstreamDO.broadcastMetadata` and `SubstreamAgent` on an event that
+  paths (`HostedParent.broadcastMetadata` and `SubstreamAgent` on an event that
   narrows visibility). That is not a second
   answer to this module's question. This module answers "does this person still
   have access to the workspace", which only D1 knows; those checks answer "does

@@ -272,24 +272,29 @@ describe("a conversation object's outbox", () => {
     expect(await projectionVersion(child, "common")).toBe(version);
   });
 
-  it("carries a child's directory through its parent's per-child row to the workspace directory", async () => {
+  it("carries a child's directory through its hosted parent's per-child row to the channels row in one delivery", async () => {
     const child = childStub(LEG_WORKSTREAM_ID);
     await parkEffectQueue(child);
     await openWorkstream(child, LEG_WORKSTREAM_ID, "Both legs");
-    const parent = workstreamStub(LEG_WORKSTREAM_ID);
-    await parkEffectQueue(parent);
+    const workspace = workspaceStub();
 
+    // One leg now: the consumer hands the child's effects to the Organization
+    // object, which applies the parent step and then its own directory step
+    // from the local outbox before the call returns. No second Queue hop.
     const delivered = await deliverChildEffects(env, child);
     const childCommon = delivered.filter((envelope) => envelope.effect.kind === "directory_common");
     expect(childCommon.length).toBeGreaterThan(0);
 
     // The per-child row holds the child's newest common projection, at the
     // child's own version number.
-    const perChild = await runInDurableObject(parent, (_instance, state) => state.storage.sql.exec<{
+    const perChild = await runInDurableObject(workspace, (_instance, state) => state.storage.sql.exec<{
       substream_id: string;
       source_version: number;
       effect_json: string;
-    }>(`SELECT substream_id, source_version, effect_json FROM substream_directory`).toArray());
+    }>(
+      `SELECT substream_id, source_version, effect_json FROM parent_child_projections WHERE parent_id = ?`,
+      LEG_WORKSTREAM_ID,
+    ).toArray());
     expect(perChild).toEqual([{
       substream_id: "0",
       source_version: Math.max(...childCommon.map((envelope) => envelope.sourceVersion)),
@@ -297,36 +302,32 @@ describe("a conversation object's outbox", () => {
     }]);
     expect(JSON.parse(perChild[0]!.effect_json)).toMatchObject({ kind: "directory_common", title: "Both legs" });
 
-    const queued = await pendingParentEffects(parent);
-    const parentCommon = queued.filter((envelope) => envelope.effect.kind === "directory_common");
-    expect(parentCommon.length).toBeGreaterThan(0);
-    for (const envelope of queued) {
-      expect(envelope).toMatchObject({ kind: "parent_effect", parentKind: "workstream", parentId: LEG_WORKSTREAM_ID });
-    }
-
-    const parentDelivered = await deliverParentEffectsInOrder(env, parent);
-    const directory = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{
-      workstream_id: string;
-      title: string;
-      waterline: number;
-    }>(
-      `SELECT workstream_id, title, waterline FROM workspace_workstream_directory WHERE workstream_id = ?`,
-      LEG_WORKSTREAM_ID,
-    ).toArray());
-    // Compare to the batch actually delivered, not the earlier inspection:
-    // another alarm may have published a newer projection between those reads.
-    expect(directory).toEqual([{
-      workstream_id: LEG_WORKSTREAM_ID,
-      title: "Both legs",
-      waterline: Math.max(...parentDelivered.filter((envelope) => envelope.effect.kind === "directory_common")
-        .map((envelope) => envelope.sourceVersion)),
-    }]);
+    // The directory row is already there, at the parent's newest common
+    // version, and nothing of the directory is left waiting in the outbox.
+    const { directory, commonVersion, pendingDirectory } = await runInDurableObject(workspace, (_instance, state) => ({
+      directory: state.storage.sql.exec<{ workstream_id: string; title: string; waterline: number }>(
+        `SELECT workstream_id, title, waterline FROM channels WHERE workstream_id = ?`,
+        LEG_WORKSTREAM_ID,
+      ).toArray(),
+      commonVersion: state.storage.sql.exec<{ next_version: number }>(
+        `SELECT next_version FROM parent_projection_keys WHERE parent_id = ? AND projection_key = 'common'`,
+        LEG_WORKSTREAM_ID,
+      ).one().next_version - 1,
+      pendingDirectory: state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM parent_outbox
+          WHERE parent_id = ? AND effect_kind IN ('directory_common', 'directory_user')`,
+        LEG_WORKSTREAM_ID,
+      ).one().count,
+    }));
+    expect(commonVersion).toBeGreaterThan(0);
+    expect(directory).toEqual([{ workstream_id: LEG_WORKSTREAM_ID, title: "Both legs", waterline: commonVersion }]);
+    expect(pendingDirectory).toBe(0);
   });
 });
 
 describe("a parent with two children", () => {
   it("retains private child unread locally without publishing it into Main's directory", async () => {
-    const parent = workstreamStub(SIBLING_WORKSTREAM_ID);
+    const workspace = workspaceStub();
     const reserve = {
       workspaceId: WORKSPACE_ID,
       parentId: SIBLING_WORKSTREAM_ID,
@@ -350,14 +351,11 @@ describe("a parent with two children", () => {
       }),
     ];
 
-    // Reserve, apply, and capture in one object invocation. Returning between
-    // those steps lets the alarm legitimately drain one projection into the
-    // test Queue before the assertion can read it, which made this test race
-    // the behavior it was trying to inspect. The Queue consumer and the real
-    // alarm drain are covered above; this case is about which rows the parent
-    // publishes for Main and a Breakout.
-    const queued = await runInDurableObject(parent, async (instance, state) => {
-      await instance.reserveChild({
+    // Drive the hosted parent directly, below the facade, so its outbox rows
+    // can be read before the Organization applies them. The facade drains the
+    // directory kinds on every write, which is proved below.
+    const queued = await withHostedParent(workspace, SIBLING_WORKSTREAM_ID, (parent, state) => {
+      parent.reserveChild({
         ...reserve,
         substreamId: asSubstreamId("0"),
         kind: "main",
@@ -371,69 +369,146 @@ describe("a parent with two children", () => {
           createdAt: "2026-09-01T12:00:00.000Z",
         },
       });
-      await instance.reserveChild({ ...reserve, substreamId: SIBLING_CHILD_ID, kind: "child" });
+      parent.reserveChild({ ...reserve, substreamId: SIBLING_CHILD_ID, kind: "child" });
       for (const envelope of childEffects) {
-        await instance.receiveChildEffects({ substreamId: envelope.substreamId, envelopes: [envelope] });
+        parent.receiveChildEffects({ substreamId: envelope.substreamId, envelopes: [envelope] });
       }
-      const rows = state.storage.sql.exec<{ message_id: string; payload_json: string }>(
-        `SELECT message_id, payload_json FROM durable_outbox
-          WHERE json_extract(payload_json, '$.kind') = 'parent_effect'
-          ORDER BY CASE json_extract(payload_json, '$.effect.kind')
-                     WHEN 'directory_common' THEN 0
-                     WHEN 'directory_user' THEN 1
-                     ELSE 2
-                   END,
-                   created_at, message_id`,
-      ).toArray();
-      for (const row of rows) {
-        state.storage.sql.exec(`DELETE FROM durable_outbox WHERE message_id = ?`, row.message_id);
-      }
-      return rows.map((row) => ParentEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
+      return state.storage.sql.exec<{ payload_json: string }>(
+        `SELECT payload_json FROM parent_outbox WHERE parent_id = ? AND effect_kind = 'directory_user'
+          ORDER BY created_at, message_id`,
+        SIBLING_WORKSTREAM_ID,
+      ).toArray().map((row) => ParentEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
     });
 
-    const perChild = await runInDurableObject(parent, (_instance, state) => state.storage.sql.exec<{
+    const perChild = await runInDurableObject(workspace, (_instance, state) => state.storage.sql.exec<{
       substream_id: string;
-    }>(`SELECT substream_id FROM substream_user_directory WHERE user_id = ? ORDER BY substream_id`, USER_ID).toArray());
+    }>(
+      `SELECT substream_id FROM parent_child_viewer_projections WHERE parent_id = ? AND user_id = ? ORDER BY substream_id`,
+      SIBLING_WORKSTREAM_ID,
+      USER_ID,
+    ).toArray());
     expect(perChild.map((row) => row.substream_id)).toEqual(["0", SIBLING_CHILD_ID]);
 
-    const queuedViewerEffects = queued.filter((envelope) => envelope.effect.kind === "directory_user");
     // Main advances the Channel row, while the Breakout carries its own tagged
     // projection to the Space dashboard. The Breakout must not be folded into
     // Main even though both projections leave the parent.
-    expect(queuedViewerEffects).toHaveLength(2);
-    expect(queuedViewerEffects.find((envelope) => envelope.substreamId === undefined)).toMatchObject({
+    expect(queued).toHaveLength(2);
+    expect(queued.find((envelope) => envelope.substreamId === undefined)).toMatchObject({
       sourceVersion: 2,
       effect: { kind: "directory_user", unreadCount: 2, listable: true },
     });
-    expect(queuedViewerEffects.find((envelope) => envelope.substreamId === SIBLING_CHILD_ID)).toMatchObject({
+    expect(queued.find((envelope) => envelope.substreamId === SIBLING_CHILD_ID)).toMatchObject({
       substreamId: SIBLING_CHILD_ID,
       sourceVersion: 1,
       effect: { kind: "directory_user", unreadCount: 3, listable: true },
     });
 
-    for (const envelope of queued) {
-      expect(await consumeEffectBodies(env, [envelope])).toEqual({ acked: 1, retried: 0 });
-    }
-    const viewer = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{
-      unread_count: number;
-      waterline: number;
-    }>(
-      `SELECT unread_count, waterline FROM workspace_workstream_viewers WHERE workstream_id = ? AND user_id = ?`,
-      SIBLING_WORKSTREAM_ID,
-      USER_ID,
-    ).toArray());
-    expect(viewer).toEqual([{ unread_count: 2, waterline: 2 }]);
-    const breakoutViewer = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{
-      unread_count: number;
-      waterline: number;
-    }>(
-      `SELECT unread_count, waterline FROM workspace_breakout_viewers
-        WHERE workstream_id = ? AND substream_id = ? AND user_id = ?`,
-      SIBLING_WORKSTREAM_ID,
-      SIBLING_CHILD_ID,
-      USER_ID,
-    ).toArray());
-    expect(breakoutViewer).toEqual([{ unread_count: 3, waterline: 1 }]);
+    // Any facade write drains the directory kinds locally; this one writes
+    // nothing else.
+    await workspace.flushProvisionalDirectory({ workspaceId: WORKSPACE_ID, parentId: SIBLING_WORKSTREAM_ID });
+
+    await runInDurableObject(workspace, (_instance, state) => {
+      expect(state.storage.sql.exec<{ unread_count: number; waterline: number }>(
+        `SELECT unread_count, waterline FROM channel_viewers WHERE workstream_id = ? AND user_id = ?`,
+        SIBLING_WORKSTREAM_ID,
+        USER_ID,
+      ).toArray()).toEqual([{ unread_count: 2, waterline: 2 }]);
+      expect(state.storage.sql.exec<{ unread_count: number; waterline: number }>(
+        `SELECT unread_count, waterline FROM breakout_viewers
+          WHERE workstream_id = ? AND substream_id = ? AND user_id = ?`,
+        SIBLING_WORKSTREAM_ID,
+        SIBLING_CHILD_ID,
+        USER_ID,
+      ).toArray()).toEqual([{ unread_count: 3, waterline: 1 }]);
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM parent_outbox WHERE parent_id = ?`,
+        SIBLING_WORKSTREAM_ID,
+      ).one().count).toBe(0);
+    });
+  });
+});
+
+describe("the Organization's parent outbox", () => {
+  it("applies directory kinds in the write and leaves activity for the alarm to send to ACTIVITY_QUEUE", async () => {
+    const workspace = workspaceStub();
+    // Refused while parked, so an alarm that fires early defers the activity
+    // row instead of sending it; recorded once unparked.
+    const gate = await captureEffectQueue(workspace);
+    await workspace.reserveChild({
+      workspaceId: WORKSPACE_ID,
+      parentId: ACTIVITY_WORKSTREAM_ID,
+      createdByUserId: USER_ID,
+      authorityGeneration: 1,
+      substreamId: asSubstreamId("0"),
+      kind: "main",
+      directory: {
+        title: "Activity leaves by Queue",
+        description: "",
+        scope: "personal",
+        systemKind: null,
+        emailAddress: null,
+        titleStatus: "settled",
+        createdAt: "2026-09-01T12:00:00.000Z",
+      },
+    });
+    const viewer = childEnvelope({
+      parentKind: "workstream",
+      parentId: ACTIVITY_WORKSTREAM_ID,
+      substreamId: "0",
+      sourceVersion: 1,
+      effect: viewerEffect(4),
+    });
+    const activity = childEnvelope({
+      parentKind: "workstream",
+      parentId: ACTIVITY_WORKSTREAM_ID,
+      substreamId: "0",
+      sourceVersion: 2,
+      effect: activityEffect("channel-activity-1"),
+    });
+    await workspace.receiveChildEffects({ substreamId: asSubstreamId("0"), envelopes: [viewer] });
+    await workspace.receiveChildEffects({ substreamId: asSubstreamId("0"), envelopes: [activity] });
+
+    // The directory is applied before the write returns; only the activity
+    // row is left, because nothing has sent it yet.
+    const before = await runInDurableObject(workspace, (_instance, state) => ({
+      viewers: state.storage.sql.exec<{ unread_count: number }>(
+        `SELECT unread_count FROM channel_viewers WHERE workstream_id = ? AND user_id = ?`,
+        ACTIVITY_WORKSTREAM_ID,
+        USER_ID,
+      ).toArray(),
+      outbox: state.storage.sql.exec<{ effect_kind: string; message_id: string }>(
+        `SELECT effect_kind, message_id FROM parent_outbox WHERE parent_id = ?`,
+        ACTIVITY_WORKSTREAM_ID,
+      ).toArray(),
+    }));
+    expect(before.viewers).toEqual([{ unread_count: 4 }]);
+    expect(before.outbox).toEqual([{ effect_kind: "activity_event", message_id: `substream:0:${activity.messageId}` }]);
+    expect(gate.sent).toEqual([]);
+
+    // Hand the Queue back, make the row due, and let the real alarm send it.
+    gate.parked = false;
+    await runInDurableObject(workspace, async (_instance, state) => {
+      state.storage.sql.exec(`UPDATE parent_outbox SET not_before = 0 WHERE parent_id = ?`, ACTIVITY_WORKSTREAM_ID);
+      await state.storage.setAlarm(Date.now());
+    });
+    await runDurableObjectAlarm(workspace);
+    await expect.poll(async () => runInDurableObject(workspace, (_instance, state) => state.storage.sql.exec<{
+      count: number;
+    }>(`SELECT COUNT(*) AS count FROM parent_outbox WHERE parent_id = ?`, ACTIVITY_WORKSTREAM_ID).one().count), {
+      timeout: 10_000,
+      interval: 100,
+    }).toBe(0);
+
+    const sent = gate.sent.map((body) => ParentEffectEnvelopeSchema.safeParse(body))
+      .flatMap((parsed) => parsed.success && parsed.data.parentId === ACTIVITY_WORKSTREAM_ID ? [parsed.data] : []);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      kind: "parent_effect",
+      parentKind: "workstream",
+      parentId: ACTIVITY_WORKSTREAM_ID,
+      messageId: `substream:0:${activity.messageId}`,
+      effect: { kind: "activity_event", dedupeKey: "channel-activity-1" },
+    });
   });
 });
 

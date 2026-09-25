@@ -24,12 +24,12 @@ import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
 
 import { RETIREMENT_REFUSAL_CODE } from "../src/durable-objects/object-retirement";
 import { retireWorkspaceGraph } from "../src/services/workspace-retirement-service";
-import { workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
-import type { WorkstreamDO } from "../src/durable-objects/workstream-do";
+import { automationDOName, workspaceDOName } from "../src/durable-objects/names";
+import type { SidekickDO } from "../src/durable-objects/sidekick-do";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { Env } from "../src/env";
 
@@ -41,6 +41,18 @@ const OPERATION_ID = "00000000-0000-7000-8000-00000000e003";
 const COMPLETED_AT = "2026-09-05T13:00:00.000Z";
 const FIRST_ROOM_ID = "00000000-0000-7000-8000-00000000e201";
 const SPACE_ID = "00000000-0000-7000-8000-00000000e401";
+const SIDEKICK_ID = "00000000-0000-7000-8000-00000000e301";
+
+/**
+ * The Sidekick parent, still its own object. A Channel's and a Space's parent
+ * are hosted by the Organization object and are closed with it, so the Sidekick
+ * is the parent the walk tombstones separately.
+ */
+function sidekickStub(workspaceId: string): DurableObjectStub<SidekickDO> {
+  return TEST_ENV.AUTOMATION_DOS.get(TEST_ENV.AUTOMATION_DOS.idFromName(
+    automationDOName(TEST_ENV.AVALON_REGION, asWorkspaceId(workspaceId), asAutomationId(SIDEKICK_ID)),
+  )) as DurableObjectStub<SidekickDO>;
+}
 
 let workspaceSequence = 0;
 function freshWorkspaceId() {
@@ -116,7 +128,7 @@ async function seedDirectory(stub: DurableObjectStub<WorkspaceDO>, workspaceId: 
       "00000000-0000-7000-8000-00000000e202",
     ].entries()) {
       state.storage.sql.exec(
-        `INSERT INTO workspace_workstream_directory (
+        `INSERT INTO channels (
            workstream_id, authority_generation, waterline, source_event_id, payload_hash,
            title, description, preview, scope, exact_state, system_kind, last_activity_at,
            completed_at, archived_at, email_address, origin_type, origin_label,
@@ -141,17 +153,17 @@ async function seedDirectory(stub: DurableObjectStub<WorkspaceDO>, workspaceId: 
          automation_id, workspace_id, author_user_id, source_version, payload_hash,
          lifecycle, scope, owning_workstream_id, title, description, next_run_at, projected_at)
        VALUES (?, ?, ?, 1, 'h', 'active', 'workspace', NULL, 'Nightly', '', NULL, ?)`,
-      "00000000-0000-7000-8000-00000000e301",
+      SIDEKICK_ID,
       workspaceId,
       ACTOR_ID,
       Date.now(),
     );
     // Archived on purpose. What the graph is about is an object, not a product
-    // surface: an archived Space is still a `SpaceDO` holding a hidden main
+    // surface: an archived Space is still a parent holding a hidden main
     // conversation, so enumerating only the active ones would report the
     // Organization closed with one of its objects still answering.
     state.storage.sql.exec(
-      `INSERT INTO workspace_space_directory (
+      `INSERT INTO spaces (
          space_id, title, scope, appearance_json, archived_at, created_by_user_id,
          system_role, authority_generation, source_version, payload_hash, revision,
          created_at, updated_at, source_created_at, source_updated_at)
@@ -191,9 +203,9 @@ describe("workspace retirement graph", () => {
       SPACE_ID,
     ]);
     expect(begun.nodes.filter((node) => node.parentKind === "automation")).toHaveLength(1);
-    // A Space is enumerated as its own kind rather than as a work stream: it
-    // lives under its own binding, and addressing it through `WORKSTREAM_DOS`
-    // would tombstone a different, empty object while leaving the Space open.
+    // A Space is enumerated as its own kind rather than as a work stream, so
+    // the receipt names what was closed; its hosted parent lives in this
+    // object, but its hidden main conversation is still its own object.
     expect(begun.nodes.filter((node) => node.parentKind === "space")
       .map((node) => node.parentId)).toEqual([SPACE_ID]);
 
@@ -311,12 +323,11 @@ describe("workspace retirement graph", () => {
     await seedDirectory(stub, workspaceId);
     const tombstone = { retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: null, reason: "operator_retirement" };
     await stub.beginWorkspaceRetirement(tombstone);
-    const room = TEST_ENV.WORKSTREAM_DOS.get(TEST_ENV.WORKSTREAM_DOS.idFromName(
-      workstreamDOName(TEST_ENV.AVALON_REGION, workspaceId, asWorkstreamId(FIRST_ROOM_ID)),
-    )) as DurableObjectStub<WorkstreamDO>;
-    // Retired directly, with no `recordRetiredNode` — exactly the state an
+    // The Sidekick, because it is the parent the walk tombstones itself: a
+    // Channel's parent is closed with the Organization object above. Retired
+    // directly, with no `recordRetiredNode`, which is exactly the state an
     // interrupted pass leaves behind.
-    await room.retireObject(tombstone);
+    await sidekickStub(workspaceId).retireObject(tombstone);
     expect((await stub.workspaceRetirementProgress()).remaining).toBe(4);
 
     const receipt = await retireWorkspaceGraph(TEST_ENV, { workspaceId, ...tombstone });
@@ -331,30 +342,29 @@ describe("workspace retirement graph", () => {
     // holds a different identity. Tombstoning it would close the wrong object,
     // so the walk records the node as failed and the pass reports incomplete —
     // which is also the only path that produces a non-empty `failed`, the
-    // receipt shape the route and the Ace page render.
+    // receipt shape the route and the Ace page render. A hosted Channel or
+    // Space parent is keyed by the id the directory names and cannot disagree,
+    // so the Sidekick, still its own object, is the parent that can.
     const workspaceId = freshWorkspaceId();
     const stub = workspaceStub(workspaceId);
     await seedDirectory(stub, workspaceId);
-    const room = TEST_ENV.WORKSTREAM_DOS.get(TEST_ENV.WORKSTREAM_DOS.idFromName(
-      workstreamDOName(TEST_ENV.AVALON_REGION, workspaceId, asWorkstreamId(FIRST_ROOM_ID)),
-    )) as DurableObjectStub<WorkstreamDO>;
-    await runInDurableObject(room, (instance: WorkstreamDO, state) => {
+    const sidekick = sidekickStub(workspaceId);
+    await runInDurableObject(sidekick, (instance: SidekickDO, state) => {
       state.storage.sql.exec(
-        `INSERT INTO workstream_metadata
-           (id, revision, authority_generation, workspace_id, workstream_id, region, title,
-            description, preview, scope, exact_state, system_kind, last_activity_at,
-            completed_at, archived_at, email_address, created_by_user_id, title_status,
-            latest_attention_ordinal, unread_tracking_start_ordinal, next_wakeup_due_at,
-            next_wakeup_prompt, next_terminal_action_at, source_created_at, source_updated_at,
+        `INSERT INTO automation
+           (id, automation_id, workspace_id, region, author_user_id, run_as_user_id, lifecycle,
+            paused_by, scope, owning_workstream_id, owning_room_archived_at, title, description,
+            current_definition_revision, accepted_definition_revision, connector_bindings_json,
+            default_plugin_ids_json, activity_source_plugin_ids_json, evaluator_projection_json,
+            model_override, email_address, effective_after_event_sequence, authority_generation,
             created_at, updated_at)
-         VALUES (1, 1, 1, ?, ?, ?, 'Someone else', '', '', 'workspace', 'idle', NULL, ?,
-                 NULL, NULL, NULL, ?, 'settled', 0, 0, NULL, NULL, NULL, ?, ?,
-                 unixepoch(), unixepoch())
+         VALUES (1, ?, ?, ?, ?, ?, 'active', NULL, 'workspace', NULL, NULL, 'Someone else', '',
+                 0, NULL, '[]', '[]', '[]', '{}', NULL, NULL, NULL, 1, ?, ?)
          ON CONFLICT (id) DO NOTHING`,
+        "00000000-0000-7000-8000-00000000e3ff",
         workspaceId,
-        "00000000-0000-7000-8000-00000000e2ff",
         TEST_ENV.AVALON_REGION,
-        Date.now(),
+        ACTOR_ID,
         ACTOR_ID,
         Date.now(),
         Date.now(),
@@ -372,10 +382,10 @@ describe("workspace retirement graph", () => {
     expect(receipt.complete).toBe(false);
     expect(receipt.remaining).toBe(1);
     expect(receipt.failed).toEqual([
-      { parentKind: "workstream", parentId: FIRST_ROOM_ID, error: "conversation_parent_identity_mismatch" },
+      { parentKind: "automation", parentId: SIDEKICK_ID, error: "conversation_parent_identity_mismatch" },
     ]);
     // Not tombstoned: the mismatched object is left exactly as it was.
-    expect((await room.objectRetirementState()).retired).toBe(false);
+    expect((await sidekick.objectRetirementState()).retired).toBe(false);
   });
 
   it("closes children before parents and reports the pass", async () => {
@@ -386,36 +396,35 @@ describe("workspace retirement graph", () => {
     // A real child on one of the parents. Without it every `childrenForRetirement`
     // answers `missing`, `retiredChildren` is zero, and the test named for
     // closing children before parents closes no children at all.
-    const room = TEST_ENV.WORKSTREAM_DOS.get(TEST_ENV.WORKSTREAM_DOS.idFromName(
-      workstreamDOName(TEST_ENV.AVALON_REGION, workspaceId, asWorkstreamId(FIRST_ROOM_ID)),
-    )) as DurableObjectStub<WorkstreamDO>;
-    await runInDurableObject(room, (instance: WorkstreamDO, state) => {
+    await runInDurableObject(stub, (instance: WorkspaceDO, state) => {
       // Its identity and its one child, written the way a projection and a
       // reservation leave them. Going through `reserveChild` would drag in this
       // suite's empty D1, and what is under test here is the walk.
       state.storage.sql.exec(
-        `INSERT INTO workstream_metadata
-           (id, revision, authority_generation, workspace_id, workstream_id, region, title,
-            description, preview, scope, exact_state, system_kind, last_activity_at,
-            completed_at, archived_at, email_address, created_by_user_id, title_status,
+        `INSERT INTO parent_metadata
+           (parent_id, parent_kind, workspace_id, region, authority_generation, revision, title,
+            description, preview, email_address, scope, exact_state, created_by_user_id,
+            title_status, system_kind, last_activity_at, completed_at, archived_at,
             latest_attention_ordinal, unread_tracking_start_ordinal, next_wakeup_due_at,
             next_wakeup_prompt, next_terminal_action_at, source_created_at, source_updated_at,
             created_at, updated_at)
-         VALUES (1, 1, 1, ?, ?, ?, 'Room 0', '', '', 'workspace', 'idle', NULL, ?,
-                 NULL, NULL, NULL, ?, 'settled', 0, 0, NULL, NULL, NULL, ?, ?,
-                 unixepoch(), unixepoch())
-         ON CONFLICT (id) DO NOTHING`,
-        workspaceId,
+         VALUES (?, 'workstream', ?, ?, 1, 1, 'Room 0', '', '', NULL, 'workspace', 'idle', ?,
+                 'settled', NULL, ?, NULL, NULL, 0, 0, NULL, NULL, NULL, ?, ?, ?, ?)
+         ON CONFLICT (parent_id) DO NOTHING`,
         FIRST_ROOM_ID,
+        workspaceId,
         TEST_ENV.AVALON_REGION,
-        Date.now(),
         ACTOR_ID,
+        Date.now(),
+        Date.now(),
+        Date.now(),
         Date.now(),
         Date.now(),
       );
       state.storage.sql.exec(
-        `INSERT OR IGNORE INTO conversation_children (substream_id, kind, created_by_user_id, created_at)
-         VALUES (?, 'main', ?, ?)`,
+        `INSERT OR IGNORE INTO parent_children (parent_id, substream_id, kind, created_by_user_id, created_at)
+         VALUES (?, ?, 'main', ?, ?)`,
+        FIRST_ROOM_ID,
         asSubstreamId("0"),
         ACTOR_ID,
         Date.now(),
