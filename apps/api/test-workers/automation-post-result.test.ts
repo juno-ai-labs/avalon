@@ -1661,8 +1661,8 @@ describe("post_result", () => {
 
   it("refuses the activation once the owning room is archived, and the archive pauses the automation", async () => {
     // Archived through the room's own surface; the archive reaches the room's
-    // parent on the first queue leg and the workspace on the second, which
-    // tells the automation its room is gone.
+    // parent, hosted by the workspace, on the queue leg, and the workspace's
+    // directory step tells the automation its room is gone.
     const archived = await post(roomConversation(), "/internal/product", {
       operation: "update",
       auth: AUTH,
