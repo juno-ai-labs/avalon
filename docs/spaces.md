@@ -475,11 +475,26 @@ A resource and a Sidekick recommendation are one mechanism with two consumers,
 keyed by `kind` through every row and every message. `addDefault` attaches the
 thing to the Space's own authority — the attachment a person sees — after
 checking that every effective reader can reach it, then registers it in
-WorkspaceDO, which is what stages, fences and settles delivery. Targets are
-published through the outbox onto the activity Queue; the consumer rechecks the
-default generation, the membership generation and the Space's lifecycle before
+WorkspaceDO, which is what stages, fences and settles delivery.
+
+A Sidekick target is written in the same transaction that stages it, by
+`addDefault`, `stageDefaultsForMember` (a Channel joining) or a membership move:
+the member Channel's `parent_sidekicks` row is in WorkspaceDO's own SQLite, so
+the target is marked `applied` and nothing is published. That needs the
+Channel's parent hosted here (a `parent_metadata` row and no pending import),
+not archived, and the Sidekick live and workspace-scoped in
+`automation_directory`; otherwise the target takes the Queue as before. No
+actor's Channel management access is asked in place: the Space's write check
+admitted whoever added the default or placed the Channel, and recommending a
+workspace Sidekick exposes nothing a member could not already open. Open rails
+are refreshed with the `automations` sync topic after commit.
+
+Resource targets, and Sidekick targets that did not qualify, are published
+through the outbox onto the activity Queue; the consumer rechecks the default
+generation, the membership generation and the Space's lifecycle before
 attaching through `WorkstreamService.attachResource` or
-`setSidekickRecommendation`.
+`setSidekickRecommendation`. A resource keeps the Queue because attaching one
+writes the Channel's main conversation, a `SubstreamAgent`.
 
 Removing a default advances its generation, which makes every queued target
 stale. It does **not** detach it from Channels that already have it: a Channel's
@@ -2023,10 +2038,11 @@ afterwards.
 
 ## Changelog
 
-### 2026-09-25 — Space creation, equal-audience moves and a Channel's birth commit in one WorkspaceDO transaction
+### 2026-09-25 — Space creation, equal-audience moves, a Channel's birth and Sidekick defaults commit in one WorkspaceDO transaction
 
-**What changed:** Three Space flows that were staged across several WorkspaceDO
-calls are now one call and one transaction each.
+**What changed:** Four Space flows that were staged across several WorkspaceDO
+calls, or a Queue round trip back into it, are now one call and one
+transaction each.
 
 - Creating a Space: `SpaceService.create` and `ensureGeneral` write the D1
   anchor first and then one call (`reserveSpace` with `reserveParent`,
@@ -2043,6 +2059,12 @@ calls are now one call and one transaction each.
   Space sources. Creation no longer calls `prepareSpaceMembership`,
   `finalizeSpaceMembership` or `cancelSpaceMembership`, stages no `add` intent,
   and never leaves a `joining` row.
+- A Sidekick default on a Channel hosted in WorkspaceDO is written to
+  `parent_sidekicks` inside the transaction that stages it (`addDefault`,
+  `stageDefaultsForMember`, a membership move). Resource targets, and Sidekick
+  targets on a Channel not yet imported, archived, or whose Sidekick the
+  directory does not show as a live workspace Sidekick, still take the activity
+  Queue.
 
 **Why:** Space and Channel parents moved into WorkspaceDO
 ([hosted conversation parents](hosted-conversation-parents.md)), so the Space
@@ -2060,7 +2082,11 @@ anchoring in D1 after, as before: with the Space and its parent committed
 together, a D1 failure after them would leave a Space in every member's sidebar
 that no cancel could remove, while anchoring first leaves only an unused
 anchor. Keeping the staged placement RPCs and batching them into one call:
-that keeps the `joining` state and its intent for no reader.
+that keeps the `joining` state and its intent for no reader. Keeping the
+actor's Channel management check on an in-place Sidekick default: it is an
+async relationship read that cannot run inside the staging transaction, the
+Space's write check already authorized the person, and a workspace Sidekick
+recommendation grants nothing.
 
 **Consequences:** A refused Space creation can leave an anchor row and a
 bootstrapped hidden conversation under an id no Space uses; both are inert. The
@@ -2071,7 +2097,11 @@ written. The version-zero `reserveSpace`, `ensureGeneralSpace`,
 `cancelSpaceReservation`, `prepareSpaceMembershipMove` and the
 `replaceEquivalentSpaceAccessSource` RPC stay for a Worker from before this
 change during the rollout. `replanSpaceMembershipMoveForAudience` and
-`finalizeSpaceMembershipMove` stay while a `move` intent may be stored.
+`finalizeSpaceMembershipMove` stay while a `move` intent may be stored. The
+in-place Sidekick default trusts `automation_directory` for the Sidekick's
+scope and lifecycle: a row lagging a Sidekick's creation sends the target
+through the Queue, and a row lagging a narrowing to personal would still
+recommend it on the Channel.
 
 ### 2026-09-23 — Resume internal Space creation under a stable identity
 

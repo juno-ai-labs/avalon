@@ -71,10 +71,24 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
       workspaceDOName(env.AVALON_REGION, workspaceId),
       placementAffinity,
     );
-    const { closedUserIds = [] } = await workspace.revokeNarrowedAudienceAccess({
+    const { closedUserIds = [], substreams, automationIds } = await workspace.revokeNarrowedAudienceAccess({
       workspaceId,
       parentId: target.workstreamId,
     });
+    if (substreams && automationIds) {
+      // The object ran each person's Channel step in the same call, so only
+      // the leaves go out: each conversation, and each Sidekick the Channel owns.
+      await publishDescendantRevocations(env, [
+        ...substreams.flatMap(({ userId, substreamIds }) => substreamIds.map((substreamId) =>
+          descendantRevocation({ ...carried, userId }, {
+            scope: "substream", workstreamId: target.workstreamId, substreamId,
+          }))),
+        ...closedUserIds.flatMap((userId) => automationIds.map((automationId) =>
+          descendantRevocation({ ...carried, userId }, { scope: "automation", automationId }))),
+      ]);
+      return;
+    }
+    // An object from before the combined step answers with names only.
     await publishDescendantRevocations(env, closedUserIds.flatMap((userId) => [
       descendantRevocation({ ...carried, userId }, { scope: "workstream", workstreamId: target.workstreamId }),
       descendantRevocation({ ...carried, userId },
@@ -107,12 +121,20 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
     // retraction — where an empty list simply reaches nothing new.
     const {
       workstreamIds = [],
+      channels = [],
       automationIds = [],
       artifactIds = [],
     } = await workspace.revokeSocketAccess(revocation);
+    // A Channel in `channels` had its own hop run inside that call, so only
+    // its conversations go out. The rest (a Channel still waiting for its
+    // legacy import, or every Channel when an older object answered) get the
+    // `workstream` hop.
+    const handled = new Set(channels.map((channel) => channel.workstreamId));
     await publishDescendantRevocations(env, [
-      ...workstreamIds.map((workstreamId) =>
+      ...workstreamIds.filter((workstreamId) => !handled.has(workstreamId)).map((workstreamId) =>
         descendantRevocation(revocation, { scope: "workstream", workstreamId })),
+      ...channels.flatMap(({ workstreamId, substreamIds }) => substreamIds.map((substreamId) =>
+        descendantRevocation(revocation, { scope: "substream", workstreamId, substreamId }))),
       // An automation holds no socket of its own, but its conversation and
       // its runs do, and only the automation object can name them.
       ...automationIds.map((automationId) =>

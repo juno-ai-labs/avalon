@@ -12,11 +12,12 @@
  */
 
 import { env } from "cloudflare:workers";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
 import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type UserId } from "@rally/contracts";
 import type { ScopeGrantTarget } from "@rally/contracts/scope-grants";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { conversationObjectName } from "../src/durable-objects/names";
 import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
 import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
 
@@ -195,6 +196,90 @@ describe("hosted parent isolation", () => {
       // A socket the revocation already closed refuses the frame; its close says so below.
     }
     expect(await closedB).toEqual({ code: 1008, reason: "Work-stream control events must be JSON" });
+    await finishSockets([channelA, channelB], [socketA, socketB]);
+  });
+});
+
+describe("the revocation walk's Channel step, run inside the Organization object", () => {
+  /** A `channels` directory row, which is what the workspace hop enumerates. */
+  async function listChannel(parentId: string): Promise<void> {
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO channels
+           (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+            title, description, preview, scope, exact_state, last_activity_at, origin_type,
+            title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
+            source_created_at, source_updated_at, projected_at)
+         VALUES (?, 1, 1, ?, 'test', 'Channel', '', '', 'workspace', 'idle', 0, 'ad_hoc',
+                 'settled', 0, 0, 0, 0, 0)`,
+        parentId, crypto.randomUUID(),
+      );
+    });
+  }
+
+  it("closes each hosted Channel's control sockets and names its conversations in the workspace hop itself", async () => {
+    const importing = asWorkstreamId("00000000-0000-4000-8000-0000000e00c0");
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE parent_metadata SET scope = 'workspace'");
+      // A Channel whose legacy object has not been imported yet: its hop is left
+      // for the Queue rather than importing it inside the walk.
+      state.storage.sql.exec(
+        "INSERT INTO parent_imports (parent_id, parent_kind, state, not_before) VALUES (?, 'workstream', 'pending', ?)",
+        importing, Date.now() + 3_600_000,
+      );
+    });
+    for (const parentId of [channelA, channelB, importing]) await listChannel(parentId);
+    const [socketA, socketB] = await Promise.all([openControlSocket(channelA), openControlSocket(channelB)]);
+    const closedA = closeOf(socketA);
+    const closedB = closeOf(socketB);
+
+    const result = await organization().revokeSocketAccess({
+      reason: "workspace_membership_removed", workspaceId, userId: shared, sessionId: null,
+    });
+
+    expect(result.workstreamIds).toEqual([channelA, channelB, importing]);
+    expect(result.channels).toEqual([
+      { workstreamId: channelA, substreamIds: ["0", breakoutA] },
+      { workstreamId: channelB, substreamIds: ["0", breakoutB] },
+    ]);
+    expect((await closedA).code).toBe(1008);
+    expect((await closedB).code).toBe(1008);
+    await finishSockets([channelA, channelB], [socketA, socketB]);
+  });
+
+  it("answers a narrowing with each closed reader's conversations and the Sidekicks the Channel owns", async () => {
+    const owned = "00000000-0000-4000-8000-0000000e00d0";
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE parent_metadata SET scope = 'workspace'");
+      state.storage.sql.exec(
+        `INSERT INTO automation_directory
+           (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope,
+            owning_workstream_id, title, description, next_run_at, projected_at)
+         VALUES (?, ?, ?, 1, 'test', 'active', 'workstream', ?, 'Owned', '', NULL, 0)`,
+        owned, workspaceId, shared, channelA,
+      );
+    });
+    // A member reading Channel A only because it admits the whole Organization.
+    await env.DB.prepare("UPDATE workspace_members SET access_class = 'member' WHERE user_id = ?").bind(shared).run();
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec("DELETE FROM parent_grants WHERE parent_id = ? AND user_id = ?", channelA, shared);
+    });
+    const socket = await openControlSocket(channelA);
+    const closed = closeOf(socket);
+    // The narrowing.
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE parent_metadata SET scope = 'personal' WHERE parent_id = ?", channelA);
+    });
+
+    const result = await organization().revokeNarrowedAudienceAccess({ workspaceId, parentId: channelA });
+
+    expect(result).toEqual({
+      closedUserIds: [shared],
+      substreams: [{ userId: shared, substreamIds: ["0", breakoutA] }],
+      automationIds: [owned],
+    });
+    expect((await closed).code).toBe(1008);
+    await finishSockets([channelA], [socket]);
   });
 });
 
@@ -214,6 +299,41 @@ async function openControlSocket(parentId: string): Promise<WebSocket> {
   const socket = response.webSocket!;
   socket.accept();
   return socket;
+}
+
+/**
+ * Finish a socket test so the next test's `reset()` finds nothing in flight.
+ *
+ * Opening a control socket wakes the Channel's main conversation without
+ * awaiting it, and a reset that lands while that wake is still running takes
+ * workerd down (`Promise callback destroyed itself`). Evicting the main
+ * conversation succeeds only once the wake has started it, as
+ * `durable-object-runtime.test.ts` observes; the close answers the one the
+ * object started.
+ */
+async function finishSockets(parentIds: readonly string[], sockets: readonly WebSocket[]): Promise<void> {
+  for (const parentId of parentIds) {
+    const main = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", workspaceId, parentId));
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        await evictDurableObject(main);
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
+    expect(lastError).toBeNull();
+  }
+  for (const socket of sockets) {
+    try {
+      socket.close(1000, "test complete");
+    } catch {
+      // Already closed on this side.
+    }
+  }
 }
 
 function closeOf(socket: WebSocket): Promise<{ code: number; reason: string }> {
