@@ -7,6 +7,7 @@ import { SidekickDetailLayout } from '../components/sidekick-detail-layout';
 import { AutomationHeader, type AutomationHeaderAction } from '../components/automation-header';
 import { Button, EmptyState, OpeningState } from '../components/primitives';
 import { useCollaborationSession } from '../lib/collaboration-session';
+import { copySidekickLink } from '../lib/copy-workstream-link';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { ConversationSurface } from './conversation-surface';
 
@@ -66,7 +67,7 @@ function NewAutomationScreen(): React.JSX.Element {
 }
 
 function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
-  const { api } = useCollaborationSession();
+  const { api, session } = useCollaborationSession();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const automation = useQuery({
@@ -167,6 +168,10 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
       error={act.error?.message}
       onAppearanceChange={setAppearance}
       onArchive={() => act.mutateAsync('archive').then(() => undefined)}
+      onCopyLink={async () => {
+        if (!session?.workspace) throw new Error('No active organization');
+        await copySidekickLink({ region: session.workspace.region, workspaceId: session.workspace.id }, id);
+      }}
       onPause={() => act.mutate('pause')}
       onResume={() => act.mutate('resume')}
       onRunNow={() => act.mutate('run')}

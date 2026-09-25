@@ -10,6 +10,10 @@ describe('Apple channel links', () => {
     expect(parseDesktopDeepLinkIntent(workstreamHttpsDeepLink(`${root}c/1111117Hxt1fAWDjN7TY/b/1111117Hxt1fAWDjN7Te`)!))
       .toMatchObject({ kind: 'workstream', spaceId: '00000000-0000-7000-8000-000000000002', substreamId: '00000000-0000-7000-8000-000000000009' });
   });
+  it('adapts a Base58 Sidekick path into its addressed screen', () => {
+    expect(parseDesktopDeepLinkIntent(workstreamHttpsDeepLink('https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/sidekicks/1111117Hxt1fAWDjN7TX/')!))
+      .toMatchObject({ kind: 'sidekick', sidekickId: '00000000-0000-7000-8000-000000000002', target: { region: 'global' } });
+  });
   it('adapts an addressed private child into the existing scheme parser', () => {
     const link = workstreamHttpsDeepLink(`https://rallywith.ai/app/workspaces/enterprise/${id}/workstreams/${id}/substreams/${id}`);
     expect(link).not.toBeNull();

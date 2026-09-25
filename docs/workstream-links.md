@@ -3,6 +3,7 @@
 Every surface that points at a Space, Channel, or Breakout from outside the desktop app uses
 `https://rallywith.ai/app/<region>/<organization-base58>/s/<space-base58>/`,
 with `/c/<channel-base58>` and optional `/b/<breakout-base58>` appended.
+A Sidekick uses `https://rallywith.ai/app/<region>/<organization-base58>/sidekicks/<sidekick-base58>/`.
 Each Base58 segment encodes the corresponding 16-byte UUID; the Organization ID
 immediately follows the environment/region segment.
 The `rallywithai://` deep link
@@ -44,6 +45,7 @@ Breakout links append `/b/<breakout-base58>` to the canonical HTTPS path. Writer
 | **Space** | `https://rallywith.ai/app/<region>/<organization-base58>/s/<space-base58>/` | Space sharing and handoff |
 | **Channel** | Space URL plus `c/<channel-base58>` | Current Channel link writers |
 | **Breakout** | Channel URL plus `/b/<breakout-base58>` | Current Breakout link writers |
+| **Sidekick** | `https://rallywith.ai/app/<region>/<organization-base58>/sidekicks/<sidekick-base58>/` | The Sidekick screen's menu; hands off to `rallywithai://workspace/<region>/<organization-base58>/sidekicks/<sidekick-base58>` |
 | **Deep link** | `rallywithai://workspace/<region>/<organization-base58>/spaces/<space-base58>/channels/<channel-base58>` | The canonical page's last hop; Breakout adds `/breakouts/<breakout-base58>` |
 | **Legacy reader** | `/app/workspaces/.../workstreams/...`, `/app/workstreams/...`, or older deep links | Compatibility for already-shared links |
 
@@ -339,8 +341,8 @@ Both Rally hosts serve `/.well-known/apple-app-site-association`. Desktop claims
 `/app/workstreams/*` paths until an iPhone release with the new parser is
 available. A canonical Channel or Breakout link opens the site handoff, which
 uses the old addressed iPhone reader; it does not send the new Base58 path to
-an installed old build. Space-only URLs stay on the web with a desktop-only
-explanation because the iPhone has no Space dashboard.
+an installed old build. Space-only and Sidekick URLs stay on the web with a
+desktop-only explanation because the iPhone has no Space dashboard or Sidekick screen.
 The desktop main process adapts these HTTPS links with `workstreamHttpsDeepLink`, then
 uses existing scheme navigation. The iPhone opens the Channel and Breakout paths
 into the native client. Legacy origins and other path families remain
@@ -349,6 +351,27 @@ checks both hosts after site deployment and before desktop release. Push clicks
 use the same adapter with notification attribution. See [push](push-notifications.md).
 
 ## Changelog
+
+### 2026-09-25 — Sidekicks get a shareable link
+
+**What changed:** The Sidekick screen's menu copies
+`/app/<region>/<organization>/sidekicks/<sidekick>/`. The site page, the
+desktop HTTPS adapter, and the shared deep-link grammar read it and open the
+Sidekick's own screen in the addressed Organization.
+
+**Why:** There was no way to point a teammate at a Sidekick. A Sidekick belongs to
+the Organization rather than to a Space, so it hangs off the Organization
+segment instead of nesting under `/s/`. It uses a spelled-out `sidekicks`
+segment because the one-letter `s` already means Space.
+
+**Considered and rejected:** A custom-scheme-only link, for the same reasons the
+Channel link left it. A one-letter segment such as `/k/`, which saves a few
+characters and reads as noise.
+
+**What a future change has to respect:** A desktop build older than this change
+rejects the `sidekicks` deep link as unrecognized, and a site older than it
+shows the invalid-link state. iOS claims neither path, so the link stays on the
+web there.
 
 ### 2026-09-22 — Address Spaces, Channels, and Breakouts hierarchically
 
