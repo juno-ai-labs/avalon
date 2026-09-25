@@ -3,17 +3,15 @@
 /**
  * Every Channel is born in a Space, and none is published before it is.
  *
- * Both halves need the runtime. The first is three objects agreeing —
- * WorkspaceDO stages and settles the membership, the Channel's own authority
- * records which Space reaches it, and the conversation takes the audience that
- * implies — and each of those is a real transaction with a real fence.
+ * Both halves need the runtime. The first is two objects agreeing: WorkspaceDO
+ * writes the membership, the Channel's parent and directory row, and the
+ * Channel's record of which Space reaches it in one transaction, and the
+ * conversation opens with the audience that implies.
  *
- * The second is an ordering property, and it needs a real alarm to be worth
- * anything. Reserving a Channel's main conversation arms the parent's recovery
- * alarm, and that alarm delivers the deferred provisional directory row itself
- * if it wins the race with the coordinator — so "the failed creation did not
- * flush" proves nothing, and what has to be true is that the membership settles
- * before a row can exist by either path.
+ * The second is atomicity, and it needs real storage to be worth anything: a
+ * refused membership write has to take the parent and its directory row with
+ * it, and a failure after the commit has to leave a placement a retry
+ * finishes on.
  */
 
 import { env } from "cloudflare:workers";
@@ -45,17 +43,52 @@ function workspace() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
 }
 
-/** The address allocator needs a key; it is configuration, not behaviour. */
-function creationEnv(): Env {
-  return new Proxy(env, {
-    get: (current, property, receiver) => property === "WORKSTREAM_EMAIL_ADDRESS_KEY"
-      ? "workerd-test-email-address-key-0123456789"
-      : Reflect.get(current, property, receiver),
+/**
+ * The Organization namespace, recording each method the coordinator calls on
+ * a stub it hands out. The object itself is real; only the calling side is
+ * observed, which is where a round trip is spent.
+ */
+function countingNamespace(calls: string[]): Env["WORKSPACE_DOS"] {
+  const namespace = env.WORKSPACE_DOS;
+  return new Proxy(namespace, {
+    get: (target, property) => {
+      const value: unknown = Reflect.get(target, property);
+      if (property !== "get" || typeof value !== "function") {
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+      return (...args: Parameters<typeof namespace.get>) => {
+        const stub = namespace.get(...args);
+        return new Proxy(stub, {
+          get: (stubTarget, method) => {
+            const member: unknown = Reflect.get(stubTarget, method);
+            if (typeof method !== "string" || typeof member !== "function") return member;
+            // Called through the stub rather than `apply`d: an RPC method is
+            // itself a stub, and would take `apply` for a remote method name.
+            const rpc = stubTarget as unknown as Record<string, (...values: unknown[]) => unknown>;
+            return (...input: unknown[]) => {
+              calls.push(method);
+              return rpc[method]!(...input);
+            };
+          },
+        });
+      };
+    },
   });
 }
 
-async function createChannel(clientMessageId: string, spaceIds: SpaceId[] = []) {
-  return new WorkstreamObjectCreationService(creationEnv(), AUTH).createPrepared({
+/** The address allocator needs a key; it is configuration, not behaviour. */
+function creationEnv(calls?: string[]): Env {
+  return new Proxy(env, {
+    get: (current, property, receiver) => property === "WORKSTREAM_EMAIL_ADDRESS_KEY"
+      ? "workerd-test-email-address-key-0123456789"
+      : property === "WORKSPACE_DOS" && calls
+        ? countingNamespace(calls)
+        : Reflect.get(current, property, receiver),
+  });
+}
+
+async function createChannel(clientMessageId: string, spaceIds: SpaceId[] = [], calls?: string[]) {
+  return new WorkstreamObjectCreationService(creationEnv(calls), AUTH).createPrepared({
     title: "Hiring plan",
     clientMessageId,
     participantUserIds: [],
@@ -164,105 +197,129 @@ describe("a Channel created without a Space", () => {
   });
 });
 
-describe("a settled placement", () => {
-  it("leaves no intent-resume wake behind it", async () => {
+describe("a creation's Organization-side birth", () => {
+  it("is one WorkspaceDO call from the coordinator", async () => {
+    // General first, so the creation measured below finds it rather than
+    // making it: making General is the one case that takes a second call.
+    await createChannel("opens-general");
+
+    const calls: string[] = [];
+    await createChannel("counted", [], calls);
+
+    // The staged sequence this replaced was `ensureGeneralSpace`,
+    // `prepareSpaceMembership`, `finalizeSpaceMembership`, `reserveChild`,
+    // `applySpaceAccessSource` and `flushProvisionalDirectory`: six calls into
+    // the same object for one Space.
+    expect(calls).toEqual(["reserveChannelInSpaces"]);
+  });
+
+  it("writes an active membership with no staging row and no intent to finish it", async () => {
     // Close the cutover first, the way the path that opens a new Organization
-    // does. A `pending` one is a derived alarm candidate due at the epoch —
-    // that is how the fleet migration starts with nobody signed in — so
-    // without this the assertions below would be measuring the cutover.
+    // does. A `pending` one is a derived alarm candidate due at the epoch, and
+    // this case reads the alarm.
+    await createChannel("opens-general");
     await workspace().finalizeSpaceBootstrap({ workspaceId: WORKSPACE_ID });
 
-    // A Channel and a Space it is not in yet, so the pair of calls below is
-    // the same pair every creation makes for its General placement, driven on
-    // its own rather than inside a creation whose other steps re-derive the
-    // alarm for their own reasons and hide what this one left.
-    const created = await createChannel("settled-placement");
-    const reserved = await workspace().reserveSpace({
-      workspaceId: WORKSPACE_ID,
-      userId: USER_ID,
-      space: { name: "Hiring", iconKey: "briefcase", colorKey: "blue", scope: "workspace" },
-    });
-    if (!reserved.ok) throw new Error(`reserveSpace refused: ${reserved.code}`);
-    const spaceId = asSpaceId(reserved.space.id);
-    const workstreamId = asWorkstreamId(created.workstream.id);
-    await runInDurableObject(workspace(), async (_instance, state) => state.storage.deleteAlarm());
-
-    const plan = await workspace().prepareSpaceMembership({
-      workspaceId: WORKSPACE_ID, userId: USER_ID, spaceId, workstreamId,
-    });
-    if (!plan.ok) throw new Error(`prepareSpaceMembership refused: ${plan.code}`);
-    const operationId = `${spaceId}:${workstreamId}:${plan.membershipGeneration}`;
-
-    // The premise: staging the intent arms the object at exactly the instant
-    // written on the row, because the resume is what that wake is for.
-    const staged = await runInDurableObject(workspace(), async (_instance, state) => ({
-      armed: await state.storage.getAlarm(),
-      intent: state.storage.sql.exec<{ state: string; not_before: number }>(
-        "SELECT state, not_before FROM space_intents WHERE operation_id = ?", operationId,
-      ).one(),
+    const created = await createChannel("no-intent");
+    const workstreamId = created.workstream.id;
+    const left = await runInDurableObject(workspace(), async (_instance, state) => ({
+      memberships: state.storage.sql.exec<{ state: string; generation: number }>(
+        "SELECT state, generation FROM space_channel_memberships WHERE workstream_id = ?", workstreamId,
+      ).toArray(),
+      intents: state.storage.sql.exec(
+        "SELECT operation_id FROM space_intents WHERE workstream_id = ?", workstreamId,
+      ).toArray(),
+      due: state.storage.sql.exec<{ due: number | null }>(
+        "SELECT MIN(not_before) AS due FROM space_intents WHERE state IN ('pending', 'applied')",
+      ).one().due,
     }));
-    expect(staged.intent.state).toBe("pending");
-    expect(staged.armed).toBe(staged.intent.not_before);
-
-    const settled = await workspace().finalizeSpaceMembership({
-      workspaceId: WORKSPACE_ID,
-      userId: USER_ID,
-      spaceId,
-      workstreamId,
-      spaceRevision: plan.space.revision,
-      membershipGeneration: plan.membershipGeneration,
-    });
-    if (!settled.ok) throw new Error(`finalizeSpaceMembership refused: ${settled.code}`);
-
-    // And settling has to take it back. `armNextAlarm` is an exact re-derive
-    // rather than a lowering, so only running it again drops a wake whose
-    // reason has gone; skipping it when this settlement staged no default of
-    // its own left every placement with a wake that finds nothing due.
-    const after = await runInDurableObject(workspace(), async (_instance, state) => ({
-      armed: await state.storage.getAlarm(),
-      intent: state.storage.sql.exec<{ state: string }>(
-        "SELECT state FROM space_intents WHERE operation_id = ?", operationId,
-      ).one(),
-    }));
-    expect(after.intent.state).toBe("settled");
-    expect(after.armed).not.toBe(staged.intent.not_before);
+    // Nothing for a crash to land between: the row is born active, and no
+    // `add` intent was staged, so no resume wake is ever armed for it.
+    expect(left.memberships).toEqual([{ state: "active", generation: 1 }]);
+    expect(left.intents).toEqual([]);
+    expect(left.due).toBeNull();
   });
 });
 
-describe("a creation whose membership cannot settle", () => {
-  it("publishes no directory row and leaves no placement behind", async () => {
+describe("a creation whose Space source cannot be recorded", () => {
+  it("publishes no directory row and leaves no placement or parent behind", async () => {
     // One placement first, so General exists and the failure below is about
-    // the settlement rather than about the Space.
+    // the placement rather than about the Space.
     await createChannel("settles");
     const before = await visibleChannelIds();
 
-    // The way this breaks in production: the settlement's write is refused.
+    // The way this breaks in production: the last write of the birth, the
+    // Channel's record of which Space reaches it, is refused after the
+    // membership, the parent row and the directory row were already written.
     // A trigger is how a refusal is made to happen at exactly that statement
     // rather than by stubbing the call that issues it.
     await runInDurableObject(workspace(), (_instance, state) => {
       state.storage.sql.exec(
-        `CREATE TRIGGER fail_membership_settlement BEFORE UPDATE ON space_channel_memberships
-           WHEN NEW.state = 'active'
-           BEGIN SELECT RAISE(ABORT, 'space membership settlement unavailable'); END`,
+        `CREATE TRIGGER fail_source_write BEFORE INSERT ON parent_space_sources
+           BEGIN SELECT RAISE(ABORT, 'space source write unavailable'); END`,
       );
     });
 
-    await expect(createChannel("cannot-settle")).rejects.toThrow(/settlement unavailable/u);
+    const failure = await createChannel("cannot-place").then(() => null, (error: unknown) => error);
+    expect(String(failure)).toMatch(/source write unavailable/u);
 
-    // Nothing new is listable. The directory flush runs *after* the
-    // memberships settle, so a Channel whose placement never became active is
-    // a Channel no client is told about.
+    // Nothing new is listable, and nothing is half-written: the membership,
+    // the parent's row, the directory row and the source are one transaction,
+    // so the refused source took the rest with it.
     expect(await visibleChannelIds()).toEqual(before);
-
     await runInDurableObject(workspace(), (_instance, state) => {
-      // The staged row was cancelled rather than left `joining`, which is what
-      // keeps the alarm from republishing an intent for a Channel nobody can
-      // see.
-      expect(state.storage.sql.exec(
-        "SELECT COUNT(*) AS rows FROM space_channel_memberships WHERE state = 'joining'",
-      ).one()).toEqual({ rows: 0 });
-      state.storage.sql.exec("DROP TRIGGER fail_membership_settlement");
+      const listed = new Set(before);
+      const parents = state.storage.sql.exec<{ parent_id: string }>(
+        "SELECT parent_id FROM parent_metadata WHERE parent_kind = 'workstream'",
+      ).toArray().map((row) => row.parent_id);
+      expect(parents.filter((id) => !listed.has(id))).toEqual([]);
+      const placed = state.storage.sql.exec<{ workstream_id: string }>(
+        "SELECT workstream_id FROM space_channel_memberships",
+      ).toArray().map((row) => row.workstream_id);
+      expect(placed.filter((id) => !listed.has(id))).toEqual([]);
+      state.storage.sql.exec("DROP TRIGGER fail_source_write");
     });
+  });
+});
+
+describe("a creation that fails after the Organization committed", () => {
+  it("keeps the placement, and a retry under the same key finishes on it", async () => {
+    await createChannel("opens-general");
+    const general = await workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID });
+
+    // The step straight after the reservation fails: the regional route
+    // cannot be written. Dropping its table is how D1 refuses that batch.
+    await env.DB.prepare("ALTER TABLE workstream_authority_routes RENAME TO routes_offline").run();
+    const failure = await createChannel("fails-after-commit").then(() => null, (error: unknown) => error);
+    expect(failure).toBeInstanceOf(Error);
+    await env.DB.prepare("ALTER TABLE routes_offline RENAME TO workstream_authority_routes").run();
+
+    // The residue the creation prefers: an active placement, the Channel's
+    // record of which Space reaches it, and its row in the directory. Nothing
+    // was cancelled, because a Channel whose conversation may never open is a
+    // better state than one whose placement was taken back under a retry.
+    const receipt = await env.DB.prepare(
+      "SELECT workstream_id FROM workstream_create_receipts WHERE client_message_id = 'fails-after-commit'",
+    ).first<{ workstream_id: string }>();
+    const workstreamId = asWorkstreamId(receipt?.workstream_id ?? "");
+    expect(await workspace().channelSpaces({ workspaceId: WORKSPACE_ID, userId: USER_ID, workstreamId }))
+      .toEqual({ spaceIds: [general.generalSpaceId] });
+    const sources = await workspace().readAccessSources({
+      workspaceId: WORKSPACE_ID,
+      parentId: workstreamId,
+      channel: { readers: { scope: "workspace" }, participantUserIds: [USER_ID] },
+    });
+    expect(sources.spaces.map((source) => source.spaceId)).toEqual([general.generalSpaceId]);
+
+    // The retry reuses the id and settles on the same placement rather than
+    // staging a second one.
+    const retried = await createChannel("fails-after-commit");
+    expect(retried.workstream.id).toBe(workstreamId);
+    const memberships = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{
+      state: string; generation: number;
+    }>("SELECT state, generation FROM space_channel_memberships WHERE workstream_id = ?", workstreamId).toArray());
+    expect(memberships).toEqual([{ state: "active", generation: 1 }]);
+    expect(await visibleChannelIds()).toContain(workstreamId);
   });
 });
 
@@ -286,6 +343,33 @@ describe("a Channel created inside a Space", () => {
       workstreamId: asWorkstreamId(created.workstream.id),
     })).toEqual({ spaceIds: [spaceId] });
     expect(created.workstream.scope).toBe("personal");
+  });
+
+  it("inherits the Space's defaults in the same call that places it", async () => {
+    const reserved = await workspace().reserveSpace({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      space: { name: "Private", iconKey: "briefcase", colorKey: "blue", scope: "personal" },
+    });
+    if (!reserved.ok) throw new Error(`reserveSpace refused: ${reserved.code}`);
+    const spaceId = asSpaceId(reserved.space.id);
+    const sidekickId = "00000000-0000-7000-8000-000000000cc9";
+    const added = await workspace().addSpaceDefault({
+      workspaceId: WORKSPACE_ID, userId: USER_ID, spaceId, kind: "sidekick", targetId: sidekickId,
+    });
+    if (!added.ok) throw new Error(`addSpaceDefault refused: ${added.code}`);
+
+    const created = await createChannel("inherits-defaults", [spaceId]);
+
+    // A delivery target for the new member, at the generation its membership
+    // was born at: the staging is part of the placement, not a later step.
+    const targets = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      `SELECT kind, target_id, membership_generation FROM space_default_targets
+        WHERE space_id = ? AND workstream_id = ?`,
+      spaceId,
+      created.workstream.id,
+    ).toArray());
+    expect(targets).toEqual([{ kind: "sidekick", target_id: sidekickId, membership_generation: 1 }]);
   });
 });
 

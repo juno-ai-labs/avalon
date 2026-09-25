@@ -473,7 +473,7 @@ describe("a Space's hosted parent", () => {
       )`),
       env.DB.prepare(`CREATE TABLE workspace_members (
         workspace_id TEXT, user_id TEXT, status TEXT, role TEXT,
-        access_class TEXT, incarnation TEXT DEFAULT 'existing-member'
+        access_class TEXT, incarnation TEXT DEFAULT 'existing-member', revision INTEGER NOT NULL DEFAULT 1
       )`),
       env.DB.prepare(`CREATE TABLE workstream_authority_control (
         id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,

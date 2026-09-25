@@ -35,7 +35,7 @@ const sorted = (items: readonly unknown[]) => [...items].map((item) => JSON.stri
 beforeAll(async () => {
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspace_members (workspace_id TEXT NOT NULL, user_id TEXT NOT NULL,
-      status TEXT NOT NULL, role TEXT NOT NULL, access_class TEXT DEFAULT 'member', last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id))`),
+      status TEXT NOT NULL, role TEXT NOT NULL, access_class TEXT DEFAULT 'member', last_seen_at TEXT, revision INTEGER NOT NULL DEFAULT 1, incarnation TEXT NOT NULL DEFAULT 'existing-member', PRIMARY KEY (workspace_id, user_id))`),
     ...[[OWNER, 'active'], [MEMBER, 'active'], [OUTSIDER, 'removed']].map(([userId, status]) => env.DB.prepare(
       `INSERT INTO workspace_members (workspace_id, user_id, status, role) VALUES (?, ?, ?, 'member')
        ON CONFLICT(workspace_id, user_id) DO UPDATE SET status = excluded.status`).bind(WORKSPACE_ID, userId, status)),
