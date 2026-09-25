@@ -3251,9 +3251,9 @@ export class WorkspaceSpaceStorage {
    * that fails is still a resume to retry. Two conditions end an intent
    * without success instead, and neither is retryable because no later
    * delivery gives the requester back what they lost: they are no longer an
-   * active member of the Organization, which the consumer settles by name, and
-   * they no longer have an editable reach into the Space, which
-   * `SpaceService.resumeIntent` settles by name — writing the code here first,
+   * active member of the Organization, which the resume records by name, and
+   * they no longer have an editable reach into the Space, which the resume
+   * (`SpaceChannelAccess.resume`) settles by name, writing the code here first,
    * because this statement only matches a row that is still unsettled.
    */
   recordIntentFailure(operationId: string, errorCode: string, now = Date.now()): void {
@@ -3274,6 +3274,57 @@ export class WorkspaceSpaceStorage {
       now,
       operationId,
     );
+  }
+
+  /**
+   * One intent as it stands now, or `null` once it is settled or cancelled.
+   *
+   * What a resume acts on: the cursor and fences on the row, which a page of
+   * the walk may have advanced since a message naming the intent was sent.
+   */
+  unsettledIntent(operationId: string): WorkspaceSpaceIntentClaim | null {
+    if (!this.ready()) return null;
+    const row = this.storage.sql.exec<{
+      operation_id: string;
+      kind: WorkspaceSpaceIntentClaim["kind"];
+      space_id: string;
+      workstream_id: string | null;
+      space_revision: number;
+      membership_generation: number | null;
+      source_space_id: string | null;
+      source_space_revision: number | null;
+      source_membership_generation: number | null;
+      cursor: string | null;
+      requested_by_user_id: string;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT operation_id, kind, space_id, workstream_id, space_revision,
+              membership_generation, source_space_id, source_space_revision,
+              source_membership_generation, cursor, requested_by_user_id
+         FROM space_intents
+        WHERE operation_id = ? AND state IN ('pending', 'applied')`,
+      operationId,
+    ).toArray()[0];
+    return row === undefined ? null : {
+      operationId: row.operation_id,
+      kind: row.kind,
+      spaceId: row.space_id,
+      workstreamId: row.workstream_id,
+      spaceRevision: row.space_revision,
+      membershipGeneration: row.membership_generation,
+      sourceSpaceId: row.source_space_id,
+      sourceSpaceRevision: row.source_space_revision,
+      sourceMembershipGeneration: row.source_membership_generation,
+      cursor: row.cursor,
+      requestedByUserId: row.requested_by_user_id,
+    };
+  }
+
+  /** The Space's current revision, whoever is asking; `null` when there is no such Space. */
+  spaceRevision(spaceId: string): number | null {
+    return this.storage.sql.exec<{ revision: number } & Record<string, SqlStorageValue>>(
+      "SELECT revision FROM spaces WHERE space_id = ?",
+      spaceId,
+    ).toArray()[0]?.revision ?? null;
   }
 
   nextIntentResumeDueAt(): number | null {

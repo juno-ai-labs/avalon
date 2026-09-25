@@ -227,6 +227,17 @@ async function openMemberChannel(workstreamId: WorkstreamId): Promise<void> {
       workstreamId,
       OWNER,
     );
+    // The directory effect `publishChannel` delivered named a parent this
+    // object had not seen, which queues an import from the legacy object. The
+    // parent written above is the hosted one, so the import is settled here;
+    // left pending, whichever of the alarm and the first parent call reaches it
+    // first decides whether that call finds a target that is not empty.
+    state.storage.sql.exec(
+      `INSERT INTO parent_imports (parent_id, parent_kind, state, source_rows, imported_at)
+       VALUES (?, 'workstream', 'imported', 0, 1)
+       ON CONFLICT (parent_id) DO UPDATE SET state = 'imported', last_error_code = NULL`,
+      workstreamId,
+    );
   });
   await runInDurableObject(conversation(workstreamId), (_instance, state) => {
     seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId });
@@ -410,6 +421,12 @@ describe("a Space fan-out over more members than one page", () => {
     });
     if (!restored.ok) throw new Error(restored.code);
     expect(await spaceSourceIds(remaining)).toEqual([staying]);
+    // The walk got as far as the first member and wrote its page, which is the
+    // cursor the resume reads off the row.
+    await workspace().recordSpaceIntentReceipt({
+      workspaceId: WORKSPACE_ID, userId: OWNER, operationId, receipt: "restore_page", settled: false,
+      cursor: cursorAt(walked),
+    });
 
     await service.resumeIntent({
       operationId,
@@ -427,6 +444,48 @@ describe("a Space fan-out over more members than one page", () => {
     expect(await spaceSourceIds(walked)).toEqual([staying]);
     await expect(intentRow(operationId)).resolves.toMatchObject({ rows: [{ state: "settled" }] });
   }, 120_000);
+
+  it("given an audience change overtaken by a newer one, when the older resumes, then its members converge on the Space as it is now", async () => {
+    const spaceId = await reserve("Side work", "personal");
+    const channel = CHANNELS[0]!;
+    await publishChannel(channel);
+    await place(spaceId, channel);
+    await openMemberChannel(channel);
+    await seatSpaceSource(channel, spaceId, { scope: "personal", participantUserIds: [OWNER] });
+
+    // Staged, and overtaken before its walk reached the Channel.
+    const operationId = crypto.randomUUID();
+    const staged = await workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId,
+      audience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
+    });
+    if (!staged.ok) throw new Error(staged.code);
+    const newer = await workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId: crypto.randomUUID(),
+      audience: { scope: "workspace", participantUserIds: [OWNER] },
+    });
+    if (!newer.ok) throw new Error(newer.code);
+
+    await expect(new SpaceService(env, AUTH).resumeIntent({
+      operationId,
+      kind: "audience",
+      spaceId,
+      workstreamId: null,
+      spaceRevision: staged.space.revision,
+      membershipGeneration: null,
+      cursor: null,
+    })).resolves.toEqual({ outcome: "settled" });
+
+    // The walk is still an interrupted one, so it converges on the newer
+    // Space rather than abandoning and leaving the Channel on neither roster.
+    expect(await spaceSource(channel, spaceId)).toMatchObject({ scope: "workspace", participantUserIds: [OWNER] });
+    const row = await workspace().runInspectionSql({
+      sql: "SELECT state, receipts_json FROM space_intents WHERE operation_id = ?",
+      bindings: [operationId],
+    });
+    expect(row.rows[0]).toMatchObject({ state: "settled" });
+    expect(String((row.rows[0] as { receipts_json: string }).receipts_json)).toContain("audience_superseded");
+  }, 60_000);
 
   it("given a resume that fails, when the consumer catches it, then the reason is on the intent row", async () => {
     const spaceId = await reserve("Company");
