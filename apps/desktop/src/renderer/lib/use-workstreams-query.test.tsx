@@ -100,6 +100,33 @@ describe('useWorkstreamsQuery', () => {
     });
   });
 
+  // The refetch writes its answer itself rather than through
+  // `setCachedWorkstreams`, and prefers the resident copy of a row it fetched,
+  // so both halves of the pending rule have to hold here on their own.
+  it('keeps a Channel whose create is in flight across a refetch, and takes the fetched row for it once listed', async () => {
+    const { result, rerender } = renderHook(() => useWorkstreamsQuery(), { wrapper });
+    landConnectPayload(rerender);
+    await waitFor(() => expect(result.current.data).toHaveLength(1));
+    act(() => setCachedWorkstreams(queryClient, (rows) => [
+      { ...summary('workstream-new', ''), pending: true },
+      ...rows ?? [],
+    ]));
+
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }); });
+    await waitFor(() => expect(listWorkstreams).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.data?.map((row) => [row.id, row.pending]))
+      .toEqual([['workstream-new', true], ['workstream-1', undefined]]));
+
+    listWorkstreams.mockResolvedValue({
+      items: [summary('workstream-new', 'Named'), summary('workstream-1', 'Launch brief')],
+      nextCursor: null,
+    });
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }); });
+    await waitFor(() => expect(result.current.data?.find((row) => row.id === 'workstream-new'))
+      .toEqual(expect.objectContaining({ title: 'Named' })));
+    expect(result.current.data?.find((row) => row.id === 'workstream-new')?.pending).toBeUndefined();
+  });
+
   it('stores the list under the unparameterized key producers write to', async () => {
     const { result, rerender } = renderHook(() => useWorkstreamsQuery(), { wrapper });
     landConnectPayload(rerender);

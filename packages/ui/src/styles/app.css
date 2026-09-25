@@ -2561,6 +2561,10 @@ pre {
    work, one level down: dimmed, with a small gear, and no dimming while it is
    the active row — hierarchy should not cost legibility once you are in it. */
 .workstream-row.is-system { opacity: .58; }
+/* A Channel asked for and not yet in the list: the row is drawn so the sidebar
+   agrees with the screen that has already opened it, and dimmed because it
+   cannot be acted on until the server's row replaces it. */
+.workstream-row.is-pending { opacity: .5; cursor: default; }
 .workstream-row.is-system:hover,
 .workstream-row.is-system.is-active { opacity: 1; }
 .workstream-row.is-system .sidebar-row-title {

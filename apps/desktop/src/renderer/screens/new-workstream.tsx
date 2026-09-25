@@ -14,6 +14,8 @@ import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
+import { uuidV7 } from '../lib/telemetry';
+import { addPendingWorkstream, confirmPendingWorkstream, discardPendingWorkstream } from '../lib/workstreams-cache';
 import type { AgentModelOverride, CreatedWorkstream, Message, MessageAttachment, Workspace, WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import { AgentWorkTiming } from '../components/agent-work-timing';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
@@ -36,6 +38,8 @@ interface CreateWorkstreamInput {
    * first refetch replaces it with the run's real start.
    */
   startedAt: string;
+  /** The id this Channel is listed under from the keystroke, and created under. */
+  workstreamId: string;
 }
 
 /**
@@ -264,6 +268,7 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
         openingMessageLength: input.openingMessage.length,
       });
       return trace.step('create_request', () => api!.createWorkstream({
+        workstreamId: input.workstreamId,
         ...(channelName ? { title: channelName } : {}),
         openingMessage: input.openingMessage,
         participantIds: input.participantIds,
@@ -275,8 +280,9 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
         ...(input.modelOverride ? { modelOverride: input.modelOverride } : {}),
       }));
     },
-    onError: () => {
+    onError: (_error, input) => {
       createPending.current = false;
+      discardPendingWorkstream(queryClient, input.workstreamId);
       createTrace.current?.end({ outcome: 'failed' });
       createTrace.current = null;
       createStartedAt.current = null;
@@ -287,6 +293,7 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
       setLaunching(null);
     },
     onSuccess: (created, input) => {
+      confirmPendingWorkstream(queryClient, input.workstreamId, created.workstream);
       const selectedParticipants = (members.data ?? [])
         .filter((member) => input.participantIds.includes(member.id))
         .map((member) => ({ ...member, role: 'explicit' }));
@@ -372,6 +379,19 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
     // below, and a state set in the same commit as the send is what makes the
     // work stream appear to open on the keystroke rather than on the response.
     setLaunching({ attachments, createdAt, openingMessage, startedAt: Date.parse(createdAt) });
+    // The sidebar lists the Channel on the same keystroke, under the id the
+    // server will create it with, so its row there is already the real one
+    // and the server's answer only fills it in. Placed in exactly the Space
+    // the request names; the directory supplies only the audience.
+    const workstreamId = uuidV7();
+    addPendingWorkstream(queryClient, {
+      id: workstreamId,
+      ...(channelName ? { title: channelName } : {}),
+      spaceIds: [owningSpaceId],
+      scope: owningSpace?.scope === 'personal' ? 'personal' : 'workspace',
+      harnessStatus: 'running',
+      createdAt,
+    });
     await create.mutateAsync({
       attachmentIds: readyAttachments.map((attachment) => attachment.resource!.id),
       attachmentLocalIds: readyAttachments.map((attachment) => attachment.localId),
@@ -380,6 +400,7 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
       openingMessage,
       mentions,
       participantIds,
+      workstreamId,
       startedAt: createdAt,
     });
   };
