@@ -253,8 +253,13 @@ function observeParentReads(observe: () => Promise<void>): Env {
             await observe();
             return facts;
           };
+          // The Organization stub answers far more than the parent contract.
+          // Its RPC methods are read and called on the stub itself: `.bind` on
+          // one would be sent as an RPC call named "bind".
           const value = Reflect.get(target, method, target);
-          return typeof value === 'function' ? value.bind(target) : value;
+          return typeof value === 'function'
+            ? (...args: unknown[]) => (Reflect.get(target, method, target) as (...rest: unknown[]) => unknown)(...args)
+            : value;
         } });
       };
       const value = Reflect.get(namespace, key, namespace);

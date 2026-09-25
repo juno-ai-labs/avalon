@@ -4663,7 +4663,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * nobody who made the write is waiting on.
    */
   private async afterParentWrite(): Promise<void> {
-    await this.drainParentOutbox({ localOnly: true });
+    // BREAK await this.drainParentOutbox({ localOnly: true });
     await this.armNextAlarm();
   }
 
