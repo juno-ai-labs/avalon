@@ -28,7 +28,7 @@ export function EmbeddedBrowserRail({
   const controlsRef = useRef<HTMLDivElement>(null);
   const addressRef = useRef<HTMLInputElement>(null);
   // Scoped to the rail's own controls, so ⌘W and ⌘T elsewhere stay Rally's.
-  useEmbeddedBrowserShortcuts({ state, command, addressRef, scope: controlsRef });
+  useEmbeddedBrowserShortcuts({ state, command, addressRef, scope: controlsRef, onCloseLast: onClose });
   useEmbeddedBrowserPlacement(pageRef, !leaving && error === null && active !== undefined && active.url !== 'about:blank');
 
   const navigate = (raw: string): void => {
@@ -41,7 +41,7 @@ export function EmbeddedBrowserRail({
       onResize={onResize} resizeLabel="Resize browser" scrimLabel="Close browser" width={width}>
       <div className="embedded-browser-controls" ref={controlsRef}>
         <div className="embedded-browser-chrome window-no-drag">
-          <EmbeddedBrowserTabs command={command} onNewTab={() => void command({ action: 'open' }).then(() => focusAddress(addressRef))} state={state} />
+          <EmbeddedBrowserTabs command={command} onCloseLast={onClose} onNewTab={() => void command({ action: 'open' }).then(() => focusAddress(addressRef))} state={state} />
           <IconButton label="Close browser" onClick={onClose}><X size={17} /></IconButton>
         </div>
         <EmbeddedBrowserNavigation active={active} addressRef={addressRef} className="window-no-drag" command={command} />
