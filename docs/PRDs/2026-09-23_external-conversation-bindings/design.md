@@ -26,14 +26,14 @@ The Northstar flow is these four combined, with no Northstar-specific code.
 | --- | --- | --- |
 | `slack_agent_sessions` in WorkspaceDO | Slack installation + channel ID + root timestamp to one Rally `workstream_id` | Preserve existing rows; migrate them into bindings. Do not mistake the workstream ID for a Breakout address. |
 | Slack `slack_thread` origin resource | Link from a Rally Channel to the source thread, with watching off | Keep as provenance. It is not the routing authority. |
-| Space membership in WorkspaceDO | Many-to-many placement and its audience effects | Place a newly bound Channel in the bound Space through canonical Space creation/access ordering, before publishing it. |
+| Channel and Space parents, hosted in WorkspaceDO ([hosted conversation parents](../../hosted-conversation-parents.md)) | Space membership, Channel audience, viewer rows and Channel birth (`reserveChannelInSpaces`) in one database | A spawned Channel's birth, its Space placement and its thread binding commit in one WorkspaceDO transaction. |
 | Slack Agent ingress | Verifies event, resolves installation, creates or resumes Channel, writes human message | Normalize the external path and resolve a binding before creating a Channel. |
 | Connector watch registrations (`matchExternalEventDestinations`) | Fan an external event out to Sidekicks and watched resources; a claimed event skips Suggested Work | Candidate home for bindings; see [Reusing watch registrations](#reusing-watch-registrations). |
-| `automation.owning_workstream_id` (`sidekick-do.ts:270`) | The Channel whose Main conversation `sidekick_post_result` posts to | Replace with an owning substream address. |
-| `sidekick_post_result` (`integrations.ts:6243`) | A run's only way to post into a room | Remove; `post_to_conversation` covers it. |
+| `automation.owning_workstream_id` (`sidekick-do.ts:266`) | The Channel whose Main conversation `sidekick_post_result` posts to | Replace with an owning substream address. |
+| `sidekick_post_result` (`integrations.ts:6431`) | A run's only way to post into a room | Remove; `post_to_conversation` covers it. |
 | `authoringOrigin` (`packages/agent-harness/src/prompts/workstream.ts:32`) | Slack-only prompt section; nothing sets it | Remove. |
-| `sidekick_attachments` per SubstreamAgent | This conversation may load this Sidekick as a skill | Reuse as the one attachment record; add a lookup from the Sidekick side. |
-| `claimPersistentLoopExecution` (`substream-agent.ts:3890`) | Starts a loop for pending input with no `automationRun` | Restore the run's context when the child belongs to a Sidekick run. |
+| `sidekick_attachments` per SubstreamAgent, `parent_sidekicks` in WorkspaceDO | This conversation may load this Sidekick as a skill | Leave as is. Conversation attachments get their own WorkspaceDO table. |
+| `claimPersistentLoopExecution` (`substream-agent.ts:3895`) | Starts a loop for pending input with no `automationRun` | Restore the run's context when the child belongs to a Sidekick run. |
 
 ## Connector-neutral contract
 
@@ -87,7 +87,9 @@ Binding {
 | Northstar founder DM | `[D456, 1727.002]` | 1 PM run child (`automation`, Sidekick ID, run ID) | converse | none |
 
 `WorkspaceDO` holds bindings, because it already owns connector connection
-identity, the Space directory, Channel placement, and Slack Agent sessions.
+identity, Slack Agent sessions, and, since Channel and Space parents moved into
+it, the Space directory, Channel birth and placement, and Channel and Breakout
+audiences.
 The unique key is Organization + connection + path. Every active key has one
 target. Display name and participant list are attributes, never keys. A
 provider ID change is an explicit move of the key (and every key beneath it)
@@ -119,12 +121,15 @@ their rows.
   fetches the room's facts, claims the room path, and creates or reuses its
   Space. A first mention runs the same ensure step if it arrives before the
   invitation event.
-- **Spawn.** As in resolution step 2. The existing creation/outbox ordering
-  publishes the Channel only after placement settles.
+- **Spawn.** As in resolution step 2. The binding claim runs in the same
+  WorkspaceDO transaction as `reserveChannelInSpaces`, which writes the
+  Channel's Organization-side birth with its Space membership already active.
+  A duplicate or reordered event therefore finds either nothing or a Channel
+  that is fully placed and bound; there is no intermediate state to fence.
 - **Outbound send.** When a connector tool that sends a message succeeds during
   a Sidekick run, the host writes a binding from the returned path to that run
   child. The model does not write bindings. Slack's `send_message` already
-  returns `channel_id` and `timestamp` (`packages/connectors/src/slack.ts:1736`).
+  returns `channel_id` and `timestamp` (`packages/connectors/src/slack.ts:1747`).
   A send whose result is lost has no binding, and a reply to it is not matched
   by text or timing.
 
@@ -151,22 +156,33 @@ each existing value to (`workstream`, id, `"0"`).
 The field's existing duties move with it:
 
 - Only a Sidekick with a home gets a posting tool
-  (`apps/api/src/services/integrations.ts:5224`), so a personal or workspace
+  (`apps/api/src/services/integrations.ts:5367`), so a personal or workspace
   Sidekick still cannot post into a room.
 - Archiving the home still tells the Sidekick. Today WorkspaceDO's
-  `automation_directory` projection joins on `owning_workstream_id` and calls
-  `setOwningRoomArchived` (`workspace-do.ts:8515`). The projection carries the
-  substream too, and archiving a home Breakout has to propagate the same way.
+  `notifyOwningRoomArchival` joins `automation_directory` to the `channels`
+  directory on `owning_workstream_id` and calls `setOwningRoomArchived`
+  (`workspace-do.ts:10468`). The projection carries the substream too. The
+  `breakouts` directory is in the same database, so a home Breakout's archive
+  is the same local join.
 
 The Slack-only `authoringOrigin` type, its prompt section, and its test are
 removed. The prompt names the home conversation instead; if that Channel began
 in Slack, its origin resource already carries the link.
 
-Attachments reuse `sidekick_attachments`, the per-conversation table that today
-means "this conversation may load this Sidekick as a skill". The home is always
-attached. The Sidekick side gains a lookup of its attachments so that the
-tools below can list them without scanning conversations. Keeping one record
-stops the two directions from drifting apart.
+Conversation attachments are a WorkspaceDO table keyed by Sidekick and
+conversation address. The home is always attached. They do not reuse the two
+existing Sidekick attachment tables, `sidekick_attachments` in each
+SubstreamAgent and `parent_sidekicks` in WorkspaceDO (formerly
+`workstream_sidekick_attachments`). Those mean "this conversation may load
+this Sidekick as a skill", and loading a skill writes them automatically
+(`substream-agent.ts:5018`). Reusing them would give a Sidekick read and post
+access to every conversation that ever used it.
+
+WorkspaceDO is the right home for the new table now that it holds the
+`channels`, `breakouts`, `channel_viewers` and `breakout_viewers` directories
+and each person's relationship (`workspace_member_status`). Listing a
+Sidekick's attachments and checking an audience at attach time are local reads,
+with no call to a Channel object and no D1 read.
 
 ## Conversation tools
 
@@ -189,7 +205,7 @@ of agent means adding a scope, not new tools.
 | Sidekick run (`parentKind: automation`, `automationRun` present) | The Sidekick's attachments | list, read, post | The Sidekick's run-as user |
 
 In a Sidekick config conversation the tools load where the drafting plugin
-already loads (`integrations.ts:5205`), and a post has no run ID, so its
+already loads (`integrations.ts:5348`), and a post has no run ID, so its
 idempotency key is the caller key alone. In a run they load only when
 `automationRun` is present, which run continuation guarantees for every wake
 of a run child. A Channel or Breakout loop does not get post, because it posts
@@ -197,11 +213,14 @@ to its own conversation by replying.
 
 `sidekick_post_result` is removed, not kept beside the new tool. It is
 hard-wired to the owning Channel's Main conversation and deduplicated on run
-ID alone (`integrations.ts:6243-6311`), and a model offered both would not know
+ID alone (`integrations.ts:6431-6518`), and a model offered both would not know
 which to use. A continued run posts more than once, so the replacement's
 idempotency key includes a caller key such as the reply's event ID.
 
-Every read and post checks that the address is in scope and that the move does
+A read or post first admits the acting principal to the target conversation.
+For a Channel or Breakout that is the conversation-parent contract WorkspaceDO
+now serves, one call with no namespace probe. Every read and post also checks
+that the address is in scope and that the move does
 not widen an audience: reading moves a conversation's content into the
 reading loop's conversation, and posting moves content the other way. A
 Breakout reading its Channel's Main conversation narrows, since a Breakout's
@@ -211,29 +230,33 @@ it came from" (`docs/connectors.md`); both directions use that rule, at attach
 time and on each call.
 
 Several `SubstreamAgent` methods refuse a parent that is not a Channel
-(`substream-agent.ts:1348`, `1509`, `2273`, `2393`, `4921`). Each that the tools
+(`substream-agent.ts:1374`, `1535`, `2310`, `2430`, `5001` and others). Each that the tools
 touch must accept a run child as an ordinary conversation.
 
 ## Run continuation
 
 A Sidekick run child is an ordinary `SubstreamAgent` with parent kind
-`automation`, parent ID the Sidekick, and substream ID the run ID.
+`automation`, parent ID the Sidekick, and substream ID the run ID. Unlike
+Channel and Space parents, Sidekick parents still live in `SidekickDO`; moving
+them into WorkspaceDO is a named follow-up of the hosted-parent change. The
+design below targets `SidekickDO` and keeps the same shape if they move:
+`continueRun` becomes a local call instead of an RPC.
 
 ### Today
 
 A message admitted to a run child after the run completed:
 
-1. `admitMessage` requests an activation (`substream-agent.ts:6105`).
+1. `admitMessage` requests an activation (`substream-agent.ts:6212`).
 2. `claimPersistentLoopExecution` builds a loop input from the message's stored
    authorization with a new harness run ID and no `automationRun`
-   (`substream-agent.ts:3890-3935`). Only the SidekickDO alarm sets
-   `automationRun` (`sidekick-do.ts:1712-1728`).
+   (`substream-agent.ts:3895`, with the input built at `3970`). Only the SidekickDO alarm sets
+   `automationRun` (`sidekick-do.ts:1711-1728`).
 3. The loop runs as the message's author, so connectors are chosen for that
-   person (`integrations.ts:5270`).
+   person (`integrations.ts:5415`).
 4. The loop has no posting tool, no Sidekick definition or instructions, and
-   takes the non-run authority check (`integrations.ts:6162`).
+   takes the non-run authority check (`integrations.ts:6346`).
 5. The run row stays completed; `onChildCommonAggregate` ignores finished runs
-   (`sidekick-do.ts:1433`).
+   (`sidekick-do.ts:1435`).
 
 Answering an elicitation resumes through the same path, so a Sidekick run that
 asks a question likely loses its run context on resume too. This needs a test.
@@ -252,7 +275,7 @@ When `claimPersistentLoopExecution` wakes a child whose parent kind is
    alarm path builds.
 
 The loop then has the Sidekick's instructions, tools, and authority, and the
-run authority check (`integrations.ts:6186`) passes because the run is running.
+run authority check (`integrations.ts:6385`) passes because the run is running.
 The sender is only the author of the message. `continueRun` does not check who
 sent it: anyone who can reach the run may continue it.
 
@@ -315,7 +338,7 @@ retains membership after departure.
 Slack's app manifest (`config/provider-apps/slack.json`) lacks `message.mpim`
 despite carrying `mpim:history`, so the group-DM path needs a subscription
 change. The public-channel join sweep and the `channel_created` join path
-(`apps/api/src/services/slack-agent-service.ts:1454`) must stop. Existing
+(`apps/api/src/services/slack-agent-service.ts:1451`) must stop. Existing
 subscriptions to `member_joined_channel` and `member_left_channel` remain useful
 for source membership and lifecycle. Slack's provider semantics are documented
 in [message.mpim](https://docs.slack.dev/reference/events/message.mpim/),

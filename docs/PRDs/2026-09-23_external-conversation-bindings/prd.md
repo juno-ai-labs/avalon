@@ -9,8 +9,9 @@
 > [`discussion-brief.md`](discussion-brief.md). State: [`state.md`](state.md).
 > Standing contract: [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 > Read alongside [connectors](../../connectors.md), [Spaces](../../spaces.md),
-> [Slack integration](../../slack-integration.md), and
-> [work-stream origin attachments](../../workstream-origin-attachments.md).
+> [Slack integration](../../slack-integration.md),
+> [work-stream origin attachments](../../workstream-origin-attachments.md), and
+> [hosted conversation parents](../../hosted-conversation-parents.md).
 
 ## Summary
 
