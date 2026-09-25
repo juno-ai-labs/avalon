@@ -15,7 +15,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { reset } from "cloudflare:test";
+import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { asUserId, asWorkstreamId } from "@rally/contracts";
@@ -87,6 +87,15 @@ async function deliverDirectoryEffects(workstreamId: string): Promise<number> {
   const directory = (await pendingParentEffects(parent))
     .filter((envelope) => envelope.effect.kind.startsWith("directory_"))
     .sort((left, right) => directoryRank(left.effect.kind) - directoryRank(right.effect.kind));
+  const dbg = await runInDurableObject(parent, async (instance, state) => {
+    const rows = state.storage.sql.exec<{ payload_json: string }>("SELECT payload_json FROM parent_outbox WHERE effect_kind LIKE 'directory%'").toArray();
+    const envelopes = rows.map((row) => JSON.parse(row.payload_json));
+    try {
+      const r = await (instance as any).applyWorkstreamDirectoryEffects({ workspaceId: DEMO_WORKSPACE_ID, envelopes });
+      return { ok: r, envelopes };
+    } catch (error) { return { error: String(error), stack: (error as Error).stack, envelopes }; }
+  });
+  expect(dbg).toEqual(["DEBUGDIR"]);
   for (const envelope of directory) {
     const result = await consumeEffectBodies(env, [envelope]);
     if (result.retried > 0) throw new Error(`directory effect retried: ${envelope.effect.kind} ${envelope.messageId}`);
