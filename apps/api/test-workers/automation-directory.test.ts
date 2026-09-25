@@ -20,13 +20,14 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type AutomationDetail, type AutomationScope } from "@rally/contracts";
 
-import { automationDOName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import { automationDOName, workspaceDOName } from "../src/durable-objects/names";
 import type { SidekickDO } from "../src/durable-objects/sidekick-do";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
 import { deliverParentEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
+import { hostedParentStub } from "./helpers/hosted-parent";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 /** Its own workspace: object names are shared across files, storage is not. */
@@ -88,11 +89,11 @@ async function seedRegionalDatabase(): Promise<void> {
 /**
  * A personal room with the author as its one participant, registered the way
  * creation registers it: the parent reserves the main conversation and puts
- * the provisional directory row, viewer included, into the workspace.
+ * the provisional directory row, viewer included, into the workspace. The
+ * parent is hosted by the workspace object itself.
  */
 async function seedRoom(): Promise<void> {
-  const room = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(workstreamDOName("global", WORKSPACE_ID, ROOM_ID)));
-  await room.reserveChild({
+  await hostedParentStub(env, WORKSPACE_ID).reserveChild({
     workspaceId: WORKSPACE_ID,
     parentId: ROOM_ID,
     substreamId: asSubstreamId("0"),

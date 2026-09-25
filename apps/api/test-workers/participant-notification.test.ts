@@ -14,7 +14,7 @@
  * stream their sidebar cannot show them.
  *
  * This drives the real SubstreamAgent product boundary against real Durable
- * Object SQLite, so `projection_keys`, the payload hashes, and the outbox rows
+ * Object SQLite, so `parent_projection_keys`, the payload hashes, and the outbox rows
  * are the production ones rather than a description of them. Existing-room
  * cases use its system-provision port; create-only cases stop before run activation.
  */
@@ -32,12 +32,13 @@ import {
 } from "@rally/contracts";
 
 import type { AuthContext, Env } from "../src/env";
-import { conversationObjectName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { processWorkstreamNotificationIntent } from "../src/services/conversation-effect-service";
 import { deliverChildEffects, pendingParentEffects } from "./helpers/conversation-effects";
+import { hostedParentStub } from "./helpers/hosted-parent";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000006a1");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a2");
@@ -155,10 +156,9 @@ function agentStub(workstreamId = WORKSTREAM_ID): DurableObjectStub<SubstreamAge
   ));
 }
 
-function parentStub(workstreamId = WORKSTREAM_ID): DurableObjectStub {
-  return env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-    workstreamDOName("global", WORKSPACE_ID, workstreamId),
-  ));
+/** The Organization object that hosts every Channel parent in the workspace. */
+function parentStub(): DurableObjectStub {
+  return hostedParentStub(env, WORKSPACE_ID);
 }
 
 /**
@@ -329,7 +329,7 @@ async function seedCompletedRun(
  *
  * The outbox is transport, not projection authority: creation recovery can
  * successfully deliver and delete a directory row before this helper parks the
- * parent. Directory assertions therefore read `workstream_state_changes`
+ * parent. Directory assertions therefore read `parent_state_changes`
  * through `viewerProjectionEffect`; this helper is for immutable activity and
  * notification effects that the test deliberately leaves queued.
  */
@@ -365,15 +365,15 @@ async function deliveredEffects(
   stub: DurableObjectStub,
   workstreamId = WORKSTREAM_ID,
 ): Promise<ParentEffectEnvelope[]> {
-  const parent = parentStub(workstreamId);
+  const parent = parentStub();
   await parkEffectQueue(parent);
   await deliverChildEffects(env, stub);
-  return pendingParentEffects(parent);
+  return (await pendingParentEffects(parent)).filter((envelope) => envelope.parentId === workstreamId);
 }
 
 /**
  * The version a recipient's directory row was written at, read from the parent's
- * own `projection_keys` rather than from an outbox row.
+ * own `parent_projection_keys` rather than from an outbox row.
  *
  * That table is the one the delivery gate compares against and it is never
  * drained, so this is the same number `requiredProjectionVersion` has to match
@@ -383,9 +383,10 @@ async function viewerProjectionVersion(
   userId: string,
   workstreamId = WORKSTREAM_ID,
 ): Promise<number> {
-  return runInDurableObject(parentStub(workstreamId), (_instance, state) =>
+  return runInDurableObject(parentStub(), (_instance, state) =>
     Number(state.storage.sql.exec<{ next_version: number }>(
-      `SELECT next_version FROM projection_keys WHERE projection_key = ?`,
+      `SELECT next_version FROM parent_projection_keys WHERE parent_id = ? AND projection_key = ?`,
+      workstreamId,
       `user:${userId}`,
     ).toArray()[0]?.next_version ?? 0) - 1);
 }
@@ -395,10 +396,11 @@ async function viewerProjectionEffect(
   userId: string,
   workstreamId = WORKSTREAM_ID,
 ): Promise<Extract<ParentEffectEnvelope["effect"], { kind: "directory_user" }> | null> {
-  return runInDurableObject(parentStub(workstreamId), (_instance, state) => {
+  return runInDurableObject(parentStub(), (_instance, state) => {
     const row = state.storage.sql.exec<{ state_json: string }>(
-      `SELECT state_json FROM workstream_state_changes
-        WHERE state_key = ? ORDER BY waterline DESC LIMIT 1`,
+      `SELECT state_json FROM parent_state_changes
+        WHERE parent_id = ? AND state_key = ? ORDER BY waterline DESC LIMIT 1`,
+      workstreamId,
       `user:${userId}`,
     ).toArray()[0];
     if (!row) return null;
@@ -419,10 +421,11 @@ async function notificationReceipts(
   workstreamId = WORKSTREAM_ID,
 ): Promise<string[]> {
   await deliverChildEffects(env, stub);
-  return runInDurableObject(parentStub(workstreamId), (_instance, state) =>
+  return runInDurableObject(parentStub(), (_instance, state) =>
     state.storage.sql.exec<{ message_id: string }>(
-      `SELECT message_id FROM child_effect_receipts
-        WHERE message_id LIKE 'effect:participant_added:%' ORDER BY message_id`,
+      `SELECT message_id FROM parent_child_receipts
+        WHERE parent_id = ? AND message_id LIKE 'effect:participant_added:%' ORDER BY message_id`,
+      workstreamId,
     ).toArray().map((row) => row.message_id));
 }
 
@@ -813,7 +816,7 @@ describe("naming somebody when the work stream is created", () => {
     // Armed by this recipient's own directory row: the delivery gate refuses to
     // send until the workspace has reached that version, so nobody is told
     // about a work stream their sidebar cannot yet show them. Read from the
-    // parent's `projection_keys` — the table the gate itself compares against.
+    // parent's `parent_projection_keys` — the table the gate itself compares against.
     expect(notification[0]!.requiredProjectionVersion)
       .toBe(await viewerProjectionVersion(INVITEE_ID));
     expect(notification[0]!.requiredProjectionVersion).toBeGreaterThan(0);

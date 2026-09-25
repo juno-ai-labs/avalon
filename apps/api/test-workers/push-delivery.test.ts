@@ -52,18 +52,18 @@ beforeEach(async () => {
   ]);
   await workspace().initializeWorkspace(workspaceId, 'wnam');
   await runInDurableObject(workspace(), (_instance, state) => {
-    state.storage.sql.exec(`INSERT INTO workspace_space_directory
+    state.storage.sql.exec(`INSERT INTO spaces
       (space_id, title, scope, authority_generation, source_version, payload_hash, revision, created_at, updated_at)
       VALUES (?, 'General', 'workspace', 1, 1, 'space', 1, 0, 0)`, spaceId);
     state.storage.sql.exec(`INSERT INTO space_channel_memberships
       (space_id, workstream_id, state, generation, joined_at, updated_at)
       VALUES (?, ?, 'active', 1, 0, 0)`, spaceId, workstreamId);
-    state.storage.sql.exec(`INSERT INTO workspace_workstream_directory
+    state.storage.sql.exec(`INSERT INTO channels
       (workstream_id, authority_generation, waterline, source_event_id, payload_hash, title, description, preview,
        scope, exact_state, last_activity_at, origin_type, title_status, latest_attention_ordinal,
        unread_tracking_start_ordinal, source_created_at, source_updated_at, projected_at)
       VALUES (?, 1, 1, 'source', 'hash', 'Planning', '', '', 'personal', 'idle', 0, 'ad_hoc', 'settled', 0, 0, 0, 0, 0)`, workstreamId);
-    state.storage.sql.exec(`INSERT INTO workspace_workstream_viewers
+    state.storage.sql.exec(`INSERT INTO channel_viewers
       (workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash, is_participant,
        unread_count, you_are_mentioned, listable, seen_attention_ordinal, manual_unread_generation, latest_mention_attention_ordinal, projected_at)
       VALUES (?, ?, 1, 1, 'viewer', 'hash', 1, 0, 0, 1, 0, 0, 0, 0)`, workstreamId, userId);
@@ -97,9 +97,9 @@ it('sets the APNs badge to unread and needs-input work streams in this workspace
   const needsInputId = asWorkstreamId('00000000-0000-7000-8000-00000000f105');
   const archivedId = asWorkstreamId('00000000-0000-7000-8000-00000000f106');
   await runInDurableObject(workspace(), (_instance, state) => {
-    state.storage.sql.exec(`UPDATE workspace_workstream_directory SET latest_attention_ordinal = 2`);
+    state.storage.sql.exec(`UPDATE channels SET latest_attention_ordinal = 2`);
     state.storage.sql.exec(
-      `INSERT INTO workspace_workstream_directory
+      `INSERT INTO channels
        (workstream_id, authority_generation, waterline, source_event_id, payload_hash, title, description, preview,
         scope, exact_state, last_activity_at, origin_type, title_status, latest_attention_ordinal,
         unread_tracking_start_ordinal, source_created_at, source_updated_at, projected_at)
@@ -107,14 +107,14 @@ it('sets the APNs badge to unread and needs-input work streams in this workspace
       needsInputId,
     );
     state.storage.sql.exec(
-      `INSERT INTO workspace_workstream_viewers
+      `INSERT INTO channel_viewers
        (workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash, is_participant,
         unread_count, you_are_mentioned, listable, seen_attention_ordinal, manual_unread_generation, latest_mention_attention_ordinal, projected_at)
        VALUES (?, ?, 1, 1, 'needs-viewer', 'hash-needs', 1, 0, 0, 1, 1, 0, 0, 0)`,
       needsInputId, userId,
     );
     state.storage.sql.exec(
-      `INSERT INTO workspace_workstream_directory
+      `INSERT INTO channels
        (workstream_id, authority_generation, waterline, source_event_id, payload_hash, title, description, preview,
         scope, exact_state, last_activity_at, archived_at, origin_type, title_status, latest_attention_ordinal,
         unread_tracking_start_ordinal, source_created_at, source_updated_at, projected_at)
@@ -122,7 +122,7 @@ it('sets the APNs badge to unread and needs-input work streams in this workspace
       archivedId,
     );
     state.storage.sql.exec(
-      `INSERT INTO workspace_workstream_viewers
+      `INSERT INTO channel_viewers
        (workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash, is_participant,
         unread_count, you_are_mentioned, listable, seen_attention_ordinal, manual_unread_generation, latest_mention_attention_ordinal, projected_at)
        VALUES (?, ?, 1, 1, 'archived-viewer', 'hash-archived', 1, 4, 0, 1, 0, 0, 0, 0)`,

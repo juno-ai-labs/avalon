@@ -106,13 +106,12 @@ function environment(input: {
         }),
       }),
     }),
-    WORKSTREAM_DOS: createCloudflareTestBinding<Env["WORKSTREAM_DOS"]>({
-      idFromName: (name: string) => createTestDurableObjectId(name),
-      get: () => stub,
-    }),
+    // The Organization object hosts the Channel's parent, so one stub answers
+    // both the parent's access-source calls and the directory observation.
     WORKSPACE_DOS: createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
       idFromName: (name: string) => createTestDurableObjectId(name),
       get: () => ({
+        ...stub,
         channelAccessObservation: async () => input.workspaceObservation ?? { found: false },
       }),
     }),

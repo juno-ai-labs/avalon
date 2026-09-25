@@ -324,9 +324,10 @@ nothing between two of its calls. Daytona's
 object-local claim that outlives the provider request limit and reconcile
 observed provider state after ambiguous calls. The workspace directory carries
 one Terminal deadline per work stream: the earliest across every conversation
-under it, which `WorkstreamDO` folds into the main conversation's projection
-(see [`workstream-durable-object.md`](workstream-durable-object.md)). When that
-entry comes due the sweep asks the work stream's parent object which
+under it, which the Channel's parent in `WorkspaceDO` folds into the main
+conversation's projection (see
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md)). When that
+entry comes due the sweep asks the work stream's parent which
 conversations are due (`childTerminalDeadlines`) and reconciles each one's
 sandbox on its own row; a work stream that lists none is treated as the main
 conversation's, as every work stream was before conversations reported their
