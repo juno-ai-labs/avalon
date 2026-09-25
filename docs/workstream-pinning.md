@@ -112,7 +112,7 @@ one — see [`menu-bar.md`](menu-bar.md).
 `useOpenFirstWorkstream` is the one way a screen leaves. It always replaces the
 history entry, so Back cannot return to a screen the API refuses, and it names
 the rows the landing must pass over for that one landing. No leaving screen
-patches the directory: the WorkstreamDO tombstone the socket delivers is what
+patches the directory: the Channel parent's tombstone the socket delivers is what
 removes an archived row, under the directory waterline that orders the removal
 against everything else in flight for it. What a leaving screen does do is
 evict the archived or left work stream's own cache entries, and that eviction
@@ -202,7 +202,7 @@ arrangement is shared. `Alt`+`ArrowUp` / `Alt`+`ArrowDown` on a focused pinned r
 it one step, and each row announces its position to a screen reader, so the
 order is not reachable by pointer alone. Plain arrows are left to move focus.
 
-In Electron, every pinned row also keeps its WorkstreamDO control socket and
+In Electron, every pinned row also keeps its Channel control socket and
 substream `0` feed socket proactively connected. It joins the active work
 stream, the five most recently active unpinned rows, and any running work stream
 in the socket pool; pin order does not sequence their handshakes. WorkspaceDO
@@ -288,12 +288,12 @@ it repairs. Focus resting anywhere real belongs to whoever put it there.
 - **A rewrite covers every stored pin, not just the visible ones.** Skipping a
   pin whose work stream has gone out of sight strands it at a position the
   visible run is about to reuse.
-- **`workspace_workstream_directory` is one row per Channel, and every query
+- **`channels` is one row per Channel, and every query
   here may assume it.** That assumption is what lets this module's paging, the
   pin join, the cursor and the live-state supplement be written without a kind
   filter. It is deliberate rather than incidental: a Channel's *breakouts* now
   reach the Organization too, and they are projected into
-  `workspace_breakout_directory` instead of into this table precisely so that
+  `breakouts` instead of into this table precisely so that
   none of the queries here has to learn a filter it would eventually forget.
   Anything that needs a second kind of conversation gets a table, not a column —
   [`spaces.md`](spaces.md#breakouts-reach-the-organization) holds the reasoning.
@@ -340,7 +340,7 @@ what a work stream *is* or who may read it.
 
 It deliberately does not:
 
-- **Broadcast to other users or a WorkstreamDO.** A pin changes nothing another
+- **Broadcast to other users or to a Channel's parent.** A pin changes nothing another
   person can see. WorkspaceDO does publish `workstream_directory` on its own
   socket so the same person's other windows converge without polling.
 - **Decide workspace membership.** D1 remains current membership authority;
@@ -348,7 +348,7 @@ It deliberately does not:
   active member may pin the work stream — see [`data-model.md`](data-model.md#work-streams).
 - **Pin anything but a work stream.** Automations and notes have their own
   sections and no pin. A breakout is not pinnable and is not in this module's
-  directory at all: its projection lands in `workspace_breakout_directory`,
+  directory at all: its projection lands in `breakouts`,
   read only by the Space dashboard's conversation page.
 
 ## Failure modes and limits
