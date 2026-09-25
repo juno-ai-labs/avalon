@@ -2289,12 +2289,15 @@ export function Sidebar({
           // name are drawn as placeholders rather than falling through to the
           // header below, whose New button a Space rail never shows.
           <SidebarTitleHeader
-            aria-hidden="true"
             className="sidebar-titlebar window-drag channels-sidebar-titlebar skeleton-title-header"
             icon={<span className="skeleton-bar skeleton-title-mark" />}
-            title={<span className="skeleton-bar skeleton-title-line" />}
+            title={<><span aria-hidden="true" className="skeleton-bar skeleton-title-line" /><span className="sr-only">Space</span></>}
             titleClassName="channels-sidebar-title"
-          />
+          >
+            <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
+              <ChevronsLeft size={16} />
+            </IconButton>
+          </SidebarTitleHeader>
         ) : <SidebarHeader className="sidebar-titlebar window-drag">
           <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
             <ChevronsLeft size={16} />
