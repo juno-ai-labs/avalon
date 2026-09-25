@@ -1,8 +1,9 @@
 # Scope grant directory
 
 The scope grant directory finds candidate workstreams for a user's current
-workspace relationship. WorkstreamDO remains the grant authority; WorkspaceDO
-stores a discovery projection. The projection alone never authorizes a read.
+workspace relationship. The Channel's parent, hosted in `WorkspaceDO`
+([hosted conversation parents](hosted-conversation-parents.md)), remains the
+grant authority; `WorkspaceDO` also stores a discovery projection. The projection alone never authorizes a read.
 The lite browser consumes a canonical directory endpoint for shared navigation.
 
 ## Where the code lives
@@ -10,9 +11,9 @@ The lite browser consumes a canonical directory endpoint for shared navigation.
 | File | Responsibility |
 | --- | --- |
 | `apps/api/src/durable-objects/scope-grant-storage.ts` | Grant mutation and existing parent outbox enqueue in one transaction. |
-| `apps/api/src/durable-objects/workstream-do.ts` | Owns grant mutation and projection delivery through the existing parent outbox. |
+| `apps/api/src/durable-objects/hosted-parent.ts` | Owns grant mutation and writes the projection to `parent_outbox`. |
 | `packages/contracts/src/conversation-effects.ts` | Typed parent effect carrying the grant. |
-| `apps/api/src/queues/activity-consumer.ts` | Existing Queue delivery to WorkspaceDO. |
+| `apps/api/src/queues/activity-consumer.ts` | Applies a grant effect that arrives on the Queue, such as one a legacy object sent before it was exported. |
 | `apps/api/src/durable-objects/scope-grant-directory.ts` | Versioned projection and incarnation-specific candidate query. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Workspace identity checks, schema and typed RPC boundary. |
 | `apps/api/src/services/shared-directory-service.ts` | Candidate lookup followed by canonical owner reads and relationship revalidation. |
@@ -30,14 +31,16 @@ every Channel in the Organization, so publishing one row per Space-derived
 reader per Channel would size this index at the Organization times its
 Channels. Direct provenance wins where both apply, in both directions — a Space
 can neither claim such a row nor deactivate it — so a Channel a person also
-holds directly stays published. The same durable outbox owns
-versioning, retries and WorkspaceDO delivery; there is no intermediate delivery alarm.
-Migration 17 drains pending legacy delivery rows into that outbox transactionally,
-then removes their old alarm. The empty legacy table remains for schema compatibility.
+holds directly stays published. The parent's `parent_outbox` row owns versioning
+and retries. `WorkspaceDO` applies it to this index right after the write, with
+no Queue hop and no separate delivery alarm; the alarm only retries an apply that
+failed. Importing a legacy parent republishes its direct grants, deduplicated
+against the projection keys it carried, so a delivery the legacy object never
+sent is not lost.
 
 The WorkspaceDO index supplies candidates only, and it is one of two sources:
 a Channel where this person may list a Breakout but cannot see the Channel
-itself is a candidate too, read from `workspace_breakout_viewers`. That is how
+itself is a candidate too, read from `breakout_viewers`. That is how
 a member seated in a legacy Breakout of a Channel they cannot read finds it;
 the parent's `canReadConversation` then admits the Breakout alone.
 Directory reads admit each candidate at its canonical parent concurrently and
@@ -53,7 +56,7 @@ canonically admitted Channels. The response preserves parent archive state separ
 from each conversation, so clients do not offer a child restore while its parent is
 archived.
 The current Channel rail opts into `?attention=1` on `/sharing/navigation`.
-WorkstreamDO then derives one attention boolean from each *admitted*
+The Channel's parent then derives one attention boolean from each *admitted*
 conversation's common and requesting-viewer projections. The default response
 keeps its previous shape for deployed clients with strict navigation parsers.
 This remains a navigation snapshot, refreshed on focus or directory
@@ -79,15 +82,16 @@ invalidation; it does not create a guest socket for unopened Breakouts.
 ## Boundary
 
 This module owns discovery delivery and candidate indexing. Identity and active
-relationships belong to D1; canonical grants belong to WorkstreamDO. Invitation
+relationships belong to D1; canonical grants belong to the Channel's parent in
+`WorkspaceDO`. Invitation
 redemption is described in [scope invitations](scope-invitations.md). Browser
 entry and its limited collaboration surface belong to
 [browser client](browser-client.md). There is no new Queue or socket multiplexer.
 
 ## Failure modes and limits
 
-The existing outbox alarm retries interrupted delivery. Queue transport failure leaves
-the durable outbox row available for retry. Identical deliveries are idempotent;
+A failed apply leaves the `parent_outbox` row in place, and the alarm retries
+it. Identical deliveries are idempotent;
 older deliveries are ignored. Equal-version conflicting payloads fail rather
 than silently selecting one. Malformed addresses or hashes fail delivery.
 Discovery can lag grant acceptance, but the direct shared link still uses the

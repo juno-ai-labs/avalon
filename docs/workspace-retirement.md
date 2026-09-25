@@ -10,7 +10,7 @@ the resumable walk that closes children before parents, what a background
 caller does when it meets a retired object, and the operator door in Ace behind
 which all of it sits.
 
-Read it before changing retirement, adding a method to any of the four gated
+Read it before changing retirement, adding a method to any of the three gated
 object classes, adding an effect receiver to one of them, or adding a Queue
 consumer, Workflow or cron pass that reaches one.
 
@@ -47,21 +47,19 @@ boundary.
 So `applyRetirementGate` replaces every callable method on the prototype chain,
 once, at module load. Prototype replacement rather than a proxy around the
 instance is what survives real workerd, which dispatches to ordinary own
-properties of a prototype. The five object classes that can belong to a
-workspace — `WorkspaceDO`, `WorkstreamDO`, `SpaceDO`, `SidekickDO` (deployed
-under the Cloudflare class name `AutomationDO`) and `SubstreamAgent` — extend
-`ScheduledDurableObject`, so the tombstone and its two entry points live there;
-six gate policies are declared, one for the abstract
-`ConversationParentDurableObject` base the parents share and one for each
+properties of a prototype. The three gated classes (`WorkspaceDO`,
+`SidekickDO`, deployed under the Cloudflare class name `AutomationDO`, and
+`SubstreamAgent`) extend `ScheduledDurableObject`, so the tombstone and its two
+entry points live there. Four gate policies are declared, one for the abstract
+`ConversationParentDurableObject` base `SidekickDO` extends and one for each
 concrete class, and each declares only its exceptions.
 
-`SpaceDO` is `WorkstreamDO` under a different role and overrides nothing, so a
-disposition it resolves is always `WorkstreamDO`'s — the lookup walks the
-prototype chain. Its registration is therefore not what classifies its doors;
-it registers the *same policy object* `WorkstreamDO` exports, and what it adds is
-the tombstone wrapping of any method `SpaceDO` comes to define itself. A class
-that defines none today is exactly where that omission would be invisible, and a
-second literal policy would have been two door lists to keep in step. The gate does not wrap
+Channel and Space parents have no object of their own: their state is rows in
+`WorkspaceDO` ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)),
+so the Organization's tombstone closes them. The legacy `WorkstreamDO` and
+`SpaceDO` classes are not gated. They no longer extend `ScheduledDurableObject`,
+write no product row, and answer everything except the one-time export and the
+effect forward with `410`. The gate does not wrap
 accessors — a getter is state, not a door — so a getter that does work is not
 fenced; today every such getter delegates to a gated method.
 
@@ -103,7 +101,7 @@ Retirement runs in this order, and the order is the design:
    and writes the tombstone. Doing this in one call is what leaves no window in
    which a caller writes into a half-closed workspace. Archived Spaces are
    enumerated too: what is being closed is an object, not a product surface, and
-   an archived Space is still a `SpaceDO` holding a hidden main conversation.
+   an archived Space still has a hidden main conversation to close.
 3. **Clear every wake reason, and close every socket.** The same transaction
    deletes `_internal_durable_alarms`, the platform alarm is deleted immediately
    after, and every socket the object holds is closed with `1008`, the code the
@@ -120,7 +118,10 @@ Retirement runs in this order, and the order is the design:
    is one rename away from tombstoning a parent without walking its children.
    That read is permitted on a retired parent: a pass that dies between
    retiring the parent and writing its receipt has to be able to ask again, or
-   the node stays unreceipted on every pass.
+   the node stays unreceipted on every pass. A Channel or Space node asks
+   `WorkspaceDO.childrenForRetirement`, which is permitted on the already
+   retired Organization object, and has no parent object to retire after its
+   children; only a Sidekick node calls `retireObject` on its parent.
 5. **Finish when nothing is left unreceipted.** Completion is the workspace's own
    tombstone plus the absence of NULLs in the graph table, rather than a flag
    somebody sets. The tombstone is what says the enumeration happened: reading
@@ -149,10 +150,9 @@ The effect receivers a Queue redelivers to (`receiveChildEffects`,
 `applyAutomationDirectory`) are the exception and are **dropped** in the gate
 instead: their consumers parse a `strictObject` acknowledgement and would treat
 a throw as a delivery failure, so the object answers the shape they expect. One
-read is dropped for the same reason: `canReadWorkstream` answers `false` on a
-retired object, because the artifact host that asks it keeps its cached
-answer when the call throws, and a refusal served a retired work stream's
-artifacts until the viewer's session expired.
+read is dropped for the same reason: `WorkspaceDO.canReadWorkstream` answers
+`false` on a retired object, because nobody can read anything in a retired
+workspace and a caller can act on `false` where it cannot act on a throw.
 
 ### The operator door
 
@@ -255,12 +255,11 @@ the fact, owned by [`demo-workspaces.md`](demo-workspaces.md); retirement never
 reads it, and a workspace no demo made has no row for it to touch.
 
 Two workspace-scoped Durable Object classes are **not** gated and not walked:
-`ArtifactHostDO`, which serves a work stream's published artifacts and asks
-`WorkstreamDO.canReadWorkstream` before serving — that answer is `false` on a
-retired work stream, so a retired workspace's artifacts stop serving on their
-next visibility check, but the host itself is never tombstoned and its own
-alarm and facet storage are untouched; and `SlackReactionTicker`, whose alarm
-is bounded and self-clearing. Gating and walking artifact hosts is the
+`ArtifactHostDO`, which serves a work stream's published artifacts to viewer
+sessions admitted by the canonical authorization service, is never tombstoned,
+and its own alarm and facet storage are untouched; and
+`SlackReactionTicker`, whose alarm is bounded and self-clearing. The legacy
+`WorkstreamDO` and `SpaceDO` are also outside the walk; see [The gate](#the-gate). Gating and walking artifact hosts is the
 remaining piece of "nothing in it ever writes again", recorded under **Open
 questions**.
 
@@ -294,8 +293,10 @@ included.
   out of a closed workspace; moving them means deciding whose they now are. The
   count is what distinguishes retained residue from work still in flight.
 - **A parent the directory names whose object never materialized** is retired
-  anyway. The call brings the object into existence holding only a tombstone,
-  which fences an id a late create would otherwise take.
+  anyway. For a Sidekick, the call brings the object into existence holding only
+  a tombstone, which fences an id a late create would otherwise take. A Channel
+  or Space with no parent rows answers `missing`, has no children, and is
+  receipted; the Organization's tombstone already fences its id.
 - **A failed node leaves retirement incomplete.** The walk continues to the rest
   and reports incomplete, so the next pass returns to exactly that node. The
   receipt's `failed[].error` is a stable code (`conversation_parent_identity_mismatch`,
@@ -381,7 +382,7 @@ closes, which is the case a construction-only fix does not reach.
 
 The tombstone lives in the object rather than D1 because the gate answers during
 constructor recovery, before anything cross-authority could be consulted. Both
-tables arrive through each of the four object classes' own append-only migration
+tables arrive through each of the three gated classes' own append-only migration
 ledger, from one shared constant, as `_internal_durable_alarms` does. There is
 no D1 table for a retirement; the door sets `workspaces.abandoned_at`, the
 column every D1 authority read already fences on, and a caller that needs more
@@ -422,8 +423,7 @@ telemetry roles.
   the session row itself is not revoked and the desktop is told
   `session_revoked` rather than "this workspace was closed". A per-member
   revocation fan-out with a retirement `reason` would let the desktop say so.
-- **Artifact hosts are not walked.** See **Boundary**: a retired work stream's
-  artifacts stop serving on their next visibility check, but `ArtifactHostDO`
+- **Artifact hosts are not walked.** See **Boundary**: `ArtifactHostDO`
   holds no tombstone. Walking `artifact_registry` and gating the class is the
   remaining step.
 - **Nothing re-invokes an interrupted walk.** See **Failure modes and limits**;

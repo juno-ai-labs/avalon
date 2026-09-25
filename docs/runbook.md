@@ -1330,7 +1330,7 @@ Google connector ingestion currently polls Gmail history, Calendar sync/completi
 
 ## Realtime operations and cost controls
 
-- Use deterministic region/workspace IDs for `WorkspaceDO`, region/workspace/work-stream IDs for model-free `WorkstreamDO`, and append the external substream ID for each independently provisioned `SubstreamAgent`. Never allocate an object per socket, user, turn, tool call, or retry.
+- Use deterministic region/workspace IDs for `WorkspaceDO`, which also hosts every Channel and Space parent, and region/workspace/work-stream plus the external substream ID for each independently provisioned `SubstreamAgent`. Never allocate an object per socket, user, turn, tool call, or retry.
 
 - Respect the authority boundary. REST reads the selected `SubstreamAgent`, its
   parent holds aggregate metadata/outbox, and D1 contains only authority
@@ -1346,14 +1346,14 @@ Google connector ingestion currently polls Gmail history, Calendar sync/completi
 - Keep `acceptWebSocket` and serialized attachments. Replacing them with the standard WebSocket API prevents Durable Object hibernation.
 
 - Keep exact text `ping`/`pong` in `setWebSocketAutoResponse`. The
-  SubstreamAgent feed jitters its heartbeat across 45–55 seconds; WorkspaceDO
-  and WorkstreamDO control sockets use a fixed 50-second
+  SubstreamAgent feed jitters its heartbeat across 45–55 seconds; the WorkspaceDO
+  socket and the Channel control socket use a fixed 50-second
   heartbeat. Every role waits 15 seconds for `pong` and reconnects with
   equal-jitter exponential backoff capped at 30 seconds. Auto-responses must not
   perform application work.
 
 - Expect one native Chromium WorkspaceDO socket per signed-in Electron
-  renderer/workspace, plus one main-process Node WorkstreamDO metadata socket
+  renderer/workspace, plus one main-process Node Channel control socket
   and one substream `0` feed for the active work stream, every pin, the five most
   recent unpinned rows, every visible live-state row, and recently viewed pairs
   still inside retention. Navigation must not reopen the WorkspaceDO socket. An
@@ -1378,11 +1378,10 @@ Google connector ingestion currently polls Gmail history, Calendar sync/completi
   the desktop invalidates every workspace surface once rather than polling.
 
 - Verify aggregate convergence by changing title/description/state/read and
-  mention metadata, evicting WorkstreamDO, then subscribing again. Confirm each
-  transition created `workstream_state_changes` and `durable_outbox` rows with
-  a UUIDv7 and increasing common or viewer waterline. The direct work-stream
-  socket and Queue-delayed workspace socket must carry the same identity for
-  each matching common or viewer row;
+  mention metadata, evicting `WorkspaceDO`, then subscribing again. Confirm each
+  transition created a `parent_state_changes` row with a UUIDv7 and increasing
+  common or viewer waterline. The Channel control socket and the workspace
+  socket must carry the same identity for each matching common or viewer row;
   the shared Electron cache must clear nullable fields, ignore duplicate/lower
   waterlines independently, reject an older directory page's pin position, and
   remove the row on authorization revocation. Reconnect the WorkspaceDO socket
@@ -1399,7 +1398,7 @@ Google connector ingestion currently polls Gmail history, Calendar sync/completi
 
 Cloudflare can terminate long-lived connections during network deployments, so recovery—not socket immortality—is the contract. Verify that a forced disconnect reconnects with a cursor, replays only newer events when available, and refreshes REST state when the room replies `resync_required` without dropping the active checkpoint that frame carries.
 
-### WorkstreamDO authority steady-state operations
+### Work-stream authority steady-state operations
 
 Configured deployments completed the one-time maintenance cutover and are permanently at
 `durable_object_open` in `workstream_authority_control`. The campaign machinery
@@ -1413,13 +1412,15 @@ request and fails closed — do not delete it, and never edit
 live work-stream-to-object directory: creation writes it, and regional effect
 delivery fences on its `state`/`generation`.
 
-For a missing or stale product fact, inspect the parent's (`WorkstreamDO` or
-`AutomationDO`) `durable_outbox`, the source child's `durable_outbox`, and the
-parent's `child_effect_receipts` first. For a
-missing sidebar badge/resource route/suggestion feedback row, inspect
+For a missing or stale product fact, inspect the source child's `durable_outbox`
+and the parent's outbox and receipts first: `parent_outbox` and
+`parent_child_receipts` in `WorkspaceDO` for a Channel or Space (see
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md)), or
+`durable_outbox` and `child_effect_receipts` in `AutomationDO` for a Sidekick.
+For a missing sidebar badge/resource route/suggestion feedback row, inspect
 `WorkspaceDO.workspace_workstream_effect_receipts` and the corresponding
-`workspace_workstream_*` row's authority generation, waterline, and UUIDv7
-`source_event_id`. For a missing digest event, Slack mention, or email
+`channels` or `channel_viewers` row's authority generation, waterline, and
+UUIDv7 `source_event_id`. For a missing digest event, Slack mention, or email
 notification, inspect that same
 `WorkspaceDO.workspace_workstream_effect_receipts` table — activity and mention
 effects commit their receipt in the object transaction that commits the event
@@ -1428,7 +1429,8 @@ receipt with no sender outbox row is the normal end state: the sender deleted
 its row when the Queue accepted the message, and the receiver committed the
 effect with its receipt. A sender outbox row that persists means the Queue is
 refusing the send (`substream_outbox_batch_deferred`,
-`parent_effect_enqueue_failed`); no outbox row and no receipt means the Queue
+`parent_effect_enqueue_failed`, or `parent_effect_delivery_deferred` for a hosted
+parent); no outbox row and no receipt means the Queue
 holds the message or has dead-lettered it
 (`conversation_effect_processing_failed` names the throw). There is no
 acknowledgement RPC to retry. Never delete an object outbox row to clear an
@@ -2386,8 +2388,8 @@ Retain the previous regional key during rotation. Decrypt with the stored key ve
 - Before the authority phase opens, D1 is canonical for work streams, messages,
   runs, schedules, connector metadata, and audit events. After it opens, each
   `SubstreamAgent` is canonical for its substream product tables,
-  `WorkstreamDO` is canonical for aggregate metadata/outbox, `WorkspaceDO` is
-  canonical for cross-work-stream directory/viewer/pin/resource/feedback
+  `WorkspaceDO` is canonical for each Channel and Space parent's aggregate
+  metadata/outbox and for cross-work-stream directory/viewer/pin/resource/feedback
   indexes and every workspace-scoped product module, and D1 stays canonical for
   identity/membership, routing, migration/control, and operational
   audit/telemetry only.

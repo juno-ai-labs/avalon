@@ -262,7 +262,8 @@ Two paths, and both matter because they serve different readers:
   can arrive after that receipt.
 - **The workspace directory.** The `UPDATE` names `workstreams`, so the
   work-stream object commits a `directory_common` effect beside it, which flows
-  `SubstreamAgent -> WorkstreamDO -> WorkspaceDO` and is pushed to every
+  `SubstreamAgent -> Queue -> WorkspaceDO` (the Channel's parent, then the
+  directory, in one object) and is pushed to every
   subscribed workspace socket as `workspace_workstream_state`. This is the only
   path to a sidebar row, and therefore the only path to somebody who is a
   participant in the work stream and has not opened it.

@@ -43,7 +43,7 @@ docs/                      Product, architecture, security, setup, runbooks
 | `apps/api/src/index.ts`, `apps/api/src/worker-events.ts` | The regional API's statically imported HTTP/event graph and platform exports. Heavy stateless providers run in the typed document, Terminal, and Global telemetry-delivery service Workers owned by [`api-worker-deployment.md`](api-worker-deployment.md). |
 | `apps/api/src/services` | Business rules. Route handlers hold none. |
 | `apps/api/src/services/terminal` | Deferred Terminal plugin, Daytona adapter, authority-fenced sandbox control plane, resources, and trusted GitHub publication. |
-| `apps/api/src/durable-objects` | `WorkspaceDO`, the model-free conversation parents `WorkstreamDO`, `SpaceDO` (`WorkstreamDO` under a different `ConversationParentRole`, so Spaces reuse the work-stream primitive rather than forking it) and `AutomationDO` over their shared `ConversationParentDurableObject` base, `SubstreamAgent`, the shared `MigratableDurableObject` schema base and the `ScheduledDurableObject` alarm base above it, the retirement gate (`object-retirement.ts`) that wraps every method of the workspace-owned classes, and their SQL-only migration/storage layers. |
+| `apps/api/src/durable-objects` | `WorkspaceDO`, which also hosts the model-free Channel and Space conversation parents as `parent_*` rows (`hosted-parent.ts`, one `HostedParentRole` per kind; see [`hosted-conversation-parents.md`](hosted-conversation-parents.md)), `AutomationDO` over the `ConversationParentDurableObject` base, the legacy `WorkstreamDO` and `SpaceDO` kept only to export their rows once, `SubstreamAgent`, the shared `MigratableDurableObject` schema base and the `ScheduledDurableObject` alarm base above it, the retirement gate (`object-retirement.ts`) that wraps every method of the workspace-owned classes, and their SQL-only migration/storage layers. |
 | `apps/api/src/workflows`, `apps/api/src/queues` | Generic/non-workstream orchestration, legacy work-stream drain, and idempotent regional consumers. |
 | `apps/api/src/env.ts` | `assertEnvContract` — the one place the Worker environment is parsed. |
 | `apps/api/src/lib/rpc-contracts.ts` | The parsers every RPC bridge argument passes through. |
@@ -126,8 +126,9 @@ registrations, resources/notes/memory/R2 references, external delivery,
 activity, discovery, and cross-work-stream query state. Each automation's own
 product state lives in its own `AutomationDO`, which is also the parent of the
 automation's conversation and its runs. `SubstreamAgent` SQLite owns substream
-product state and the full conversation agent loop; `WorkstreamDO` and
-`AutomationDO` own aggregate metadata and their outboxes. Large activity
+product state and the full conversation agent loop. Channel and Space parents
+keep their aggregate metadata and outbox as `parent_*` rows in `WorkspaceDO`,
+and `AutomationDO` keeps its own. Large activity
 payloads, uploads, and snapshots live in R2.
 
 ### Region boundary
@@ -193,11 +194,13 @@ without a second Google sign-in.
 
 ### Work streams and live updates
 
-`WorkspaceDO` and `WorkstreamDO` form the low-volume control plane for workspace
-sync/command admission, metadata, authoritative directory queries, and regional effects.
+`WorkspaceDO` is the low-volume control plane for workspace sync/command
+admission, Channel and Space parent state and metadata, authoritative directory
+queries, and regional effects.
 Each authenticated Electron renderer maintains one native Chromium WorkspaceDO
 socket for the active workspace. It also owns a main-process Node socket pair —
-one WorkstreamDO metadata connection and one substream `0` feed — for the active
+one Channel control connection (also served by `WorkspaceDO`) and one substream
+`0` feed — for the active
 work stream, every pin, the five most recently active unpinned rows, every
 visible live-state row, and recently viewed retained rows. Those feed
 subscriptions opt out of legacy socket-derived presence; WorkspaceDO's explicit
@@ -207,17 +210,18 @@ Parents therefore never become the throughput ceiling for their children.
 
 An authoritative child mutation that changes workspace/user surfaces writes a
 versioned effect to the child's local outbox in the same SQLite transaction.
-The child RPCs it to `WorkstreamDO`, which deduplicates the source, recomputes
-the aggregate, appends a common or per-viewer state row with a monotonic
-waterline and UUIDv7 identity, and owns the sole parent outbox. The direct
-WorkstreamDO socket can publish that committed row immediately. Its alarm sends
-an opaque Queue wake-up for every directory, viewer, resource-link,
-activity-log, and mention-delivery effect. The regional
-consumer fetches the payload from WorkstreamDO and RPCs the named WorkspaceDO.
-WorkspaceDO rejects stale/duplicate per-key waterlines, persists the current
-row with the same UUIDv7 for the affected common or viewer field, and publishes
-it on the workspace socket before the
-consumer acknowledges the source object. D1 resolves current membership and
+The child sends it over the activity Queue to `WorkspaceDO.receiveChildEffects`.
+For a Channel or Space parent, `WorkspaceDO` deduplicates the source,
+recomputes the aggregate, appends a common or per-viewer state row with a
+monotonic waterline and UUIDv7 identity to that parent's `parent_outbox`, and
+pushes the new metadata to the Channel's control sockets. It then applies the
+directory rows to itself in the same invocation: it rejects stale or duplicate
+per-key waterlines, persists the current row with the same UUIDv7 for the
+affected common or viewer field, and publishes it on the workspace socket.
+Activity-log and mention-delivery rows leave on the alarm as `parent_effect`
+messages on the activity Queue. A Sidekick parent keeps the older shape: its
+own outbox, an alarm, and the Queue to reach `WorkspaceDO`
+([`hosted-conversation-parents.md`](hosted-conversation-parents.md)). D1 resolves current membership and
 profile identity; WorkspaceDO resolves Slack/email destinations and mention
 delivery's causally required viewer version so Queue
 reordering cannot outrun a removal. The
@@ -244,32 +248,30 @@ The socket responsibilities are deliberately not interchangeable:
 - `WorkspaceDO` accepts idempotent user commands, including new work-stream and
   message creation, serves cursor-paged authoritative work-stream lists, and
   publishes current work-stream rows plus waterlined workspace-topic invalidations.
-- `WorkstreamDO` publishes complete independently waterlined common/viewer
-  snapshots, but carries neither transcript parts
-  nor model tokens.
+- The Channel control socket (a hosted parent in `WorkspaceDO`) publishes
+  complete independently waterlined common/viewer snapshots, but carries
+  neither transcript parts nor model tokens.
 - `SubstreamAgent` is a read-only direct conversation feed plus correlated
   transcript-page download. Its object-local SQL owns canonical parts, tool
   calls/results, active compaction, and the accumulated output checkpoint.
 
 Electron's header/detail/sidebar use one shared work-stream cache and one
 per-work-stream ledger keyed by authority generation plus separate common and
-viewer waterlines. The direct WorkstreamDO event gives an open work stream the
-fast path; the WorkspaceDO event gives inactive rows and global
+viewer waterlines. The Channel control socket event gives an open work stream
+the fast path; the workspace socket event gives inactive rows and global
 sidebar/discovery surfaces the complete path. Whichever copy arrives second is
 field-wise ignored unless its corresponding waterline is newer. UUIDv7 makes
 the same event searchable and millisecond-time-sortable across both paths, but
 does not replace authority-local waterlines for causal correctness.
 
-WorkstreamDO hands its directory effects to WorkspaceDO **directly, as the
-commit that produced them returns**, rather than leaving them for the alarm and
-the Queue. WorkspaceDO then re-runs the directory query once per subscribed
-socket and pushes `workspace_workstream_state` to each viewer separately, so
-audience is decided per person and per frame: a viewer who may not read the
-work stream receives the same frame carrying `workstream: null`, a versioned
-tombstone, rather than nothing or the row. The Queue is unchanged and remains
-the delivery guarantee — the eager call is one bounded, unawaited attempt to
-arrive first, and the outbox row it would ack is returned to `pending` if it
-fails.
+A hosted parent's directory effects are applied by `WorkspaceDO` to itself
+**straight after the write that produced them**, with no Queue hop. WorkspaceDO
+then re-runs the directory query once per subscribed socket and pushes
+`workspace_workstream_state` to each viewer separately, so audience is decided
+per person and per frame: a viewer who may not read the work stream receives
+the same frame carrying `workstream: null`, a versioned tombstone, rather than
+nothing or the row. The `parent_outbox` row stays until it is applied, so a
+failed apply is retried by the alarm.
 
 The SubstreamAgent message receipt is private and outside the published room
 sequence. If a connection drops before that receipt, Electron reconnects and
@@ -316,7 +318,7 @@ window, the agent retains the old attachment cursor and uses
 fallback. A socket cursor ahead of the durable sequence likewise uses
 `sequence_ahead`, because a lower-sequence snapshot would be rejected.
 
-The desktop applies each complete WorkstreamDO snapshot through one shared
+The desktop applies each complete Channel control snapshot through one shared
 common/viewer waterline ledger behind the open detail and sidebar caches, so the
 header and status dot cannot disagree across a delayed Queue copy. WorkspaceDO
 directory pages/events are the path for work streams without a live child
@@ -325,7 +327,7 @@ no list response becomes transcript authority.
 
 Cloudflare's WebSocket auto-response answers exact text `ping` frames with `pong`
 without waking a hibernated object. The SubstreamAgent feed jitters its heartbeat
-across 45–55 seconds; WorkspaceDO and WorkstreamDO use a
+across 45–55 seconds; the workspace and Channel control sockets use a
 fixed 50-second interval. Every role closes after 15 seconds without `pong`,
 reconnects with equal-jitter exponential backoff capped at 30 seconds, pauses
 while offline, and resumes from its own topic waterline, metadata waterlines,
@@ -439,7 +441,8 @@ its window fills.
 ### Automations and scheduling
 
 An automation is one `AutomationDO` Durable Object and one conversation. The
-object is a conversation parent beside `WorkstreamDO`: its substream `0` is the
+object is a conversation parent beside the Channel and Space parents hosted in
+`WorkspaceDO`: its substream `0` is the
 chat where the automation is drafted, created, and edited, and every run is a
 child substream under it. The object holds the definition revisions, the
 lifecycle, the schedules, the runs, and the inbound-email receipts; a run reads
@@ -462,7 +465,7 @@ armed for the earliest of them, and every target due at that instant drains in
 one wake, each behind its own exponential-backoff gate, so a broken connector
 poll cannot stop a digest. Workspaces never contend: each has its own object
 and its own alarm. [`durable-object-alarms.md`](durable-object-alarms.md)
-covers the mechanism, which WorkstreamDO, SubstreamAgent, and AutomationDO
+covers the mechanism, which WorkspaceDO, SubstreamAgent, and AutomationDO
 share.
 
 A person's scheduled digest is one `schedules` row per delivery time, because a
@@ -530,8 +533,9 @@ precede any LLM classification.
   activity/discovery, directory, and external-delivery state. Each
   `AutomationDO` owns one automation's product state and is the parent of its
   conversation and its runs. After a work-stream generation opens, each
-  `SubstreamAgent` owns its substream product state, the model-free parents
-  `WorkstreamDO`, `SpaceDO` and `AutomationDO` own aggregate metadata/outbox, and legacy D1
+  `SubstreamAgent` owns its substream product state, the model-free Channel and
+  Space parents own aggregate metadata/outbox as `parent_*` rows in
+  `WorkspaceDO`, `AutomationDO` owns its own, and legacy D1
   product and pin tables do not exist. R2 holds large payloads; the authority that names each
   workspace reference stays in the owning WorkspaceDO database.
 
@@ -654,11 +658,10 @@ it.
   [`access-revocation.md`](access-revocation.md).
 - **Reconnect uses equal-jitter exponential backoff capped at 30 seconds**, pauses
   while offline, and resumes from the last cursor/waterline for that socket role.
-- **Queue delivery is duplicate-prone and unordered by design.** WorkstreamDO
-  retains every state outbox row until acknowledgement; WorkspaceDO compares
-  authority generation and the affected common/viewer waterline. UUIDv7 order
-  alone never decides freshness. A synchronous WorkstreamDO-to-WorkspaceDO
-  flush exists only inside the maintenance/bootstrap route-activation fence.
+- **Queue delivery is duplicate-prone and unordered by design.** A parent
+  retains every state outbox row until its destination has it; WorkspaceDO
+  compares authority generation and the affected common/viewer waterline.
+  UUIDv7 order alone never decides freshness.
 - **Dictation sessions are capped at five minutes**, with a one-minute single-use
   ticket, a bounded regional session count, and rate- and size-limited audio
   events. Raw microphone audio and transcripts are not persisted by that bridge.

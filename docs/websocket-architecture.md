@@ -3,8 +3,8 @@
 Rally keeps a small set of long-lived WebSockets open so workspace state,
 work-stream metadata, and the active substream feed are already available when
 a person navigates. Electron deliberately uses two client transports: the
-singleton workspace connection stays in Chromium, while each WorkstreamDO and
-substream `0` pair is dialled by a Node broker in the main process. The split
+singleton workspace connection stays in Chromium, while each Channel control
+socket and substream `0` pair is dialled by a Node broker in the main process. The split
 lets the desktop open a useful swarm in parallel without moving protocol state
 or product caches out of the renderer.
 
@@ -51,8 +51,8 @@ protocol inside each Durable Object.
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Owns the singleton native Chromium WorkspaceDO socket, workspace subscription, directory paging, replay, and outbound message-command queue. |
 | `packages/contracts/src/workspace-reach-watch.ts` | The listen-only workspace socket for hosts without one of their own (Sideline main, the lite browser), and the heartbeat and reconnect numbers every workspace-socket client shares. |
 | `apps/desktop/src/renderer/lib/conversation-admission.tsx` | Composes account and workspace-journey readiness independently of connection warming. |
-| `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns one WorkstreamDO/substream `0` pair per selected work stream above the route, retains recently viewed pairs for five minutes, and supports presence-free pair warming on deliberate hover. |
-| `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Owns the WorkstreamDO metadata protocol, ticket request, snapshot application, heartbeat, and reconnect state machine. |
+| `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns one Channel control/substream `0` pair per selected work stream above the route, retains recently viewed pairs for five minutes, and supports presence-free pair warming on deliberate hover. |
+| `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Owns the Channel control socket's metadata protocol, ticket request, snapshot application, heartbeat, and reconnect state machine. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Owns the SubstreamAgent feed protocol, ticket request, snapshot/replay application, heartbeat, pagination, and reconnect state machine. |
 | `apps/desktop/src/renderer/lib/realtime-socket.ts` | Presents a browser-shaped socket to both work-stream hooks and maps Electron sockets onto one socket-ID-multiplexed preload listener. Browser development falls back to the native `WebSocket` constructor. |
 | `apps/desktop/src/common/realtime-socket.ts` | Defines the closed IPC schemas for opening, sending, closing, and receiving brokered socket events. |
@@ -62,8 +62,8 @@ protocol inside each Durable Object.
 | `apps/desktop/src/main/realtime-socket-broker.ts` | Owns Node `ws` connections, follows Electron's complete ordered system/PAC route and operating-system CA trust, supplies the Rally application Origin, enforces the shared frame ceiling, relays events, and terminates sockets with their renderer owner. |
 | `apps/api/src/routes/socket.ts` | Receives public WebSocket upgrades and sends each accepted request through the correct regional Durable Object namespace. |
 | `apps/api/src/services/socket-service.ts` | Issues and verifies purpose-specific socket tickets and constructs the clean upgrade subrequest. |
-| `apps/api/src/durable-objects/workspace-do.ts` | Accepts the workspace synchronization/command socket through Cloudflare's hibernation API. |
-| `apps/api/src/durable-objects/workstream-do.ts` | Accepts the per-work-stream aggregate metadata socket through the hibernation API. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Accepts the workspace synchronization/command socket through Cloudflare's hibernation API, and each Channel's control socket at the internal `/parent-socket` path, tagged `parent-control:<id>`. |
+| `apps/api/src/durable-objects/hosted-parent.ts` | Admits a Channel control socket and serves its aggregate metadata protocol for the Channel's parent hosted in `WorkspaceDO` ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)). |
 | `apps/api/src/durable-objects/substream-agent.ts` | Accepts the substream feed socket, sends the canonical snapshot, and publishes ordered transcript/runtime events. |
 | `apps/ios/Rally/Network/RallySocketPolicy.swift` | iOS retain set: navigation-shaped, not the desktop swarm. |
 | `apps/ios/Rally/Network/RallySocketPool.swift` | Opens and closes iOS `URLSessionWebSocketTask` owners to match that set. |
@@ -88,7 +88,7 @@ Electron renderer
   |
   |-- typed preload IPC --> Electron main --> Node ws ----> regional Worker
           one control socket per selected work stream            |
-          one substream 0 feed socket per selected work stream   +--> WorkstreamDO
+          one substream 0 feed socket per selected work stream   +--> WorkspaceDO (Channel control)
           one substream 0 feed socket for the open automation    +--> SubstreamAgent
 ```
 
@@ -102,8 +102,10 @@ routing, or the Worker-to-object hop.
 
 The WorkspaceDO socket stays in Chromium because there is exactly one for the
 active workspace and therefore no swarm to serialize. It supplies the sidebar's
-authoritative directory and presence. A WorkstreamDO control socket supplies
-complete work-stream metadata. The matching SubstreamAgent socket for the
+authoritative directory and presence. A Channel control socket supplies
+complete work-stream metadata. It is a separate connection from the workspace
+socket even though `WorkspaceDO` serves both, because it carries one Channel's
+protocol and is pooled and retained per work stream. The matching SubstreamAgent socket for the
 addressed conversation supplies the canonical feed snapshot, ordered live
 events, replay, older-page responses, and the private receipts for message and
 conversation commands sent directly by the composer. WorkspaceDO's explicit
@@ -172,7 +174,7 @@ still obtains its own authorized ticket; starting earlier bypasses no access che
 When a work stream leaves the active route, its exact pair remains mounted for
 five minutes. It stays longer when it still qualifies as pinned, recent, or
 running. A one-second deliberate pointer hover may add one complete
-WorkstreamDO and SubstreamAgent pair for an otherwise-cold row. The feed
+Channel control and SubstreamAgent pair for an otherwise-cold row. The feed
 subscription is presence-free, so transport warmth does not claim that the
 person is viewing the row or clear its unseen marker. When navigation commits,
 the renderer promotes that same admitted socket with `mark_opened`; no new
@@ -227,7 +229,7 @@ authority because maintenance can close a generation in place. Either way the
 object enforces local visibility, consumes the ticket ID once, accepts the
 server socket, and serializes the attachment needed after eviction.
 
-WorkspaceDO, WorkstreamDO, and SubstreamAgent use Cloudflare's
+WorkspaceDO (for workspace and Channel control sockets) and SubstreamAgent use Cloudflare's
 [WebSocket Hibernation API](https://developers.cloudflare.com/durable-objects/best-practices/websockets/).
 Idle objects can be evicted while the platform keeps their sockets connected;
 incoming application frames wake the object and recover connection identity
@@ -326,7 +328,7 @@ For additional SubstreamAgent feeds, the current pool cannot simply be widened.
 It keys ownership, connection state, and lease identity by `workstreamId` and
 the feed hook currently subscribes to substream `0`. Supporting other
 substreams requires a feed identity of `(workstreamId, substreamId)` throughout
-the pool, cache keys, telemetry, and tests. Keep one WorkstreamDO control socket
+the pool, cache keys, telemetry, and tests. Keep one Channel control socket
 per work stream and add only the eligible feed sockets; do not duplicate the
 control socket for every child.
 
@@ -371,7 +373,7 @@ open transport as success.
   explicitly disable the legacy SubstreamAgent presence publication, and the UI
   ignores that legacy event in favor of WorkspaceDO's foreground snapshot.
 - **The client and both object endpoints share one frame ceiling.** Raising or
-  lowering the 1 MB bound in only Node, WorkstreamDO, or SubstreamAgent creates a
+  lowering the 1 MB bound in only Node, the hosted Channel parent, or SubstreamAgent creates a
   transport-dependent protocol and must not be done.
 - **A brokered socket kind is a closed enum with its own route shape.** Adding
   one means adding it to `DesktopRealtimeSocketKindSchema` *and* to
@@ -396,7 +398,7 @@ Worker, or upgrade negotiation; those belong to
 snapshots or events; those belong to the Durable Object modules. It does not
 define cache waterlines or choose sockets over REST; see
 [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md). It also does not
-move WorkspaceDO or dictation transport into Node.
+move the workspace synchronization socket or dictation transport into Node.
 
 ## Failure modes and limits
 
@@ -481,7 +483,7 @@ socket operations only from the primary Rally window, parses every operation,
 and keys authority to that window's `webContents` ID. An open URL must use
 `ws`/`wss`, match a configured regional origin exactly, contain no username,
 password or fragment, and match the path declared for its kind — one of
-the WorkstreamDO or SubstreamAgent shapes. Query data is discarded before the
+the Channel control or SubstreamAgent shapes. Query data is discarded before the
 connection opens; it never selects a protocol capability. The first protocol
 must be the public ticket sentinel;
 main supplies `app://rallywithai` as Origin and accepts no renderer-selected
@@ -503,7 +505,7 @@ percentiles. For packaged macOS builds, governed renderer performance records
 also appear in Unified Logging. The `workstream_open` `handshake` phase spans
 renderer-to-main IPC plus the network/Worker/object upgrade. Its direct-route
 PAC, DNS, TCP, TLS, and edge-upgrade annotations locate that total; proxied
-attempts expose one aggregate. Chromium NetLog no longer contains WorkstreamDO
+attempts expose one aggregate. Chromium NetLog no longer contains Channel control
 and SubstreamAgent handshakes.
 
 Worker traces and `perf_flow` rows cover ticket issue, edge upgrade, Durable

@@ -1,6 +1,7 @@
 # Work-stream descriptions
 
-A work stream's description is the WorkstreamDO's `workstream.description` (the
+A work stream's description is its Channel parent's `description`, held in
+`WorkspaceDO`'s `parent_metadata` and mirrored on its `channels` row (the
 desktop directory model still exposes that value through its `objective` field):
 searchable directory context, the text the routing classifier reads when it decides
 whether a connector activity belongs here, and the standing context every run
