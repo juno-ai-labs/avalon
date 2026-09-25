@@ -46,10 +46,31 @@ const SpaceFailureSchema = z.strictObject({
 export const WorkspaceSpaceListRequestSchema = SpaceActorSchema;
 export type WorkspaceSpaceListRequest = z.infer<typeof WorkspaceSpaceListRequestSchema>;
 
+/**
+ * `openGeneralSpace`. With a `spaceId` (whose D1 anchor the caller has already
+ * written) General is created under it together with its hosted parent in one
+ * transaction; without one the call only answers whether General exists.
+ */
+export const WorkspaceSpaceGeneralRequestSchema = SpaceActorSchema.extend({
+  spaceId: SpaceIdSchema.optional(),
+}).strict();
+export type WorkspaceSpaceGeneralRequest = z.infer<typeof WorkspaceSpaceGeneralRequestSchema>;
+
 export const WorkspaceSpaceReserveRequestSchema = SpaceActorSchema.extend({
   space: CreateSpaceRequestSchema,
-  /** Internal creation identity for resumable setup; absent for ordinary creates. */
+  /**
+   * The creation identity. `SpaceService` always names one, because the D1
+   * anchor is written under it before this call; absent only for a caller
+   * that lets the Organization allocate it.
+   */
   spaceId: SpaceIdSchema.optional(),
+  /**
+   * Reserve the Space's hosted parent (its metadata and provisional directory
+   * row) in the same transaction as the Space. Omitted, the Space is written
+   * alone at source version zero and the caller reserves the parent itself,
+   * which is what a Worker from before this field did.
+   */
+  reserveParent: z.literal(true).optional(),
 }).strict();
 export type WorkspaceSpaceReserveRequest = z.infer<typeof WorkspaceSpaceReserveRequestSchema>;
 
@@ -217,6 +238,24 @@ export const WorkspaceSpaceMembershipMovePlanResultSchema = z.union([
 ]);
 export type WorkspaceSpaceMembershipMovePlanResult =
   z.infer<typeof WorkspaceSpaceMembershipMovePlanResultSchema>;
+
+/**
+ * `moveSpaceMembership`: an equal-audience move committed in one WorkspaceDO
+ * transaction, or `moved: false` when the caller has to take the add-then-remove
+ * path because the audiences differ or the Channel's recorded provenance does
+ * not match the Spaces as they are now. Nothing is written in that case.
+ */
+export const WorkspaceSpaceMembershipMoveOutcomeSchema = z.union([
+  z.strictObject({ ok: z.literal(true), moved: z.literal(false) }),
+  z.strictObject({
+    ok: z.literal(true),
+    moved: z.literal(true),
+    source: SpaceSummarySchema,
+    target: SpaceSummarySchema,
+  }),
+  WorkspaceSpaceAudienceFailureSchema,
+]);
+export type WorkspaceSpaceMembershipMoveOutcome = z.infer<typeof WorkspaceSpaceMembershipMoveOutcomeSchema>;
 
 export const WorkspaceSpaceMembershipMoveResultSchema = z.union([
   z.strictObject({ ok: z.literal(true), source: SpaceSummarySchema, target: SpaceSummarySchema }),
@@ -443,6 +482,14 @@ export const WorkspaceSpaceGeneralResultSchema = z.union([
   SpaceFailureSchema,
 ]);
 export type WorkspaceSpaceGeneralResult = z.infer<typeof WorkspaceSpaceGeneralResultSchema>;
+
+export const WorkspaceSpaceGeneralOpenResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), space: SpaceSummarySchema, created: z.boolean() }),
+  /** General does not exist yet; answered only to a call that named no `spaceId`. */
+  z.strictObject({ ok: z.literal(true), absent: z.literal(true) }),
+  SpaceFailureSchema,
+]);
+export type WorkspaceSpaceGeneralOpenResult = z.infer<typeof WorkspaceSpaceGeneralOpenResultSchema>;
 
 /**
  * Where the Organization is in its one-time Space cutover.
