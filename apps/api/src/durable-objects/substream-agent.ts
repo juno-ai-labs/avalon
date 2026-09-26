@@ -18,6 +18,7 @@ import { searchIndexingConfigured } from '../services/search-embedding';
 import { conversationSearchDocumentIds, prepareConversationLinks, readConversationSearchLink, type ConversationDisplay } from './conversation-link-search';
 import { drainSearchProjectionOutbox, nextSearchProjectionDueAt, SearchConversationProjectionMessageSchema, SearchProjectionMessageSchema } from './search-projection-outbox';
 import { searchDocumentId } from '../services/text-search';
+import { conversationSearchAudience } from '../services/search-audience';
 import { ConversationParentKindSchema } from "@rally/contracts/conversation-parent";
 import { SubstreamAddressSchema, type SubstreamContextCapture } from "@rally/contracts/substream-creation";
 import { workspaceDOName } from "./names";
@@ -5703,6 +5704,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const live = turn?.entryKind === "conversation" ? turn : null;
     if (documentId === undefined || documentId === id) links.documents.unshift({ id, source: "messages", sourceId, scopeId: identity.parentId,
       substreamId: request.substreamId,
+      ...(live ? { audience: conversationSearchAudience({ parentKind: identity.parentKind, parentId: identity.parentId,
+        substreamId: request.substreamId }) } : {}),
       revision: turn?.revision ?? request.revision,
       text: live ? live.blocks.filter((block) => block.type === "text").map((block) => block.text).join("\n") : null,
       // The result renders from the index: the conversation title, when the
