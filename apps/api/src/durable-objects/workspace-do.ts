@@ -7432,10 +7432,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /**
    * Whether this person may create a Space, asked before anything is written.
    *
-   * `SpaceService.create` writes the D1 anchor and bootstraps the Space's
-   * conversation environment before `reserveSpace`, so the gate has to be
-   * answered first: otherwise every refused attempt leaves an anchor and a
-   * bootstrapped object behind. The same gate `reserveSpace` applies again.
+   * `SpaceService.create` writes the D1 anchor before `reserveSpace`, so the
+   * gate has to be answered first: otherwise every refused attempt leaves an
+   * anchor behind. The same gate `reserveSpace` applies again.
    */
   async admitSpaceCreation(input: WorkspaceSpaceListRequest): Promise<{ ok: true } | { ok: false; code: SpaceErrorCode }> {
     await this.initialized;
@@ -8501,7 +8500,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const storage = this.spaceStorage();
+    // A Sidekick default is also the Space's recommendation, which a Channel
+    // created in the Space reads from its hosted parent. Written right after
+    // the default with nothing awaited between them, so both land or neither.
+    const parent = request.kind === "sidekick" ? await this.hostedParent(request.spaceId, request.workspaceId) : null;
     const result = WorkspaceSpaceDefaultResultSchema.parse(storage.addDefault(request));
+    if (result.ok) parent?.writeSidekickRecommendation(request.targetId, true);
     if (result.ok) this.publishSpaceSnapshot();
     if (result.ok && result.targets.length > 0) await this.armNextAlarm();
     await this.afterSidekickDefaultsApplied(storage, request.workspaceId);
@@ -8514,7 +8518,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
+    const parent = request.kind === "sidekick" ? await this.hostedParent(request.spaceId, request.workspaceId) : null;
     const space = this.spaceStorage().removeDefault(request);
+    if (space !== false) parent?.writeSidekickRecommendation(request.targetId, false);
     if (space !== false) this.publishSpaceSnapshot();
     return WorkspaceSpaceMutationResultSchema.parse(space === false
       ? { ok: false, code: "space_not_found" }
