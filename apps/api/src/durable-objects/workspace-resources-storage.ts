@@ -387,19 +387,13 @@ export function listWorkspaceReapableResourceObjects(
     `SELECT pending.object_ref, pending.resource_id, pending.object_kind
        FROM resource_object_deletion_outbox pending
       WHERE pending.workspace_id = ?
+        -- One indexed lookup per column; see migration 78. Every row here
+        -- is this workspace's, so the lookups do not name workspace_id.
         AND (pending.cleanup_eligible = 1
-         OR EXISTS (
-           SELECT 1 FROM resources current_resource
-            WHERE current_resource.workspace_id = pending.workspace_id
-              AND (current_resource.content_ref = pending.object_ref
-                OR current_resource.model_content_ref = pending.object_ref)
-         )
-         OR EXISTS (
-           SELECT 1 FROM resource_versions historical_version
-            WHERE historical_version.workspace_id = pending.workspace_id
-              AND (historical_version.content_ref = pending.object_ref
-                OR historical_version.model_content_ref = pending.object_ref)
-         ))
+         OR EXISTS (SELECT 1 FROM resources WHERE content_ref = pending.object_ref)
+         OR EXISTS (SELECT 1 FROM resources WHERE model_content_ref = pending.object_ref)
+         OR EXISTS (SELECT 1 FROM resource_versions WHERE content_ref = pending.object_ref)
+         OR EXISTS (SELECT 1 FROM resource_versions WHERE model_content_ref = pending.object_ref))
       ORDER BY pending.created_at ASC, pending.object_ref ASC
       LIMIT ?`,
     workspaceId,

@@ -3850,6 +3850,22 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // row in place, and existing semantic chunks are left alone. A row in
   // backoff keeps its `not_before`, as in 47.
   statements: ['UPDATE resource_search_versions SET pending = 1'],
+}, {
+  version: 78,
+  description: "index the stored object a resource or version points at",
+  // The maintenance schedule asks, for each object waiting in
+  // `resource_object_deletion_outbox`, whether a resource or an older version
+  // still points at it. Nothing indexed those columns, so one waiting row
+  // scanned every resource and every version (460,000 rows at Juno Labs) on
+  // each refresh, and a Channel directory effect with links refreshes it:
+  // most of `receiveChildEffects`' 700 ms of CPU. Connector resources store no
+  // object, so the partial indexes hold only the few rows that do.
+  statements: [
+    "CREATE INDEX resources_content_ref_idx ON resources(content_ref) WHERE content_ref IS NOT NULL",
+    "CREATE INDEX resources_model_content_ref_idx ON resources(model_content_ref) WHERE model_content_ref IS NOT NULL",
+    "CREATE INDEX resource_versions_content_ref_idx ON resource_versions(content_ref) WHERE content_ref IS NOT NULL",
+    "CREATE INDEX resource_versions_model_content_ref_idx ON resource_versions(model_content_ref) WHERE model_content_ref IS NOT NULL",
+  ],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
