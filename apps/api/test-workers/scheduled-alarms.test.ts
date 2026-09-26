@@ -254,9 +254,6 @@ describe("the shared Durable Object alarm list", () => {
         { phase: "space_bootstrap", alarmKind: undefined },
         { phase: "activity_reap", alarmKind: undefined },
         { phase: "schedule_reconcile", alarmKind: undefined },
-        // Background imports late: a page is up to one cold RPC per parent,
-        // and a Channel someone opens imports on that request instead.
-        { phase: "parent_import", alarmKind: undefined },
         // Interrupted Space operations last: each step waits on a Channel's
         // conversation, and one step per intent per alarm keeps the phases
         // above from waiting behind a large Space.
