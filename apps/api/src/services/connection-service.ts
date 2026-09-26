@@ -681,10 +681,14 @@ export class ConnectionService {
   /**
    * Store what a discovery found and tell open clients when it moved.
    *
-   * Fenced on the grants and configuration the discovery ran under: a custom
-   * MCP policy saved, or a reconnect that changed the grants, while this
-   * discovery was in flight has already changed what the count means, so the
-   * late answer is dropped rather than written over the newer truth. The
+   * Fenced on the grants, configuration and provider account the discovery
+   * ran under: a custom MCP policy saved, or a reconnect that changed the
+   * grants or the account, while this discovery was in flight has already
+   * changed what the count means, so the late answer is dropped rather than
+   * written over the newer truth. A token alone is not fenced: a new token for
+   * the same account and grants lists the same tools, and polls and the
+   * discovery's own token refresh rewrite the row, so fencing on `updated_at`
+   * or the credential would drop good counts. The
    * `IS NOT` keeps an unchanged count from publishing a topic every client
    * would refetch the list for.
    */
@@ -692,7 +696,7 @@ export class ConnectionService {
     const changed = await this.env.DB.prepare(
       `UPDATE connector_connections SET discovered_tool_count = ?
         WHERE id = ? AND workspace_id = ? AND status <> 'disabled'
-          AND granted_scopes_json = ? AND config_json = ?
+          AND granted_scopes_json = ? AND config_json = ? AND provider_account_id IS ?
           AND discovered_tool_count IS NOT ?
         RETURNING id`,
     ).bind(
@@ -701,11 +705,12 @@ export class ConnectionService {
       connection.workspace_id,
       String(connection.granted_scopes_json),
       String(connection.config_json),
+      connection.provider_account_id,
       count,
     ).first<{ id: string }>();
     if (changed?.id !== connection.id) return;
     try {
-      await publishWorkspaceSync(this.env, connection.workspace_id, ["connector_connections"]);
+      await publishWorkspaceSync(this.env, connection.workspace_id, ["connector_connections"], { connectionId: connection.id });
     } catch (error) {
       // The count is stored; a client that missed this push reads it on its
       // next list, which focus already triggers.
