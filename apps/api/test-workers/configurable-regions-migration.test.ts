@@ -41,15 +41,19 @@ it.each(cases)('$component preserves its committed identity and receipts while a
   await stub.ping();
   const columns = Object.keys(row);
   const insert = `INSERT INTO ${table} (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`;
+  // Found by name rather than assumed last: an object keeps adding migrations
+  // after this one, and the row this test compares is the one it rebuilt.
+  const through = migrations.findIndex((migration) => migration.description === 'allow configured deployment identifiers') + 1;
+  expect(through).toBeGreaterThan(0);
   const before = await runInDurableObject(stub, (_instance, state) => {
-    applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: migrations.slice(0, -1), component, workerVersionId: 'before', now: 1 });
+    applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: migrations.slice(0, through - 1), component, workerVersionId: 'before', now: 1 });
     state.storage.sql.exec(insert, ...Object.values(row));
     return state.storage.sql.exec(`SELECT * FROM ${table}`).toArray();
   });
   await runInDurableObject(stub, (_instance, state) => {
     // Receipt verification in the production runner also proves the applied
     // migration hashes remain compatible when this forward migration runs.
-    applyDurableObjectSqliteMigrations({ storage: state.storage, migrations, component, workerVersionId: 'after', now: 2 });
+    applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: migrations.slice(0, through), component, workerVersionId: 'after', now: 2 });
     expect(state.storage.sql.exec(`SELECT * FROM ${table}`).toArray()).toEqual(before);
     expect(state.storage.sql.exec('PRAGMA foreign_key_check').toArray()).toEqual([]);
     state.storage.sql.exec(`DELETE FROM ${table}`);

@@ -673,9 +673,17 @@ chat published a revision, and the page refetches its detail on it, so the icon
 travels the path that exists rather than a second one built for it. The sidebar
 tiles and the library list read the appearance straight off the pushed row.
 
+The setup chat chooses one too: `submit_draft` requires an icon and a color,
+and `submitDefinition` writes them unless they repeat the last appearance the
+chat knew of, which is its own previous submission, kept in
+`automation.chat_appearance_json`, or the stored one before its first. A new
+color must come from the ring; one outside it is accepted only as the color
+already stored. The RPC field is optional, so a seeded or scripted definition
+leaves the appearance alone.
+
 A Sidekick nobody has chosen for stores `NULL`, which is not the same as
 choosing the default: the glyph falls back to the mark derived from the
-Sidekick's id, exactly what every Sidekick showed before the picker existed.
+Sidekick's id.
 
 ## Invariants
 
@@ -840,7 +848,8 @@ catalogs the columns; the occurrence keys and run states are in the tables
 above. `run_id` is the child substream id, and `harness_run_id` is unique per
 run. Migration 6 adds `runs.seed_json`, null on every run but one a demo
 seeded; migration 7 adds `automation.appearance_json`, null until somebody
-picks an icon or a colour.
+picks an icon or a colour. Migration 9 adds `automation.chat_appearance_json`, the
+appearance the setup chat last submitted, null until it first does.
 
 `WorkspaceDO` migration 32 rebuilt `automation_directory` (automation id,
 workspace, author, `source_version`, hash, lifecycle, scope, owning work stream,
@@ -930,6 +939,48 @@ Desktop and browser request management options only when their controls open, no
 on every transcript update.
 
 ## Changelog
+
+### 2026-09-25 — The setup chat chooses a Sidekick's icon and color
+
+**What changed:** `submit_draft` requires `icon` and `color`. The icon is an
+exact key from the Channel icon catalog, with each key's drawing description
+rendered into the field; the color is one of the fourteen ring colors the picker
+offers, or the Sidekick's current color when that is `black` or a retired one.
+They ride beside the draft, not inside it, and `submitDefinition` writes them
+to `automation.appearance_json` alongside the title, unless they repeat the
+last appearance the chat knew of. Migration 9 adds `chat_appearance_json` to
+hold that. `sidekicks_list` now returns each Sidekick's current appearance.
+
+**Why:** The chat named a Sidekick but left its look to the id hash, so a new
+Sidekick's hexagon said nothing about what it does until somebody opened the
+picker. Channels already get a chosen icon from the naming pass; Sidekicks now
+choose from the same list, so Channels, Breakouts and Sidekicks share one icon
+library and one set of descriptions.
+
+**Considered and rejected:** Putting the two fields in `AutomationDraftSchema`.
+That schema also parses every stored revision, so a required field there would
+fail on every revision written before it, and the appearance is not part of a
+definition anyway: a person changes it from the picker without a revision.
+Writing only when nothing is stored, as the Channel naming pass does, was also
+rejected: that pass has no person's intent behind it, while the chat does, and
+"make it red" has to work. No fallback icon is named to the chat; the catalog
+carries descriptions only. Limiting the tool's color to the ring was rejected in
+review: a Sidekick wearing a retired color could not echo it, so every edit
+would have overwritten it.
+
+Writing every submission was rejected in review: nothing makes the chat
+re-read `sidekicks_list`, so a revision copying its own earlier call would
+undo a person's pick made since. Carrying the current appearance in every tool
+result was also considered; it narrows the window but still trusts the model
+to use the latest view, where comparing against the chat's own last value in
+the object does not.
+
+**Consequences:** A person's pick survives any submission that repeats what
+the chat asked for before; only a value the chat has not submitted replaces
+it. The comparison is of serialized JSON, so both writers must keep producing
+`{icon, color}` in that key order, which the two schemas' shapes do. Adding an
+icon key means adding its description, which the exhaustive `Record` already
+enforces.
 
 ### 2026-09-22 — Empty rooms keep the Sidekicks heading
 

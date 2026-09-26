@@ -12,6 +12,7 @@ import {
   AutomationRunSchema,
   AutomationSetEvaluatorRulesInputV1Schema,
   DemoSeedSchema,
+  PROJECT_COLOR_RING,
   WorkstreamAppearanceSchema,
   WorkstreamAppearancePatchSchema,
   automationAcceptanceSelections,
@@ -215,6 +216,8 @@ interface AutomationRow extends Record<string, SqlStorageValue> {
   loadable: number;
   /** The chosen icon and colour as `WorkstreamAppearance` JSON; null until picked. */
   appearance_json: string | null;
+  /** The icon and colour the setup chat last submitted; null until it first does. */
+  chat_appearance_json: string | null;
   authority_generation: number;
   created_at: number;
   updated_at: number;
@@ -396,6 +399,16 @@ export const AUTOMATION_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
   "DROP TABLE \"_region_copy_automation\"",
   "PRAGMA defer_foreign_keys = OFF"
 ]
+}, {
+  version: 9,
+  description: "the appearance the setup chat last submitted",
+  statements: [
+    // What the chat last asked for, kept apart from what the Sidekick wears so
+    // a repeat of that request is not mistaken for a new one. Null until the
+    // chat first submits; see `submitDefinition`.
+    `ALTER TABLE automation ADD COLUMN chat_appearance_json TEXT
+       CHECK (chat_appearance_json IS NULL OR json_valid(chat_appearance_json))`,
+  ],
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -566,6 +579,17 @@ export class SidekickDO extends ConversationParentDurableObject {
     const revision = this.state.storage.transactionSync(() => {
       const latest = this.assertAutomation(request.workspaceId, request.automationId);
       if (latest.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
+      // A colour outside the ring is one nobody can pick any more, so it may
+      // only be the one this Sidekick already wears, kept through an edit.
+      if (request.appearance && !(PROJECT_COLOR_RING as readonly string[]).includes(request.appearance.color)) {
+        const stored = latest.appearance_json
+          ? WorkstreamAppearanceSchema.parse(JSON.parse(latest.appearance_json)).color
+          : null;
+        if (stored !== request.appearance.color) {
+          throw new ApiError(400, "sidekick_color_not_offered",
+            `color ${request.appearance.color} is kept only when it is the Sidekick's current color; choose one of ${PROJECT_COLOR_RING.join(", ")}`);
+        }
+      }
       const definitionRevision = latest.current_definition_revision + 1;
       this.state.storage.sql.exec(
         `INSERT INTO definition_revisions
@@ -583,14 +607,28 @@ export class SidekickDO extends ConversationParentDurableObject {
       const scope = latest.lifecycle === "draft" && latest.scope !== "workstream" && request.draft.suggestedScope !== "workstream"
         ? request.draft.suggestedScope
         : latest.scope;
+      // A submitted appearance is a new choice only when it differs from the
+      // last one the chat knew of: its own previous submission, or what the
+      // Sidekick wore when it first submitted. A repeat of that is the chat
+      // copying its own earlier call, and writing it would undo whatever a
+      // person picked since. Nothing stored means nobody has chosen.
+      const submittedAppearance = request.appearance ? JSON.stringify(request.appearance) : null;
+      const knownAppearance = latest.chat_appearance_json ?? latest.appearance_json;
+      const appearance = submittedAppearance !== null
+        && (latest.appearance_json === null || submittedAppearance !== knownAppearance)
+        ? submittedAppearance
+        : latest.appearance_json;
       this.state.storage.sql.exec(
         `UPDATE automation
-            SET current_definition_revision = ?, title = ?, description = ?, scope = ?, updated_at = ?
+            SET current_definition_revision = ?, title = ?, description = ?, scope = ?,
+                appearance_json = ?, chat_appearance_json = COALESCE(?, chat_appearance_json), updated_at = ?
           WHERE id = 1`,
         definitionRevision,
         request.draft.name,
         request.draft.description,
         scope,
+        appearance,
+        submittedAppearance,
         now,
       );
       this.enqueueDirectory(now);
