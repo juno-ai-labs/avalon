@@ -30,7 +30,7 @@ them; the product design is in
 | `apps/api/src/durable-objects/workspace-breakout-storage.ts` | The breakout directory and viewer projections (migration 65), and the generation-fenced applies over them. |
 | `packages/contracts/src/conversation-attention.ts` | `conversationNeedsViewer`, the one definition of "this conversation still needs you", and the `HarnessStatus` vocabulary it reads. |
 | `apps/api/src/durable-objects/workspace-space-protocol.ts` | Strict RPC requests and results, the Queue message shapes, and the `kind` that makes a resource and a Sidekick default one mechanism. |
-| `apps/api/src/durable-objects/workspace-do.ts` | The authenticated Space RPCs, the three server-to-server cutover RPCs, the Space branch of `applyWorkstreamDirectoryEffects`, `publishSpaceSnapshot`, the sidebar payload, the three alarm phases, and migration 64, which retires Projects. |
+| `apps/api/src/durable-objects/workspace-do.ts` | The authenticated Space RPCs, the three server-to-server cutover RPCs, the Space branch of the directory apply (`applyDirectoryBatch`), `publishSpaceSnapshot`, the sidebar payload, the three alarm phases, and migration 64, which retires Projects. |
 | `apps/api/src/durable-objects/fenced-target-publication.ts` | The claim/send/accept publisher every Space publisher calls. |
 | `apps/api/src/durable-objects/workspace-space-default-publication.ts` | The Space's two arguments to it: default targets, and the cutover's next page of work. |
 | `apps/api/src/services/space-service.ts` | Creation, presentation, audience, membership, archive, restore, defaults, and the resume of an interrupted operation. |
@@ -71,7 +71,7 @@ Channel has a home lives here and nowhere else.
 participants and attachments are written on the Space's hosted parent rows in
 `WorkspaceDO` and its hidden main conversation, and reach WorkspaceDO as the same `directory_common` and
 `directory_user` effects a Channel publishes — routed by parent kind in
-`applyWorkstreamDirectoryEffects`.
+`applyDirectoryBatch`, inside the parent's own transaction.
 
 **Each Channel's parent owns its own audience.** A Space never writes one. Every
 membership, audience change, archive and restore asks the Channel's own

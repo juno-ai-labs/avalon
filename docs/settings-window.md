@@ -251,7 +251,7 @@ screen. It does not own:
   that an idle prewarmed socket was nearly free: it was, idle, but it also took
   the full sidebar, a second copy of every push, and a second read of
   everything on each open.
-  [`websocket-architecture.md`](websocket-architecture.md#one-workspace-socket-per-desktop-the-settings-relay)
+  [`websocket-architecture.md`](websocket-architecture.md#one-workspace-socket-per-desktop-the-organization-sync-relay)
   owns the relay, the socket, and the reasoning.
 - **The renderer bundle.** Opening any window still parses the whole application,
   because the renderer has no code splitting; prewarming moves that cost off the

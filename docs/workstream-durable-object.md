@@ -1198,9 +1198,8 @@ complete relationship map is:
 | WorkspaceDO/Worker | SubstreamAgent | typed RPC | idempotent child product transaction, pending loop input, or subordinate execution receipt |
 | Worker | WorkspaceDO (hosted Channel or Space parent) / AutomationDO | typed RPC | the conversation-parent contract: the caller needs the answer (a viewer decision, the generation and archive state, a child reservation at creation) |
 | SubstreamAgent | regional Queue | Cloudflare Queue | child `durable_outbox` row, sent with the `conversation_effect` envelope inline and deleted when the Queue accepts it |
-| regional Queue Worker | WorkspaceDO (hosted parent) / AutomationDO | typed RPC | `receiveChildEffects`: parent receipt, child projection, aggregate, state row, and outbox row in one transaction; a replay is answered from the receipt. A hosted parent's directory rows are then applied in the same `WorkspaceDO` invocation, from its `parent_outbox` |
+| regional Queue Worker | WorkspaceDO (hosted parent) / AutomationDO | typed RPC | `receiveChildEffects`: parent receipt, child projection, aggregate, state row, and outbox row in one transaction; a replay is answered from the receipt. A hosted parent's directory rows are applied inside that same transaction, never through `parent_outbox` |
 | WorkspaceDO (hosted parent) / AutomationDO | regional Queue | Cloudflare Queue | activity and notification rows of the parent outbox (`parent_outbox` for a hosted parent, `durable_outbox` for a Sidekick), sent with the `parent_effect` envelope inline and deleted when the Queue accepts it |
-| regional Queue Worker | WorkspaceDO | typed RPC | `applyWorkstreamDirectoryEffects`: unordered directory/user envelope; generation + per-key waterline, hash receipt, and authoritative directory/index transaction |
 | regional Queue Worker | WorkspaceDO | typed RPC | `applyAutomationDirectory`: one automation's sidebar row, fenced on the automation's own `sourceVersion` |
 | regional Queue Worker | WorkspaceDO | typed RPC | `applyWorkstreamRegionalEffect`: first-party activity event, all target edges, and the replay receipt commit atomically; the object-local sequence is the digest/feed cursor |
 | regional Queue Worker | WorkspaceDO | typed RPC | notification intent, bounded destination payload, and the replay receipt commit atomically; current user/member identity is resolved from D1 before the call and crosses as data |
@@ -1464,6 +1463,10 @@ and independent local attachments end to end. Run both with
 `pnpm --filter @rally/api test:workers`; dropping the recommendation write or
 restoring main-only loading makes the corresponding regression fail.
 
+`test-workers/durable-object-runtime.test.ts` proves connector-event retention:
+the alarm ages out a processed event past 90 days and keeps every event still
+in flight.
+
 This inventory does not by itself satisfy the ordered-transcript acceptance
 contract. The PRD's focused [test contract](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md#test-contract)
 maps persistent loop ownership, reserve-before-await ordering, safe controls,
@@ -1531,7 +1534,7 @@ already have committed across the object boundary.
 | `workspace_sync_events` | Monotonic `waterline`, UUIDv7 `event_id`, JSON topic set, the audience a per-person event was sent to (`audience_json`, `NULL` for the whole Organization; replay honours it), and occurrence time for the bounded 1,024-event reconciliation window. Rows are invalidations only, never workspace data copies. |
 | `object_retirement` | Singleton (`id = 1`): the retirement tombstone — instant, operation, actor, reason. Present in all four object classes from one shared constant; migration 40 here. [`workspace-retirement.md`](workspace-retirement.md). |
 | `workspace_retirement_graph` | `(parent_kind, parent_id)`: one row per work stream and automation recorded before the tombstone, with a nullable `retired_at` receipt the walk writes. Migration 41. |
-| `workspace_connector_events` | Complete authoritative normalized provider event, connection/workspace scope, bounded JSON/text fields, provider/dedupe unique keys, local insertion sequence, and processing claim/terminal state. It is never shared with another workspace. |
+| `workspace_connector_events` | Complete authoritative normalized provider event, connection/workspace scope, bounded JSON/text fields, provider/dedupe unique keys, local insertion sequence, and processing claim/terminal state. It is never shared with another workspace. A `processed` row is deleted 90 days after `received_at` by the alarm's `connector_event_reap` phase, 50 rows a pass; the alarm is due at the oldest processed row's `received_at` plus 90 days, so it re-arms at once while a backlog remains. Pending, processing and failed rows never age out. Deleting a row removes its two unique keys, so a provider redelivery older than 90 days is processed again. |
 | `workspace_connector_event_ingress_receipts` | One ingress UUID/content-hash to canonical-event mapping. It makes provider replay and at-least-once Queue delivery idempotent even when a second delivery used a different UUIDv7; ingest opportunistically reaps the oldest receipts after 30 days while the provider/dedupe keys continue to resolve the canonical event. |
 | `connector_connections`, `external_user_identities` | Workspace connector credentials, cursor/configuration/health, model plugin identity, refresh lease, and verified provider-user mappings. Global/provider ingress routes retain only the opaque fields needed to find this object. |
 | `slack_agent_*`, `slack_delivery_preferences`, `slack_user_links`, `slack_ingress_jobs`, `slack_link_challenges`, `slack_unfurled_links` | Workspace-local Slack policy, allowlist, identity, execution session, queued handoff, delivery preference, and shared-link state. Global Slack installation routing remains outside the object because the workspace is not known at initial ingress. |
@@ -1787,6 +1790,37 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-09-26 — Processed connector events age out at 90 days, on the alarm
+
+**What changed:** Processed `workspace_connector_events` rows now age out after
+90 days instead of 396. The owner set 90 days on 2026-09-26. The delete left
+`ingestConnectorEvent`, where it ran up to 50 rows inside every ingest
+transaction, for a new `WorkspaceDO` alarm phase, `connector_event_reap`. It
+deletes 50 processed rows a pass, and the alarm is due at the oldest processed
+row's `received_at` plus 90 days.
+
+**Why:** Processed event bodies are the largest rows in the Organization
+object, and since Channel and Space parents moved in, a full object refuses
+their writes too. The busiest Organization adds about 0.26 GB of these rows a
+week. At 396 days that is about 14.7 GB (396 / 7 × 0.26), over the 10 GB
+Durable Object limit; at 90 days it is about 3.3 GB (90 / 7 × 0.26). A reap on
+the ingest path only ran when a new event arrived, so an Organization whose
+events stopped never aged its rows out, and every ingest paid for the deletes.
+
+**Considered and rejected:** Keeping 396 days. It held more than the object
+can store for the busiest Organization.
+
+**Consequences:** Only `processed` rows are deleted; pending, processing and
+failed rows stay until they settle. Deleting a row also deletes its two unique
+dedupe keys, so a provider that redelivers an event older than 90 days has it
+processed again. Every known reader of a processed event reaches back well
+inside 90 days: opportunity batch windows, which are reaped 30 days after they
+finish; a Sidekick run's trigger context; and an opportunity's origin events.
+A new reader that needs an older event has to change this number first. The
+research datasets in [`jev-classifier-opportunities.md`](jev-classifier-opportunities.md)
+and [`semantic-activity-triggers.md`](semantic-activity-triggers.md) now have
+90 days of history, not 396.
 
 ### 2026-09-25 — Channel and Space parents move into WorkspaceDO
 

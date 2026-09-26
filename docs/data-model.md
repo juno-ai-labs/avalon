@@ -914,7 +914,9 @@ column catalog; what follows is only what WorkspaceDO still holds.
   constraints select one canonical event; processing status, processing owner,
   claim, error, and settlement timestamps stay beside the body. The separate
   `workspace_connector_event_ingress_receipts` maps each Queue/provider ingress
-  UUID and content hash to that canonical event.
+  UUID and content hash to that canonical event. A `processed` event is deleted
+  90 days after it was received, by the alarm's `connector_event_reap` phase;
+  see [`workstream-durable-object.md`](workstream-durable-object.md).
 
 - Legacy regional D1 `activities` rows are maintenance import input only. The
   verified cutover imports them into `workspace_connector_events`, scrubs the
