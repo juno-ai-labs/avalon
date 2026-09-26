@@ -361,7 +361,7 @@ in a way the preflight was never asked about.
 
 Two of the three placement errors are refused by
 `scripts/ensure-cloudflare-queues.mjs` before it creates anything, so they fail
-`pnpm test:scripts` and the deploy rather than a review:
+the deploy rather than a review:
 
 - **A name only one side declares** — `assertPairedQueues`. A misspelled
   producer would otherwise be created and attached, the deploy would go green,
@@ -372,11 +372,8 @@ Two of the three placement errors are refused by
 
 The third has no automatic check, because it is a judgement rather than a
 contradiction: **a consumer on the wrong Worker, where that Worker can still do
-the work.** For that, read the inventory. `pnpm test:scripts` pins every
-surface, role, and queue name in `ensure-cloudflare-queues.test.mjs`, so a queue
-that moves between files fails the suite and adding one is a deliberate edit to
-that list — which is where to look first. For what a deploy would actually
-carry, the dry-run builds print the resolved bindings per surface:
+the work.** For that, read the queue bindings in each Wrangler file. For what
+a deploy would actually carry, the dry-run builds print the resolved bindings per surface:
 
 ### What none of that checks
 

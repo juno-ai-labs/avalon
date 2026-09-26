@@ -30,7 +30,7 @@ once and passes on a rerun.
 | `apps/site/test/**/*.test.ts`, `apps/release-retention/test/**/*.test.ts` | `pnpm --filter @rally/site test`, `pnpm --filter @rally/release-retention test` | Node. The public site Worker and the release-retention Worker, each with its own R2 builder. |
 | `scripts/*.test.mjs` | `pnpm test:scripts` | `node --test`. The repository's own tooling and the ESLint boundary rules, including `ios-project.test.mjs` for the native iOS packaging invariants. |
 | `apps/ios/RallyTests`, `apps/ios/RallyUITests` | Xcode → Product → Test on the Rally scheme | XCTest on the iOS 26 SDK. PKCE, deep links, transcript mapping, and sign-in chrome. **Not** covered by `pnpm test`; the sandbox has no iOS SDK. |
-| `apps/desktop/scripts/*.test.mjs` | `pnpm --filter @rally/desktop test:release` | `node --test`. The release planner and workflow invariants — **not** covered by `pnpm test:scripts`, whose name suggests otherwise. |
+| `apps/desktop/scripts/*.test.mjs` | `pnpm --filter @rally/desktop test:release` | `node --test`. The release planner and release scripts — **not** covered by `pnpm test:scripts`, whose name suggests otherwise. |
 | `apps/api/scripts/test-crash-symbolicator-container.mjs` | `pnpm --filter @rally/api test:crash-symbolicator-container` | Docker. Builds and exercises the symbolicator image. |
 | `scripts/smoke-local.mjs` | `pnpm smoke:local` against a running `pnpm dev:api:local` | Configured regional Workers under `wrangler dev`, with the local D1 database. |
 | `scripts/e2e-local.mjs` | `pnpm e2e:local` against a running `pnpm dev:api:local`, after `pnpm db:open-authority` | The full member pipeline over the live local stack — happy, sad, and chaos lanes, with real model calls when `OPENROUTER_API_KEY` is configured. See [`e2e.md`](e2e.md#automated-behavioral-lane). |
@@ -439,7 +439,7 @@ of an open pull request, so running those locally buys confidence rather than
 correctness. Two things qualify that. The gates outside the matrix have no
 backstop at all — `pnpm docs:check`, `pnpm smoke:local`, `pnpm e2e:local` are in
 no lane — and that is the distinction the bullets below draw. And `ci.yml`
-triggers on `pull_request` alone, pinned by `scripts/ci-workflow.test.mjs`, so a
+triggers on `pull_request` alone, so a
 branch with no pull request open runs nothing; since a pull request here is
 opened ready for review rather than as a draft, that is most of a change's life.
 
