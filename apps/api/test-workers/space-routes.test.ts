@@ -15,7 +15,6 @@
 import { env } from "cloudflare:workers";
 import {
   createExecutionContext,
-  evictDurableObject,
   reset,
   runDurableObjectAlarm,
   runInDurableObject,
@@ -43,7 +42,6 @@ import type { AuthContext, Env } from "../src/env";
 import { SpaceService } from "../src/services/space-service";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
-import { deliverEffectsToWorkspaceInOrder } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { changeRelationships } from "./helpers/workspace-relationship-events";
@@ -122,22 +120,14 @@ async function request(
 }
 
 /**
- * The Space's hidden main conversation, and the effects it has queued.
- *
- * Nothing about a Space is settled until they land. The reservation answers the
- * creator inside the request so the Space is in their sidebar immediately, and
- * the conversation's own `directory_common` effect supersedes that row a Queue
- * round trip later — which is the step a test that stops at the response never
- * takes, and the step both directions of the audience change are read through.
+ * The conversation object a Space id names. Nothing opens it any more; the
+ * tests read it only to show that stays true, and a Channel's own
+ * conversation is addressed the same way.
  */
 function spaceConversation(spaceId: string) {
   return env.SUBSTREAM_AGENTS.getByName(
     conversationObjectName("global", WORKSPACE_ID, spaceId, asSubstreamId("0")),
   );
-}
-
-async function settleSpaceEffects(spaceId: string): Promise<void> {
-  await deliverEffectsToWorkspaceInOrder(routeEnv(), spaceConversation(spaceId));
 }
 
 /** `POST /spaces`, answered with the summary the route renders. */
@@ -212,6 +202,16 @@ async function spaceDirectoryRow(spaceId: string): Promise<Record<string, unknow
   return read.rows[0] as Record<string, unknown>;
 }
 
+/** Whether anything ever opened the conversation named by this parent id. */
+async function conversationInitialized(parentId: string): Promise<boolean> {
+  return runInDurableObject(spaceConversation(parentId), (_instance, state) => {
+    const table = state.storage.sql.exec(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'workstream'",
+    ).toArray().length === 1;
+    return table && state.storage.sql.exec("SELECT 1 FROM workstream LIMIT 1").toArray().length === 1;
+  });
+}
+
 /** The Space sources `GET /workstreams/:id/access` reports for one Channel. */
 async function channelSpaceSources(workstreamId: WorkstreamId) {
   const access = await request(`/workstreams/${workstreamId}/access`, OWNER_AUTH);
@@ -239,7 +239,7 @@ describe("GET /workstreams/:id/link-spaces", () => {
 
 // The test Worker binds `ACTIVITY_QUEUE` with no consumer, so an object's own
 // drain would send every effect into nothing before a case could read it. Held
-// here and delivered by `settleSpaceEffects`, which is the real consumer.
+// here, so a Channel's effects wait for the case that delivers them.
 useHeldEffectQueue();
 
 beforeEach(async () => {
@@ -304,21 +304,12 @@ describe("POST /spaces", () => {
   it("makes an Organization-wide Space every member can see", async () => {
     const created = await createSpace("workspace");
     expect(created.scope).toBe("workspace");
-    // Cold before its own projections are read, because that is the state a
-    // Space spends its life in: nothing opens its conversation, so the object
-    // is evicted between the request that made it and everything after.
-    await evictDurableObject(spaceConversation(created.id));
-    await settleSpaceEffects(created.id);
 
-    // The row the Organization holds, at the version the Space's own object
-    // wrote rather than the one its reservation did. `reserveSpace` commits
-    // the parent's provisional version 1; anything above it is
-    // the conversation's own aggregate, and a Space stuck below it is one the
-    // Organization can never be told anything new about — not its scope, not
-    // its name, not its appearance.
-    const row = await spaceDirectoryRow(created.id);
-    expect(row).toMatchObject({ scope: "workspace", title: "Company" });
-    expect(Number(row.source_version)).toBeGreaterThan(1);
+    // The Organization's row is the whole Space. Nothing else is written for
+    // it: no hidden conversation is opened, so there is no second copy of its
+    // name, scope or roster to fall out of step with this one.
+    expect(await spaceDirectoryRow(created.id)).toMatchObject({ scope: "workspace", title: "Company" });
+    expect(await conversationInitialized(created.id)).toBe(false);
 
     // And the read a second member actually has. A Space nobody but its
     // creator is sent is an Organization-wide Space in name only.
@@ -331,41 +322,6 @@ describe("POST /spaces", () => {
     const workstreamId = await createChannel("in-company", [asSpaceId(created.id)]);
     expect(await channelSpaceSources(workstreamId))
       .toEqual([expect.objectContaining({ spaceId: created.id, scope: "workspace" })]);
-  });
-
-  it("given a conversation that cannot be provisioned, when a Space is created, then the Space is taken back rather than left listed", async () => {
-    // The conversation initializes and then its appearance write fails, the
-    // last step of provisioning: a Space listed at this point has a
-    // conversation nobody can finish, and the next attempt mints a new id.
-    const appearance = vi.spyOn(WorkstreamObjectClient.prototype, "setAppearance")
-      .mockRejectedValueOnce(new Error("conversation_unreachable"));
-
-    const failed = await request("/spaces", OWNER_AUTH, {
-      name: "Company", iconKey: "briefcase", colorKey: "blue", scope: "workspace",
-    });
-    appearance.mockRestore();
-
-    expect(failed).toMatchObject({ status: 503, body: { error: { code: "space_authority_unreachable" } } });
-    expect((await spaceDirectories(OWNER)).active.items.map((item) => item.name)).not.toContain("Company");
-    expect(await workspace().runInspectionSql({
-      sql: `SELECT (SELECT COUNT(*) FROM spaces) AS spaces,
-                   (SELECT COUNT(*) FROM parent_metadata WHERE parent_kind = 'space') AS parents`,
-      bindings: [],
-    })).toMatchObject({ rows: [{ spaces: 0, parents: 0 }] });
-
-    // And a retry succeeds as an ordinary creation.
-    const retried = await createSpace("workspace", "Company");
-    expect((await spaceDirectories(OWNER)).active.items.map((item) => item.id)).toContain(retried.id);
-  });
-
-  it("given a Space whose conversation has published, when its creator asks for it back, then it stays", async () => {
-    const created = await createSpace("workspace", "Company");
-    await settleSpaceEffects(created.id);
-
-    await expect(workspace().cancelSpaceReservation({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: asSpaceId(created.id),
-    })).resolves.toEqual({ cancelled: false });
-    expect((await spaceDirectories(OWNER)).active.items.map((item) => item.id)).toContain(created.id);
   });
 
   it("given a caller WorkspaceDO refuses, when they create a Space, then no anchor is written for it", async () => {
@@ -391,8 +347,6 @@ describe("POST /spaces", () => {
   it("keeps a personal Space personal, and out of a second member's sidebar", async () => {
     const created = await createSpace("personal");
     expect(created.scope).toBe("personal");
-    await evictDurableObject(spaceConversation(created.id));
-    await settleSpaceEffects(created.id);
 
     expect(await spaceDirectoryRow(created.id)).toMatchObject({ scope: "personal" });
     expect((await spaceDirectories(OWNER)).active.items)
@@ -631,10 +585,6 @@ describe("PATCH /spaces/:id/audience", () => {
     const workstreamId = await createChannel("member-channel");
     const placed = await request(`/spaces/${created.id}/channels`, OWNER_AUTH, { workstreamId });
     expect(placed.status).toBe(200);
-    // The Space's conversation is cold by the time anybody edits the Space —
-    // it has no socket, no feed and no reader — so this is the ordinary state
-    // of the object every one of these operations addresses, not a corner.
-    await evictDurableObject(spaceConversation(created.id));
 
     const widened = await request(`/spaces/${created.id}/audience`, OWNER_AUTH, {
       scope: "workspace", participantUserIds: [OWNER, MEMBER],
@@ -642,6 +592,8 @@ describe("PATCH /spaces/:id/audience", () => {
     expect(widened).toMatchObject({ status: 200, body: { scope: "workspace" } });
 
     expect(await spaceDirectoryRow(created.id)).toMatchObject({ scope: "workspace" });
+    // WorkspaceDO holds the audience alone; no conversation carries a copy.
+    expect(await conversationInitialized(created.id)).toBe(false);
     // The Channel's own record of what this Space supplies, which is the half
     // WorkspaceDO cannot answer and the half a person is shown.
     expect(await channelSpaceSources(workstreamId))
@@ -704,36 +656,11 @@ describe("PATCH /spaces/:id/audience", () => {
     );
   });
 
-  it("names the Space's own authority when its conversation cannot answer", async () => {
-    const created = await createSpace("personal", "Hiring");
-    // The way this breaks in production: the Space's own authority cannot
-    // write, so it answers with the 500 it gives when it cannot say what went
-    // wrong. A trigger is how a refusal is made to happen at exactly that
-    // statement rather than by stubbing the call that issues it.
-    await runInDurableObject(spaceConversation(created.id), (_instance, state) => {
-      state.storage.sql.exec(
-        `CREATE TRIGGER fail_space_conversation_scope
-           BEFORE UPDATE ON workstream
-           BEGIN SELECT RAISE(ABORT, 'space conversation storage unavailable'); END`,
-      );
-    });
-
-    const refused = await request(`/spaces/${created.id}/audience`, OWNER_AUTH, {
-      scope: "workspace", participantUserIds: [OWNER],
-    }, "PATCH");
-    // Named, because the code was in hand. `internal_error` is what this
-    // answered before, and it is indistinguishable in a log from every other
-    // unhandled failure the Worker has.
-    expect(refused.body).toMatchObject({
-      error: { code: "space_authority_unreachable" },
-    });
-  });
 });
 
-describe("the other Space operations that reach the hidden conversation", () => {
-  it("renames and re-dresses a Space whose conversation is cold", async () => {
+describe("the other Space operations", () => {
+  it("renames and re-dresses a Space without addressing any conversation", async () => {
     const created = await createSpace("workspace", "Hiring");
-    await evictDurableObject(spaceConversation(created.id));
 
     const renamed = await request(`/spaces/${created.id}`, OWNER_AUTH, {
       name: "Recruiting", iconKey: "target", colorKey: "violet",
@@ -743,9 +670,10 @@ describe("the other Space operations that reach the hidden conversation", () => 
       body: { name: "Recruiting", iconKey: "target", colorKey: "violet" },
     });
     expect(await spaceDirectoryRow(created.id)).toMatchObject({ title: "Recruiting" });
+    expect(await conversationInitialized(created.id)).toBe(false);
   });
 
-  it("archives and restores a Space whose conversation is cold", async () => {
+  it("archives and restores a Space", async () => {
     const general = await createSpace("workspace", "Everything");
     const created = await createSpace("personal", "Hiring");
     // Two Spaces, so the archive is not refused `space_membership_final`: the
@@ -753,7 +681,6 @@ describe("the other Space operations that reach the hidden conversation", () => 
     const workstreamId = await createChannel("two-homes", [
       asSpaceId(general.id), asSpaceId(created.id),
     ]);
-    await evictDurableObject(spaceConversation(created.id));
 
     const archived = await request(`/spaces/${created.id}/archive`, OWNER_AUTH, {}, "POST");
     expect(archived).toMatchObject({ status: 200, body: { status: "archived" } });
@@ -767,22 +694,18 @@ describe("the other Space operations that reach the hidden conversation", () => 
   });
 });
 
-describe("an archived Space and its conversation's projection", () => {
+describe("an archived Space", () => {
   it("given an archived Space, when it is renamed, then it stays archived and can be restored", async () => {
     const general = await createSpace("workspace", "Everything");
     const created = await createSpace("personal", "Hiring");
     await createChannel("two-homes-renamed", [asSpaceId(general.id), asSpaceId(created.id)]);
-    await settleSpaceEffects(created.id);
     const archived = await request(`/spaces/${created.id}/archive`, OWNER_AUTH, {}, "POST");
     expect(archived).toMatchObject({ status: 200, body: { status: "archived" } });
 
-    // The conversation reports every Space unarchived; its projection of the
-    // rename lands at a newer version than anything the archive wrote.
     const renamed = await request(`/spaces/${created.id}`, OWNER_AUTH, {
       name: "Recruiting", iconKey: "target", colorKey: "violet",
     }, "PATCH");
     expect(renamed.status).toBe(200);
-    await settleSpaceEffects(created.id);
 
     expect(await spaceDirectoryRow(created.id)).toMatchObject({
       title: "Recruiting", archived_at: expect.any(Number),

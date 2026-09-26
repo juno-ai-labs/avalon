@@ -98,7 +98,8 @@ Retirement runs in this order, and the order is the design:
    and writes the tombstone. Doing this in one call is what leaves no window in
    which a caller writes into a half-closed workspace. Archived Spaces are
    enumerated too: what is being closed is an object, not a product surface, and
-   an archived Space still has a hidden main conversation to close.
+   a Space created before 2026-09-26 still has a hidden main conversation to
+   close.
 3. **Clear every wake reason, and close every socket.** The same transaction
    deletes `_internal_durable_alarms`, the platform alarm is deleted immediately
    after, and every socket the object holds is closed with `1008`, the code the

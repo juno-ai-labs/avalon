@@ -224,11 +224,13 @@ A **Space** is the third sibling, and the simplest hop here. Its parent state
 is hosted in `WorkspaceDO` under a role whose `admitsClientSockets` is false
 ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)), so it
 admits no client socket and there is nothing on it to close. The hop does not
-ask it to revoke anything. What it does hold is a hidden main conversation, an
-ordinary `SubstreamAgent` that *does* hold whatever was opened against it, and
-only the Space's parent rows name it. So the hop is `WorkspaceDO.listChildren`
-for the Space id and one `substream` message per child, keyed by the Space id
-as the parent, exactly as an automation's conversations are keyed by its own.
+ask it to revoke anything. A Space created before 2026-09-26 also has a hidden
+main conversation, an ordinary `SubstreamAgent` that *does* hold whatever was
+opened against it, and only the Space's parent rows name it. So the hop is
+`WorkspaceDO.listChildren` for the Space id and one `substream` message per
+child, keyed by the Space id as the parent, exactly as an automation's
+conversations are keyed by its own; for a newer Space the message reaches an
+object holding nothing.
 
 **Only the object knows its own children.** A work stream's participants and a
 dashboard's blocks live in Durable Object SQL storage, not in D1, so no query the

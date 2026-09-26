@@ -211,6 +211,12 @@ export interface HostedParentRole {
   publishesGrantDirectory: boolean;
   /** Whether activity, notification and breakout projections leave this parent. */
   forwardsFeedEffects: boolean;
+  /**
+   * Whether the main conversation's directory effects describe this parent. A
+   * Space's are acknowledged and ignored: WorkspaceDO writes every Space fact
+   * itself, and only Spaces created before 2026-09-26 have a conversation.
+   */
+  appliesMainChildDirectory: boolean;
 }
 
 export const HOSTED_CHANNEL_ROLE: HostedParentRole = {
@@ -218,6 +224,7 @@ export const HOSTED_CHANNEL_ROLE: HostedParentRole = {
   admitsClientSockets: true,
   publishesGrantDirectory: true,
   forwardsFeedEffects: true,
+  appliesMainChildDirectory: true,
 };
 
 export const HOSTED_SPACE_ROLE: HostedParentRole = {
@@ -225,6 +232,7 @@ export const HOSTED_SPACE_ROLE: HostedParentRole = {
   admitsClientSockets: false,
   publishesGrantDirectory: false,
   forwardsFeedEffects: false,
+  appliesMainChildDirectory: false,
 };
 
 /** What the Organization object lends a hosted parent. */
@@ -749,6 +757,13 @@ export class HostedParent {
         if (receipt.payload_hash !== envelope.payloadHash) throw new Error("substream_effect_idempotency_conflict");
         return;
       }
+      // Acknowledged and applied nowhere, so a stale title, scope or roster a
+      // retired Space conversation still has in flight cannot overwrite it.
+      if (!this.role.appliesMainChildDirectory && substreamId === "0"
+        && (envelope.effect.kind === "directory_common" || envelope.effect.kind === "directory_user")) {
+        this.recordChildReceipt(substreamId, envelope, now);
+        return;
+      }
       const forwards = this.forwardsChildEffect(substreamId, envelope.effect);
       if (envelope.effect.kind === "directory_common") {
         const accepted = this.upsertChildProjection("common", substreamId, null, envelope, now);
@@ -778,23 +793,27 @@ export class HostedParent {
       } else if (forwards) {
         this.enqueueImmutable(substreamId, envelope, now);
       }
-      this.sql.exec(
-        `INSERT INTO parent_child_receipts(parent_id, substream_id, message_id, payload_hash, received_at)
-         VALUES (?, ?, ?, ?, ?)`,
-        this.parentId, substreamId, envelope.messageId, envelope.payloadHash, now,
-      );
-      // The receipt is a replay fence, not history. Past retention a
-      // redelivery converges on the per-key waterlines instead. Aged out
-      // across every parent: retention is a property of the table.
-      this.sql.exec(
-        `DELETE FROM parent_child_receipts
-          WHERE (parent_id, substream_id, message_id) IN (
-            SELECT parent_id, substream_id, message_id FROM parent_child_receipts
-             WHERE received_at < ? ORDER BY received_at LIMIT 100
-          )`,
-        now - CHILD_EFFECT_RECEIPT_RETENTION_MS,
-      );
+      this.recordChildReceipt(substreamId, envelope, now);
     });
+  }
+
+  private recordChildReceipt(substreamId: string, envelope: ConversationEffectEnvelope, now: number): void {
+    this.sql.exec(
+      `INSERT INTO parent_child_receipts(parent_id, substream_id, message_id, payload_hash, received_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      this.parentId, substreamId, envelope.messageId, envelope.payloadHash, now,
+    );
+    // The receipt is a replay fence, not history. Past retention a
+    // redelivery converges on the per-key waterlines instead. Aged out
+    // across every parent: retention is a property of the table.
+    this.sql.exec(
+      `DELETE FROM parent_child_receipts
+        WHERE (parent_id, substream_id, message_id) IN (
+          SELECT parent_id, substream_id, message_id FROM parent_child_receipts
+           WHERE received_at < ? ORDER BY received_at LIMIT 100
+        )`,
+      now - CHILD_EFFECT_RECEIPT_RETENTION_MS,
+    );
   }
 
   /** The child stamps its own kind; a mismatch is a conversation addressed at the wrong parent. */
@@ -1384,25 +1403,6 @@ export class HostedParent {
     return ConversationParentReserveChildResultSchema.parse({ reserved: true, authorityGeneration });
   }
 
-  /**
-   * Delete a parent whose main conversation was reserved and never opened:
-   * the rows `reserveChild` and its projections wrote. Refuses (false) once
-   * any child projection has arrived, because by then a conversation exists
-   * that publishes to this parent. Runs in the caller's transaction.
-   */
-  discardUnopenedReservation(): boolean {
-    if (first(this.sql.exec("SELECT 1 AS one FROM parent_child_projections WHERE parent_id = ? LIMIT 1", this.parentId))) {
-      return false;
-    }
-    this.sql.exec("DELETE FROM parent_outbox WHERE parent_id = ?", this.parentId);
-    this.sql.exec("DELETE FROM parent_state_changes WHERE parent_id = ?", this.parentId);
-    this.sql.exec("DELETE FROM parent_state_clock WHERE parent_id = ?", this.parentId);
-    this.sql.exec("DELETE FROM parent_projection_keys WHERE parent_id = ?", this.parentId);
-    this.sql.exec("DELETE FROM parent_children WHERE parent_id = ?", this.parentId);
-    this.sql.exec("DELETE FROM parent_metadata WHERE parent_id = ?", this.parentId);
-    return true;
-  }
-
   private insertProvisionalMetadata(
     request: ConversationParentReserveChildRequest,
     directory: NonNullable<ConversationParentReserveChildRequest["directory"]>,
@@ -1529,13 +1529,22 @@ export class HostedParent {
     const access = await this.readManagementAccess({ workspaceId: request.workspaceId, parentId: request.parentId, userId: request.userId });
     if (!access.allowed) throw new Error("sidekick_attachment_participant_required");
     if (!access.writable) throw new Error("sidekick_attachment_workstream_archived");
-    if (request.attached) {
-      this.sql.exec(`INSERT OR IGNORE INTO parent_sidekicks (parent_id, sidekick_id, attached_at) VALUES (?, ?, ?)`,
-        this.parentId, request.sidekickId, Date.now());
-    } else {
-      this.sql.exec(`DELETE FROM parent_sidekicks WHERE parent_id = ? AND sidekick_id = ?`, this.parentId, request.sidekickId);
-    }
+    this.writeSidekickRecommendation(request.sidekickId, request.attached);
     return this.recommendedSidekickIds({ workspaceId: request.workspaceId, parentId: request.parentId });
+  }
+
+  /**
+   * The recommendation row alone, for a caller that has already authorized
+   * the write: a Space's default, which WorkspaceDO authorizes from the Space
+   * rows because this parent holds no current copy of a Space's audience.
+   */
+  writeSidekickRecommendation(sidekickId: string, attached: boolean): void {
+    if (attached) {
+      this.sql.exec(`INSERT OR IGNORE INTO parent_sidekicks (parent_id, sidekick_id, attached_at) VALUES (?, ?, ?)`,
+        this.parentId, sidekickId, Date.now());
+    } else {
+      this.sql.exec(`DELETE FROM parent_sidekicks WHERE parent_id = ? AND sidekick_id = ?`, this.parentId, sidekickId);
+    }
   }
 
   // ---------------------------------------------------------------------------

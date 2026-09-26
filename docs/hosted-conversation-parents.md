@@ -14,8 +14,7 @@ under a role); both classes are deleted, and [How the parents
 moved](#how-the-parents-moved) records how their rows got here.
 
 The conversations themselves do not move. Every Channel main conversation, every
-breakout, every Sidekick run and every Space's hidden conversation is still a
-`SubstreamAgent`: a transcript and an agent loop are a real concurrency and size
+breakout and every Sidekick run is still a `SubstreamAgent`: a transcript and an agent loop are a real concurrency and size
 boundary, and they stay one object each. `SidekickDO` is also unchanged; it
 keeps its own parent object ([`automation-lifecycle.md`](automation-lifecycle.md)).
 
@@ -396,9 +395,9 @@ Space in an Organization now shares one SQLite database and one socket set.
   loop, `WorkstreamControlSocketService` and `GET /workstreams/:id/control-socket`
   can go once the oldest supported desktop is the one that stopped opening it
   and the iOS client reads its child directory from its workspace socket.
-- A Space's hidden conversation still holds its participants and resources.
-  Moving them into `spaces` is the next step, and removes a `SubstreamAgent` per
-  Space.
+- Spaces created before 2026-09-26 still have an idle hidden conversation
+  object. Nothing writes or reads it ([`spaces.md`](spaces.md#the-retired-hidden-conversation));
+  deleting those objects is its own decision.
 - `parent_metadata` and `channels` still hold the same presentation columns.
   Both are written in the parent's one transaction (the directory apply runs
   inside it through `applyLocalEffects`), but they are two copies of the same

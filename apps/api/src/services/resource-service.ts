@@ -331,6 +331,22 @@ export class ResourceService {
     return this.toResource(row);
   }
 
+  /**
+   * `get` for a resource about to be handed to a container: refused while it
+   * is an upload nobody has sent with a message yet, the same refusal a
+   * Channel's own attach gives, because a draft is reaped when it expires.
+   */
+  async getAttachable(id: string) {
+    await this.authorizeRead(id);
+    const row = await this.loadResource(id);
+    await this.authorizeRead(id);
+    if (row.provider === "avalon_upload" && row.attachment_status !== "attached") {
+      throw new ApiError(409, "attachment_draft_requires_message",
+        "Send this upload with a message before attaching it as an existing resource");
+    }
+    return this.toResource(row);
+  }
+
   /** Opening a search result repeats the same attachment authority checks. */
   async searchPreview(id: string, signal: AbortSignal): Promise<Response> {
     const before = await this.loadSearchResource(id);
