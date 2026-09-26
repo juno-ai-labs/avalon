@@ -13,7 +13,6 @@ import {
   type SpaceErrorCode,
   type SpaceId,
   SpaceRefusalDetailsSchema,
-  type SpaceScope,
   type SpaceSummary,
   SpaceSummarySchema,
   type UpdateSpaceAudienceRequest,
@@ -50,11 +49,7 @@ import { uuidV7 } from "../lib/uuid-v7";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { spaceAccessError } from "./channel-access-service";
 import { ResourceService } from "./resource-service";
-import {
-  bootstrapWorkstreamRuntimeEnvironment,
-  provisionWorkstreamObject,
-} from "./workstream-runtime-database";
-import { WorkstreamObjectClient } from "./workstream-object-client";
+import { claimParentAnchor } from "./workstream-runtime-database";
 
 /**
  * One refusal per closed code, each naming the Space it is about.
@@ -252,21 +247,16 @@ export class SpaceService {
   }
 
   /**
-   * Create a Space: ask whether this person may, anchor it, reserve it with
-   * its parent, then open its hidden conversation.
+   * Create a Space: ask whether this person may, anchor it, then reserve it
+   * with its parent.
    *
-   * The permission is asked first, because the two steps before the
-   * reservation write outside WorkspaceDO: the id is minted here (or is the
-   * caller's stable creation id) so the D1 anchor and authority route a
-   * Channel's creation writes, under `parentKind: "space"`, can be written
-   * before the Space is listed. WorkspaceDO then writes the Space and its
-   * hosted parent in one transaction. Last, the hidden main conversation is
-   * provisioned with no opening message and admitting no run, because nothing
-   * in the product opens a Space's feed and a Space that started an agent loop
-   * would be a conversation the product cannot show. A provisioning that fails
-   * takes the Space back (`cancelSpaceReservation`) when this call created
-   * it, so no retry is left facing a listed Space whose conversation never
-   * opened.
+   * The permission is asked first, because the step before the reservation
+   * writes outside WorkspaceDO: the id is minted here (or is the caller's
+   * stable creation id) so the D1 anchor and authority route a Channel's
+   * creation writes, under `parentKind: "space"`, can claim the id before the
+   * Space is listed. WorkspaceDO then writes the Space and its hosted parent in
+   * one transaction, and that is the whole Space: nothing outside WorkspaceDO
+   * holds any of it.
    */
   async create(input: CreateSpaceRequest, spaceId?: SpaceId): Promise<SpaceSummary> {
     const workspace = await this.workspace();
@@ -275,7 +265,7 @@ export class SpaceService {
     if (!admitted.ok) throw spaceRefusal(admitted.code, input.name);
     const id = spaceId ?? asSpaceId(uuidV7());
     await this.throughSpaceAuthority(id, input.name, "provision", () =>
-      bootstrapWorkstreamRuntimeEnvironment(this.env, this.auth.workspaceId, id, "space"));
+      claimParentAnchor(this.env, this.auth.workspaceId, id, "space"));
     const reservation = WorkspaceSpaceReserveResultSchema.parse(await workspace.reserveSpace({
       ...actor,
       space: input,
@@ -287,10 +277,7 @@ export class SpaceService {
       || reserved.iconKey !== input.iconKey || reserved.colorKey !== input.colorKey || reserved.reach === "through_channel")) {
       throw new ApiError(409, "space_revision_conflict", "The creation identity already names a different Space");
     }
-    // A replay under a stable id resumes here: provisioning keeps initialized
-    // state and the appearance writer is idempotent.
-    await this.provisionOrTakeBack(reserved.id, input, reservation.created);
-    return this.summary(reserved.id);
+    return reserved;
   }
 
   /**
@@ -300,11 +287,9 @@ export class SpaceService {
    * whether General exists, which is the whole cost for every caller after the
    * Organization's first. When it does not, the D1 anchor is written under a
    * fresh id and General is created with its parent in one WorkspaceDO
-   * transaction; the unique partial index still decides a race, the loser is
-   * answered with the Space the winner made, and only the caller that *made*
-   * it provisions the conversation, taking General back if that fails so the
-   * next caller makes it again. The loser's anchor names an id nothing else
-   * ever will.
+   * transaction; the unique partial index still decides a race, and the loser
+   * is answered with the Space the winner made. The loser's anchor names an id
+   * nothing else ever will.
    *
    * Reached by the cutover and by a Channel creation that names no Space in
    * an Organization without General, which is why it is here rather than
@@ -321,62 +306,16 @@ export class SpaceService {
     if (!("absent" in existing)) return existing.space;
     const id = asSpaceId(uuidV7());
     await this.throughSpaceAuthority(id, "General", "provision", () =>
-      bootstrapWorkstreamRuntimeEnvironment(this.env, this.auth.workspaceId, id, "space"));
+      claimParentAnchor(this.env, this.auth.workspaceId, id, "space"));
     const result = WorkspaceSpaceGeneralOpenResultSchema.parse(await workspace.openGeneralSpace({ ...actor, spaceId: id }));
     if (!result.ok) throw spaceRefusal(result.code, "General");
     if ("absent" in result) throw new Error("space_general_open_absent");
-    if (!result.created) return result.space;
-    await this.provisionOrTakeBack(result.space.id, {
-      name: result.space.name,
-      iconKey: result.space.iconKey,
-      colorKey: result.space.colorKey,
-      scope: result.space.scope,
-    }, true);
-    return this.summary(result.space.id);
+    return result.space;
   }
 
-  /**
-   * Provision a Space's hidden conversation, and when this caller created the
-   * Space and provisioning fails, take the Space back before the failure is
-   * answered. A take-back WorkspaceDO refuses (a Channel or the conversation
-   * got there first) or cannot reach is logged; the refusal the caller sees
-   * is the provisioning one either way.
-   */
-  private async provisionOrTakeBack(spaceId: SpaceId, input: CreateSpaceRequest, created: boolean): Promise<void> {
-    try {
-      await this.provisionSpaceConversation(spaceId, input);
-    } catch (error) {
-      if (!created) throw error;
-      try {
-        const taken = await (await this.workspace()).cancelSpaceReservation({
-          workspaceId: asWorkspaceId(this.auth.workspaceId),
-          userId: asUserId(this.auth.userId),
-          spaceId,
-        });
-        if (!taken.cancelled) {
-          logWarn(this.env, "space_creation_take_back_refused", {
-            workspace_id: this.auth.workspaceId, space_id: spaceId, reason: "space_creation_in_use",
-          });
-        }
-      } catch (takeBackError) {
-        logWarn(this.env, "space_creation_take_back_failed", {
-          workspace_id: this.auth.workspaceId,
-          space_id: spaceId,
-          reason: diagnosticErrorCode(takeBackError, "space_creation_take_back_failed"),
-        });
-      }
-      throw error;
-    }
-  }
-
-  /** Presentation belongs to the Space's own authority; this is its door. */
+  /** A Space's name and appearance: one WorkspaceDO write. */
   async updatePresentation(spaceId: SpaceId, input: UpdateSpacePresentationRequest): Promise<SpaceSummary> {
     const current = await this.editable(spaceId);
-    const client = this.spaceConversation(spaceId);
-    await this.throughSpaceAuthority(spaceId, current.name, "presentation", async () => {
-      await client.update({ title: input.name });
-      await client.setAppearance({ icon: input.iconKey, color: input.colorKey });
-    });
     return this.settled(await (await this.workspace()).noteSpacePresentation({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
@@ -392,9 +331,9 @@ export class SpaceService {
    * Channel is asked first whether it *could* take the wider audience, because
    * widening cannot be undone — somebody may have read — and discovering a
    * retained-content fence on the fourth Channel after three are already wider
-   * is not a failure anybody can recover from. Then the Space's own authority
-   * accepts the change, which advances the revision every staged membership is
-   * fenced on. Only then does each member Channel converge.
+   * is not a failure anybody can recover from. Then WorkspaceDO accepts the
+   * change, which advances the revision every staged membership is fenced on.
+   * Only then does each member Channel converge.
    *
    * Convergence is retract-then-apply rather than a second application.
    * `audienceSourceApplicationPlan` only ever widens and seats — by
@@ -430,57 +369,13 @@ export class SpaceService {
     await this.preflightContainment(spaceId, input);
 
     const operationId = uuidV7();
-    const spaceClient = this.spaceConversation(spaceId);
-    const applyAudience = async (
-      scope: SpaceScope,
-      participants: ReadonlySet<string>,
-      previousScope: SpaceScope,
-      previousParticipants: ReadonlySet<string>,
-    ) => this.throughSpaceAuthority(spaceId, current.name, "audience", async () => {
-      if (scope !== previousScope) await spaceClient.update({ scope });
-      for (const userId of participants) {
-        if (!previousParticipants.has(userId)) await spaceClient.addParticipant(userId);
-      }
-      for (const userId of previousParticipants) {
-        if (!participants.has(userId)) await spaceClient.removeParticipant(userId);
-      }
-    });
-    try {
-      // The Space is the audience authority. Commit it before WorkspaceDO
-      // publishes the projection or stages the fan-out intent; otherwise a
-      // refused Space mutation leaves every sidebar and socket claiming an
-      // audience the authority never accepted.
-      await applyAudience(input.scope, requested, current.scope, currentParticipants);
-    } catch (error) {
-      await applyAudience(current.scope, currentParticipants, input.scope, requested).catch((rollbackError) => {
-        logWarn(this.env, "space_audience_authority_rollback_failed", {
-          workspace_id: this.auth.workspaceId,
-          space_id: spaceId,
-          reason: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
-        });
-      });
-      throw error;
-    }
-
-    let updated: SpaceSummary;
-    try {
-      updated = this.settled(await (await this.workspace()).noteSpaceAudience({
-        workspaceId: asWorkspaceId(this.auth.workspaceId),
-        userId: asUserId(this.auth.userId),
-        spaceId,
-        operationId,
-        audience: input,
-      }), current.name);
-    } catch (error) {
-      await applyAudience(current.scope, currentParticipants, input.scope, requested).catch((rollbackError) => {
-        logWarn(this.env, "space_audience_projection_rollback_failed", {
-          workspace_id: this.auth.workspaceId,
-          space_id: spaceId,
-          reason: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
-        });
-      });
-      throw error;
-    }
+    const updated = this.settled(await (await this.workspace()).noteSpaceAudience({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+      spaceId,
+      operationId,
+      audience: input,
+    }), current.name);
 
     // Each member Channel converges by retract-then-apply in WorkspaceDO. The
     // walk abandons if a later audience change overtakes it, because that
@@ -605,12 +500,13 @@ export class SpaceService {
   /**
    * Add a resource or a Sidekick every member Channel inherits.
    *
-   * Attached to the Space's own authority first, because that attachment is the
-   * inheritance record a person sees, and registered in WorkspaceDO second,
-   * because the registry is what stages and fences delivery. The audience
-   * preflight runs before either: the full effective audience of every member
-   * Channel has to fit inside what the resource or Sidekick admits, and a
-   * default that fails that test must not be published at all.
+   * A resource is one WorkspaceDO registration, which both records the default
+   * and stages and fences its delivery. A Sidekick is also recommended on the
+   * Space's hosted parent first, because that is the list a Channel created in
+   * the Space reads. The audience preflight runs before either: the full
+   * effective audience of every member Channel has to fit inside what the
+   * resource or Sidekick admits, and a default that fails that test must not be
+   * published at all.
    */
   async addDefault(spaceId: SpaceId, kind: SpaceDefaultKind, targetId: string): Promise<SpaceSummary> {
     const space = await this.editable(spaceId);
@@ -671,18 +567,8 @@ export class SpaceService {
     targetId: string,
     attached: boolean,
   ): Promise<void> {
-    if (kind === "resource") {
-      await this.throughSpaceAuthority(
-        spaceId,
-        spaceName,
-        attached ? "attach_default_resource" : "detach_default_resource",
-        async () => {
-          if (attached) await this.spaceConversation(spaceId).attachResource(targetId);
-          else await this.spaceConversation(spaceId).detachResource(targetId);
-        },
-      );
-      return;
-    }
+    // A resource default lives only in WorkspaceDO's registry.
+    if (kind === "resource") return;
     await this.throughSpaceAuthority(
       spaceId,
       spaceName,
@@ -897,37 +783,6 @@ export class SpaceService {
     }
   }
 
-  /**
-   * The hidden conversation's own state: title, scope and creator, then the
-   * appearance through the same writer a Channel's icon and colour go through,
-   * so there is one place a stored appearance is produced and one effect that
-   * carries it. A failure names the Space authority boundary.
-   */
-  private provisionSpaceConversation(spaceId: SpaceId, input: CreateSpaceRequest): Promise<void> {
-    return this.throughSpaceAuthority(spaceId, input.name, "provision", async () => {
-      await provisionWorkstreamObject(this.env, {
-        workspaceId: this.auth.workspaceId,
-        workstreamId: spaceId,
-        title: input.name.trim(),
-        objective: "",
-        scope: input.scope,
-        createdByUserId: this.auth.userId,
-        participantUserIds: [this.auth.userId],
-        harnessStatus: "idle",
-        titleStatus: "settled",
-        emailAddress: null,
-        emailRouteStatus: null,
-        systemKind: null,
-        modelOverride: null,
-        now: Date.now(),
-      });
-      await this.spaceConversation(spaceId).setAppearance({
-        icon: input.iconKey,
-        color: input.colorKey,
-      });
-    });
-  }
-
   /** The person this request acts as, for WorkspaceDO to act as on a Channel's conversation. */
   private actor(): SpaceActorAuth {
     return {
@@ -952,19 +807,6 @@ export class SpaceService {
       throw spaceRefusal(parsed.code, spaceName, parsed.unreachableUserIds, parsed.blockedWorkstreamIds);
     }
     return SpaceSummarySchema.parse(parsed.space);
-  }
-
-  /**
-   * The Space's hidden main conversation: its participants and resources.
-   *
-   * Addressed as a Space rather than as a Channel, which is what makes every
-   * *other* route into this object refuse: a product request that says
-   * `workstream` about an id the object knows is a Space is answered as not
-   * found, so a Space id on `/workstreams/:id` cannot archive General or make
-   * it personal behind the Space authority's back.
-   */
-  private spaceConversation(spaceId: SpaceId): WorkstreamObjectClient {
-    return WorkstreamObjectClient.forSpace(this.env, this.auth, spaceId);
   }
 
   /**
