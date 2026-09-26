@@ -230,6 +230,7 @@ import {
 } from './session-file';
 import { SettingsWindowController } from './settings-window-controller';
 import { WorkspaceSyncRelay } from './workspace-sync-relay';
+import { registerWorkspaceSyncRelayIpc } from './workspace-sync-relay-ipc';
 import {
   activeStoredCredential,
   activeStoredWorkspaceCredential,
@@ -858,9 +859,6 @@ function flagSessionIdentity(userId: string, apiBaseUrl: string): string {
 }
 
 function broadcastSessionChanged(value: WireSession | null): void {
-  // Before any window hears of the change, so the next provider's publication
-  // for the new Organization always lands after this.
-  workspaceSyncRelay.releaseUnless(value?.workspace?.id ?? null);
   closeArtifactWindowsOutsideSession(value?.workspace?.id ?? null, value?.user.id ?? null);
   closeEmbeddedBrowsersOutsideUser(value?.user.id ?? null);
   // The import window offers one Organization's Spaces; another Organization's
@@ -3323,10 +3321,11 @@ function assertBrowserImportIpcSender(event: IpcMainInvokeEvent): void {
   }
 }
 
-function assertMainWindowIpcSender(event: IpcMainInvokeEvent): void {
+/** `operation` names what was refused, in the words "Only the main Rally window can …". */
+function assertMainWindowIpcSender(event: IpcMainInvokeEvent, operation: string): void {
   assertTrustedIpcSender(event);
   if (!mainWindow || event.sender !== mainWindow.webContents) {
-    throw new Error('Only the main Rally window can open realtime sockets');
+    throw new Error(`Only the main Rally window can ${operation}`);
   }
 }
 
@@ -3346,16 +3345,12 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     return runtimeConfig();
   });
-  ipcMain.handle(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.publish, (event, raw: unknown) => {
-    assertMainWindowIpcSender(event);
-    workspaceSyncRelay.publish(raw);
-  });
-  ipcMain.handle(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.source, (event) => {
-    assertTrustedIpcSender(event);
-    if (!settingsWindow || event.sender !== settingsWindow.webContents) {
-      throw new Error('Only the settings window consumes the relayed organization sync');
-    }
-    return workspaceSyncRelay.snapshot();
+  registerWorkspaceSyncRelayIpc({
+    assertTrustedSender: assertTrustedIpcSender,
+    ipc: ipcMain,
+    mainWindowContents: () => mainWindow?.webContents,
+    relay: workspaceSyncRelay,
+    settingsWindowContents: () => settingsWindow?.webContents,
   });
   ipcMain.handle('embedded-browser:state', (event) => embeddedBrowserFor(embeddedBrowserHost(event)).state());
   ipcMain.handle('embedded-browser:command', async (event, raw: unknown) => {
@@ -3372,7 +3367,7 @@ function registerIpc(): void {
     embeddedBrowserFor(host).setVisible(raw);
   });
   ipcMain.handle('browser-import:open', async (event, raw: unknown) => {
-    assertMainWindowIpcSender(event);
+    assertMainWindowIpcSender(event, 'open the import window');
     await openBrowserImportWindow(parseBrowserIpc(BrowserImportContextSchema, raw, 'browser_import_context'));
   });
   ipcMain.handle('browser-import:context', (event) => {
@@ -3661,7 +3656,7 @@ function registerIpc(): void {
     });
   });
   ipcMain.handle('window:set-conversation-details', (event, rawInput: unknown) => {
-    assertMainWindowIpcSender(event);
+    assertMainWindowIpcSender(event, 'resize for conversation details');
     if (!rawInput || typeof rawInput !== 'object') throw new Error('Invalid conversation details window request');
     const input = rawInput as { open?: unknown; width?: unknown };
     if (typeof input.open !== 'boolean' || typeof input.width !== 'number' || !Number.isFinite(input.width) || input.width < 0) {
@@ -3865,11 +3860,11 @@ function registerIpc(): void {
     deepLinkErrorWindow?.close();
   });
   ipcMain.handle('transcription-audio:start-system-capture', (event) => {
-    assertMainWindowIpcSender(event);
+    assertMainWindowIpcSender(event, 'capture system audio');
     return nativeSystemAudioController.start(event.sender);
   });
   ipcMain.handle('transcription-audio:stop-system-capture', (event) => {
-    assertMainWindowIpcSender(event);
+    assertMainWindowIpcSender(event, 'capture system audio');
     return nativeSystemAudioController.stop(event.sender);
   });
 }

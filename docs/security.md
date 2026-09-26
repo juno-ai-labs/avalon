@@ -220,12 +220,9 @@ same as desktop.
 - The native Settings window uses the same sandbox, preload, CSP, navigation
   denial, and regional session bridge as the main window. **Command-,** opens a
   singleton window rather than a privileged remote page. It holds no workspace
-  socket while the main window is open: main relays the main window's sync
-  topics, flags and connection state to it. Only the main window may publish on
-  that relay and only the settings window may read its source; both ends parse
-  one closed, dependency-free shape, and nothing but topic names, waterlines, a
-  connection state and the viewer's own flags crosses — see
-  [`websocket-architecture.md`](websocket-architecture.md#security-and-trust-model).
+  socket while the main window publishes one through main; that relay's sender
+  checks and what may cross it are in
+  [`websocket-architecture.md`](websocket-architecture.md#one-workspace-socket-per-desktop-the-settings-relay).
 - Application → Developer → **Debug enabled** shares the same
   `application-settings.json` file but crosses no trust boundary: it only reveals
   debugging affordances the renderer already holds, such as copying a work

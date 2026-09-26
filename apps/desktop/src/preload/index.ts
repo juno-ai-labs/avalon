@@ -28,8 +28,8 @@ import type { ThemeChoice } from '../common/themes';
 import {
   WORKSPACE_SYNC_RELAY_IPC_CHANNELS,
   createWorkspaceSyncRelayInbox,
-  parseWorkspaceSyncRelayEvent,
-  parseWorkspaceSyncSourceSnapshot,
+  isWorkspaceSyncRelayEvent,
+  type WorkspaceSyncSourceSnapshot,
 } from '../common/workspace-sync-relay';
 
 const deepLinkListeners = new Set<(navigation: DesktopDeepLinkNavigation) => void>();
@@ -66,10 +66,11 @@ ipcRenderer.on(REALTIME_SOCKET_IPC_CHANNELS.event, (_event, rawEvent: unknown) =
 });
 
 // Installed before React starts, so relayed news that lands before the
-// settings provider listens is held for it rather than lost.
+// settings provider listens is held for it rather than lost. Main built each
+// event from its own closed parse of the main window's publication, so this
+// checks only the structure the inbox reads.
 ipcRenderer.on(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.relayed, (_event, rawEvent: unknown) => {
-  const parsed = parseWorkspaceSyncRelayEvent(rawEvent);
-  if (parsed) workspaceSyncInbox.receive(parsed);
+  if (isWorkspaceSyncRelayEvent(rawEvent)) workspaceSyncInbox.receive(rawEvent);
 });
 
 ipcRenderer.on('application:foreground-changed', (_event, rawForegrounded: unknown) => {
@@ -293,13 +294,8 @@ const bridge: RallyDesktopBridge = {
   },
   publishWorkspaceSync: (publication) =>
     ipcRenderer.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.publish, publication) as Promise<void>,
-  getWorkspaceSyncSource: async () => {
-    const snapshot = parseWorkspaceSyncSourceSnapshot(
-      await ipcRenderer.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.source),
-    );
-    if (!snapshot) throw new Error('Rally received an unreadable organization sync source.');
-    return snapshot;
-  },
+  getWorkspaceSyncSource: () =>
+    ipcRenderer.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.source) as Promise<WorkspaceSyncSourceSnapshot>,
   onWorkspaceSyncRelayed: (listener) => workspaceSyncInbox.subscribe(listener),
   openRealtimeSocket: (input) => ipcRenderer.invoke(REALTIME_SOCKET_IPC_CHANNELS.open, input) as Promise<void>,
   sendRealtimeSocket: (input) => ipcRenderer.invoke(REALTIME_SOCKET_IPC_CHANNELS.send, input) as Promise<void>,
