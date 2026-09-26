@@ -339,6 +339,7 @@ function mapConnection(connection: WireConnection): WorkstreamConnection {
     ...(connection.settingsKind ? { settingsKind: connection.settingsKind } : {}),
     ...(connection.userDelivery ? { userDelivery: connection.userDelivery } : {}),
     ...(connection.toolCount === null ? {} : { toolCount: connection.toolCount }),
+    ...(connection.toolCountMissing === null ? {} : { toolCountMissing: connection.toolCountMissing }),
   };
 }
 
