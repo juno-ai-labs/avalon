@@ -1244,13 +1244,6 @@ function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTa
  */
 const SPACE_INTENT_RESUME_DELAY_MS = 30_000;
 
-/** Raised inside `cancelSpaceReservation`'s transaction when the Space's conversation has published. */
-class SpaceCreationInUse extends Error {
-  constructor() {
-    super("space_creation_in_use");
-  }
-}
-
 /**
  * A hosted-parent transaction met somebody the member table has never heard
  * of. It rolls the transaction back; the caller learns them with one D1 read
@@ -7520,43 +7513,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         });
       },
     };
-  }
-
-  /**
-   * Take back a Space whose hidden conversation could not be provisioned.
-   *
-   * `SpaceService` calls it when provisioning fails after `reserveSpace` (or
-   * `openGeneralSpace`) created the Space: the Space row, its viewers and
-   * order, and its hosted parent's reservation go in one transaction, and the
-   * snapshot is republished, so the Space is not left listed with a
-   * conversation nobody can open. Narrowed to the caller's own creation and
-   * refused (`cancelled: false`) once anything depends on the Space: a
-   * Channel placed in it, or a projection from its conversation, which means
-   * the conversation exists after all.
-   */
-  async cancelSpaceReservation(input: WorkspaceSpaceRequest): Promise<{ cancelled: boolean }> {
-    await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceRequestSchema, input, "cancel_space_reservation");
-    this.assertWorkspace(request.workspaceId);
-    if (await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId)) {
-      return { cancelled: false };
-    }
-    const parent = await this.hostedParent(request.spaceId, request.workspaceId);
-    let cancelled: boolean;
-    try {
-      cancelled = await this.withMembersLearned(() => this.state.storage.transactionSync(() => {
-        if (!this.spaceStorage().discardCreation(request.spaceId, request.userId)) return false;
-        // Rolls the Space row back with it: a conversation that has published
-        // is one somebody's Channel or sidebar may already be reading.
-        if (!parent.discardUnopenedReservation()) throw new SpaceCreationInUse();
-        return true;
-      }));
-    } catch (error) {
-      if (!(error instanceof SpaceCreationInUse)) throw error;
-      cancelled = false;
-    }
-    if (cancelled) this.publishSpaceSnapshot();
-    return { cancelled };
   }
 
   /**

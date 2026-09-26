@@ -749,6 +749,15 @@ export class HostedParent {
         if (receipt.payload_hash !== envelope.payloadHash) throw new Error("substream_effect_idempotency_conflict");
         return;
       }
+      // A Space's hidden conversation is no longer its authority: WorkspaceDO
+      // writes every Space fact directly. A directory effect such a
+      // conversation still has in flight is acknowledged and applies nothing,
+      // so a stale title, scope or roster cannot overwrite the Space.
+      if (this.role.kind === "space" && substreamId === "0"
+        && (envelope.effect.kind === "directory_common" || envelope.effect.kind === "directory_user")) {
+        this.recordChildReceipt(substreamId, envelope, now);
+        return;
+      }
       const forwards = this.forwardsChildEffect(substreamId, envelope.effect);
       if (envelope.effect.kind === "directory_common") {
         const accepted = this.upsertChildProjection("common", substreamId, null, envelope, now);
@@ -778,23 +787,27 @@ export class HostedParent {
       } else if (forwards) {
         this.enqueueImmutable(substreamId, envelope, now);
       }
-      this.sql.exec(
-        `INSERT INTO parent_child_receipts(parent_id, substream_id, message_id, payload_hash, received_at)
-         VALUES (?, ?, ?, ?, ?)`,
-        this.parentId, substreamId, envelope.messageId, envelope.payloadHash, now,
-      );
-      // The receipt is a replay fence, not history. Past retention a
-      // redelivery converges on the per-key waterlines instead. Aged out
-      // across every parent: retention is a property of the table.
-      this.sql.exec(
-        `DELETE FROM parent_child_receipts
-          WHERE (parent_id, substream_id, message_id) IN (
-            SELECT parent_id, substream_id, message_id FROM parent_child_receipts
-             WHERE received_at < ? ORDER BY received_at LIMIT 100
-          )`,
-        now - CHILD_EFFECT_RECEIPT_RETENTION_MS,
-      );
+      this.recordChildReceipt(substreamId, envelope, now);
     });
+  }
+
+  private recordChildReceipt(substreamId: string, envelope: ConversationEffectEnvelope, now: number): void {
+    this.sql.exec(
+      `INSERT INTO parent_child_receipts(parent_id, substream_id, message_id, payload_hash, received_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      this.parentId, substreamId, envelope.messageId, envelope.payloadHash, now,
+    );
+    // The receipt is a replay fence, not history. Past retention a
+    // redelivery converges on the per-key waterlines instead. Aged out
+    // across every parent: retention is a property of the table.
+    this.sql.exec(
+      `DELETE FROM parent_child_receipts
+        WHERE (parent_id, substream_id, message_id) IN (
+          SELECT parent_id, substream_id, message_id FROM parent_child_receipts
+           WHERE received_at < ? ORDER BY received_at LIMIT 100
+        )`,
+      now - CHILD_EFFECT_RECEIPT_RETENTION_MS,
+    );
   }
 
   /** The child stamps its own kind; a mismatch is a conversation addressed at the wrong parent. */
@@ -1382,25 +1395,6 @@ export class HostedParent {
       return metadata.authority_generation;
     });
     return ConversationParentReserveChildResultSchema.parse({ reserved: true, authorityGeneration });
-  }
-
-  /**
-   * Delete a parent whose main conversation was reserved and never opened:
-   * the rows `reserveChild` and its projections wrote. Refuses (false) once
-   * any child projection has arrived, because by then a conversation exists
-   * that publishes to this parent. Runs in the caller's transaction.
-   */
-  discardUnopenedReservation(): boolean {
-    if (first(this.sql.exec("SELECT 1 AS one FROM parent_child_projections WHERE parent_id = ? LIMIT 1", this.parentId))) {
-      return false;
-    }
-    this.sql.exec("DELETE FROM parent_outbox WHERE parent_id = ?", this.parentId);
-    this.sql.exec("DELETE FROM parent_state_changes WHERE parent_id = ?", this.parentId);
-    this.sql.exec("DELETE FROM parent_state_clock WHERE parent_id = ?", this.parentId);
-    this.sql.exec("DELETE FROM parent_projection_keys WHERE parent_id = ?", this.parentId);
-    this.sql.exec("DELETE FROM parent_children WHERE parent_id = ?", this.parentId);
-    this.sql.exec("DELETE FROM parent_metadata WHERE parent_id = ?", this.parentId);
-    return true;
   }
 
   private insertProvisionalMetadata(
