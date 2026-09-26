@@ -3983,6 +3983,20 @@ describe("Durable Objects in the Workers runtime", () => {
 
     await runInDurableObject(stub, async (_instance, state) => {
       expect(await state.storage.getAlarm()).toBe(expiresAt);
+      // As if the first settle committed its row and died before arming.
+      await state.storage.deleteAlarm();
+    });
+    await stub.settleConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId,
+      processingOwnerId,
+      processingLeaseId: claim.processingLeaseId,
+      outcome: "processed",
+      error: null,
+    });
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      expect(await state.storage.getAlarm()).toBe(expiresAt);
     });
   });
 

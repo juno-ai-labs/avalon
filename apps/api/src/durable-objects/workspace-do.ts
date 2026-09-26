@@ -9158,8 +9158,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const settled = this.state.storage.sql.exec<{
       processing_status: WorkspaceConnectorEventRow["processing_status"];
       workflow_instance_id: string | null;
+      received_at: number;
     }>(
-      `SELECT processing_status, workflow_instance_id
+      `SELECT processing_status, workflow_instance_id, received_at
          FROM workspace_connector_events WHERE event_id = ?`,
       request.eventId,
     ).toArray()[0];
@@ -9167,6 +9168,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       settled?.workflow_instance_id === processingLeaseId
       && settled.processing_status === request.outcome
     ) {
+      // The first settle may have committed its row and died before arming.
+      if (request.outcome === "processed") {
+        await this.ensureAlarmNoLaterThan(settled.received_at + CONNECTOR_EVENT_BODY_RETENTION_MS);
+      }
       logInfo(this.env, "connector_event_authority_terminal", {
         workspace_id: request.workspaceId,
         connector_event_id: request.eventId,
