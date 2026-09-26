@@ -143,7 +143,7 @@ its own is a boundary that drifts.
 | `apps/ace/src/regional-api.ts`, `index.ts`, `private-access.ts` | a regional answer the contract refuses names the field in the message beside `regional_api_contract_mismatch`; the fallback handler logs `error_code`; a refused download grant says which field |
 | `apps/api/src/services/integrations.ts` | `dynamic_connector_tools_unavailable` carries `error_code` beside the class name, so a tool catalog that drifted out of `ToolDefinitionSchema` names its path on both the creator-catalog and initial-activation surfaces; `connector_plugin_reauthorization_failed` carries a schema rejection's paths as `code`, the way it already carried a connector's own |
 | `apps/api/src/durable-objects/scheduled-alarm-report.ts` | `scheduledAlarmErrorCode` names the field a handler's own `ZodError` rejected, as `handler_error:ZodError:<paths>`, and passes any code-shaped message through |
-| `apps/api/src/observability/logger.ts` | `diagnosticErrorCode` names a `ZodError` behind the caller's own code (`external_event_delivery_failed:event.eventSequence:invalid_type`), and carries a `parseRpcInput` message across the hop through `isDiagnosticCode`; every other thrown message is admitted only in the bare constant class it always was, so an identifier interpolated after a colon still reduces to the fallback; a Workers runtime failure, which arrives as a sentence, is named behind the caller's code by matching the sentence or the runtime's `overloaded`/`retryable` flags (`parent_export_failed:durable_object_code_updated`), never by copying it |
+| `apps/api/src/observability/logger.ts` | `diagnosticErrorCode` names a `ZodError` behind the caller's own code (`external_event_delivery_failed:event.eventSequence:invalid_type`), and carries a `parseRpcInput` message across the hop through `isDiagnosticCode`; every other thrown message is admitted only in the bare constant class it always was, so an identifier interpolated after a colon still reduces to the fallback; a Workers runtime failure, which arrives as a sentence, is named behind the caller's code by matching the sentence or the runtime's `overloaded` flag (`parent_export_failed:durable_object_code_updated`), never by copying it |
 | `apps/api/src/middleware/errors.ts` | `request_failed` carries what `diagnosticErrorCode` admits of a plain `Error`'s message, as `error_code` and in the row's summary, where the row said `internal_error` and `Error` |
 | `apps/api/src/services/workspace-schedule-execution.ts` | the `schedule.failed`, `resource_watch.failed` and `workspace_schedule_target_failed` records name a stored row's rejection behind each record's own constant; the schedule and watch rows are the two whose targets parse a stored row |
 | `apps/api/src/durable-objects/sidekick-do.ts` | every RPC entry point, through `parseRpcInput`, labelled by method (`admit_external_event_invalid:…`) |
@@ -209,8 +209,8 @@ error made that diagnosable in minutes; it did not make it visible.
 **What changed:** `diagnosticErrorCode` gives a platform failure a name of ours
 after the caller's own code: the fixed runtime sentences (an object reset
 because its code was updated, a storage timeout reset, an inactive instance, a
-lost connection, a hung Worker) and, failing those, the error's `overloaded`
-or `retryable` flag.
+lost connection, a hung Worker) and, failing those, the runtime's
+`overloaded` flag.
 
 **Why:** Deploying the hosted-parent change reset legacy `WorkstreamDO`s while
 `WorkspaceDO` was exporting from them, and five imports logged
@@ -219,10 +219,13 @@ not tell a deploy reset from a refusal, which is the generic-code defect this
 document exists to stop.
 
 **Considered and rejected:** Copying the runtime's message: it is code-shaped
-in no case and the rule here is to name, not to quote. A table per boundary:
+in no case and the rule here is to name, not to quote. Reading `retryable`:
+this tree's own provider errors (Firecrawl, the Azure media providers, the
+harness plugin activation) carry a property of that name, so it would label
+them runtime failures. A table per boundary:
 the runtime's sentences are the same at every hop, so one helper names them.
 
-**Consequences:** A sentence the table does not know, with neither flag, still
+**Consequences:** A sentence the table does not know, without the `overloaded` flag, still
 reduces to the bare fallback; add it to `PLATFORM_ERRORS` when a log shows it.
 
 ### 2026-09-15 — The plugin host names a catalog and an authorization that failed their schemas
