@@ -13402,7 +13402,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           appearance: effect.appearance
             ? { iconKey: effect.appearance.icon, colorKey: effect.appearance.color }
             : null,
-          archivedAt: epoch(effect.archivedAt),
           createdByUserId: effect.createdByUserId ?? null,
           sourceCreatedAt: epoch(effect.createdAt ?? effect.lastActivityAt) ?? now,
           sourceUpdatedAt: epoch(effect.updatedAt ?? effect.lastActivityAt) ?? now,
