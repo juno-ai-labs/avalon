@@ -1491,8 +1491,11 @@ request runs and returns the ledger row: `state: "imported"` means done; still
 
 **Before a change deletes the legacy classes**, confirm no Organization still
 owes an import. In every region, for every Organization `list_workspaces`
-returns, `SELECT COUNT(*) FROM parent_imports WHERE state = 'pending'` must be
-`0`. The ledger is seeded by `WorkspaceDO` migration 72 when each object first
+returns and that is not retired (`SELECT COUNT(*) FROM object_retirement` is
+`0`), `SELECT COUNT(*) FROM parent_imports WHERE state = 'pending'` must be
+`0`. A retired Organization keeps its pending rows for good: retirement drops
+the import and arms no alarm, and nothing reads its Channels again, so its rows
+are residue rather than a debt. The ledger is seeded by `WorkspaceDO` migration 72 when each object first
 wakes on the new code, so first confirm in the migration tracker
 ([The Durable Object migration tracker](#the-durable-object-migration-tracker))
 that every `WorkspaceDO` is at schema 72 or later; an object that has not woken
