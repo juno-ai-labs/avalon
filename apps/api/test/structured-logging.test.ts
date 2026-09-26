@@ -42,18 +42,32 @@ describe("structured logging", () => {
   });
 
   it("names a Workers runtime failure behind the caller's own code without copying its sentence", () => {
+    const sentences: Array<[string, string]> = [
+      ["Durable Object reset because its code was updated.", "durable_object_code_updated"],
+      ["Durable Object storage operation exceeded timeout which caused object to be reset.", "durable_object_storage_timeout"],
+      ["Connection closed: this Durable Object instance is no longer active. Reconnect or retry the request.", "durable_object_inactive"],
+      ["Network connection lost.", "network_connection_lost"],
+      ["The Workers runtime canceled this request because it detected that your Worker's code had hung and would never generate a response.", "worker_hung"],
+    ];
+    for (const [sentence, name] of sentences) {
+      expect(diagnosticErrorCode(new Error(sentence), "parent_export_failed")).toBe(`parent_export_failed:${name}`);
+    }
+    // A known sentence wins over the flag.
     expect(diagnosticErrorCode(
-      new Error("Durable Object reset because its code was updated."),
+      Object.assign(new Error("Network connection lost."), { overloaded: true }),
       "parent_export_failed",
-    )).toBe("parent_export_failed:durable_object_code_updated");
+    )).toBe("parent_export_failed:network_connection_lost");
     expect(diagnosticErrorCode(
-      Object.assign(new Error("Some runtime sentence"), { overloaded: true, retryable: false }),
+      Object.assign(new Error("Some runtime sentence"), { overloaded: true }),
       "parent_export_failed",
-    )).toBe("parent_export_failed:overloaded");
+    )).toBe("parent_export_failed:durable_object_overloaded");
+  });
+
+  it("does not read an application error's own retryable flag as a runtime failure", () => {
     expect(diagnosticErrorCode(
-      Object.assign(new Error("Some runtime sentence"), { retryable: true }),
-      "parent_export_failed",
-    )).toBe("parent_export_failed:retryable");
+      Object.assign(new Error("Provider said to try again later"), { retryable: true }),
+      "connector_event_failed",
+    )).toBe("connector_event_failed");
   });
 
   it("names the field a schema rejection rejected, behind the caller's own code", () => {
