@@ -1271,9 +1271,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private ensurePersistentLoop() {
     const identity = this.objectStore.identity();
     if (!identity) throw new Error("substream_loop_identity_unavailable");
-    // A Space's hidden conversation is its participant and resource authority
-    // and nothing else: no composer reaches it, no socket opens it, and no
-    // agent runs in it. This is the one place a loop is minted, so it is the
+    // A Space's retired hidden conversation (only Spaces created before
+    // 2026-09-26 have one) holds nothing anybody reads: no composer reaches
+    // it, no socket opens it, and no agent runs in it. This is the one place a loop is minted, so it is the
     // one place that has to say so — every other branch that excludes a Space
     // from a run path is excluding something that could not have started.
     if (identity.parentKind === "space") throw new Error("substream_loop_space_parent_refused");

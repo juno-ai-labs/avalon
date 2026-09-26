@@ -953,49 +953,6 @@ export class WorkspaceSpaceStorage {
     }
   }
 
-  /**
-   * Delete a Space this person created whose conversation could not be
-   * provisioned, in the caller's transaction: its row, its viewers, and every
-   * order that names it or is about it.
-   *
-   * Only the creator's own, and only while no Channel has ever been placed in
-   * it: a membership row in any state is somebody's Channel pointing at this
-   * Space, and deleting the Space under it would strand that Channel. The
-   * hosted parent's rows are the caller's to discard.
-   */
-  discardCreation(spaceId: string, createdByUserId: string, now = Date.now()): boolean {
-    if (!this.ready()) return false;
-    const removed = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
-      `DELETE FROM spaces
-        WHERE space_id = ? AND created_by_user_id = ? AND archived_at IS NULL
-          AND NOT EXISTS (SELECT 1 FROM space_channel_memberships WHERE space_id = ?)
-        RETURNING space_id`,
-      spaceId,
-      createdByUserId,
-      spaceId,
-    ).toArray().length === 1;
-    if (!removed) return false;
-    this.storage.sql.exec("DELETE FROM space_viewers WHERE space_id = ?", spaceId);
-    // Both directions: the Space leaves everybody's Organization order, and
-    // the order of the Channels somebody had arranged inside it goes with the
-    // container it was about.
-    this.storage.sql.exec(
-      `DELETE FROM workspace_container_order
-        WHERE (container_kind = 'organization' AND item_id = ?)
-           OR (container_kind = 'space' AND container_id = ?)`,
-      spaceId,
-      spaceId,
-    );
-    // A General taken back is one the cutover makes again.
-    this.storage.sql.exec(
-      "UPDATE space_bootstrap SET general_space_id = NULL, updated_at = ? WHERE general_space_id = ?",
-      now,
-      spaceId,
-    );
-    this.advanceWaterline(now);
-    return true;
-  }
-
   list(workspaceId: string, userId: string, now = Date.now()): SpaceDirectory {
     if (!this.ready()) return EMPTY_DIRECTORY;
     return this.storage.transactionSync(() => {
@@ -3301,9 +3258,9 @@ export class WorkspaceSpaceStorage {
    * Every Space this Organization has, archived ones included.
    *
    * For the retirement walk, which has to close an object rather than list a
-   * product surface: an archived Space still holds a hidden main conversation
-   * (a `SubstreamAgent`), and a graph that skipped it would report the
-   * Organization closed with that object still open. Guarded like every
+   * product surface: a Space created before 2026-09-26 still holds a hidden
+   * main conversation (a `SubstreamAgent`), and a graph that skipped it would
+   * report the Organization closed with that object still open. Guarded like every
    * other Space read, so an Organization the cutover never reached enumerates
    * nothing rather than aborting the tombstone on a missing table.
    */
