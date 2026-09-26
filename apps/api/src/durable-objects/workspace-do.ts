@@ -3837,6 +3837,15 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // Search rows now carry their audience; see
   // docs/PRDs/2026-09-26_search-audience-filtering/design.md.
   statements: RESOURCE_SEARCH_AUDIENCE_MIGRATION,
+}, {
+  version: 77,
+  description: 'rewrite every indexed resource with its audience',
+  // Rows written before migration 76 carry no audience, and phase 3 of
+  // docs/PRDs/2026-09-26_search-audience-filtering filters on it. This is
+  // migration 47's pass again: an equal-revision upsert rewrites the lexical
+  // row in place, and existing semantic chunks are left alone. A row in
+  // backoff keeps its `not_before`, as in 47.
+  statements: ['UPDATE resource_search_versions SET pending = 1'],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
