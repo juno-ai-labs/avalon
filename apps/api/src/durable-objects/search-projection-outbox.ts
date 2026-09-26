@@ -176,3 +176,27 @@ export const CONVERSATION_SEARCH_REPROJECTION_MIGRATION_STATEMENTS = [
      source_version = MAX(excluded.source_version, durable_outbox.source_version),
      state = 'pending', not_before = 0`,
 ];
+
+/**
+ * Migration 70: every message and captured link written before search rows
+ * carried an audience (docs/PRDs/2026-09-26_search-audience-filtering) is
+ * re-queued once so the consumer rewrites it with one. Links ride their turn's
+ * job. A copy of 53's statement, not a shared constant, for 53's reason: each
+ * migration's text is hashed into a receipt on every migrated object.
+ *
+ * A link whose capture failed before is captured again by this pass, as it
+ * would be on its turn's next edit.
+ */
+export const CONVERSATION_SEARCH_AUDIENCE_MIGRATION_STATEMENTS = [
+  `INSERT INTO durable_outbox
+    (message_id, channel, destination_kind, destination_id, partition_key,
+     source_version, source_epoch, contract_version, payload_json, payload_ref,
+     payload_hash, state, attempts, not_before, created_at, acked_at)
+   SELECT 'search-turn:' || turn_id, 'search_projection_v1', 'queue', 'activity', 'search',
+     revision, 0, 1, json_object('turnId', turn_id), NULL, 'search-turn:' || turn_id,
+     'pending', 0, 0, updated_at, NULL
+   FROM participant_transcript_turns WHERE EXISTS (SELECT 1 FROM workstream WHERE id = 1)
+   ON CONFLICT(message_id) DO UPDATE SET
+     source_version = MAX(excluded.source_version, durable_outbox.source_version),
+     state = 'pending', not_before = 0`,
+];
