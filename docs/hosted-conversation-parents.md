@@ -273,6 +273,13 @@ receipt ledger, `parent_child_receipts`, with the legacy 180-day retention; see
 
 ## Invariants
 
+- **A parent's presentation is read from its directory row.** A Channel's
+  title, scope, archive state and every other presentation column come from
+  `channels`; a Space's title, scope and archive state from `spaces`
+  (`HostedParent.metadataRow()`). `parent_metadata` is read for identity and
+  generation, and for presentation only before the directory row exists. A
+  fixture or tool that changes a parent's scope or archive state writes the
+  directory row; writing `parent_metadata` changes nothing a parent reads.
 - **Every hosted table leads with `parent_id`, and every statement names it.**
   A statement without it reads or writes every Channel in the Organization; the
   worst case is `claimReaderAsDirect`, which deletes a reader's Space
@@ -324,6 +331,14 @@ directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
 
 ## Testing
 
+Fixtures seed a Channel's `channels` row beside its `parent_metadata` row
+(`insertChannelRow` in `test-workers/helpers/hosted-parent.ts`) and change scope
+or archive state on the directory row. `automation-post-result.test.ts` proves
+a Channel archived only on `channels` refuses a child while `parent_metadata`
+still says active; `space-authority.test.ts` proves the same for a Space
+archived only on `spaces`, and that a member Channel archived only on
+`channels` takes the Queue for a Sidekick default; `scope-invitations.test.ts`
+proves a Main invitation names the Channel from `channels`.
 `hosted-parent-migration.test.ts` upgrades a populated v70 object and proves
 migration 72 carries every directory row into the renamed tables and migration
 75 leaves no import ledger behind.
@@ -399,25 +414,26 @@ Space in an Organization now shares one SQLite database and one socket set.
   object. Nothing writes or reads it ([`spaces.md`](spaces.md#the-retired-hidden-conversation));
   deleting those objects is its own decision.
 - `parent_metadata` still stores the 19 presentation columns `channels` holds.
-  `metadataRow()` no longer reads them (see the changelog); the one remaining
-  read is `forwardChildTerminalDeadline`'s own `next_terminal_action_at`
-  compare, on the write path. Replacing that compare, then dropping the
-  columns down to identity and bookkeeping, is the follow-up migration.
+  A Channel's parent reads none of them once its directory row exists. Three
+  readers still do, and each blocks dropping them: a Space's parent reads the
+  16 columns `spaces` lacks (`description`, `preview`, `exact_state`,
+  `last_activity_at` and the rest, which only a Channel's surfaces show) from
+  its own row; the fallback before a directory row exists reads all 19; and
+  `forwardChildTerminalDeadline` compares against `next_terminal_action_at`,
+  its own bookkeeping, which stays. A Space's row needs constants or its own
+  select, and the fallback its own shape, before the drop.
 
 ## Changelog
 
 ### 2026-09-26 — A parent reads its presentation from its directory row
 
-**What changed:** `HostedParent.metadataRow()` is one statement that joins
-`parent_metadata` to `channels` (a Channel) or `spaces` (a Space's title, scope
-and archive state) by primary key and takes every duplicated column from the
-directory row. It falls back to `parent_metadata` only when the parent has no
-directory row yet, keyed on the row rather than on NULL, because `archived_at`
-and the other optional columns are NULL on purpose. The invitation title and
-the in-place Sidekick default read `channels` directly.
-`forwardChildTerminalDeadline` keeps reading its own column, because it
-compares inside the transaction that writes it, before the directory row
-flushes.
+**What changed:** `HostedParent.metadataRow()` reads a Channel's presentation
+from `channels`, and a Space's title, scope and archive state from `spaces`,
+with identity from `parent_metadata`; one query per kind. Before a directory
+row exists it reads `parent_metadata` alone. The invitation title and the
+in-place Sidekick default read `channels` directly.
+`forwardChildTerminalDeadline` keeps its own column, a change-detection check
+against the parent's bookkeeping.
 
 **Why:** Two copies of a Channel's scope, archive state and title meant the
 parent's own gates (child reservation, management access, viewer admission)
@@ -429,13 +445,18 @@ because a Space's archive is WorkspaceDO's own write. Reading `spaces` makes a
 Space's parent agree with it.
 
 **Considered and rejected:** Rewriting each of the ~30 readers to name the
-table it wants. The one query keeps every reader unchanged and costs the same
-single primary-key read. Dropping the columns in the same change: the read
-switch is reversible on its own, the migration is not, so they ship apart.
+table it wants: changing `metadataRow()` keeps every reader unchanged, at one
+statement of primary-key lookups. A `COALESCE` fallback: `archived_at` and the
+other optional columns are NULL on purpose, so the fallback keys on whether the
+directory row exists. Dropping the columns in the same change: the read switch
+is reversible on its own, the migration is not, so they ship apart.
 
-**Consequences:** A test or tool that changes a parent's scope or archive
-state by writing `parent_metadata` now changes nothing a parent reads; write
-`channels` or `spaces`. The next change drops the duplicated columns.
+**Consequences:** An archived Space's parent now reports `archived` and is not
+writable, refuses a child, and on its next child effect runs the archived
+parent's stop loop over its children; a Space hosts no loop, so that stops
+nothing. A test or tool that changes a parent's scope or archive state by
+writing `parent_metadata` now changes nothing a parent reads. Dropping the
+columns waits on the three readers the open question names.
 
 ### 2026-09-26 — The legacy parent classes and the import are deleted
 

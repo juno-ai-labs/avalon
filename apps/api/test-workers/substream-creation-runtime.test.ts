@@ -182,14 +182,14 @@ describe("substream preparation on workerd", () => {
     await env.DB.prepare("UPDATE workspace_members SET access_class='guest',role=NULL WHERE user_id=?")
       .bind(OTHER_ID).run();
     await runInDurableObject(parent(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE parent_metadata SET scope='personal' WHERE parent_id=?", WORKSTREAM_ID);
       state.storage.sql.exec("UPDATE channels SET scope='personal' WHERE workstream_id = ?", WORKSTREAM_ID);
     });
     expect(await parent().mutateParticipantGrant({ actorUserId: CREATOR_ID, userId: OTHER_ID,
       target: { kind: "conversation", workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId: asSubstreamId("0") },
       operationId: crypto.randomUUID(), active: true })).toMatchObject({ status: "committed" });
-    // The held effect queue leaves directory delivery pending. Admission must
-    // use the same authority throughout creation, not wait for a sidebar row.
+    // The held effect queue leaves participant directory delivery pending.
+    // Admission reads the Channel's scope from its directory row and its
+    // participants from the parent's own rows, so it need not wait for that.
     expect(await withHostedParent(parent(), WORKSTREAM_ID, (hosted) => hosted.canRead(OTHER_ID))).toBe(false);
     const service = new SubstreamCreationService(TEST_ENV, { ...otherAuth, role: null });
     const prepared = await service.prepare(WORKSTREAM_ID, {
