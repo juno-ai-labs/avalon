@@ -677,7 +677,6 @@ export interface SpaceDirectoryProjection {
   title: string;
   scope: "personal" | "workspace";
   appearance: SpaceAppearanceProjection | null;
-  archivedAt: number | null;
   createdByUserId: string | null;
   sourceCreatedAt: number;
   sourceUpdatedAt: number;
@@ -1392,10 +1391,9 @@ export class WorkspaceSpaceStorage {
       title: string;
       scope: string;
       appearance_json: string | null;
-      archived_at: number | null;
     } & Record<string, SqlStorageValue>>(
       `SELECT authority_generation, source_version, payload_hash, title, scope,
-              appearance_json, archived_at
+              appearance_json
          FROM spaces WHERE space_id = ?`,
       projection.spaceId,
     ).toArray()[0];
@@ -1413,22 +1411,23 @@ export class WorkspaceSpaceStorage {
     const appearanceJson = projection.appearance
       ? JSON.stringify({ icon: projection.appearance.iconKey, color: projection.appearance.colorKey })
       : current?.appearance_json ?? null;
+    // A projection never writes `archived_at`: only `finalizeArchive` and
+    // `restore` do. Taking the conversation's value, always null, un-archived a
+    // Space on its next rename and left it where `restore` refused it.
     const changed = !current
       || current.title !== projection.title
       || current.scope !== projection.scope
-      || current.appearance_json !== appearanceJson
-      || current.archived_at !== projection.archivedAt;
+      || current.appearance_json !== appearanceJson;
     this.storage.sql.exec(
       `INSERT INTO spaces (
          space_id, title, scope, appearance_json, archived_at,
          created_by_user_id, system_role, authority_generation, source_version,
          payload_hash, revision, created_at, updated_at, source_created_at, source_updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 1, ?, ?, ?, ?)
+       ) VALUES (?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?, 1, ?, ?, ?, ?)
        ON CONFLICT(space_id) DO UPDATE SET
          title = excluded.title,
          scope = excluded.scope,
          appearance_json = excluded.appearance_json,
-         archived_at = excluded.archived_at,
          created_by_user_id = COALESCE(
            spaces.created_by_user_id, excluded.created_by_user_id
          ),
@@ -1443,7 +1442,6 @@ export class WorkspaceSpaceStorage {
       projection.title,
       projection.scope,
       appearanceJson,
-      projection.archivedAt,
       projection.createdByUserId,
       projection.authorityGeneration,
       projection.sourceVersion,

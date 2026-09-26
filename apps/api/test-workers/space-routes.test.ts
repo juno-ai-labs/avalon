@@ -767,6 +767,31 @@ describe("the other Space operations that reach the hidden conversation", () => 
   });
 });
 
+describe("an archived Space and its conversation's projection", () => {
+  it("given an archived Space, when it is renamed, then it stays archived and can be restored", async () => {
+    const general = await createSpace("workspace", "Everything");
+    const created = await createSpace("personal", "Hiring");
+    await createChannel("two-homes-renamed", [asSpaceId(general.id), asSpaceId(created.id)]);
+    await settleSpaceEffects(created.id);
+    const archived = await request(`/spaces/${created.id}/archive`, OWNER_AUTH, {}, "POST");
+    expect(archived).toMatchObject({ status: 200, body: { status: "archived" } });
+
+    // The conversation reports every Space unarchived; its projection of the
+    // rename lands at a newer version than anything the archive wrote.
+    const renamed = await request(`/spaces/${created.id}`, OWNER_AUTH, {
+      name: "Recruiting", iconKey: "target", colorKey: "violet",
+    }, "PATCH");
+    expect(renamed.status).toBe(200);
+    await settleSpaceEffects(created.id);
+
+    expect(await spaceDirectoryRow(created.id)).toMatchObject({
+      title: "Recruiting", archived_at: expect.any(Number),
+    });
+    const restored = await request(`/spaces/${created.id}/restore`, OWNER_AUTH, {}, "POST");
+    expect(restored).toMatchObject({ status: 200, body: { status: "active" } });
+  });
+});
+
 /** A personal Space whose participants are exactly these people. */
 async function personalSpace(name: string, participantUserIds: readonly string[]): Promise<SpaceSummary> {
   const created = await createSpace("personal", name);
