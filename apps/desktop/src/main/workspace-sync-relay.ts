@@ -1,24 +1,55 @@
+import { WorkspaceSyncTopicSchema } from '@rally/contracts';
+import { RegionSchema } from '@rally/contracts/regions';
+import { codeShaped, describeZodIssues } from '@rally/contracts/zod-diagnostics';
+import { z } from 'zod';
 import {
-  parseWorkspaceSyncPublication,
+  sameWorkspaceSyncIdentity,
+  type WorkspaceSyncPublication,
   type WorkspaceSyncRelayEvent,
   type WorkspaceSyncSourceSnapshot,
 } from '../common/workspace-sync-relay';
 
+const identity = {
+  region: RegionSchema,
+  workspaceId: z.string().uuid(),
+};
+
 /**
- * Main's half of the Organization-sync relay: which window's socket is being
- * relayed, and the hop from that window to the one consuming it.
+ * The one shape main accepts from the main window's renderer — the relay's
+ * untrusted edge. Closed: an unknown key is refused, so nothing but an
+ * identity, a connection state, topic names and a waterline can be relayed.
+ */
+const WorkspaceSyncPublicationSchema: z.ZodType<WorkspaceSyncPublication> = z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('state'),
+    ...identity,
+    state: z.enum(['connecting', 'connected', 'reconnecting', 'unavailable']),
+  }),
+  z.strictObject({ type: z.literal('detach'), ...identity }),
+  z.strictObject({
+    type: z.literal('topics'),
+    ...identity,
+    waterline: z.number().int().nonnegative(),
+    topics: z.array(WorkspaceSyncTopicSchema).min(1),
+  }),
+]);
+
+/**
+ * Main's half of the Organization-sync relay: which Organization the main
+ * window's socket is serving, and the hop from that window to the one
+ * consuming it.
  *
- * No Electron import. `index.ts` decides who may publish (the main window
- * only), who receives (the Settings window only), and when the source is gone
- * (the main window closing, crashing or reloading); this class holds the one
- * piece of state those decisions share.
+ * No Electron import. `workspace-sync-relay-ipc.ts` decides who may publish
+ * (the main window only) and who may read the source (the Settings window
+ * only); `index.ts` decides who receives and when the publishing renderer is
+ * gone (closed, crashed or navigating). This class holds the one piece of
+ * state those decisions share.
  *
- * The source is the main window's *renderer*, attached by its first `state`
- * publication and held until main releases it. It is deliberately not detached
- * when the renderer's provider unmounts: that happens on every Organization
- * switch, immediately followed by the next provider's own `state`, and a
- * detach between the two would have the Settings window dial a socket of its
- * own for the few milliseconds in between.
+ * The source is attached by the main window's `state` publication and ends on
+ * its `detach` — its provider unmounted with no successor, as when the tree
+ * falls into the top-level error boundary — or when main releases it. A
+ * `detach` for an identity that is no longer attached is stale and ignored, so
+ * a successor's attach always wins.
  */
 export class WorkspaceSyncRelay {
   private current: WorkspaceSyncSourceSnapshot = { revision: 0, source: null };
@@ -29,35 +60,31 @@ export class WorkspaceSyncRelay {
     return this.current;
   }
 
-  /** Throws, naming the field, on a publication main cannot read. */
+  /** Throws a code naming the rejected field on a publication main cannot read. */
   publish(raw: unknown): void {
-    const parsed = parseWorkspaceSyncPublication(raw);
-    if (!parsed.ok) throw new Error(`Blocked workspace sync publication: invalid ${parsed.field}`);
-    const publication = parsed.value;
+    const parsed = WorkspaceSyncPublicationSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error(codeShaped(`workspace_sync_publication_invalid:${describeZodIssues(parsed.error)}`));
+    }
+    const publication = parsed.data;
+    const source = this.current.source;
     if (publication.type === 'state') {
-      const source = this.current.source;
-      if (source?.workspaceId === publication.workspaceId && source.state === publication.state) return;
-      this.replace({ workspaceId: publication.workspaceId, state: publication.state });
+      if (source && sameWorkspaceSyncIdentity(source, publication) && source.state === publication.state) return;
+      const { region, workspaceId, state } = publication;
+      this.replace({ region, workspaceId, state });
       return;
     }
-    // News about an Organization nobody is attached for cannot be ordered
-    // against anything the consumer holds, so it goes nowhere.
-    if (this.current.source?.workspaceId !== publication.workspaceId) return;
+    if (!sameWorkspaceSyncIdentity(source, publication)) return;
+    if (publication.type === 'detach') {
+      this.replace(null);
+      return;
+    }
     this.deliver(publication);
   }
 
   /** The publishing renderer is gone: closed, crashed, or navigating away. */
   release(): void {
     if (this.current.source !== null) this.replace(null);
-  }
-
-  /**
-   * The session moved to another Organization (or ended). The main window
-   * republishes for the new one as soon as its provider mounts; until then the
-   * old attachment describes a socket that no longer serves this session.
-   */
-  releaseUnless(workspaceId: string | null): void {
-    if (this.current.source !== null && this.current.source.workspaceId !== workspaceId) this.replace(null);
   }
 
   private replace(source: WorkspaceSyncSourceSnapshot['source']): void {

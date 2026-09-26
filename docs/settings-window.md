@@ -241,16 +241,18 @@ screen. It does not own:
   — [`deep-link-failures.md`](deep-link-failures.md). This module supplies
   `revealedSettingsWindow()`, which that routing now asks.
 - **The workspace socket.** The settings surface holds none while the main
-  window is open: it consumes the main window's socket through main
-  (`relay="consume"` on its provider), so its reads are invalidated by the same
-  topics, its feature flags follow the same pushes, and the connector
-  authorization reconcile re-runs on the relayed `connector_oauth_attempts`
-  waterline and connection state — live from the moment the window is built,
-  prewarmed or not. It dials a socket of its own only while no main window is
-  publishing for its Organization, which on a Mac is the ordinary case of
-  Settings left open after the main window was closed.
+  window is publishing one: it consumes that socket through main
+  (`relay="consume"`), so its reads — flags included — are invalidated by the
+  same topics, and the connector authorization reconcile re-runs on the
+  relayed `connector_oauth_attempts` waterline and connection state, live from
+  the moment the window is built, prewarmed or not. It dials its own only while
+  nobody publishes, which on a Mac is the ordinary case of Settings left open
+  after the main window was closed. This replaces the 2026-09-10 reasoning below
+  that an idle prewarmed socket was nearly free: it was, idle, but it also took
+  the full sidebar, a second copy of every push, and a second read of
+  everything on each open.
   [`websocket-architecture.md`](websocket-architecture.md#one-workspace-socket-per-desktop-the-settings-relay)
-  owns the relay and the socket.
+  owns the relay, the socket, and the reasoning.
 - **The renderer bundle.** Opening any window still parses the whole application,
   because the renderer has no code splitting; prewarming moves that cost off the
   click but does not reduce it. See [Open questions](#open-questions).
@@ -318,30 +320,6 @@ exists to survive and Electron does not guarantee it.
   threshold for that is a number nobody here can currently derive.
 
 ## Changelog
-
-### 2026-09-26 — The settings window stops holding a workspace socket of its own
-
-**What changed:** The settings surface consumes the main window's workspace
-socket through main instead of dialling one, so opening Settings reads each of
-its queries once, and a prewarmed window costs no socket. It falls back to its
-own socket only while no main window is publishing.
-
-**Why:** Prewarming made the settings window's socket a permanent second socket
-per desktop, and its subscribe answer named every topic right after the screen
-had issued its reads, so every open read everything twice. The 2026-09-10 entry
-kept the socket on the reasoning that an idle hibernated socket is nearly free;
-that held for the idle cost but not for the full sidebar payload, the second
-copy of every push, or the double read. The full reasoning, and the rejected
-show-time connection with a sidebar-less subscribe, are in
-[`websocket-architecture.md`](websocket-architecture.md#2026-09-26--the-settings-window-relays-the-main-windows-workspace-socket-instead-of-holding-its-own).
-
-**Considered and rejected:** Deferring the socket until the window is revealed,
-already rejected on 2026-09-10 for making the open slower; the relay keeps the
-prewarmed window live without a socket.
-
-**Consequences:** The window's freshness now depends on the main window's
-socket while one exists. Anything the settings screen starts reading from the
-socket context beyond topics, flags and connection state must be relayed too.
 
 ### 2026-09-10 — Settings opens a window that already exists, drawn on the session
 

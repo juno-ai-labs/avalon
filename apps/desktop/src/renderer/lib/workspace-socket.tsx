@@ -13,6 +13,7 @@ import {
   WorkspaceWorkstreamPageEventSchema,
   WorkspaceWorkstreamStateEventSchema,
   WorkstreamIdSchema,
+  type Region,
   type WorkstreamId,
   type SpaceDirectory,
   type WorkspaceSidebar,
@@ -70,10 +71,11 @@ import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY 
 import { retainQueryData } from './retain-query-data';
 import { isSocketTicketRequestTimeoutError } from './socket-ticket-request';
 import { logWarn } from '../../common/logger';
-import type {
-  WorkspaceSyncConnectionState,
-  WorkspaceSyncPublication,
-  WorkspaceSyncSourceSnapshot,
+import {
+  sameWorkspaceSyncIdentity,
+  type WorkspaceSyncConnectionState,
+  type WorkspaceSyncPublication,
+  type WorkspaceSyncSourceSnapshot,
 } from '../../common/workspace-sync-relay';
 import { describeZodIssues } from '@rally/contracts/zod-diagnostics';
 import type { z } from 'zod';
@@ -119,16 +121,31 @@ export type WorkspaceSocketState = WorkspaceSyncConnectionState;
  * How a window takes part in the Organization-sync relay.
  *
  * - `publish`: the main window. It holds the socket and tells main what it
- *   hears — its connection state, each topic change, the viewer's flags.
- * - `consume`: the Settings window. It holds no socket while main reports a
- *   publisher for this Organization, and applies what is relayed through the
- *   same receivers a socket would. With no publisher (the main window closed,
- *   crashed or reloading) it dials its own, and puts it down again once one
- *   is back.
+ *   hears — its connection state and each topic change — and detaches when
+ *   it unmounts with no successor.
+ * - `consume`: the Settings window. It holds no socket while main reports any
+ *   publisher, and applies what is relayed for its own Organization through
+ *   the same receivers a socket would. With no publisher (the main window
+ *   closed, crashed, reloading or fallen into the error boundary) it dials its
+ *   own, and puts it down again once one is back.
  * - absent: a window with a socket of its own that relays nothing (Sidekicks,
  *   browser import), or a test.
  */
 export type WorkspaceSyncRelayRole = 'publish' | 'consume';
+
+function publishToMain(publication: WorkspaceSyncPublication): void {
+  void desktopBridge().publishWorkspaceSync(publication).catch((error: unknown) => {
+    logWarn('rally', 'could not relay organization sync to main', error);
+  });
+}
+
+/**
+ * The publishing provider currently mounted in this renderer. An Organization
+ * switch, and StrictMode, unmount a publisher and mount its successor in one
+ * pass; the successor claims this before the predecessor's deferred detach
+ * runs, so only a publisher nobody replaced detaches.
+ */
+let mountedRelayPublisher: object | null = null;
 
 /** One page of the work-stream directory, as every caller here receives it. */
 export interface WorkstreamPage {
@@ -295,11 +312,14 @@ export function WorkspaceSocketProvider({
   api,
   children,
   onAccessRevoked,
+  region,
   relay,
   workspaceId,
 }: PropsWithChildren<{
   api: WorkspaceSocketApi;
   onAccessRevoked?: () => void;
+  /** With `workspaceId`, the Organization's identity: UUIDs are unique only within a region. */
+  region: Region;
   relay?: WorkspaceSyncRelayRole;
   workspaceId: string;
 }>): React.JSX.Element {
@@ -313,8 +333,14 @@ export function WorkspaceSocketProvider({
   // know: the answer is one IPC round trip, and a socket opened in that gap
   // would be the second socket this exists to avoid.
   const [relaySnapshot, setRelaySnapshot] = useState<WorkspaceSyncSourceSnapshot | null>(null);
-  const relayedSourceLive = relay === 'consume' && relaySnapshot?.source?.workspaceId === workspaceId;
-  const ownSocket = relay !== 'consume' || (relaySnapshot !== null && !relayedSourceLive);
+  // A publisher for another Organization is the main window mid-switch — the
+  // two windows follow one session and apply it at different moments — so a
+  // consumer waits for it rather than dialling for the gap. Only no publisher
+  // at all means there is nobody to wait for.
+  const ownSocket = relay !== 'consume' || relaySnapshot?.source === null;
+  const relayedState = relaySnapshot?.source && sameWorkspaceSyncIdentity(relaySnapshot.source, { region, workspaceId })
+    ? relaySnapshot.source.state
+    : 'connecting';
   const foregroundWorkstreamIdRef = useRef<WorkstreamId | null>(null);
   const reportPresenceRef = useRef<() => void>(() => undefined);
   const reconnectRef = useRef<() => void>(() => undefined);
@@ -378,11 +404,8 @@ export function WorkspaceSocketProvider({
     };
     reportPresenceRef.current = sendPresence;
     const bridge = desktopBridge();
-    const publish = (publication: WorkspaceSyncPublication): void => {
-      if (relay !== 'publish') return;
-      void bridge.publishWorkspaceSync(publication).catch((error: unknown) => {
-        logWarn('rally', 'could not relay organization sync to main', error);
-      });
+    const publishTopics = (topics: WorkspaceSyncTopic[], waterline: number): void => {
+      if (relay === 'publish') publishToMain({ type: 'topics', region, workspaceId, waterline, topics });
     };
     const initialApplicationFocusObservation = applicationFocusObservation;
     void bridge.getApplicationForegroundState().then((foregrounded) => {
@@ -602,7 +625,13 @@ export function WorkspaceSocketProvider({
             }
             if (sync.data.featureFlags) {
               queryClient.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, sync.data.featureFlags);
-              publish({ type: 'feature_flags', workspaceId, flags: sync.data.featureFlags });
+              // Every answer to `subscribe` carries the viewer's flags, and a
+              // flag push made while this socket was away moved no topic. A
+              // consumer refetches its own rather than trusting ours: flags
+              // are the viewer's, but the relay carries names, not values.
+              if (!sync.data.topics.includes('feature_flags')) {
+                publishTopics(['feature_flags'], Math.max(lastWaterline, sync.data.waterline));
+              }
             }
             // Before the waterline guard, not after. The sidebar rides on the
             // answer to `subscribe`, and a resume where no topic moved carries
@@ -621,9 +650,7 @@ export function WorkspaceSocketProvider({
             // Every topic, `initial` and `history_unavailable` included: those
             // name everything because this socket cannot say what moved while
             // it was away, and neither can a window relying on it.
-            if (sync.data.topics.length > 0) {
-              publish({ type: 'topics', workspaceId, waterline: sync.data.waterline, topics: sync.data.topics });
-            }
+            if (sync.data.topics.length > 0) publishTopics(sync.data.topics, sync.data.waterline);
             for (const topic of sync.data.topics) {
               // An event that carried the sidebar has just delivered the
               // directory; telling the client to go and fetch it again in the
@@ -652,7 +679,9 @@ export function WorkspaceSocketProvider({
           const featureFlags = safeParseSocketEvent(WorkspaceFeatureFlagsEventSchema, decoded);
           if (featureFlags.success) {
             queryClient.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, featureFlags.data.flags);
-            publish({ type: 'feature_flags', workspaceId, flags: featureFlags.data.flags });
+            // A push, not a sync event: no topic moved, so the flag change is
+            // relayed as the `feature_flags` topic it amounts to.
+            publishTopics(['feature_flags'], lastWaterline);
             return;
           }
           const recency = safeParseSocketEvent(WorkspaceWorkstreamRecencyEventSchema, decoded);
@@ -987,16 +1016,33 @@ export function WorkspaceSocketProvider({
       activeTicketAbort = null;
       socket?.close();
     };
-  }, [api, localCacheScope, onAccessRevoked, ownSocket, queryClient, relay, workspaceId]);
+  }, [api, localCacheScope, onAccessRevoked, ownSocket, queryClient, region, relay, workspaceId]);
 
-  // The publisher's connection state, so a consumer can show and react to the
-  // socket it is actually relying on (the OAuth reconcile re-runs on it).
+  // The publisher's lifetime. Its cleanup is what tells main the socket is
+  // gone when the tree falls into the top-level error boundary: main would
+  // otherwise go on reporting a connected publisher, and the Settings window
+  // would dial nothing and hear nothing. Deferred to a microtask so that a
+  // successor mounted in the same pass — an Organization switch, StrictMode —
+  // claims the relay first and no detach is sent at all.
   useEffect(() => {
     if (relay !== 'publish') return;
-    void desktopBridge().publishWorkspaceSync({ type: 'state', workspaceId, state }).catch((error: unknown) => {
-      logWarn('rally', 'could not relay organization sync to main', error);
-    });
-  }, [relay, state, workspaceId]);
+    const claim = {};
+    mountedRelayPublisher = claim;
+    return () => {
+      queueMicrotask(() => {
+        if (mountedRelayPublisher !== claim) return;
+        mountedRelayPublisher = null;
+        publishToMain({ type: 'detach', region, workspaceId });
+      });
+    };
+  }, [region, relay, workspaceId]);
+
+  // The publisher's connection state, which attaches it: a consumer shows and
+  // reacts to the socket it is actually relying on (the OAuth reconcile
+  // re-runs on it).
+  useEffect(() => {
+    if (relay === 'publish') publishToMain({ type: 'state', region, workspaceId, state });
+  }, [region, relay, state, workspaceId]);
 
   // A consumer listens for as long as it is mounted, whether or not it has
   // dialled a socket of its own. That overlap is what makes every hand-over
@@ -1018,11 +1064,7 @@ export function WorkspaceSocketProvider({
         observe(event);
         return;
       }
-      if (event.workspaceId !== workspaceId) return;
-      if (event.type === 'feature_flags') {
-        queryClient.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, event.flags);
-        return;
-      }
+      if (!sameWorkspaceSyncIdentity(event, { region, workspaceId })) return;
       setTopicWaterlines((current) => withTopicWaterline(current, event.topics, event.waterline));
       // The directory is socket-owned and a consumer holds none; asking its
       // query to refetch would ask a socket this window does not have.
@@ -1040,7 +1082,7 @@ export function WorkspaceSocketProvider({
       stopped = true;
       stop();
     };
-  }, [queryClient, relay, workspaceId]);
+  }, [queryClient, region, relay, workspaceId]);
 
   const listWorkstreams = useCallback<WorkspaceSocketContextValue['listWorkstreams']>(
     (input) => listWorkstreamsRef.current(input),
@@ -1058,7 +1100,7 @@ export function WorkspaceSocketProvider({
     setPresenceUserIdsByWorkstream({});
     reportPresenceRef.current();
   }, []);
-  const exposedState: WorkspaceSocketState = ownSocket ? state : relaySnapshot?.source?.state ?? 'connecting';
+  const exposedState: WorkspaceSocketState = ownSocket ? state : relayedState;
   const value = useMemo(
     () => ({
       state: exposedState,
