@@ -548,9 +548,14 @@ watch the regional activity Queue drain and its dead-letter queue stay empty.
 WorkspaceDO migration 77 and SubstreamAgent migration 70 run the same two
 passes a third time, so every lexical row written before migration 76 is
 rewritten with its `audience`. Existing semantic chunk rows keep no audience
-(see the changelog). The pass also retries each link capture that failed
-before. Force both classes in each region, then confirm with a Turbopuffer
-count that no live lexical row lacks `audience` before search filters on it.
+(see the changelog). Force both classes in each region, then confirm with a
+Turbopuffer count that no live lexical row lacks `audience` before search
+filters on it. This pass does leave dead letters: every link whose capture
+failed before is captured again, and one that still fails throws
+`search_capture_retry_required` after its lexical row is written, so its job
+exhausts the activity Queue's retries (six Browser Run calls) and dead-letters.
+Those are expected and harmless; count them against the
+`search_link_capture_failed` logs, and treat any other dead letter as real.
 
 Object alarms dispatch pending references only when the regional Turbopuffer key
 and `OPENROUTER_API_KEY` are present. Otherwise intents remain pending and search
