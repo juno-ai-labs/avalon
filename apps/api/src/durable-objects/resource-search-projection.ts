@@ -64,8 +64,10 @@ export const RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION = [
  * audience, see `services/search-audience.ts`), so a change to any input of
  * that audience must rewrite them too. The update trigger additionally
  * watches the uploader, the attachment status (a draft becoming sent), a
- * Resend resource becoming or ceasing to be an email, and the connection; the location triggers rewrite a resource
- * when an inventory attaches it to, or detaches it from, a conversation.
+ * Resend resource becoming or ceasing to be an email, and the connection. The
+ * location triggers rewrite a resource when an inventory attaches it to, or
+ * detaches it from, a conversation, or corrects whether that conversation
+ * belongs to a Sidekick.
  * Immutable once shipped, like migration 43's statement it replaces.
  */
 export const RESOURCE_SEARCH_AUDIENCE_MIGRATION = [
@@ -102,6 +104,14 @@ export const RESOURCE_SEARCH_AUDIENCE_MIGRATION = [
         ON CONFLICT(resource_id) DO UPDATE SET revision = revision + 1, pending = 1, not_before = 0;
       END`;
   }),
+  // A location's parent kind decides whether it admits a Sidekick's readers or a conversation's.
+  `CREATE TRIGGER authorization_locations_search_update AFTER UPDATE OF parent_kind ON authorization_locations
+    WHEN OLD.parent_kind IS NOT NEW.parent_kind
+    BEGIN
+      INSERT INTO resource_search_versions(resource_id, revision, pending, not_before)
+      VALUES (NEW.resource_id, 1, 1, 0)
+      ON CONFLICT(resource_id) DO UPDATE SET revision = revision + 1, pending = 1, not_before = 0;
+    END`,
 ];
 
 export function resourceSearchRevision(sql: SqlStorage, resourceId: string): number | null {

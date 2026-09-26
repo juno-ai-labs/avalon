@@ -7,13 +7,14 @@
 
 A group is a name hashed to a UUID:
 `uuid = first 16 bytes of sha256("rally-search-audience:v1:" + name)`, formatted
-as an RFC 4122 UUID with the version nibble set to 8 (custom). One function in
-`packages/contracts` builds every group ID; nothing else hashes a group name.
+as an RFC 9562 version 8 (custom) UUID. One function,
+`searchAudienceGroupId` in `apps/api/src/services/search-audience.ts`, builds
+every group ID; nothing else hashes a group name.
 
 | Group name | Who holds it (person side) | Which rows carry it (row side) |
 | --- | --- | --- |
 | `user:<userId>` | That user, when active in the Organization | Resources they uploaded |
-| `members` | Every active member whose `access_class` is `member` (never a guest) | Resources whose provider makes them readable by every member (not attachment-gated) |
+| `members:<workspaceId>` | Every active member whose `access_class` is `member` (never a guest) | Resources whose provider makes them readable by every member (not attachment-gated) |
 | `conversation:<parentId>/<substreamId>` | Everyone who may read that Channel/Space conversation (Main is substream `0`; a Breakout is its own substream) | Turns and captured links in it; resources attached in it |
 | `sidekick:<automationId>` | Everyone who may read that Sidekick's conversations (all of its children share one reader set) | Turns and captured links in any of its conversations; resources attached in them |
 | `connection:<connectionId>` | Everyone who may read that connection (not disabled; owner, or workspace-scoped and a member) | Every resource that connection synced |
@@ -35,7 +36,7 @@ search returns nothing.
 Otherwise it returns:
 
 1. `user:<userId>`.
-2. `members`, when `access_class = 'member'`.
+2. `members:<workspaceId>`, when `access_class = 'member'`.
 3. For each hosted parent conversation, `conversation:<parent>/<substream>`
    when the person may read it, decided the way canonical authorization decides
    it today, per substream:
@@ -85,7 +86,7 @@ from its own tables, through the one row-side function:
   - attachment-gated (an upload or generated artifact, or a Resend email):
     `user:<uploader>` plus the group of every location in the canonical
     inventory (`authorization_locations` for this resource).
-  - every other provider: `members`, `user:<uploader>`, plus location groups,
+  - every other provider: `members:<workspaceId>`, `user:<uploader>`, plus location groups,
     so a guest can still reach it through a conversation they may read.
 
   A resource's audience changes only when it is attached or detached, or when a
