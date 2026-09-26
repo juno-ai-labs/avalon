@@ -7,6 +7,8 @@ import type { Env } from '../env';
 import { assertSafePublicUrl } from '../lib/public-web-url';
 import { searchDocumentId } from '../services/text-search';
 import type { SearchDocumentBatch } from '../services/search-document';
+import { conversationSearchAudience } from '../services/search-audience';
+import type { ConversationParentKind } from '@rally/contracts/conversation-parent';
 
 export const CONVERSATION_LINK_SEARCH_SCHEMA = [
   `CREATE TABLE conversation_search_links (
@@ -103,7 +105,7 @@ export async function conversationSearchDocumentIds(sql: SqlStorage,
 
 /** Called by the durable projection Queue, never by message admission. */
 export async function prepareConversationLinks(sql: SqlStorage, env: Env,
-  identity: { workspaceId: string; parentId: string; substreamId: string }, turnId: string,
+  identity: { workspaceId: string; parentId: string; substreamId: string; parentKind: ConversationParentKind }, turnId: string,
   readTurn: () => TranscriptTurn | null, capture = true, documentId?: string,
   // Read after capture, like the turn: the conversation the link lives in.
   readConversation: () => ConversationDisplay | null = () => null,
@@ -149,6 +151,7 @@ export async function prepareConversationLinks(sql: SqlStorage, env: Env,
     documents.push({ id: row.id, source: 'conversation_links',
       sourceId: `${identity.substreamId}/${turnId}/${row.id}`, scopeId: identity.parentId,
       substreamId: identity.substreamId,
+      ...(current ? { audience: conversationSearchAudience(identity) } : {}),
       revision: current?.revision ?? row.revision, text: current?.text ?? null,
       ...(current && conversation ? { display: { title: current.label, sourceLabel: conversation.title,
         occurredAt: null, transcriptSequence: null, url: current.url, mimeType: null, archived: conversation.archived } } : {}) });

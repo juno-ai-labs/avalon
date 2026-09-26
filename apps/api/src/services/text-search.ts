@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { sha256Hex } from "../lib/crypto";
 import type { SearchDocumentDisplay } from "./search-document";
+import { searchAudienceGroupIds } from "./search-audience";
 import { MEMORY_EMBEDDING_MODEL } from "./structured-inference";
 import { SEARCH_CHUNK_MAX_TOKENS, SEARCH_CHUNK_OVERLAP_TOKENS } from "./semantic-chunks";
 
@@ -26,6 +27,9 @@ const SEARCH_DOCUMENT_SCHEMA = {
   chunk_start: { type: "uint" },
   chunk_end: { type: "uint" },
   chunk_strategies: { type: "[]string" },
+  // Who may read the row, as group UUIDs (`search-audience.ts`). Null on a row
+  // written before it existed and on a deletion watermark.
+  audience: { type: "[]uuid" },
   // Display attributes the read path renders without a canonical reload.
   // `title`, `source_label` and `archived` stay filterable because a display
   // patch addresses the rows that still carry the previous values.
@@ -93,6 +97,8 @@ export interface TextSearchDocument {
   scopeId: string;
   substreamId?: string | undefined;
   connectionId?: string | undefined;
+  /** Group names; hashed to their UUIDs when written. */
+  audience?: readonly string[] | undefined;
   revision: number;
   text: string;
   vector?: number[];
@@ -188,10 +194,12 @@ export class TextSearchIndex {
     }
     const isSemantic = semantic.length > 0;
     if (isSemantic && semantic.some((document) => !document.vector)) throw new Error("search_embedding_required");
+    const audiences = await Promise.all(documents.map((document) =>
+      document.audience ? searchAudienceGroupIds(document.audience) : null));
     await (isSemantic ? this.namespace : this.lexicalNamespace).write({
       ...(isSemantic ? { distance_metric: "cosine_distance" as const } : {}),
       schema: SEARCH_DOCUMENT_SCHEMA,
-      upsert_rows: documents.map((document) => ({
+      upsert_rows: documents.map((document, index) => ({
         id: document.id,
         source: document.source,
         source_id: document.sourceId,
@@ -207,6 +215,7 @@ export class TextSearchIndex {
         chunk_start: document.chunk?.start ?? null,
         chunk_end: document.chunk?.end ?? null,
         chunk_strategies: document.chunk?.strategies ?? [],
+        audience: audiences[index] ?? null,
         title: document.display?.title ?? null,
         source_label: document.display?.sourceLabel ?? null,
         archived: document.display?.archived ?? null,

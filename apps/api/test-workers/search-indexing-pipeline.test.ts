@@ -10,6 +10,7 @@ import { workspaceDOName, conversationObjectName } from '../src/durable-objects/
 import { consumeActivityQueue } from '../src/queues/activity-consumer';
 import { seedWorkstreamRoot, seedParticipantMessage } from './helpers/substream-fixture';
 import { searchDocumentId } from '../src/services/text-search';
+import { searchAudienceGroupId } from '../src/services/search-audience';
 import type { Env } from '../src/env';
 import { SearchDocumentJobSchema, SearchEmbeddingBatchSchema, SearchSourceReferenceSchema, publishSearchIndexingJobs } from '../src/services/search-indexing-jobs';
 
@@ -459,7 +460,13 @@ describe('index-served display attributes', () => {
   const turn = (turnId: string) => ({ type: 'search_projection_v1', region: 'global', workspaceId, parentId, substreamId: '0', turnId, revision: 1 });
 
   it('writes what a result renders beside the text for messages, links and files', async () => {
-    await seedResource();
+    const workspace = await seedResource();
+    // An attached upload is readable through the conversation it is attached in.
+    await runInDurableObject(workspace, (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO authorization_locations(parent_id, substream_id, parent_kind, resource_id)
+        VALUES (?, '0', 'workstream', ?)`, parentId, resourceId);
+    });
+    const conversationAudience = [await searchAudienceGroupId(`conversation:${parentId}/0`)];
     const stub = env.SUBSTREAM_AGENTS.getByName(conversationObjectName('global', workspaceId, parentId, '0'));
     const url = 'https://example.com/page';
     const linkId = await searchDocumentId('conversation_links', `${parentId}/0/turn`, url);
@@ -472,11 +479,11 @@ describe('index-served display attributes', () => {
     const result = await consume([resourceMessage(), turn('turn')]);
     expect(result.retryMessages).toEqual([]);
     expect(upserted('messages')).toEqual([expect.objectContaining({ substream_id: '0', title: 'Fixture', source_label: 'Fixture',
-      archived: false, transcript_sequence: expect.any(Number), occurred_at: expect.any(Number), url: null, mime_type: null })]);
+      audience: conversationAudience, archived: false, transcript_sequence: expect.any(Number), occurred_at: expect.any(Number), url: null, mime_type: null })]);
     expect(upserted('conversation_links')).toEqual([expect.objectContaining({ substream_id: '0', title: url, url, source_label: 'Fixture',
-      archived: false, occurred_at: null, transcript_sequence: null })]);
+      audience: conversationAudience, archived: false, occurred_at: null, transcript_sequence: null })]);
     expect(upserted('files')).toEqual([expect.objectContaining({ substream_id: null, title: 'alpha', source_label: 'alpha',
-      mime_type: 'text/plain', occurred_at: Date.parse('2026-09-05T00:00:00Z'), archived: false })]);
+      audience: conversationAudience, mime_type: 'text/plain', occurred_at: Date.parse('2026-09-05T00:00:00Z'), archived: false })]);
   });
 
   it('patches every indexed row of a renamed or archived conversation and stops when none still differs', async () => {
