@@ -15,8 +15,8 @@ The design adds three primitives and changes one:
    conversations, with a scope per agent. Sidekicks scope it to their
    attached conversations; Channel and Breakout agents to their own Channel
    and Breakout.
-4. **Home conversation (changed):** a Sidekick's `owning_workstream_id` becomes
-   an owning substream address.
+4. **Home conversation (changed):** a Sidekick gains an `owning_substream_id`
+   beside `owning_workstream_id`, so its home can be a Breakout.
 
 The Mucker flow is these four combined, with no Mucker-specific code.
 
@@ -29,7 +29,7 @@ The Mucker flow is these four combined, with no Mucker-specific code.
 | Channel and Space parents, hosted in WorkspaceDO ([hosted conversation parents](../../hosted-conversation-parents.md)) | Space membership, Channel audience, viewer rows and Channel birth (`reserveChannelInSpaces`) in one database | A spawned Channel's birth, its Space placement and its thread binding commit in one WorkspaceDO transaction. |
 | Slack Agent ingress | Verifies event, resolves installation, creates or resumes Channel, writes human message | Normalize the external path and resolve a binding before creating a Channel. |
 | Connector watch registrations (`matchExternalEventDestinations`) | Fan an external event out to Sidekicks and watched resources; a claimed event skips Suggested Work | Candidate home for bindings; see [Reusing watch registrations](#reusing-watch-registrations). |
-| `automation.owning_workstream_id` (`sidekick-do.ts:279`) | The Channel whose Main conversation `post_result` posts to | Replace with an owning substream address. |
+| `automation.owning_workstream_id` (`sidekick-do.ts:279`) | The Channel whose Main conversation `post_result` posts to | Add `owning_substream_id` beside it, defaulting to `"0"`. |
 | `post_result` in the `rally:sidekick-result` plugin (`createAutomationPostResultPlugin`, `integrations.ts:6435`) | A run's only way to post into a room | Remove; `conversation_post` covers it. |
 | `authoringOrigin` (`packages/agent-harness/src/prompts/workstream.ts:32`) | Slack-only prompt section; nothing sets it | Remove. |
 | `sidekick_attachments` per SubstreamAgent, `parent_sidekicks` in WorkspaceDO | This conversation may load this Sidekick as a skill | Leave as is. Conversation attachments get their own WorkspaceDO table. |
@@ -42,31 +42,30 @@ outermost provider container to the conversation a message belongs to. Slack
 gives `[channel]` for a room and `[channel, thread_ts]` for a thread. In a
 room that does not allow threads, an addressed message gets the synthetic path
 `[channel, message_ts]`, so each addressed message has its own key under the
-room. Discord
-could give `[guild, channel, thread]`; email could give `[thread]`. Each
-segment carries the facts the adapter can verify about it:
+room. Slack is the only conversation connector today; the path is a list so the
+next adapter, whatever its depth, needs no schema change, and nothing else is
+built for adapters that do not exist.
 
 ```text
-ExternalNode {
-  connectionId, path: string[],
+ExternalRoom {
+  installationId, path: string[],
   kind: shared | direct,
   visibility: public | private | unknown,
-  displayName?, membershipState: joined | left | unknown,
-  childSupport: supported | unsupported | unknown
+  displayName?
 }
 ExternalMessage {
-  connectionId, path: string[], messageId,
+  installationId, path: string[], messageId,
   actor, text, addressedToRally, providerEventId, occurredAt
 }
 ```
 
-The adapter alone derives these facts from Slack's `channel`, `thread_ts`,
-`channel_type`, and `conversations.info`. In particular, it checks `is_mpim`
-rather than assuming a `G` prefix means a private channel. The host must not
-assume all connectors have invitation events, stable names, native thread
-replies, or the same message edit/delete semantics. A connector declares which
-facts it can produce; a binding that needs a fact is available only when the
-fact is verified.
+`installationId` names the provider installation whose events arrive at
+ingress; for Slack that is the workspace bot's team, not a personal
+connection. The adapter alone derives these facts from Slack's `channel`,
+`thread_ts`, `channel_type`, and `conversations.info`. In particular, it checks
+`is_mpim` rather than assuming a `G` prefix means a private channel, and it
+handles Slack's non-threadable flag itself. Room membership is not an attribute
+here: joining and leaving change the binding's `state`.
 
 ## The binding record
 
@@ -74,27 +73,33 @@ One record type for every level:
 
 ```text
 Binding {
-  source:  connectionId + external path
-  target:  Rally address { parentKind, parentId, substreamId }
-           or a Space ID
-  deliver: none | converse
-  spawn?:  { on: addressed_to_rally, create: channel_in_space }
-  state:   active | suspended
+  source: installationId + external path
+  target: a Space, or a Rally conversation address
+          { parentKind, parentId, substreamId }
+  state:  pending | active | suspended
 }
 ```
 
-| Use | Source path | Target | deliver | spawn |
-| --- | --- | --- | --- | --- |
-| Shared Slack room | `[C123]` | Space | none | Channel in this Space |
-| Tagged Slack thread | `[C123, 1727.001]` | Channel Main conversation | converse | none |
-| Mucker founder DM | `[D456, 1727.002]` | 1 PM run child (`automation`, Sidekick ID, run ID) | converse | none |
+What a match does follows from the target, so the record has no policy fields:
+
+- **A Space target** is a shared room. An addressed message under it with no
+  binding of its own creates a Channel placed in that Space and binds the
+  message's path to it.
+- **A conversation target** is a thread. A message on that exact path is
+  delivered to it.
+
+| Use | Source path | Target |
+| --- | --- | --- |
+| Shared Slack room | `[C123]` | Space |
+| Tagged Slack thread | `[C123, 1727.001]` | Channel Main conversation |
+| Mucker founder DM | `[D456, 1727.002]` | 1 PM run child (`automation`, Sidekick ID, run ID) |
 
 `WorkspaceDO` holds bindings, because it already owns connector connection
 identity, Slack Agent sessions, and, since Channel and Space parents moved into
 it, the Space directory, Channel birth and placement, and Channel and Breakout
-audiences.
-The unique key is Organization + connection + path. Every active key has one
-target. Display name and participant list are attributes, never keys. A
+audiences. Ingress already calls it on every message, so bindings add no new
+hop. The unique key is Organization + installation + path. Every active key has
+one target. Display name and participant list are attributes, never keys. A
 provider ID change is an explicit move of the key (and every key beneath it)
 that preserves the target. No client-supplied URL, message text, or
 model-proposed target can override a recorded binding.
@@ -104,17 +109,22 @@ reaches its target; the message keeps its sender.
 
 ### Resolution
 
-For a verified `ExternalMessage`:
+For a verified `ExternalMessage`, in one WorkspaceDO read:
 
-1. Read the exact path and every ancestor path in one lookup. If any of them
-   is `suspended`, stop: nothing is delivered or created.
-2. If the exact path is `active` and its `deliver` is `converse`, deliver the
-   message to the target through ordinary message admission.
-3. Otherwise the nearest `active` ancestor with a `spawn` rule that the message
-   satisfies creates the Rally conversation it names and records an `active`
-   binding for the exact path, in one claim.
-4. Otherwise nothing happens. An unrelated provider message creates no Rally
+1. Read the exact path and its ancestors. If any of them is `suspended`, stop:
+   nothing is delivered or created.
+2. If the exact path is `active` with a conversation target, deliver the
+   message there.
+3. If the exact path is `pending`, the conversation it will point at is still
+   being created. Hold the event for redelivery; do not create a second one.
+4. Otherwise, if the message is addressed to Rally and the nearest `active`
+   ancestor targets a Space, claim the exact path as `pending` and create the
+   Channel (see Creating bindings).
+5. Otherwise nothing happens. An unrelated provider message creates no Rally
    work.
+
+A bound match marks the connector event `claimed`, as a matched watch does
+today, so a bound reply never also becomes Suggested Work.
 
 Suspending a room therefore stops every thread beneath it without touching
 their rows.
@@ -122,24 +132,30 @@ their rows.
 ### Creating bindings
 
 - **Invitation.** A verified event says the bot joined a shared room. The host
-  fetches the room's facts, claims the room path, and creates or reuses its
-  Space. A first mention runs the same ensure step if it arrives before the
-  invitation event.
-- **Spawn.** As in resolution step 2. The binding claim runs in the same
-  WorkspaceDO transaction as `reserveChannelInSpaces`, which writes the
-  Channel's Organization-side birth with its Space membership already active.
-  A duplicate or reordered event therefore finds either nothing or a Channel
-  that is fully placed and bound; there is no intermediate state to fence.
-- **Outbound send.** When a connector tool that sends a message succeeds during
-  a Sidekick run, the host writes a binding from the returned path to that run
-  child. The model does not write bindings. Slack's `send_message` already
-  returns `channel_id` and `timestamp` (`packages/connectors/src/slack.ts:1747`).
-  A send whose result is lost has no binding, and a reply to it is not matched
-  by text or timing.
-
-Creating a binding is part of the same WorkspaceDO transaction as whatever it
-points at, so there is no half-created state to resume: a failure writes
-nothing and the provider event is retried.
+  fetches the room's facts and claims the room path as `pending` in the same
+  WorkspaceDO transaction as `reserveSpace`. The binding turns `active` when
+  the Space's conversation is provisioned, and is removed if the reservation is
+  taken back (`cancelSpaceReservation`). A first mention runs the same ensure
+  step if it arrives before the invitation event.
+- **Spawn.** Creating a Channel is several steps (`WorkstreamObjectCreationService`:
+  receipt, `reserveChannelInSpaces`, D1 anchors, conversation `initialize`,
+  route activation, receipt completion), not one transaction. The thread
+  binding is written `pending` in the `reserveChannelInSpaces` transaction and
+  turns `active` when the creation receipt completes. A failed creation removes
+  it. The existing Slack thread claim stays as the fence until then.
+- **Outbound send.** Only a send made with the workspace bot's token creates a
+  binding, because only the bot's conversations reach ingress; a send through a
+  person's own Slack connection goes out with their user token
+  (`executeSlackDirectTool`, `packages/connectors/src/slack.ts`) and its replies
+  never arrive. The binding's path is `[channel, thread_ts ?? ts]`: a send into
+  an existing thread binds that thread's root, not the new message. Slack's
+  `send_message` already returns `channel_id` and `timestamp`. The model does
+  not write bindings. The run child enqueues the binding as a regional effect in
+  the same transaction that commits the tool receipt
+  (`enqueueRegionalEffectsInTransaction`), so a successful send cannot lose its
+  binding. A reply that arrives before that effect drains finds no binding and
+  follows the one-to-one DM policy. A send whose result is lost has no receipt
+  and no binding, and a reply to it is not matched by text or timing.
 
 ### Suspending bindings
 
@@ -151,43 +167,47 @@ Suspension keeps the row and its target. These suspend a binding:
 - the Sidekick a binding targets being deleted (every binding to its runs);
 - a person closing the binding from the run or the Sidekick.
 
-A paused Sidekick keeps its bindings; `continueRun` refuses while it is paused.
+A paused Sidekick keeps its bindings; its runs refuse input while it is paused.
 Whether an outbound binding also expires after a set time is an open question
 that blocks the build, and its duration is the team's number to set. A reply to
 a suspended binding creates no Rally work and is logged with the code
 `binding_suspended`.
 
-### Reusing watch registrations
+### One routing step, not three
 
-`WorkspaceDO.matchExternalEventDestinations` already matches external events
-to registered destinations and marks a matched event claimed so it skips
-Suggested Work, and `SubstreamAgent.appendWatchedResourceEvent` already
-delivers into a named child substream idempotently. That is most of a binding.
-The differences: a binding has one owner rather than fanning out, delivers an
-attributed human turn rather than a system resource update, can spawn a
-Channel, and Slack Agent messages arrive through their own ingress. Before
-building a binding table, decide whether bindings become an exact-key,
-single-owner registration kind in that matcher. The aim is one routing step,
-not three.
+Bindings replace the thread lookup in `slack_agent_sessions` and
+`WorkspaceDO.slackThreadRoutable` as the one exact-key lookup for a thread.
+They do not go through `matchExternalEventDestinations`: that matcher fans out
+by predicate, queues each match again before delivery, and has no destination
+kind that can name a run child. `slack_agent_sessions` stays as delivery state
+only (`slack_stream_ts`, `last_delivery_key`, reactions, assignment), which
+`deliverWorkstreamOutcome` still reads by workstream. A binding's row must not
+cascade on `connector_connections`, since suspension has to keep its identity
+for reactivation.
 
 ## Home conversation and attachments
 
-`automation.owning_workstream_id` becomes an owning substream address:
-(`workstream`, Channel ID, substream ID). A Channel's Main conversation is
-substream `"0"`, so one field covers Channels and Breakouts. Migration maps
-each existing value to (`workstream`, id, `"0"`).
+The home is `owning_workstream_id` plus a new `owning_substream_id TEXT NOT
+NULL DEFAULT '0'` column, in SidekickDO's `automation` table and WorkspaceDO's
+`automation_directory`. A Channel's Main conversation is substream `"0"`, so
+every existing Sidekick keeps its home with no backfill. Adding a column with a
+default avoids rebuilding either table, which replacing the column would need:
+both carry `CHECK` constraints on `owning_workstream_id`
+([durable-object-sqlite.md](../../durable-object-sqlite.md)).
 
-The field's existing duties move with it:
+`owning_workstream_id` is also an authorization input, and each use has to
+take the substream into account:
 
-- Only a Sidekick with a home gets a posting tool
-  (`postResultPlugin` in `loadHarnessTools`, `apps/api/src/services/integrations.ts:5371`), so a personal or workspace
-  Sidekick still cannot post into a room.
-- Archiving the home still tells the Sidekick. Today WorkspaceDO's
-  `notifyOwningRoomArchival` joins `automation_directory` to the `channels`
-  directory on `owning_workstream_id` and calls `setOwningRoomArchived`
-  (`workspace-do.ts:10405`). The projection carries the substream too. The
-  `breakouts` directory is in the same database, so a home Breakout's archive
-  is the same local join.
+- `authorization-service.ts` names the Sidekick's owner as
+  `${owning_workstream_id}/0`; it becomes `${owning_workstream_id}/${owning_substream_id}`.
+  A Breakout home therefore narrows the Sidekick's audience to the Breakout's.
+- `search-authorization-universe.ts` scopes search the same way.
+- `resultDelivery` and `automationSendsOutward` in `integrations.ts` read it to
+  decide where results go and whether a run sends outward.
+- `notifyOwningRoomArchival` in WorkspaceDO joins `automation_directory` to the
+  `channels` directory on it and calls `setOwningRoomArchived`. It also has to
+  join `breakouts`, so that archiving a home Breakout, or the Channel that
+  holds it, tells the Sidekick. Both directories are in the same database.
 
 The Slack-only `authoringOrigin` type, its prompt section, and its test are
 removed. The prompt names the home conversation instead; if that Channel began
@@ -327,11 +347,19 @@ for a Breakout, because a Breakout id is unique only within its Channel.
   Sidekick's home."), `text` (required string, at least one character).
 - Output: `{ conversationId, messageId, replayed: boolean }`. `replayed` is
   `true` when the same receipt had already posted.
+- A post does not start the target conversation's agent; it appears as a
+  message from the Sidekick. It cannot reuse `appendAutomationActivation`, which
+  wakes the target and refuses any substream but `"0"`; it needs an append
+  method on `SubstreamAgent` that accepts any substream and does not activate.
 
 `conversation_attach`
 
-- Input: `conversation` (required).
+- Input: `conversation` (required): a Rally link or id, or the exact title of
+  a Channel or Breakout the acting person can read. Title lookup runs over
+  WorkspaceDO's `channels` and `breakouts` directories and that person's viewer
+  rows, so the model can attach what the person names without an id.
 - Output: `{ conversationId, kind, title, alreadyAttached: boolean }`.
+- There is no detach tool yet; see the PRD's open questions.
 
 ### Idempotency
 
@@ -360,7 +388,6 @@ recovery step.
 | attach | `conversation_not_found` | "No Channel or Breakout matches "<value>". Ask the person for its link." | `field` | Stop and ask |
 | read, post | `conversation_archived` | "That conversation is archived, so it cannot be read or posted to. Tell the person." | `resourceId` | Stop |
 | read, post, attach | `conversation_access_denied` | "The account this runs as cannot open that conversation. Ask someone with access to attach it or share it." | `resourceId` | Stop |
-| attach | `conversation_audience_wider` | "Attaching would show this conversation's messages to people who cannot see it today. Ask the person to pick a conversation with the same people or fewer." | `resourceId`, `reason` | Stop and ask |
 | read_next | `invalid_cursor` | The pagination wrapper's existing sentence | as today | Call `conversation_read` again |
 | any | `invalid_arguments` | Names the field and the accepted form, echoing the refused value | `field`, `expected` | Correct and retry |
 
@@ -374,7 +401,7 @@ loop starts, so it never reaches these tools.
   text, and page size within the limit.
 - Every call admits the acting principal to the target through the
   conversation-parent contract WorkspaceDO serves, then checks the target is in
-  scope. Attach also runs the audience check described below.
+  scope. Attach also requires the person attaching to be able to post there.
 - Text returned by `read` is untrusted content. The system message tells the
   model so; nothing in it can change the scope.
 - No credentials are involved; every call stays inside the Organization's own
@@ -399,14 +426,22 @@ loop starts, so it never reaches these tools.
   discovery through `conversation_list`; a multi-page read; posting to the home
   without naming it; a wrong first call (posting to a title that is not in
   scope) that recovers through `conversation_list`; stopping on
-  `conversation_audience_wider`; and no repeated post after a successful one.
+  `conversation_access_denied`; and no repeated post after a successful one.
 
 ### Limits
 
-The two numbers above are existing limits reused, not new ones: 25 and 50 are
-`list_resources`' default and maximum, and 12,000 characters is
-`read_resource`'s default page (`workstream-attachment-tools.ts:56-58`).
-Whether conversations need their own numbers is the team's call.
+These are limits, per
+[adding-security-defensive-and-other-limits.md](../../adding-security-defensive-and-other-limits.md),
+and every number is a placeholder for the team to set:
+
+- `conversation_list` and `conversation_read` page size: written as
+  `list_resources`' default 25 and maximum 50.
+- `conversation_read` character budget per page: written as `read_resource`'s
+  default 12,000 (`workstream-attachment-tools.ts`).
+- The earlier thread context Rally reads when a tag activates an older Slack
+  thread: bounded, number open.
+
+Each guard is written open until the team names its number.
 
 ### Other rules
 
@@ -419,23 +454,27 @@ are removed, not kept beside the new tool. `post_result` is hard-wired to the
 owning Channel's Main conversation and deduplicated on run ID alone
 (`createAutomationPostResultPlugin`, `integrations.ts:6435-6522`), and a model
 offered both would not know which to use. Its `sidekick_post_result_*` error
-codes and activity names go with it.
+codes and activity names go with it, and so do:
 
-A read or post first admits the acting principal to the target conversation.
-For a Channel or Breakout that is the conversation-parent contract WorkspaceDO
-now serves, one call with no namespace probe. Every read and post also checks
-that the address is in scope and that the move does
-not widen an audience: reading moves a conversation's content into the
-reading loop's conversation, and posting moves content the other way. A
-Breakout reading its Channel's Main conversation narrows, since a Breakout's
-audience sits inside its Channel's. Connector watches
-already apply "content may only move into an audience no broader than the one
-it came from" (`docs/connectors.md`); both directions use that rule, at attach
-time and on each call.
+- the `# Result delivery` section of the Sidekick prompt
+  (`packages/agent-harness/src/prompts/workstream.ts`) and the plugin's
+  `systemMessage`, replaced by the conversation plugin's system message;
+- the `automationWorkstream` golden prompt hash, which moves;
+- the two `authoringOrigin` tests in `prompts.test.ts`, removed with the field.
 
-Several `SubstreamAgent` methods refuse a parent that is not a Channel
-(`substream-agent.ts:1374`, `1535`, `2310`, `2430`, `5001` and others). Each that the tools
-touch must accept a run child as an ordinary conversation.
+The new tool-naming line in the system message is pinned with an assertion, per
+[writing-prompts.md](../../writing-prompts.md).
+
+A read or post first admits the acting principal to the target conversation
+through the conversation-parent contract WorkspaceDO serves, one call with no
+namespace probe, and checks the target is in scope. There is no per-call
+audience comparison: the audience decision is made once, by the person who
+attaches, as described under Audience and authorization.
+
+Many `SubstreamAgent` methods branch on `parentKind === "workstream"` (about
+fifteen on `main`). Each one the tools touch must treat a run child as an
+ordinary conversation. Some refuse a run child; at least one returns `true` and
+so skips a membership check for it, which the tools must not rely on.
 
 ## Run continuation
 
@@ -469,24 +508,50 @@ asks a question likely loses its run context on resume too. This needs a test.
 
 When `claimPersistentLoopExecution` wakes a child whose parent kind is
 `automation` and whose substream is not `"0"`, it calls
-`SidekickDO.continueRun(runId)` before building the loop input. That method:
+`SidekickDO.continueRun(runId)` before building the loop input.
+`continueRun` is a read with no side effects, so a failed optimistic check or a
+crash between it and `activatePendingInput` leaves nothing to undo. It returns
+either:
 
-1. Refuses, with a named code, when the Sidekick is paused or deleted, or the
-   run does not exist. The input stays in the feed and the sender sees the
-   reason.
-2. Moves the run row to `running`, including from `completed`.
-3. Returns the same `automationRun` block and run-as `executionPrincipal` the
-   alarm path builds.
+- a refusal code (`sidekick_paused`, `sidekick_deleted`, `run_not_found`), or
+- the `automationRun` block and run-as `executionPrincipal` the scheduled start
+  builds, using the Sidekick's **currently accepted** definition revision, not
+  the revision the run started with. Continuing a run acts on today's consent.
+
+On a refusal the loop settles the pending input as refused with that code, so
+it does not sit at the head of the queue and block the input behind it. The
+refusal is recorded on the run child's transcript.
+
+The run row moves back to `running` through the child's existing
+`directory_common` effect, not through `continueRun`. `onChildCommonAggregate`
+accepts a finished state (`completed`, `failed` or `stopped`) moving to
+`running`, but only from an accepted, versioned child update: once reopening is
+possible, a late `completed` projection from an earlier activation must not
+close a run that has since continued. The run row allows more than one
+completion. Input that arrives while the run is still active is queued by the
+existing loop and needs no change. Elicitation answers take the same path and
+are fixed by the same change.
 
 The loop then has the Sidekick's instructions, tools, and authority, and the
-run authority check (`readRunAuthority`, `integrations.ts:6389`) passes because the run is running.
+run authority check (`readRunAuthority`) passes because the run is running.
 The sender is only the author of the message. `continueRun` does not check who
 sent it: anyone who can reach the run may continue it.
 
-`onChildCommonAggregate` must accept `completed → running`, and the run row
-must allow more than one completion. Input that arrives while the run is still
-active is queued by the existing loop and needs no change. Elicitation answers
-take the same path and are fixed by the same change.
+**What the continued model sees.** Its own transcript, as today, followed by a
+host-rendered user-role message: "This run is continuing because <name> replied
+<in Slack, in the thread you started | in this run>. The work you already did
+is above; do only what the new input needs." Without it, the re-rendered
+Sidekick instructions ("DM the founders") read as a fresh task, and a model can
+send the requests again, each send writing a new binding.
+
+**How bound-thread text is framed.** A message that arrives through a binding
+is external, untrusted text. It is admitted as an external attributed message
+and rendered as labelled evidence from that person, the way inbound mail is,
+never as a member request above the Sidekick's instructions. When the run
+forwards it with `conversation_post`, the post carries the same external
+source in its structured content, so a later run reading the home through
+`conversation_read` sees it marked as external. The prompt-injection test for
+inbound mail is extended to cover both.
 
 ## Mucker weekly call prep
 
@@ -494,8 +559,9 @@ The Sidekick's home is the Breakout in the investors Space where it was set up.
 
 | Step | Mechanism |
 | --- | --- |
-| 1 PM run DMs Adam, Alex, KB | Existing Slack tools; each successful `send_message` writes a binding from `[D…, ts]` to the 1 PM run child. |
-| A founder replies | Resolution finds the exact thread binding and delivers the reply to the 1 PM run child. |
+| 1 PM run DMs Adam, Alex, KB | Existing Slack tools with the workspace bot's token; each successful `send_message` writes a binding from `[D…, ts]` to the 1 PM run child. |
+| A founder replies in the thread | Resolution finds the exact thread binding and delivers the reply to the 1 PM run child. |
+| A founder replies at the top level of the DM | Resolves to `[D…]`, which has no binding. What happens is the one-to-one DM policy, an open question that blocks calling this flow solved: most people answer a DM at the top level. |
 | The run continues and forwards | Run continuation; `conversation_post` to the home, naming the founder and linking the thread. The host keys the post on the run and receipt, so a retry posts once. |
 | 2 PM run reads | `conversation_read` on the home, then `conversation_read_next` as needed. |
 | 2 PM run posts the agenda | `conversation_post` to the home. |
@@ -503,20 +569,28 @@ The Sidekick's home is the Breakout in the investors Space where it was set up.
 No step pairs the two runs. A late reply continues the 1 PM run and lands in
 the home without changing a posted agenda. A founder with no answer is absent
 from the home. The forward depends on the model following its instructions;
-a missing forward shows as an answer in the run feed that is absent from the
-Breakout.
+a missing forward leaves an answer in the run child that is absent from the
+Breakout. Only the run-as user is seated in a run child, and the desktop client
+renders only a Sidekick's config conversation, so today nobody can see that
+answer; whether to build a run-feed view is an open question in the PRD.
 
 ## Audience and authorization
 
-**A message that arrives through a bound thread takes the audience of the
-conversation it lands in**, like any message posted there. The provider room it
-came from is recorded as its source, not as its audience. So when a continued
-Mucker run forwards a founder's answer to the home Breakout, the audience
-check compares the run's conversation with the Breakout, not the founder's DM
-with the Breakout. The founder answered a request from the Sidekick, and the
-Sidekick's run feed is where that answer lives in Rally. The outbound request
-should say where answers go, which the Sidekick's instructions can state; the
-design does not enforce that wording.
+**Run children are personal.** `provisionRun` creates each run child with
+`scope: "personal"` and seats only the run-as principal. A message that
+arrives through a bound thread lands there and takes that audience; the
+provider room it came from is recorded as its source, not as its audience.
+
+**An attached conversation's audience is the ceiling for what the Sidekick
+posts there, and attaching is the consent.** Anything a run posts, a founder's
+forwarded answer included, is published to that conversation's audience, the
+way `post_result` publishes a run's result to its owning Channel today. The
+person who attaches a conversation is choosing that audience, so attaching
+requires them to be able to post there. Reading an attached conversation moves
+its content into the personal run child, so a read only needs the acting
+principal to be admitted. The outbound request should tell recipients where
+answers go, which the Sidekick's instructions can state; the design does not
+enforce that wording.
 
 The source conversation says who could speak there. Rally decides who may read
 persisted Rally work. Public shared rooms can use an Organization-wide Space;
@@ -546,7 +620,7 @@ retains membership after departure.
 | Bot leaves, channel archives, connection disconnects | Suspend the room binding; its threads stop resolving; retain Rally work and binding identity for reactivation. |
 | Slack Connect `channel_id_changed` | Atomically move the room path and every path beneath it to the new ID while preserving targets. |
 | Slack group DM adds people and Slack creates a new DM | Treat the new provider room ID as a separate source. Never copy or merge Rally history on the strength of a similar member list. |
-| `is_non_threadable` group DM | An addressed message gets the path `[channel, message_ts]` and the room's spawn rule starts a Channel for it; two addressed messages start two Channels. An unaddressed message resolves nothing, since there is no thread to reply in. |
+| `is_non_threadable` group DM | An addressed message gets the path `[channel, message_ts]` and the room's Space target starts a Channel for it; two addressed messages start two Channels. An unaddressed message resolves nothing, since there is no thread to reply in. |
 | Provider retry or reordered delivery | Unique path key and event receipt prevent duplicate Space, Channel, message, or run continuation. |
 
 Slack's app manifest (`config/provider-apps/slack.json`) lacks `message.mpim`
@@ -570,34 +644,55 @@ thread text. Already-joined public channels are not evidence of a new
 invitation after the proactive join policy stops. A migration must select their
 room bindings explicitly, and must not bulk-create Spaces for every historical
 bot membership. An old session whose parent Space is not yet selected remains
-reachable at its existing Rally URL. Existing Sidekicks map
-`owning_workstream_id` to (`workstream`, id, `"0"`).
+reachable at its existing Rally URL. Existing Sidekicks keep their home through
+the `owning_substream_id` default of `"0"`, with no backfill. Existing
+`slack_agent_sessions` thread keys migrate into thread bindings; the rows stay
+for delivery state.
 
-Acceptance tests should exercise the real ingress and WorkspaceDO, Space,
-Channel, SidekickDO, and SubstreamAgent authorities:
+Acceptance tests exercise the real authorities. Durable Object behavior goes in
+`apps/api/test-workers/` (real workerd); schema migrations of Durable Object
+SQLite go in the Node suite with `createTestSqlStorage`; model behavior goes in
+evaluations, not in these checks.
+
+`test-workers/`:
 
 - duplicate and out-of-order invite plus mention;
 - public, private, and MPIM classification;
 - two threads in one room; a bound reply versus an unrelated message;
 - a suspended room stopping its threads, including a thread that already has
   an active binding;
+- a `pending` binding holding a second event until the Channel is created, and
+  a failed creation removing it;
 - two addressed messages in a non-threadable group DM starting two Channels;
-- a binding suspended by Sidekick deletion, disconnect or a person closing it
-  routing nothing, and a Slack Connect `channel_id_changed` event moving every
-  path under the room;
-- `conversation_list` omitting a conversation after the principal loses access;
-- a forward to a home Breakout that includes someone who was not in the DM;
-- the one-to-one DM exception;
-- an outbound send writing a binding, and a lost receipt writing none;
-- input to a completed run child continuing it with `automationRun` and the
-  run-as principal, from a Rally user and from a bound thread;
-- input to a paused Sidekick's run refused with its code;
+- suspension by Sidekick deletion, disconnect or a person closing it; and a
+  Slack Connect `channel_id_changed` event moving every path under the room;
+- a Slack redelivery of the same event changing nothing;
+- an outbound bot send writing a binding keyed on `thread_ts ?? ts`, a send
+  through a personal connection writing none, and a lost receipt writing none;
+- a send whose receipt committed but whose binding effect has not drained yet;
+- input to a completed, failed or stopped run child continuing it with
+  `automationRun`, the run-as principal and the current definition revision,
+  from a bound thread;
+- two concurrent replies to a completed run: one reopen, one activation, both
+  delivered;
+- a stale `completed` projection arriving after a reopen, which must not close
+  the run; and repeated complete, reopen cycles;
+- input to a paused, deleted or missing Sidekick run settled as refused with
+  its code, and the input behind it still processed;
 - an elicitation answer keeping run context;
-- read and post refused for an unattached conversation or a widening audience;
-- the Mucker flow end to end: three replies forwarded once each, 2 PM read and
-  post;
-- bot removal and re-invitation; Slack Connect ID change; blocked private
-  placement.
+- `conversation_post` replayed for the same receipt producing one message, with
+  the model scripted through `useOpenRouterDouble`;
+- `conversation_list` omitting a conversation after the principal loses access;
+- read and post refused for an unattached conversation, and attach refused to
+  a person who cannot post there;
+- a forward to a home Breakout that includes someone who was not in the DM;
+- bot removal and re-invitation; blocked private placement.
+
+Node suite: the `owning_substream_id` column added to SidekickDO's `automation`
+and WorkspaceDO's `automation_directory`, and the binding table's migration.
+
+Evaluations: the continued model forwarding a reply once without re-sending the
+original requests, and the tool evaluations listed under Conversation tools.
 
 Provider event parsing alone does not prove the persisted destination or
 audience. Slack app changes also need a live invitation and MPIM message smoke
