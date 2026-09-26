@@ -51,6 +51,7 @@ The regional bridge uses D1 only for identity and routing:
 | `list_spaces` | Regional workspace identity at the open authority generation | `spaces` in WorkspaceDO, archived Spaces included |
 | `list_artifacts` | Regional workspace identity at the open authority generation | `artifact_registry` in WorkspaceDO |
 | `run_workspace_sql` | Resolve, select one region, then revalidate the open workspace authority generation | WorkspaceDO SQLite |
+| `retry_parent_import` | Resolve, select one region, then revalidate the open workspace authority generation, as `run_workspace_sql` | `WorkspaceDO.retryParentImport`: runs a pending Channel or Space import out of its legacy object now and returns its `parent_imports` row |
 | `run_workstream_sql` | Resolve, select one region, then revalidate the active work-stream route generation | Legacy WorkstreamDO SQLite (frozen after export; live Channel parent state is in WorkspaceDO) |
 | `run_substream_sql` | Resolve the active work-stream route and child directory membership, select one region, then revalidate | SubstreamAgent SQLite |
 | `run_sidekick_sql` | Resolve the regional workspace identity and `automation_directory` membership, select one region, then revalidate | SidekickDO SQLite |
@@ -163,6 +164,15 @@ still open the legacy `WorkstreamDO` and `SpaceDO`, which hold only the rows
 they had before export and whether they were exported
 (`parent_authority_moved`). They are how an operator confirms a parent moved.
 
+**`retry_parent_import` is the one tool that is not SQL.** An import that
+fails the same way every time is repaired with the SQL tools, but re-running it
+needs the legacy object's export RPC, which no statement can make. It calls
+`WorkspaceDO.retryParentImport`, the same single-flight import a request runs,
+and returns the ledger row rather than throwing, so the operator sees the next
+code if the repair was not enough. It changes nothing for a parent that is not
+pending. [`runbook.md`](runbook.md#a-channel-or-space-import-is-stuck) is the
+procedure.
+
 **Its hidden main conversation is reached with the substream tools**, under the
 Space id as the parent and `0` as the substream, exactly as a work stream's Main
 is. That works because `SpaceService.create` provisions a Space through
@@ -213,7 +223,9 @@ It proves bound writes, reads, SQLite metadata, and BLOB serialization.
 
 `apps/api/test-workers/engineering-workspace-inspection.test.ts` proves that a
 workspace is inventoried as active, resolves at the open generation, and
-executes against its initialized WorkspaceDO from regional identity alone.
+executes against its initialized WorkspaceDO from regional identity alone, and
+that `retryParentImport` imports a pending parent through the bridge and is
+refused at a stale generation.
 
 `apps/api/test-workers/engineering-sidekick-inspection.test.ts` drives the
 bridge's Sidekick tools against a Sidekick created through the real path, and
@@ -277,6 +289,27 @@ configuration and administrator-added HTTPS redirect allowlist entries. It also
 ensures the supported Claude, ChatGPT, and Cursor hosted origins remain present.
 Changing that managed provider list remains an explicit Access administration
 decision.
+
+### 2026-09-25 — Retry a stuck Channel or Space import
+
+**What changed:** `retry_parent_import` calls a new bridge method and
+`WorkspaceDO.retryParentImport`, fenced like `run_workspace_sql`, and returns
+the parent's `parent_imports` row.
+
+**Why:** Moving Channel and Space parents into `WorkspaceDO` freezes the legacy
+object before the import commits, so an import that fails deterministically (a
+row SQLite refuses, a stored row the replay cannot parse) left the Channel
+unavailable with no way to re-run it after a repair short of waiting for the
+alarm's backoff or a user opening it.
+
+**Considered and rejected:** An SQL convention (clear `not_before` and wait for
+the alarm) was rejected: it waits up to the alarm's backoff and gives the
+operator no answer. A general "call any RPC" tool was rejected as a product API
+in disguise; this is one named repair.
+
+**Consequences:** This console now holds one typed domain call beside the SQL
+tools. The next such call needs the same justification: a repair SQL cannot
+express.
 
 ### 2026-09-20 — Remove the completed workspace cutover ledger
 

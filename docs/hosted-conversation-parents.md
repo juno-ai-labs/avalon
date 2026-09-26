@@ -3,46 +3,20 @@
 A **Channel** and a **Space** are conversation parents: each owns who may read
 its conversations, its breakout registry, its grants, invitations and Space
 access provenance, and the per-viewer state the sidebar and the Channel control
-socket draw. Until this change each parent was its own Durable Object
-(`WorkstreamDO`, and `SpaceDO`, which was `WorkstreamDO` under a role). This
-document owns how that state now lives inside the Organization's `WorkspaceDO`,
-keyed by parent id, and how existing objects were moved there.
+socket draw. That state lives inside the Organization's `WorkspaceDO`, keyed by
+parent id, in the same SQLite database as the directory, the Space membership
+and the grants it is derived from or copied into, so a conversation request
+asks one warm object instead of two parent calls, sidebar state takes one Queue
+hop instead of two, and a Space change is a transaction instead of a
+cross-object saga. This document owns that hosting, and the one-time move of
+each parent out of the Durable Object it used to be (`WorkstreamDO`, and
+`SpaceDO`, which was `WorkstreamDO` under a role).
 
 The conversations themselves do not move. Every Channel main conversation, every
 breakout, every Sidekick run and every Space's hidden conversation is still a
 `SubstreamAgent`: a transcript and an agent loop are a real concurrency and size
 boundary, and they stay one object each. `SidekickDO` is also unchanged; it
 keeps its own parent object ([`automation-lifecycle.md`](automation-lifecycle.md)).
-
-## Why
-
-The parent objects were the middle layer of `WorkspaceDO → WorkstreamDO →
-SubstreamAgent`, and almost every one of their facts either came from the
-Organization or was copied back into it:
-
-- **Every conversation request paid two sequential calls to the parent**
-  (`authority`, then `authorizeViewer`) before reaching the conversation, often
-  against a cold object that then woke its main conversation.
-- **Sidebar state crossed two Queue hops.** A conversation's projection went
-  conversation → Queue → parent (outbox, receipts, waterline fences) → Queue →
-  `WorkspaceDO`, which kept a second copy in its directory.
-- **Space changes were cross-object sagas.** Moving a Space's audience onto its
-  Channels took four cross-object awaits per Channel, staged intents, a resume
-  loop, and apply/confirm/retract fences, because the Space membership lived in
-  `WorkspaceDO` and each Channel's audience provenance lived in its own object.
-- **A Space was a Channel with every product surface switched off**, replaying
-  the whole Channel migration ledger for four methods it used.
-- **Kind was found by probing.** `resolveParent` asked `WorkstreamDO` first, and
-  the authorization projection asked `SpaceDO` first under every Channel id,
-  creating and migrating an empty object each time.
-
-The size argument that justified small objects applies to transcripts, which
-stay in `SubstreamAgent`. Measured in production on 2026-09-25, the busiest
-Channel parent held 4 children, 11 viewer rows and 1,083 state changes; its
-only large table was the Queue receipt ledger this change removes. What does
-threaten the 10 GB object limit is `workspace_connector_events` (about 2.1 GB in
-eight weeks in one Organization), which is unrelated to this change and tracked
-separately.
 
 ## Where the code lives
 
@@ -197,20 +171,44 @@ Importing one parent:
    then on it refuses everything except export (idempotent: a second export
    returns the same frozen rows) and forwards any child effect it is handed to
    `WorkspaceDO`.
-2. `WorkspaceDO` inserts the rows under the parent id and marks the ledger row
-   `imported`, in one transaction. Pending outbox rows come with it and are
-   drained locally.
+2. `WorkspaceDO` inserts the rows under the parent id, re-arms the work the
+   legacy object's alarm owed (an undelivered participant projection, a
+   pending participant migration, an unsent invitation email), replays the
+   stored breakout projections and direct grants the legacy migrations 17, 19
+   and 20 once replayed, and marks the ledger row `imported`, all in one
+   transaction. A parent is never `imported` without its replay. Outbox rows
+   come with it as `pending` and due now, whatever the legacy drain was doing
+   with them, and are drained straight after.
 
 This is the write freeze: one parent at a time, for the length of one RPC. A
-request for a `pending` parent imports it before it is served. The alarm also
-imports pending parents in pages, last in its run so a page of cold legacy
-calls does not hold up the rest of its work, and an Organization converges
-without anyone opening anything. A failed import, before or after the export,
-records its code and backs off; a request that arrives during the backoff fails
-with `parent_import_unavailable` and that code rather than asking the legacy
-object again. Child-effect receipts are not imported: a replay older than
-the import converges on the per-key waterlines, which is the rule the legacy
-receipts already fell back to past their retention.
+request for a `pending` parent imports it before it is served, single-flight
+per parent. The alarm also imports pending parents in pages of
+`SPACE_BOOTSTRAP_PAGE_SIZE`, last in its run so a page of cold legacy calls
+does not hold up the rest of its work, and re-arms while any is due, so an
+Organization converges without anyone opening anything.
+
+**A failed import stays `pending` and says why.** Every failure, before or
+after the export, records its code in `parent_imports.last_error_code`, logs
+`hosted_parent_import_deferred` with it, and throws
+`parent_import_unavailable:<code>`: the code is in the message because a
+Durable Object RPC drops `cause`. A row SQLite refused is named by its hosted
+table and rule (`parent_import_row_rejected:parent_state_changes:unique`);
+the import is one transaction, so nothing of the parent lands. The next
+request for that parent retries at once, because the person asking is the one
+the import is for; the alarm retries an unopened one on
+`scheduledAlarmRetryDelay`'s schedule, the same backoff every other alarm
+phase uses. A failure that repeats is deterministic, and an operator repairs
+it with the engineering MCP's `run_workspace_sql` or `run_workstream_sql`,
+then `retry_parent_import` (`WorkspaceDO.retryParentImport`), which runs the
+same import and returns the ledger row;
+[`runbook.md`](runbook.md#a-channel-or-space-import-is-stuck) has the
+procedure.
+
+Child-effect receipts are not imported: a replay older than the import
+converges on the per-key waterlines, which is the rule the legacy receipts
+already fell back to past their retention. The hosted parent keeps its own
+receipt ledger, `parent_child_receipts`, with the legacy 180-day retention; see
+[Performance and cost](#performance-and-cost).
 
 ## Invariants
 
@@ -247,7 +245,9 @@ directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
 
 | Condition | Behavior |
 | --- | --- |
-| The legacy object cannot be reached during an import | The request that needed the parent fails with `parent_import_unavailable`; the ledger row stays `pending` and the next request or alarm retries it. |
+| The legacy object cannot be reached during an import | The request that needed the parent fails with `parent_import_unavailable:<code>`; the ledger row stays `pending` with the code, the next request retries at once, and the alarm retries on `scheduledAlarmRetryDelay`. |
+| An import fails the same way every time (a row SQLite refuses, `parent_import_target_not_empty`, a stored row a replay cannot parse) | Nothing of the parent lands, the legacy object stays frozen, and every request for that parent fails with the code until an operator repairs the row and runs `retry_parent_import` ([`runbook.md`](runbook.md#a-channel-or-space-import-is-stuck)). The Channel is unavailable for that time; that is the failure the team chose to notice rather than an import that lands partly. |
+| One parent's export is larger than a Workers RPC result (32 MiB) | The export RPC fails every time with the runtime's error as the code. No parent in production is near it (see [Performance and cost](#performance-and-cost)); the fix, if one ever is, is a paged export, which nobody has needed. |
 | A legacy object that was never created (an id the directory knew but no object held) | Its export returns no metadata; the parent is marked `imported` empty. |
 | The directory apply fails after a parent commit | The `parent_outbox` row stays and the alarm reapplies it; the apply is idempotent on generation, waterline and payload hash. |
 | A Queue message addressed to the legacy object arrives after export | The legacy object forwards it to `WorkspaceDO`. |
@@ -260,18 +260,80 @@ directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
 `WorkstreamDO` with its own migration ledger and rows, then proves on real
 workerd that the first request to the Organization object imports it, that the
 legacy object is frozen and answers 410, and that a parent whose legacy object
-never existed closes its ledger row without creating that object. A Space uses
-the same code with a different namespace and is not covered separately.
+never existed closes its ledger row without creating that object. For a
+Channel and for a Space it seeds at least one row in every table
+`LEGACY_PARENT_EXPORT_TABLES` names and asserts each lands row for row, against
+a table map the test writes out itself, with the legacy alarms re-armed; a new
+exported table without a fixture row fails it. It also covers the failure
+paths: the retry on every request, the named code in the thrown message, the
+alarm's retry schedule and paging, a row SQLite refuses being repaired and
+retried through `retryParentImport`, a replay that fails rolling the whole
+import back, and a legacy in-flight outbox row draining once imported.
 `conversation-effect-queue.test.ts` proves the outbox drain: directory rows
 applied in the object, activity and notification rows sent to the Queue. The
 conversation-parent contract tests (`conversation-parent-contract.test.ts` and
 its neighbours) run against the hosted parent. Run with
 `pnpm --filter @rally/api test:workers`.
 
+## Operations
+
+**Ship it at 100%, never as a percentage split.** `deploy-api.yml` promotes
+each version with `--percentage 100`, and this change depends on that. Under a
+split, a request on the old version reaches a legacy object the new version
+has already exported and frozen (every product call answers 410), and the old
+version's directory statements name tables migration 72 renamed. A gradual
+deployment of this change is an outage for whichever share of traffic lands on
+the old version.
+
+**Rollback is forward-fix only.** Migration 72 renames the directory tables in
+the same migration as the code that uses the new names, and every exported
+legacy object is frozen. Rolling the Worker back would run the previous code
+against renamed tables and frozen parents. Splitting the renames into a later
+migration was considered and not done: every hosted-parent statement and the
+directory code already use the new names, so the split is a second rename of
+the same tables rather than a smaller change.
+
+**A stuck import** is a `parent_imports` row that stays `pending` with a
+`last_error_code`, and `hosted_parent_import_deferred` warnings with that
+code. [`runbook.md`](runbook.md#a-channel-or-space-import-is-stuck) has the
+query, the repair, the retry, and how to confirm no Organization has a pending
+import before the legacy classes are deleted.
+
+## Performance and cost
+
+The design is bounded by one Durable Object's limits, since every Channel and
+Space in an Organization now shares one SQLite database and one socket set.
+
+- **Parent state is small.** Measured in production on 2026-09-25, the busiest
+  Channel parent held 4 children, 11 viewer rows and 1,083 state changes. Its
+  largest table was the child-effect receipt ledger, which the move does not
+  import and which the hosted parent keeps as `parent_child_receipts` with the
+  legacy 180-day retention. It is a replay fence for activity and notification
+  effects, and those are idempotent downstream too (`workstream_notification_intents`
+  is `ON CONFLICT (intent_id) DO NOTHING` and keeps its delivered state;
+  activity dedupes on `dedupe_key`), so dropping the ledger is open if it ever
+  grows. An export of that size is far below the 32 MiB Workers RPC limit.
+- **The 10 GB object limit is reached by connector events, not by parents.**
+  `workspace_connector_events` grew about 2.1 GB in eight weeks in the busiest
+  Organization, about 0.26 GB a week. At that rate that Organization's object
+  is full in about 30 weeks from 2026-09-25 ((10 - 2.1) / 0.26), around April
+  2027. A full object refuses every write, and since this change that includes
+  every Channel and Space parent in the Organization, not only connector
+  ingest. **Connector-event retention is a precondition of this design**, and
+  has to ship before any Organization's object is within a few GB of the
+  limit; `PRAGMA page_count` times `page_size` through `run_workspace_sql` is
+  the reading.
+- **Sockets.** Cloudflare allows 32,768 hibernatable WebSockets per object. The
+  Organization object holds every workspace socket and every Channel control
+  socket in its Organization: roughly two per open client window, so about 16,000
+  windows open at once in one Organization. Conversation feed sockets are on the
+  `SubstreamAgent`s and do not count.
+
 ## Open questions
 
 - Retiring the legacy classes: once every Organization reports no `pending`
-  row, a follow-up change deletes `WorkstreamDO` and `SpaceDO` with a
+  row ([`runbook.md`](runbook.md#a-channel-or-space-import-is-stuck) says how
+  to check), a follow-up change deletes `WorkstreamDO` and `SpaceDO` with a
   `deleted_classes` migration.
 - A Space's hidden conversation still holds its participants and resources.
   Moving them into `spaces` is the next step, and removes a `SubstreamAgent` per
@@ -290,19 +352,37 @@ tables took the product's names (`channels`, `channel_viewers`, `breakouts`,
 `breakout_viewers`, `spaces`, `space_viewers`). The legacy objects are reduced
 to a one-time export, and each is imported on first touch or by the alarm.
 
-**Why:** The parent objects were a middle layer whose facts mostly came from or
-went back to the Organization. It cost two sequential calls on every
-conversation request, two Queue hops on every sidebar update, and staged
-cross-object sagas on every Space change, and the Space object was a Channel
-object with its features switched off. The small-object design was meant to
-protect transcripts, which stay in their own objects.
+**Why:** The parent objects were the middle layer of `WorkspaceDO →
+WorkstreamDO → SubstreamAgent`, and almost every one of their facts either came
+from the Organization or was copied back into it. Every conversation request
+paid two sequential calls to the parent (`authority`, then `authorizeViewer`),
+often against a cold object that then woke its main conversation. Sidebar state
+crossed two Queue hops (conversation → Queue → parent → Queue → `WorkspaceDO`,
+which kept a second copy). Moving a Space's audience onto its Channels took four
+cross-object awaits per Channel, staged intents, a resume loop and
+apply/confirm/retract fences, because the Space membership and each Channel's
+audience provenance lived in different objects. A Space was a Channel with
+every product surface switched off, replaying the whole Channel migration
+ledger for four methods. And kind was found by probing: `resolveParent` asked
+`WorkstreamDO` first and the authorization projection asked `SpaceDO` first,
+creating and migrating an empty object each time. The small-object design was
+meant to protect transcripts, which stay in their own objects; the busiest
+Channel parent in production held 4 children, 11 viewer rows and 1,083 state
+changes.
 
 **Considered and rejected:** Folding each Channel parent into its own main
 conversation instead. It removes the same parent round trip but leaves Space
 changes as cross-object sagas, since the Space membership and the Channel
 audience would still live in different objects. Zero-downtime dual writes for
 the move were rejected for the per-parent export: a parent is frozen for one
-RPC, which is cheaper to build and to verify.
+RPC, which is cheaper to build and to verify. For a failed import, a backoff
+the request path waited out (5 s doubling to 300 s) was rejected: it was a new
+limit nobody owned, and it made the person who opened the Channel wait for a
+schedule meant for background retries. A request retries at once; only the
+alarm backs off, on the shared `scheduledAlarmRetryDelay`. A frozen legacy
+object whose import fails the same way every time is repaired by an operator
+and retried with `retry_parent_import`, rather than importing what fits and
+skipping the rest, which would lose rows silently.
 
 **Consequences:** The Organization object now answers every Channel viewer
 check, so its handlers have to stay short. The Channel control socket is served
@@ -310,4 +390,7 @@ by the Organization object, which is also where it is revoked. The legacy
 parent warmed a Channel's Main conversation whenever it woke; the Organization
 object is rarely asleep, so it now warms Main when a Channel control socket
 opens instead. The legacy
-classes stay deployed until every Organization has imported.
+classes stay deployed until every Organization has imported. The change ships
+only at 100% and rolls back only forward (see [Operations](#operations)), and
+connector-event retention becomes a precondition of the Organization object's
+storage budget (see [Performance and cost](#performance-and-cost)).

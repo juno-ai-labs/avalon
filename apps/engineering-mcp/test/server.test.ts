@@ -71,6 +71,9 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     runSpaceSql: vi.fn<EngineeringInspectionRpcBinding["runSpaceSql"]>(
       async () => ({ found: false }),
     ),
+    retryParentImport: vi.fn<EngineeringInspectionRpcBinding["retryParentImport"]>(
+      async () => ({ found: false }),
+    ),
   };
 }
 
@@ -124,6 +127,7 @@ describe("Rally engineering MCP tools", () => {
       "list_spaces",
       "list_artifacts",
       "run_workspace_sql",
+      "retry_parent_import",
       "run_workstream_sql",
       "run_substream_sql",
       "run_sidekick_sql",
@@ -421,6 +425,33 @@ describe("Rally engineering MCP tools", () => {
       query: { sql: "SELECT current_version FROM artifact_state", bindings: [] },
     });
     expect(global.runArtifactSql).not.toHaveBeenCalled();
+  });
+
+  it("retries a parent import in the one region that holds the Organization and returns its ledger row", async () => {
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000ec1");
+    const parentId = "00000000-0000-7000-8000-000000000ec2";
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    vi.mocked(global.resolveWorkspace).mockResolvedValue({
+      found: true,
+      value: { region: "global", workspaceId, authorityGeneration: 3 },
+    });
+    vi.mocked(global.retryParentImport).mockResolvedValue({
+      found: true,
+      value: { region: "global", workspaceId, parentId, state: "imported", attempts: 2, lastErrorCode: null },
+    });
+
+    const response = await rpc(
+      { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise },
+      "tools/call",
+      { name: "retry_parent_import", arguments: { workspaceId, parentId } },
+    );
+    const result = response.result as { content: Array<{ text: string }> };
+    expect(JSON.parse(result.content[0]!.text)).toEqual({
+      region: "global", workspaceId, parentId, state: "imported", attempts: 2, lastErrorCode: null,
+    });
+    expect(global.retryParentImport).toHaveBeenCalledWith({ workspaceId, parentId, authorityGeneration: 3 });
+    expect(enterprise.retryParentImport).not.toHaveBeenCalled();
   });
 
   it("does not execute SQL when both regions resolve the target", async () => {
