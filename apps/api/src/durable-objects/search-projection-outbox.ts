@@ -184,8 +184,10 @@ export const CONVERSATION_SEARCH_REPROJECTION_MIGRATION_STATEMENTS = [
  * job. A copy of 53's statement, not a shared constant, for 53's reason: each
  * migration's text is hashed into a receipt on every migrated object.
  *
- * A link whose capture failed before is captured again by this pass, as it
- * would be on its turn's next edit.
+ * A link whose capture failed before is captured again by this pass. Its
+ * lexical row is written first, so it still gains an audience, but a capture
+ * that fails again exhausts the Queue's retries and dead-letters; see
+ * docs/text-search.md, Operations.
  */
 export const CONVERSATION_SEARCH_AUDIENCE_MIGRATION_STATEMENTS = [
   `INSERT INTO durable_outbox
