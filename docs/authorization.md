@@ -12,6 +12,7 @@ participants or become a new canonical owner of memberships.
 | `services/search-authorization.ts` | KV/regional search decisions, read-through misses and mutation-driven push |
 | `durable-objects/search-authorization-universe.ts` | The subjects and resources a push target reaches, read from the WorkspaceDO directories, so a decision is registered before the search that needs it |
 | `services/authorization-service.ts` | Member policy, batch-local owner observations and HTTP disclosure adapter |
+| `services/resource-read-rules.ts` | The draft and attachment rules for a resource, shared by the canonical check and the search audience its rows carry |
 | `durable-objects/authorization-storage.ts` | Exact attachment locations, inventory revision ordering and shipped migration tables |
 | `durable-objects/search-authorization-projection.ts` | Workspace mutation triggers, coalesced push outbox and Queue dispatch |
 | `durable-objects/authorization-projection.ts` | Transactional child outbox and reference-only Queue contract |
