@@ -981,6 +981,40 @@ describe("carrying one revocation to the objects", () => {
     expect(acked).toEqual(["unreadable"]);
     expect(retried).toEqual(["hop"]);
   });
+
+  it("names the field an unreadable message failed on, never its value", async () => {
+    const { env } = fanOut();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const queued = (id: string, body: unknown) => ({
+      id,
+      timestamp: new Date(NOW),
+      body,
+      attempts: 1,
+      ack: vi.fn(),
+      retry: vi.fn(),
+    }) satisfies Message<unknown>;
+    await consumeAccessRevocationQueue({
+      queue: "avalon-global-access-revocations",
+      messages: [
+        queued("field", { ...message({ scope: "workspace" }), workspaceId: "alex@juno-labs.com" }),
+        queued("whole", "not a message"),
+      ],
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
+      retryAll: vi.fn(),
+      ackAll: vi.fn(),
+    } satisfies MessageBatch<unknown>, env);
+
+    const rejections = warning.mock.calls
+      .map(([entry]) => entry as Record<string, unknown>)
+      .filter((entry) => entry.event === "access_revocation_message_invalid");
+    expect(rejections.map((entry) => entry.errors)).toEqual([
+      expect.stringMatching(/^workspaceId:invalid_/u),
+      // The whole-value case is the one with no other evidence, and the one a
+      // hand-rolled `(root)` once pushed outside the code's character class.
+      "-root-:invalid_type",
+    ]);
+    expect(JSON.stringify(rejections)).not.toContain("alex");
+  });
 });
 
 describe("recognizing this protocol's queue", () => {
