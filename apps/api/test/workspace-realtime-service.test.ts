@@ -26,7 +26,6 @@ describe('workspaceSyncPublicationsForMutation', () => {
     ['POST', '/connections/x', connectionTopics, organization],
     ['POST', '/connections/granola/workspace', connectionTopics, organization],
     ['POST', '/connections/ashby/workspace', connectionTopics, organization],
-    ['POST', '/connections/canva/complete', connectionTopics, actor],
     ['POST', '/connections/google/start', ['connector_oauth_attempts'], actor],
     ['POST', '/connections/custom-mcp/start', ['connector_oauth_attempts'], actor],
     ['POST', '/connections/connection-1/reconnect', ['connector_oauth_attempts'], actor],
@@ -48,5 +47,7 @@ describe('workspaceSyncPublicationsForMutation', () => {
   it('publishes nothing for a retired or read-only write', () => {
     expect(workspaceSyncPublicationsForMutation('PATCH', '/projects/project-1')).toEqual([]);
     expect(workspaceSyncPublicationsForMutation('POST', '/connections/slack/link/preview')).toEqual([]);
+    // The OAuth completion it runs publishes the connection's topics itself.
+    expect(workspaceSyncPublicationsForMutation('POST', '/connections/canva/complete')).toEqual([]);
   });
 });

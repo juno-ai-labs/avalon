@@ -372,22 +372,38 @@ the traffic, and neither goes to every socket by default.
 Nobody else is sent anything. A tombstone to someone who never saw the Channel
 would name a private Channel and say when it moved, and it has no job to do on
 the client: the desktop's receiver removes the row, and there is no row to
-remove. The people who may have lost a Channel are worked out inside the
+remove. The people who may have lost a Channel are named inside the
 directory transaction, against the rows as they were before it, because once
-the batch commits "who could see it a moment ago" is no longer answerable.
-They are carried in the directory follow-up (`channelLosses`) as a set of
-people or `"all"`:
+the batch commits "who could see it a moment ago" is no longer answerable, and
+a follow-up can run long after its write (the alarm retries one that failed).
+They are carried in the directory follow-up (`channelLosses`) as user ids,
+never as "everyone": expanded against whoever is connected when the follow-up
+runs, "everyone" would send a Channel's tombstone, and so its id, to a member
+who joined after the write and never had it.
 
 | What the write did | Who is owed the tombstone |
 | --- | --- |
 | A viewer row stopped being a participant, or was deleted for a person who is no longer an active member | That person. |
-| The Channel was archived | Everyone who could see it: `"all"` for an Organization-wide Channel, its participants otherwise. |
-| An Organization-wide Channel narrowed to its participants | `"all"`; the participants still see it and get the row. |
+| The Channel was archived | Everyone who could see it (`channelReadersBefore`): its participants, and for an Organization-wide Channel every member socket subscribed at the write. |
+| An Organization-wide Channel narrowed to its participants | As for an archive; the participants still see it and get the row. |
 | A new authority generation replaced the row | As for an archive; each participant's row reappears when their viewer row arrives at the new generation. |
 | A person left the Organization (`applyMemberStatus`) | That person, for each Channel they sat in; their socket stays open until the revocation walk closes it. |
 
-A follow-up recorded before `channelLosses` existed is read as `"all"` for its
-common changes, so no tombstone is lost across the deploy.
+The subscribed sockets stand in for an Organization-wide Channel's readers
+because they are exactly the people holding it: a member with no socket is
+answered, when they connect, with a sidebar that already reflects the write,
+and `workspace_member_status` cannot list every member, since it learns one
+from before it existed only when something asks.
+
+Two older follow-up shapes are still read: one recorded before `channelLosses`
+existed, and one holding `"all"`, which an earlier build of this change wrote
+for an Organization-wide Channel. Neither is read as everyone. Each Channel's
+row goes to its current readers, and its tombstone to the people who still hold
+a viewer row for it at any generation (`legacyChannelLosers`): a removed
+participant keeps a non-participant row, so they are told, and somebody with
+no relationship to the Channel is not. A reader of an Organization-wide Channel
+who never had a row keeps it on screen until a reconnect reloads the sidebar;
+only a follow-up written before this change pays that.
 
 Each person's rows are **built once** for all of their sockets and all of the
 Channels they are owed, from one set of reads, and sent to each socket.
@@ -405,15 +421,21 @@ the same way. Nothing here waits on anything: the plan is sent synchronously
 after the last follow-up ran, with no `await` or round trip added to the
 request.
 
+**The rows are best effort, and never hold a follow-up back.**
+`publishChannelRows` does not throw: a person whose row cannot be built is
+logged (`channel_row_publish_failed`, with the reason's code) and skipped, and
+everybody else is still sent theirs. A follow-up that ran is deleted whatever
+the sends did, because re-running it would repeat its reconciliations,
+archival notices and presence broadcast to re-send a row, and a socket that
+missed one is answered with the current sidebar when it reconnects. The pass's
+sync topics are the durable part: if publishing them throws, they are recorded
+as a follow-up of their own (`directory_followup_sync_deferred`), and only
+they are retried.
+
 **A sync topic** (`workspace_sync`) goes to everybody unless its event names an
-audience: the people whose own setting moved, or the connection a write
-changed, whose audience is its owner when it is personal and everyone when it
-is the Organization's. The event is stored with that audience
-(`workspace_sync_events.audience_json`), so a reconnect's replay unions only
-the events that were sent to that person. `history_unavailable` still names
-every topic, which is the person's own invalidation and carries no data.
-[`realtime-sockets.md`](realtime-sockets.md) has the topic catalog and each
-topic's audience.
+audience, live and on replay; how an event names one, and each topic's
+audience, are in
+[`realtime-sockets.md`](realtime-sockets.md#electron-connection-topology).
 
 ### Reconnect and teardown
 
@@ -531,8 +553,13 @@ open transport as success.
   people a write just took it from.** A null row sent to anybody else names a
   private Channel and when it moved; a tombstone withheld from somebody who
   lost the Channel leaves it on their screen. A new way to take a Channel from
-  someone has to add them to the batch's `channelLosses`, or it has to be one
-  of the transitions `applyDirectoryEnvelope` already compares.
+  someone has to add them to the batch's `channelLosses`, by user id and read
+  inside the batch's transaction, or it has to be one of the transitions
+  `applyDirectoryEnvelope` already compares.
+- **A Channel row never holds a directory follow-up back.** A failed row send
+  is logged and skipped; making it defer the follow-up re-runs every
+  reconciliation and notice in the pass on each alarm retry, for a row the
+  next reconnect would send anyway.
 - **A per-person sync event is stored with its audience and replayed only to
   it.** Replaying it to everyone after a reconnect would undo the live send's
   narrowing for every client that was briefly away.
@@ -648,7 +675,7 @@ move the workspace synchronization socket or dictation transport into Node.
 | `apps/desktop/src/renderer/lib/realtime-socket.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/realtime-socket.test.ts` | Browser-shaped state/events, IPC calls, and one multiplexed preload listener for a socket swarm. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/workstream-socket-pool.test.tsx` | Feed ownership with no Channel control ticket ever requested, route retention, expiry, overlap, speculative feed warming, and navigation promotion. |
 | `apps/api/test-workers/channel-viewer-state.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/channel-viewer-state.test.ts` | A Channel's breakouts and running background agents on the real workspace socket: per viewer and per Channel, pushed on a roster or agent change, tombstoned without closing the socket, current after a resubscribe, and Main warmed on foreground. |
-| `apps/api/test-workers/workspace-socket-fanout.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-socket-fanout.test.ts` | Who the workspace socket tells, on real sockets: a private Channel's change reaches nobody outside it; the tombstone reaches a removed participant, the readers of a narrowed or archived Channel, the participants of a re-generated one, and a member who left the Organization, and nobody who never saw the Channel; one person's two sockets get the same row, built once (a counting wrapper on `channelRowPayloads`); a burst of five changes in one delivery is one row per socket; a per-person topic reaches its owner alone, live and on replay; a personal connection's change reaches its owner and an Organization connection's reaches everyone. |
+| `apps/api/test-workers/workspace-socket-fanout.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-socket-fanout.test.ts` | Who the workspace socket tells, on real sockets: a private Channel's change reaches nobody outside it; the tombstone reaches a removed participant, the readers of a narrowed or archived Channel, every reader of an Organization-wide Channel re-generated for its participants, the participants of a re-generated personal one, and a member who left the Organization, and nobody who never saw the Channel, including a member who joined before a held follow-up ran; a follow-up in either older shape reaches the readers and whoever still has a viewer row, never everyone; one person's two sockets get the same row, built once (a counting wrapper on `channelRowPayloads`); a burst of five changes in one delivery, and two held follow-ups run in one pass, are one row per socket; a row that cannot be built for one person still reaches the others and the follow-up is deleted; a per-person topic and a personal connection's change reach their audience alone, live and on replay, and a replay answers at the log's waterline; an Organization connection's change reaches everyone; a route's `noteChangedConnection` reaches the middleware's publish. |
 | `apps/desktop/src/renderer/components/app-shell.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/app-shell.test.tsx` | Active/background selection, including all pins, five recent unpinned rows, and additional running rows. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/durable-object-runtime.test.ts` | Real-workerd upgrade, hibernation, attachment, snapshot, replay, read-only feed, and revocation behavior. |
 
@@ -748,9 +775,14 @@ explicit product states rather than speculative guesses.
 
 **What changed:** A Channel's row is sent to the people who can see the
 Channel now and to the people the write may have taken it from, who get the
-tombstone; nobody else hears of it. Each person's row is built once for all of
+tombstone; nobody else hears of it. Those people are named by user id inside
+the write's transaction (for an Organization-wide Channel, every member socket
+subscribed then), so a follow-up the alarm runs late never reaches someone who
+joined in between. Each person's row is built once for all of
 their sockets, and one post-commit pass sends each Channel once per socket
-however many writes in it touched the Channel. A sync event can name an
+however many writes in it touched the Channel. The rows are best effort: one
+that cannot be built is logged and skipped, and never keeps a follow-up from
+being deleted. A sync event can name an
 audience (people, or a connection whose owner is the audience when it is
 personal), is stored with it, and replays only to it; the mutation map now says
 per write who it is for, and a connection write no longer names `automations`.
@@ -780,7 +812,16 @@ when its socket's `initial` landed).
 **Considered and rejected:** Deciding tombstones at publish time with a
 "could have seen it" test: it misses the readers of an Organization-wide
 Channel who have no viewer row when it narrows, and sends tombstones for ever
-to people who once had a row. Per-Channel subscriptions on the workspace
+to people who once had a row. It survives only as the reading of a follow-up
+recorded before losses were named, where nothing better is known. Recording
+"everyone" for an Organization-wide Channel and expanding it when the
+follow-up runs: a member who joined in between is sent the tombstone, and with
+it the id, of a Channel they never had. Naming those readers from
+`workspace_member_status`: it lists a member from before it existed only once
+something has asked about them. Putting off every follow-up of a pass when its
+row send throws: each alarm retry re-ran the pass's unrelated reconciliations,
+archival notices and presence broadcasts, and one bad row also dropped the
+pass's sync topics. Per-Channel subscriptions on the workspace
 socket, for the reasons the 2026-09-25 entry gives. Publishing connection
 changes from each route handler, which would have added an awaited RPC to
 requests that now defer it. Connecting Settings's socket only while shown with
@@ -800,8 +841,11 @@ successor misses nothing and costs no socket. Parsing again in the preload
 what main had already parsed: main is the untrusted edge's one parser.
 
 **Consequences:** A change that can take a Channel away from someone has to
-name them in `channelLosses` (or be a transition `applyDirectoryEnvelope`
-compares). A new sync topic that is one person's has to be published with an
+name them in `channelLosses`, by user id and inside its transaction (or be a
+transition `applyDirectoryEnvelope` compares); `"all"` is still parsed, for
+rows already written, and must not be written again. Nothing that must happen
+may ride on a Channel row send, which can fail for one person without anyone
+retrying it. A new sync topic that is one person's has to be published with an
 audience; the table in [`realtime-sockets.md`](realtime-sockets.md) says which
 topics are. A connection change still invalidates `resources` and
 `digest_schedule` for its whole audience. A socket-less window is now a
