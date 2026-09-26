@@ -15,6 +15,8 @@ import {
   EngineeringWorkstreamListLookupSchema,
   ListEngineeringWorkspacesInputSchema,
   ListEngineeringWorkspacesResultSchema,
+  ParentImportRetryInputSchema,
+  ParentImportRetryLookupSchema,
   SidekickInspectionInputSchema,
   SidekickSqlInspectionInputSchema,
   SpaceInspectionInputSchema,
@@ -41,6 +43,7 @@ import {
   type EngineeringWorkstreamListLookup,
   type EngineeringWorkstreamTargetLookup,
   type ListEngineeringWorkspacesResult,
+  type ParentImportRetryLookup,
 } from "@rally/contracts/engineering-inspection";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { z } from "zod";
@@ -619,6 +622,26 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         substreamId: null,
         result: await workspace.runInspectionSql(request.query),
       },
+    });
+  }
+
+  /**
+   * The one repair here that is not SQL: re-running a Channel's or Space's
+   * legacy import, which needs the export RPC the console cannot make.
+   * Fenced like `runWorkspaceSql`.
+   */
+  async retryParentImport(input: unknown): Promise<ParentImportRetryLookup> {
+    const request = parseRpcInput(ParentImportRetryInputSchema, input, "retryParentImport");
+    if (!await resolveInspectionWorkspaceRoute(
+      this.env,
+      request.workspaceId,
+      request.authorityGeneration,
+    )) return { found: false };
+    const workspace = await workspaceStub(this.env, request.workspaceId);
+    const ledger = await workspace.retryParentImport({ workspaceId: request.workspaceId, parentId: request.parentId });
+    return ParentImportRetryLookupSchema.parse({
+      found: true,
+      value: { region: this.env.AVALON_REGION, workspaceId: request.workspaceId, parentId: request.parentId, ...ledger },
     });
   }
 
