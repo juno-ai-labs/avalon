@@ -211,6 +211,12 @@ export interface HostedParentRole {
   publishesGrantDirectory: boolean;
   /** Whether activity, notification and breakout projections leave this parent. */
   forwardsFeedEffects: boolean;
+  /**
+   * Whether the main conversation's directory effects describe this parent. A
+   * Space's are acknowledged and ignored: WorkspaceDO writes every Space fact
+   * itself, and only Spaces created before 2026-09-26 have a conversation.
+   */
+  appliesMainChildDirectory: boolean;
 }
 
 export const HOSTED_CHANNEL_ROLE: HostedParentRole = {
@@ -218,6 +224,7 @@ export const HOSTED_CHANNEL_ROLE: HostedParentRole = {
   admitsClientSockets: true,
   publishesGrantDirectory: true,
   forwardsFeedEffects: true,
+  appliesMainChildDirectory: true,
 };
 
 export const HOSTED_SPACE_ROLE: HostedParentRole = {
@@ -225,6 +232,7 @@ export const HOSTED_SPACE_ROLE: HostedParentRole = {
   admitsClientSockets: false,
   publishesGrantDirectory: false,
   forwardsFeedEffects: false,
+  appliesMainChildDirectory: false,
 };
 
 /** What the Organization object lends a hosted parent. */
@@ -749,11 +757,9 @@ export class HostedParent {
         if (receipt.payload_hash !== envelope.payloadHash) throw new Error("substream_effect_idempotency_conflict");
         return;
       }
-      // A Space's hidden conversation is no longer its authority: WorkspaceDO
-      // writes every Space fact directly. A directory effect such a
-      // conversation still has in flight is acknowledged and applies nothing,
-      // so a stale title, scope or roster cannot overwrite the Space.
-      if (this.role.kind === "space" && substreamId === "0"
+      // Acknowledged and applied nowhere, so a stale title, scope or roster a
+      // retired Space conversation still has in flight cannot overwrite it.
+      if (!this.role.appliesMainChildDirectory && substreamId === "0"
         && (envelope.effect.kind === "directory_common" || envelope.effect.kind === "directory_user")) {
         this.recordChildReceipt(substreamId, envelope, now);
         return;
