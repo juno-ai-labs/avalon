@@ -66,4 +66,37 @@ describe("engineering inspection of a workspace", () => {
       },
     });
   });
+
+  it("retries a pending parent import through the bridge and answers with the ledger row", async () => {
+    const inspection = new EngineeringInspectionBridge(createExecutionContext(), TEST_ENV);
+    const parentId = "00000000-0000-7000-8000-00000000ef04";
+    const target = await inspection.resolveWorkspace({ workspaceId: WORKSPACE_ID });
+    if (!target.found) throw new Error("Expected the workspace to resolve");
+    await inspection.runWorkspaceSql({
+      workspaceId: WORKSPACE_ID,
+      authorityGeneration: target.value.authorityGeneration,
+      query: {
+        sql: "INSERT INTO parent_imports (parent_id, parent_kind, state, attempts, not_before) VALUES (?, 'workstream', 'pending', 3, ?)",
+        // Backed off far into the future: the retry does not wait for it.
+        bindings: [parentId, Date.now() + 86_400_000],
+      },
+    });
+
+    // No legacy object ever held this id, so the import closes it empty.
+    await expect(inspection.retryParentImport({
+      workspaceId: WORKSPACE_ID,
+      authorityGeneration: target.value.authorityGeneration,
+      parentId,
+    })).resolves.toEqual({
+      found: true,
+      value: {
+        region: "global", workspaceId: WORKSPACE_ID, parentId, state: "imported", attempts: 3, lastErrorCode: null,
+      },
+    });
+    await expect(inspection.retryParentImport({
+      workspaceId: WORKSPACE_ID,
+      authorityGeneration: target.value.authorityGeneration + 1,
+      parentId,
+    })).resolves.toEqual({ found: false });
+  });
 });
