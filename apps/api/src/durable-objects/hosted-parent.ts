@@ -242,12 +242,10 @@ export interface HostedParentHost {
   publishChannelRow(parentId: string, userId?: string): Promise<void>;
   /**
    * Apply published effects inside the caller's transaction, and name the
-   * ones that still need an outbox row: a directory row the Organization
-   * cannot apply yet, or work that has to leave the object.
+   * ones whose remaining work leaves the object and so needs an outbox row.
+   * A failure throws and takes the caller's transaction with it.
    */
-  applyLocalEffects(envelopes: readonly ParentEffectEnvelope[]): {
-    outbox: { envelope: ParentEffectEnvelope; code: string | null }[];
-  };
+  applyLocalEffects(envelopes: readonly ParentEffectEnvelope[]): { outbox: ParentEffectEnvelope[] };
   /** A person's workspace relationship, from the Organization's own table. */
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
   /** Record a relationship this request just read from or wrote to D1. */
@@ -623,7 +621,7 @@ export class HostedParent {
   }
 
   private publishLocal(envelopes: readonly ParentEffectEnvelope[], now: number): void {
-    for (const { envelope } of this.host.applyLocalEffects(envelopes).outbox) this.writeOutboxRow(envelope, now);
+    for (const envelope of this.host.applyLocalEffects(envelopes).outbox) this.writeOutboxRow(envelope, now);
   }
 
   // ---------------------------------------------------------------------------
@@ -722,8 +720,10 @@ export class HostedParent {
   // ---------------------------------------------------------------------------
 
   /**
-   * Apply one batch of a child's effects. The caller drains the outbox after,
-   * which is where the directory step now runs — locally, not over a Queue.
+   * Apply one batch of a child's effects. Each envelope is its own
+   * transaction, and the directory step lands in it; one that throws fails
+   * the delivery, and the Queue redelivers it (the receipts answer the ones
+   * that already committed).
    */
   receiveChildEffects(input: ReceiveChildEffectsRequest): { messageId: string; payloadHash: string }[] {
     const request = parseRpcInput(ReceiveChildEffectsRequestSchema, input, "receive_child_effects");
@@ -1231,7 +1231,7 @@ export class HostedParent {
     this.storage.transactionSync(() => this.publishLocal([envelope], now));
   }
 
-  /** The durable fallback: a row the drain applies or sends after the commit. */
+  /** Work that leaves the object: a row the drain sends after the commit. */
   private writeOutboxRow(envelope: ParentEffectEnvelope, now: number): void {
     const inserted = this.sql.exec<{ message_id: string }>(
       `INSERT OR IGNORE INTO parent_outbox
@@ -1244,7 +1244,8 @@ export class HostedParent {
     );
     if (inserted.toArray().length === 0) {
       const existing = first(this.sql.exec<{ payload_hash: string }>(
-        `SELECT payload_hash FROM parent_outbox WHERE message_id = ?`, envelope.messageId,
+        `SELECT payload_hash FROM parent_outbox WHERE parent_id = ? AND message_id = ?`,
+        this.parentId, envelope.messageId,
       ));
       if (existing?.payload_hash !== envelope.payloadHash) throw new Error("conversation_parent_outbox_conflict");
     }

@@ -767,8 +767,8 @@ column catalog; what follows is only what WorkspaceDO still holds.
 
 - `WorkspaceDO.workspace_workstream_effect_receipts` is the inbox for parent
   directory, activity, resource-link, and mention-delivery effects, whether
-  applied locally from a hosted parent's `parent_outbox` or delivered by the
-  activity Queue. Message ID and payload hash detect replay or
+  applied in a hosted parent's own transaction or delivered by the activity
+  Queue. Message ID and payload hash detect replay or
   conflict; generation and per-key waterlines reject stale mutable state.
 - `WorkspaceDO.channels` and
   `channel_viewers` are authoritative common and viewer-specific
@@ -1051,9 +1051,9 @@ The tables have distinct lifecycles rather than one catch-all event store:
     A child's effects commit in its parent (a hosted Channel or Space parent in
     WorkspaceDO, or `AutomationDO`); directory/user effects, an automation's
     row, and first-party activity/mention effects commit in WorkspaceDO. A
-    hosted parent's directory effects are applied from its `parent_outbox`
-    right after the write, with no Queue hop, and the outbox row is deleted
-    once applied. External notification
+    hosted parent's directory effects are applied in the parent write's own
+    transaction, with no Queue hop and no outbox row; its `parent_outbox` holds
+    only work that leaves the object. External notification
     intent and delivery state also commit there; D1 supplies only current
     member/user identity and opaque provider routing. Queue order and
     uniqueness are never trusted, generation/version fences mutable state, and

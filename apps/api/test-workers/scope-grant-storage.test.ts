@@ -27,27 +27,41 @@ function insertParentMetadata(state: DurableObjectState, title: string): void {
     VALUES (?,'workstream',?,'global',1,?,'','','personal','idle',0,0,0)`, parentId, workspaceId, title);
 }
 
+/** The Organization object learns its own id, as a parent's first request teaches it. */
+function learnIdentity(instance: unknown): void {
+  (instance as { ensureIdentity(workspaceId: string, affinity: string): void }).ensureIdentity(workspaceId, "wnam");
+}
+
 /**
  * Each test gets its own Organization object, addressed by name as the legacy
  * tests addressed their own parent object: the file shares one storage, and
  * every parent here uses the same id.
  */
 async function withStorage(name: string, run: (store: ScopeGrantStorage, state: DurableObjectState, parent: HostedParent) => void) {
-  await withHostedParent(env.WORKSPACE_DOS.getByName(name), parentId, (parent, state) => {
+  const stub = env.WORKSPACE_DOS.getByName(name);
+  await runInDurableObject(stub, (instance) => learnIdentity(instance));
+  await withHostedParent(stub, parentId, (parent, state) => {
     insertParentMetadata(state, "Parent");
     run(parent['scopeGrants'](address), state, parent);
   });
 }
 
+/**
+ * Every grant the parent published to the grant directory, in order: its own
+ * record of each projection version. The directory applies each one in the
+ * publishing transaction, so this is also what the directory received.
+ */
 function deliveries(state: DurableObjectState) {
-  return state.storage.sql.exec<{ payload_json: string }>(
-    `SELECT payload_json FROM parent_outbox WHERE parent_id=? AND effect_kind='scope_grant_directory'
-      ORDER BY source_version,created_at,message_id`, parentId,
-  ).toArray().map((row) => ({ grant: JSON.parse(row.payload_json).effect.grant, actorUserId: userId }));
+  return state.storage.sql.exec<{ state_json: string }>(
+    `SELECT state_json FROM parent_state_changes WHERE parent_id=? AND state_key LIKE 'grant:%'
+      ORDER BY sequence`, parentId,
+  ).toArray().map((row) => ({ grant: JSON.parse(row.state_json).grant, actorUserId: userId }));
 }
-function acknowledge(state: DurableObjectState, revision: number): void {
-  state.storage.sql.exec(`DELETE FROM parent_outbox WHERE parent_id=? AND effect_kind='scope_grant_directory'
-    AND json_extract(payload_json,'$.effect.grant.revision')=?`, parentId, revision);
+/** What the Organization's grant directory holds for this person now. */
+function directoryRow(state: DurableObjectState) {
+  return state.storage.sql.exec<{ active: number; source_version: number }>(
+    "SELECT active, source_version FROM scope_grant_directory WHERE parent_id=? AND user_id=?", parentId, userId,
+  ).toArray();
 }
 function grantRevision(state: DurableObjectState): number {
   return state.storage.sql.exec<{ revision: number }>(
@@ -144,6 +158,7 @@ describe("workstream scope grants in real workerd", () => {
         .bind(workspaceId, id, id)),
     ]);
     const stub = hostedParentStub(env, workspaceId);
+    await runInDurableObject(stub, (instance) => learnIdentity(instance));
     await withHostedParent(stub, parentId, (parent, state) => {
       insertParentMetadata(state, "Hiring");
       state.storage.sql.exec("INSERT INTO parent_children (parent_id,substream_id,kind,created_at,status) VALUES (?,'0','main',0,'ready')", parentId);
@@ -163,9 +178,8 @@ describe("workstream scope grants in real workerd", () => {
       // read by the same `resolveScopedAccess`.
       expect(store.read(readerId, target)).toMatchObject({ active: true });
       expect(store.sourceKind(readerId, target)).toBe("space");
-      // The write drained the grant directory in the same object, so nothing
-      // is left waiting in the outbox.
-      expect(deliveries(state)).toEqual([]);
+      // Only the actor's direct grant was published; the Space's reader was not.
+      expect(deliveries(state).map((item) => item.grant.userId)).toEqual([userId]);
     });
     // And it reaches no candidate index: the actor's direct grant is the only
     // thing published. A Space-derived reader finds the Channel through the
@@ -289,10 +303,13 @@ describe("workstream scope grants in real workerd", () => {
       expect(store.mutate(add)).toEqual(accepted);
       expect(store.read(userId, add.target)).toEqual(removed.grant);
 
-      acknowledge(state, accepted.grant.revision);
-      expect(deliveries(state)).toEqual([{ grant: removed.grant, actorUserId: userId }]);
-      acknowledge(state, accepted.grant.revision);
-      expect(deliveries(state)).toHaveLength(1);
+      // The directory holds the revocation, and the replayed addition did not
+      // publish over it.
+      expect(deliveries(state)).toEqual([
+        { grant: accepted.grant, actorUserId: userId },
+        { grant: removed.grant, actorUserId: userId },
+      ]);
+      expect(directoryRow(state)).toEqual([{ active: 0, source_version: 2 }]);
     });
   });
 
@@ -314,7 +331,7 @@ describe("workstream scope grants in real workerd", () => {
   it("rolls back the grant and revision when recording its delivery fails", async () => {
     await withStorage("scope-grant-rollback", (store, state) => {
       const add = command();
-      state.storage.sql.exec(`CREATE TRIGGER fail_grant_delivery BEFORE INSERT ON parent_outbox
+      state.storage.sql.exec(`CREATE TRIGGER fail_grant_delivery BEFORE INSERT ON scope_grant_directory
         BEGIN SELECT RAISE(ABORT, 'delivery failed'); END`);
       expect(() => store.mutate(add)).toThrow("delivery failed");
       expect(store.read(userId, add.target)).toBeNull();
@@ -323,6 +340,7 @@ describe("workstream scope grants in real workerd", () => {
       state.storage.sql.exec("DROP TRIGGER fail_grant_delivery");
       expect(store.mutate(add).status).toBe("committed");
       expect(deliveries(state)).toHaveLength(1);
+      expect(directoryRow(state)).toEqual([{ active: 1, source_version: 1 }]);
     });
   });
 
@@ -341,25 +359,28 @@ describe("workstream scope grants in real workerd", () => {
     });
   });
 
-  it("republishes an imported parent's unsent legacy discovery into the parent outbox atomically", async () => {
+  it("republishes an imported parent's unsent legacy discovery into the grant directory atomically", async () => {
     // The legacy object's `scope_grant_deliveries` queue is not imported: a
     // grant whose discovery a legacy object never sent arrives as a bare
     // `parent_grants` row, and the import republishes every direct grant in
     // the same transaction as the rest of its local work.
-    await withHostedParent(env.WORKSPACE_DOS.getByName("scope-grant-legacy-outbox"), parentId, (parent, state) => {
+    const legacy = env.WORKSPACE_DOS.getByName("scope-grant-legacy-outbox");
+    await runInDurableObject(legacy, (instance) => learnIdentity(instance));
+    await withHostedParent(legacy, parentId, (parent, state) => {
       insertParentMetadata(state, "Parent");
       const grant = { id: crypto.randomUUID(), userId, target: command().target, active: true, revision: 1, membershipIncarnation: null };
       state.storage.sql.exec(`INSERT INTO parent_grants (parent_id,user_id,scope_kind,substream_id,grant_json,source_kind,source_id)
         VALUES (?,?,'conversation',?,?,'direct','')`, parentId, userId, childId, JSON.stringify(grant));
-      state.storage.sql.exec(`CREATE TRIGGER fail_legacy_outbox BEFORE INSERT ON parent_outbox
-        BEGIN SELECT RAISE(ABORT, 'outbox unavailable'); END`);
-      expect(() => state.storage.transactionSync(() => parent.republishDirectGrants())).toThrow('outbox unavailable');
-      // The projection key did not advance without its outbox row, so the
+      state.storage.sql.exec(`CREATE TRIGGER fail_legacy_outbox BEFORE INSERT ON scope_grant_directory
+        BEGIN SELECT RAISE(ABORT, 'directory unavailable'); END`);
+      expect(() => state.storage.transactionSync(() => parent.republishDirectGrants())).toThrow('directory unavailable');
+      // The projection key did not advance without its directory row, so the
       // retry below still publishes rather than deduplicating to nothing.
       expect(state.storage.sql.exec("SELECT 1 FROM parent_projection_keys WHERE parent_id=?", parentId).toArray()).toEqual([]);
       state.storage.sql.exec("DROP TRIGGER fail_legacy_outbox");
       state.storage.transactionSync(() => parent.republishDirectGrants());
       expect(deliveries(state).map((item) => item.grant)).toEqual([grant]);
+      expect(directoryRow(state)).toEqual([{ active: 1, source_version: 1 }]);
       state.storage.transactionSync(() => parent.republishDirectGrants());
       expect(deliveries(state)).toHaveLength(1);
     });
