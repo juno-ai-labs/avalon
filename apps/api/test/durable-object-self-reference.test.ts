@@ -167,7 +167,7 @@ describe("a Durable Object addressing its own name", () => {
     const other = {};
     const { namespace } = trackedNamespace();
     const otherIdFromName = vi.fn((name: string) => createTestDurableObjectId(name));
-    const otherBinding = createCloudflareTestBinding<Env["WORKSTREAM_DOS"]>({
+    const otherBinding = createCloudflareTestBinding<Env["AUTOMATION_DOS"]>({
       idFromName: otherIdFromName,
       get: vi.fn((): object => other),
     });
@@ -218,7 +218,7 @@ describe("a Durable Object addressing its own name", () => {
 
     expect(durableObjectSelfForId(
       env,
-      bare.WORKSTREAM_DOS,
+      bare.AUTOMATION_DOS,
       createTestDurableObjectId(OWN_NAME),
     )).toBeNull();
   });
@@ -366,7 +366,7 @@ describe("a caller that reaches a namespace for its own object", () => {
     try {
       const other = {};
       const { namespace } = trackedNamespace();
-      const otherBinding = createCloudflareTestBinding<Env["WORKSTREAM_DOS"]>({
+      const otherBinding = createCloudflareTestBinding<Env["AUTOMATION_DOS"]>({
         idFromName: vi.fn((name: string) => createTestDurableObjectId(name)),
         get: vi.fn((): object => other),
       });

@@ -230,10 +230,8 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "workspace_workstream_resource_links",
   "channel_viewers",
   // Hosted Channel and Space parents (WorkspaceDO migration 72). Every row is
-  // read and written by `HostedParent` and the import through the object's own
-  // storage, scoped by `parent_id`; no runtime statement names a parent's
-  // state.
-  "parent_imports",
+  // read and written by `HostedParent` through the object's own storage,
+  // scoped by `parent_id`; no runtime statement names a parent's state.
   "parent_metadata",
   "parent_children",
   "parent_child_projections",

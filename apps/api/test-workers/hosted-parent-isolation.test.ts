@@ -218,17 +218,10 @@ describe("the revocation walk's Channel step, run inside the Organization object
   }
 
   it("closes each hosted Channel's control sockets and names its conversations in the workspace hop itself", async () => {
-    const importing = asWorkstreamId("00000000-0000-4000-8000-0000000e00c0");
     await runInDurableObject(organization(), (_instance, state) => {
       state.storage.sql.exec("UPDATE parent_metadata SET scope = 'workspace'");
-      // A Channel whose legacy object has not been imported yet: its hop is left
-      // for the Queue rather than importing it inside the walk.
-      state.storage.sql.exec(
-        "INSERT INTO parent_imports (parent_id, parent_kind, state, not_before) VALUES (?, 'workstream', 'pending', ?)",
-        importing, Date.now() + 3_600_000,
-      );
     });
-    for (const parentId of [channelA, channelB, importing]) await listChannel(parentId);
+    for (const parentId of [channelA, channelB]) await listChannel(parentId);
     const [socketA, socketB] = await Promise.all([openControlSocket(channelA), openControlSocket(channelB)]);
     const closedA = closeOf(socketA);
     const closedB = closeOf(socketB);
@@ -237,7 +230,7 @@ describe("the revocation walk's Channel step, run inside the Organization object
       reason: "workspace_membership_removed", workspaceId, userId: shared, sessionId: null,
     });
 
-    expect(result.workstreamIds).toEqual([channelA, channelB, importing]);
+    expect(result.workstreamIds).toEqual([channelA, channelB]);
     expect(result.channels).toEqual([
       { workstreamId: channelA, substreamIds: ["0", breakoutA] },
       { workstreamId: channelB, substreamIds: ["0", breakoutB] },

@@ -4,8 +4,6 @@ import { beforeEach, expect, it } from "vitest";
 import { asWorkspaceId, asUserId } from "@rally/contracts";
 import { ScopeGrantSchema } from "@rally/contracts/scope-grants";
 import { ParentEffectEnvelopeSchema, conversationEffectHash } from "@rally/contracts/conversation-effects";
-import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
-import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-do";
 import { workspaceDOName } from "../src/durable-objects/names";
 import { consumeEffectBodies } from "./helpers/conversation-effects";
 
@@ -54,27 +52,6 @@ it("isolates membership incarnations and fences previous parent generations", as
   expect(await candidates("replacement")).toEqual([parentId]);
   await expect(runInDurableObject(workspace(), (instance) => instance.applyScopeGrantDirectory({ ...envelope(2), parentId: childId }))).rejects.toThrow("address_invalid");
   await expect(runInDurableObject(workspace(), (instance) => instance.applyScopeGrantDirectory({ ...envelope(2), payloadHash: `fnv1a64:${'0'.repeat(16)}` }))).rejects.toThrow("address_invalid");
-});
-
-
-it("preserves pending and inflight deliveries while upgrading the parent outbox", async () => {
-  const probe = env.MIGRATION_PROBE_DO!.getByName("scope-grant-outbox-upgrade");
-  await probe.ping();
-  await runInDurableObject(probe, (_instance, state) => {
-    const options = { storage: state.storage, component: "workstream_do", workerVersionId: "test" };
-    applyDurableObjectSqliteMigrations({ ...options,
-      migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 14) });
-    for (const deliveryState of ["pending", "inflight"]) {
-      state.storage.sql.exec(`INSERT INTO durable_outbox VALUES (?, 'old', 1, 1,
-        'directory_user', '{}', 'hash', ?, 3, 100, 10)`, deliveryState, deliveryState);
-    }
-    const before = state.storage.sql.exec("SELECT * FROM durable_outbox ORDER BY message_id").toArray();
-    applyDurableObjectSqliteMigrations({ ...options, migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS });
-    expect(state.storage.sql.exec("SELECT * FROM durable_outbox ORDER BY message_id").toArray()).toEqual(before);
-    state.storage.sql.exec(`INSERT INTO durable_outbox VALUES ('grant', 'new', 1, 1,
-      'scope_grant_directory', '{}', 'hash', 'pending', 0, 100, 10)`);
-    expect(state.storage.sql.exec("PRAGMA foreign_key_check").toArray()).toEqual([]);
-  });
 });
 
 

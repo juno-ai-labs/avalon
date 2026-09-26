@@ -56,10 +56,7 @@ concrete class, and each declares only its exceptions.
 
 Channel and Space parents have no object of their own: their state is rows in
 `WorkspaceDO` ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)),
-so the Organization's tombstone closes them. The legacy `WorkstreamDO` and
-`SpaceDO` classes are not gated. They no longer extend `ScheduledDurableObject`,
-write no product row, and answer everything except the one-time export and the
-effect forward with `410`. The gate does not wrap
+so the Organization's tombstone closes them. The gate does not wrap
 accessors — a getter is state, not a door — so a getter that does work is not
 fenced; today every such getter delegates to a gated method.
 
@@ -258,8 +255,7 @@ Two workspace-scoped Durable Object classes are **not** gated and not walked:
 `ArtifactHostDO`, which serves a work stream's published artifacts to viewer
 sessions admitted by the canonical authorization service, is never tombstoned,
 and its own alarm and facet storage are untouched; and
-`SlackReactionTicker`, whose alarm is bounded and self-clearing. The legacy
-`WorkstreamDO` and `SpaceDO` are also outside the walk; see [The gate](#the-gate). Gating and walking artifact hosts is the
+`SlackReactionTicker`, whose alarm is bounded and self-clearing. Gating and walking artifact hosts is the
 remaining piece of "nothing in it ever writes again", recorded under **Open
 questions**.
 
@@ -323,12 +319,12 @@ included.
 
 | Suite | Command | What it proves |
 | --- | --- | --- |
-| `apps/api/test-workers/object-retirement.test.ts` | `pnpm --filter @rally/api test:workers` | The gate on real workerd: refusal on every class, a refusal that crosses the RPC boundary with its code, `canReadWorkstream` answering `false`, sockets closed with `1008`, drop-and-acknowledge in the shapes the consumers parse, alarm clearing, a rebuilt retired agent not refilling its alarm index, that all four socket-holding object classes rebuild themselves after eviction and revoke access while retired, that `SpaceDO` resolves the same door list `WorkstreamDO` declares, and that the gate's function is installed on every callable method. |
+| `apps/api/test-workers/object-retirement.test.ts` | `pnpm --filter @rally/api test:workers` | The gate on real workerd: refusal on every class, a refusal that crosses the RPC boundary with its code, `canReadWorkstream` answering `false`, sockets closed with `1008`, drop-and-acknowledge in the shapes the consumers parse, alarm clearing, a rebuilt retired agent not refilling its alarm index, that all three socket-holding object classes rebuild themselves after eviction and revoke access while retired, and that the gate's function is installed on every callable method. |
 | `apps/api/test-workers/workspace-retirement-graph.test.ts` | `pnpm --filter @rally/api test:workers` | The graph is captured before the tombstone, is idempotent and resumable — including over a parent retired but never receipted — an empty workspace reports closed, an identity mismatch leaves a node failed with a stable code, and the walk closes children before parents. |
 | `apps/api/test/workspace-operations.test.ts` | `pnpm --filter @rally/api exec vitest run test/workspace-operations.test.ts` | Against the real migrations: the route admits only the `demos` role, refuses a confirmation naming another workspace, refuses an id this region does not own even when its row is present, writes `abandoned_at` before walking, and answers the contract's receipt. |
 | `apps/api/test/retirement-background-callers.test.ts` | `pnpm --filter @rally/api exec vitest run test/retirement-background-callers.test.ts` | Each background caller acknowledges a refusal: the flag fan-out, the revocation hop, and the digest pass, which also proves the pass finishes and writes its cursor. |
 | `apps/api/test/telemetry-operator-routes.test.ts` | `pnpm --filter @rally/api exec vitest run test/telemetry-operator-routes.test.ts` | The `demos` role is refused at the telemetry router, on every route. |
-| `apps/api/test/durable-object-initialization-wiring.test.ts` | `pnpm --filter @rally/api exec vitest run test/durable-object-initialization-wiring.test.ts` | Every gated class, `SidekickDO` included, opens the construction window through `initializeDurableObject`; `SpaceDO` delegates the whole gate to `WorkstreamDO` and adds no constructor work of its own; `SubstreamAgent`'s recovery attempt stays a prototype method. |
+| `apps/api/test/durable-object-initialization-wiring.test.ts` | `pnpm --filter @rally/api exec vitest run test/durable-object-initialization-wiring.test.ts` | Every gated class, `SidekickDO` included, opens the construction window through `initializeDurableObject`; `SubstreamAgent`'s recovery attempt stays a prototype method. |
 | `apps/api/test/workspace-runtime-database.test.ts`, `apps/api/test/workstream-object-schema.test.ts` | `pnpm --filter @rally/api exec vitest run test/<file>` | Retirement's tables are declared to the schema guards. |
 | `apps/ace/test/workspaces.test.ts`, `apps/ace/test/workspaces-client.test.tsx`, `apps/ace/test/directory.test.ts` | `pnpm --filter @rally/ace test` | Ace's relay refuses an unconfirmed retirement before asking the region, carries the confirmation when it does, names a contract mismatch as such, and answers a directory outage with a sentence; the tab's typed confirmation, its receipt, an incomplete pass kept armed and scoped to its workspace, a failed search shown as a failure, and a partial outage named. |
 
@@ -348,10 +344,10 @@ first few days, because nothing had registered one — the assertion it was name
 for could not fail, and the parent-missing branch it was actually exercising is
 the one that skips the children entirely.
 
-The eviction test covers all four object classes in one case on purpose. Both
+The eviction test covers all three object classes in one case on purpose. Both
 failures it exists for were category failures found one class at a time, and
-neither is visible from a single class: `WorkstreamDO` reaches its own helpers
-from its constructor, and `SubstreamAgent` recovers after the construction window
+neither is visible from a single class: `WorkspaceDO` reaches a hosted Channel
+parent through its own lookup, and `SubstreamAgent` recovers after the construction window
 closes, which is the case a construction-only fix does not reach.
 
 ## Operations

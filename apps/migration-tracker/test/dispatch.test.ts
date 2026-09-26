@@ -129,15 +129,15 @@ describe("dispatchMigrationRun", () => {
 
   it("sends only the region the run asked for", async () => {
     await sweepIn([
-      namespaceOf("global", "WorkstreamDO", [objectId("a")]),
-      namespaceOf("enterprise", "WorkstreamDO", [objectId("b")]),
+      namespaceOf("global", "WorkspaceDO", [objectId("a")]),
+      namespaceOf("enterprise", "WorkspaceDO", [objectId("b")]),
     ]);
     const queues = boundEnv();
 
     const run = await dispatchMigrationRun(
       queues.env,
       registryStub(),
-      { className: "WorkstreamDO", region: "enterprise" },
+      { className: "WorkspaceDO", region: "enterprise" },
       "operator@example.test",
     );
 

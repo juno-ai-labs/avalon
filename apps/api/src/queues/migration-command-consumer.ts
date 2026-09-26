@@ -33,7 +33,6 @@ import {
 
 import { latestMigrationVersion, type ForcedMigrationOutcome } from "../durable-objects/migration-reporting";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../durable-objects/workspace-do";
-import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../durable-objects/workstream-do";
 import { AUTOMATION_DO_SCHEMA_MIGRATIONS } from "../durable-objects/automation-do";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../durable-objects/workstream-object-schema";
 import type { Env } from "../env";
@@ -67,14 +66,6 @@ export function migrationCommandDispatchers(env: Env): Record<
   return {
     SubstreamAgent: (objectId, command) =>
       durableObjectStubById(env, env.SUBSTREAM_AGENTS, objectId).forceMigration(command),
-    WorkstreamDO: (objectId, command) =>
-      durableObjectStubById(env, env.WORKSTREAM_DOS, objectId).forceMigration(command),
-    // Its own namespace and its own entry even though `SpaceDO` is
-    // `WorkstreamDO` under a role: the id in the command was minted against
-    // `SPACE_DOS`, and looking it up in `WORKSTREAM_DOS` would resolve a
-    // different object — creating an empty one rather than failing.
-    SpaceDO: (objectId, command) =>
-      durableObjectStubById(env, env.SPACE_DOS, objectId).forceMigration(command),
     WorkspaceDO: (objectId, command) =>
       durableObjectStubById(env, env.WORKSPACE_DOS, objectId).forceMigration(command),
     // Commands already queued under the old class retain the same namespace.
@@ -86,6 +77,14 @@ export function migrationCommandDispatchers(env: Env): Record<
 }
 
 /**
+ * Classes whose namespaces were deleted. A command for one that was dispatched
+ * before the deletion can never be applied, so it is acknowledged rather than
+ * retried into the dead-letter queue this platform reads as its signal for
+ * stuck migrations.
+ */
+const DELETED_MIGRATION_CLASSES: ReadonlySet<string> = new Set(["WorkstreamDO", "SpaceDO"]);
+
+/**
  * The highest schema version *this deployment* ships for each class.
  *
  * Read from the same migration lists the objects run, in the Worker that is
@@ -95,10 +94,6 @@ export function migrationCommandDispatchers(env: Env): Record<
  */
 export const MIGRATION_COMMAND_HEADS: Readonly<Record<string, number>> = {
   SubstreamAgent: latestMigrationVersion(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS),
-  WorkstreamDO: latestMigrationVersion(WORKSTREAM_DO_SCHEMA_MIGRATIONS),
-  // The same ledger `WorkstreamDO` runs: a Space is that class under a role,
-  // and only its component and class name are its own.
-  SpaceDO: latestMigrationVersion(WORKSTREAM_DO_SCHEMA_MIGRATIONS),
   WorkspaceDO: latestMigrationVersion(WORKSPACE_DO_SCHEMA_MIGRATIONS),
   AutomationDO: latestMigrationVersion(AUTOMATION_DO_SCHEMA_MIGRATIONS),
   SidekickDO: latestMigrationVersion(AUTOMATION_DO_SCHEMA_MIGRATIONS),
@@ -161,9 +156,9 @@ export async function applyMigrationCommand(
 /**
  * Queue entry point: one object per message, retried on its own.
  *
- * Two kinds of message are acknowledged rather than retried, because neither
- * can ever become valid: one the contract refuses, and one addressed to the
- * other region. The second is a misrouted producer rather than a transient
+ * Three kinds of message are acknowledged rather than retried, because none
+ * can ever become valid: one the contract refuses, one for a class whose
+ * namespace was deleted, and one addressed to the other region. The second is a misrouted producer rather than a transient
  * fault, and rerouting it here would be the Global fallback
  * `docs/choosing-queues-or-rpc.md` forbids — a command must be applied by the
  * region that owns the object or not at all.
@@ -190,6 +185,16 @@ export async function consumeMigrationCommandQueue(
       return;
     }
     const command = parsed.data;
+    if (DELETED_MIGRATION_CLASSES.has(command.className)) {
+      logWarn(env, "migration_command_class_deleted", {
+        queue: batch.queue,
+        run_id: command.runId,
+        command_id: command.commandId,
+        class_name: command.className,
+      });
+      message.ack();
+      return;
+    }
     if (command.region !== env.AVALON_REGION) {
       logStructuredEvent(env, "error", "migration_command_misrouted", {
         message: `migration_command_misrouted ${command.region} reached ${env.AVALON_REGION}`,
