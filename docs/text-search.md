@@ -557,6 +557,16 @@ exhausts the activity Queue's retries (six Browser Run calls) and dead-letters.
 Those are expected and harmless; count them against the
 `search_link_capture_failed` logs, and treat any other dead letter as real.
 
+A WorkspaceDO dispatches resource references 100 at a time. While more are due
+after a batch, the next waits `RESOURCE_SEARCH_BACKLOG_INTERVAL_MS` (30
+seconds), so a backlog drains at 200 resources a minute (Juno Labs' 152,000 in
+about 13 hours); an edit arriving with no backlog goes at once. Batches go out
+lowest `not_before` first, so a re-projection written at `not_before = 1` lets
+edits (written at `0`) through ahead of it. To pause a workspace's backlog,
+move its pending rows' `not_before` far ahead
+(`UPDATE resource_search_versions SET not_before = 4102444800000 WHERE pending = 1 AND not_before <= 1`);
+to resume, set those rows to `1`.
+
 Object alarms dispatch pending references only when the regional Turbopuffer key
 and `OPENROUTER_API_KEY` are present. Otherwise intents remain pending and search
 due-times are excluded from alarms. Provision credentials and wake the objects to resume. Queue acceptance clears only the
@@ -636,6 +646,42 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-26 — A workspace's resource backlog is dispatched 100 every 30 seconds
+
+**What changed:** After the WorkspaceDO dispatches a full batch of 100
+resource references, its next batch waits
+`RESOURCE_SEARCH_BACKLOG_INTERVAL_MS` (30 seconds) if anything due is still
+pending, and its alarm is set for then. Once the backlog is gone no wait is
+set. The wait is held on the object, not stored; an eviction or restart forgets
+it, and the object dispatches one batch early if something wakes it inside the
+wait.
+
+**Why:** Migration 77 marked all 152,000 of Juno Labs' resources pending, and
+the alarm dispatched batch after batch with nothing between them. Each
+resource becomes three document jobs, and each job calls
+`prepareResourceSearchDocument` back on the same object, which returned
+`durable_object_overloaded` to 38,000 calls in 30 minutes and failed connector
+events and search-authorization pushes beside them. The backfill was paused by
+hand (`not_before` set to 2100-01-01 on the pending rows) until this shipped.
+Adam set the interval: 200 resources a minute, about 10 calls a second into the
+object, finishing Juno Labs in about ten hours.
+
+**Considered and rejected:** Acknowledging completion from the consumer so the
+object dispatches only when the previous batch is done (the open question
+above); right, but too large for an incident fix. Pausing by pushing
+`not_before` forward on every remaining row after each batch; it rewrites the
+whole backlog on every batch.
+
+**What a future change has to respect:** a whole-workspace re-projection is now
+bounded by this interval, so its duration is the workspace's resource count
+divided by 200 a minute. A change to the batch size or the jobs per resource
+changes the load this number was chosen against. Batches go out in
+`not_before, resource_id` order and every edit trigger writes `not_before = 0`,
+so a backlog also written at `0` interleaves with live edits by id, and a new
+resource (the newest UUIDv7) waits behind the whole backlog. A whole-workspace
+re-projection must therefore mark its rows `not_before = MAX(not_before, 1)`,
+so edits sort ahead of it.
 
 ### 2026-09-26 — Rows carry the groups that may read them
 
