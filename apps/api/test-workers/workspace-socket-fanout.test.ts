@@ -17,7 +17,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { createExecutionContext, reset, runInDurableObject, waitOnExecutionContext } from "cloudflare:test";
 import {
   asSubstreamId,
   asUserId,
@@ -31,8 +31,11 @@ import {
   type UserId,
   type WorkstreamId,
 } from "@rally/contracts";
+import { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import type { HonoAppEnv } from "../src/env";
+import { noteChangedConnection, workspaceRealtimeInvalidation } from "../src/middleware/workspace-realtime";
 import { hostedParentStub } from "./helpers/hosted-parent";
 import { changeRelationships } from "./helpers/workspace-relationship-events";
 
@@ -45,6 +48,8 @@ const owner = asUserId("00000000-0000-4000-8000-0000000fd011");
 const member = asUserId("00000000-0000-4000-8000-0000000fd012");
 /** A member of the Organization who is in neither Channel's participants. */
 const outsider = asUserId("00000000-0000-4000-8000-0000000fd013");
+/** Joins the Organization partway through a test. */
+const newcomer = asUserId("00000000-0000-4000-8000-0000000fd014");
 const personalConnection = "00000000-0000-4000-8000-0000000fd0c1";
 const organizationConnection = "00000000-0000-4000-8000-0000000fd0c2";
 const at = "2026-09-26T12:00:00.000Z";
@@ -106,6 +111,25 @@ function viewer(userId: UserId, isParticipant = true) {
     manualUnreadFromOrdinal: null,
     manualUnreadGeneration: 0,
     latestMentionAttentionOrdinal: 0,
+  };
+}
+
+/** A Channel's common row at `generation`, as the directory step receives it. */
+function atGeneration(parentId: WorkstreamId, generation: number, effect: Common, messageId: string): ParentEffectEnvelope {
+  return {
+    kind: "parent_effect",
+    contractVersion: 1,
+    region: "global",
+    workspaceId,
+    parentKind: "workstream",
+    parentId,
+    generation,
+    messageId,
+    partitionKey: "common",
+    sourceVersion: 1,
+    requiredProjectionVersion: null,
+    payloadHash: conversationEffectHash(effect),
+    effect,
   };
 }
 
@@ -189,6 +213,63 @@ function rowsFor(connected: Connected, channelId: string): Frame[] {
 
 function close(...sockets: Connected[]): void {
   for (const { socket } of sockets) socket.close(1000, "done");
+}
+
+interface FollowUpRunner {
+  runDirectoryFollowUps(entries: readonly number[]): Promise<void>;
+}
+
+/**
+ * Keep every write's post-commit pass from running, the way a failed or
+ * delayed one leaves its recorded follow-up for the alarm. The returned
+ * release runs everything recorded meanwhile as one pass, as the alarm does.
+ */
+async function holdFollowUps(): Promise<() => Promise<void>> {
+  await runInDurableObject(organization(), (instance) => {
+    (instance as unknown as FollowUpRunner).runDirectoryFollowUps = async () => {};
+  });
+  return () => runInDurableObject(organization(), async (instance, state) => {
+    delete (instance as unknown as Record<string, unknown>).runDirectoryFollowUps;
+    await (instance as unknown as FollowUpRunner).runDirectoryFollowUps(pendingFollowUps(state));
+  });
+}
+
+function pendingFollowUps(state: DurableObjectState): number[] {
+  return state.storage.sql.exec<{ id: number }>(
+    `SELECT id FROM workspace_directory_followups WHERE state = 'pending' ORDER BY id`,
+  ).toArray().map((row) => row.id);
+}
+
+/** A follow-up exactly as an earlier build recorded it, run the way the alarm runs a due one. */
+async function runRecordedFollowUp(followUp: Record<string, unknown>): Promise<void> {
+  await runInDurableObject(organization(), async (instance, state) => {
+    const { id } = state.storage.sql.exec<{ id: number }>(
+      `INSERT INTO workspace_directory_followups (followup_json, attempts, not_before, created_at)
+       VALUES (?, 0, 0, 0) RETURNING id`,
+      JSON.stringify(followUp),
+    ).one();
+    await (instance as unknown as FollowUpRunner).runDirectoryFollowUps([id]);
+  });
+}
+
+/** A directory follow-up naming one changed Channel, in the shape recorded before `channelLosses`. */
+function legacyFollowUp(commonChanges: string[]): Record<string, unknown> {
+  return {
+    workspaceId, publishSnapshotAll: false, snapshotUsers: [], reachChangedUsers: [], commonChanges,
+    viewerChanges: [], breakoutChanges: [], breakoutViewerChanges: [], reopenBootstrap: false,
+    watchReconciliations: [], archivalChanges: [], refreshTerminal: false, refreshWatchKinds: false,
+    directoryChanged: true, syncTopics: [], refreshProductAlarm: false,
+  };
+}
+
+/** Somebody who becomes an active member now, with a session to connect with. */
+async function join(userId: UserId): Promise<void> {
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO workspace_members (workspace_id, user_id, status, role) VALUES (?, ?, 'active', 'member')`)
+      .bind(workspaceId, userId),
+    env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+       VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`).bind(`session-${userId}`, userId, workspaceId),
+  ]);
 }
 
 beforeEach(async () => {
@@ -310,22 +391,7 @@ describe("a Channel's row on the workspace socket", () => {
     const ownerSocket = await connect(owner);
     const outsiderSocket = await connect(outsider);
     const hidden = ownerSocket.stream.next(stateOf(privateChannel), "private Channel tombstone");
-    const effect = common("Private", { scope: "personal" });
-    const next: ParentEffectEnvelope = {
-      kind: "parent_effect",
-      contractVersion: 1,
-      region: "global",
-      workspaceId,
-      parentKind: "workstream",
-      parentId: privateChannel,
-      generation: 2,
-      messageId: "00000000-0000-7000-8000-0000000fd0e1",
-      partitionKey: "common",
-      sourceVersion: 1,
-      requiredProjectionVersion: null,
-      payloadHash: conversationEffectHash(effect),
-      effect,
-    };
+    const next = atGeneration(privateChannel, 2, common("Private", { scope: "personal" }), "00000000-0000-7000-8000-0000000fd0e1");
 
     // Until each participant's row arrives at generation 2, none of them joins it.
     await organization().applyWorkstreamDirectoryEffects({ workspaceId, envelopes: [next] });
@@ -334,6 +400,111 @@ describe("a Channel's row on the workspace socket", () => {
     await drained(outsiderSocket);
     expect(rowsFor(outsiderSocket, privateChannel)).toEqual([]);
     close(ownerSocket, outsiderSocket);
+  });
+
+  it("sends the tombstone to every reader when an Organization-wide Channel returns at a new generation for its participants only", async () => {
+    const memberSocket = await connect(member);
+    const outsiderSocket = await connect(outsider);
+    const memberHidden = memberSocket.stream.next(stateOf(openChannel), "open Channel tombstone");
+    const outsiderHidden = outsiderSocket.stream.next(stateOf(openChannel), "open Channel tombstone");
+    const next = atGeneration(openChannel, 2, common("Open", { scope: "personal" }), "00000000-0000-7000-8000-0000000fd0e2");
+
+    // The outsider read it as an Organization-wide Channel and has no viewer
+    // row; the member's row is at generation 1 and does not join generation 2.
+    await organization().applyWorkstreamDirectoryEffects({ workspaceId, envelopes: [next] });
+
+    expect((await memberHidden).workstream).toBeNull();
+    expect((await outsiderHidden).workstream).toBeNull();
+    close(memberSocket, outsiderSocket);
+  });
+
+  it("owes a narrowed Channel's tombstone to nobody who joined after the write, however late its follow-up runs", async () => {
+    const memberSocket = await connect(member);
+    const outsiderSocket = await connect(outsider);
+    const release = await holdFollowUps();
+
+    await publishMain(openChannel, common("Open", { scope: "personal" }));
+    // Joins, and connects to a sidebar that never had the Channel, before the
+    // narrowing's follow-up has run.
+    await join(newcomer);
+    const newcomerSocket = await connect(newcomer);
+    const withdrawn = outsiderSocket.stream.next(stateOf(openChannel), "open Channel tombstone");
+    const stillShown = memberSocket.stream.next(stateOf(openChannel), "open Channel row");
+    await release();
+
+    expect((await withdrawn).workstream).toBeNull();
+    expect((await stillShown).workstream).not.toBeNull();
+    await drained(newcomerSocket);
+    expect(rowsFor(newcomerSocket, openChannel)).toEqual([]);
+    close(memberSocket, outsiderSocket, newcomerSocket);
+  });
+
+  it.each([
+    ["recorded before losses were named", legacyFollowUp([privateChannel])],
+    ["that named every reader", { ...legacyFollowUp([privateChannel]), channelLosses: [[privateChannel, "all"]] }],
+  ])("reads a follow-up %s as owed to the Channel's readers and to who still has a row for it, never to everyone", async (_shape, followUp) => {
+    // The owner leaves the Channel's participants and keeps a non-participant row.
+    await publishMain(privateChannel, viewer(owner, false));
+    const ownerSocket = await connect(owner);
+    const memberSocket = await connect(member);
+    const outsiderSocket = await connect(outsider);
+    const withdrawn = ownerSocket.stream.next(stateOf(privateChannel), "private Channel tombstone");
+    const shown = memberSocket.stream.next(stateOf(privateChannel), "private Channel row");
+
+    await runRecordedFollowUp(followUp);
+
+    expect((await withdrawn).workstream).toBeNull();
+    expect(((await shown).workstream as { title: string }).title).toBe("Private");
+    await drained(outsiderSocket);
+    expect(rowsFor(outsiderSocket, privateChannel)).toEqual([]);
+    close(ownerSocket, memberSocket, outsiderSocket);
+  });
+
+  it("sends the Channels of every follow-up run in one pass once per socket", async () => {
+    const memberSocket = await connect(member);
+    const outsiderSocket = await connect(outsider);
+    const release = await holdFollowUps();
+
+    // Two deliveries, each its own write and its own recorded follow-up.
+    await publishMain(openChannel, common("Open, first"));
+    await publishMain(openChannel, common("Open, second"));
+    await release();
+
+    await drained(memberSocket, outsiderSocket);
+    for (const connected of [memberSocket, outsiderSocket]) {
+      expect(rowsFor(connected, openChannel).map((frame) => (frame.workstream as { title: string }).title))
+        .toEqual(["Open, second"]);
+    }
+    close(memberSocket, outsiderSocket);
+  });
+
+  it("sends everybody else their row when one person's cannot be built, and finishes the follow-up", async () => {
+    const sockets = [await connect(member), await connect(outsider)];
+    // Whoever's row is built first cannot be, so the other is built after it.
+    let unbuildable: string | null = null;
+    await runInDurableObject(organization(), (instance) => {
+      const target = instance as unknown as {
+        channelRowPayloads(person: { userId: string }, ...rest: unknown[]): string[];
+      };
+      const original = target.channelRowPayloads.bind(target);
+      target.channelRowPayloads = (person, ...rest) => {
+        unbuildable ??= person.userId;
+        if (person.userId === unbuildable) throw new Error("channel_row_unbuildable");
+        return original(person, ...rest);
+      };
+    });
+
+    await publishMain(openChannel, common("Open, renamed"));
+
+    await drained(...sockets);
+    const failed = sockets.find((connected) => connected.userId === unbuildable)!;
+    const served = sockets.find((connected) => connected.userId !== unbuildable)!;
+    expect(rowsFor(failed, openChannel)).toEqual([]);
+    expect(rowsFor(served, openChannel).map((frame) => (frame.workstream as { title: string }).title))
+      .toEqual(["Open, renamed"]);
+    // Not put off for the alarm to re-run its reconciliations and notices.
+    expect(await runInDurableObject(organization(), (_instance, state) => pendingFollowUps(state))).toEqual([]);
+    close(...sockets);
   });
 
   it("sends the tombstone to a member who left the Organization while their socket is still open", async () => {
@@ -411,6 +582,64 @@ describe("a workspace sync topic's audience", () => {
     expect(ownerAgain.answer).toMatchObject({ reason: "change", topics: ["digest_schedule"] });
     expect(memberAgain.answer).toMatchObject({ reason: "resume", topics: [] });
     close(ownerAgain, memberAgain);
+  });
+
+  it("answers a replay at the log's waterline, past events that were other people's", async () => {
+    await organization().publishSync(["terminal_policy"], workspaceId, "wnam");
+    const away = await connect(member);
+    const waterline = away.answer.waterline;
+    close(away);
+
+    await organization().publishSync(["notes"], workspaceId, "wnam");
+    const latest = await organization().publishSync(["digest_schedule"], workspaceId, "wnam", { audienceUserIds: [owner] });
+
+    const back = await connect(member, waterline);
+    // Left at the member's own newest event, the cursor would trail every
+    // later event for somebody else and fall out of the pruning window.
+    expect(back.answer).toMatchObject({ reason: "change", topics: ["notes"], waterline: latest });
+    close(back);
+  });
+
+  it("replays a personal connection's change to its owner alone", async () => {
+    await organization().publishSync(["terminal_policy"], workspaceId, "wnam");
+    const away = await connect(owner);
+    const waterline = away.answer.waterline;
+    close(away);
+
+    await organization().publishSync(["connector_connections"], workspaceId, "wnam", { connectionId: personalConnection });
+
+    const ownerBack = await connect(owner, waterline);
+    const memberBack = await connect(member, waterline);
+    expect(ownerBack.answer).toMatchObject({ reason: "change", topics: ["connector_connections"] });
+    expect(memberBack.answer).toMatchObject({ reason: "resume", topics: [] });
+    close(ownerBack, memberBack);
+  });
+
+  it("tells the connection a request's route named to its audience, through the request middleware", async () => {
+    const app = new Hono<HonoAppEnv>();
+    app.use("*", async (c, next) => {
+      c.set("auth", { workspaceId, userId: owner } as HonoAppEnv["Variables"]["auth"]);
+      await next();
+    });
+    app.use("*", workspaceRealtimeInvalidation);
+    // A creating route: the path carries no id, so the route names it.
+    app.post("/connections/custom-mcp", (c) => {
+      noteChangedConnection(c, personalConnection);
+      return c.body(null, 201);
+    });
+    const ownerSocket = await connect(owner);
+    const memberSocket = await connect(member);
+    const told = ownerSocket.stream.next(syncWith("connector_connections"), "created connection invalidation");
+
+    const context = createExecutionContext();
+    const response = await app.fetch(new Request("https://api.test/connections/custom-mcp", { method: "POST" }), env, context);
+    await waitOnExecutionContext(context);
+
+    expect(response.status).toBe(201);
+    expect((await told).topics).toEqual(["connector_connections", "digest_schedule", "resources"]);
+    await drained(memberSocket);
+    expect(memberSocket.stream.received.filter(syncWith("connector_connections"))).toEqual([]);
+    close(ownerSocket, memberSocket);
   });
 
   it("tells a personal connection's change to its owner, and an Organization connection's to everyone", async () => {
