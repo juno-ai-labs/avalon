@@ -183,6 +183,7 @@ describe("substream preparation on workerd", () => {
       .bind(OTHER_ID).run();
     await runInDurableObject(parent(), (_instance, state) => {
       state.storage.sql.exec("UPDATE parent_metadata SET scope='personal' WHERE parent_id=?", WORKSTREAM_ID);
+      state.storage.sql.exec("UPDATE channels SET scope='personal' WHERE workstream_id = ?", WORKSTREAM_ID);
     });
     expect(await parent().mutateParticipantGrant({ actorUserId: CREATOR_ID, userId: OTHER_ID,
       target: { kind: "conversation", workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId: asSubstreamId("0") },
