@@ -3759,8 +3759,9 @@ export class WorkspaceSpaceStorage {
    */
   private applySidekickDefaultInPlace(target: WorkspaceSpaceDefaultTarget, requestedByUserId: string, now: number): boolean {
     const eligible = this.storage.sql.exec<{ one: number } & Record<string, SqlStorageValue>>(
-      `SELECT 1 AS one FROM parent_metadata parent, automation_directory sidekick
-        WHERE parent.parent_id = ? AND parent.parent_kind = 'workstream' AND parent.archived_at IS NULL
+      `SELECT 1 AS one FROM parent_metadata parent, channels channel, automation_directory sidekick
+        WHERE parent.parent_id = ? AND parent.parent_kind = 'workstream'
+          AND channel.workstream_id = parent.parent_id AND channel.archived_at IS NULL
           AND sidekick.automation_id = ? AND sidekick.scope = 'workspace' AND sidekick.lifecycle <> 'deleted'`,
       target.workstreamId,
       target.targetId,
