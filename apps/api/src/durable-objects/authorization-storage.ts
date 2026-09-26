@@ -53,10 +53,21 @@ export class AuthorizationStorage {
       ).toArray()[0];
       if (current && (current.revision > input.revision
         || current.revision === input.revision && current.validated_at >= input.validatedAt)) return;
-      this.storage.sql.exec('DELETE FROM authorization_locations WHERE parent_id = ? AND substream_id = ?', input.parentId, input.substreamId);
-      for (const resourceId of new Set(input.resourceIds)) this.storage.sql.exec(
+      // Write only what changed: each inserted or deleted row rewrites that
+      // resource's search rows (migration 76), so an unchanged inventory must
+      // not touch the rows it already holds.
+      const next = new Set(input.resourceIds);
+      const held = new Set(this.storage.sql.exec<{ resource_id: string }>(
+        'SELECT resource_id FROM authorization_locations WHERE parent_id = ? AND substream_id = ?', input.parentId, input.substreamId,
+      ).toArray().map((row) => row.resource_id));
+      for (const resourceId of held) if (!next.has(resourceId)) this.storage.sql.exec(
+        'DELETE FROM authorization_locations WHERE parent_id = ? AND substream_id = ? AND resource_id = ?',
+        input.parentId, input.substreamId, resourceId);
+      for (const resourceId of next) if (!held.has(resourceId)) this.storage.sql.exec(
         'INSERT INTO authorization_locations(parent_id, substream_id, parent_kind, resource_id) VALUES (?, ?, ?, ?)',
         input.parentId, input.substreamId, input.parentKind, resourceId);
+      this.storage.sql.exec('UPDATE authorization_locations SET parent_kind = ? WHERE parent_id = ? AND substream_id = ? AND parent_kind <> ?',
+        input.parentKind, input.parentId, input.substreamId, input.parentKind);
       this.storage.sql.exec(`INSERT INTO authorization_inventories(parent_id, substream_id, revision, validated_at) VALUES (?, ?, ?, ?)
         ON CONFLICT(parent_id, substream_id) DO UPDATE SET revision = excluded.revision, validated_at = excluded.validated_at`,
       input.parentId, input.substreamId, input.revision, input.validatedAt);
@@ -64,9 +75,14 @@ export class AuthorizationStorage {
   }
 
   locations(resourceId: string) {
-    return this.storage.sql.exec<{ parent_id: string; substream_id: string; parent_kind: 'workstream' | 'automation' }>(
-      'SELECT parent_id, substream_id, parent_kind FROM authorization_locations WHERE resource_id = ? ORDER BY parent_id, substream_id',
-      resourceId,
-    ).toArray().map((row) => ({ parentId: row.parent_id, substreamId: row.substream_id, parentKind: row.parent_kind }));
+    return authorizationLocations(this.storage.sql, resourceId);
   }
+}
+
+/** Every conversation the canonical inventories place a resource in. */
+export function authorizationLocations(sql: SqlStorage, resourceId: string) {
+  return sql.exec<{ parent_id: string; substream_id: string; parent_kind: 'workstream' | 'automation' }>(
+    'SELECT parent_id, substream_id, parent_kind FROM authorization_locations WHERE resource_id = ? ORDER BY parent_id, substream_id',
+    resourceId,
+  ).toArray().map((row) => ({ parentId: row.parent_id, substreamId: row.substream_id, parentKind: row.parent_kind }));
 }

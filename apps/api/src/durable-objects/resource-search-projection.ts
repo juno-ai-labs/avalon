@@ -7,6 +7,8 @@ import { resourceSearchCategory, resourceSearchText } from '../services/resource
 import { isUnlistedResourceMetadata } from '../services/resource-listing';
 import { searchDocumentId } from '../services/text-search';
 import type { SearchDocumentBatch, SearchDocument } from '../services/search-document';
+import { resourceSearchAudience } from '../services/search-audience';
+import { authorizationLocations } from './authorization-storage';
 
 export const ResourceSearchProjectionSchema = z.strictObject({
   type: z.literal('resource_search_projection_v1'), region: RegionSchema,
@@ -57,6 +59,61 @@ export const RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION = [
     END`,
 ];
 
+/**
+ * Migration 76: a resource's rows also carry who may read them (its search
+ * audience, see `services/search-audience.ts`), so a change to any input of
+ * that audience must rewrite them too. The update trigger additionally
+ * watches the uploader, the attachment status (a draft becoming sent), a
+ * Resend resource becoming or ceasing to be an email, and the connection. The
+ * location triggers rewrite a resource when an inventory attaches it to, or
+ * detaches it from, a conversation, or corrects whether that conversation
+ * belongs to a Sidekick.
+ * Immutable once shipped, like migration 43's statement it replaces.
+ */
+export const RESOURCE_SEARCH_AUDIENCE_MIGRATION = [
+  'DROP TRIGGER resources_search_update',
+  `CREATE TRIGGER resources_search_update AFTER UPDATE ON resources
+    WHEN OLD.provider IS NOT NEW.provider
+      OR OLD.title IS NOT NEW.title
+      OR OLD.canonical_url IS NOT NEW.canonical_url
+      OR OLD.mime_type IS NOT NEW.mime_type
+      OR OLD.content_ref IS NOT NEW.content_ref
+      OR OLD.content_sha256 IS NOT NEW.content_sha256
+      OR OLD.model_mime_type IS NOT NEW.model_mime_type
+      OR OLD.model_content_ref IS NOT NEW.model_content_ref
+      OR OLD.model_content_sha256 IS NOT NEW.model_content_sha256
+      OR OLD.uploaded_by_user_id IS NOT NEW.uploaded_by_user_id
+      OR OLD.attachment_status IS NOT NEW.attachment_status
+      OR (NEW.provider = 'resend' AND (OLD.resource_type = 'email') IS NOT (NEW.resource_type = 'email'))
+      OR OLD.connection_id IS NOT NEW.connection_id
+      OR COALESCE((SELECT CASE WHEN type = 'text' THEN atom ELSE '' END
+          FROM json_each(OLD.metadata_json) WHERE key = 'description' ORDER BY id DESC LIMIT 1), '')
+        IS NOT COALESCE((SELECT CASE WHEN type = 'text' THEN atom ELSE '' END
+          FROM json_each(NEW.metadata_json) WHERE key = 'description' ORDER BY id DESC LIMIT 1), '')
+    BEGIN
+      INSERT INTO resource_search_versions(resource_id, revision, pending, not_before)
+      VALUES (NEW.id, 1, 1, 0)
+      ON CONFLICT(resource_id) DO UPDATE SET revision = revision + 1, pending = 1, not_before = 0;
+    END`,
+  ...(['INSERT', 'DELETE'] as const).map((operation) => {
+    const row = operation === 'DELETE' ? 'OLD' : 'NEW';
+    return `CREATE TRIGGER authorization_locations_search_${operation.toLowerCase()} AFTER ${operation} ON authorization_locations
+      BEGIN
+        INSERT INTO resource_search_versions(resource_id, revision, pending, not_before)
+        VALUES (${row}.resource_id, 1, 1, 0)
+        ON CONFLICT(resource_id) DO UPDATE SET revision = revision + 1, pending = 1, not_before = 0;
+      END`;
+  }),
+  // A location's parent kind decides whether it admits a Sidekick's readers or a conversation's.
+  `CREATE TRIGGER authorization_locations_search_update AFTER UPDATE OF parent_kind ON authorization_locations
+    WHEN OLD.parent_kind IS NOT NEW.parent_kind
+    BEGIN
+      INSERT INTO resource_search_versions(resource_id, revision, pending, not_before)
+      VALUES (NEW.resource_id, 1, 1, 0)
+      ON CONFLICT(resource_id) DO UPDATE SET revision = revision + 1, pending = 1, not_before = 0;
+    END`,
+];
+
 export function resourceSearchRevision(sql: SqlStorage, resourceId: string): number | null {
   return sql.exec<{ revision: number }>('SELECT revision FROM resource_search_versions WHERE resource_id = ?', resourceId)
     .toArray()[0]?.revision ?? null;
@@ -98,6 +155,14 @@ export async function prepareResourceSearch(sql: SqlStorage, env: Env, workspace
   const categoryId = category ? await searchDocumentId(category, workspaceId, resourceId) : null;
   const text = row && category && (documentId === undefined || documentId === categoryId) ? await resourceSearchText(env, row) : null;
   if (resourceSearchRevision(sql, resourceId) !== revision) throw new Error('search_source_changed');
+  // Read after the revision check, with no await between: a location change
+  // bumps the revision (migration 76), so these are the locations of this revision.
+  const audience = row ? resourceSearchAudience(workspaceId, {
+    provider: String(row.provider), resource_type: String(row.resource_type),
+    uploaded_by_user_id: typeof row.uploaded_by_user_id === 'string' ? row.uploaded_by_user_id : null,
+    attachment_status: typeof row.attachment_status === 'string' ? row.attachment_status : null,
+    connection_id: typeof row.connection_id === 'string' ? row.connection_id : null,
+  }, authorizationLocations(sql, resourceId)) : [];
   const documents: SearchDocument[] = [];
   for (const source of ['files', 'artifacts', 'links'] as const) {
     const id = await searchDocumentId(source, workspaceId, resourceId);
@@ -107,6 +172,7 @@ export async function prepareResourceSearch(sql: SqlStorage, env: Env, workspace
       source, sourceId: resourceId, scopeId: workspaceId, revision,
       // A connector resource is admitted by its connection's projected decision.
       ...(live && typeof row.connection_id === 'string' ? { connectionId: row.connection_id } : {}),
+      ...(live ? { audience } : {}),
       text: live ? text : null,
       // The row is the canonical metadata the result used to reload; the index
       // now carries it so a hit renders without touching this object again.
