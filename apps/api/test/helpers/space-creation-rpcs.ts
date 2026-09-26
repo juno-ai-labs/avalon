@@ -79,23 +79,15 @@ export function spaceCreationWorkspaceRpcs() {
       authorityGeneration: input.authorityGeneration,
       spaces: (input.spaceIds.length > 0 ? input.spaceIds : [GENERAL_SPACE_ID]).map(summary),
     })),
-    ensureGeneralSpace: vi.fn(async () => ({
+    openGeneralSpace: vi.fn(async () => ({
       ok: true as const,
       created: false as const,
       space: summary(GENERAL_SPACE_ID),
     })),
-    prepareSpaceMembership: vi.fn(async (input: { spaceId: string }) => ({
+    // The connector path's placement of a Channel it provisioned itself.
+    placeChannelInGeneral: vi.fn(async () => ({
       ok: true as const,
-      space: summary(input.spaceId),
-      membershipGeneration: 1,
-    })),
-    finalizeSpaceMembership: vi.fn(async (input: { spaceId: string }) => ({
-      ok: true as const,
-      space: summary(input.spaceId),
-    })),
-    cancelSpaceMembership: vi.fn(async (input: { spaceId: string }) => ({
-      ok: true as const,
-      space: summary(input.spaceId),
+      space: summary(GENERAL_SPACE_ID),
     })),
   };
 }
