@@ -136,7 +136,11 @@ export const RESOURCE_SEARCH_BACKLOG_INTERVAL_MS = 30_000;
 /** The activity Queue accepts at most 100 messages in one batch. */
 const RESOURCE_SEARCH_BATCH = 100;
 
-/** When the next batch may go. Held by the object, not stored: a restart dispatches one batch early. */
+/**
+ * When the next batch may go. Held by the object, not stored: an eviction or
+ * restart forgets it, and the object dispatches one batch early if something
+ * wakes it inside the wait. The alarm is already set for the wait's end.
+ */
 export interface ResourceSearchPace { nextBatchAt: number }
 
 export function nextResourceSearchDueAt(sql: SqlStorage, env?: Env, pace?: ResourceSearchPace): number | null {
@@ -146,7 +150,7 @@ export function nextResourceSearchDueAt(sql: SqlStorage, env?: Env, pace?: Resou
   return due === null || !pace ? due : Math.max(due, pace.nextBatchAt);
 }
 export async function publishResourceSearch(sql: SqlStorage, env: Env, workspaceId: string,
-  pace?: ResourceSearchPace, intervalMs = RESOURCE_SEARCH_BACKLOG_INTERVAL_MS): Promise<void> {
+  pace?: ResourceSearchPace): Promise<void> {
   if (!searchIndexingConfigured(env)) return;
   if (pace && Date.now() < pace.nextBatchAt) return;
   const rows = sql.exec<{ resource_id: string; revision: number }>(
@@ -162,7 +166,7 @@ export async function publishResourceSearch(sql: SqlStorage, env: Env, workspace
     // Only a backlog is paced: once nothing due is left, the next edit goes at once.
     if (pace && rows.length === RESOURCE_SEARCH_BATCH && sql.exec(
       'SELECT 1 FROM resource_search_versions WHERE pending = 1 AND not_before <= ? LIMIT 1', Date.now(),
-    ).toArray().length) pace.nextBatchAt = Date.now() + intervalMs;
+    ).toArray().length) pace.nextBatchAt = Date.now() + RESOURCE_SEARCH_BACKLOG_INTERVAL_MS;
   } catch (error) {
     // Use the regional-effect outbox dispatch retry interval.
     for (const row of rows) sql.exec('UPDATE resource_search_versions SET not_before = ? WHERE resource_id = ? AND revision = ?', Date.now() + 5_000, row.resource_id, row.revision);

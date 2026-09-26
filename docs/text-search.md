@@ -557,6 +557,16 @@ exhausts the activity Queue's retries (six Browser Run calls) and dead-letters.
 Those are expected and harmless; count them against the
 `search_link_capture_failed` logs, and treat any other dead letter as real.
 
+A WorkspaceDO dispatches resource references 100 at a time. While more are due
+after a batch, the next waits `RESOURCE_SEARCH_BACKLOG_INTERVAL_MS` (30
+seconds), so a backlog drains at 200 resources a minute (Juno Labs' 152,000 in
+about 13 hours); an edit arriving with no backlog goes at once. Batches go out
+lowest `not_before` first, so a re-projection written at `not_before = 1` lets
+edits (written at `0`) through ahead of it. To pause a workspace's backlog,
+move its pending rows' `not_before` far ahead
+(`UPDATE resource_search_versions SET not_before = 4102444800000 WHERE pending = 1 AND not_before <= 1`);
+to resume, set those rows to `1`.
+
 Object alarms dispatch pending references only when the regional Turbopuffer key
 and `OPENROUTER_API_KEY` are present. Otherwise intents remain pending and search
 due-times are excluded from alarms. Provision credentials and wake the objects to resume. Queue acceptance clears only the
@@ -643,8 +653,9 @@ budgets require team policy; no arbitrary new caps are introduced here.
 resource references, its next batch waits
 `RESOURCE_SEARCH_BACKLOG_INTERVAL_MS` (30 seconds) if anything due is still
 pending, and its alarm is set for then. Once the backlog is gone no wait is
-set, so a single edit is dispatched as before unless it arrives behind one. The wait is held on the object, not stored;
-an object that restarts dispatches one batch early.
+set. The wait is held on the object, not stored; an eviction or restart forgets
+it, and the object dispatches one batch early if something wakes it inside the
+wait.
 
 **Why:** Migration 77 marked all 152,000 of Juno Labs' resources pending, and
 the alarm dispatched batch after batch with nothing between them. Each
@@ -665,7 +676,12 @@ whole backlog on every batch.
 **What a future change has to respect:** a whole-workspace re-projection is now
 bounded by this interval, so its duration is the workspace's resource count
 divided by 200 a minute. A change to the batch size or the jobs per resource
-changes the load this number was chosen against.
+changes the load this number was chosen against. Batches go out in
+`not_before, resource_id` order and every edit trigger writes `not_before = 0`,
+so a backlog also written at `0` interleaves with live edits by id, and a new
+resource (the newest UUIDv7) waits behind the whole backlog. A whole-workspace
+re-projection must therefore mark its rows `not_before = MAX(not_before, 1)`,
+so edits sort ahead of it.
 
 ### 2026-09-26 — Rows carry the groups that may read them
 
