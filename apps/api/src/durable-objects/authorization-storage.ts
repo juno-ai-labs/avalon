@@ -54,7 +54,7 @@ export class AuthorizationStorage {
       if (current && (current.revision > input.revision
         || current.revision === input.revision && current.validated_at >= input.validatedAt)) return;
       // Write only what changed: each inserted or deleted row rewrites that
-      // resource's search rows (migration 75), so an unchanged inventory must
+      // resource's search rows (migration 76), so an unchanged inventory must
       // not touch the rows it already holds.
       const next = new Set(input.resourceIds);
       const held = new Set(this.storage.sql.exec<{ resource_id: string }>(

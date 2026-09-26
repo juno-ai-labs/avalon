@@ -35,7 +35,6 @@ import {
 
 import type { Env } from "../src/env";
 import { QUEUE_BATCH_MAX_BYTES } from "../src/durable-objects/conversation-parent-object";
-import { notePendingParentImport, parentImportState } from "../src/durable-objects/hosted-parent-import";
 import { SCHEDULED_ALARM_RETRY_BASE_MS } from "../src/durable-objects/scheduled-alarms";
 import { hostedParentStub } from "./helpers/hosted-parent";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
@@ -44,7 +43,6 @@ const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000e00");
 const USER_ID = asUserId("00000000-0000-7000-8000-000000000e01");
 const SESSION_ID = "00000000-0000-7000-8000-000000000e02";
 const CHANNEL_ID = "00000000-0000-7000-8000-000000000e03";
-const IMPORTED_CHANNEL_ID = "00000000-0000-7000-8000-000000000e04";
 const LATE_CHANNEL_ID = "00000000-0000-7000-8000-000000000e05";
 
 const encoder = new TextEncoder();
@@ -70,10 +68,6 @@ interface QueueRecorder {
   calls: SendCall[];
   /** A batch this returns true for is refused, the way a Queue outage refuses it. */
   refuse: (messageIds: string[]) => boolean;
-  /** While set, a parent-effect `sendBatch` waits on it before answering. */
-  hold: Promise<void> | null;
-  /** How many `sendBatch` calls have reached `hold`. */
-  held: number;
 }
 
 /**
@@ -82,7 +76,7 @@ interface QueueRecorder {
  * recorded, so the calls are exactly the outbox drain's.
  */
 async function recordQueue(stub: DurableObjectStub): Promise<QueueRecorder> {
-  const recorder: QueueRecorder = { calls: [], refuse: () => false, hold: null, held: 0 };
+  const recorder: QueueRecorder = { calls: [], refuse: () => false };
   const queue = {
     send: async () => {},
     sendBatch: async (messages: Iterable<{ body: unknown }>) => {
@@ -91,10 +85,6 @@ async function recordQueue(stub: DurableObjectStub): Promise<QueueRecorder> {
         return parsed.success ? [parsed.data] : [];
       });
       if (effects.length === 0) return;
-      if (recorder.hold) {
-        recorder.held += 1;
-        await recorder.hold;
-      }
       const messageIds = effects.map((effect) => effect.messageId);
       const bytes = effects.reduce((total, effect) => total + encoder.encode(JSON.stringify(effect)).byteLength, 0);
       if (recorder.refuse(messageIds)) {
@@ -353,40 +343,6 @@ describe("the Organization's parent outbox drain", () => {
     expect(await runInDurableObject(workspace, (_instance, state) => (
       state.storage.sql.exec("SELECT id FROM workspace_directory_followups").toArray()
     ))).toEqual([]);
-  });
-
-  it("sends each row once when an import's drain starts while the alarm's is still sending", async () => {
-    const workspace = workspaceStub();
-    const recorder = await recordQueue(workspace);
-    let release!: () => void;
-    recorder.hold = new Promise<void>((resolve) => { release = resolve; });
-    const envelopes = Array.from({ length: 3 }, (_, index) => activityEnvelope(CHANNEL_ID, index + 1, 100));
-    await seedOutbox(workspace, envelopes);
-    await runInDurableObject(workspace, async (_instance, state) => {
-      // A Channel the ledger still owes an import; its legacy object holds
-      // nothing, so opening it imports empty and then drains the outbox.
-      notePendingParentImport(state.storage.sql, IMPORTED_CHANNEL_ID, "workstream");
-      await state.storage.setAlarm(Date.now() + 60_000);
-    });
-
-    // The alarm's drain reads the rows and waits in `sendBatch`.
-    const alarm = runDurableObjectAlarm(workspace);
-    await expect.poll(() => recorder.held, { timeout: 10_000, interval: 20 }).toBe(1);
-    // A request imports the Channel and starts its own drain while the
-    // alarm's has not deleted anything yet.
-    const opened = workspace.listChildren({ workspaceId: WORKSPACE_ID, parentId: IMPORTED_CHANNEL_ID })
-      .then(() => null, (error: unknown) => error);
-    await expect.poll(async () => runInDurableObject(workspace, (_instance, state) => (
-      parentImportState(state.storage.sql, IMPORTED_CHANNEL_ID)
-    )), { timeout: 10_000, interval: 20 }).toBe("imported");
-    release();
-    await alarm;
-    // An empty import leaves no parent to list; the drain is what is asserted.
-    expect(String(await opened)).toContain("conversation_parent_missing");
-
-    const sent = sentIds(recorder);
-    expect([...sent].sort()).toEqual(envelopes.map((envelope) => envelope.messageId));
-    expect(await outboxRows(workspace, CHANNEL_ID)).toEqual([]);
   });
 
   it("fails a viewer effect that reaches its parent before the Channel's row, and applies its redelivery", async () => {

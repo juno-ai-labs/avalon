@@ -97,7 +97,7 @@ describe("a Durable Object's registration of its own identity", () => {
         env.SUBSTREAM_AGENTS,
         conversationObjectName("global", WORKSPACE_ID, OTHER_WORKSTREAM_ID),
       )).toBeNull();
-      expect(selfFor(held.env, env.WORKSTREAM_DOS, name)).toBeNull();
+      expect(selfFor(held.env, env.AUTOMATION_DOS, name)).toBeNull();
     });
   });
 
@@ -131,7 +131,7 @@ describe("a Durable Object's registration of its own identity", () => {
         env.WORKSPACE_DOS,
         workspaceDOName("global", asWorkspaceId("00000000-0000-7000-8000-0000000004b3")),
       )).toBeNull();
-      expect(selfFor(held.env, env.WORKSTREAM_DOS, name)).toBeNull();
+      expect(selfFor(held.env, env.AUTOMATION_DOS, name)).toBeNull();
     });
   });
 });

@@ -10,7 +10,7 @@ import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlit
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 
 // Migration 72 renames the six directory tables WorkspaceDO held at v70 and
-// seeds `parent_imports` from two of them. Every assertion below starts from a
+// seeded `parent_imports` from two of them, which migration 75 drops. Every assertion below starts from a
 // populated v70 object committed in its own event, because a fresh schema has
 // no rows to lose, no foreign keys to leave pointing at an old name, and no
 // triggers to strand.
@@ -138,15 +138,12 @@ async function upgradeFromPopulatedV70(name: string): Promise<{ stub: DurableObj
   return { stub, v70 };
 }
 
-it("seeds parent_imports pending for every Channel and Space of a populated v70 object, archived ones included, and nothing else", async () => {
+it("drops the legacy import ledger once every parent is hosted", async () => {
+  // Migration 72 seeded a pending row for every Channel and Space; migration
+  // 75 drops the ledger with the legacy classes it imported from.
   const { stub } = await upgradeFromPopulatedV70("hosted-parent-v70-seed");
   await runInDurableObject(stub, (_instance, state) => {
-    expect(rows(state.storage.sql, "SELECT parent_id, parent_kind, state, attempts FROM parent_imports ORDER BY parent_id")).toEqual([
-      { parent_id: "channel-archived", parent_kind: "workstream", state: "pending", attempts: 0 },
-      { parent_id: "channel-live", parent_kind: "workstream", state: "pending", attempts: 0 },
-      { parent_id: "space-archived", parent_kind: "space", state: "pending", attempts: 0 },
-      { parent_id: "space-live", parent_kind: "space", state: "pending", attempts: 0 },
-    ]);
+    expect(rows(state.storage.sql, "SELECT name FROM sqlite_master WHERE name LIKE 'parent_imports%'")).toEqual([]);
   });
 });
 

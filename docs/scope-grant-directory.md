@@ -13,7 +13,7 @@ The lite browser consumes a canonical directory endpoint for shared navigation.
 | `apps/api/src/durable-objects/scope-grant-storage.ts` | Grant mutation and existing parent outbox enqueue in one transaction. |
 | `apps/api/src/durable-objects/hosted-parent.ts` | Owns grant mutation and writes the projection to `parent_outbox`. |
 | `packages/contracts/src/conversation-effects.ts` | Typed parent effect carrying the grant. |
-| `apps/api/src/queues/activity-consumer.ts` | Applies a grant effect that arrives on the Queue, such as one a legacy object sent before it was exported. |
+| `apps/api/src/queues/activity-consumer.ts` | Applies a grant effect that arrives on the Queue. |
 | `apps/api/src/durable-objects/scope-grant-directory.ts` | Versioned projection and incarnation-specific candidate query. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Workspace identity checks, schema and typed RPC boundary. |
 | `apps/api/src/services/shared-directory-service.ts` | Candidate lookup followed by canonical owner reads and relationship revalidation. |
@@ -34,9 +34,9 @@ can neither claim such a row nor deactivate it — so a Channel a person also
 holds directly stays published. The parent's `parent_outbox` row owns versioning
 and retries. `WorkspaceDO` applies it to this index right after the write, with
 no Queue hop and no separate delivery alarm; the alarm only retries an apply that
-failed. Importing a legacy parent republishes its direct grants, deduplicated
-against the projection keys it carried, so a delivery the legacy object never
-sent is not lost.
+failed. The one-time import of each legacy parent republished its direct
+grants, deduplicated against the projection keys it carried, so a delivery the
+legacy object never sent was not lost.
 
 The WorkspaceDO index supplies candidates only, and it is one of two sources:
 a Channel where this person may list a Breakout but cannot see the Channel

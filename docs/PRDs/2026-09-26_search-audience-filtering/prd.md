@@ -169,7 +169,7 @@ its pull request merged.
 
 ### 2026-09-26 — Attach and detach rewrite a resource through its existing re-projection
 
-**Decided:** No separate audience patch job. WorkspaceDO migration 75 adds
+**Decided:** No separate audience patch job. WorkspaceDO migration 76 adds
 triggers on `authorization_locations`, and the inventory writer now changes
 only the location rows that differ, so an attach or detach bumps that
 resource's search revision and the existing pipeline rewrites every row.
@@ -187,7 +187,7 @@ fallback. Shipped in the phase 1 pull request.
 
 ### 2026-09-26 — The resource-type trigger watches only email-ness
 
-**Decided:** Migration 75's update trigger reacts to a Resend resource becoming
+**Decided:** Migration 76's update trigger reacts to a Resend resource becoming
 or ceasing to be an email, not to every `resource_type` change.
 
 **Why:** `resource_type` enters a resource's audience only through that rule.
