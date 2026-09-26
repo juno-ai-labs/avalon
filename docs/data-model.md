@@ -276,7 +276,8 @@ never embeds the underlying row. Membership, invitations,
 user profiles, placement routes, and migration control remain D1 authorities.
 
 `WorkspaceDO.parent_metadata` is different: one row per Channel or Space, it is
-the authoritative parent metadata projected from Main. Its revision covers
+the parent's identity and generation, with a copy of the metadata projected
+from Main that its readers take from the `channels` or `spaces` row instead. Its revision covers
 complete common metadata; only Main entries in `parent_child_viewer_projections`
 produce the parent viewer overlay. Child title and lifecycle live in
 `parent_children`, whose nullable
@@ -305,8 +306,8 @@ SQL joins.
 
 - The main `SubstreamAgent`'s object-local `workstream` row is the product root;
   each provisioned child carries the bounded root facts needed to authorize and
-  project its own context, while `WorkspaceDO.parent_metadata` is the
-  Main-derived parent view. `workstream_key` is the conversation parent id and
+  project its own context, while `WorkspaceDO`'s `channels` row is the
+  Main-derived parent view and `parent_metadata` its identity. `workstream_key` is the conversation parent id and
   `parent_kind` (v39, widened by v66) says whether that parent is a work stream,
   an automation, or a Space; `origin_type`, `automation_subscription_id`, `automation_run_id`,
   and `planned_for` are dead columns, kept only because the released

@@ -28,3 +28,24 @@ export async function withHostedParent<T>(
     return fn(await host.hostedParent(parentId), state);
   });
 }
+
+/**
+ * A Channel's directory row, the copy a hosted parent reads its title, scope
+ * and archive state from. A fixture that writes a parent's own
+ * `parent_metadata` row writes this beside it; changing scope or archive
+ * state means changing this row.
+ */
+export function insertChannelRow(
+  state: DurableObjectState,
+  workstreamId: string,
+  title: string,
+  scope: "personal" | "workspace" = "personal",
+): void {
+  state.storage.sql.exec(`INSERT INTO channels
+    (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+     title, description, preview, scope, exact_state, last_activity_at,
+     origin_type, title_status, latest_attention_ordinal,
+     unread_tracking_start_ordinal, source_created_at, source_updated_at, projected_at)
+    VALUES (?, 1, 1, ?, 'hash', ?, '', '', ?, 'idle', 0, 'ad_hoc', 'settled', 0, 0, 0, 0, 0)`,
+    workstreamId, `event:${workstreamId}`, title, scope);
+}

@@ -1565,17 +1565,23 @@ describe("post_result", () => {
     // the parent's own gate has to agree with it rather than with a copy.
     await runInDurableObject(roomParent(), (_instance, state) => {
       state.storage.sql.exec("UPDATE channels SET archived_at = ? WHERE workstream_id = ?", Date.now(), ROOM_ID);
+      // The parent's own copy still says active: that is the stale case.
+      expect(state.storage.sql.exec<{ archived_at: number | null }>(
+        "SELECT archived_at FROM parent_metadata WHERE parent_id = ?", ROOM_ID,
+      ).one().archived_at).toBeNull();
     });
     await expect(Promise.resolve(roomParent().reserveChild({
       workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: childId, createdByUserId: AUTHOR_ID,
       kind: "child", authorityGeneration: 1,
     }))).rejects.toThrow("workstream_archived");
+    const registered = await runInDurableObject(roomParent(), (_instance, state) =>
+      state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM parent_children WHERE parent_id = ? AND substream_id = ?", ROOM_ID, childId).one().n);
+    expect(registered).toBe(0);
   });
 
   it("refuses child reservation after archival without registering the child", async () => {
     const childId = asSubstreamId(crypto.randomUUID());
     await runInDurableObject(roomParent(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE parent_metadata SET archived_at = ? WHERE parent_id = ?", Date.now(), ROOM_ID);
       state.storage.sql.exec("UPDATE channels SET archived_at = ? WHERE workstream_id = ?", Date.now(), ROOM_ID);
     });
     await expect(Promise.resolve(roomParent().reserveAgentChild({
@@ -1612,7 +1618,6 @@ describe("post_result", () => {
     const recipientAgentId = agentIdForAddress({ parentKind: "workstream", parentId: ROOM_ID, substreamId: asSubstreamId("0") });
     const senderAgentId = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("0") });
     await runInDurableObject(roomParent(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE parent_metadata SET archived_at = ? WHERE parent_id = ?", Date.now(), ROOM_ID);
       state.storage.sql.exec("UPDATE channels SET archived_at = ? WHERE workstream_id = ?", Date.now(), ROOM_ID);
     });
     const messageId = crypto.randomUUID();

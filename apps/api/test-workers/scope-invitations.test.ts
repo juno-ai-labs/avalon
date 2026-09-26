@@ -15,7 +15,7 @@ import { openEmailLoginSecret } from "../src/services/email-login-service";
 import { promoteWorkspaceGuest } from "../src/services/workspace-relationship-service";
 import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
 import { changeRelationships } from "./helpers/workspace-relationship-events";
-import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
+import { hostedParentStub, insertChannelRow, withHostedParent } from "./helpers/hosted-parent";
 import { conversationObjectName } from "../src/durable-objects/names";
 import { boot, seedParticipantMessage, seedOpenWorkstreamAuthority, seedWorkstreamRoot } from "./helpers/substream-fixture";
 
@@ -101,13 +101,7 @@ async function seedParent(id: string, title: string, actorTargets: ScopeGrantTar
     state.storage.sql.exec(`INSERT INTO parent_metadata
       (parent_id,parent_kind,workspace_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
       VALUES (?,'workstream',?,'global',1,'Stale copy','','','personal','idle',0,0,0)`, id, workspaceId);
-    state.storage.sql.exec(`INSERT INTO channels
-      (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
-       title, description, preview, scope, exact_state, last_activity_at,
-       origin_type, title_status, latest_attention_ordinal,
-       unread_tracking_start_ordinal, source_created_at, source_updated_at, projected_at)
-      VALUES (?, 1, 1, ?, 'hash', ?, '', '', 'personal', 'idle', 0, 'ad_hoc', 'settled', 0, 0, 0, 0, 0)`,
-      id, `event:${id}`, title);
+    insertChannelRow(state, id, title);
     state.storage.sql.exec("INSERT INTO parent_children (parent_id,substream_id,kind,created_at) VALUES (?,'0','main',0), (?,?,'child',0)", id, id, childId);
     state.storage.sql.exec("INSERT INTO parent_participant_migrations VALUES (?, '0', ?, '{}', 'complete')", id, crypto.randomUUID());
     state.storage.sql.exec("INSERT INTO parent_participant_migrations VALUES (?, ?, ?, NULL, 'complete')", id, childId, crypto.randomUUID());
