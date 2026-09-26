@@ -168,7 +168,7 @@ const provider = useOpenRouterDouble(async (call) => {
     const submit = call.toolNames.find((name) => name.endsWith("submit_draft"));
     if (!submit) throw new Error("sidekick_authoring_tool_missing");
     const revised = JSON.stringify(latestInput?.content ?? "").includes("REVISE");
-    return { callTool: { name: submit, arguments: { ...DEFINITION, sidekickId: null,
+    return { callTool: { name: submit, arguments: { ...DEFINITION, sidekickId: null, icon: "file-text", color: "blue",
       name: revised ? "Revised research guide" : "Research guide", triggers: [],
       instructions: revised ? "Compare the options and include their costs." : "Compare the available options." } } };
   }

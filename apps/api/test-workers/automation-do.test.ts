@@ -136,7 +136,7 @@ const provider = useOpenRouterDouble((call) => {
   if (submitDraftOnNextTurn) {
     submitDraftOnNextTurn = false;
     expect(call.toolNames).toContain("sidekick_submit_draft");
-    return { callTool: { name: "sidekick_submit_draft", arguments: { ...DEFINITION, triggers: [] } } };
+    return { callTool: { name: "sidekick_submit_draft", arguments: { ...DEFINITION, triggers: [], icon: "lightbulb", color: "emerald" } } };
   }
   if (loadSkillOnNextTurn) {
     loadSkillOnNextTurn = false;
@@ -591,6 +591,10 @@ describe("AutomationDO", () => {
     }>(`SELECT status, final_turn_id, terminalized_at, error_json FROM runs ORDER BY created_at DESC LIMIT 1`).one());
     await expect.poll(async () => (await latestRun()).terminalized_at, { timeout: RUN_SETTLE_TIMEOUT_MS }).not.toBeNull();
     expect(await automationRow()).toMatchObject({ lifecycle: "active", accepted_definition_revision: 1 });
+    // The icon and colour the chat chose are the Sidekick's own, not the draft's.
+    expect(JSON.parse(await runInDurableObject(automationStub(), (_instance, state) => state.storage.sql.exec<{ appearance_json: string }>(
+      `SELECT appearance_json FROM automation WHERE id = 1`,
+    ).one().appearance_json))).toEqual({ icon: "lightbulb", color: "emerald" });
     const run = await latestRun();
     expect(run).toMatchObject({ status: "completed", error_json: null, final_turn_id: expect.any(String) });
     expect(await runInDurableObject(root, (_instance, state) => state.storage.sql.exec<{ count: number }>(
@@ -617,6 +621,42 @@ describe("AutomationDO", () => {
     expect((await runInDurableObject(automationStub(), (instance: AutomationDO) => instance.readDetail({ ...addressed(), actor: actor() }))).loadable).toBe(true);
     await automationStub().pause({ ...addressed(), actor: actor() });
     expect((await runInDurableObject(automationStub(), (instance: AutomationDO) => instance.readDetail({ ...addressed(), actor: actor() }))).loadable).toBe(true);
+  });
+
+  it("keeps a person's pick when the chat repeats its own earlier appearance", async () => {
+    await createDraft();
+    const draft = { ...DEFINITION, definitionVersion: 2 as const, triggers: [] };
+    const save = (appearance: { icon: "lightbulb" | "rocket"; color: "emerald" | "red" | "blue" }) => automationStub().saveDefinition({
+      ...addressed(), draft, evaluatorRules: null, submittedByRunId: null, appearance, actor: actor(),
+    });
+    const stored = async () => JSON.parse((await runInDurableObject(automationStub(), (_instance, state) => state.storage.sql.exec<{ appearance_json: string }>(
+      `SELECT appearance_json FROM automation WHERE id = 1`,
+    ).one().appearance_json)));
+    await save({ icon: "lightbulb", color: "emerald" });
+    expect(await stored()).toEqual({ icon: "lightbulb", color: "emerald" });
+    await automationStub().setAppearance({ ...addressed(), actor: actor(), appearance: { color: "red" } });
+    // "Also run it on Fridays": the chat copies its earlier call.
+    await save({ icon: "lightbulb", color: "emerald" });
+    expect(await stored()).toEqual({ icon: "lightbulb", color: "red" });
+    // A value it has not submitted before is a choice, and is written.
+    await save({ icon: "rocket", color: "blue" });
+    expect(await stored()).toEqual({ icon: "rocket", color: "blue" });
+  });
+
+  it("keeps a retired colour the Sidekick already wears, and refuses it as a new choice", async () => {
+    await createDraft();
+    const draft = { ...DEFINITION, definitionVersion: 2 as const, triggers: [] };
+    const storedAppearance = () => runInDurableObject(automationStub(), (_instance, state) => state.storage.sql.exec<{ appearance_json: string | null }>(
+      `SELECT appearance_json FROM automation WHERE id = 1`,
+    ).one().appearance_json);
+    const refused = await automationStub().saveDefinition({ ...addressed(), draft, evaluatorRules: null, submittedByRunId: null,
+      appearance: { icon: "folder", color: "teal" }, actor: actor() }).then(() => null, (error: unknown) => error);
+    expect((refused as Error).message).toContain("color teal is kept only when it is the Sidekick's current color");
+    expect(await storedAppearance()).toBeNull();
+    await automationStub().setAppearance({ ...addressed(), actor: actor(), appearance: { icon: "folder", color: "teal" } });
+    await automationStub().saveDefinition({ ...addressed(), draft: { ...draft, name: "Edited" }, evaluatorRules: null, submittedByRunId: null,
+      appearance: { icon: "folder", color: "teal" }, actor: actor() });
+    expect(JSON.parse((await storedAppearance())!)).toEqual({ icon: "folder", color: "teal" });
   });
 
   it("hides disabled email while retaining its permanent address", async () => {

@@ -1022,6 +1022,8 @@ describe("connector tools selected for harness runs", () => {
     const readyDraft = {
       name: "New mail summary",
       description: "Summarize new mail.",
+      icon: "file-text",
+      color: "blue",
       overview: "Reports newly received messages.",
       instructions: "Summarize the message.",
       triggers: [{
@@ -1189,6 +1191,8 @@ describe("connector tools selected for harness runs", () => {
     await expect(submit.execute({
       name: "New mail summary",
       description: "Summarize new mail.",
+      icon: "file-text",
+      color: "blue",
       overview: "Reports newly received messages.",
       instructions: "Summarize the message.",
       triggers: [{
@@ -1629,22 +1633,25 @@ describe("editing an automation a conversation already owns", () => {
     const submit = await automationCreatorTool(database, automationConversationInput(), "submit_draft");
 
     await expect(submit.execute(
-      { ...manualDraft("Someone else's job"), sidekickId: OWNED_AUTOMATION_ID },
+      { ...manualDraft("Someone else's job"), icon: "file-text", color: "blue", sidekickId: OWNED_AUTOMATION_ID },
       { toolCallId: "edit-another-automation" } as never,
     )).rejects.toThrow("edits only its own Sidekick");
     expect(database.submittedDefinitions).toEqual([]);
 
     await expect(submit.execute(
-      { ...manualDraft("Named itself"), sidekickId: AUTOMATION_ID },
+      { ...manualDraft("Named itself"), icon: "file-text", color: "blue", sidekickId: AUTOMATION_ID },
       { toolCallId: "edit-itself-by-id" } as never,
     )).resolves.toMatchObject({ output: { accepted: true } });
     await expect(submit.execute(
-      { ...manualDraft("Named nothing"), sidekickId: null },
+      { ...manualDraft("Named nothing"), icon: "file-text", color: "blue", sidekickId: null },
       { toolCallId: "edit-itself-by-default" } as never,
     )).resolves.toMatchObject({ output: { accepted: true } });
 
     expect(database.submittedDefinitions.map((request) => request.automationId))
       .toEqual([AUTOMATION_ID, AUTOMATION_ID]);
+    // The icon and colour ride beside the draft to the object, not inside it.
+    expect(database.submittedDefinitions.map((request) => request.appearance))
+      .toEqual([{ icon: "file-text", color: "blue" }, { icon: "file-text", color: "blue" }]);
     // Nothing is created here either: the automation this conversation belongs
     // to already exists, and its own chat has no room to post a proposal into.
     expect(database.createdAutomations).toEqual([]);
