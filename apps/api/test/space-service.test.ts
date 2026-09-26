@@ -52,12 +52,9 @@ function summary(overrides: Partial<SpaceSummary> = {}): SpaceSummary {
 interface WorkspaceDouble {
   spaceSummary: ReturnType<typeof vi.fn>;
   listSpaceMembers: ReturnType<typeof vi.fn>;
-  prepareSpaceMembershipRemoval: ReturnType<typeof vi.fn>;
   moveSpaceMembership: ReturnType<typeof vi.fn>;
-  replanSpaceMembershipMoveForAudience: ReturnType<typeof vi.fn>;
-  finalizeSpaceMembershipMove: ReturnType<typeof vi.fn>;
-  finalizeSpaceMembershipRemoval: ReturnType<typeof vi.fn>;
   noteSpaceAudience: ReturnType<typeof vi.fn>;
+  admitSpaceCreation: ReturnType<typeof vi.fn>;
   reserveSpace: ReturnType<typeof vi.fn>;
   recordSpaceIntentReceipt: ReturnType<typeof vi.fn>;
   prepareSpaceArchive: ReturnType<typeof vi.fn>;
@@ -75,26 +72,9 @@ function workspaceDouble(overrides: Partial<WorkspaceDouble> = {}): WorkspaceDou
     listSpaceMembers: vi.fn(async () => ({
       ok: true, members: [{ workstreamId: CHANNEL_ID, membershipGeneration: 4 }], nextCursor: null,
     })),
-    prepareSpaceMembershipRemoval: vi.fn(async () => ({
-      ok: true, space: summary(), membershipGeneration: 4,
-    })),
     moveSpaceMembership: vi.fn(async () => ({ ok: true, moved: false })),
-    replanSpaceMembershipMoveForAudience: vi.fn(async () => ({
-      ok: true,
-      equivalentAudience: true,
-      operationId: "00000000-0000-7000-8000-0000000000e2",
-      source: summary({ name: "Source" }),
-      target: summary({ id: TARGET_SPACE_ID, name: "Target" }),
-      sourceMembershipGeneration: 4,
-      targetMembershipGeneration: 2,
-    })),
-    finalizeSpaceMembershipMove: vi.fn(async () => ({
-      ok: true,
-      source: summary({ channelCount: 0 }),
-      target: summary({ id: TARGET_SPACE_ID }),
-    })),
-    finalizeSpaceMembershipRemoval: vi.fn(async () => ({ ok: true, space: summary() })),
     noteSpaceAudience: vi.fn(async () => ({ ok: true, space: summary({ revision: 4 }) })),
+    admitSpaceCreation: vi.fn(async () => ({ ok: true })),
     reserveSpace: vi.fn(async (): Promise<WorkspaceSpaceReserveResult> => ({ ok: true, space: summary(), created: true })),
     recordSpaceIntentReceipt: vi.fn(async () => ({ recorded: true })),
     prepareSpaceArchive: vi.fn(async () => ({ ok: true, space: summary() })),
@@ -331,7 +311,8 @@ describe("SpaceService lifecycle fan-out", () => {
       CHANNEL_ID,
     )).rejects.toMatchObject({ code: "space_not_found" });
 
-    expect(workspace.prepareSpaceMembershipRemoval).not.toHaveBeenCalled();
+    expect(workspace.addSpaceChannel).not.toHaveBeenCalled();
+    expect(workspace.removeSpaceChannel).not.toHaveBeenCalled();
   });
 
   it("moves equal-audience provenance in one WorkspaceDO call without reading or rewriting the Channel audience", async () => {
@@ -484,110 +465,22 @@ describe("SpaceService membership changes", () => {
 });
 
 describe("SpaceService intent resumption", () => {
-  it("replays an interrupted equivalent-audience move from its durable fences", async () => {
-    const log: string[] = [];
+  it("given a queued intent, when it resumes, then WorkspaceDO takes it a step at a time until it stops progressing", async () => {
+    const steps = [
+      { ok: true, outcome: "progressed" },
+      { ok: true, outcome: "abandoned", reason: "add_superseded" },
+    ];
     const workspace = workspaceDouble({
-      spaceSummary: vi.fn(async (input: { spaceId: SpaceSummary["id"] }) => ({
-        ok: true,
-        space: summary({ id: input.spaceId, name: input.spaceId === SPACE_ID ? "Source" : "Target" }),
-      })),
-      finalizeSpaceMembershipMove: vi.fn(async () => {
-        log.push("finalize");
-        return {
-          ok: true,
-          source: summary({ channelCount: 0 }),
-          target: summary({ id: TARGET_SPACE_ID, channelCount: 1 }),
-        };
-      }),
-    });
-    const channels = channelDoubles(log);
-    channels.room.readPersistedSpaceAccessSources = vi.fn(async () => [{
-      spaceId: TARGET_SPACE_ID,
-      scope: "personal" as const,
-      participantUserIds: [OWNER],
-    }]);
-
-    await expect(new SpaceService(serviceEnv({
-      workspace, conversation: channels.conversation, room: channels.room,
-    }), auth()).resumeIntent({
-      operationId: "00000000-0000-7000-8000-0000000000e2",
-      kind: "move",
-      spaceId: TARGET_SPACE_ID,
-      workstreamId: CHANNEL_ID,
-      spaceRevision: 3,
-      membershipGeneration: 2,
-      sourceSpaceId: SPACE_ID,
-      sourceSpaceRevision: 3,
-      sourceMembershipGeneration: 4,
-      cursor: null,
-    })).resolves.toEqual({ outcome: "settled" });
-
-    expect(log).toEqual([
-      `apply:${CHANNEL_ID}:4`,
-      `retract:${CHANNEL_ID}`,
-      `apply:${CHANNEL_ID}:2`,
-      `retract:${CHANNEL_ID}`,
-      "finalize",
-    ]);
-    expect(channels.room.applySpaceAccessSource.mock.calls[0]?.[0]).toMatchObject({
-      spaceId: SPACE_ID,
-      participantUserIds: [OWNER],
-    });
-    expect(channels.room.applySpaceAccessSource.mock.calls[1]?.[0]).toMatchObject({
-      spaceId: TARGET_SPACE_ID,
-      participantUserIds: [OWNER, MEMBER],
-    });
-    expect(workspace.finalizeSpaceMembershipMove).toHaveBeenCalledWith(expect.objectContaining({
-      operationId: "00000000-0000-7000-8000-0000000000e2",
-      sourceSpaceRevision: 3,
-      sourceMembershipGeneration: 4,
-      targetSpaceRevision: 3,
-      targetMembershipGeneration: 2,
-    }));
-  });
-
-  it("acks a resumed move that a competing destination already superseded", async () => {
-    const workspace = workspaceDouble({
-      replanSpaceMembershipMoveForAudience: vi.fn(async () => ({
-        ok: false,
-        code: "space_revision_conflict",
-        unreachableUserIds: [],
-        blockedWorkstreamIds: [],
-      })),
-    });
-
-    await expect(new SpaceService(serviceEnv({ workspace }), auth()).resumeIntent({
-      operationId: "00000000-0000-7000-8000-0000000000e3",
-      kind: "move",
-      spaceId: TARGET_SPACE_ID,
-      workstreamId: CHANNEL_ID,
-      spaceRevision: 3,
-      membershipGeneration: 2,
-      sourceSpaceId: SPACE_ID,
-      sourceSpaceRevision: 3,
-      sourceMembershipGeneration: 4,
-      cursor: null,
-    })).resolves.toEqual({ outcome: "abandoned", reason: "move_superseded" });
-  });
-
-  it("given an intent other than a move, when it resumes, then WorkspaceDO finishes it from its row", async () => {
-    const workspace = workspaceDouble({
-      resumeSpaceIntent: vi.fn(async () => ({ ok: true, outcome: "abandoned", reason: "add_superseded" })),
+      resumeSpaceIntent: vi.fn(async () => steps.shift()),
     });
     const channels = channelDoubles([]);
 
     await expect(new SpaceService(serviceEnv({
       workspace, conversation: channels.conversation, room: channels.room,
-    }), auth()).resumeIntent({
-      operationId: "00000000-0000-7000-8000-0000000000e1",
-      kind: "audience",
-      spaceId: SPACE_ID,
-      workstreamId: null,
-      spaceRevision: 4,
-      membershipGeneration: null,
-      cursor: null,
-    })).resolves.toEqual({ outcome: "abandoned", reason: "add_superseded" });
+    }), auth()).resumeIntent("00000000-0000-7000-8000-0000000000e1"))
+      .resolves.toEqual({ outcome: "abandoned", reason: "add_superseded" });
 
+    expect(workspace.resumeSpaceIntent).toHaveBeenCalledTimes(2);
     expect(workspace.resumeSpaceIntent).toHaveBeenCalledWith({
       auth: expect.objectContaining({ userId: OWNER }),
       operationId: "00000000-0000-7000-8000-0000000000e1",
@@ -598,6 +491,21 @@ describe("SpaceService intent resumption", () => {
 });
 
 describe("SpaceService creation", () => {
+  it("given a caller WorkspaceDO refuses, when they create a Space, then nothing is anchored, bootstrapped or reserved", async () => {
+    const workspace = workspaceDouble({
+      admitSpaceCreation: vi.fn(async () => ({ ok: false, code: "space_access_denied" })),
+    });
+    const batch = vi.fn(async () => []);
+    const env = serviceEnv({ workspace, batch });
+
+    await expect(new SpaceService(env, auth()).create({
+      name: "Company", iconKey: "briefcase", colorKey: "blue", scope: "workspace",
+    })).rejects.toMatchObject({ status: 403, code: "space_access_denied" });
+
+    expect(batch).not.toHaveBeenCalled();
+    expect(workspace.reserveSpace).not.toHaveBeenCalled();
+  });
+
   it("given a D1 anchor that cannot be written, when creation fails, then nothing was reserved", async () => {
     const workspace = workspaceDouble();
     const env = serviceEnv({

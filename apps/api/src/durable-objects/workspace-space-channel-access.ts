@@ -12,6 +12,7 @@ import type { Env } from "../env";
 import { asApiError } from "../lib/api-error";
 import { effectiveChannelAudience } from "../lib/channel-audience";
 import { settledBatches } from "../lib/settled-batches";
+import { stableUuidSync } from "../lib/stable-uuid";
 import { uuidV7 } from "../lib/uuid-v7";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import {
@@ -20,7 +21,6 @@ import {
   runSpaceSourceRetraction,
   SpaceSourceApplicationInterrupted,
   survivorAttributions,
-  type ChannelAudienceClient,
 } from "../services/space-source-operations";
 import { WorkstreamObjectClient } from "../services/workstream-object-client";
 import type { HostedParent } from "./hosted-parent";
@@ -60,6 +60,11 @@ export interface SpaceChannelAccessHost {
   archivedChannel(workstreamId: string): { channel: ObservedChannel; title: string } | null;
   /** When a newly staged intent becomes due for the alarm's resume. */
   intentResumeAt(): number;
+  /**
+   * Mark an intent as being run by this request until the returned release,
+   * so the alarm skips it rather than running the same intent alongside.
+   */
+  holdIntent(operationId: string): () => void;
   armNextAlarm(): Promise<void>;
   publishSpaceSnapshot(): void;
   publishMembershipChanged(workstreamId: string, spaceIds: readonly string[]): void;
@@ -158,16 +163,22 @@ function observedOf(detail: WorkstreamDetail): ObservedChannel {
  * retained-content fence and the roster live in its conversation):
  *
  * 1. One transaction here stages whatever the change is about (a `joining` or
- *    `removing` membership and its intent, or nothing for a walk step), plans
- *    the retraction and records which remaining Space supplies each survivor,
- *    and plans the application against the audience the retraction leaves.
+ *    `removing` membership and its intent, or nothing for a walk step),
+ *    retracts the departing source and records which remaining Space supplies
+ *    each survivor, and commits the applied source with the readers it plans
+ *    to seat.
  * 2. The Channel's conversation is asked for the canonical operations the plan
  *    names, as the person who asked.
  * 3. One transaction here confirms the applied source and settles the
  *    membership and its intent.
  *
  * The intent row is the durable record between the two transactions, and the
- * alarm resumes it through this same path.
+ * alarm resumes it through this same path. The access operations of step 1
+ * are keyed by the intent (`operationId` on `changeSource`), so a resume
+ * replays the plan the first attempt committed rather than planning again
+ * against a Channel that attempt may already have changed: a retraction's
+ * departing readers are the ones it read before the source was deleted, and
+ * an application's seats are the ones it recorded before any were made.
  */
 export class SpaceChannelAccess {
   constructor(private readonly host: SpaceChannelAccessHost) {}
@@ -176,24 +187,30 @@ export class SpaceChannelAccess {
    * Put an existing Channel in a Space, or finish a staged `add`.
    *
    * With `staged`, the membership is already `joining` at those fences (a
-   * resume) and is not staged again.
+   * resume) and is not staged again. `archived` lets the cutover place an
+   * archived Channel, observed from the directory because its product read
+   * answers 404; the product route never passes it.
    */
   async addChannel(
     actor: SpaceActorAuth,
     spaceId: SpaceId,
     workstreamId: WorkstreamId,
     staged: StagedMembership | null,
+    options: { archived?: boolean } = {},
   ): Promise<WorkspaceSpaceChannelChangeResult> {
     const storage = this.host.spaceStorage();
     const address = { workspaceId: actor.workspaceId, userId: actor.userId, spaceId, workstreamId };
     let fences = staged;
     let spaceName = "";
+    let release: (() => void) | null = null;
     const operationId = () => membershipOperationId(spaceId, workstreamId, fences!.membershipGeneration);
     const result = await this.changeSource({
       actor,
       spaceId,
       workstreamId,
       change: "apply",
+      operationId: () => operationId(),
+      archived: options.archived ?? false,
       plan: () => {
         if (staged) {
           const space = this.currentSpace(storage, actor.userId, spaceId);
@@ -220,7 +237,10 @@ export class SpaceChannelAccess {
         });
         return prepared;
       },
-      afterPlan: staged ? undefined : () => this.host.armNextAlarm(),
+      afterPlan: staged ? undefined : async () => {
+        release = this.host.holdIntent(operationId());
+        await this.host.armNextAlarm();
+      },
       settle: () => {
         const space = storage.finalizeMembership({ ...address, ...fences! });
         if (space === "conflict") throw spaceRefused("space_revision_conflict", spaceName);
@@ -239,7 +259,7 @@ export class SpaceChannelAccess {
         storage.cancelMembership({ ...address, ...fences });
         storage.cancelIntent(operationId());
       },
-    });
+    }).finally(() => (release as (() => void) | null)?.());
     if (!result.ok) {
       if (fences) this.host.publishSpaceSnapshot();
       return result;
@@ -258,7 +278,7 @@ export class SpaceChannelAccess {
    *
    * A failure after the plan leaves the membership `removing` and its intent
    * pending: the source is already withdrawn from the Channel's record, so the
-   * only way forward is the resume finishing the canonical operations.
+   * only way forward is the resume replaying the retraction that read it.
    */
   async removeChannel(
     actor: SpaceActorAuth,
@@ -270,12 +290,14 @@ export class SpaceChannelAccess {
     const address = { workspaceId: actor.workspaceId, userId: actor.userId, spaceId, workstreamId };
     let fences = staged;
     let spaceName = "";
+    let release: (() => void) | null = null;
     const operationId = () => membershipOperationId(spaceId, workstreamId, fences!.membershipGeneration);
     const result = await this.changeSource({
       actor,
       spaceId,
       workstreamId,
       change: "retract",
+      operationId: () => operationId(),
       plan: () => {
         if (staged) return null;
         const prepared = storage.prepareMembershipRemoval(address);
@@ -299,6 +321,7 @@ export class SpaceChannelAccess {
       },
       // The membership is `removing` from here, which every list already hides.
       afterPlan: staged ? undefined : async () => {
+        release = this.host.holdIntent(operationId());
         this.host.publishSpaceSnapshot();
         await this.host.armNextAlarm();
       },
@@ -308,7 +331,7 @@ export class SpaceChannelAccess {
         storage.settleIntent(operationId(), "membership_removed", true);
         return space;
       },
-    });
+    }).finally(() => (release as (() => void) | null)?.());
     if (!result.ok) return result;
     this.host.publishSpaceSnapshot();
     // The Space is named alongside the Channel: the membership is `removed`
@@ -360,6 +383,7 @@ export class SpaceChannelAccess {
         spaceId,
         workstreamId: member.workstreamId,
         change,
+        operationId: () => `${request.operationId}:${member.workstreamId}`,
         plan: () => (change === "retract" ? null : {
           space: this.currentSpace(storage, actor.userId, spaceId),
           membershipGeneration: member.membershipGeneration,
@@ -408,15 +432,19 @@ export class SpaceChannelAccess {
   }
 
   /**
-   * Finish a staged intent as its requester, through the same path the request
-   * takes.
+   * Take one step of a staged intent as its requester, through the same path
+   * the request takes.
+   *
+   * An `add`, a `remove` or a `move` is finished; a walk advances one page
+   * from the cursor on its row and answers `progressed` while pages remain,
+   * so no single resume holds this object for a whole Space.
    *
    * The requester's reach is checked first. Every branch applies this Space's
    * audience as the requester sees it, and somebody taken out of the Space
    * who still reaches it through a Channel in it is shown an empty roster;
    * applying that would withdraw every reader the Space supplies and report
    * success. That, like a missing fence, ends the intent by name: no later
-   * attempt gives it back.
+   * attempt gives it back. A `move` is the exception (see `resumeMove`).
    */
   async resume(actor: SpaceActorAuth, intent: WorkspaceSpaceIntentClaim): Promise<WorkspaceSpaceIntentResumeResult> {
     const storage = this.host.spaceStorage();
@@ -426,6 +454,7 @@ export class SpaceChannelAccess {
       await this.host.armNextAlarm();
       return { ok: true, outcome: "abandoned", reason };
     };
+    if (intent.kind === "move") return this.resumeMove(actor, intent, abandon);
     const reach = storage.reach(actor.userId, spaceId);
     if (reach === null) return { ok: false, refusal: spaceRefused("space_not_found", "").refusal };
     if (reach === "through_channel") {
@@ -442,7 +471,18 @@ export class SpaceChannelAccess {
         const staged = { spaceRevision: intent.spaceRevision, membershipGeneration: intent.membershipGeneration };
         if (intent.kind === "add" && storage.spaceRevision(spaceId) !== intent.spaceRevision) {
           // Staged against a Space whose audience has since moved; applying
-          // the audience it has now would be an add nobody asked for.
+          // the audience it has now would be an add nobody asked for. The plan
+          // recorded this add's source with the readers it meant to seat, so
+          // the source is withdrawn before the membership is taken back.
+          const parent = await this.host.hostedParent(workstreamId, actor.workspaceId);
+          if (parent.recordedSpaceSource(spaceId)?.membershipGeneration === intent.membershipGeneration) {
+            const withdrawn = await this.changeSource({
+              actor, spaceId, workstreamId, change: "retract",
+              operationId: () => `${intent.operationId}:superseded`,
+              plan: () => null, settle: () => undefined,
+            });
+            if (!withdrawn.ok) return withdrawn;
+          }
           storage.cancelMembership({ workspaceId: actor.workspaceId, userId: actor.userId, spaceId, workstreamId, ...staged });
           storage.cancelIntent(intent.operationId);
           this.host.publishSpaceSnapshot();
@@ -467,21 +507,99 @@ export class SpaceChannelAccess {
             current_revision: storage.spaceRevision(spaceId),
           });
         }
-        let cursor = intent.cursor;
-        for (;;) {
-          const page = await this.walkPage(actor, {
-            spaceId, operationId: intent.operationId, kind: intent.kind, cursor, expectedSpaceRevision: null,
-          });
-          if (!page.ok) return page;
-          if (page.outcome !== "page") return { ok: true, outcome: "settled" };
-          cursor = page.cursor;
-        }
+        const page = await this.walkPage(actor, {
+          spaceId, operationId: intent.operationId, kind: intent.kind, cursor: intent.cursor, expectedSpaceRevision: null,
+        });
+        if (!page.ok) return page;
+        return { ok: true, outcome: page.outcome === "page" ? "progressed" : "settled" };
       }
-      case "move":
-        // Staged only by a Worker from before `moveSpaceMembership`, and
-        // finished by `SpaceService.resumeIntent` through the Queue.
-        throw new Error("space_intent_move_resumes_in_worker");
     }
+  }
+
+  /**
+   * Finish a stored equal-audience `move`.
+   *
+   * No code path stages one (`moveSpaceMembership` commits an equal-audience
+   * move in one transaction); this finishes the ones in storage. One
+   * transaction finishes it the way that call does when the two Spaces still
+   * grant the same readers; otherwise the move is taken apart into an add to
+   * the target and a removal from the source, each with an intent of its own.
+   * If the Channel's provenance was already swapped to the target, the
+   * source's record is put back first, so the removal withdraws exactly what
+   * the source supplied.
+   *
+   * The stored intent is the authorization: the requester may have lost reach
+   * into either Space after the swap committed, and that must not strand a
+   * move they were allowed to make.
+   */
+  private async resumeMove(
+    actor: SpaceActorAuth,
+    intent: WorkspaceSpaceIntentClaim,
+    abandon: (reason: string) => Promise<WorkspaceSpaceIntentResumeResult>,
+  ): Promise<WorkspaceSpaceIntentResumeResult> {
+    const workstreamId = intent.workstreamId as WorkstreamId | null;
+    const sourceSpaceId = intent.sourceSpaceId as SpaceId | null;
+    const sourceSpaceRevision = intent.sourceSpaceRevision;
+    const sourceMembershipGeneration = intent.sourceMembershipGeneration;
+    if (!workstreamId || !intent.membershipGeneration || !sourceSpaceId || !sourceSpaceRevision
+      || !sourceMembershipGeneration) {
+      return abandon("move_fences_missing");
+    }
+    const targetSpaceId = intent.spaceId as SpaceId;
+    const storage = this.host.spaceStorage();
+    let parent: HostedParent;
+    let observed: { channel: ObservedChannel; title: string };
+    try {
+      parent = await this.host.hostedParent(workstreamId, actor.workspaceId);
+      observed = await this.observe(this.client(actor, workstreamId), workstreamId, true);
+    } catch (error) {
+      return { ok: false, refusal: conversationRefusal(error) };
+    }
+    const address = { workspaceId: actor.workspaceId, parentId: workstreamId };
+    const outcome = this.host.storage.transactionSync(() => storage.resumeStagedMove({
+      operationId: intent.operationId,
+      userId: intent.requestedByUserId,
+      sourceSpaceId,
+      targetSpaceId,
+      workstreamId,
+      sourceMembershipGeneration,
+      targetMembershipGeneration: intent.membershipGeneration!,
+    }, {
+      swap: (fences) => parent.replaceEquivalentSpaceAccessSource({
+        ...address, sourceSpaceId, targetSpaceId, ...fences,
+        operationId: stableUuidSync([intent.operationId, "swap", fences.sourceSpaceRevision, fences.targetSpaceRevision]),
+      }).ok,
+      restore: () => {
+        if (parent.recordedSpaceSource(sourceSpaceId)) return;
+        const swapped = parent.recordedSpaceSource(targetSpaceId);
+        if (!swapped) return;
+        parent.confirmSpaceAccessSource({
+          ...address,
+          spaceId: sourceSpaceId,
+          operationId: stableUuidSync([intent.operationId, "restore"]),
+          seatedUserIds: swapped.suppliedUserIds,
+          source: {
+            scope: swapped.scope,
+            participantUserIds: swapped.participantUserIds,
+            spaceRevision: sourceSpaceRevision,
+            membershipGeneration: sourceMembershipGeneration,
+            channel: observed.channel,
+          },
+        });
+      },
+    }));
+    if (outcome === "superseded") return { ok: true, outcome: "abandoned", reason: "move_superseded" };
+    this.host.publishSpaceSnapshot();
+    if (outcome === "moved") {
+      this.host.publishMembershipChanged(workstreamId, [sourceSpaceId, targetSpaceId]);
+      this.host.deferSpaceMembershipConvergence(actor.workspaceId, workstreamId, true);
+      await this.host.afterSidekickDefaultsApplied(storage, actor.workspaceId);
+      return { ok: true, outcome: "settled" };
+    }
+    const added = await this.addChannel(actor, targetSpaceId, workstreamId, null);
+    if (!added.ok) return added;
+    const removed = await this.removeChannel(actor, sourceSpaceId, workstreamId, null);
+    return removed.ok ? { ok: true, outcome: "settled" } : removed;
   }
 
   /**
@@ -493,12 +611,23 @@ export class SpaceChannelAccess {
    * the confirming transaction. `abandon` undoes what `plan` staged when the
    * change will not finish; without it a failure leaves the staged intent for
    * the alarm.
+   *
+   * `operationId` names the intent this change belongs to and is read once
+   * `plan` has run. The retraction and the application are recorded under
+   * ids derived from it, so the same change resumed replays the plans the
+   * first attempt committed; `null` (a rollback, which has no intent behind
+   * it) plans afresh. The application's id carries the Space revision it
+   * applies, and so does a re-application's retraction: a walk resumed after
+   * the Space moved retracts the source as it stands now rather than
+   * replaying a retraction of the one before.
    */
   private async changeSource<T>(input: {
     actor: SpaceActorAuth;
     spaceId: SpaceId;
     workstreamId: WorkstreamId;
     change: SourceChange;
+    operationId: () => string | null;
+    archived?: boolean;
     plan: () => PlannedSource | null;
     afterPlan?: (() => Promise<void>) | undefined;
     settle: () => T;
@@ -509,7 +638,7 @@ export class SpaceChannelAccess {
     let observation: { channel: ObservedChannel; title: string };
     let parent: HostedParent;
     try {
-      observation = await this.observe(client, workstreamId, change === "retract");
+      observation = await this.observe(client, workstreamId, change === "retract" || (input.archived ?? false));
       parent = await this.host.hostedParent(workstreamId, actor.workspaceId);
     } catch (error) {
       return { ok: false, refusal: conversationRefusal(error) };
@@ -523,13 +652,15 @@ export class SpaceChannelAccess {
     try {
       planned = this.host.storage.transactionSync(() => {
         const source = input.plan();
+        const intentId = input.operationId();
+        const step = (name: string) => (intentId === null ? uuidV7() : stableUuidSync([intentId, name]));
         let channel = observation.channel;
         let retraction: typeof planned.retraction = null;
         if (change !== "apply") {
           const retracted = parent.retractSpaceAccessSource({
             ...address,
             spaceId,
-            operationId: uuidV7(),
+            operationId: step(change === "reapply" && source ? `retract:${source.space.revision}` : "retract"),
             // A convergence that retracts in order to re-apply has to lose to
             // a newer one: this deletes the row the application fences on.
             ...(change === "reapply" && source ? { expectedSpaceRevision: source.space.revision } : {}),
@@ -563,8 +694,13 @@ export class SpaceChannelAccess {
             spaceRevision: source.space.revision,
             membershipGeneration: source.membershipGeneration,
           };
+          // Committed with the readers it plans to seat, so whatever a crash
+          // leaves seated is already attributed to this Space: a resume that
+          // gives the change up withdraws them, and one that finishes it
+          // confirms them.
           const plannedApplication = parent.applySpaceAccessSource({
-            ...address, spaceId, ...applied, operationId: uuidV7(), channel,
+            ...address, spaceId, ...applied, operationId: step(`apply:${applied.spaceRevision}`), channel,
+            commitWithPlan: true,
           });
           if (!plannedApplication.ok) throw channelRefused(plannedApplication.code, title);
           application = { plan: plannedApplication.plan, source: { ...applied, channel } };
@@ -603,6 +739,7 @@ export class SpaceChannelAccess {
       return { ok: false, refusal: conversationRefusal(error.cause) };
     }
 
+    let superseded = false;
     try {
       const value = this.host.storage.transactionSync(() => {
         if (planned.application) {
@@ -613,7 +750,10 @@ export class SpaceChannelAccess {
             seatedUserIds: seated,
             source: planned.application.source,
           });
-          if (!confirmed.ok) throw channelRefused(confirmed.code, title);
+          if (!confirmed.ok) {
+            superseded = true;
+            throw channelRefused(confirmed.code, title);
+          }
         }
         return input.settle();
       });
@@ -621,7 +761,11 @@ export class SpaceChannelAccess {
     } catch (error) {
       if (!(error instanceof SpaceSourceRefused)) throw error;
       if (planned.application) {
-        await this.withdrawUnconfirmedSeats(actor, client, parent, workstreamId, spaceId, seated);
+        // A newer source replaced this one: only the seats nothing now
+        // accounts for are withdrawn. Otherwise this change's own source is
+        // still the recorded one, and it is withdrawn whole.
+        if (superseded) await this.withdrawUnconfirmedSeats(actor, client, parent, workstreamId, spaceId, seated);
+        else await this.rollbackApplication(actor, parent, spaceId, workstreamId, seated, planned.application.source);
       }
       if (input.abandon) this.host.storage.transactionSync(input.abandon);
       return { ok: false, refusal: error.refusal };
@@ -631,9 +775,9 @@ export class SpaceChannelAccess {
   /**
    * What the Channel's readers are, from the conversation that owns them.
    *
-   * An archived Channel's product read answers 404; a retraction reads the
-   * directory's projection of it instead, which is what an archive's walk
-   * reaches.
+   * An archived Channel's product read answers 404; a retraction, and the
+   * cutover placing an archived Channel, read the directory's projection of it
+   * instead.
    */
   private async observe(
     client: WorkstreamObjectClient,
@@ -652,14 +796,15 @@ export class SpaceChannelAccess {
   }
 
   /**
-   * Withdraw what an interrupted application seated.
+   * Withdraw what an interrupted or refused application committed and seated.
    *
-   * The seated readers are attributed first, committing the source as the
-   * successful path would have, and then withdrawn through the ordinary
+   * The source is confirmed first with the readers actually seated (a replayed
+   * plan does not commit it again), then withdrawn through the ordinary
    * retraction, so a reader another Space also supplies survives a rollback
-   * exactly as it survives a removal. Best effort: the refusal the caller is
-   * about to see is the useful one, and a cleanup that could not finish is
-   * named so the leftover source can be found.
+   * exactly as it survives a removal, and a widening made before the first
+   * seat failed is narrowed back. Best effort: the refusal the caller is about
+   * to see is the useful one, and a cleanup that could not finish is named so
+   * the leftover source can be found.
    */
   private async rollbackApplication(
     actor: SpaceActorAuth,
@@ -669,7 +814,6 @@ export class SpaceChannelAccess {
     seated: readonly UserId[],
     source: ConfirmedAccessSource,
   ): Promise<void> {
-    if (seated.length === 0) return;
     try {
       this.host.storage.transactionSync(() => parent.confirmSpaceAccessSource({
         workspaceId: actor.workspaceId,
@@ -680,7 +824,8 @@ export class SpaceChannelAccess {
         source,
       }));
       const retracted = await this.changeSource({
-        actor, spaceId, workstreamId, change: "retract", plan: () => null, settle: () => undefined,
+        actor, spaceId, workstreamId, change: "retract", operationId: () => null,
+        plan: () => null, settle: () => undefined,
       });
       if (!retracted.ok) throw new Error(retracted.refusal.code);
     } catch (error) {
@@ -695,9 +840,9 @@ export class SpaceChannelAccess {
   /**
    * Remove readers this attempt seated after its confirmation lost a fence.
    *
-   * The stale source was never committed, so it cannot be retracted. Every
-   * reader the sources that did win still name is kept; only the now-unowned
-   * seats are withdrawn.
+   * A newer source for this Space replaced the one this attempt committed, so
+   * nothing of this attempt's is left to retract. Every reader the sources
+   * that did win still name is kept; only the now-unowned seats are withdrawn.
    */
   private async withdrawUnconfirmedSeats(
     actor: SpaceActorAuth,
@@ -758,7 +903,7 @@ export class SpaceChannelAccess {
   }
 
   /** The Channel's conversation, as the person this operation acts for. */
-  private client(actor: SpaceActorAuth, workstreamId: string): WorkstreamObjectClient & ChannelAudienceClient {
+  private client(actor: SpaceActorAuth, workstreamId: string): WorkstreamObjectClient {
     const { principal, ...session } = actor;
     return new WorkstreamObjectClient(this.host.env, principal ? { ...session, principal } : session, workstreamId);
   }

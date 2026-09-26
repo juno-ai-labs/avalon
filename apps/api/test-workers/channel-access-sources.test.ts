@@ -56,7 +56,7 @@ function applySource(input: {
   membershipGeneration?: number;
   operationId?: string;
   /** The birth mode: this call commits the source rather than only planning it. */
-  bornWithSourceApplied?: boolean;
+  commitWithPlan?: boolean;
 }) {
   return channel().applySpaceAccessSource({
     ...address,
@@ -67,9 +67,9 @@ function applySource(input: {
     membershipGeneration: input.membershipGeneration ?? 1,
     operationId: input.operationId ?? crypto.randomUUID(),
     channel: input.channel,
-    ...(input.bornWithSourceApplied === undefined
+    ...(input.commitWithPlan === undefined
       ? {}
-      : { bornWithSourceApplied: input.bornWithSourceApplied }),
+      : { commitWithPlan: input.commitWithPlan }),
   });
 }
 
@@ -303,7 +303,7 @@ describe("a Channel's Space access sources", () => {
     // callers take two calls.
     expect(await applySource({
       spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
-      channel: personal([OWNER]), bornWithSourceApplied: true,
+      channel: personal([OWNER]), commitWithPlan: true,
     })).toEqual({
       ok: true,
       plan: { widenScope: false, seatUserIds: [READER] },
@@ -330,7 +330,7 @@ describe("a Channel's Space access sources", () => {
     const operationId = crypto.randomUUID();
     const first = await applySource({
       spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
-      channel: personal([OWNER]), operationId, bornWithSourceApplied: true,
+      channel: personal([OWNER]), operationId, commitWithPlan: true,
     });
     expect(first).toEqual({
       ok: true,
@@ -344,7 +344,7 @@ describe("a Channel's Space access sources", () => {
     // receipt is what makes the second answer the first one.
     expect(await applySource({
       spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
-      channel: personal([OWNER, READER]), operationId, bornWithSourceApplied: true,
+      channel: personal([OWNER, READER]), operationId, commitWithPlan: true,
     })).toEqual(first);
     expect(await storedSources()).toEqual({
       sources: [{ space_id: SPACE_A, participants_json: JSON.stringify([OWNER, READER]) }],
@@ -364,7 +364,7 @@ describe("a Channel's Space access sources", () => {
     // protected against before this mode existed.
     expect(await applySource({
       spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, OTHER],
-      channel: personal([OWNER]), spaceRevision: 1, bornWithSourceApplied: true,
+      channel: personal([OWNER]), spaceRevision: 1, commitWithPlan: true,
     })).toEqual({ ok: false, code: "space_revision_conflict" });
 
     expect(await storedSources()).toEqual({

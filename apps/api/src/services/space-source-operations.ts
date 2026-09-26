@@ -8,19 +8,7 @@ import type {
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { publishAccessRevocation } from "./access-revocation";
-
-/**
- * The canonical audience operations of one Channel's main conversation.
- *
- * `WorkstreamObjectClient` is the implementation; this names only the three
- * calls a Space's source is applied or withdrawn with, so the Worker's
- * `ChannelAccessService` and WorkspaceDO run the same sequence over them.
- */
-export interface ChannelAudienceClient {
-  update(input: { scope: "personal" | "workspace" }): Promise<unknown>;
-  addParticipant(userId: string, options?: { spaceSourceId?: string }): Promise<unknown>;
-  removeParticipant(userId: string, options?: { spaceSourceId?: string }): Promise<void>;
-}
+import type { WorkstreamObjectClient } from "./workstream-object-client";
 
 /** The readers one remaining Space supplies among a retraction's survivors. */
 export interface SurvivorAttribution {
@@ -48,7 +36,7 @@ export class SpaceSourceApplicationInterrupted extends Error {
  * readers seated, in order, for the confirmation to attribute.
  */
 export async function runSpaceSourceApplication(
-  client: ChannelAudienceClient,
+  client: WorkstreamObjectClient,
   spaceId: SpaceId,
   plan: SpaceAccessApplication,
 ): Promise<UserId[]> {
@@ -107,7 +95,7 @@ export function observedAfterRetraction(
 /**
  * Withdraw one Space's source through the Channel's canonical operations.
  *
- * Seat, then attribute, then narrow, then remove. Seating first is what keeps
+ * Seat, then narrow, then remove. Seating first is what keeps
  * a narrowing from revoking access a surviving source still provides (the
  * readers it supplies were never seated while everybody could read), and
  * removing last means nobody is taken out of an audience that is still about
@@ -118,9 +106,8 @@ export function observedAfterRetraction(
  * commit, and the Space that really supplies the reader would later retract
  * with no provenance for them.
  *
- * `attribute` is for a caller that records the attributions after seating;
- * WorkspaceDO records them in the transaction that plans the retraction and
- * passes none.
+ * The attributions are recorded by the caller in the transaction that plans
+ * the retraction, before anybody is seated.
  *
  * The narrowing's announcement is kept until the removals are done. A
  * narrowing that was not announced leaves every non-participant reader's
@@ -134,18 +121,16 @@ export async function runSpaceSourceRetraction(input: {
   env: Env;
   workspaceId: WorkspaceId;
   workstreamId: string;
-  client: ChannelAudienceClient;
+  client: WorkstreamObjectClient;
   spaceId: SpaceId;
   plan: SpaceAccessRetraction;
   remaining: ChannelAccessSources["spaces"];
-  attribute?: (attributions: SurvivorAttribution[]) => Promise<void>;
 }): Promise<void> {
   const { client, plan } = input;
   for (const userId of plan.seatUserIds) {
     const supplier = input.remaining.find((space) => space.participantUserIds.includes(userId));
     await client.addParticipant(userId, supplier ? { spaceSourceId: supplier.spaceId } : {});
   }
-  if (input.attribute) await input.attribute(survivorAttributions(plan, input.remaining));
   let announced = true;
   if (plan.narrowScope) {
     await client.update({ scope: "personal" });
