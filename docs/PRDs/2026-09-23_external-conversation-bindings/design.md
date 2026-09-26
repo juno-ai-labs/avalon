@@ -154,7 +154,7 @@ their rows.
   the same transaction that commits the tool receipt
   (`enqueueRegionalEffectsInTransaction`), so a successful send cannot lose its
   binding. A reply that arrives before that effect drains finds no binding and
-  follows the one-to-one DM policy. A send whose result is lost has no receipt
+  follows the one-to-one DM policy below. A send whose result is lost has no receipt
   and no binding, and a reply to it is not matched by text or timing.
 
 ### Suspending bindings
@@ -168,10 +168,19 @@ Suspension keeps the row and its target. These suspend a binding:
 - a person closing the binding from the run or the Sidekick.
 
 A paused Sidekick keeps its bindings; its runs refuse input while it is paused.
-Whether an outbound binding also expires after a set time is an open question
-that blocks the build, and its duration is the team's number to set. A reply to
-a suspended binding creates no Rally work and is logged with the code
+Bindings do not expire: these triggers are the only way one stops routing. A
+reply to a suspended binding creates no Rally work and is logged with the code
 `binding_suspended`.
+
+### One-to-one DM policy
+
+A message at the top level of a DM with the workspace bot resolves to `[D…]`,
+which has no binding. If that DM holds at least one active outbound binding,
+the bot replies once to the message asking the person to answer in the
+request's thread, linking the most recent active one, and the message creates
+no Rally work. The prompt is deduplicated on the provider event, so a Slack
+retry does not ask twice, and it is not itself a binding. A DM with no active
+outbound binding keeps today's one-to-one Agent behavior.
 
 ### One routing step, not three
 
@@ -561,7 +570,7 @@ The Sidekick's home is the Breakout in the investors Space where it was set up.
 | --- | --- |
 | 1 PM run DMs Morgan, Casey, Jules | Existing Slack tools with the workspace bot's token; each successful `send_message` writes a binding from `[D…, ts]` to the 1 PM run child. |
 | A founder replies in the thread | Resolution finds the exact thread binding and delivers the reply to the 1 PM run child. |
-| A founder replies at the top level of the DM | Resolves to `[D…]`, which has no binding. What happens is the one-to-one DM policy, an open question that blocks calling this flow solved: most people answer a DM at the top level. |
+| A founder replies at the top level of the DM | Resolves to `[D…]`, which has no binding. The bot asks them to answer in the request's thread (one-to-one DM policy); the answer then arrives through the thread binding. |
 | The run continues and forwards | Run continuation; `conversation_post` to the home, naming the founder and linking the thread. The host keys the post on the run and receipt, so a retry posts once. |
 | 2 PM run reads | `conversation_read` on the home, then `conversation_read_next` as needed. |
 | 2 PM run posts the agenda | `conversation_post` to the home. |
@@ -603,10 +612,9 @@ silently opening the audience.
 Provider actors without Rally accounts remain external actors on their own
 turns; receiving a Slack event does not create a Rally member or personal tool
 grant. A continued Sidekick run acts as its run-as user regardless of who sent
-the input. The unresolved policy is whether a person who leaves the provider
-room keeps their prior Rally participation. That answer belongs in the product
-contract before private-room rollout, because current connector admission
-retains membership after departure.
+the input. A person who leaves a private provider room keeps their Rally
+access until it is changed in Rally, as current connector admission already
+does (see the PRD's decision log).
 
 ## Slack adapter and lifecycle cases
 
@@ -615,7 +623,7 @@ retains membership after departure.
 | `member_joined_channel` for the bot | Verify `conversations.info` and ensure the room binding when `is_channel`, `is_group`, or `is_mpim`; ignore `is_im` for this policy. |
 | Invite and `app_mention` delivered in either order | Both reach the same idempotent ensure operation, then one spawn claim. |
 | `message.channels`, `message.groups`, `message.mpim` | Normalize to the same path and message shape; resolve. |
-| `message.im` | Resolve exact outbound bindings; otherwise apply the one-to-one DM policy. |
+| `message.im` | Resolve exact outbound bindings; otherwise apply the one-to-one DM policy: ask for a thread reply when the DM has an active outbound binding, else today's Agent behavior. |
 | Channel or group DM rename | Preserve source identity; present a label update only under the decided naming policy. |
 | Bot leaves, channel archives, connection disconnects | Suspend the room binding; its threads stop resolving; retain Rally work and binding identity for reactivation. |
 | Slack Connect `channel_id_changed` | Atomically move the room path and every path beneath it to the new ID while preserving targets. |
@@ -628,7 +636,10 @@ despite carrying `mpim:history`, and lacks `channel_id_changed`, so both need a
 subscription change. Until an installation carries `channel_id_changed`, a
 Slack Connect ID change routes nothing under the new ID rather than guessing
 continuity from the channel name. The public-channel join sweep and the `channel_created` join path
-(`apps/api/src/services/slack-agent-service.ts:1451`) must stop. Existing
+(`apps/api/src/services/slack-agent-service.ts:1451`) must stop. The bot stays
+in, and joins when a Sidekick is saved, every conversation a Slack automation
+source names, so Slack-triggered Sidekicks keep receiving events; such a join
+links no Space. Existing
 subscriptions to `member_joined_channel` and `member_left_channel` remain useful
 for source membership and lifecycle. Slack's provider semantics are documented
 in [message.mpim](https://docs.slack.dev/reference/events/message.mpim/),
@@ -669,6 +680,11 @@ evaluations, not in these checks.
 - a Slack redelivery of the same event changing nothing;
 - an outbound bot send writing a binding keyed on `thread_ts ?? ts`, a send
   through a personal connection writing none, and a lost receipt writing none;
+- a top-level message in a bot DM with an active outbound binding getting one
+  thread prompt and creating no work, including on a Slack retry, and one in a
+  DM without a binding keeping today's behavior;
+- saving a Sidekick with a Slack channel source joining the bot there without
+  linking a Space;
 - a send whose receipt committed but whose binding effect has not drained yet;
 - input to a completed, failed or stopped run child continuing it with
   `automationRun`, the run-as principal and the current definition revision,
