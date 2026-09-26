@@ -103,13 +103,14 @@ reaches its target; the message keeps its sender.
 
 For a verified `ExternalMessage`:
 
-1. Look up the exact path. If it is `active` and its `deliver` is `converse`,
-   deliver the message to the target through ordinary message admission.
-2. Otherwise walk up the path. The nearest ancestor that is `suspended` stops
-   resolution. The nearest `active` ancestor with a `spawn` rule that the
-   message satisfies creates the Rally conversation it names and records an
-   `active` binding for the exact path, in one claim.
-3. Otherwise nothing happens. An unrelated provider message creates no Rally
+1. Read the exact path and every ancestor path in one lookup. If any of them
+   is `suspended`, stop: nothing is delivered or created.
+2. If the exact path is `active` and its `deliver` is `converse`, deliver the
+   message to the target through ordinary message admission.
+3. Otherwise the nearest `active` ancestor with a `spawn` rule that the message
+   satisfies creates the Rally conversation it names and records an `active`
+   binding for the exact path, in one claim.
+4. Otherwise nothing happens. An unrelated provider message creates no Rally
    work.
 
 Suspending a room therefore stops every thread beneath it without touching
