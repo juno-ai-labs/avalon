@@ -592,7 +592,7 @@ function hostedOverrides(legacy: string, row: SqlRow, kind: "workstream" | "spac
   switch (legacy) {
     case "workstream_metadata": return { parent_kind: kind };
     // Whatever the legacy drain was doing with it, it is due again here.
-    case "durable_outbox": return { state: "pending", not_before: 0 };
+    case "durable_outbox": return { state: "pending", not_before: 0, last_error_code: null };
     case "private_child_membership_effects":
       return { state: row.state === "delivered" ? "delivered" : "pending", not_before: 0 };
     case "main_participant_migration": return { substream_id: "0" };

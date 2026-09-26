@@ -689,7 +689,7 @@ describe("WorkspaceDO space authority", () => {
     // feed reaching the Organization rather than the Space being unknown to it.
     await workspace().applyWorkstreamDirectoryEffects({
       workspaceId: WORKSPACE_ID,
-      envelopes: [spaceEnvelope(spaceId, spaceDirectoryEffect("Hiring", "workspace"), 1)],
+      envelopes: [spaceEnvelope(spaceId, spaceDirectoryEffect("Hiring", "workspace"), 2)],
     });
     expect(await workspace().runInspectionSql({
       sql: "SELECT COUNT(*) AS count FROM workspace_activity_events",
