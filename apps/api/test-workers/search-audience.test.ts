@@ -59,6 +59,9 @@ it('rewrites only the resources an inventory attaches or detaches', async () => 
     // Moving the attachment rewrites both: one gained a reader set, one lost it.
     locations.replaceLocations(inventory(3, [otherResourceId]));
     expect([revision(sql), revision(sql, otherResourceId)]).toEqual([before[0]! + 2, before[1]! + 1]);
+    // A newer inventory that says the conversation is a Sidekick's changes who the location admits.
+    locations.replaceLocations({ ...inventory(4, [otherResourceId]), parentKind: 'automation' });
+    expect([revision(sql), revision(sql, otherResourceId)]).toEqual([before[0]! + 2, before[1]! + 2]);
   });
 });
 

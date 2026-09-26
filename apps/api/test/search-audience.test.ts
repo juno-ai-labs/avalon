@@ -10,7 +10,9 @@ describe('search audience groups', () => {
   it('stores a group as a stable version 8 UUID', async () => {
     const id = await searchAudienceGroupId('conversation:channel/0');
     expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-    expect(await searchAudienceGroupId('conversation:channel/0')).toBe(id);
+    // Computed outside this module (Python hashlib). Indexed rows hold these IDs,
+    // so a change to the prefix, truncation or bit layout must fail here.
+    expect(id).toBe('9c043fe1-5056-8d7c-b911-ee26e2c68643');
     expect(await searchAudienceGroupId('conversation:channel/1')).not.toBe(id);
   });
 
