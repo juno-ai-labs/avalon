@@ -1873,7 +1873,8 @@ Ten tables in WorkspaceDO's migration 63, and two more in migration 65.
 `spaces` (created as `workspace_space_directory` and renamed by migration 72;
 see [`hosted-conversation-parents.md`](hosted-conversation-parents.md#table-map))
 is one row per Space: the name, appearance and scope
-a projection wrote, the archive timestamp, the protected `system_role`, the
+a projection wrote, the archive timestamp (written only by `finalizeArchive`
+and `restore`; a projection never changes it), the protected `system_role`, the
 generation/source-version/payload-hash triple every projection is fenced on, and
 one `revision` that advances on every accepted change. A unique partial index on
 `system_role` makes General singular. `space_viewers` is the
@@ -2129,6 +2130,33 @@ whoever reads it afterwards; `space_default_delivery_failed` does the same for a
 default target.
 
 ## Changelog
+
+### 2026-09-26 — A Space's projection no longer un-archives it
+
+**What changed:** `applyDirectoryProjection` keeps a Space's stored
+`archived_at` rather than taking the projection's, and an archive-only
+difference no longer counts as a change. Archival is now written by
+`finalizeArchive` and `restore` alone.
+
+**Why:** The hidden conversation reports every Space unarchived, and
+`finalizeArchive` and `restore` write `archived_at` without advancing
+`source_version`. Renaming an archived Space, or changing its defaults or
+audience, made the conversation publish a projection at a newer version, and
+the fence let it write `archived_at = NULL`. The Space then listed as active
+while its memberships stayed withdrawn, and `restore` refused it because it
+was not archived: the Space was stuck.
+
+**Considered and rejected:** Advancing `source_version` on archive and restore.
+The conversation's next projection would still claim a newer version and carry
+the same null. Refusing edits to an archived Space would hide the symptom for
+rename but not for the paths that reach the conversation before WorkspaceDO
+refuses.
+
+**Consequences:** Renaming an archived Space is still allowed and leaves it
+archived. Anything that needs to archive a Space goes through WorkspaceDO's
+own archive and restore; a projection cannot. Moving a Space's remaining facts
+out of its hidden conversation is the follow-up that removes the projection
+entirely.
 
 ### 2026-09-25 — Space operations run in WorkspaceDO, and the Worker's Space-source saga is deleted
 
