@@ -251,7 +251,16 @@ function WorkspaceApp(): React.JSX.Element {
     // Named above the socket provider so the directory it seeds and the
     // conversations every feed hook below it seeds belong to this workspace.
     <LocalCacheScopeProvider scope={localCacheScope(session!.user.id, session!.workspace!.region, session!.workspace!.id)}>
-    <WorkspaceSocketProvider key={scope} api={api!} onAccessRevoked={surrenderActiveWorkspace} workspaceId={session!.workspace!.id}>
+    <WorkspaceSocketProvider
+      key={scope}
+      api={api!}
+      onAccessRevoked={surrenderActiveWorkspace}
+      // The main window publishes its socket to main and Settings consumes it,
+      // so a desktop holds one Organization socket rather than one per window.
+      relay={surface === 'settings' ? 'consume' : mainSurface ? 'publish' : undefined}
+      region={session!.workspace!.region}
+      workspaceId={session!.workspace!.id}
+    >
       {/* The directory connection and profile request start together. Keep this
           tree mounted when the profile arrives so prepared sockets survive. */}
       {/* Commit route changes atomically so a new hash never labels an old feed. */}

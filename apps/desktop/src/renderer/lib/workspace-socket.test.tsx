@@ -1,4 +1,5 @@
 import {
+  ClientFeatureFlagsSchema,
   asSpaceId,
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
@@ -7,9 +8,9 @@ import {
 } from '@rally/contracts';
 import type { SpaceDirectory } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { act, render, screen } from '@testing-library/react';
-import { useEffect, type JSX } from 'react';
+import { StrictMode, useEffect, type JSX } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSummary } from './types';
 import { applyBreakoutAppearanceReceipt, type WorkstreamChildDirectory } from './channel-viewer-state';
@@ -24,6 +25,11 @@ import { DIRECTORY_CACHE_KEY, workspaceDirectorySlice } from './workspace-direct
 import { SPACES_QUERY_KEY } from './sidebar-list-store';
 
 import type * as TelemetryModule from './telemetry';
+import type {
+  WorkspaceSyncPublication,
+  WorkspaceSyncRelayEvent,
+  WorkspaceSyncSourceSnapshot,
+} from '../../common/workspace-sync-relay';
 
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
 const applicationFocus = vi.hoisted(() => ({
@@ -33,6 +39,11 @@ const applicationFocus = vi.hoisted(() => ({
 vi.mock('./telemetry', async (importOriginal) => ({
   ...await importOriginal<typeof TelemetryModule>(),
   reportTelemetryProductIntent,
+}));
+const syncRelay = vi.hoisted(() => ({
+  published: [] as WorkspaceSyncPublication[],
+  listeners: new Set<(event: WorkspaceSyncRelayEvent) => void>(),
+  snapshot: { revision: 0, source: null } as WorkspaceSyncSourceSnapshot,
 }));
 vi.mock('./platform', () => ({
   // This store-ordering suite exercises the browser-shaped transport. The
@@ -44,8 +55,23 @@ vi.mock('./platform', () => ({
       applicationFocus.listeners.add(listener);
       return () => applicationFocus.listeners.delete(listener);
     },
+    publishWorkspaceSync: async (publication: WorkspaceSyncPublication) => {
+      syncRelay.published.push(publication);
+    },
+    getWorkspaceSyncSource: async () => syncRelay.snapshot,
+    onWorkspaceSyncRelayed: (listener: (event: WorkspaceSyncRelayEvent) => void) => {
+      syncRelay.listeners.add(listener);
+      return () => syncRelay.listeners.delete(listener);
+    },
   }),
 }));
+
+/** What main would deliver to the consuming window. */
+function relayToConsumer(event: WorkspaceSyncRelayEvent): void {
+  act(() => {
+    for (const listener of syncRelay.listeners) listener(event);
+  });
+}
 
 function setApplicationForeground(foregrounded: boolean): void {
   applicationFocus.foregrounded = foregrounded;
@@ -135,6 +161,9 @@ afterEach(() => {
   reportTelemetryProductIntent.mockClear();
   applicationFocus.foregrounded = false;
   applicationFocus.listeners.clear();
+  syncRelay.published = [];
+  syncRelay.listeners.clear();
+  syncRelay.snapshot = { revision: 0, source: null };
   FakeWebSocket.instances = [];
   vi.restoreAllMocks();
 });
@@ -162,7 +191,7 @@ describe('WorkspaceSocketProvider', () => {
 
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
@@ -233,7 +262,7 @@ describe('WorkspaceSocketProvider', () => {
 
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket: vi.fn(async () => ({
             url: 'wss://api.rally.test/socket/workspaces/workspace-1',
             ticket: 'workspace-ticket',
@@ -297,7 +326,7 @@ describe('WorkspaceSocketProvider', () => {
 
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket: vi.fn(async () => ({
             url: 'wss://api.rally.test/socket/workspaces/workspace-1',
             ticket: 'workspace-ticket',
@@ -330,7 +359,7 @@ describe('WorkspaceSocketProvider', () => {
 
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket: vi.fn(async () => ({
             url: 'wss://api.rally.test/socket/workspaces/workspace-1',
             ticket: 'workspace-ticket',
@@ -397,7 +426,7 @@ describe('WorkspaceSocketProvider', () => {
     }
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
@@ -442,7 +471,7 @@ describe('WorkspaceSocketProvider', () => {
 
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
@@ -546,7 +575,7 @@ describe('WorkspaceSocketProvider', () => {
     }));
     const { unmount } = render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
@@ -597,7 +626,7 @@ describe('WorkspaceSocketProvider', () => {
     });
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
@@ -635,7 +664,7 @@ describe('WorkspaceSocketProvider', () => {
     });
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
@@ -684,7 +713,7 @@ describe('WorkspaceSocketProvider', () => {
       });
       render(
         <QueryClientProvider client={queryClient}>
-          <WorkspaceSocketProvider
+          <WorkspaceSocketProvider region="global"
             api={{ getWorkspaceSocketTicket }}
             workspaceId="00000000-0000-7000-8000-000000000001"
           >
@@ -710,7 +739,7 @@ describe('WorkspaceSocketProvider', () => {
     }));
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
@@ -757,7 +786,7 @@ describe('WorkspaceSocketProvider', () => {
     }));
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
@@ -791,7 +820,7 @@ describe('WorkspaceSocketProvider', () => {
       url: 'wss://api.rally.test/socket/workspaces/workspace-1', ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     }));
-    render(<QueryClientProvider client={queryClient}><WorkspaceSocketProvider
+    render(<QueryClientProvider client={queryClient}><WorkspaceSocketProvider region="global"
       api={{ getWorkspaceSocketTicket }} workspaceId="00000000-0000-7000-8000-000000000001">
       <div /></WorkspaceSocketProvider></QueryClientProvider>);
     await flushPromises();
@@ -867,7 +896,7 @@ describe('WorkspaceSocketProvider', () => {
     }
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
@@ -951,7 +980,7 @@ describe('WorkspaceSocketProvider', () => {
     }
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider api={{ getWorkspaceSocketTicket }}
+        <WorkspaceSocketProvider region="global" api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001">
           <Probe />
         </WorkspaceSocketProvider>
@@ -1013,7 +1042,7 @@ describe('WorkspaceSocketProvider', () => {
     }));
     const owner = render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
@@ -1172,7 +1201,7 @@ describe('WorkspaceSocketProvider', () => {
     }));
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
@@ -1228,7 +1257,7 @@ describe('WorkspaceSocketProvider', () => {
     }));
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
@@ -1280,7 +1309,7 @@ describe('WorkspaceSocketProvider', () => {
     }));
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
@@ -1324,7 +1353,7 @@ describe('WorkspaceSocketProvider', () => {
     }));
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
@@ -1389,7 +1418,7 @@ describe('WorkspaceSocketProvider', () => {
     }
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket: vi.fn(async () => ({
             url: 'wss://api.rally.test/socket/workspaces/workspace-1',
             ticket: 'workspace-ticket',
@@ -1453,7 +1482,7 @@ describe('WorkspaceSocketProvider', () => {
     }));
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
@@ -1504,7 +1533,7 @@ describe('WorkspaceSocketProvider', () => {
     }));
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
@@ -1562,7 +1591,7 @@ describe('WorkspaceSocketProvider', () => {
     }));
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
@@ -1643,7 +1672,7 @@ describe('WorkspaceSocketProvider', () => {
     }));
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
@@ -1734,7 +1763,7 @@ describe('WorkspaceSocketProvider', () => {
     }));
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
@@ -1782,7 +1811,7 @@ describe('WorkspaceSocketProvider', () => {
     }));
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
@@ -1825,7 +1854,7 @@ describe('WorkspaceSocketProvider', () => {
     }
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider
+        <WorkspaceSocketProvider region="global"
           api={{ getWorkspaceSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
@@ -1927,7 +1956,7 @@ describe('a Channel\'s breakouts and background agents on the organization socke
       })),
     };
     const provider = (
-      <WorkspaceSocketProvider api={api} workspaceId={workspaceId}><div /></WorkspaceSocketProvider>
+      <WorkspaceSocketProvider region="global" api={api} workspaceId={workspaceId}><div /></WorkspaceSocketProvider>
     );
     render(
       <QueryClientProvider client={queryClient}>
@@ -2139,7 +2168,7 @@ describe('the organization socket over the local cache', () => {
     render(
       <QueryClientProvider client={queryClient}>
         <LocalCacheScopeProvider scope={scope}>
-          <WorkspaceSocketProvider
+          <WorkspaceSocketProvider region="global"
             api={{ getWorkspaceSocketTicket }}
             workspaceId="00000000-0000-7000-8000-000000000001"
           >
@@ -2184,5 +2213,229 @@ describe('the organization socket over the local cache', () => {
       const row = await workspaceDirectorySlice.read(scope, DIRECTORY_CACHE_KEY);
       expect(row?.workstreams.map((item) => item.title)).toEqual(['Live row']);
     }, { timeout: LOCAL_CACHE_WRITE_COALESCE_MS + 2_000 });
+  });
+});
+
+describe('the organization-sync relay between windows', () => {
+  const workspaceId = '00000000-0000-7000-8000-000000000001';
+  const otherWorkspaceId = '00000000-0000-7000-8000-000000000009';
+  const region = 'global';
+  // A publisher left mounted by the previous test detaches during the
+  // automatic cleanup, which runs after the file's own reset.
+  beforeEach(() => {
+    syncRelay.published = [];
+  });
+  const ticket = async () => ({
+    url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+    ticket: 'workspace-ticket',
+    protocols: socketTicketProtocols('workspace-ticket'),
+  });
+
+  function ConnectionProbe(): JSX.Element {
+    const { state, topicWaterlines } = useWorkspaceSocket();
+    return <div>{`${state}:${topicWaterlines.connector_oauth_attempts ?? '-'}`}</div>;
+  }
+
+  function publisher(identity: { region: string; workspaceId: string } = { region, workspaceId }): JSX.Element {
+    return (
+      <WorkspaceSocketProvider
+        key={`${identity.region}:${identity.workspaceId}`}
+        api={{ getWorkspaceSocketTicket: vi.fn(ticket) }}
+        relay="publish"
+        region={identity.region}
+        workspaceId={identity.workspaceId}
+      >
+        <div />
+      </WorkspaceSocketProvider>
+    );
+  }
+
+  it('publishes the main window\'s state and every topic it hears, flag pushes as the flags topic', async () => {
+    const queryClient = new QueryClient();
+    render(<QueryClientProvider client={queryClient}>{publisher()}</QueryClientProvider>);
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'workspace_sync',
+      eventId: '00000000-0000-7000-8000-000000000008',
+      waterline: 8,
+      occurredAt: '2026-08-17T20:00:00.000Z',
+      topics: WORKSPACE_SYNC_TOPICS,
+      reason: 'initial',
+      sidebar: {
+        workstreams: { directoryWaterline: 1, nextCursor: null, stateVersions: [], items: [] },
+        automations: { waterline: 1, items: [] },
+        notes: { waterline: 1, items: [], nextCursor: null },
+      },
+      featureFlags: { digestsEnabled: false },
+    }));
+    act(() => socket.message({
+      type: 'workspace_sync',
+      eventId: '00000000-0000-7000-8000-000000000009',
+      waterline: 9,
+      occurredAt: '2026-08-17T20:00:01.000Z',
+      topics: ['member_directory'],
+      reason: 'change',
+    }));
+    act(() => socket.message({
+      type: 'workspace_feature_flags',
+      occurredAt: '2026-08-17T20:00:02.000Z',
+      changedFlag: 'digests-enabled',
+      flags: ClientFeatureFlagsSchema.parse({ digestsEnabled: true }),
+    }));
+    await flushPromises();
+
+    // `initial` is relayed whole: it names every topic because this socket
+    // cannot say what moved before it subscribed, and neither can a consumer.
+    // The flags themselves never cross; the consumer refetches its own.
+    expect(syncRelay.published).toEqual([
+      { type: 'state', region, workspaceId, state: 'connecting' },
+      { type: 'state', region, workspaceId, state: 'connected' },
+      { type: 'topics', region, workspaceId, waterline: 8, topics: [...WORKSPACE_SYNC_TOPICS] },
+      { type: 'topics', region, workspaceId, waterline: 9, topics: ['member_directory'] },
+      { type: 'topics', region, workspaceId, waterline: 9, topics: ['feature_flags'] },
+    ]);
+  });
+
+  it('detaches when its provider unmounts with no successor, and not when one replaces it', async () => {
+    const queryClient = new QueryClient();
+    const other = { region, workspaceId: otherWorkspaceId };
+    const view = render(<QueryClientProvider client={queryClient}>{publisher()}</QueryClientProvider>);
+    await flushPromises();
+
+    // An Organization switch: the successor attaches, and the predecessor
+    // sends nothing that would leave main with no publisher in between.
+    view.rerender(<QueryClientProvider client={queryClient}>{publisher(other)}</QueryClientProvider>);
+    await flushPromises();
+    expect(syncRelay.published).toEqual([
+      { type: 'state', region, workspaceId, state: 'connecting' },
+      { type: 'state', region, workspaceId: otherWorkspaceId, state: 'connecting' },
+    ]);
+
+    // The tree falls into the error boundary: nothing replaces it.
+    view.rerender(<QueryClientProvider client={queryClient}><div /></QueryClientProvider>);
+    await flushPromises();
+    expect(syncRelay.published.slice(2)).toEqual([{ type: 'detach', region, workspaceId: otherWorkspaceId }]);
+  });
+
+  it('does not detach across StrictMode\'s mount, unmount and mount', async () => {
+    render(<StrictMode><QueryClientProvider client={new QueryClient()}>{publisher()}</QueryClientProvider></StrictMode>);
+    await flushPromises();
+    expect(syncRelay.published.some((publication) => publication.type === 'detach')).toBe(false);
+    expect(syncRelay.published.at(-1)).toEqual({ type: 'state', region, workspaceId, state: 'connecting' });
+  });
+
+  it('holds no socket while the main window publishes, and applies what it relays', async () => {
+    syncRelay.snapshot = { revision: 3, source: { region, workspaceId, state: 'connected' } };
+    const queryClient = new QueryClient();
+    const readMembers = vi.fn(async () => ['member']);
+    const readFlags = vi.fn(async () => ClientFeatureFlagsSchema.parse({}));
+    const getWorkspaceSocketTicket = vi.fn(ticket);
+    function Reads(): JSX.Element {
+      const members = useQuery({
+        queryKey: ['workspace-members'], queryFn: readMembers, staleTime: 30_000, networkMode: 'always',
+      });
+      useQuery({ queryKey: ['feature-flags'], queryFn: readFlags, staleTime: 30_000, networkMode: 'always' });
+      return <div>{members.data?.join(',') ?? 'loading'}</div>;
+    }
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider api={{ getWorkspaceSocketTicket }} relay="consume" region={region} workspaceId={workspaceId}>
+          <ConnectionProbe />
+          <Reads />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('connected:-')).toBeInTheDocument();
+    expect(await screen.findByText('member')).toBeInTheDocument();
+    await flushPromises();
+
+    // One read on open, and no socket: nothing in this window asks for a
+    // ticket, so no `initial` arrives to repeat the read.
+    expect(getWorkspaceSocketTicket).not.toHaveBeenCalled();
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    expect(readMembers).toHaveBeenCalledTimes(1);
+    expect(readFlags).toHaveBeenCalledTimes(1);
+
+    // A change the main window's socket hears reaches this window's reads.
+    relayToConsumer({
+      type: 'topics', region, workspaceId, waterline: 12, topics: ['member_directory', 'connector_oauth_attempts'],
+    });
+    await vi.waitFor(() => expect(readMembers).toHaveBeenCalledTimes(2), { timeout: 2_000 });
+    expect(await screen.findByText('connected:12')).toBeInTheDocument();
+
+    // A flag change is a topic like any other: this window reads its own.
+    relayToConsumer({ type: 'topics', region, workspaceId, waterline: 12, topics: ['feature_flags'] });
+    await vi.waitFor(() => expect(readFlags).toHaveBeenCalledTimes(2), { timeout: 2_000 });
+
+    // News about another Organization is not this window's — including the
+    // same UUID in another region.
+    relayToConsumer({ type: 'topics', region, workspaceId: otherWorkspaceId, waterline: 13, topics: ['member_directory'] });
+    relayToConsumer({ type: 'topics', region: 'enterprise', workspaceId, waterline: 13, topics: ['member_directory'] });
+    await flushPromises();
+    expect(readMembers).toHaveBeenCalledTimes(2);
+
+    // The publisher's connection state is what this window reports.
+    relayToConsumer({ type: 'source', revision: 4, source: { region, workspaceId, state: 'reconnecting' } });
+    expect(await screen.findByText('reconnecting:12')).toBeInTheDocument();
+  });
+
+  it('dials its own socket only while nobody publishes, and puts it down when somebody does', async () => {
+    syncRelay.snapshot = { revision: 0, source: null };
+    const getWorkspaceSocketTicket = vi.fn(ticket);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <WorkspaceSocketProvider api={{ getWorkspaceSocketTicket }} relay="consume" region={region} workspaceId={workspaceId}>
+          <ConnectionProbe />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1), { timeout: 2_000 });
+    const own = FakeWebSocket.instances[0]!;
+    act(() => own.open());
+    expect(await screen.findByText('connected:-')).toBeInTheDocument();
+
+    // The main window comes back and publishes: this window's socket closes.
+    relayToConsumer({ type: 'source', revision: 1, source: { region, workspaceId, state: 'connecting' } });
+    expect(own.readyState).toBe(FakeWebSocket.CLOSED);
+    expect(await screen.findByText('connecting:-')).toBeInTheDocument();
+
+    // A stale answer cannot undo a newer event.
+    relayToConsumer({ type: 'source', revision: 0, source: null });
+    await flushPromises();
+    expect(FakeWebSocket.instances).toHaveLength(1);
+
+    // The main window's provider goes: this window subscribes afresh, from
+    // nothing, so its first answer names every topic and covers the hand-over.
+    relayToConsumer({ type: 'source', revision: 2, source: null });
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2), { timeout: 2_000 });
+    const replacement = FakeWebSocket.instances[1]!;
+    act(() => replacement.open());
+    expect(JSON.parse(replacement.send.mock.calls[0]![0] as string)).toMatchObject({ type: 'subscribe', afterWaterline: 0 });
+    // It relays nothing: only the main window publishes.
+    expect(syncRelay.published).toEqual([]);
+  });
+
+  it('waits, holding no socket, while the publisher serves another Organization, and takes over from it', async () => {
+    // The same UUID in another region: the main window is mid-switch.
+    syncRelay.snapshot = { revision: 5, source: { region: 'enterprise', workspaceId, state: 'connected' } };
+    const getWorkspaceSocketTicket = vi.fn(ticket);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <WorkspaceSocketProvider api={{ getWorkspaceSocketTicket }} relay="consume" region={region} workspaceId={workspaceId}>
+          <ConnectionProbe />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    // Not the other Organization's state: this window has no connection yet.
+    expect(await screen.findByText('connecting:-')).toBeInTheDocument();
+    await flushPromises();
+    expect(getWorkspaceSocketTicket).not.toHaveBeenCalled();
+
+    relayToConsumer({ type: 'source', revision: 6, source: { region, workspaceId, state: 'connected' } });
+    expect(await screen.findByText('connected:-')).toBeInTheDocument();
+    expect(getWorkspaceSocketTicket).not.toHaveBeenCalled();
+    expect(FakeWebSocket.instances).toHaveLength(0);
   });
 });

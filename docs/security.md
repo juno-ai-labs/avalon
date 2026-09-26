@@ -219,7 +219,10 @@ same as desktop.
   owns the mechanism.
 - The native Settings window uses the same sandbox, preload, CSP, navigation
   denial, and regional session bridge as the main window. **Command-,** opens a
-  singleton window rather than a privileged remote page.
+  singleton window rather than a privileged remote page. It holds no workspace
+  socket while the main window publishes one through main; that relay's sender
+  checks and what may cross it are in
+  [`websocket-architecture.md`](websocket-architecture.md#one-workspace-socket-per-desktop-the-settings-relay).
 - Application → Developer → **Debug enabled** shares the same
   `application-settings.json` file but crosses no trust boundary: it only reveals
   debugging affordances the renderer already holds, such as copying a work
