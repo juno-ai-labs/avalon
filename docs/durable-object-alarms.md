@@ -280,7 +280,11 @@ automation's sidebar row from reaching the workspace.
   own source row has invalidated the index, and the settle that follows it
   deletes the only entry pointing at that row. `WorkspaceDO.runDueAlarmWork`
   reconciles for exactly this reason; an object that grows stored entries whose
-  handlers write their own next occurrence has to do the same.
+  handlers write their own next occurrence has to do the same. Its phases are
+  isolated: one that throws is logged (`workspace_alarm_phase_failed`) and the
+  rest, the reconcile included, still run, and the first throw is rethrown at
+  the end so the alarm retries rather than re-arming at once for rows the
+  failed phase left due.
 - **Every mutation of the entry list re-arms before returning.** A caller that
   schedules an entry and returns without arming has written a row nothing will
   ever read.
