@@ -2,8 +2,8 @@ import type { Region, WorkspaceSyncTopic } from '@rally/contracts';
 
 /**
  * The Organization-sync relay: what the main window's workspace socket learns,
- * handed on by main to the Settings window so that one does not hold a second
- * socket to the same room. `docs/websocket-architecture.md` owns the mechanism.
+ * handed on by main to the Settings and Sidekicks windows so neither holds a
+ * second socket to the same room. `docs/websocket-architecture.md` owns the mechanism.
  *
  * Main parses what the main window sends (`main/workspace-sync-relay.ts`); that
  * is the one untrusted edge. What main sends on is built from that parse, so
@@ -15,9 +15,9 @@ import type { Region, WorkspaceSyncTopic } from '@rally/contracts';
 export const WORKSPACE_SYNC_RELAY_IPC_CHANNELS = {
   /** Main window renderer → main (invoke): its socket's state and news. */
   publish: 'workspace-sync:publish',
-  /** Settings renderer → main (invoke): who, if anyone, is publishing now. */
+  /** Settings or Sidekicks renderer → main (invoke): who, if anyone, is publishing now. */
   source: 'workspace-sync:source',
-  /** Main → Settings renderer (send): every relayed event. */
+  /** Main → Settings and Sidekicks renderers (send): every relayed event. */
   relayed: 'workspace-sync:relayed',
 } as const;
 

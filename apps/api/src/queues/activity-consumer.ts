@@ -58,7 +58,6 @@ import {
   enqueueWorkspaceConnectorEventProcess,
 } from "../services/workspace-connector-event-ingress";
 import {
-  applyQueuedWorkspaceDirectoryEffect,
   applyWorkstreamRegionalEffect,
   processWorkstreamNotificationIntent,
 } from "../services/conversation-effect-service";
@@ -1044,12 +1043,6 @@ async function consumeEffect(
         });
         if (!published) throw new Error("scope_grant_sidekick_revocation_publish_failed");
       }
-      message.ack();
-      return;
-    }
-    if (envelope.effect.kind === "directory_common" || envelope.effect.kind === "directory_user") {
-      await applyQueuedWorkspaceDirectoryEffect(env, envelope);
-      logInfo(env, "conversation_effect_terminal", { ...fields, outcome: "applied", reason: "directory_effect_applied" });
       message.ack();
       return;
     }

@@ -10,7 +10,7 @@ const connected = { type: 'state', region, workspaceId, state: 'connected' };
 
 type Handler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown;
 
-function harness(windows: { main?: boolean; settings?: boolean } = { main: true, settings: true }) {
+function harness(windows: { main?: boolean; settings?: boolean; sidekicks?: boolean } = { main: true, settings: true, sidekicks: true }) {
   const mainContents = { id: 1 } as unknown as WebContents;
   const settingsContents = { id: 2 } as unknown as WebContents;
   const sidekicksContents = { id: 3 } as unknown as WebContents;
@@ -28,7 +28,7 @@ function harness(windows: { main?: boolean; settings?: boolean } = { main: true,
     ipc,
     mainWindowContents: () => (windows.main ? mainContents : null),
     relay,
-    settingsWindowContents: () => (windows.settings ? settingsContents : undefined),
+    consumerWindowContents: () => [windows.settings ? settingsContents : undefined, windows.sidekicks ? sidekicksContents : null],
   });
   const from = (sender: WebContents) => ({ sender }) as unknown as IpcMainInvokeEvent;
   return {
@@ -65,15 +65,15 @@ describe('workspace sync relay IPC', () => {
     expect(subject.delivered).toEqual([{ type: 'source', revision: 1, source: { region, workspaceId, state: 'connected' } }]);
   });
 
-  it('answers the source to the settings window only', () => {
+  it('answers the source to the Settings and Sidekicks windows only', () => {
     const subject = harness();
     subject.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.publish, subject.fromMain, connected);
-    for (const event of [subject.fromMain, subject.fromSidekicks]) {
-      expect(() => subject.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.source, event))
-        .toThrow('Only the settings window consumes the relayed organization sync');
+    expect(() => subject.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.source, subject.fromMain))
+      .toThrow('Only the Settings and Sidekicks windows consume the relayed organization sync');
+    for (const event of [subject.fromSettings, subject.fromSidekicks]) {
+      expect(subject.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.source, event))
+        .toEqual({ revision: 1, source: { region, workspaceId, state: 'connected' } });
     }
-    expect(subject.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.source, subject.fromSettings))
-      .toEqual({ revision: 1, source: { region, workspaceId, state: 'connected' } });
   });
 
   it('refuses both channels while the window each is reserved for does not exist', () => {
@@ -82,7 +82,9 @@ describe('workspace sync relay IPC', () => {
     expect(() => subject.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.publish, nobody, connected))
       .toThrow('Only the main Rally window can publish organization sync');
     expect(() => subject.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.source, nobody))
-      .toThrow('Only the settings window consumes the relayed organization sync');
+      .toThrow('Only the Settings and Sidekicks windows consume the relayed organization sync');
+    expect(() => subject.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.source, subject.fromSidekicks))
+      .toThrow('Only the Settings and Sidekicks windows consume the relayed organization sync');
   });
 
   it('runs the shared trusted-sender check first', () => {

@@ -8,7 +8,7 @@ import { projectionSupersedes, type StoredProjection } from "./projection-fence"
  * The Organization's projection of a Channel's breakouts.
  *
  * A breakout is a conversation under a Channel, owned by that Channel's
- * `WorkstreamDO`. Until the Space dashboard had to list one, the Organization
+ * hosted parent. Until the Space dashboard had to list one, the Organization
  * had no reason to know it existed: `aggregatesChildProjection` folded only the
  * main conversation into the Channel's row, and a breakout's own
  * `directory_common` and `directory_user` effects were stored in the Channel

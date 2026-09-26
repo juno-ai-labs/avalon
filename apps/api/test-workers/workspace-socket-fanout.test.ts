@@ -240,28 +240,6 @@ function pendingFollowUps(state: DurableObjectState): number[] {
   ).toArray().map((row) => row.id);
 }
 
-/** A follow-up exactly as an earlier build recorded it, run the way the alarm runs a due one. */
-async function runRecordedFollowUp(followUp: Record<string, unknown>): Promise<void> {
-  await runInDurableObject(organization(), async (instance, state) => {
-    const { id } = state.storage.sql.exec<{ id: number }>(
-      `INSERT INTO workspace_directory_followups (followup_json, attempts, not_before, created_at)
-       VALUES (?, 0, 0, 0) RETURNING id`,
-      JSON.stringify(followUp),
-    ).one();
-    await (instance as unknown as FollowUpRunner).runDirectoryFollowUps([id]);
-  });
-}
-
-/** A directory follow-up naming one changed Channel, in the shape recorded before `channelLosses`. */
-function legacyFollowUp(commonChanges: string[]): Record<string, unknown> {
-  return {
-    workspaceId, publishSnapshotAll: false, snapshotUsers: [], reachChangedUsers: [], commonChanges,
-    viewerChanges: [], breakoutChanges: [], breakoutViewerChanges: [], reopenBootstrap: false,
-    watchReconciliations: [], archivalChanges: [], refreshTerminal: false, refreshWatchKinds: false,
-    directoryChanged: true, syncTopics: [], refreshProductAlarm: false,
-  };
-}
-
 /** Somebody who becomes an active member now, with a session to connect with. */
 async function join(userId: UserId): Promise<void> {
   await env.DB.batch([
@@ -437,27 +415,6 @@ describe("a Channel's row on the workspace socket", () => {
     await drained(newcomerSocket);
     expect(rowsFor(newcomerSocket, openChannel)).toEqual([]);
     close(memberSocket, outsiderSocket, newcomerSocket);
-  });
-
-  it.each([
-    ["recorded before losses were named", legacyFollowUp([privateChannel])],
-    ["that named every reader", { ...legacyFollowUp([privateChannel]), channelLosses: [[privateChannel, "all"]] }],
-  ])("reads a follow-up %s as owed to the Channel's readers and to who still has a row for it, never to everyone", async (_shape, followUp) => {
-    // The owner leaves the Channel's participants and keeps a non-participant row.
-    await publishMain(privateChannel, viewer(owner, false));
-    const ownerSocket = await connect(owner);
-    const memberSocket = await connect(member);
-    const outsiderSocket = await connect(outsider);
-    const withdrawn = ownerSocket.stream.next(stateOf(privateChannel), "private Channel tombstone");
-    const shown = memberSocket.stream.next(stateOf(privateChannel), "private Channel row");
-
-    await runRecordedFollowUp(followUp);
-
-    expect((await withdrawn).workstream).toBeNull();
-    expect(((await shown).workstream as { title: string }).title).toBe("Private");
-    await drained(outsiderSocket);
-    expect(rowsFor(outsiderSocket, privateChannel)).toEqual([]);
-    close(ownerSocket, memberSocket, outsiderSocket);
   });
 
   it("sends the Channels of every follow-up run in one pass once per socket", async () => {

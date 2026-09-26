@@ -152,7 +152,10 @@ export async function reconcileReplayedSpaceMembership(input: {
   for (const spaceId of spaceIds) await input.spaces.addChannel(spaceId, input.workstreamId);
 }
 
-/** Regional creation coordinator; the new WorkstreamDO owns product state. */
+/**
+ * Regional creation coordinator; the new Channel's hosted parent in WorkspaceDO
+ * and its main conversation (`SubstreamAgent`) own product state.
+ */
 export class WorkstreamObjectCreationService {
   constructor(
     private readonly env: Env,

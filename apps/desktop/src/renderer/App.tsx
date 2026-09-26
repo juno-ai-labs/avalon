@@ -255,9 +255,10 @@ function WorkspaceApp(): React.JSX.Element {
       key={scope}
       api={api!}
       onAccessRevoked={surrenderActiveWorkspace}
-      // The main window publishes its socket to main and Settings consumes it,
-      // so a desktop holds one Organization socket rather than one per window.
-      relay={surface === 'settings' ? 'consume' : mainSurface ? 'publish' : undefined}
+      // The main window publishes its socket to main and Settings and
+      // Sidekicks consume it, so a desktop holds one Organization socket
+      // rather than one per window.
+      relay={surface === 'settings' || surface === 'sidekicks' ? 'consume' : mainSurface ? 'publish' : undefined}
       region={session!.workspace!.region}
       workspaceId={session!.workspace!.id}
     >

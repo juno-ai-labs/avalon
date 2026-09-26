@@ -10,9 +10,9 @@ lets the desktop open a useful swarm in parallel without moving protocol state
 or product caches out of the renderer.
 
 A desktop holds **one** workspace socket, in the main window: the Settings
-window consumes it through main rather than dialling its own, and dials only
-while no main window is publishing — see
-[the Settings relay](#one-workspace-socket-per-desktop-the-settings-relay).
+and Sidekicks windows consume it through main rather than dialling their own,
+and each dials only while no main window is publishing — see
+[the Organization-sync relay](#one-workspace-socket-per-desktop-the-organization-sync-relay).
 
 An automation's page uses the same feed socket kind: its conversation is
 substream `0` under the automation, dialled through the same broker and the
@@ -54,10 +54,10 @@ protocol inside each Durable Object.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/renderer/lib/workspace-workstream-sockets.tsx` | Selects the active work stream, every pinned work stream, the five most recently active unpinned work streams, and any additional running work stream for proactive connection. |
-| `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Owns the singleton native Chromium WorkspaceDO socket, workspace subscription, directory paging, replay, and outbound message-command queue. Its `relay` prop makes the main window publish what the socket hears and the Settings window consume it instead of dialling. |
+| `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Owns the singleton native Chromium WorkspaceDO socket, workspace subscription, directory paging, replay, and outbound message-command queue. Its `relay` prop makes the main window publish what the socket hears and the Settings and Sidekicks windows consume it instead of dialling. |
 | `apps/desktop/src/common/workspace-sync-relay.ts` | The relay's IPC channel names and message types, the `{ region, workspaceId }` comparison every hop uses, the preload's structural check, and the preload's inbox that holds news arriving before any listener. Dependency-free for the sandboxed preload. |
 | `apps/desktop/src/main/workspace-sync-relay.ts` | Main's relay state: the closed Zod parse of what the main window publishes, which Organization is attached, the revision that orders source changes, and forwarding news only for the attached Organization. |
-| `apps/desktop/src/main/workspace-sync-relay-ipc.ts` | The relay's two invoke channels and their sender checks: publish from the main window only, read the source from the Settings window only. `main/index.ts` registers it and owns the one receiver and the release points. |
+| `apps/desktop/src/main/workspace-sync-relay-ipc.ts` | The relay's two invoke channels and their sender checks: publish from the main window only, read the source from the Settings and Sidekicks windows only. `main/index.ts` registers it and owns the one receiver and the release points. |
 | `packages/contracts/src/workspace-reach-watch.ts` | The listen-only workspace socket for hosts without one of their own (Sideline main, the lite browser), and the heartbeat and reconnect numbers every workspace-socket client shares. |
 | `apps/desktop/src/renderer/lib/conversation-admission.tsx` | Composes account and workspace-journey readiness independently of connection warming. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns one substream `0` feed per selected work stream above the route, retains recently viewed feeds for five minutes, and supports presence-free feed warming on deliberate hover. |
@@ -80,11 +80,16 @@ protocol inside each Durable Object.
 ## Sidekick library synchronization
 
 Each Sidekicks library renderer shares the existing workspace/session boundary
-and listens to WorkspaceDO synchronization. Automation topics and pushed sidebar
-rows invalidate the broader library and attachment REST queries alongside detail
-and run queries. This matters when authoring happens in a different window: its
-local query cache cannot invalidate the library's cache. The existing workspace
-push supplies that signal without an additional broadcast channel or polling.
+and listens to WorkspaceDO synchronization. The `automations` topic and the
+pushed `automations` sidebar list invalidate the broader library and attachment
+REST queries alongside detail and run (`automation-runs`) queries. This matters
+when authoring happens in a different window: its local query cache cannot
+invalidate the library's cache. The Sidekicks window hears both through the
+[Organization-sync relay](#one-workspace-socket-per-desktop-the-organization-sync-relay):
+the main window relays each pushed `automations` list as the `automations`
+topic, which is all the Sidekicks window needs, since it reads the detail
+surfaces the push refetches and never the list itself. No additional broadcast
+channel or polling is involved.
 
 ### The topology
 
@@ -143,18 +148,19 @@ automation parent serves no metadata snapshot.
 Dictation sockets keep their existing transport and lifecycle. They are not
 brokered by this module and are not part of the proactive work-stream swarm.
 
-### One workspace socket per desktop: the Settings relay
+### One workspace socket per desktop: the Organization-sync relay
 
 Every Rally window mounts `WorkspaceSocketProvider`, and the prewarmed Settings
-window used to dial through it like the main window: a second socket to the
-same WorkspaceDO for the whole session, a subscribe answer carrying a full
-sidebar it never draws, and a copy of every push. The relay replaces that
-second socket without a second protocol. This section is its one full
+and Sidekicks windows used to dial through it like the main window: a second
+and third socket to the same WorkspaceDO for the whole session, a subscribe
+answer carrying a full sidebar neither draws, and a copy of every push. The
+relay replaces those sockets without a second protocol. Settings and Sidekicks
+are its two consumers; only the browser-import window still dials its own. This section is its one full
 description; [`settings-window.md`](settings-window.md) and
 [`security.md`](security.md) link here.
 
 The protocol is three messages from the main window to main, and two from main
-to the Settings window. Each names its Organization as `{ region, workspaceId }`,
+to each consumer window. Each names its Organization as `{ region, workspaceId }`,
 because a workspace UUID is unique only within a region, and every comparison —
 main's, the preload inbox's, the consumer's — compares both.
 
@@ -162,8 +168,8 @@ main's, the preload inbox's, the consumer's — compares both.
 | --- | --- | --- |
 | `state` | main window → main (`workspace-sync:publish`) | The provider's connection state. Attaches it as the source. |
 | `detach` | main window → main (`workspace-sync:publish`) | That provider unmounted with no successor. Ends the source if it is still the attached one. |
-| `topics` | main window → main → Settings (`workspace-sync:relayed`) | Topic names and the waterline they moved at. |
-| `source` | main → Settings (`workspace-sync:relayed`, and the `workspace-sync:source` reply) | `{ revision, source: { region, workspaceId, state } \| null }`. |
+| `topics` | main window → main → Settings and Sidekicks (`workspace-sync:relayed`) | Topic names and the waterline they moved at. |
+| `source` | main → Settings and Sidekicks (`workspace-sync:relayed`, and the `workspace-sync:source` reply) | `{ revision, source: { region, workspaceId, state } \| null }`. |
 
 - **Publish (main window, `relay="publish"`).** The provider publishes its
   connection state on every change and the topics of every sync event that
@@ -171,13 +177,16 @@ main's, the preload inbox's, the consumer's — compares both.
   included, which name every topic). A `workspace_feature_flags` push, which
   moves no topic, is published as the `feature_flags` topic, and so is a
   subscribe answer's flags when its topics do not already name it; the flag
-  values themselves never cross, and the consumer refetches its own. Nothing
-  else crosses: no sidebar, rows, presence or directory pages.
+  values themselves never cross, and the consumer refetches its own. A
+  `workspace_sidebar_list` push of the `automations` list is published as the
+  `automations` topic, the refetch that push amounts to for a window that does
+  not hold the list. Nothing else crosses: no sidebar, rows, presence or
+  directory pages.
 - **Detach on unmount, unless replaced.** The provider's cleanup publishes
   `detach` on a microtask, and only if no other publisher has mounted in the
   renderer since. An Organization switch — and StrictMode — unmounts a
   publisher and mounts its successor in one pass, so the successor's `state`
-  replaces the source directly and Settings never sees a gap to dial into. A
+  replaces the source directly and a consumer never sees a gap to dial into. A
   tree that falls into the top-level error boundary, or a session that leaves
   every Organization, has no successor, so main hears `detach` and releases.
 - **Relay (main).** `WorkspaceSyncRelay` parses each publication against one
@@ -188,14 +197,14 @@ main's, the preload inbox's, the consumer's — compares both.
   navigation (a reload). Every source change carries a revision. It does not
   react to the session changing Organization: the main window's own
   publications say when its socket changes.
-- **Consume (Settings window, `relay="consume"`).** The provider asks main for
+- **Consume (Settings and Sidekicks windows, `relay="consume"`).** The provider asks main for
   the current source and listens for changes, keeping the higher revision.
   While the source is its own Organization it dials nothing, reports the
   source's connection state as its own, keeps `topicWaterlines` from the
-  relayed topics (the connector OAuth reconcile re-runs on
+  relayed topics (in Settings, the connector OAuth reconcile re-runs on
   `connector_oauth_attempts` there), and invalidates exactly what a socket's
   topic would — except `workstream_directory`, which names a socket-owned list
-  this window does not hold. While the source is another Organization it
+  neither window holds. While the source is another Organization it
   waits, dialling nothing and reporting `connecting`: both windows follow one
   session but apply it at different moments (the window that asked for a
   switch applies it only after fetching the new Organization), so the main
@@ -207,20 +216,20 @@ main's, the preload inbox's, the consumer's — compares both.
 and the preload holds relayed topics that arrive before the listener exists
 (folded: each topic once with the newest waterline, for one Organization, and
 cleared only once a still-subscribed listener has taken them), so a read
-started above the provider — account onboarding — is still covered. A read the
-Settings window starts is answered by the server before any change made after
+started above the provider — account onboarding — is still covered. A read a
+consumer window starts is answered by the server before any change made after
 it; that change reaches the main window's live socket afterwards, is relayed
 afterwards, and invalidates the read. If the main window's socket is not yet
 subscribed (a cold start), its first answer is `initial`, which is relayed and
 names every topic. Every hand-over starts the same way: when the main window's
-socket goes, Settings subscribes from waterline `0`; when one comes back, its
+socket goes, a consumer subscribes from waterline `0`; when one comes back, its
 own `initial` is relayed. The two overlap rather than leave a gap, because the
 consumer applies relayed news even while its own socket is still open.
 
 **The trust boundary.** Only the main window may publish and only the Settings
-window may read the source (`registerWorkspaceSyncRelayIpc`, behind the shared
-trusted-sender check), and main sends relayed events to the Settings window
-alone. Main is where parsing happens, because the main window's renderer is the
+and Sidekicks windows may read the source (`registerWorkspaceSyncRelayIpc`,
+behind the shared trusted-sender check), and main sends relayed events to those
+two windows alone. Main is where parsing happens, because the main window's renderer is the
 untrusted edge ([`security.md`](security.md)): the shape is closed, so an
 unknown key is refused rather than dropped, and the refusal is a code naming
 the field. What main sends on is built from that parse, so the preload checks
@@ -235,19 +244,19 @@ processes the `subscribe` can miss a change made between the two, and nothing
 on the client can tell such a read from one answered after. The only exact fix
 is a sync waterline on each REST response to compare with the answer's, and
 most of these reads (D1-backed members, connections) have none. The Settings
-window no longer pays it, because while it relays it has no `initial` of its
-own.
+and Sidekicks windows no longer pay it, because while they relay they have no
+`initial` of their own.
 
 **When the source goes.** When the main window closes, crashes, reloads or
-falls into the error boundary while Settings is open, the Settings window dials
+falls into the error boundary while a consumer window is open, that window dials
 its own socket, whose `initial` answer refetches its reads once; when a main
-window publishes again, Settings closes it, and the new main socket's relayed
+window publishes again, the consumer closes it, and the new main socket's relayed
 `initial` refetches them once more. Both are the price of missing nothing
 across the hand-over, and neither happens in a steady session or on an
 Organization switch. If main cannot answer the source read, the consumer
 treats it as nobody publishing and dials its own socket. If the main window
 stays attached for another Organization for good — a switch it never applied —
-Settings waits with no socket; its REST reads still work, but nothing
+a consumer waits with no socket; its REST reads still work, but nothing
 invalidates them until the main window attaches, detaches or goes.
 
 ### Selecting the swarm
@@ -395,15 +404,12 @@ answered, when they connect, with a sidebar that already reflects the write,
 and `workspace_member_status` cannot list every member, since it learns one
 from before it existed only when something asks.
 
-Two older follow-up shapes are still read: one recorded before `channelLosses`
-existed, and one holding `"all"`, which an earlier build of this change wrote
-for an Organization-wide Channel. Neither is read as everyone. Each Channel's
-row goes to its current readers, and its tombstone to the people who still hold
-a viewer row for it at any generation (`legacyChannelLosers`): a removed
-participant keeps a non-participant row, so they are told, and somebody with
-no relationship to the Channel is not. A reader of an Organization-wide Channel
-who never had a row keeps it on screen until a reconnect reloads the sidebar;
-only a follow-up written before this change pays that.
+`channelLosses` is required and holds only user-id lists. A follow-up in an
+older shape (one recorded before the field existed, or one holding `"all"`)
+does not parse, so it is kept as `failed` and logged
+`directory_followup_unreadable`, like any other unreadable row. Every
+production Organization was checked before the fallback that read those shapes
+was removed, and none held one.
 
 Each person's rows are **built once** for all of their sockets and all of the
 Channels they are owed, from one set of reads, and sent to each socket.
@@ -597,15 +603,16 @@ open transport as success.
   `validSocketPath`, which is what keeps the renderer from turning main into a
   general network client. A kind whose path check falls through to the
   work-stream branch would accept a URL its own protocol never uses.
-- **The Settings relay: one socket per desktop, no gap at a hand-over, names
+- **The Organization-sync relay: one socket per desktop, no gap at a hand-over, names
   and never state.** A consumer dials only while main reports no publisher;
   it listens for its whole life and a fallback socket subscribes from `0`;
   a publisher that goes without a successor detaches; identities compare
   region and UUID together; and only topic names, waterlines and a connection
   state cross. The reasons are in
-  [the Settings relay](#one-workspace-socket-per-desktop-the-settings-relay).
-  A window that needs a socket-owned list needs a socket of its own, which is
-  why Sidekicks still dials one.
+  [the Organization-sync relay](#one-workspace-socket-per-desktop-the-organization-sync-relay).
+  A window that needs a socket-owned list needs a socket of its own; a consumer
+  may read only what the relayed topics refetch. Sidekicks qualifies because the
+  main window relays its pushed `automations` list as a topic.
 - **A conversation that is not pooled must not be given the pool's lifecycle.**
   An automation's feed follows its page. Retaining it for five minutes the way a
   work-stream feed is retained would hold a conversation open after its author
@@ -657,9 +664,9 @@ move the workspace synchronization socket or dictation transport into Node.
 - **A Durable Object hibernates:** the connection remains established. Its next
   application event may pay object wake, construction, and schema-initialization
   time, but it does not pay a new client TCP/TLS/WebSocket handshake.
-- **The main window's socket goes while Settings is open:** Settings dials its
-  own and refetches once each way; see
-  [the Settings relay](#one-workspace-socket-per-desktop-the-settings-relay).
+- **The main window's socket goes while Settings or Sidekicks is open:** that
+  window dials its own and refetches once each way; see
+  [the Organization-sync relay](#one-workspace-socket-per-desktop-the-organization-sync-relay).
 - **Browser development opens a large set:** it remains subject to Chromium's
   connection scheduling because only packaged Electron routes these three socket
   kinds through Node.
@@ -671,11 +678,11 @@ move the workspace synchronization socket or dictation transport into Node.
 | `apps/desktop/src/main/realtime-socket-broker.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/main/realtime-socket-broker.test.ts` | Destination confinement, ordered PAC fallback, shared payload limit, event relay, normal close cleanup, sends, and renderer-owner teardown. |
 | `apps/desktop/src/main/realtime-socket-ipc.test.ts`, `apps/desktop/src/common/realtime-socket-validation.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/main/realtime-socket-ipc.test.ts src/common/realtime-socket-validation.test.ts` | Shared channel wiring, main-window authorization, request confinement, broker relay, and strict dependency-free event validation. |
 | `apps/desktop/src/common/workspace-sync-relay.test.ts`, `apps/desktop/src/main/workspace-sync-relay.test.ts`, `apps/desktop/src/main/workspace-sync-relay-ipc.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/common/workspace-sync-relay.test.ts src/main/workspace-sync-relay.test.ts src/main/workspace-sync-relay-ipc.test.ts` | The preload inbox folding news that arrives before a listener and keeping it for the listener that replaces one unsubscribed before it could take it; main refusing a malformed or open publication with the field named, attaching, forwarding only the attached Organization (the same UUID in another region is another one), ignoring a stale detach, releasing once, and ordering by revision; each IPC channel refusing every window but its own. |
-| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` (`the organization-sync relay between windows`) | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/workspace-socket.test.tsx` | The main window publishing state and every topic (`initial` included, a flag push as `feature_flags`); detaching when unmounted with no successor and not across a switch or StrictMode; a consumer with a live publisher asking for no ticket, reading once, and refetching on relayed topics for its own region and UUID only; dialling only while nobody publishes, closing when somebody does, resubscribing from `0` after; and waiting, socketless, while the publisher serves another Organization. |
+| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` (`the organization-sync relay between windows`) | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/workspace-socket.test.tsx` | The main window publishing state and every topic (`initial` included, a flag push as `feature_flags`, an `automations` list push as `automations`); detaching when unmounted with no successor and not across a switch or StrictMode; a consumer with a live publisher asking for no ticket, reading once, and refetching on relayed topics for its own region and UUID only; dialling only while nobody publishes, closing when somebody does, resubscribing from `0` after; and waiting, socketless, while the publisher serves another Organization. |
 | `apps/desktop/src/renderer/lib/realtime-socket.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/realtime-socket.test.ts` | Browser-shaped state/events, IPC calls, and one multiplexed preload listener for a socket swarm. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/workstream-socket-pool.test.tsx` | Feed ownership with no Channel control ticket ever requested, route retention, expiry, overlap, speculative feed warming, and navigation promotion. |
 | `apps/api/test-workers/channel-viewer-state.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/channel-viewer-state.test.ts` | A Channel's breakouts and running background agents on the real workspace socket: per viewer and per Channel, pushed on a roster or agent change, tombstoned without closing the socket, current after a resubscribe, and Main warmed on foreground. |
-| `apps/api/test-workers/workspace-socket-fanout.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-socket-fanout.test.ts` | Who the workspace socket tells, on real sockets: a private Channel's change reaches nobody outside it; the tombstone reaches a removed participant, the readers of a narrowed or archived Channel, every reader of an Organization-wide Channel re-generated for its participants, the participants of a re-generated personal one, and a member who left the Organization, and nobody who never saw the Channel, including a member who joined before a held follow-up ran; a follow-up in either older shape reaches the readers and whoever still has a viewer row, never everyone; one person's two sockets get the same row, built once (a counting wrapper on `channelRowPayloads`); a burst of five changes in one delivery, and two held follow-ups run in one pass, are one row per socket; a row that cannot be built for one person still reaches the others and the follow-up is deleted; a per-person topic and a personal connection's change reach their audience alone, live and on replay, and a replay answers at the log's waterline; an Organization connection's change reaches everyone; a route's `noteChangedConnection` reaches the middleware's publish. |
+| `apps/api/test-workers/workspace-socket-fanout.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-socket-fanout.test.ts` | Who the workspace socket tells, on real sockets: a private Channel's change reaches nobody outside it; the tombstone reaches a removed participant, the readers of a narrowed or archived Channel, every reader of an Organization-wide Channel re-generated for its participants, the participants of a re-generated personal one, and a member who left the Organization, and nobody who never saw the Channel, including a member who joined before a held follow-up ran; one person's two sockets get the same row, built once (a counting wrapper on `channelRowPayloads`); a burst of five changes in one delivery, and two held follow-ups run in one pass, are one row per socket; a row that cannot be built for one person still reaches the others and the follow-up is deleted; a per-person topic and a personal connection's change reach their audience alone, live and on replay, and a replay answers at the log's waterline; an Organization connection's change reaches everyone; a route's `noteChangedConnection` reaches the middleware's publish. |
 | `apps/desktop/src/renderer/components/app-shell.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/app-shell.test.tsx` | Active/background selection, including all pins, five recent unpinned rows, and additional running rows. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/durable-object-runtime.test.ts` | Real-workerd upgrade, hibernation, attachment, snapshot, replay, read-only feed, and revocation behavior. |
 
@@ -723,7 +730,7 @@ headers.
 
 The Organization-sync relay is a separate, narrower IPC path, described with
 its sender checks and what may cross in
-[the Settings relay](#one-workspace-socket-per-desktop-the-settings-relay).
+[the Organization-sync relay](#one-workspace-socket-per-desktop-the-organization-sync-relay).
 
 The signed ticket remains confined to the `Sec-WebSocket-Protocol` request
 header. It is not put in a URL, returned in an event, or logged. The Worker
@@ -770,6 +777,33 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-09-26 — The Sidekicks window consumes the relay, and old follow-up shapes are no longer read
+
+**What changed:** The Sidekicks window now consumes the main window's
+Organization-sync relay like Settings (`relay="consume"`) instead of dialling
+its own workspace socket. The main window publishes each pushed `automations`
+sidebar list as the `automations` topic; main sends relayed events to both
+consumer windows; the `workspace-sync:source` IPC answers either one; and the
+`automations` topic now also invalidates `['automation-runs']`. With no
+publisher, the Sidekicks window dials its own socket as before. Only the
+browser-import window still dials its own. Separately, a directory follow-up's
+`channelLosses` is now required and holds only user-id lists: the `"all"`
+value, the absent-field fallback and `legacyChannelLosers` are gone.
+
+**Why:** The Sidekicks window was the second window holding a socket to the
+same WorkspaceDO, with a full sidebar in its subscribe answer and a copy of
+every push. The entry below kept it dialling because it was thought to read
+the pushed `automations` list. It does not: it reads the detail surfaces that
+push refetches (the automation, its runs, the library), so a topic is all it
+needs. The follow-up fallback existed only for rows written before #989, and
+all 20 production Organizations were checked and held none.
+
+**Consequences:** A consumer may read only what a relayed topic refetches. A
+surface the Sidekicks window starts reading from a socket-owned list has to be
+turned into a topic by the main window, or that window has to dial again. A
+follow-up row in an old shape now fails to parse and is kept as `failed`
+(`directory_followup_unreadable`) rather than sent.
 
 ### 2026-09-26 — The workspace socket tells each change to the people it is about, once, and Settings relays the main window's socket
 

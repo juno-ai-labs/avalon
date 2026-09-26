@@ -278,8 +278,8 @@ aggregation by taking the last refusal rather than the first outage.
   asks for — but the cases were authored rather than replayed, because the feature
   had never run. So the criteria are measured against a distribution somebody
   imagined. What replaces it is a corpus of (event, condition, adjudicated
-  verdict) triples assembled from retained connector events — bodies are kept for
-  396 days — and conditions of the shape the authoring agent writes.
+  verdict) triples assembled from retained connector events — processed bodies are
+  kept for 90 days — and conditions of the shape the authoring agent writes.
   The first authorized export may well move the criteria.
 - **The optimization is not reproducible from this repository.** The harness, the
   corpus, the candidate contracts and the per-run reports are not committed, so
