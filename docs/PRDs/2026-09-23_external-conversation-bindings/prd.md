@@ -5,8 +5,7 @@
 > A shared connector conversation can become a Rally Space, a thread in it can
 > become a Rally Channel, and a reply to a message Rally sent can return to the
 > Sidekick run that sent it, without making Rally a copy of the provider.
-> Companion architecture: [`design.md`](design.md). Discussion record:
-> [`discussion-brief.md`](discussion-brief.md). State: [`state.md`](state.md).
+> Companion architecture: [`design.md`](design.md). State: [`state.md`](state.md).
 > Standing contract: [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 > Read alongside [connectors](../../connectors.md), [Spaces](../../spaces.md),
 > [Slack integration](../../slack-integration.md),
@@ -284,7 +283,53 @@ Two behaviors move:
 
 ## Decision log
 
-None yet.
+### 2026-09-26: A top-level reply in a bot DM with an open request is asked to use the thread
+
+**Decided:** When someone writes at the top level of a DM with the workspace
+bot, not in a thread, and that DM holds at least one active outbound binding,
+the bot replies once asking them to answer in the request's thread, with a link
+to the most recent one. The message creates no Rally work and reaches no run. A
+DM with no active outbound binding keeps today's one-to-one Agent behavior.
+
+**Why:** Most people answer a DM at the top level, and such a reply has no
+binding. Guessing which request it answers would route it by timing, which the
+design rules out; starting ordinary Agent work would repeat the bug this PRD
+exists to fix. Asking costs the sender one more message and keeps every
+collected answer tied to the request it answers.
+
+**Changes:** Resolves open question 7 as agreed (top-level DM replies), which blocked
+calling the Northstar flow solved. The one-to-one DM policy in the design is now
+defined for DMs with an active outbound binding.
+
+### 2026-09-26: Outbound bindings do not expire
+
+**Decided:** A binding has no time limit. It stops routing only when it is
+suspended: its Sidekick is deleted, its connection disconnects, the bot leaves
+or the room is archived, or a person closes it.
+
+**Why:** No workflow has asked for expiry, and choosing a duration now would be
+a guess. A binding that outlives its use costs one row; the existing suspension
+triggers cover the cases where routing must stop.
+
+**Changes:** Resolves open question 6 as agreed, which blocked the build. What
+a sender sees after suspension remains open, now open question 11. Revisit if
+an old thread is used to drive a run through the run-as user's connectors long
+after its request.
+
+### 2026-09-26: The bot stays in conversations that Slack-triggered Sidekicks watch
+
+**Decided:** Stopping proactive joins does not remove the bot from any
+conversation a Slack automation source names, and saving a Sidekick with such a
+source joins the bot to that conversation. A join made for a Sidekick source
+is not an invitation, so it links no Space.
+
+**Why:** Those Sidekicks receive message events only from conversations the bot
+has joined. Letting them stop until someone invites the bot would silently
+break working Sidekicks at rollout.
+
+**Changes:** Resolves open question 10 as agreed. Narrows goal 4: Rally still does not
+join conversations on its own, but it does join the ones a configured Sidekick
+names.
 
 ## Key design decisions
 
@@ -404,9 +449,9 @@ home should be a Breakout is changed explicitly.
 
 Stopping proactive joins affects Sidekicks triggered by Slack activity: their
 message events arrive only from conversations the bot has joined
-([`slack-integration.md`](../../slack-integration.md)). Rollout has to keep
-the bot in every conversation such a Sidekick names, or say that those
-Sidekicks stop firing until someone invites the bot; see open questions.
+([`slack-integration.md`](../../slack-integration.md)). The bot stays in every
+conversation such a Sidekick names, and joins it when such a Sidekick is saved
+(see the decision log).
 
 This ships to everybody on merge, with no feature flag.
 
@@ -470,30 +515,19 @@ This ships to everybody on merge, with no feature flag.
    message but its response is lost, how can Rally recover that exact root ID
    before routing a reply? Without a provider receipt or a reliable correlation
    event, this is an uncollected state, not a reason to guess.
-6. **How long an outbound binding lives (blocks the build):** A run's state no
-   longer decides this, since input reopens a finished run, and a binding lets
-   its senders act through the run-as user's connectors. The design suspends a
-   binding when its Sidekick is deleted, its connection disconnects, or a person
-   closes it. Whether bindings also expire after a set time, and after how
-   long, is the team's number to set. What a sender sees after suspension is
-   also open.
-7. **Top-level DM replies (blocks calling the Northstar flow solved):** Most
-   people answer a DM at the top level, not in the thread. Such a reply has no
-   binding. Should Rally route a top-level reply in a bot DM to the most recent
-   open outbound binding in that DM, start ordinary Agent work, decline it, or
-   ask the person to reply in the thread?
-8. **A view of a run:** Nobody but the run-as user is seated in a run, and no
+6. **A view of a run:** Nobody but the run-as user is seated in a run, and no
    screen shows one. Should Rally build a run view (route, who is seated,
    composer, reopened state), or should only bound threads and elicitation
    answers continue a run?
-9. **Showing a reopened run:** How does the Sidekick's run history show a run
+7. **Showing a reopened run:** How does the Sidekick's run history show a run
    that completed, reopened, and completed again?
-10. **Slack-triggered Sidekicks after joins stop:** Keep the bot joined to the
-    conversations such Sidekicks name, or let them stop until invited?
-11. **Detaching:** No tool or screen removes an attachment yet. Where does a
-    person do that?
-12. **Edited and deleted answers:** If a founder edits or deletes an answer
-    after it was forwarded, does the forward change, and does a posted agenda?
-13. **Posting for Channel and Breakout agents:** Should a Breakout agent be
+8. **Detaching:** No tool or screen removes an attachment yet. Where does a
+   person do that?
+9. **Edited and deleted answers:** If a founder edits or deletes an answer
+   after it was forwarded, does the forward change, and does a posted agenda?
+10. **Posting for Channel and Breakout agents:** Should a Breakout agent be
     able to post to its Channel's Main conversation, and should a Channel agent
     reach its Breakouts? Both fit the same scope rule; neither is needed yet.
+11. **What a sender sees after suspension:** A reply to a suspended binding
+    creates no Rally work. Should the bot tell the sender, and what should it
+    say?
