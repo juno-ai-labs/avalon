@@ -2849,7 +2849,7 @@ describe("a member's message travels the whole pipeline", () => {
       expect(renamed.body).toMatchObject({ title:"Guest collaboration" });
       // Workspace-public legacy visibility must not become implicit guest access.
       await runInDurableObject(parent,(_instance,state) => {
-        state.storage.sql.exec("UPDATE parent_metadata SET scope='workspace' WHERE parent_id=?",WORKSTREAM_ID);
+        state.storage.sql.exec("UPDATE channels SET scope='workspace' WHERE workstream_id = ?",WORKSTREAM_ID);
       });
       await env.DB.prepare("ALTER TABLE users ADD COLUMN analytics_person_id TEXT").run();
       const signingKey = "guest-route-signing-key-for-workerd-test";
@@ -3029,12 +3029,12 @@ describe("a member's message travels the whole pipeline", () => {
         crypto.randomUUID(), WORKSPACE_ID, WORKSTREAM_ID, unrelatedResource);
       });
       await runInDurableObject(parent, (_instance, state) => {
-        state.storage.sql.exec("UPDATE parent_metadata SET scope='workspace' WHERE parent_id=?", WORKSTREAM_ID);
+        state.storage.sql.exec("UPDATE channels SET scope='workspace' WHERE workstream_id = ?", WORKSTREAM_ID);
       });
       expect(await withHostedParent(parent, WORKSTREAM_ID, (hosted) => hosted.canRead(USER_ID))).toBe(true); // Legacy public visibility must not authorize a guest.
       await expect(artifactService.open(unrelatedResource)).rejects.toMatchObject({ status: 404, code: "artifact_not_found" });
       await runInDurableObject(parent, (_instance, state) => {
-        state.storage.sql.exec("UPDATE parent_metadata SET scope='personal' WHERE parent_id=?", WORKSTREAM_ID);
+        state.storage.sql.exec("UPDATE channels SET scope='personal' WHERE workstream_id = ?", WORKSTREAM_ID);
       });
       const refreshResponse = await app.request(`/resources/${sharedResource}/hydrate`, { method: "POST", headers }, apiEnv);
       expect(refreshResponse.status, await refreshResponse.clone().text()).toBe(200);

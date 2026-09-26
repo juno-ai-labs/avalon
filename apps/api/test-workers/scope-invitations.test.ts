@@ -15,7 +15,7 @@ import { openEmailLoginSecret } from "../src/services/email-login-service";
 import { promoteWorkspaceGuest } from "../src/services/workspace-relationship-service";
 import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
 import { changeRelationships } from "./helpers/workspace-relationship-events";
-import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
+import { hostedParentStub, insertChannelRow, withHostedParent } from "./helpers/hosted-parent";
 import { conversationObjectName } from "../src/durable-objects/names";
 import { boot, seedParticipantMessage, seedOpenWorkstreamAuthority, seedWorkstreamRoot } from "./helpers/substream-fixture";
 
@@ -96,9 +96,12 @@ beforeEach(async () => {
 async function seedParent(id: string, title: string, actorTargets: ScopeGrantTarget[]) {
   await room().authority({ workspaceId, parentId: id });
   await withHostedParent(room(), id, (parent, state) => {
+    // The title lives on the directory row; the parent's own copy is stale on
+    // purpose, so an invitation that read it would say so.
     state.storage.sql.exec(`INSERT INTO parent_metadata
       (parent_id,parent_kind,workspace_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
-      VALUES (?,'workstream',?,'global',1,?,'','','personal','idle',0,0,0)`, id, workspaceId, title);
+      VALUES (?,'workstream',?,'global',1,'Stale copy','','','personal','idle',0,0,0)`, id, workspaceId);
+    insertChannelRow(state, id, title);
     state.storage.sql.exec("INSERT INTO parent_children (parent_id,substream_id,kind,created_at) VALUES (?,'0','main',0), (?,?,'child',0)", id, id, childId);
     state.storage.sql.exec("INSERT INTO parent_participant_migrations VALUES (?, '0', ?, '{}', 'complete')", id, crypto.randomUUID());
     state.storage.sql.exec("INSERT INTO parent_participant_migrations VALUES (?, ?, ?, NULL, 'complete')", id, childId, crypto.randomUUID());
@@ -413,6 +416,12 @@ it("names the sender and the workspace, and still sends when the conversation ca
   // sends the message that was composed rather than one rendered again later.
   expect(html).toContain("Adam Owner");
   expect(html).toContain("Shared workspace");
+  // A Main invitation names the Channel from its directory row.
+  const whole = await room().createScopeInvitations({ ...invitation([main]), emails: ["main-title@example.test"] });
+  if (whole.status !== "created") throw new Error(JSON.stringify(whole));
+  const mainParts = await deliveredParts(whole.invitations[0]!.id);
+  expect(mainParts.text).toContain("Private parent");
+  expect(mainParts.text).not.toContain("Stale copy");
   expect(html).toContain(`href="${(await deliveredLink(created.invitations[0]!.id)).toString()}"`);
 });
 

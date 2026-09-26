@@ -295,7 +295,7 @@ export class ScopeInvitationService {
       // Inside the guard with the transcript read: a local read that fails is
       // still only a title, and an invitation must not fail for want of one.
       conversationTitle = substreamId === "0"
-        ? this.storage.sql.exec<{ title: string | null }>("SELECT title FROM parent_metadata WHERE parent_id = ?", this.parentId)
+        ? this.storage.sql.exec<{ title: string | null }>("SELECT title FROM channels WHERE workstream_id = ?", this.parentId)
           .toArray()[0]?.title ?? null
         : this.storage.sql.exec<{ title: string | null }>(
           "SELECT title FROM parent_children WHERE parent_id = ? AND substream_id = ?", this.parentId, substreamId,

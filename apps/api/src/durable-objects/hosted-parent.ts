@@ -565,10 +565,22 @@ interface StoredStateRow extends Record<string, SqlStorageValue> {
   waterline: number;
 }
 
-const METADATA_COLUMNS = `parent_kind, revision, authority_generation, workspace_id, parent_id, region, title,
-  description, preview, scope, exact_state, system_kind, last_activity_at, completed_at, archived_at,
-  email_address, created_by_user_id, title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
-  next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at, source_created_at, source_updated_at`;
+/**
+ * A parent's identity from `parent_metadata`, and its presentation from its
+ * directory row: every column from `channels` for a Channel; for a Space its
+ * title, scope and archive state from `spaces` and the rest, which only a
+ * Channel's surfaces show, from its own row.
+ */
+const CHANNEL_PARENT_ROW_SQL = `SELECT m.parent_kind, m.revision, m.authority_generation, m.workspace_id, m.parent_id, m.region,
+  c.title, c.description, c.preview, c.scope, c.exact_state, c.system_kind, c.last_activity_at, c.completed_at, c.archived_at, c.email_address, c.created_by_user_id, c.title_status, c.latest_attention_ordinal, c.unread_tracking_start_ordinal, c.next_wakeup_due_at, c.next_wakeup_prompt, c.next_terminal_action_at, c.source_created_at, c.source_updated_at
+  FROM parent_metadata m JOIN channels c ON c.workstream_id = m.parent_id
+ WHERE m.parent_id = ?`;
+const SPACE_PARENT_ROW_SQL = `SELECT m.parent_kind, m.revision, m.authority_generation, m.workspace_id, m.parent_id, m.region,
+  s.title, m.description, m.preview, s.scope, m.exact_state, m.system_kind, m.last_activity_at, m.completed_at, s.archived_at, m.email_address, m.created_by_user_id, m.title_status, m.latest_attention_ordinal, m.unread_tracking_start_ordinal, m.next_wakeup_due_at, m.next_wakeup_prompt, m.next_terminal_action_at, m.source_created_at, m.source_updated_at
+  FROM parent_metadata m JOIN spaces s ON s.space_id = m.parent_id
+ WHERE m.parent_id = ?`;
+/** Before the directory row exists: a reservation inside its own transaction, or a child's placeholder. */
+const OWN_PARENT_ROW_SQL = "SELECT * FROM parent_metadata WHERE parent_id = ?";
 
 export class HostedParent {
   constructor(
@@ -635,10 +647,9 @@ export class HostedParent {
   // ---------------------------------------------------------------------------
 
   metadataRow(): ParentMetadataRow | null {
-    return first(this.sql.exec<ParentMetadataRow>(
-      `SELECT ${METADATA_COLUMNS} FROM parent_metadata WHERE parent_id = ?`,
-      this.parentId,
-    ));
+    const directory = this.role.kind === "space" ? SPACE_PARENT_ROW_SQL : CHANNEL_PARENT_ROW_SQL;
+    return first(this.sql.exec<ParentMetadataRow>(directory, this.parentId))
+      ?? first(this.sql.exec<ParentMetadataRow>(OWN_PARENT_ROW_SQL, this.parentId));
   }
 
   private parentIdentity(): {
@@ -968,7 +979,11 @@ export class HostedParent {
     if (!this.mainCommonProjection()) return;
     const aggregate = this.aggregateCommon();
     const dueAt = epoch(aggregate.nextTerminalActionAt);
-    const current = this.metadataRow();
+    // Change detection against the parent's own bookkeeping column, which
+    // survives the column drop: this decides whether to publish at all.
+    const current = first(this.sql.exec<{ next_terminal_action_at: number | null }>(
+      "SELECT next_terminal_action_at FROM parent_metadata WHERE parent_id = ?", this.parentId,
+    ));
     if (!current || current.next_terminal_action_at === dueAt) return;
     this.sql.exec(
       `UPDATE parent_metadata SET next_terminal_action_at = ?, revision = revision + 1, updated_at = ?
