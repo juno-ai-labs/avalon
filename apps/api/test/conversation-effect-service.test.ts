@@ -23,7 +23,6 @@ import {
 import { consumeActivityQueue } from "../src/queues/activity-consumer";
 import { workspaceConnectorEventQueueMessage } from "../src/services/workspace-connector-event-ingress";
 import {
-  applyQueuedWorkspaceDirectoryEffect,
   applyWorkstreamRegionalEffect,
   processWorkstreamNotificationIntent,
 } from "../src/services/conversation-effect-service";
@@ -465,37 +464,6 @@ describe("a parent's effects on the regional delivery plane", () => {
       expect(workspace.database.prepare(
         "SELECT COUNT(*) AS count FROM workspace_workstream_effect_receipts",
       ).get()).toEqual({ count: 0 });
-    } finally {
-      database.close();
-      workspace.database.close();
-    }
-  });
-
-  it("hands a directory effect to WorkspaceDO and insists on its receipt", async () => {
-    const database = seedAuthority();
-    const workspace = workspaceSyncNamespace();
-    const env = regionalEnv(database, workspace);
-    const envelope = message(directoryCommon(), {
-      messageId: MESSAGE_ID,
-      partitionKey: "common",
-      sourceVersion: 7,
-    });
-    try {
-      await applyQueuedWorkspaceDirectoryEffect(env, envelope);
-      expect(workspace.applyWorkstreamDirectoryEffects).toHaveBeenCalledWith({
-        workspaceId: WORKSPACE_ID,
-        envelopes: [envelope],
-      });
-      // An apply that accepted nothing is not a delivery: the Queue has to
-      // bring the message back, not drop it on the strength of a 200.
-      workspace.applyWorkstreamDirectoryEffects.mockResolvedValueOnce({ accepted: [], directoryChanged: false });
-      await expect(applyQueuedWorkspaceDirectoryEffect(env, envelope))
-        .rejects.toThrow("workspace_directory_effect_ack_incomplete");
-      await expect(applyQueuedWorkspaceDirectoryEffect(env, message(activityEvent("Not a directory effect"), {
-        messageId: `activity:${MESSAGE_ID}`,
-        partitionKey: `activity:${MESSAGE_ID}`,
-        sourceVersion: 1,
-      }))).rejects.toThrow("non_workspace_effect_misdirected_to_workspace_do");
     } finally {
       database.close();
       workspace.database.close();

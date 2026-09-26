@@ -82,8 +82,8 @@ const RESOURCE_LOOKUP_BATCH = BOUND_PARAMETER_ID_CHUNK;
 
 /**
  * Resolve the cross-authority resource projection without a cross-database
- * join. Work-stream membership/watch state comes from the WorkstreamDO; the
- * workspace-owned resource and note authorization come from WorkspaceDO.
+ * join. Link and watch state comes from the conversation that owns it
+ * (`SubstreamAgent`); the workspace-owned resource and note authorization come from WorkspaceDO.
  */
 async function loadVisibleRows(
   database: D1Database,

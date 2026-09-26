@@ -859,8 +859,8 @@ export class WorkstreamService {
     // The conversation is asked before `WORKSTREAM_DOS` is addressed at all.
     // It is the object that knows which parent kind this id belongs to, and a
     // Space's hidden main conversation refuses a Channel product request by
-    // name; reaching the Channel authority first would materialise an empty
-    // `WorkstreamDO` for a Space id and record a direct scope on it. The title
+    // name; reaching the Channel authority first would address a Space id as
+    // a Channel and record a direct scope on it. The title
     // is what the refusals below need anyway.
     const access = new ChannelAccessService(this.env, this.auth);
     const title = await access.channelTitle(id);
