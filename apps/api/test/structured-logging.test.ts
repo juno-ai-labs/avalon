@@ -41,6 +41,21 @@ describe("structured logging", () => {
     )).toBe("connector_event_failed");
   });
 
+  it("names a Workers runtime failure behind the caller's own code without copying its sentence", () => {
+    expect(diagnosticErrorCode(
+      new Error("Durable Object reset because its code was updated."),
+      "parent_export_failed",
+    )).toBe("parent_export_failed:durable_object_code_updated");
+    expect(diagnosticErrorCode(
+      Object.assign(new Error("Some runtime sentence"), { overloaded: true, retryable: false }),
+      "parent_export_failed",
+    )).toBe("parent_export_failed:overloaded");
+    expect(diagnosticErrorCode(
+      Object.assign(new Error("Some runtime sentence"), { retryable: true }),
+      "parent_export_failed",
+    )).toBe("parent_export_failed:retryable");
+  });
+
   it("names the field a schema rejection rejected, behind the caller's own code", () => {
     // The consumer delivering an external event to a Sidekick reduced a
     // rejection to the constant `external_event_delivery_failed` and retried
