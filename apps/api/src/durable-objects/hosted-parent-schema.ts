@@ -373,13 +373,16 @@ export const HOSTED_PARENT_SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE INDEX workspace_directory_followups_due_idx ON workspace_directory_followups(not_before)`,
 
   // Each person's workspace relationship as this object last heard it: from a
-  // relationship change event (sequence > 0, in D1's order) or, for someone it
-  // had never heard of, from one D1 read (sequence 0, never replacing an
-  // event). Access checks read it instead of D1; the events keep it current.
-  // `relationship_json` is null for someone with no relationship.
+  // relationship change event (sequence > 0, in D1's order), or from a D1 read
+  // or write a request just made (sequence kept), which replaces the row only
+  // when it is provably newer. Access checks read it instead of D1; the events
+  // keep it current. `relationship_json` is null for someone with no
+  // relationship; `removed_incarnation` names the one a removal event ended,
+  // so a later read of that same relationship cannot bring it back.
   `CREATE TABLE workspace_member_status (
     user_id TEXT PRIMARY KEY,
     relationship_json TEXT CHECK (relationship_json IS NULL OR json_valid(relationship_json)),
+    removed_incarnation TEXT CHECK (removed_incarnation IS NULL OR relationship_json IS NULL),
     active INTEGER NOT NULL CHECK (active IN (0, 1)),
     sequence INTEGER NOT NULL CHECK (sequence >= 0),
     updated_at INTEGER NOT NULL

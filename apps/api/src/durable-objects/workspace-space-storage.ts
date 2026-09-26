@@ -812,7 +812,16 @@ export class WorkspaceSpaceStorage {
   /** Sidekick defaults this instance wrote onto a Channel in place; the caller refreshes the rails when nonzero. */
   sidekickDefaultsApplied = 0;
 
-  constructor(private readonly storage: DurableObjectStorage) {}
+  /**
+   * @param canManageChannel Whether this person may manage this Channel,
+   *   answered from this database alone (no D1, no await), so a default can
+   *   be written inside the transaction that staged it. Absent, every Sidekick
+   *   default takes the Queue.
+   */
+  constructor(
+    private readonly storage: DurableObjectStorage,
+    private readonly canManageChannel?: (workstreamId: string, userId: string) => boolean,
+  ) {}
 
   /**
    * Whether this object has reached the migration that created these tables.
@@ -3878,8 +3887,9 @@ export class WorkspaceSpaceStorage {
    * hosted here, so it is written now rather than sent out and back in. The
    * rest take the Queue: a resource is attached through the Channel's main
    * conversation (a SubstreamAgent), and a Sidekick target whose Channel parent
-   * is not hosted yet, is archived, or whose Sidekick this Organization's
-   * directory does not show as a live workspace Sidekick keeps the canonical
+   * is not hosted yet, is archived, whose Sidekick this Organization's
+   * directory does not show as a live workspace Sidekick, or whose requester
+   * cannot manage the Channel (or is not known here yet) keeps the canonical
    * path, which checks the Sidekick and the Channel and names what it refused.
    */
   private stageDefaultPublications(
@@ -3888,7 +3898,7 @@ export class WorkspaceSpaceStorage {
     now: number,
   ): void {
     for (const target of targets) {
-      if (target.kind === "sidekick" && this.applySidekickDefaultInPlace(target, now)) continue;
+      if (target.kind === "sidekick" && this.applySidekickDefaultInPlace(target, requestedByUserId, now)) continue;
       this.storage.sql.exec(
         `INSERT OR IGNORE INTO space_default_publications (
            space_id, kind, target_id, default_generation, workstream_id,
@@ -3913,12 +3923,16 @@ export class WorkspaceSpaceStorage {
    * Write one Sidekick default onto its member Channel, if everything it needs
    * is in this database. False leaves the target for the Queue.
    *
-   * No actor's Channel management access is asked, which the Queue path does.
-   * The Space's own write check admitted the person who added the default or
-   * placed the Channel, and recommending a workspace Sidekick exposes nothing
-   * a member of the Organization could not already open.
+   * The requester's management of the Channel is asked here, as the Queue
+   * path's `setSidekickRecommendation` asks it. The Space's own write check
+   * is not enough: an Organization-wide Space admits any active member, and a
+   * default's instructions run in every agent in the Channel, including
+   * personal and restricted Channels that member cannot manage. A refusal,
+   * or a requester this table has not heard of, is not decided here: it takes
+   * the Queue, whose canonical path asks again and records the reason on the
+   * target.
    */
-  private applySidekickDefaultInPlace(target: WorkspaceSpaceDefaultTarget, now: number): boolean {
+  private applySidekickDefaultInPlace(target: WorkspaceSpaceDefaultTarget, requestedByUserId: string, now: number): boolean {
     const eligible = this.storage.sql.exec<{ one: number } & Record<string, SqlStorageValue>>(
       `SELECT 1 AS one FROM parent_metadata parent, automation_directory sidekick
         WHERE parent.parent_id = ? AND parent.parent_kind = 'workstream' AND parent.archived_at IS NULL
@@ -3928,7 +3942,7 @@ export class WorkspaceSpaceStorage {
       target.workstreamId,
       target.targetId,
     ).toArray().length === 1;
-    if (!eligible) return false;
+    if (!eligible || !this.canManageChannel?.(target.workstreamId, requestedByUserId)) return false;
     this.storage.sql.exec(
       `INSERT OR IGNORE INTO parent_sidekicks (parent_id, sidekick_id, attached_at) VALUES (?, ?, ?)`,
       target.workstreamId,
