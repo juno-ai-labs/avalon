@@ -89,7 +89,9 @@ export function diagnosticErrorCode(error: unknown, fallback: string): string {
 /**
  * The Workers runtime's own failures, which arrive as sentences rather than
  * codes. Each is matched to a word of ours, so the sentence itself is never
- * copied; the runtime's `overloaded` and `retryable` flags name the rest.
+ * copied; the runtime's `overloaded` flag names the rest. `retryable` is not
+ * read: this tree's own provider errors carry a property of that name, so it
+ * says nothing about where an error came from.
  * Without this, a legacy object resetting under a deploy logged as the
  * caller's bare fallback, indistinguishable from a real refusal.
  */
@@ -103,10 +105,7 @@ const PLATFORM_ERRORS: readonly (readonly [RegExp, string])[] = [
 
 function platformErrorCode(error: Error): string | null {
   for (const [pattern, code] of PLATFORM_ERRORS) if (pattern.test(error.message)) return code;
-  const flags = error as Error & { overloaded?: unknown; retryable?: unknown };
-  if (flags.overloaded === true) return "overloaded";
-  if (flags.retryable === true) return "retryable";
-  return null;
+  return (error as Error & { overloaded?: unknown }).overloaded === true ? "durable_object_overloaded" : null;
 }
 
 export function logEvent(
