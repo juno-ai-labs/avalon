@@ -519,8 +519,12 @@ export class ConnectionService {
    * so it is counted here. A discovered one is whatever its last discovery
    * stored; a row that has never been discovered reports null and has one
    * discovery started behind this response, whose answer reaches open clients
-   * through the `connector_connections` topic. Only that first one: nothing
-   * here re-discovers a count it already has, because a staleness window is a
+   * through the `connector_connections` topic. One, ever: the attempt is
+   * recorded on the row before it runs, so a discovery that fails is not
+   * retried behind every later list — that would put a provider call behind
+   * each open again, only hidden. After that the paths that already discover
+   * (authorization, Test, the tools pane, the per-row endpoint) are the only
+   * refresh. Nothing here re-discovers a count it already has, because a staleness window is a
    * limit whose number is the team's to choose
    * (docs/adding-security-defensive-and-other-limits.md), and every path that
    * can change the count already refreshes it (docs/connectors.md#settings-tool-counts).
@@ -543,8 +547,35 @@ export class ConnectionService {
       return grantedToolCount(adapter, scope, granted, adapter.agentPlugin.tools);
     }
     if (typeof row.discovered_tool_count === "number") return row.discovered_tool_count;
-    runtimeDeferral(this.refreshDiscoveredToolCount(workspaceId, String(row.id)));
+    if (row.tool_count_backfill_attempted_at == null) {
+      runtimeDeferral(this.backfillDiscoveredToolCount(workspaceId, String(row.id)));
+    }
     return null;
+  }
+
+  /**
+   * The list's one discovery for a never-discovered row. Claimed with a
+   * returned witness before any provider call, so concurrent lists — every
+   * member's window focusing at once — start it once between them, and a
+   * failure leaves the claim in place.
+   */
+  private async backfillDiscoveredToolCount(workspaceId: string, connectionId: string): Promise<void> {
+    try {
+      const claimed = await this.env.DB.prepare(
+        `UPDATE connector_connections SET tool_count_backfill_attempted_at = ?
+          WHERE id = ? AND workspace_id = ? AND status <> 'disabled'
+            AND discovered_tool_count IS NULL AND tool_count_backfill_attempted_at IS NULL
+          RETURNING id`,
+      ).bind(nowIso(), connectionId, workspaceId).first<{ id: string }>();
+      if (claimed?.id !== connectionId) return;
+    } catch (error) {
+      logWarn(this.env, "connection_tool_count_refresh_failed", {
+        connection_id: connectionId,
+        code: diagnosticErrorCode(error, "backfill_claim_failed"),
+      });
+      return;
+    }
+    await this.refreshDiscoveredToolCount(workspaceId, connectionId);
   }
 
   private registeredAdapter(connectorType: string): ResolvedConnectorAdapter | null {

@@ -3799,10 +3799,13 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 73,
   description: "remember how many tools a discovered connection last exposed",
   // Read by `GET /connections` so Settings needs no per-row provider call; NULL
-  // until the first discovery. See docs/connectors.md#settings-tool-counts.
+  // until the first discovery. The second column records that the list's
+  // one-time background discovery was spent, so a failing one is not retried
+  // on every list. See docs/connectors.md#settings-tool-counts.
   statements: [
     `ALTER TABLE connector_connections ADD COLUMN discovered_tool_count INTEGER
       CHECK (discovered_tool_count IS NULL OR discovered_tool_count >= 0)`,
+    "ALTER TABLE connector_connections ADD COLUMN tool_count_backfill_attempted_at TEXT",
   ],
 }];
 

@@ -455,6 +455,7 @@ function fixture() {
       error_json TEXT,
       last_sync_at TEXT,
       discovered_tool_count INTEGER,
+      tool_count_backfill_attempted_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );

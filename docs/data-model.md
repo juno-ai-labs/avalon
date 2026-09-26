@@ -874,8 +874,10 @@ column catalog; what follows is only what WorkspaceDO still holds.
   scope while preserving new `notion.personal.mcp` ownership. WorkspaceDO
   migration 73 adds `discovered_tool_count`, the number of tools a connection
   with a live-discovered tool surface exposed at its last discovery (NULL until
-  the first); [`connectors.md`](connectors.md#settings-tool-counts) owns when it
-  is written.
+  the first), and `tool_count_backfill_attempted_at`, which spends the
+  connection list's one background discovery;
+  [`connectors.md`](connectors.md#settings-tool-counts) owns when each is
+  written.
 
 - `slack_installation_routes` is the opaque Global team-to-region directory;
   `slack_user_links`, `slack_agent_sessions`, and durable `slack_ingress_jobs`
