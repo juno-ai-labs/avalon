@@ -8,6 +8,7 @@ export type WorkspaceScheduledAlarmPhase =
   | "authority_check"
   | "stored_target"
   | "activity_reap"
+  | "connector_event_reap"
   | "space_default_publish"
   | "space_intent_resume"
   | "space_bootstrap"
@@ -15,7 +16,6 @@ export type WorkspaceScheduledAlarmPhase =
   | "parent_outbox"
   | "parent_breakouts"
   | "directory_followup"
-  | "parent_import"
   | "final_rearm";
 
 export type ObservableWorkspaceScheduledAlarmKind =

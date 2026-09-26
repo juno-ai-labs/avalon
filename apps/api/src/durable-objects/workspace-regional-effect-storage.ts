@@ -4,7 +4,7 @@ import type {
 } from "./workspace-directory-protocol";
 import { isPersonNotificationEffect } from "@rally/contracts/conversation-effects";
 
-// WorkstreamDO effect receipts are a replay fence, not history. After this
+// Conversation-parent effect receipts are a replay fence, not history. After this
 // window a redelivery falls back to the idempotent product guards
 // (generation/waterline, event dedupe key, intent identity) instead.
 export const WORKSTREAM_EFFECT_RECEIPT_RETENTION_MS = 30 * 24 * 60 * 60_000;
@@ -46,8 +46,8 @@ function epochMs(value: string): number {
 }
 
 /**
- * Apply one WorkstreamDO activity/mention effect and its replay receipt in a
- * single WorkspaceDO transaction. Current D1 identity (surviving actor and
+ * Apply one Channel or Space parent's activity/mention effect and its replay
+ * receipt in a single WorkspaceDO transaction. Current D1 identity (surviving actor and
  * targets, mention-recipient membership) arrives as data on the request; this
  * function never reads outside the object, so the effect and the receipt that
  * acknowledges it can never commit separately.

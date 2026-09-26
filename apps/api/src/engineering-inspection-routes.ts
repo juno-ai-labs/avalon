@@ -18,7 +18,6 @@ export type InspectionWorkspaceRoute = z.infer<typeof InspectionWorkspaceRouteSc
 export const InspectionWorkstreamRouteSchema = z.strictObject({
   workspace_id: z.string(),
   workstream_id: z.string(),
-  object_name: z.string(),
   authority_generation: z.number().int().positive(),
 });
 export type InspectionWorkstreamRoute = z.infer<typeof InspectionWorkstreamRouteSchema>;
@@ -67,7 +66,7 @@ export async function resolveInspectionWorkstreamRoute(
   expectedGeneration?: number,
 ): Promise<InspectionWorkstreamRoute | null> {
   const row = await env.DB.prepare(
-    `SELECT route.workspace_id, route.workstream_id, route.object_name,
+    `SELECT route.workspace_id, route.workstream_id,
             control.generation AS authority_generation
        FROM workstream_authority_routes route
        JOIN workstream_authority_control control

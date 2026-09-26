@@ -16,7 +16,6 @@ import {
 } from "@rally/contracts/conversation-effects";
 import { workspaceDOName } from "../durable-objects/names";
 import {
-  WorkspaceDirectoryApplyResultSchema,
   WorkspaceDirectoryNotificationStateSchema,
   WorkspaceRegionalEffectApplyResultSchema,
 } from "../durable-objects/workspace-directory-protocol";
@@ -60,34 +59,6 @@ interface NotificationIntentTransitionPort {
 export interface WorkstreamRegionalEffectResult {
   replayed: boolean;
   notificationIntentId: string | null;
-}
-
-/** Apply one unordered, at-least-once Queue delivery to WorkspaceDO. */
-export async function applyQueuedWorkspaceDirectoryEffect(
-  env: Env,
-  input: ParentEffectEnvelope,
-): Promise<void> {
-  const message = ParentEffectEnvelopeSchema.parse(input);
-  if (!isDirectoryEffect(message.effect)) {
-    throw new Error("non_workspace_effect_misdirected_to_workspace_do");
-  }
-  const workspace = await durableObjectStubForWorkspace(
-    env,
-    env.WORKSPACE_DOS,
-    message.workspaceId,
-    workspaceDOName(message.region, message.workspaceId),
-  );
-  const result = WorkspaceDirectoryApplyResultSchema.parse(
-    await workspace.applyWorkstreamDirectoryEffects({
-      workspaceId: message.workspaceId,
-      envelopes: [message],
-    }),
-  );
-  if (result.accepted.length !== 1
-    || result.accepted[0]?.messageId !== message.messageId
-    || result.accepted[0]?.payloadHash !== message.payloadHash) {
-    throw new Error("workspace_directory_effect_ack_incomplete");
-  }
 }
 
 /**

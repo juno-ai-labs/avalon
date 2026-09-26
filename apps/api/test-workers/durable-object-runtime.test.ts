@@ -3893,6 +3893,113 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
+  it("ages processed connector events out on the alarm and keeps every event still in flight", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const ids = {
+      expired: "00000000-0000-7000-8000-000000000311",
+      recent: "00000000-0000-7000-8000-000000000312",
+      pendingOld: "00000000-0000-7000-8000-000000000313",
+      failedOld: "00000000-0000-7000-8000-000000000314",
+    };
+    for (const [index, id] of Object.values(ids).entries()) {
+      const event = connectorEvent(id);
+      await stub.ingestConnectorEvent({
+        workspaceId: WORKSPACE_ID,
+        ingressEventId: id,
+        payloadHash: `sha256:${String(index).repeat(64)}`,
+        event: {
+          ...event,
+          activity: { ...event.activity, providerEventId: `delivery-${index}`, dedupeKey: `retention:${index}` },
+        },
+      });
+    }
+    const day = 24 * 60 * 60_000;
+    const old = Date.now() - 91 * day;
+    await runInDurableObject(stub, async (_instance, state) => {
+      const set = (id: string, status: string, receivedAt: number) => state.storage.sql.exec(
+        `UPDATE workspace_connector_events SET processing_status = ?, received_at = ? WHERE event_id = ?`,
+        status, receivedAt, id,
+      );
+      set(ids.expired, "processed", old);
+      set(ids.recent, "processed", Date.now() - 89 * day);
+      set(ids.pendingOld, "pending", old);
+      set(ids.failedOld, "failed", old);
+      await state.storage.setAlarm(Date.now());
+    });
+
+    await runDurableObjectAlarm(stub);
+
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ event_id: string }>(
+        "SELECT event_id FROM workspace_connector_events ORDER BY event_id",
+      ).toArray().map((row) => row.event_id)).toEqual([ids.recent, ids.pendingOld, ids.failedOld]);
+    });
+  });
+
+  it("arms the alarm for a connector event's expiry when it settles as processed", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const eventId = "00000000-0000-7000-8000-000000000316";
+    const processingOwnerId = "00000000-0000-7000-8000-000000000317";
+    await stub.ingestConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      ingressEventId: eventId,
+      payloadHash: `sha256:${"e".repeat(64)}`,
+      event: connectorEvent(eventId),
+    });
+    // Due an hour from now: late enough that workerd does not fire it before
+    // the assertion reads it, and later than anything else this object waits on.
+    const expiresAt = Date.now() + 60 * 60_000;
+    await runInDurableObject(stub, async (_instance, state) => {
+      state.storage.sql.exec(
+        "UPDATE workspace_connector_events SET received_at = ? WHERE event_id = ?",
+        expiresAt - 90 * 24 * 60 * 60_000, eventId,
+      );
+      await state.storage.deleteAlarm();
+    });
+    const claim = WorkspaceConnectorEventClaimResultSchema.parse(await stub.claimConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId,
+      processingOwnerId,
+      attempt: 0,
+      orchestrator: "queue",
+    }));
+    if (claim.outcome !== "claimed") throw new Error("expected the connector event to be claimed");
+    await stub.settleConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId,
+      processingOwnerId,
+      processingLeaseId: claim.processingLeaseId,
+      outcome: "processed",
+      error: null,
+    });
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      expect(await state.storage.getAlarm()).toBe(expiresAt);
+      // As if the first settle committed its row and died before arming.
+      await state.storage.deleteAlarm();
+    });
+    await stub.settleConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId,
+      processingOwnerId,
+      processingLeaseId: claim.processingLeaseId,
+      outcome: "processed",
+      error: null,
+    });
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      expect(await state.storage.getAlarm()).toBe(expiresAt);
+    });
+  });
+
   it("owns connector events, deduplicates Queue replays, and fences processing settlement", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(

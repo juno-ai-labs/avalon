@@ -521,6 +521,7 @@ describe('WorkspaceSocketProvider', () => {
       ['digest-schedule'],
       ['automation'],
       ['automation-draft'],
+      ['automation-runs'],
       ['sidekicks-library'],
       ['attached-sidekicks'],
       ['workstream-sidekicks'],
@@ -2250,7 +2251,7 @@ describe('the organization-sync relay between windows', () => {
     );
   }
 
-  it('publishes the main window\'s state and every topic it hears, flag pushes as the flags topic', async () => {
+  it('publishes the main window\'s state and every topic it hears, flag and Sidekick list pushes as their topics', async () => {
     const queryClient = new QueryClient();
     render(<QueryClientProvider client={queryClient}>{publisher()}</QueryClientProvider>);
     await flushPromises();
@@ -2284,6 +2285,13 @@ describe('the organization-sync relay between windows', () => {
       changedFlag: 'digests-enabled',
       flags: ClientFeatureFlagsSchema.parse({ digestsEnabled: true }),
     }));
+    act(() => socket.message({
+      type: 'workspace_sidebar_list',
+      occurredAt: '2026-08-17T20:00:03.000Z',
+      list: 'automations',
+      waterline: 2,
+      items: [],
+    }));
     await flushPromises();
 
     // `initial` is relayed whole: it names every topic because this socket
@@ -2295,6 +2303,8 @@ describe('the organization-sync relay between windows', () => {
       { type: 'topics', region, workspaceId, waterline: 8, topics: [...WORKSPACE_SYNC_TOPICS] },
       { type: 'topics', region, workspaceId, waterline: 9, topics: ['member_directory'] },
       { type: 'topics', region, workspaceId, waterline: 9, topics: ['feature_flags'] },
+      // The Sidekicks window reads what the list push refetches, not the list.
+      { type: 'topics', region, workspaceId, waterline: 9, topics: ['automations'] },
     ]);
   });
 

@@ -27,7 +27,7 @@ import type { WorkstreamReaderAudience } from "./audience-containment";
  * Those are the two, and they are different on purpose.
  *
  * The provenance that says *which* sources currently
- * reach a Channel is WorkstreamDO's
+ * reach a Channel is its hosted parent's, in WorkspaceDO
  * (`durable-objects/workstream-access-storage.ts`), and applying what these
  * functions plan is the Channel's canonical scope and participant operations' —
  * which is where the retained-content containment preflight runs. This is only

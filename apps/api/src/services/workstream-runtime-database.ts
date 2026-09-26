@@ -61,7 +61,7 @@ async function regionalWorkstreamAnchorStatement(
     ).bind(
       workstreamId,
       workspaceId,
-      `[WorkstreamDO] ${workstreamId}`,
+      `[Channel] ${workstreamId}`,
       at,
       at,
       at,

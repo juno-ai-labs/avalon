@@ -169,10 +169,10 @@ export type SpaceIntentResumeOutcome =
 /**
  * The regional facade over the Organization's Space authority.
  *
- * Three objects have to agree for a Space to mean anything, and this is where
- * they are ordered: WorkspaceDO owns the relationship and stages every
- * operation behind a fence, the Space's own `SpaceDO` and hidden main
- * conversation own what the Space *is* — its name, appearance, scope,
+ * Three authorities have to agree for a Space to mean anything, and this is
+ * where they are ordered: WorkspaceDO owns the relationship and stages every
+ * operation behind a fence, the Space's hosted parent (in that same
+ * WorkspaceDO) and hidden main conversation own what the Space *is* — its name, appearance, scope,
  * participants and attachments — and each member Channel owns its own audience.
  *
  * Nothing here writes a Channel's audience itself. A membership, an audience
@@ -971,8 +971,8 @@ export class SpaceService {
    * One piece of work against the Space's *own* authority, with its failure
    * named.
    *
-   * The Space's hidden conversation and the `SpaceDO` above it are reached over
-   * Durable Object RPC, and a rejection that is not the object's own refusal
+   * The Space's hidden conversation and its hosted parent in WorkspaceDO are
+   * reached over Durable Object RPC, and a rejection that is not the object's own refusal
    * crosses that hop as a bare `Error` with no code on it. Every one of those
    * arrived at the route as `internal_error` — the same word the Worker uses
    * for every unhandled failure it has — so a Space whose authority could not

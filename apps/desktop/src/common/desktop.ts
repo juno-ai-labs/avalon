@@ -570,13 +570,13 @@ export interface RallyDesktopBridge {
   onSessionChanged: (listener: (session: DesktopSession | null) => void) => () => void;
   /**
    * The main window's Organization socket, told to main so it can relay it to
-   * the Settings window. Main refuses it from any other window.
+   * the Settings and Sidekicks windows. Main refuses it from any other window.
    */
   publishWorkspaceSync: (publication: WorkspaceSyncPublication) => Promise<void>;
-  /** Settings window only: whose socket is being relayed right now, if anyone's. */
+  /** Settings and Sidekicks windows only: whose socket is being relayed right now, if anyone's. */
   getWorkspaceSyncSource: () => Promise<WorkspaceSyncSourceSnapshot>;
   /**
-   * Settings window only: every relayed event. News that arrived before the
+   * Settings and Sidekicks windows only: every relayed event. News that arrived before the
    * first listener is held, folded, and delivered to it.
    */
   onWorkspaceSyncRelayed: (listener: (event: WorkspaceSyncRelayEvent) => void) => () => void;
