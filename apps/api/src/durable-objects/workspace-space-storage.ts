@@ -108,7 +108,7 @@ const SPACE_COLOR_KEY_SET: ReadonlySet<string> = new Set(SPACE_COLOR_KEYS_STORAB
  * WorkspaceDO's Space tables.
  *
  * Kept beside the storage that reads them, the way `workstream-access-storage.ts`
- * keeps WorkstreamDO's. The shapes mirror the Project tables wherever the
+ * keeps the hosted parents'. The shapes mirror the Project tables wherever the
  * question is the same — per-person order, a waterline, a many-to-many
  * membership with staged generations, generation-fenced delivery targets and
  * their publications — because those are the parts the Project model got right
@@ -1977,7 +1977,7 @@ export class WorkspaceSpaceStorage {
   /**
    * Space marks for Channels whose canonical grant owner has admitted a guest.
    *
-   * The caller supplies only Channels already re-read from their WorkstreamDOs.
+   * The caller supplies only Channels already re-read from their hosted parents.
    * This read therefore exposes the Space's presentation and containment edge,
    * even when the guest is not a Space participant. The candidate Channel is
    * the associative permission; no roster, defaults, lifecycle or writes leave.
@@ -3303,9 +3303,9 @@ export class WorkspaceSpaceStorage {
    * Every Space this Organization has, archived ones included.
    *
    * For the retirement walk, which has to close an object rather than list a
-   * product surface: an archived Space is still a `SpaceDO` holding a hidden
-   * main conversation, and a graph that skipped it would report the
-   * Organization closed with one of its objects still open. Guarded like every
+   * product surface: an archived Space still holds a hidden main conversation
+   * (a `SubstreamAgent`), and a graph that skipped it would report the
+   * Organization closed with that object still open. Guarded like every
    * other Space read, so an Organization the cutover never reached enumerates
    * nothing rather than aborting the tombstone on a missing table.
    */

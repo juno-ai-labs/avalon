@@ -9,13 +9,13 @@ interface WorkspaceSyncRelayIpcDependencies {
   /** The main window's renderer, when there is one: the only publisher. */
   mainWindowContents: () => WebContents | null | undefined;
   relay: Pick<WorkspaceSyncRelay, 'publish' | 'snapshot'>;
-  /** The Settings window's renderer, when there is one: the only consumer. */
-  settingsWindowContents: () => WebContents | null | undefined;
+  /** The consumers' renderers (Settings and Sidekicks), whichever exist. */
+  consumerWindowContents: () => readonly (WebContents | null | undefined)[];
 }
 
 /**
  * Register the relay's two invoke channels with their sender checks. The
- * third, `relayed`, is main's own send to the Settings window and has no
+ * third, `relayed`, is main's own send to the consumer windows and has no
  * handler.
  */
 export function registerWorkspaceSyncRelayIpc({
@@ -23,7 +23,7 @@ export function registerWorkspaceSyncRelayIpc({
   ipc,
   mainWindowContents,
   relay,
-  settingsWindowContents,
+  consumerWindowContents,
 }: WorkspaceSyncRelayIpcDependencies): void {
   ipc.handle(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.publish, (event, raw: unknown) => {
     assertTrustedSender(event);
@@ -33,9 +33,8 @@ export function registerWorkspaceSyncRelayIpc({
   });
   ipc.handle(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.source, (event) => {
     assertTrustedSender(event);
-    const settings = settingsWindowContents();
-    if (!settings || event.sender !== settings) {
-      throw new Error('Only the settings window consumes the relayed organization sync');
+    if (!event.sender || !consumerWindowContents().includes(event.sender)) {
+      throw new Error('Only the Settings and Sidekicks windows consume the relayed organization sync');
     }
     return relay.snapshot();
   });

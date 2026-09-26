@@ -38,8 +38,9 @@ export interface DurableObjectSelfReference<T extends RpcDurableObject> {
    * The binding this object is reached through, compared by identity.
    *
    * Binding, jurisdiction, and name together decide which object a name means,
-   * so the binding has to match as well as the name: `WorkstreamDO` and the
-   * main `SubstreamAgent` share a logical name under different bindings.
+   * so the binding has to match as well as the name: a logical name is not
+   * unique across bindings (the deleted `WorkstreamDO` and a Channel's main
+   * `SubstreamAgent` shared one).
    *
    * Identity is also what makes the lookup below type-safe: two references to
    * the same binding object are the same `DurableObjectNamespace<T>`, so a

@@ -441,7 +441,10 @@ function workstreamControlPayload(event: WorkstreamControlSocketEvent): string {
   return payload;
 }
 
-/** See `WorkstreamDO`'s original: one predicate for the plan and the commit. */
+/**
+ * Whether the stored Space source is newer than the staged one. One predicate
+ * for the plan and the commit, so the two cannot disagree.
+ */
 function spaceAccessSourceSuperseded(
   existing: { spaceRevision: number; membershipGeneration: number } | null,
   staged: { spaceRevision: number; membershipGeneration: number },

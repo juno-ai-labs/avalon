@@ -384,7 +384,7 @@ export const WorkspaceDirectoryApplyResultSchema = deferredZodSchema(() => z.str
 }));
 
 /**
- * One WorkstreamDO activity/mention effect, applied with its receipt in a
+ * One Channel or Space parent's activity/mention effect, applied with its receipt in a
  * single WorkspaceDO transaction. Current member/user identity crosses the
  * boundary as data: the regional caller resolves it from D1 and the object
  * commits only what it was handed, so the effect and its idempotency receipt

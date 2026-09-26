@@ -9,10 +9,10 @@ import { DurableObject } from "cloudflare:workers";
  * hibernated socket callback, an `alarm` the platform recovers after eviction,
  * and a continuation admitted a moment before the tombstone landed all reach
  * the object without passing anything that could have said no. WorkspaceDO
- * alone has roughly 229 methods and no shared dispatch boundary, and the two
- * conversation classes hold the writes that actually matter: the refusal the
+ * alone has roughly 229 methods and no shared dispatch boundary, and the
+ * conversation objects hold the writes that actually matter: the refusal the
  * spike observed came from `SubstreamAgent`, and the outbox it stranded was a
- * `WorkstreamDO`'s.
+ * `WorkstreamDO`'s (a class since deleted; its state is now in WorkspaceDO).
  *
  * So the check is not a helper each method is expected to call. Every method on
  * the prototype chain is replaced, once, at module load, with a wrapper that
@@ -615,8 +615,8 @@ export function endObjectConstruction(host: object): void {
  * The constructor's own opening, which no `finally` of its own can match.
  *
  * A constructor body reaches methods directly, before and around whatever it
- * runs under `blockConcurrencyWhile` — `WorkstreamDO` wakes its main substream
- * that way. There is no hook for "the constructor finished", so the opening is
+ * runs under `blockConcurrencyWhile` — the deleted `WorkstreamDO` woke its
+ * main substream that way. There is no hook for "the constructor finished", so the opening is
  * released by the first `initializeDurableObject` to settle, which is the last
  * moment the synchronous body can still be running. Idempotent in both
  * directions so a class with several of those releases it exactly once.

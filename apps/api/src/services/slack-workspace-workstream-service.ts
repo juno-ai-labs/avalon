@@ -121,7 +121,7 @@ export class SlackWorkspaceWorkstreamService {
     // `provision` opens the *conversation*; the Channel's own authority learns
     // it exists only from the effect that conversation's outbox delivers later,
     // and the placement below addresses that authority directly. Provisioning
-    // first therefore asked a `WorkstreamDO` with no identity yet to record a
+    // first therefore asked a Channel parent with no identity yet to record a
     // Space source, which it refuses with `conversation_parent_missing` — so
     // every Slack creation left its Channel unplaced and reopened the whole
     // Organization's cutover, blanking every member's sidebar behind the

@@ -1342,10 +1342,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * Bring this object up, and nothing else.
    *
    * Awaiting `storageReady` is the whole point: it runs the migrations and the
-   * schema work that make the first real call slow. WorkstreamDO fires this as
-   * it wakes so the two cold starts overlap instead of queueing, because a
-   * person opening a work stream needs both objects and today pays for them one
-   * after the other. Deliberately without side effects — it must stay something
+   * schema work that make the first real call slow. WorkspaceDO fires this
+   * when a person opens a Channel, so Main's cold start runs before the first
+   * request that needs it. Deliberately without side effects — it must stay something
    * that is free to call on an object nobody has asked for yet.
    */
   async wake(): Promise<{
