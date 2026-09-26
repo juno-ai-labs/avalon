@@ -118,16 +118,44 @@ export function resourceSearchRevision(sql: SqlStorage, resourceId: string): num
   return sql.exec<{ revision: number }>('SELECT revision FROM resource_search_versions WHERE resource_id = ?', resourceId)
     .toArray()[0]?.revision ?? null;
 }
-export function nextResourceSearchDueAt(sql: SqlStorage, env?: Env): number | null {
+/**
+ * How long the WorkspaceDO waits after dispatching a full batch before the next.
+ *
+ * Without it: a whole-workspace re-projection (migration 77) dispatched 100
+ * resources, re-armed its alarm at once and dispatched 100 more. Each resource
+ * becomes three document jobs, and each job calls `prepareResourceSearchDocument`
+ * back on this object, so at Juno Labs (152k resources) the object answered
+ * about 1,600 of those calls a minute on top of its own traffic and returned
+ * `durable_object_overloaded` to 38,000 of them in 30 minutes, failing connector
+ * events and search-authorization pushes with them. Only our own backfills
+ * reach it; nothing else paces the loop, because the Queue accepts the batch
+ * as soon as it is sent. A trip is a backlog that drains more slowly.
+ * 30 seconds (200 resources a minute) was set by Adam on 2026-09-26.
+ */
+export const RESOURCE_SEARCH_BACKLOG_INTERVAL_MS = 30_000;
+/** The activity Queue accepts at most 100 messages in one batch. */
+const RESOURCE_SEARCH_BATCH = 100;
+
+/**
+ * When the next batch may go. Held by the object, not stored: an eviction or
+ * restart forgets it, and the object dispatches one batch early if something
+ * wakes it inside the wait. The alarm is already set for the wait's end.
+ */
+export interface ResourceSearchPace { nextBatchAt: number }
+
+export function nextResourceSearchDueAt(sql: SqlStorage, env?: Env, pace?: ResourceSearchPace): number | null {
   if (env && !searchIndexingConfigured(env)) return null;
-  return sql.exec<{ due_at: number | null }>('SELECT MIN(not_before) AS due_at FROM resource_search_versions WHERE pending = 1')
+  const due = sql.exec<{ due_at: number | null }>('SELECT MIN(not_before) AS due_at FROM resource_search_versions WHERE pending = 1')
     .one().due_at;
+  return due === null || !pace ? due : Math.max(due, pace.nextBatchAt);
 }
-export async function publishResourceSearch(sql: SqlStorage, env: Env, workspaceId: string): Promise<void> {
+export async function publishResourceSearch(sql: SqlStorage, env: Env, workspaceId: string,
+  pace?: ResourceSearchPace): Promise<void> {
   if (!searchIndexingConfigured(env)) return;
-  // The existing activity Queue accepts at most 100 messages in one batch.
+  if (pace && Date.now() < pace.nextBatchAt) return;
   const rows = sql.exec<{ resource_id: string; revision: number }>(
-    'SELECT resource_id, revision FROM resource_search_versions WHERE pending = 1 AND not_before <= ? ORDER BY not_before, resource_id LIMIT 100', Date.now(),
+    'SELECT resource_id, revision FROM resource_search_versions WHERE pending = 1 AND not_before <= ? ORDER BY not_before, resource_id LIMIT ?',
+    Date.now(), RESOURCE_SEARCH_BATCH,
   ).toArray();
   if (!rows.length) return;
   try {
@@ -135,6 +163,10 @@ export async function publishResourceSearch(sql: SqlStorage, env: Env, workspace
       type: 'resource_search_projection_v1', region: env.AVALON_REGION, workspaceId, resourceId: row.resource_id,
     }) })));
     for (const row of rows) sql.exec('UPDATE resource_search_versions SET pending = 0 WHERE resource_id = ? AND revision = ?', row.resource_id, row.revision);
+    // Only a backlog is paced: once nothing due is left, the next edit goes at once.
+    if (pace && rows.length === RESOURCE_SEARCH_BATCH && sql.exec(
+      'SELECT 1 FROM resource_search_versions WHERE pending = 1 AND not_before <= ? LIMIT 1', Date.now(),
+    ).toArray().length) pace.nextBatchAt = Date.now() + RESOURCE_SEARCH_BACKLOG_INTERVAL_MS;
   } catch (error) {
     // Use the regional-effect outbox dispatch retry interval.
     for (const row of rows) sql.exec('UPDATE resource_search_versions SET not_before = ? WHERE resource_id = ? AND revision = ?', Date.now() + 5_000, row.resource_id, row.revision);
