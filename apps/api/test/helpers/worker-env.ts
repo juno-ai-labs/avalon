@@ -22,7 +22,7 @@ export function contractCompleteEnv(overrides: Partial<Env> = {}): Env {
     DOCUMENT_PROCESSOR: binding(), TERMINAL_PROVIDER: binding(), TELEMETRY_DELIVERY: binding(),
     CRASH_SYMBOLICATOR: binding(),
     SUBSTREAM_AGENTS: binding(), AUTOMATION_DOS: binding(),
-    WORKSTREAM_DOS: binding(), SPACE_DOS: binding(), WORKSPACE_DOS: binding(),
+    WORKSPACE_DOS: binding(),
     SLACK_REACTION_TICKERS: binding(),
     ARTIFACT_HOSTS: binding(),
     ACTIVITY_QUEUE: binding(),

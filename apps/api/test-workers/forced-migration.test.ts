@@ -16,20 +16,18 @@ import "../../../tests/isolated-region";
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { asAutomationId, asSpaceId, asWorkspaceId } from "@rally/contracts";
+import { asAutomationId, asWorkspaceId } from "@rally/contracts";
 import type {
   DurableObjectMigrationCommand,
   DurableObjectMigrationReport,
 } from "@rally/contracts/durable-object-migrations";
 
-import { automationDOName, spaceDOName, workspaceDOName } from "../src/durable-objects/names";
+import { automationDOName, workspaceDOName } from "../src/durable-objects/names";
 import {
   latestMigrationVersion,
   reportForcedMigration,
 } from "../src/durable-objects/migration-reporting";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
-import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-do-schema";
-import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import type { Env } from "../src/env";
 import {
   applyMigrationCommand,
@@ -143,7 +141,7 @@ describe("forceMigration", () => {
   it("cannot address an object through another class's namespace", async () => {
     await expect(applyMigrationCommand(env, command({
       objectId: workspaceObjectId("02"),
-      className: "WorkstreamDO",
+      className: "SidekickDO",
     }))).rejects.toThrow(/not valid for this namespace/u);
   });
 
@@ -166,7 +164,7 @@ describe("forceMigration", () => {
     await runInDurableObject(stub, async (instance) => {
       await expect(instance.forceMigration(command({
         objectId: workspaceObjectId("03"),
-        className: "WorkstreamDO",
+        className: "SidekickDO",
       }))).rejects.toThrow(/durable_object_migration_command_class_mismatch/u);
 
       await expect(instance.forceMigration(command({
@@ -177,57 +175,7 @@ describe("forceMigration", () => {
 
   it("has a dispatcher for every class the tracker may name", () => {
     expect(Object.keys(migrationCommandDispatchers(env)).sort())
-      .toEqual(["AutomationDO", "SidekickDO", "SpaceDO", "SubstreamAgent", "WorkspaceDO", "WorkstreamDO"]);
-  });
-
-  it("forces a Space onto the space_do ledger and reports it as a SpaceDO", async () => {
-    // `SpaceDO` is `WorkstreamDO` under a role, and the role is the only thing
-    // saying so: a plan that reported the inherited class or the inherited
-    // component would have this object refuse its own command, and would file
-    // its schema version under the work-stream rollup.
-    const objectId = env.SPACE_DOS.idFromName(spaceDOName(
-      "global",
-      asWorkspaceId("00000000-0000-7000-8000-000000006101"),
-      asSpaceId("00000000-0000-7000-8000-000000006102"),
-    )).toString();
-    // A legacy Space object that was never created stays empty rather than
-    // gaining a ledger when asked, so this one is seeded the way a deployed
-    // Space looks one version behind, then restarted so its constructor sees
-    // that ledger and the forced wake has a version left to apply.
-    const space = env.SPACE_DOS.get(env.SPACE_DOS.idFromString(objectId));
-    await runInDurableObject(space, (_instance, state) => {
-      applyDurableObjectSqliteMigrations({
-        storage: state.storage,
-        migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS.slice(0, -1),
-        component: "space_do",
-        workerVersionId: "test",
-      });
-    });
-    await expect(runInDurableObject(space, (_instance, state) => state.abort("seeded_space_restart")))
-      .rejects.toThrow("seeded_space_restart");
-    const result = await applyMigrationCommand(env, command({ className: "SpaceDO", objectId }));
-    expect(result).toMatchObject({
-      className: "SpaceDO",
-      component: "space_do",
-      schemaVersion: MIGRATION_COMMAND_HEADS.SpaceDO,
-    });
-    // The work stream's ledger, under the Space's own component: one array
-    // applied twice, so a version appended for a Channel is a version every
-    // Space runs without anybody writing it a second time.
-    expect(MIGRATION_COMMAND_HEADS.SpaceDO).toBe(latestMigrationVersion(WORKSTREAM_DO_SCHEMA_MIGRATIONS));
-    expect(MIGRATION_COMMAND_HEADS.SpaceDO).toBe(MIGRATION_COMMAND_HEADS.WorkstreamDO);
-
-    // The class fence, asked of the object itself. Routing the same command
-    // through `WORKSTREAM_DOS` cannot reach this — the platform refuses an id
-    // minted in another namespace first — so the mismatch is exercised where
-    // the plan is read.
-    await runInDurableObject(
-      env.SPACE_DOS.get(env.SPACE_DOS.idFromString(objectId)),
-      async (instance) => {
-        await expect(instance.forceMigration(command({ className: "WorkstreamDO", objectId })))
-          .rejects.toThrow(/durable_object_migration_command_class_mismatch/u);
-      },
-    );
+      .toEqual(["AutomationDO", "SidekickDO", "SubstreamAgent", "WorkspaceDO"]);
   });
 
   it("accepts renamed and already-queued legacy Sidekick migration commands", async () => {
@@ -378,11 +326,23 @@ describe("consumeMigrationCommandQueue", () => {
    * applied successfully could not give — the consumer would ack either way.
    */
   it("drops a command addressed to the other region rather than rerouting it", async () => {
-    const foreign = env.WORKSTREAM_DOS.idFromName("global:not-this-namespace").toString();
+    const foreign = env.AUTOMATION_DOS.idFromName("global:not-this-namespace").toString();
     const delivery = batch([command({ region: "enterprise", objectId: foreign })]);
     await consumeMigrationCommandQueue(delivery.batch, env);
 
     expect(delivery.messages[0]).toMatchObject({ acked: true, retried: false });
+  });
+
+  it("acknowledges a command for a deleted class instead of retrying it", async () => {
+    // A run dispatched before WorkstreamDO and SpaceDO were deleted can still
+    // be queued after; no binding can ever apply it.
+    const delivery = batch([
+      command({ className: "WorkstreamDO", objectId: workspaceObjectId("05") }),
+      command({ className: "SpaceDO", objectId: workspaceObjectId("06") }),
+    ]);
+    await consumeMigrationCommandQueue(delivery.batch, env);
+
+    for (const message of delivery.messages) expect(message).toMatchObject({ acked: true, retried: false });
   });
 
   it("retries a command whose object could not be reached", async () => {

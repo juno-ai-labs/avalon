@@ -1,6 +1,5 @@
 import type { ScopeGrant } from "@rally/contracts/scope-grants";
 import {
-  ScopeGrantSchema,
   AcceptScopeInvitationSchema,
   ConnectorParticipantAdmissionSchema,
   CreateScopeInvitationsSchema,
@@ -357,9 +356,7 @@ export interface ChannelViewerState {
 
 /**
  * The per-viewer Channel state the control socket used to send, for every
- * listed Channel this object has imported. A parent still waiting for its
- * import is left out rather than answered empty: its rows are not here yet,
- * and an empty list would read as "no breakouts".
+ * listed Channel this object hosts.
  */
 export function channelViewerStates(
   sql: SqlStorage,
@@ -371,9 +368,7 @@ export function channelViewerStates(
   if (parentIds.length === 0) return result;
   const hosted = sql.exec<{ parent_id: string }>(
     `SELECT metadata.parent_id FROM parent_metadata metadata
-      WHERE metadata.parent_id IN (SELECT value FROM json_each(?)) AND metadata.parent_kind = 'workstream'
-        AND NOT EXISTS (SELECT 1 FROM parent_imports ledger
-                         WHERE ledger.parent_id = metadata.parent_id AND ledger.state = 'pending')`,
+      WHERE metadata.parent_id IN (SELECT value FROM json_each(?)) AND metadata.parent_kind = 'workstream'`,
     JSON.stringify(parentIds),
   ).toArray().map((row) => row.parent_id);
   if (hosted.length === 0) return result;
@@ -1251,71 +1246,6 @@ export class HostedParent {
     }
   }
 
-  /**
-   * Stored breakout projections that predate breakout forwarding, and the
-   * background-agent flag for agents once forwarded as breakouts: the legacy
-   * migrations 19 and 20. Run at import, where they are idempotent through
-   * the projection keys the import carried.
-   */
-  replayStoredBreakoutProjections(now = Date.now()): void {
-    if (!this.role.forwardsFeedEffects || !this.metadataRow()) return;
-    for (const row of this.sql.exec<{ substream_id: string; effect_json: string }>(
-      `SELECT substream_id, effect_json FROM parent_child_projections
-        WHERE parent_id = ? AND substream_id <> '0'
-          AND COALESCE(json_extract(effect_json, '$.backgroundAgent'), 0) <> 1
-        ORDER BY substream_id`,
-      this.parentId,
-    ).toArray()) {
-      this.enqueueProjection(`substream:${row.substream_id}:common`,
-        WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(row.effect_json)), now, row.substream_id);
-    }
-    for (const row of this.sql.exec<{ substream_id: string; user_id: string; effect_json: string }>(
-      `SELECT viewer.substream_id, viewer.user_id, viewer.effect_json
-         FROM parent_child_viewer_projections viewer
-         JOIN parent_child_projections common
-           ON common.parent_id = viewer.parent_id AND common.substream_id = viewer.substream_id
-        WHERE viewer.parent_id = ? AND viewer.substream_id <> '0'
-          AND COALESCE(json_extract(common.effect_json, '$.backgroundAgent'), 0) <> 1
-        ORDER BY viewer.substream_id, viewer.user_id`,
-      this.parentId,
-    ).toArray()) {
-      this.enqueueProjection(`substream:${row.substream_id}:user:${row.user_id}`,
-        WorkstreamDirectoryUserEffectSchema.parse(JSON.parse(row.effect_json)), now, row.substream_id);
-    }
-    for (const row of this.sql.exec<{ substream_id: string; effect_json: string }>(
-      `SELECT directory.substream_id, directory.effect_json
-         FROM parent_child_projections directory
-         JOIN parent_projection_keys forwarded
-           ON forwarded.parent_id = directory.parent_id
-          AND forwarded.projection_key = 'substream:' || directory.substream_id || ':common'
-        WHERE directory.parent_id = ? AND directory.substream_id <> '0'
-          AND json_extract(directory.effect_json, '$.backgroundAgent') = 1
-        ORDER BY directory.substream_id`,
-      this.parentId,
-    ).toArray()) {
-      this.enqueueProjection(`substream:${row.substream_id}:common`,
-        WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(row.effect_json)), now, row.substream_id);
-    }
-  }
-
-  /**
-   * Publish every direct grant to the grant directory. The legacy migration 17
-   * published deliveries still queued when grant discovery moved to the
-   * outbox; an object that never woke for it arrives here with some unsent.
-   * Hash-deduplicated per key against the projection keys the import carried,
-   * so a grant already published sends nothing.
-   */
-  republishDirectGrants(now = Date.now()): void {
-    if (!this.role.publishesGrantDirectory || !this.metadataRow()) return;
-    const publish = this.grantDirectoryWriter();
-    for (const row of this.sql.exec<{ grant_json: string }>(
-      `SELECT grant_json FROM parent_grants WHERE parent_id = ? AND source_kind = 'direct' ORDER BY user_id, scope_kind, substream_id`,
-      this.parentId,
-    ).toArray()) {
-      publish(ScopeGrantSchema.parse(JSON.parse(row.grant_json)), now);
-    }
-  }
-
   // ---------------------------------------------------------------------------
   // The conversation-parent contract.
   // ---------------------------------------------------------------------------
@@ -1467,7 +1397,6 @@ export class HostedParent {
     this.sql.exec("DELETE FROM parent_projection_keys WHERE parent_id = ?", this.parentId);
     this.sql.exec("DELETE FROM parent_children WHERE parent_id = ?", this.parentId);
     this.sql.exec("DELETE FROM parent_metadata WHERE parent_id = ?", this.parentId);
-    this.sql.exec("DELETE FROM parent_imports WHERE parent_id = ?", this.parentId);
     return true;
   }
 

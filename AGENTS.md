@@ -109,7 +109,7 @@ runs cold; limits in
 ## Writing tests
 
 **Read [`docs/testing.md`](docs/testing.md) before adding a test.** It maps the
-suites to what each one can prove, and holds the two rules below.
+suites to what each one can prove, and holds the rules below.
 
 **Touching Durable Object SQLite SQL?** Both implementers and reviewers must
 read [`docs/durable-object-sqlite.md`](docs/durable-object-sqlite.md).
@@ -137,6 +137,12 @@ read [`docs/durable-object-sqlite.md`](docs/durable-object-sqlite.md).
   configuration, or a value the subject computed — none of which is coverage.
   [`docs/testing.md`](docs/testing.md#prove-the-test-can-fail) has the scope in
   full, and the catalogue of assertions that survive a break.
+- **Never test CI or deployment configuration.** No test reads a workflow file,
+  a Wrangler or deploy config, or checks a provisioning, deploy-mode or health
+  script; the run and the deploy are their test. Code that decides about data or
+  a shipped build (D1 migration tooling, desktop release scripts) is still tested
+  as code. [`docs/testing.md`](docs/testing.md#do-not-test-ci-or-deployment-configuration)
+  has why.
 
 ## Flaky tests
 

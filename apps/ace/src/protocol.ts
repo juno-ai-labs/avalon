@@ -139,10 +139,9 @@ export const ModelValidationRequestSchema = z.object({
  * `defaultVariation` is the one fact `apps/ace/scripts/deploy.mjs` and the
  * client editor must never disagree on: every flag here defaults off except
  * `digests-enabled`, which defaults on because a digest already sends by
- * default for every existing person. `deployment-contract.test.ts` reads this
- * table and pins `deploy.mjs`'s source against it, so the two cannot drift —
- * `deploy.mjs` runs under plain Node rather than through Vite, so it cannot
- * import this table directly and read it at runtime.
+ * default for every existing person. `deploy.mjs` runs under plain Node rather
+ * than through Vite, so it cannot import this table and read it at runtime;
+ * keep its `ensureFlag` calls in step with this table by hand.
  */
 export const MANAGED_FLAGS = [
   { key: 'suggested-work-enabled', label: 'Suggested Work Enabled', description: 'True shows Suggested Work surfaces in Electron; false hides them without changing API availability.', defaultVariation: 'off' },

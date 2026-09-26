@@ -15,9 +15,8 @@ A Channel's and a Space's parent is a `HostedParent` inside `WorkspaceDO`,
 keyed by parent id, in `parent_*` tables beside the Organization's directory.
 [`hosted-conversation-parents.md`](hosted-conversation-parents.md) owns it: the
 table map, the local outbox, what a Channel's workspace-socket row carries per
-viewer, the retired Channel control socket, and the one-time import out of the
-legacy `WorkstreamDO` and `SpaceDO`, which are deployed only so their rows can
-be exported.
+viewer, the retired Channel control socket, and how the parents moved out of
+the legacy `WorkstreamDO` and `SpaceDO` objects, both now deleted.
 
 The hosted parents and `SidekickDO` answer one conversation-parent contract:
 who may read the parent's conversations, which generation and archive state its
@@ -29,8 +28,7 @@ by [`automation-lifecycle.md`](automation-lifecycle.md); this document owns the
 hierarchy, its identity, its effect pipeline, and the conversation object.
 
 The Durable Object classes in this subsystem (`WorkspaceDO`, `AutomationDO`,
-`SubstreamAgent`, and the legacy `WorkstreamDO` and `SpaceDO`) use
-SQLite-backed namespaces and explicit SQL only.
+and `SubstreamAgent`) use SQLite-backed namespaces and explicit SQL only.
 The main conversation's SQLite also owns the imported-session source identity,
 per-message revision checkpoint, and re-import receipts. The append and checkpoint
 commit together; [session import](session-import.md) owns the update semantics.
@@ -96,7 +94,6 @@ and retry-stable event cutoffs. Owner migration 4 supplies the monotonic counter
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Runtime-validated typed RPC contracts for cross-work-stream lists, visibility, scheduling, resource lookup, routing, feedback, and child effect application. |
 | `apps/api/src/durable-objects/hosted-parent.ts` | `HostedParent`: one Channel's or Space's parent authority inside `WorkspaceDO`, scoped by `parent_id`. The child registry, per-child projections and receipts, cross-child aggregation, the parent's metadata row, viewer authorization from scope and participation, the Channel control socket's snapshots, and the effects it publishes into the Organization's tables in its own transaction. `HOSTED_CHANNEL_ROLE` and `HOSTED_SPACE_ROLE` are every way a Space differs from a Channel. Owned by [`hosted-conversation-parents.md`](hosted-conversation-parents.md). |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | `ConversationParentDurableObject`, the Sidekick parent's base (`AutomationDO`): the child registry, per-child projections and receipts, cross-child aggregation, the parent outbox and its drain onto `ACTIVITY_QUEUE`. Also the shared request schemas and aggregation helpers `HostedParent` reuses. |
-| `apps/api/src/durable-objects/workstream-do.ts`, `space-do.ts`, `workstream-do-schema.ts`, `conversation-parent-role.ts` | **Legacy.** `WorkstreamDO` and `SpaceDO` (the same class under the space role) now only export their rows once, forward a child effect addressed to them, and answer fleet operations. `WORKSTREAM_DO_SCHEMA_MIGRATIONS` stays so an object that has not been exported can still apply its own ledger. |
 | `apps/api/src/durable-objects/automation-do.ts`, `automation-do-protocol.ts` | `AutomationDO`: the automation parent. Adds the automation row, definition revisions, schedules, runs, and inbound-email receipts; forwards nothing its children say. Owned by [`automation-lifecycle.md`](automation-lifecycle.md). |
 | `packages/contracts/src/conversation-parent.ts` | The parent contract every Worker-side caller is written against: `authorizeViewer`, `authority`, `reserveChild`, `listChildren`, and the parent kind enum. |
 | `packages/contracts/src/conversation-effects.ts` | The two effect envelopes (`conversation_effect` from a child, `parent_effect` from a parent), the effect union, `conversationEffectHash`, `WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT`, and `EFFECT_QUEUE_MESSAGE_MAX_BYTES`. |
@@ -275,8 +272,6 @@ Names include region for operator clarity and deterministic routing:
 ```text
 WorkspaceDO       <region>:<workspace-id>                                in WORKSPACE_DOS
                   (hosts every Channel and Space parent, by parent id)
-WorkstreamDO      <region>:<workspace-id>:<workstream-id>                in WORKSTREAM_DOS  (legacy, export only)
-SpaceDO           <region>:<workspace-id>:space:<space-id>               in SPACE_DOS       (legacy, export only)
 AutomationDO      <region>:<workspace-id>:automation:<automation-id>     in AUTOMATION_DOS
 SubstreamAgent 0  <region>:<workspace-id>:<parent-id>                    in SUBSTREAM_AGENTS
 SubstreamAgent N  <region>:<workspace-id>:<parent-id>:<substream-id>
@@ -284,11 +279,8 @@ SubstreamAgent N  <region>:<workspace-id>:<parent-id>:<substream-id>
 
 A Channel and a Space have no object name of their own any more: a request for
 either is addressed to the Organization's `WorkspaceDO` with the parent id in
-the request. The two legacy names stay only so the import can reach the object
-that still holds a parent's rows. `SpaceDO`'s carries the role word `space`,
-which is in `FIXED_SEGMENTS`
-(`packages/contracts/src/durable-object-migrations.ts`) so a migration report
-can say which class a stuck legacy object belongs to.
+the request. The legacy `WorkstreamDO` and `SpaceDO` names and their
+`WORKSTREAM_DOS` and `SPACE_DOS` bindings are deleted with the classes.
 
 `conversationObjectName(region, workspaceId, parentId, substreamId = "0")` is the
 one constructor for a conversation object's name, and `parentId` is a work
@@ -1114,9 +1106,9 @@ reads `backgroundAgent: true` as "list nothing": it keeps the row as an archived
 tombstone, which every reader skips and which keeps the version fence, and
 deletes its viewer rows. Only a child projection the Channel accepted is
 forwarded; a stale one would otherwise leave under a newer parent version. The legacy `WorkstreamDO` migration 20 sent that retraction once for every
-such agent already stored, and the import replays it for any parent that missed it. A Space
+such agent already stored, and the one-time import replayed it for any parent that missed it. A Space
 forwards none of this: its hidden main conversation is its only one.
-The legacy `WorkstreamDO` migration 19 replayed, and the import replays again, every already-stored non-background breakout
+The legacy `WorkstreamDO` migration 19 replayed, and the one-time import replayed again, every already-stored non-background breakout
 projection through those same per-child keys. Forwarding originally covered
 only projections that changed after deployment, so a quiet existing breakout
 never acquired an Organization row and could not contribute to its Channel's
@@ -1626,12 +1618,6 @@ same-millisecond IDs in random order, so freshness always compares authority
 generation and the relevant common/viewer waterline, never UUID lexical order
 alone.
 
-A legacy `WorkstreamDO` or `SpaceDO` that has not been exported still holds the
-same rows under their old names (`workstream_metadata`,
-`conversation_children`, `substream_directory`, `durable_outbox`, and the
-rest), frozen once exported. `LEGACY_PARENT_EXPORT_TABLES` in
-`hosted-parent-import.ts` lists them.
-
 ### `AutomationDO`
 
 Five migrations in `sidekick-do.ts`; v1 is the automation's own tables, then the
@@ -1694,7 +1680,7 @@ path.
 
 ### `_internal_durable_alarms`
 
-Present in WorkspaceDO, AutomationDO, SubstreamAgent, and the legacy WorkstreamDO alike,
+Present in WorkspaceDO, AutomationDO, and SubstreamAgent alike,
 added by each one's own migration history from the statements
 `durable-objects/scheduled-alarms.ts` exports.
 

@@ -39,10 +39,8 @@ async function filesBelow(directory, ignoredDirectories = new Set()) {
 
 // The release planner runs before dependencies are installed, so this scanner
 // intentionally uses only Node. It recognizes every static ESM form used in
-// the tree plus literal dynamic imports. release-workflow.test.mjs derives the
-// same graph with the TypeScript parser and requires both results to be equal;
-// new syntax therefore fails ordinary CI rather than silently shrinking this
-// classifier.
+// the tree plus literal dynamic imports. New import syntax must be added here,
+// or this classifier silently shrinks.
 async function moduleSpecifiers(path) {
   const source = await readFile(path, 'utf8');
   const specifiers = new Set();

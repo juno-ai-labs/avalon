@@ -11,7 +11,6 @@ OpenRouter-backed jobs are intentionally absent.
 | Path | Responsibility |
 | --- | --- |
 | `.github/workflows/azure-ai-reviewers.yml` | Triggers reviews, configures the five Azure models, isolates a PR checkout below Cline's workspace root, runs the Monad Cline harness, and posts each fixed-path review. |
-| `scripts/azure-reviewer-workflow.test.mjs` | Guards the selected Azure jobs and the copied Monad trigger, checkout, invocation, permission, and posting contracts. |
 
 ## How it works
 
@@ -110,15 +109,8 @@ configured deployments runtime boundary does not apply.
 
 ## Testing
 
-`pnpm test:scripts` runs
-`scripts/azure-reviewer-workflow.test.mjs`. It checks the five retained Azure job
-definitions, the exact admission gates that enable only Sol and Terra, and each
-job's positional prompt, checkout placement, automatic approval, permissions,
-fixed post path, and individual job/prompt budgets. Terra is pinned to 60/60
-minutes with a 15-minute budget for each sub-agent, Sol to 60/15, and disabled
-jobs to 30/15.
-
-Run the repository quality gates after any workflow change:
+No automated test covers this workflow. Run the repository quality gates
+after any change to it:
 
 ```bash
 pnpm lint

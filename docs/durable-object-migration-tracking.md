@@ -1,16 +1,10 @@
 # Durable Object migration tracking
 
-Rally runs five migrated Durable Object classes across two regional Workers,
-`SubstreamAgent`, `WorkstreamDO`, `SpaceDO`, `WorkspaceDO`, and `SidekickDO`,
-and each object applies its own SQLite migration history in its constructor.
-`SpaceDO` is `WorkstreamDO` under a different role rather than a distinct
-implementation, and it is nonetheless a distinct *class* here: it reports
-component `space_do` under class name `SpaceDO`, from the *same* ledger
-`workstream_do` runs. Sharing the work-stream component would have put two
-version histories under one rollup and made the class fence below meaningless;
-sharing the ledger costs nothing, because the two classes are one class. Both
-are now legacy: Channel and Space parents live in `WorkspaceDO`, and these
-classes stay deployed, and tracked, only until every object has exported its rows
+Rally runs three migrated Durable Object classes across two regional Workers,
+`SubstreamAgent`, `WorkspaceDO`, and `SidekickDO`, and each object applies its
+own SQLite migration history in its constructor. The legacy `WorkstreamDO` and
+`SpaceDO` were tracked here too until both classes were deleted; Channel and
+Space parents now live in `WorkspaceDO`
 ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)). Nothing in
 Cloudflare's account model can answer the question that follows from that:
 **which objects are on which schema version, and which of them are broken?** A
@@ -76,10 +70,10 @@ when its internal callers have migrated independently of the deployed binding.
 
 ### The report
 
-`withMigrationReport` wraps the migration call in each of the five Durable Object
+`withMigrationReport` wraps the migration call in each of the three Durable Object
 constructors. It reads the object's version from the runner's own
 `_sql_schema_migrations` ledger before and after the call, so it works
-identically at the three sites that call the runner directly and at
+identically at the sites that call the runner directly and at
 `SubstreamAgent`, which reaches it through `WorkstreamObjectStore`'s constructor.
 
 Three outcomes reach the tracker:
@@ -130,7 +124,7 @@ Tracker dedupe does not make an unchanged migration wake invisible to
 operations. Every `withMigrationReport` call is nested in
 `durable_object.schema_migrate` and emits a
 `durable_object_schema_migration` Workers Log row, whether or not the outcome is
-new enough to enqueue. The five migratable classes also route their complete
+new enough to enqueue. The three migratable classes also route their complete
 constructor input gate through `durable_object.initialize`, with a matching
 `durable_object_initialization` row. These are latency diagnostics, not fleet
 state: they stay in regional Worker traces/logs and never update the registry.
@@ -511,6 +505,7 @@ report is out of scope by design.
 | A command queue unbound on the tracker | That region cannot be reached. Its objects are counted as `unroutable` on the run and named in a banner on the page; nothing is silently dropped. |
 | A command names a class the API Worker does not deploy | `migration_command_unknown_class`; the message is retried and eventually dead-lettered, because a deploy could still make it valid. The dispatcher is looked up with `Object.hasOwn`, so a name off `Object.prototype` — `constructor`, `toString` — is refused here rather than resolving to a function and being acknowledged as applied. |
 | One region's command queue refuses a send | Only that region's remaining batches stop. The other region is dispatched normally, and the run's `errorMessage` names the region that failed, so the gap between `matched` and `dispatched` has an explanation. |
+| A command names a class whose namespace was deleted (`WorkstreamDO`, `SpaceDO`) | Logged as `migration_command_class_deleted`, acknowledged, dropped. No deploy can bring the class back, so retrying it would only fill the dead-letter queue. |
 | A command names the other region | Logged as `migration_command_misrouted`, acknowledged, dropped. Rerouting it would be a Global fallback. |
 | A forced migration throws | The object reports its failure on the way past and the message is retried, then dead-lettered. The dead-letter queue's depth is the count of objects that are stuck. |
 | A forced migration lands but the report queue refuses | `reported: false` on the outcome and in `migration_command_applied`. The object migrated; the tracker will not show it until its next wake. |

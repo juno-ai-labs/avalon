@@ -33,7 +33,7 @@ execution independently. See [prepared conversations](session-import.md).
 | `apps/api/src/services/substream-context.ts` | Static strategy, selector, transform and membership registries; platform policies; validation and hashes. |
 | `apps/api/src/services/substream-context-summary.ts` | Structured Gemini summary through the shared inference gateway. |
 | `apps/api/src/services/substream-creation-service.ts` | Authenticated prepare, confirm, cancel, archive and participant coordination, and the model pin confirmation writes onto the child. |
-| `apps/api/src/durable-objects/workstream-do.ts` | Creation receipts, ready-child directory (including projected appearance) and authoritative private membership. |
+| `apps/api/src/durable-objects/hosted-parent.ts` | Creation receipts, ready-child directory (including projected appearance) and authoritative private membership. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Frozen source export and immutable inert child seed. |
 | `apps/api/src/durable-objects/substream-context-transfer.ts` | Frame-sized initial-context snapshot transfer. |
 | `apps/api/src/services/substream-initial-context.ts` | Inert seed to model-context conversion. |

@@ -140,11 +140,6 @@ export const CONVERSATION_PARENT_SCHEMA_STATEMENTS: readonly string[] = [
     ON durable_outbox(state, not_before, created_at, message_id)`,
 ];
 
-/** The one table `WorkstreamDO` did not already have; its v6 migration adds it. */
-export const CONVERSATION_CHILDREN_SCHEMA_STATEMENTS: readonly string[] = [
-  CONVERSATION_PARENT_SCHEMA_STATEMENTS[0]!,
-];
-
 export const ReceiveChildEffectsRequestSchema = z.strictObject({
   substreamId: z.string().min(1).max(180),
   envelopes: z.array(ConversationEffectEnvelopeSchema).min(1).max(25),

@@ -29,7 +29,7 @@ conversation owner.
 | `apps/api/src/routes/browser.ts` | Unauthenticated `POST /browser/invitation`, releasing the invited mailbox to a link holder. |
 | `apps/api/src/durable-objects/scope-invitation-service.ts` | Current sharing authority, verified mailbox, relationship admission, grant activation and email delivery. |
 | `apps/api/src/durable-objects/scope-invitation-storage.ts` | Operation receipts, invitation state, encrypted delivery and acceptance binding. |
-| `apps/api/src/durable-objects/workstream-do.ts` | Addressed RPCs, migration 14 and delivery alarm execution. |
+| `apps/api/src/durable-objects/hosted-parent.ts` | Addressed RPCs and delivery alarm execution. |
 
 ## How it works
 

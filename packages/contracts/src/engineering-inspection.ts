@@ -5,7 +5,6 @@ import { RegionSchema } from "./index";
 import { AutomationIdSchema } from "./automation-agent";
 import {
   ArtifactIdSchema,
-  IdSchema,
   SubstreamIdSchema,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
@@ -168,12 +167,6 @@ export const SidekickInspectionInputSchema = deferredZodSchema(() => z.strictObj
 }));
 export type SidekickInspectionInput = z.infer<typeof SidekickInspectionInputSchema>;
 
-export const SpaceInspectionInputSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: WorkspaceIdSchema,
-  spaceId: SpaceIdSchema,
-}));
-export type SpaceInspectionInput = z.infer<typeof SpaceInspectionInputSchema>;
-
 export const ArtifactInspectionInputSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: WorkspaceIdSchema,
   artifactId: ArtifactIdSchema,
@@ -204,11 +197,6 @@ export const EngineeringSidekickTargetSchema = deferredZodSchema(() => Engineeri
 }).strict());
 export type EngineeringSidekickTarget = z.infer<typeof EngineeringSidekickTargetSchema>;
 
-export const EngineeringSpaceTargetSchema = deferredZodSchema(() => EngineeringWorkspaceTargetSchema.unwrap().extend({
-  spaceId: SpaceIdSchema,
-}).strict());
-export type EngineeringSpaceTarget = z.infer<typeof EngineeringSpaceTargetSchema>;
-
 export const EngineeringArtifactTargetSchema = deferredZodSchema(() => EngineeringWorkspaceTargetSchema.unwrap().extend({
   artifactId: ArtifactIdSchema,
 }).strict());
@@ -219,12 +207,6 @@ export const WorkspaceSqlInspectionInputSchema = deferredZodSchema(() => Workspa
   query: InspectionSqlRequestSchema,
 }).strict());
 export type WorkspaceSqlInspectionInput = z.infer<typeof WorkspaceSqlInspectionInputSchema>;
-
-export const WorkstreamSqlInspectionInputSchema = deferredZodSchema(() => WorkstreamInspectionInputSchema.unwrap().extend({
-  authorityGeneration: AuthorityGenerationSchema,
-  query: InspectionSqlRequestSchema,
-}).strict());
-export type WorkstreamSqlInspectionInput = z.infer<typeof WorkstreamSqlInspectionInputSchema>;
 
 export const SubstreamSqlInspectionInputSchema = deferredZodSchema(() => SubstreamInspectionInputSchema.unwrap().extend({
   authorityGeneration: AuthorityGenerationSchema,
@@ -237,12 +219,6 @@ export const SidekickSqlInspectionInputSchema = deferredZodSchema(() => Sidekick
   query: InspectionSqlRequestSchema,
 }).strict());
 export type SidekickSqlInspectionInput = z.infer<typeof SidekickSqlInspectionInputSchema>;
-
-export const SpaceSqlInspectionInputSchema = deferredZodSchema(() => SpaceInspectionInputSchema.unwrap().extend({
-  authorityGeneration: AuthorityGenerationSchema,
-  query: InspectionSqlRequestSchema,
-}).strict());
-export type SpaceSqlInspectionInput = z.infer<typeof SpaceSqlInspectionInputSchema>;
 
 export const ArtifactSqlInspectionInputSchema = deferredZodSchema(() => ArtifactInspectionInputSchema.unwrap().extend({
   authorityGeneration: AuthorityGenerationSchema,
@@ -300,13 +276,6 @@ export type EngineeringWorkspaceTargetLookup = z.infer<
   typeof EngineeringWorkspaceTargetLookupSchema
 >;
 
-export const EngineeringWorkstreamTargetLookupSchema = deferredZodSchema(() => lookupResultSchema(
-  EngineeringWorkstreamTargetSchema,
-));
-export type EngineeringWorkstreamTargetLookup = z.infer<
-  typeof EngineeringWorkstreamTargetLookupSchema
->;
-
 export const EngineeringSubstreamTargetLookupSchema = deferredZodSchema(() => lookupResultSchema(
   EngineeringSubstreamTargetSchema,
 ));
@@ -320,11 +289,6 @@ export const EngineeringSidekickTargetLookupSchema = deferredZodSchema(() => loo
 export type EngineeringSidekickTargetLookup = z.infer<
   typeof EngineeringSidekickTargetLookupSchema
 >;
-
-export const EngineeringSpaceTargetLookupSchema = deferredZodSchema(() => lookupResultSchema(
-  EngineeringSpaceTargetSchema,
-));
-export type EngineeringSpaceTargetLookup = z.infer<typeof EngineeringSpaceTargetLookupSchema>;
 
 export const EngineeringArtifactTargetLookupSchema = deferredZodSchema(() => lookupResultSchema(
   EngineeringArtifactTargetSchema,
@@ -364,27 +328,6 @@ export const EngineeringSqlLookupSchema = deferredZodSchema(() => lookupResultSc
 })));
 export type EngineeringSqlLookup = z.infer<typeof EngineeringSqlLookupSchema>;
 
-/**
- * Retry one Channel's or Space's legacy import now. `parentId` is either kind:
- * the Organization object's import ledger already knows which it is.
- */
-export const ParentImportRetryInputSchema = deferredZodSchema(() => WorkspaceInspectionInputSchema.unwrap().extend({
-  authorityGeneration: AuthorityGenerationSchema,
-  parentId: IdSchema,
-}).strict());
-export type ParentImportRetryInput = z.infer<typeof ParentImportRetryInputSchema>;
-
-/** The ledger row after the retry: `imported`, or still `pending` with the code that stopped it. */
-export const ParentImportRetryLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
-  region: RegionSchema,
-  workspaceId: WorkspaceIdSchema,
-  parentId: IdSchema,
-  state: z.enum(["pending", "imported"]).nullable(),
-  attempts: z.number().int().nonnegative(),
-  lastErrorCode: z.string().max(200).nullable(),
-})));
-export type ParentImportRetryLookup = z.infer<typeof ParentImportRetryLookupSchema>;
-
 /** The named regional WorkerEntrypoint surface bound only to the engineering MCP Worker. */
 export interface EngineeringInspectionRpcBinding {
   listWorkspaces(input: ListEngineeringWorkspacesInput): Promise<ListEngineeringWorkspacesResult>;
@@ -394,16 +337,11 @@ export interface EngineeringInspectionRpcBinding {
   listSpaces(input: WorkspaceInspectionInput): Promise<EngineeringSpaceListLookup>;
   listArtifacts(input: WorkspaceInspectionInput): Promise<EngineeringArtifactListLookup>;
   resolveWorkspace(input: WorkspaceInspectionInput): Promise<EngineeringWorkspaceTargetLookup>;
-  resolveWorkstream(input: WorkstreamInspectionInput): Promise<EngineeringWorkstreamTargetLookup>;
   resolveSubstream(input: SubstreamInspectionInput): Promise<EngineeringSubstreamTargetLookup>;
   resolveSidekick(input: SidekickInspectionInput): Promise<EngineeringSidekickTargetLookup>;
-  resolveSpace(input: SpaceInspectionInput): Promise<EngineeringSpaceTargetLookup>;
   resolveArtifact(input: ArtifactInspectionInput): Promise<EngineeringArtifactTargetLookup>;
   runWorkspaceSql(input: WorkspaceSqlInspectionInput): Promise<EngineeringSqlLookup>;
-  runWorkstreamSql(input: WorkstreamSqlInspectionInput): Promise<EngineeringSqlLookup>;
   runSubstreamSql(input: SubstreamSqlInspectionInput): Promise<EngineeringSqlLookup>;
   runSidekickSql(input: SidekickSqlInspectionInput): Promise<EngineeringSqlLookup>;
-  runSpaceSql(input: SpaceSqlInspectionInput): Promise<EngineeringSqlLookup>;
   runArtifactSql(input: ArtifactSqlInspectionInput): Promise<EngineeringSqlLookup>;
-  retryParentImport(input: ParentImportRetryInput): Promise<ParentImportRetryLookup>;
 }

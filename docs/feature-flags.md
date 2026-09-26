@@ -1062,13 +1062,12 @@ To exercise a real flag locally you need Cloudflare credentials and
    `apps/ace/scripts/deploy.mjs` carrying the identical description and
    default. Merging those three redeploys Ace, and that deployment is what
    creates the flag. With the annotation from step 1 in place, `pnpm typecheck`
-   fails until the first of those three is done, and the other two are then
-   pinned to it by tests — so this step is enforced rather than trusted. `apps/ace/test/protocol.test.ts` fails when a product
-   Boolean the Worker serves is missing from the catalog, and
-   `deployment-contract.test.ts` fails when a catalogued flag is not
-   provisioned or its description drifts. A flag deliberately kept *outside*
-   Ace keeps a key that does not end in `-enabled`, the way `developer-settings`
-   does — the suffix is the rule, not a list.
+   fails until the first of those three is done. `apps/ace/test/protocol.test.ts`
+   then fails when a product Boolean the Worker serves is missing from the
+   catalog. No test checks that `deploy.mjs` provisions a catalogued flag with
+   the same description and default, so match those by hand. A flag
+   deliberately kept *outside* Ace keeps a key that does not end in `-enabled`,
+   the way `developer-settings` does — the suffix is the rule, not a list.
 6. Add the flag to the table above and create the rules that scope it. There is
    one app for configured deployments, so it is created once — and a flag created without
    its rule is live and unscoped until the rule lands. Ace provisions with no
