@@ -9,9 +9,10 @@
  * inside its own transaction, and the post-commit work the directory owes is
  * a row written in that same transaction. The membership the directory reads
  * is the object's own table, fed by relationship change events, with one D1
- * read for somebody it has never heard of. Each case below is one of those
- * primitives, read inside the object in the same invocation as the write, so
- * an alarm cannot be what put a row there.
+ * read for somebody it has never heard of, made before the transaction or,
+ * when the transaction meets them, between it and one retry. Each case below
+ * is one of those primitives, read inside the object in the same invocation
+ * as the write, so an alarm cannot be what put a row there.
  */
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
@@ -260,6 +261,47 @@ describe("a hosted parent's write", () => {
     });
   });
 
+  it("refuses a malformed child delivery, naming the field, before it writes anything", async () => {
+    const unknownParent = "00000000-0000-7000-8000-000000000f07";
+    const malformed: Record<string, unknown> = { ...childEnvelope(1, activity), parentId: unknownParent };
+    delete malformed.effect;
+    const refused = await workspace().receiveChildEffects({
+      substreamId: asSubstreamId("0"),
+      envelopes: [malformed as unknown as ReturnType<typeof childEnvelope>],
+    }).then(() => null, (error: unknown) => error);
+    expect(String(refused)).toContain("envelopes.0.effect");
+    // Not recorded as a parent a legacy object may hold, which is what the
+    // first envelope would otherwise have started.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      expect(state.storage.sql.exec("SELECT parent_id FROM parent_imports WHERE parent_id = ?", unknownParent).toArray())
+        .toEqual([]);
+    });
+  });
+
+  it("keeps a follow-up it cannot read as failed, and never runs it", async () => {
+    await runInDurableObject(workspace(), async (instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO workspace_directory_followups (followup_json, attempts, not_before, created_at)
+         VALUES (?, 0, 0, 0)`,
+        JSON.stringify({ workspaceId: WORKSPACE_ID, publishSnapshotAll: "yes" }),
+      );
+      const target = instance as unknown as {
+        runDirectoryFollowUps(ids: number[]): Promise<void>;
+        dueDirectoryFollowUps(now: number): number[];
+        nextDirectoryFollowUpDueAt(): number | null;
+      };
+      await target.runDirectoryFollowUps(target.dueDirectoryFollowUps(Date.now()));
+      const kept = state.storage.sql.exec<{ state: string; attempts: number; last_error_code: string | null }>(
+        "SELECT state, attempts, last_error_code FROM workspace_directory_followups",
+      ).toArray();
+      expect(kept).toMatchObject([{ state: "failed", attempts: 0 }]);
+      expect(kept[0]!.last_error_code).toMatch(/^directory_followup_invalid:/u);
+      // Not due again, so the alarm does not wake for it.
+      expect(target.dueDirectoryFollowUps(Date.now())).toEqual([]);
+      expect(target.nextDirectoryFollowUpDueAt()).toBeNull();
+    });
+  });
+
   it("keeps a follow-up that throws, and the alarm runs it", async () => {
     await parkActivityQueue();
     // Known, so the creator's viewer row lands in the reservation's own
@@ -359,59 +401,50 @@ describe("the Organization's member table", () => {
     });
   });
 
-  it("sends a viewer row for somebody it has never heard of through the outbox, and one D1 read lands it", async () => {
+  /** Count what the object asks D1 about membership, from here on. */
+  function countMemberReads(instance: unknown): string[] {
+    const target = instance as { env: Env };
+    const reads: string[] = [];
+    const database = target.env.DB;
+    target.env = new Proxy(target.env, {
+      get: (current, property, receiver) => property === "DB"
+        ? new Proxy(database, {
+          get: (db, key) => key === "prepare"
+            ? (query: string) => {
+              if (query.includes("workspace_members")) reads.push(query);
+              return db.prepare(query);
+            }
+            : Reflect.get(db, key),
+        })
+        : Reflect.get(current, property, receiver),
+    });
+    return reads;
+  }
+
+  it("learns a viewer a child effect names with one D1 read before the transaction, and the row lands in the write", async () => {
     await parkActivityQueue();
     await workspace().applyMemberStatus({
       workspaceId: WORKSPACE_ID, sequence: 1, removed: false, relationship: relationship(USER_ID),
     });
     await workspace().reserveChild(reservation);
     // Not the creator, whom the table knows and whose row the reservation carried.
-    const envelope = childEnvelope(1, viewerEffect(OTHER_USER_ID, 5));
     await runInDurableObject(workspace(), async (instance, state) => {
-      // Hold the drain the write runs after itself, so the row it leaves can
-      // be read before anything applies it.
-      const target = instance as unknown as {
-        env: Env;
-        drainParentOutbox: (options?: { localOnly?: boolean }) => Promise<void>;
-      };
-      const drain = target.drainParentOutbox.bind(target);
-      target.drainParentOutbox = async () => {};
-      try {
-        await instance.receiveChildEffects({ substreamId: asSubstreamId("0"), envelopes: [envelope] });
-      } finally {
-        target.drainParentOutbox = drain;
-      }
-      expect(rows(state)).toMatchObject({ viewers: [{ user_id: USER_ID }], outbox: ["directory_user"] });
-      expect(state.storage.sql.exec(
-        "SELECT user_id FROM workspace_member_status WHERE user_id = ?", OTHER_USER_ID,
-      ).toArray()).toEqual([]);
-
-      // Count what the drain asks D1 about membership.
-      const reads: string[] = [];
-      const database = target.env.DB;
-      target.env = new Proxy(target.env, {
-        get: (current, property, receiver) => property === "DB"
-          ? new Proxy(database, {
-            get: (db, key) => key === "prepare"
-              ? (query: string) => {
-                if (query.includes("workspace_members")) reads.push(query);
-                return db.prepare(query);
-              }
-              : Reflect.get(db, key),
-          })
-          : Reflect.get(current, property, receiver),
+      const reads = countMemberReads(instance);
+      await instance.receiveChildEffects({
+        substreamId: asSubstreamId("0"),
+        envelopes: [childEnvelope(1, viewerEffect(OTHER_USER_ID, 5))],
       });
-      await target.drainParentOutbox({ localOnly: true });
       expect(reads).toHaveLength(1);
       expect(rows(state)).toMatchObject({
-        viewers: [{ user_id: USER_ID }, { user_id: OTHER_USER_ID, unread_count: 5 }].sort((a, b) => a.user_id.localeCompare(b.user_id)),
+        viewers: [{ user_id: USER_ID }, { user_id: OTHER_USER_ID, unread_count: 5 }]
+          .sort((a, b) => a.user_id.localeCompare(b.user_id)),
         outbox: [],
       });
       expect(state.storage.sql.exec(
         "SELECT active, sequence FROM workspace_member_status WHERE user_id = ?", OTHER_USER_ID,
       ).toArray()).toEqual([{ active: 1, sequence: 0 }]);
 
-      // Recorded, so their next row lands in the write with no D1 read.
+      // Recorded, so their next row lands with no D1 read.
       await instance.receiveChildEffects({
         substreamId: asSubstreamId("0"),
         envelopes: [childEnvelope(2, viewerEffect(OTHER_USER_ID, 6))],
@@ -419,6 +452,21 @@ describe("the Organization's member table", () => {
       expect(reads).toHaveLength(1);
       expect(rows(state).viewers).toContainEqual({ user_id: OTHER_USER_ID, unread_count: 6 });
       expect(rows(state).outbox).toEqual([]);
+    });
+  });
+
+  it("rolls back a write that meets somebody it has never heard of, learns them, and runs the write once more", async () => {
+    await parkActivityQueue();
+    await runInDurableObject(workspace(), async (instance, state) => {
+      const reads = countMemberReads(instance);
+      // The creator's viewer row is published inside the reservation's own
+      // transaction, and nobody told the table about this person first.
+      await instance.reserveChild({ ...reservation, createdByUserId: OTHER_USER_ID });
+      expect(reads).toHaveLength(1);
+      expect(rows(state)).toMatchObject({ channels: 1, viewers: [{ user_id: OTHER_USER_ID, unread_count: 0 }], outbox: [] });
+      expect(state.storage.sql.exec(
+        "SELECT created_by_user_id FROM parent_metadata WHERE parent_id = ?", CHANNEL_ID,
+      ).toArray()).toEqual([{ created_by_user_id: OTHER_USER_ID }]);
     });
   });
 });

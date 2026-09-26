@@ -342,6 +342,10 @@ describe("a Space's hosted parent", () => {
 
   it("commits a grant without publishing it to the shared scope-grant directory", async () => {
     await seedParents();
+    await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
+    const grantDirectory = (state: DurableObjectState, parentId: string) => state.storage.sql.exec<{ user_id: string }>(
+      "SELECT user_id FROM scope_grant_directory WHERE parent_id = ?", parentId,
+    ).toArray();
     let spaceResult: ScopeGrantMutationResult | null = null;
     await withHostedParent(workspace(), SPACE_ID, (parent, state) => {
       spaceResult = internals(parent)
@@ -353,6 +357,7 @@ describe("a Space's hosted parent", () => {
       // reachable from a surface with no business listing it.
       expect(state.storage.sql.exec("SELECT user_id FROM parent_grants WHERE parent_id = ?", SPACE_ID).toArray())
         .toEqual([{ user_id: USER_ID }]);
+      expect(grantDirectory(state, SPACE_ID)).toEqual([]);
       expect(outboxKinds(state, SPACE_ID)).toEqual([]);
     });
     expect(spaceResult).toMatchObject({ status: "committed" });
@@ -363,7 +368,10 @@ describe("a Space's hosted parent", () => {
       internals(parent)
         .scopeGrants({ workspaceId: WORKSPACE_ID, parentId: CHANNEL_ID })
         .mutate(grantMutation(CHANNEL_ID));
-      expect(outboxKinds(state, CHANNEL_ID)).toEqual(["scope_grant_directory"]);
+      // Published, and applied to the grant directory in the grant's own
+      // transaction rather than left in the outbox.
+      expect(grantDirectory(state, CHANNEL_ID)).toEqual([{ user_id: USER_ID }]);
+      expect(outboxKinds(state, CHANNEL_ID)).toEqual([]);
     });
   });
 
