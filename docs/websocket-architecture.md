@@ -9,6 +9,14 @@ substream `0` feed is dialled by a Node broker in the main process. The split
 lets the desktop open a useful swarm in parallel without moving protocol state
 or product caches out of the renderer.
 
+A desktop holds **one** workspace socket, in the main window. The Settings
+window, which is its own renderer and is kept built and hidden for most of a
+session, holds none while the main window is there: main relays the main
+window's topic changes, feature flags and connection state to it over IPC, and
+it applies them through the same receivers a socket would. It dials a socket of
+its own only while no main window is publishing — a Mac with only Settings
+open, or the few seconds a main window takes to reload.
+
 An automation's page uses the same feed socket kind: its conversation is
 substream `0` under the automation, dialled through the same broker and the
 same `/socket/conversations/:parentId/:substreamId` route, opened on demand
@@ -49,7 +57,9 @@ protocol inside each Durable Object.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/renderer/lib/workspace-workstream-sockets.tsx` | Selects the active work stream, every pinned work stream, the five most recently active unpinned work streams, and any additional running work stream for proactive connection. |
-| `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Owns the singleton native Chromium WorkspaceDO socket, workspace subscription, directory paging, replay, and outbound message-command queue. |
+| `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Owns the singleton native Chromium WorkspaceDO socket, workspace subscription, directory paging, replay, and outbound message-command queue. Its `relay` prop makes the main window publish what the socket hears and the Settings window consume it instead of dialling. |
+| `apps/desktop/src/common/workspace-sync-relay.ts` | The relay's IPC channel names, its message shapes, the dependency-free parsers both main and the sandboxed preload use, and the preload's inbox that holds news arriving before any listener. |
+| `apps/desktop/src/main/workspace-sync-relay.ts` | Main's relay state: which renderer is publishing for which Organization, the revision that orders source changes, and forwarding news only for the attached Organization. `main/index.ts` wires the sender checks, the one receiver and the release points. |
 | `packages/contracts/src/workspace-reach-watch.ts` | The listen-only workspace socket for hosts without one of their own (Sideline main, the lite browser), and the heartbeat and reconnect numbers every workspace-socket client shares. |
 | `apps/desktop/src/renderer/lib/conversation-admission.tsx` | Composes account and workspace-journey readiness independently of connection warming. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns one substream `0` feed per selected work stream above the route, retains recently viewed feeds for five minutes, and supports presence-free feed warming on deliberate hover. |
@@ -134,6 +144,64 @@ automation parent serves no metadata snapshot.
 
 Dictation sockets keep their existing transport and lifecycle. They are not
 brokered by this module and are not part of the proactive work-stream swarm.
+
+### One workspace socket per desktop: the Settings relay
+
+Every Rally window mounts `WorkspaceSocketProvider`, and the prewarmed Settings
+window used to dial through it like the main window: a second socket to the
+same WorkspaceDO for the whole session, a subscribe answer carrying a full
+sidebar it never draws, and a copy of every push. The relay replaces that
+second socket without a second protocol.
+
+- **Publish (main window, `relay="publish"`).** The provider tells main, over
+  the `workspace-sync:publish` invoke, its connection state on every change,
+  the topics of every sync event that passes its waterline guard (the
+  `initial` and `history_unavailable` answers included, which name every
+  topic), and the viewer's feature flags from the subscribe answer and from
+  `workspace_feature_flags`. Nothing else: no sidebar, rows, presence or
+  directory pages.
+- **Relay (main).** `WorkspaceSyncRelay` attaches the main window's renderer as
+  the source on its first `state` publication and forwards its news, and each
+  source change, to the Settings window over `workspace-sync:relayed`. The
+  source is released when the main window closes, its renderer crashes, or it
+  starts a main-frame navigation (a reload), and when the session moves to
+  another Organization. It is deliberately not released when the provider
+  unmounts: that happens on every Organization switch, immediately followed by
+  the next provider's publication. Every source change carries a revision.
+- **Consume (Settings window, `relay="consume"`).** The provider asks main for
+  the current source (`workspace-sync:source`) and listens for changes,
+  keeping the higher revision. While the source is the main window for this
+  Organization it dials nothing, reports the source's connection state as its
+  own, keeps `topicWaterlines` from the relayed topics (the connector OAuth
+  reconcile re-runs on `connector_oauth_attempts` there), writes relayed flags
+  into the feature-flag cache, and invalidates exactly what a socket's topic
+  would — except `workstream_directory`, which names a socket-owned list this
+  window does not hold. With no source, or a source for another Organization,
+  it runs its own socket exactly as before. Until main answers it dials
+  nothing; the answer is one IPC round trip.
+
+**Why nothing is missed.** The consumer listens for as long as it is mounted,
+and the preload holds relayed news that arrives before the listener exists
+(folded: each topic once with the newest waterline, and the newest flags), so a
+read started above the provider — account onboarding — is still covered. A
+read the Settings window starts is answered by the server before any change
+made after it; that change reaches the main window's live socket afterwards, is
+relayed afterwards, and invalidates the read. If the main window's socket is
+not yet subscribed (a cold start), its first answer is `initial`, which is
+relayed and names every topic. Every hand-over starts the same way: when the
+main window goes, Settings subscribes from waterline `0`; when one comes back,
+its own `initial` is relayed. The two overlap rather than leave a gap, because
+the consumer applies relayed news even while its own socket is still open.
+
+**The main window's own first connect still reads twice.** It reads its
+screens' REST queries and then invalidates them on the `initial` answer. That
+second read is kept on purpose: a REST read that the server answers before it
+processes the `subscribe` can miss a change made between the two, and nothing
+on the client can tell such a read from one answered after. The only exact fix
+is a sync waterline on each REST response to compare with the answer's, and
+most of these reads (D1-backed members, connections) have none. The Settings
+window no longer pays it, because while it relays it has no `initial` of its
+own.
 
 ### Selecting the swarm
 
@@ -383,6 +451,18 @@ open transport as success.
   `validSocketPath`, which is what keeps the renderer from turning main into a
   general network client. A kind whose path check falls through to the
   work-stream branch would accept a URL its own protocol never uses.
+- **A desktop holds one workspace socket while a main window is publishing.**
+  The Settings window consumes the relay and dials only while main reports no
+  publisher for its Organization. A consumer that also dialled would put the
+  second socket, and every push's second copy, back.
+- **A consumer listens for its whole life, and every hand-over starts from an
+  answer naming every topic.** Dropping the listener while a fallback socket is
+  open, or resuming a fallback socket from a waterline instead of `0`, opens a
+  window in which a change reaches neither and a Settings read stays stale.
+- **The relay carries names, never state.** Topics, waterlines, the viewer's
+  flags and a connection state cross IPC; rows, sidebar pages and presence do
+  not. A window that needs a socket-owned list needs a socket of its own, which
+  is why Sidekicks still dials one.
 - **A conversation that is not pooled must not be given the pool's lifecycle.**
   An automation's feed follows its page. Retaining it for five minutes the way a
   work-stream feed is retained would hold a conversation open after its author
@@ -434,6 +514,14 @@ move the workspace synchronization socket or dictation transport into Node.
 - **A Durable Object hibernates:** the connection remains established. Its next
   application event may pay object wake, construction, and schema-initialization
   time, but it does not pay a new client TCP/TLS/WebSocket handshake.
+- **The main window closes, crashes, or reloads while Settings is open:** main
+  releases the source and the Settings window dials its own socket, whose
+  `initial` answer refetches its reads once. When a main window publishes
+  again, Settings closes its socket, and the new main socket's relayed
+  `initial` refetches them once more. Both are the price of missing nothing
+  across the hand-over, and neither happens in a steady session.
+- **Main cannot answer the source read:** the consumer treats it as nobody
+  publishing and dials its own socket, which is the behaviour before the relay.
 - **Browser development opens a large set:** it remains subject to Chromium's
   connection scheduling because only packaged Electron routes these three socket
   kinds through Node.
@@ -444,6 +532,8 @@ move the workspace synchronization socket or dictation transport into Node.
 | --- | --- | --- |
 | `apps/desktop/src/main/realtime-socket-broker.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/main/realtime-socket-broker.test.ts` | Destination confinement, ordered PAC fallback, shared payload limit, event relay, normal close cleanup, sends, and renderer-owner teardown. |
 | `apps/desktop/src/main/realtime-socket-ipc.test.ts`, `apps/desktop/src/common/realtime-socket-validation.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/main/realtime-socket-ipc.test.ts src/common/realtime-socket-validation.test.ts` | Shared channel wiring, main-window authorization, request confinement, broker relay, and strict dependency-free event validation. |
+| `apps/desktop/src/common/workspace-sync-relay.test.ts`, `apps/desktop/src/main/workspace-sync-relay.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/common/workspace-sync-relay.test.ts src/main/workspace-sync-relay.test.ts` | Every relay shape accepted and malformed ones refused with the field named; the preload inbox folding news that arrives before a listener; main attaching, forwarding only the attached Organization, releasing once, and ordering by revision. |
+| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` (`the organization-sync relay between windows`) | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/workspace-socket.test.tsx` | The main window publishing state, every topic (`initial` included) and flags; a consumer with a live publisher asking for no ticket, reading once, and refetching on relayed news only; dialling only while nobody publishes, closing when somebody does, and resubscribing from `0` after. |
 | `apps/desktop/src/renderer/lib/realtime-socket.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/realtime-socket.test.ts` | Browser-shaped state/events, IPC calls, and one multiplexed preload listener for a socket swarm. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/workstream-socket-pool.test.tsx` | Feed ownership with no Channel control ticket ever requested, route retention, expiry, overlap, speculative feed warming, and navigation promotion. |
 | `apps/api/test-workers/channel-viewer-state.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/channel-viewer-state.test.ts` | A Channel's breakouts and running background agents on the real workspace socket: per viewer and per Channel, pushed on a roster or agent change, tombstoned without closing the socket, current after a resubscribe, and Main warmed on foreground. |
@@ -492,6 +582,15 @@ must be the public ticket sentinel;
 main supplies `app://rallywithai` as Origin and accepts no renderer-selected
 headers.
 
+The Organization-sync relay is a separate, narrower IPC path. Only the main
+window may publish on it (`assertMainWindowIpcSender`), only the Settings
+window may read the source, and main sends relayed events to the Settings
+window alone. Main and the preload parse every message against one closed,
+dependency-free shape — UUID Organization ids, the contract's topic enum, the
+exact flag keys — and main's refusal names the field. What crosses is topic
+names, waterlines, a connection state and the viewer's own flags, between two
+windows of the same session; no row, token or URL does.
+
 The signed ticket remains confined to the `Sec-WebSocket-Protocol` request
 header. It is not put in a URL, returned in an event, or logged. The Worker
 echoes only the public sentinel. See [`security.md`](security.md) for the wider
@@ -537,6 +636,53 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-09-26 — The Settings window relays the main window's workspace socket instead of holding its own
+
+**What changed:** The main window's workspace socket publishes its connection
+state, the topics of every sync event and the viewer's feature flags to main,
+and main relays them to the Settings window, which applies them through the
+same invalidation code and dials no socket of its own while the main window is
+there. It falls back to its own socket only while main reports no publisher for
+its Organization (the main window closed, crashed or reloading) and puts it
+down when one returns.
+
+**Why:** Every desktop held two workspace sockets. The Settings window is
+prewarmed hidden at startup and rebuilt after every close, and it mounted the
+same provider as the main window, so it requested its own ticket, subscribed,
+was sent the full per-viewer sidebar payload it never draws, and received a
+second copy of every push for the whole session. Its first answer (`initial`)
+also names every topic, and the window had just issued its REST reads on
+mount, so every Settings window read everything twice: measured in a real
+window on this change, the reads at mount and the same reads again about
+600 ms later when its socket's `initial` landed. With the relay it reads once;
+the main window's socket, already live, carries any later change.
+
+**Considered and rejected:** *Connecting Settings's socket only while it is
+shown, with a subscribe flag asking WorkspaceDO to omit the sidebar.* It keeps
+one socket per window while Settings is open, keeps the double read on every
+open (its `initial` still names every topic), needs a contract and WorkspaceDO
+change, and gives up the prewarm's promise that the window is live when
+revealed. The relay needs no server change and removes both costs.
+*Detaching the source when the main window's provider unmounts.* That happens
+on every Organization switch, immediately followed by the next provider's
+publication, and a detach between the two would have Settings dial a socket for
+a few milliseconds; the source is released on window-level events and on a
+session change instead. *Trimming the main window's own first-connect double
+read.* A REST read the server answers before it processes the subscribe can
+miss a change made between the two, and the client cannot tell which reads
+those are; without a waterline on each REST response, invalidating on
+`initial` is the only exact answer, so it stays.
+
+**Consequences:** A socket-less window is now a supported shape of
+`WorkspaceSocketProvider`, and the relay is the primitive for it. Another
+secondary window can consume it only once the relay carries what that window
+reads: Sidekicks reads the pushed automations list, which is state, and the
+relay deliberately carries only names, so Sidekicks still dials. Anything
+Settings starts reading from the socket beyond topics, flags and connection
+state has to be published by the main window too, or Settings stops receiving
+it while it relays. A main-window reload refetches the Settings reads once or
+twice; that is the cost of never missing a change across the hand-over.
 
 ### 2026-09-25 — A Channel's metadata rides the workspace socket; the control socket is retired
 

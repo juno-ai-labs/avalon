@@ -93,6 +93,7 @@ import {
 } from '../common/release-channels';
 import type { DesktopSettingsSection } from '../common/settings';
 import { parseDesktopSettingsSection } from '../common/settings';
+import { WORKSPACE_SYNC_RELAY_IPC_CHANNELS } from '../common/workspace-sync-relay';
 import type { SidekicksWindowTarget } from '../common/sidekicks';
 import { parseSidekicksWindowTarget } from '../common/sidekicks';
 import { fontScheme } from '../common/theme-assets';
@@ -228,6 +229,7 @@ import {
   writeStoredSessionFile,
 } from './session-file';
 import { SettingsWindowController } from './settings-window-controller';
+import { WorkspaceSyncRelay } from './workspace-sync-relay';
 import {
   activeStoredCredential,
   activeStoredWorkspaceCredential,
@@ -559,6 +561,13 @@ let developmentDockIconUsesAppearancePreview = false;
 const realtimeSocketBroker = new RealtimeSocketBroker(createNodeRealtimeSocketFactory(
   (url) => electronSession.defaultSession.resolveProxy(url),
 ));
+// The main window's Organization socket, relayed to the Settings window so
+// that window holds no socket of its own while there is one to relay. A hidden
+// prewarmed window receives it too: its reads are mounted and must stay fresh.
+const workspaceSyncRelay = new WorkspaceSyncRelay((event) => {
+  const target = settingsWindow;
+  if (target && !target.isDestroyed()) target.webContents.send(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.relayed, event);
+});
 let telemetryIdentity: TelemetryIdentity | null = null;
 let telemetryRoute: ResolvedTelemetryRoute = {
   route: 'global',
@@ -849,6 +858,9 @@ function flagSessionIdentity(userId: string, apiBaseUrl: string): string {
 }
 
 function broadcastSessionChanged(value: WireSession | null): void {
+  // Before any window hears of the change, so the next provider's publication
+  // for the new Organization always lands after this.
+  workspaceSyncRelay.releaseUnless(value?.workspace?.id ?? null);
   closeArtifactWindowsOutsideSession(value?.workspace?.id ?? null, value?.user.id ?? null);
   closeEmbeddedBrowsersOutsideUser(value?.user.id ?? null);
   // The import window offers one Organization's Spaces; another Organization's
@@ -3334,6 +3346,17 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     return runtimeConfig();
   });
+  ipcMain.handle(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.publish, (event, raw: unknown) => {
+    assertMainWindowIpcSender(event);
+    workspaceSyncRelay.publish(raw);
+  });
+  ipcMain.handle(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.source, (event) => {
+    assertTrustedIpcSender(event);
+    if (!settingsWindow || event.sender !== settingsWindow.webContents) {
+      throw new Error('Only the settings window consumes the relayed organization sync');
+    }
+    return workspaceSyncRelay.snapshot();
+  });
   ipcMain.handle('embedded-browser:state', (event) => embeddedBrowserFor(embeddedBrowserHost(event)).state());
   ipcMain.handle('embedded-browser:command', async (event, raw: unknown) => {
     const host = embeddedBrowserHost(event);
@@ -4704,6 +4727,7 @@ async function createMainWindow(): Promise<void> {
   installWindowDiagnostics(mainWindow, 'main');
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
+    workspaceSyncRelay.release();
     rendererReady = false;
     void rendererCrashRecovery.offer(details.reason);
   });
@@ -4733,11 +4757,15 @@ async function createMainWindow(): Promise<void> {
     // process queue because React never remounts to consume that queue.
     if (isMainFrame && !isInPlace) {
       realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
+      workspaceSyncRelay.release();
       rendererReady = false;
     }
   });
   mainWindow.on('closed', () => {
     realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
+    // The Settings window may outlive this one (macOS), and dials its own
+    // socket the moment it hears there is nothing left to relay.
+    workspaceSyncRelay.release();
     rendererReady = false;
     conversationDetailsExpansion = 0;
     mainWindow = null;

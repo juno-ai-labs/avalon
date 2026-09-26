@@ -21,6 +21,11 @@ import type { DesktopSettingsSection } from './settings';
 import type { ThemeChoice } from './themes';
 import type { EmbeddedBrowserBounds, EmbeddedBrowserCommand, EmbeddedBrowserResult, EmbeddedBrowserState } from './embedded-browser';
 import type { BrowserImportContext } from './browser-import';
+import type {
+  WorkspaceSyncPublication,
+  WorkspaceSyncRelayEvent,
+  WorkspaceSyncSourceSnapshot,
+} from './workspace-sync-relay';
 
 export type RallyRegion = Region;
 
@@ -563,6 +568,18 @@ export interface RallyDesktopBridge {
   consumePendingDeepLinks: () => Promise<DesktopDeepLinkNavigation[]>;
   onDeepLink: (listener: (navigation: DesktopDeepLinkNavigation) => void) => () => void;
   onSessionChanged: (listener: (session: DesktopSession | null) => void) => () => void;
+  /**
+   * The main window's Organization socket, told to main so it can relay it to
+   * the Settings window. Main refuses it from any other window.
+   */
+  publishWorkspaceSync: (publication: WorkspaceSyncPublication) => Promise<void>;
+  /** Settings window only: whose socket is being relayed right now, if anyone's. */
+  getWorkspaceSyncSource: () => Promise<WorkspaceSyncSourceSnapshot>;
+  /**
+   * Settings window only: every relayed event. News that arrived before the
+   * first listener is held, folded, and delivered to it.
+   */
+  onWorkspaceSyncRelayed: (listener: (event: WorkspaceSyncRelayEvent) => void) => () => void;
   openRealtimeSocket: (input: DesktopRealtimeSocketOpenInput) => Promise<void>;
   sendRealtimeSocket: (input: DesktopRealtimeSocketSendInput) => Promise<void>;
   closeRealtimeSocket: (input: DesktopRealtimeSocketCloseInput) => Promise<void>;
