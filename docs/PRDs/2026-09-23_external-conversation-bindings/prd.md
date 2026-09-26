@@ -312,6 +312,30 @@ untrusted input to that run in the same way an inbound email is. Only the
 Sidekick's config conversation can attach a conversation, so a run cannot
 widen what it can read or post to.
 
+## Agent behavior
+
+Agents gain one built-in plugin, `rally:conversations`, with wire prefix
+`conversation`. Its full contract (tool catalog, wire shapes, idempotency,
+failures, sequences and evaluations) is in
+[`design.md`](design.md#conversation-tools).
+
+| Tool | What the agent may do | Offered to |
+| --- | --- | --- |
+| `conversation_list` | See the conversations it can reach, a Sidekick's home first | Every scope |
+| `conversation_read`, `conversation_read_next` | Read one of them, newest first, a page at a time | Every scope |
+| `conversation_post` | Post to one of them, a Sidekick's home by default | Sidekick config and runs |
+| `conversation_attach` | Attach a Channel or Breakout to the Sidekick | Sidekick config only |
+
+The agent is still forbidden to reach any conversation outside its scope, to
+widen its own scope, or to attach from a run. It never supplies an
+idempotency key; the host derives one so a retried post lands once. Messages it
+reads are treated as other people's words, not instructions. `sidekick_post_result`
+is removed.
+
+While it works, people see ordinary tool activity in the transcript, and each
+post appears in the target conversation as a message from the Sidekick or
+agent. Following the tool execution policy, no call asks anyone to confirm it.
+
 ## Provider configuration
 
 Slack's current app subscribes to `member_joined_channel` and has `mpim:read`
