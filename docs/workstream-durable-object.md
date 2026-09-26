@@ -1534,7 +1534,7 @@ already have committed across the object boundary.
 | `workspace_sync_events` | Monotonic `waterline`, UUIDv7 `event_id`, JSON topic set, the audience a per-person event was sent to (`audience_json`, `NULL` for the whole Organization; replay honours it), and occurrence time for the bounded 1,024-event reconciliation window. Rows are invalidations only, never workspace data copies. |
 | `object_retirement` | Singleton (`id = 1`): the retirement tombstone — instant, operation, actor, reason. Present in all four object classes from one shared constant; migration 40 here. [`workspace-retirement.md`](workspace-retirement.md). |
 | `workspace_retirement_graph` | `(parent_kind, parent_id)`: one row per work stream and automation recorded before the tombstone, with a nullable `retired_at` receipt the walk writes. Migration 41. |
-| `workspace_connector_events` | Complete authoritative normalized provider event, connection/workspace scope, bounded JSON/text fields, provider/dedupe unique keys, local insertion sequence, and processing claim/terminal state. It is never shared with another workspace. A `processed` row is deleted 90 days after `received_at` by the alarm's `connector_event_reap` phase, 50 rows a pass; the alarm is due at the oldest processed row's `received_at` plus 90 days, so it re-arms at once while a backlog remains. Pending, processing and failed rows never age out. Deleting a row removes its two unique keys, so a provider redelivery older than 90 days is processed again. |
+| `workspace_connector_events` | Complete authoritative normalized provider event, connection/workspace scope, bounded JSON/text fields, provider/dedupe unique keys, local insertion sequence, and processing claim/terminal state. It is never shared with another workspace. A `processed` row is deleted 90 days after `received_at` by the alarm's `connector_event_reap` phase, 50 rows a pass; the alarm is due at the oldest processed row's `received_at` plus 90 days, so it re-arms at once while a backlog remains, and `settleConnectorEvent` brings it forward to that time when it marks a row processed. Pending, processing and failed rows never age out. Deleting a row removes its two unique keys, so a provider redelivery older than 90 days is processed again. |
 | `workspace_connector_event_ingress_receipts` | One ingress UUID/content-hash to canonical-event mapping. It makes provider replay and at-least-once Queue delivery idempotent even when a second delivery used a different UUIDv7; ingest opportunistically reaps the oldest receipts after 30 days while the provider/dedupe keys continue to resolve the canonical event. |
 | `connector_connections`, `external_user_identities` | Workspace connector credentials, cursor/configuration/health, model plugin identity, refresh lease, and verified provider-user mappings. Global/provider ingress routes retain only the opaque fields needed to find this object. |
 | `slack_agent_*`, `slack_delivery_preferences`, `slack_user_links`, `slack_ingress_jobs`, `slack_link_challenges`, `slack_unfurled_links` | Workspace-local Slack policy, allowlist, identity, execution session, queued handoff, delivery preference, and shared-link state. Global Slack installation routing remains outside the object because the workspace is not known at initial ingress. |
@@ -1798,7 +1798,8 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 `ingestConnectorEvent`, where it ran up to 50 rows inside every ingest
 transaction, for a new `WorkspaceDO` alarm phase, `connector_event_reap`. It
 deletes 50 processed rows a pass, and the alarm is due at the oldest processed
-row's `received_at` plus 90 days.
+row's `received_at` plus 90 days. `settleConnectorEvent` brings the alarm
+forward to that time when it marks a row processed.
 
 **Why:** Processed event bodies are the largest rows in the Organization
 object, and since Channel and Space parents moved in, a full object refuses
@@ -1807,6 +1808,9 @@ week. At 396 days that is about 14.7 GB (396 / 7 × 0.26), over the 10 GB
 Durable Object limit; at 90 days it is about 3.3 GB (90 / 7 × 0.26). A reap on
 the ingest path only ran when a new event arrived, so an Organization whose
 events stopped never aged its rows out, and every ingest paid for the deletes.
+The settle arms the alarm because it is the only write that makes a row
+reapable: in a quiet Organization, where processing writes no activity row,
+nothing else would.
 
 **Considered and rejected:** Keeping 396 days. It held more than the object
 can store for the busiest Organization.

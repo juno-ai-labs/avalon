@@ -3940,6 +3940,52 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
+  it("arms the alarm for a connector event's expiry when it settles as processed", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const eventId = "00000000-0000-7000-8000-000000000316";
+    const processingOwnerId = "00000000-0000-7000-8000-000000000317";
+    await stub.ingestConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      ingressEventId: eventId,
+      payloadHash: `sha256:${"e".repeat(64)}`,
+      event: connectorEvent(eventId),
+    });
+    // Due an hour from now: late enough that workerd does not fire it before
+    // the assertion reads it, and later than anything else this object waits on.
+    const expiresAt = Date.now() + 60 * 60_000;
+    await runInDurableObject(stub, async (_instance, state) => {
+      state.storage.sql.exec(
+        "UPDATE workspace_connector_events SET received_at = ? WHERE event_id = ?",
+        expiresAt - 90 * 24 * 60 * 60_000, eventId,
+      );
+      await state.storage.deleteAlarm();
+    });
+    const claim = WorkspaceConnectorEventClaimResultSchema.parse(await stub.claimConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId,
+      processingOwnerId,
+      attempt: 0,
+      orchestrator: "queue",
+    }));
+    if (claim.outcome !== "claimed") throw new Error("expected the connector event to be claimed");
+    await stub.settleConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId,
+      processingOwnerId,
+      processingLeaseId: claim.processingLeaseId,
+      outcome: "processed",
+      error: null,
+    });
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      expect(await state.storage.getAlarm()).toBe(expiresAt);
+    });
+  });
+
   it("owns connector events, deduplicates Queue replays, and fences processing settlement", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
