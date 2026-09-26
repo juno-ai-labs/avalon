@@ -1401,18 +1401,18 @@ describe("forced migration targets", () => {
         namespaces: [{
           namespaceId: "ns-global",
           scriptName: "avalon-api-global",
-          className: "WorkstreamDO",
+          className: "WorkspaceDO",
           usesSqlite: true,
           objects: [{ objectId: objectId("a"), hasStoredData: true }],
         }, {
           namespaceId: "ns-enterprise",
           scriptName: "avalon-api-enterprise",
-          className: "WorkstreamDO",
+          className: "WorkspaceDO",
           usesSqlite: true,
           objects: [{ objectId: objectId("b"), hasStoredData: true }],
         }],
       }));
-      return registry.migrationTargets({ className: "WorkstreamDO", region: "enterprise" });
+      return registry.migrationTargets({ className: "WorkspaceDO", region: "enterprise" });
     });
 
     expect(selection.targets.map((target) => target.objectId)).toEqual([objectId("b")]);

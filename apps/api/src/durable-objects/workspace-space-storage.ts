@@ -3806,8 +3806,6 @@ export class WorkspaceSpaceStorage {
     const eligible = this.storage.sql.exec<{ one: number } & Record<string, SqlStorageValue>>(
       `SELECT 1 AS one FROM parent_metadata parent, automation_directory sidekick
         WHERE parent.parent_id = ? AND parent.parent_kind = 'workstream' AND parent.archived_at IS NULL
-          AND NOT EXISTS (SELECT 1 FROM parent_imports ledger
-                           WHERE ledger.parent_id = parent.parent_id AND ledger.state = 'pending')
           AND sidekick.automation_id = ? AND sidekick.scope = 'workspace' AND sidekick.lifecycle <> 'deleted'`,
       target.workstreamId,
       target.targetId,

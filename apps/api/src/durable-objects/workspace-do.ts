@@ -71,7 +71,6 @@ import {
   asSubstreamId,
   asUserId,
   asWorkspaceId,
-  asWorkstreamId,
   automationTriggersAdmitResourceType,
   IdSchema,
   SpaceConversationSchema,
@@ -190,7 +189,7 @@ import {
 import { boundParameterChunks } from "./bound-parameters";
 import { projectionSupersedes, type StoredProjection } from "./projection-fence";
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
-import { automationDOName, conversationObjectName, spaceDOName, workspaceDOName, workstreamDOName } from "./names";
+import { automationDOName, conversationObjectName, workspaceDOName } from "./names";
 import {
   OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
   applyRetirementGate,
@@ -717,16 +716,6 @@ import {
 } from "./hosted-parent";
 import { planParentEffectBatches, ReceiveChildEffectsRequestSchema } from "./conversation-parent-object";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
-import {
-  dueParentImports,
-  importLegacyParent,
-  LegacyParentExportSchema,
-  nextParentImportDueAt,
-  notePendingParentImport,
-  ParentImportError,
-  parentImportState,
-  recordParentImportFailure,
-} from "./hosted-parent-import";
 import {
   HostedParticipantProjectionAlarmSchema,
   PARTICIPANT_MIGRATION_ALARM,
@@ -3831,6 +3820,16 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   statements: [
     "ALTER TABLE workspace_sync_events ADD COLUMN audience_json TEXT CHECK (audience_json IS NULL OR json_valid(audience_json))",
   ],
+}, {
+  version: 75,
+  description: "drop the legacy parent import ledger",
+  // Every live Organization had imported every parent before WorkstreamDO and
+  // SpaceDO were deleted, so nothing is left to import. A retired
+  // Organization's pending rows were residue: retirement dropped their import.
+  // See docs/hosted-conversation-parents.md.
+  statements: [
+    "DROP TABLE parent_imports",
+  ],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -4767,13 +4766,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   // keep the names and shapes the parent objects answered to, so a caller
   // changes which stub it holds and nothing else.
   //
-  // A parent that still lives in a legacy object is imported before anything
-  // reads it. A write drains the parent outbox before it answers, which is
-  // where the directory step now runs: in this object, straight after the
-  // commit, rather than over a Queue and back.
+  // A write applies its directory step in its own transaction, rather than
+  // over a Queue and back; only work that leaves this object waits in the
+  // parent outbox, which the alarm drains.
   // ---------------------------------------------------------------------------
 
-  private readonly parentImportsInFlight = new Map<string, Promise<void>>();
 
   /**
    * Start a Channel's Main conversation warming when someone opens the
@@ -4911,16 +4908,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /**
    * Which kind of parent an id names. The row says once it exists; before
-   * that the import ledger does; before that a Space is the id the Space
-   * directory reserved, and anything else is a Channel. Never a probe of
-   * another object: asking a namespace whether something is there creates it.
+   * that a Space is the id the Space directory reserved, and anything else is
+   * a Channel.
    */
   private hostedParentKind(parentId: string): "workstream" | "space" {
     const known = this.state.storage.sql.exec<{ parent_kind: "workstream" | "space" }>(
-      `SELECT parent_kind FROM parent_metadata WHERE parent_id = ?
-       UNION ALL SELECT parent_kind FROM parent_imports WHERE parent_id = ?
-       LIMIT 1`,
-      parentId, parentId,
+      "SELECT parent_kind FROM parent_metadata WHERE parent_id = ?", parentId,
     ).toArray()[0]?.parent_kind;
     if (known) return known;
     return this.state.storage.sql.exec("SELECT 1 FROM spaces WHERE space_id = ?", parentId).toArray().length > 0
@@ -4930,7 +4923,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private async hostedParent(parentId: string, workspaceId?: string, rows?: ChannelRowPlan): Promise<HostedParent> {
     await this.initialized;
     if (workspaceId !== undefined) await this.ensureParentWorkspace(workspaceId);
-    await this.ensureParentImported(parentId);
     const kind = this.hostedParentKind(parentId);
     return new HostedParent(this.hostedParentHost(rows), parentId, kind === "space" ? HOSTED_SPACE_ROLE : HOSTED_CHANNEL_ROLE);
   }
@@ -4957,105 +4949,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.ensureIdentity(workspaceId, await workspacePlacementAffinity(this.env, workspaceId));
     }
     this.assertWorkspace(workspaceId);
-  }
-
-  /**
-   * Import a parent still held by its legacy object, once, before it is served.
-   *
-   * Single-flight per parent, and retried on every request that needs it: a
-   * request never waits out the alarm's backoff, because the person asking is
-   * the one the import is for. The alarm retries an unopened parent on
-   * `scheduledAlarmRetryDelay`'s schedule.
-   */
-  private async ensureParentImported(parentId: string): Promise<void> {
-    if (parentImportState(this.state.storage.sql, parentId) !== "pending") return;
-    let inFlight = this.parentImportsInFlight.get(parentId);
-    if (!inFlight) {
-      inFlight = this.importHostedParent(parentId).finally(() => this.parentImportsInFlight.delete(parentId));
-      this.parentImportsInFlight.set(parentId, inFlight);
-    }
-    await inFlight;
-  }
-
-  /**
-   * Operator repair: import one pending parent now and say what happened.
-   *
-   * The same single-flight import a request runs, answered with the ledger row
-   * instead of a thrown error, so an operator who has fixed what the last
-   * attempt's code named (`docs/runbook.md`, "A Channel or Space import is
-   * stuck") sees whether it took. A parent that is not pending is left alone.
-   */
-  async retryParentImport(input: { workspaceId: string; parentId: string }): Promise<{
-    state: "pending" | "imported" | null;
-    attempts: number;
-    lastErrorCode: string | null;
-  }> {
-    const request = parseRpcInput(
-      z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema }), input, "retry_parent_import",
-    );
-    await this.initialized;
-    this.assertWorkspace(request.workspaceId);
-    await this.ensureParentImported(request.parentId).catch(() => undefined);
-    const row = this.state.storage.sql.exec<{ state: "pending" | "imported"; attempts: number; last_error_code: string | null }>(
-      "SELECT state, attempts, last_error_code FROM parent_imports WHERE parent_id = ?", request.parentId,
-    ).toArray()[0];
-    return { state: row?.state ?? null, attempts: row?.attempts ?? 0, lastErrorCode: row?.last_error_code ?? null };
-  }
-
-  private async importHostedParent(parentId: string): Promise<void> {
-    const workspaceId = this.workspaceId();
-    if (!workspaceId) throw new Error("parent_import_workspace_unknown");
-    const kind = this.hostedParentKind(parentId);
-    const namespace = kind === "space" ? this.env.SPACE_DOS : this.env.WORKSTREAM_DOS;
-    const name = kind === "space"
-      ? spaceDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), asSpaceId(parentId))
-      : workstreamDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(parentId));
-    // Every failure, before or after the export, is recorded with its code
-    // and thrown with that code in the message: `cause` does not survive the
-    // RPC hop back to the caller.
-    const fail = (code: string): Error => {
-      const now = Date.now();
-      recordParentImportFailure(this.state.storage.sql, parentId, code,
-        (attempt) => now + scheduledAlarmRetryDelay(attempt));
-      logWarn(this.env, "hosted_parent_import_deferred", {
-        workspace_id: workspaceId, parent_id: parentId, parent_kind: kind, code,
-      });
-      return new Error(`parent_import_unavailable:${code}`);
-    };
-    let exported;
-    try {
-      const legacy = await durableObjectStubForWorkspace(this.env, namespace, workspaceId, name);
-      exported = LegacyParentExportSchema.parse(await legacy.exportParentState({ workspaceId: asWorkspaceId(workspaceId), parentId }));
-    } catch (error) {
-      throw fail(diagnosticErrorCode(error, "parent_export_failed"));
-    }
-    const now = Date.now();
-    const parent = new HostedParent(this.hostedParentHost(), parentId, kind === "space" ? HOSTED_SPACE_ROLE : HOSTED_CHANNEL_ROLE);
-    let result;
-    try {
-      // The legacy migrations 19 and 20 replayed breakout projections once
-      // across the fleet; running them here makes an object that missed that
-      // pass converge, and costs nothing on one that did. They run in the
-      // import's transaction, so a parent is never `imported` without them;
-      // a replay that meets an unknown person rolls the import back and runs
-      // it again once that person is learned.
-      result = await this.withMembersLearned(() => importLegacyParent(
-        this.state.storage, this.scheduledAlarms, parentId, kind, exported, now, () => {
-          parent.replayStoredBreakoutProjections(now);
-          parent.republishDirectGrants(now);
-        },
-      ));
-    } catch (error) {
-      throw fail(error instanceof ParentImportError ? error.code : diagnosticErrorCode(error, "parent_import_failed"));
-    }
-    logInfo(this.env, "hosted_parent_imported", {
-      workspace_id: workspaceId, parent_id: parentId, parent_kind: kind, rows: result.rows, found: result.found,
-    });
-    await this.drainParentOutbox();
-    await this.armNextAlarm();
-    // Rows sent before the import left this Channel's breakouts out, because
-    // they were not here yet; this is the push that fills them in.
-    if (kind === "workstream") this.publishChannelRowToReaders(parentId);
   }
 
   /**
@@ -5102,25 +4995,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /**
    * Deliver every due `parent_outbox` row: a notification or mention on the
    * activity Queue, whose consumer delivers it in a Worker; a revoked Channel
-   * grant's Sidekick revocation; and a directory row the legacy object still
-   * had pending at import, applied here. A row is deleted only once its
-   * destination has it; a failure puts it off on the alarm's retry schedule,
-   * and a row that does not parse is kept as `failed` and never retried.
-   */
-  private parentOutboxDrain: Promise<void> | null = null;
-
-  /**
-   * Drains run one at a time. Rows are not claimed, so a drain started by a
-   * request's import while the alarm drains would send the same rows twice.
+   * grant's Sidekick revocation; and a directory row a legacy object still
+   * had pending when it was imported, applied here. A row is deleted only once
+   * its destination has it; a failure puts it off on the alarm's retry
+   * schedule, and a row that does not parse is kept as `failed` and never
+   * retried. Rows are not claimed: the alarm is the only drain, and an alarm
+   * never runs beside another.
    */
   private async drainParentOutbox(): Promise<void> {
-    while (this.parentOutboxDrain) await this.parentOutboxDrain;
-    const drain = this.drainParentOutboxOnce();
-    this.parentOutboxDrain = drain.finally(() => { this.parentOutboxDrain = null; });
-    await this.parentOutboxDrain;
-  }
-
-  private async drainParentOutboxOnce(): Promise<void> {
     const workspaceId = this.workspaceId();
     if (!workspaceId) return;
     const rows = this.state.storage.sql.exec<{
@@ -5290,19 +5172,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).toArray()[0]?.due_at ?? null;
   }
 
-  /** Import pending parents in pages, so an Organization converges without anyone opening anything. */
-  private async importDueParents(now: number): Promise<void> {
-    // One page of a cross-object walk, for the reason `SPACE_BOOTSTRAP_PAGE_SIZE`
-    // gives: an alarm has to finish the page. An import is one RPC per parent.
-    for (const due of dueParentImports(this.state.storage.sql, now, SPACE_BOOTSTRAP_PAGE_SIZE)) {
-      try {
-        await this.ensureParentImported(due.parentId);
-      } catch {
-        // Deferred and logged by the import itself; the next page moves on.
-      }
-    }
-  }
-
   private async drainDueParentBreakouts(now: number): Promise<void> {
     for (const parentId of HostedParent.dueParentIds(this.state.storage.sql, now)) {
       const parent = await this.hostedParent(parentId);
@@ -5412,25 +5281,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   async receiveChildEffects(input: Parameters<HostedParent["receiveChildEffects"]>[0]) {
     // Parsed before anything is written: the first envelope decides which
-    // parent is imported and, on a new object, the object's own identity.
+    // parent is served and, on a new object, the object's own identity.
     const request = parseRpcInput(ReceiveChildEffectsRequestSchema, input, "receive_child_effects");
     const envelope = request.envelopes[0]!;
     if (envelope.parentKind !== "workstream" && envelope.parentKind !== "space") {
       throw new Error("conversation_effect_parent_kind_unhosted");
     }
     await this.initialized;
-    // Every parent created here has its row before its first child effect, so
-    // an effect for a parent with no row and no ledger entry names one a
-    // legacy object may still hold: a Channel whose provisional directory row
-    // never reached this object before the move. Creating an empty row would
-    // lose that object's creator, grants and reservations, so it is imported
-    // first; an id no legacy object holds imports empty, once.
-    const known = this.state.storage.sql.exec(
-      `SELECT 1 FROM parent_metadata WHERE parent_id = ?
-       UNION ALL SELECT 1 FROM parent_imports WHERE parent_id = ? LIMIT 1`,
-      envelope.parentId, envelope.parentId,
-    ).toArray().length > 0;
-    if (!known) notePendingParentImport(this.state.storage.sql, envelope.parentId, envelope.parentKind);
     // One plan for the whole batch: every envelope is its own transaction and
     // records its own follow-up, and a turn's burst of them owes each Channel
     // one row per socket, not one per envelope. The parent's own republish
@@ -6126,13 +5983,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const hosted = this.hostedParentSchemaPresent();
     const parentOutbox = hosted ? this.nextParentOutboxDueAt() : null;
     const parentBreakouts = hosted ? HostedParent.nextDueAt(this.state.storage.sql) : null;
-    const parentImport = hosted ? nextParentImportDueAt(this.state.storage.sql) : null;
     const directoryFollowUp = hosted ? this.nextDirectoryFollowUpDueAt() : null;
     return [
       ...(parentOutbox === null ? [] : [parentOutbox]),
       ...(directoryFollowUp === null ? [] : [directoryFollowUp]),
       ...(parentBreakouts === null ? [] : [parentBreakouts]),
-      ...(parentImport === null ? [] : [parentImport]),
       ...(oldest === null ? [] : [Number(oldest) + ACTIVITY_EVENT_RETENTION_MS]),
       ...(spacePublication === null ? [] : [spacePublication]),
       ...(spaceIntent === null ? [] : [spaceIntent]),
@@ -6234,9 +6089,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     };
     if (workspaceId) {
       // Hosted parents first: an outbox row is a directory update somebody is
-      // waiting to see. Background imports run last instead: a page is up to
-      // one cold legacy RPC per parent, and a Channel someone opens imports on
-      // that request without waiting for the alarm.
+      // waiting to see.
       if (this.hostedParentSchemaPresent()) {
         await isolated("parent_outbox", () => this.drainParentOutbox());
         await isolated("parent_breakouts", () => this.drainDueParentBreakouts(now));
@@ -6304,9 +6157,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       await isolated("schedule_reconcile", async () => {
         await this.refreshSchedule(workspaceId);
       });
-      if (this.hostedParentSchemaPresent()) {
-        await isolated("parent_import", () => this.importDueParents(now));
-      }
       // An interrupted Space operation finishes here. Nothing else would: the
       // request that staged the intent is gone, and the Channel it was about to
       // reach was never told the operation existed. Last, because each step
@@ -6849,9 +6699,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * A Channel's control sockets are this object's sockets and its children are
    * this object's rows, so publishing a `workstream` message per Channel only
    * for it to come back here was a Queue round trip per Channel before any
-   * conversation heard. A Channel whose legacy import is still pending is left
-   * to its own hop: importing it here would put one remote call per such
-   * Channel inside this walk.
+   * conversation heard.
    */
   private async revokeHostedChannelAccess(
     workstreamIds: readonly string[],
@@ -6859,10 +6707,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   ): Promise<{ workstreamId: string; substreamIds: string[] }[]> {
     const channels: { workstreamId: string; substreamIds: string[] }[] = [];
     for (const workstreamId of workstreamIds) {
-      const pendingImport = this.state.storage.sql.exec(
-        "SELECT 1 FROM parent_imports WHERE parent_id = ? AND state = 'pending'", workstreamId,
-      ).toArray().length > 0;
-      if (pendingImport) continue;
       const { substreamIds } = await (await this.hostedParent(workstreamId)).revokeSocketAccess(revocation);
       channels.push({ workstreamId, substreamIds });
     }
@@ -7616,8 +7460,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /**
    * What reserving a Space's hosted parent needs from outside the transaction:
-   * a legacy parent imported, and the regional authority generation the parent
-   * is born at. An id this object already hosts as a Channel is refused as
+   * the regional authority generation the parent is born at. An id this object already hosts as a Channel is refused as
    * `space_not_found`, the answer an identity the caller cannot use as a Space
    * always gets; a generation D1 cannot supply is `space_authority_unreachable`.
    */
@@ -7625,12 +7468,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     | { ok: false; code: "space_not_found" | "space_authority_unreachable" }
     | { ok: true; reserve: (userId: string, space: SpaceSummary) => void }
   > {
-    await this.ensureParentImported(spaceId);
     const known = this.state.storage.sql.exec<{ parent_kind: string }>(
-      `SELECT parent_kind FROM parent_metadata WHERE parent_id = ?
-       UNION ALL SELECT parent_kind FROM parent_imports WHERE parent_id = ?
-       LIMIT 1`,
-      spaceId, spaceId,
+      "SELECT parent_kind FROM parent_metadata WHERE parent_id = ?", spaceId,
     ).toArray()[0]?.parent_kind;
     if (known !== undefined && known !== "space") return { ok: false, code: "space_not_found" };
     const authority = await readWorkstreamAuthorityControl(this.env);
@@ -10022,16 +9861,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // effects a Channel does, and both land here. They are kept apart from this
     // line on: a Space in `channels` would be a Space in
     // the Channel sidebar, and the two directories answer different questions.
-    // A directory effect from a legacy parent object — one that was mid-way
-    // through delivering when this deploy landed — names a parent this object
-    // has to import before it can serve it. A hosted parent's own effects never
-    // reach this line with its metadata missing.
-    for (const envelope of request.envelopes) {
-      if (envelope.parentKind !== "workstream" && envelope.parentKind !== "space") continue;
-      if (this.state.storage.sql.exec("SELECT 1 FROM parent_metadata WHERE parent_id = ?", envelope.parentId)
-        .toArray().length > 0) continue;
-      notePendingParentImport(this.state.storage.sql, envelope.parentId, envelope.parentKind);
-    }
     // Membership is answered from this object's member table. Somebody it
     // has never heard of is learned from D1 before the transaction, so
     // meeting one here rolls it back for the caller to learn and retry.
@@ -13318,17 +13147,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * are `parent_children` rows in this database, so registering them is a few
    * statements in the caller's transaction rather than a Queue hop to a Worker
    * that would call straight back into this object for the list and the
-   * registration. A conversation job, a Sidekick parent (its children are in
-   * AutomationDO) and a Channel whose legacy import has not run yet (reading
-   * it would need the import, which is async) still go through the Queue.
+   * registration. A conversation job and a Sidekick parent (its children are
+   * in AutomationDO) still go through the Queue.
    */
   private enqueueAuthorizationDiscovery(job: AuthorizationProjectionJob): void {
     if (job.substreamId === undefined) {
       const hostedChannel = this.state.storage.sql.exec(
         `SELECT 1 FROM parent_metadata parent
-          WHERE parent.parent_id = ? AND parent.parent_kind = 'workstream'
-            AND NOT EXISTS (SELECT 1 FROM parent_imports ledger
-                             WHERE ledger.parent_id = parent.parent_id AND ledger.state = 'pending')`,
+          WHERE parent.parent_id = ? AND parent.parent_kind = 'workstream'`,
         job.parentId,
       ).toArray().length > 0;
       if (hostedChannel) {

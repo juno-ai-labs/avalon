@@ -8,9 +8,9 @@
  * arrives here with `parent_id` as its leading key, so one parent is one slice
  * of these rows. `docs/hosted-conversation-parents.md` has the table map.
  *
- * The seeded `parent_imports` rows are the list of parents that still live in a
- * legacy object: every Channel and Space the directory knew when this ran. A
- * parent id with no row was created after the move and never had one.
+ * The seeded `parent_imports` rows were the list of parents that still lived in
+ * a legacy object: every Channel and Space the directory knew when this ran.
+ * Migration 75 drops the ledger once every import had run.
  */
 export const HOSTED_PARENT_SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE workspace_workstream_directory RENAME TO channels`,

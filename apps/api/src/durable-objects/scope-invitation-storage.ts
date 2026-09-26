@@ -15,21 +15,6 @@ export function scopeInvitationAlarmKey(parentId: string, invitationId: string):
   return `${parentId}:${invitationId}`;
 }
 
-/** The legacy `WorkstreamDO` ledger's statements, frozen; see `hosted-parent-schema.ts`. */
-export const SCOPE_INVITATION_SCHEMA_STATEMENTS = [
-  `CREATE TABLE scope_invitation_operations (
-    operation_id TEXT PRIMARY KEY, request_json TEXT NOT NULL CHECK(json_valid(request_json)),
-    invitation_ids_json TEXT NOT NULL CHECK(json_valid(invitation_ids_json))
-  ) STRICT`,
-  `CREATE TABLE scope_invitations (
-    id TEXT PRIMARY KEY, operation_id TEXT NOT NULL REFERENCES scope_invitation_operations(operation_id),
-    actor_user_id TEXT NOT NULL, actor_incarnation TEXT NOT NULL,
-    summary_json TEXT NOT NULL CHECK(json_valid(summary_json)),
-    token_hash TEXT NOT NULL UNIQUE, delivery_encrypted TEXT NOT NULL, grant_operations_json TEXT NOT NULL CHECK(json_valid(grant_operations_json)),
-    delivered_at INTEGER, accepted_incarnation TEXT, created_at INTEGER NOT NULL
-  ) STRICT`,
-] as const;
-
 export class ScopeInvitationOperationConflict extends Error {}
 
 export interface ScopeInvitationRecord {

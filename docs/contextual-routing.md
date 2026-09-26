@@ -13,7 +13,7 @@ This page is the historical record for the retired feature. The four Suggested W
 | Work-stream detail | Emits an empty `suggestions` rollout tombstone for older desktop builds; current desktop code ignores the field. |
 | Realtime protocol | Old suggestion event names remain parse-only during rolling deployment and have no producer or consumer. |
 | SubstreamAgent storage | Migration 35 drops `suggested_actions`, removes its outbox rows, converts old `suggested_activity` links to `attachment`, and retains accepted items' source audiences as generic immutable content fences. Those fences continue to block participant or scope widening that would expose the attachment. |
-| WorkstreamDO and WorkspaceDO | Forward migrations discard stored suggestion-feedback state. Parse-only tombstones acknowledge an in-flight feedback envelope from an older isolate without applying or persisting it. |
+| WorkspaceDO | Forward migrations discard stored suggestion-feedback state. Parse-only tombstones acknowledge an in-flight feedback envelope from an older isolate without applying or persisting it. |
 | Desktop | Does not construct, render, resolve, or cache Suggested context cards. Canonical blocks from an older Worker are filtered out. A parse-only resource relationship accepts an old Worker's snapshot/event and immediately normalizes it to `attachment`. |
 
 The rollout tombstones are compatibility boundaries, not a dormant implementation or a re-enable switch. Reintroducing a work-stream suggestion product would be a new feature with new contracts and storage rather than a reversal of these migrations.
