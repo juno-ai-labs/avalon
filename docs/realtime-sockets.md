@@ -300,13 +300,13 @@ Its complete topic catalog, and whose each one is:
 | `workspace_profile` | Workspace name, slug, immutable region, workspace timezone, current role, inference-log policy, creation metadata, and onboarding workspace view. | Organization; the person alone for their own onboarding journey (`PATCH /workspace/onboarding`). |
 | `member_directory` | Active/invited/suspended members, user name/email/avatar/timezone/role/join time, and onboarding membership state. | Organization. |
 | `invitation_directory` | Pending/accepted/expired/revoked invitations, role, inviter, expiry, acceptance, and delivery-visible state. | Organization. |
-| `connector_connections` | Connection identity, type, scope/owner, account/display name, capabilities, health/reconnect/error state, catalog capabilities, GitHub repository access, and onboarding connector state. Credentials never enter this feed. | The connection's: its owner for a personal connection, everyone for the Organization's. The person alone for their own Slack identity link. |
+| `connector_connections` | Connection identity, type, scope/owner, account/display name, capabilities, health/reconnect/error state, catalog capabilities, GitHub repository access, and onboarding connector state. Credentials never enter this feed. | The connection's: its owner for a personal connection, everyone for the Organization's. The person alone for their own Slack identity link. A provider webhook delivery: its matched connections' audience (below). |
 | `connector_oauth_attempts` | Signals that a pending OAuth attempt should be read once from its authenticated endpoint. The renderer does not poll while the provider window is open. | The person who started the attempt. |
 | `terminal_policy` | Workspace Terminal capability, Daytona configuration availability, network allow/deny policy, version, and validation/failure state. | Organization. |
 | `digest_schedule` | Per-viewer digest enablement, cadence/timezone, destinations, and next run. | The person, for their own digest; the connection's audience when a connection a digest can deliver to changes. |
-| `automations` | Automation detail and drafts. **Not** the sidebar list, which is pushed whole as `workspace_sidebar_list`. | Organization. |
+| `automations` | Automation detail, drafts and runs. **Not** the sidebar list, which is pushed whole as `workspace_sidebar_list`. | Organization. |
 | `notes` | Note detail. **Not** the sidebar list, which is pushed whole as `workspace_sidebar_list`. | Organization. |
-| `resources` | Resource directory, hydration/watch/content availability, work-stream context links, and connector-derived resource changes. | Organization; the connection's audience for a connection change, since a personal connection's resources are its owner's. |
+| `resources` | Resource directory, hydration/watch/content availability, work-stream context links, and connector-derived resource changes. | Organization; the connection's audience for a connection change or a provider webhook delivery, since a personal connection's resources are its owner's. |
 | `activity` | Connector activity ingestion that can change opportunity generation or activity-derived UI. | Organization. |
 | `work_opportunities` | Suggested work/actions, audience, version, accepted/dismissed state, and resulting work-stream directory changes. | Organization. |
 | `workstream_directory` | Invalidates WorkspaceDO cursor-page membership/order and pin changes. Normal common/viewer state transitions instead push the current waterlined row directly. D1 is never a list fallback. | Organization. |
@@ -329,6 +329,15 @@ writes that publish `automations` themselves. Starting an authorization
 (`…/start`, `…/reconnect`) writes only the person's attempt, so it publishes
 `connector_oauth_attempts` to that person; the completion publishes the
 connection's topics to the connection's audience.
+
+Provider webhook ingestion (GitHub, Linear, Notion, through
+`services/provider-webhook-service.ts`) is the other background publisher. It
+has no single connection id to name, since one delivery can match several
+connections in several workspaces, so it passes `audienceUserIds` itself, per
+workspace: `connector_connections` and `resources` go to everyone when any
+matched connection there is the Organization's, and otherwise only to the
+owners of the personal ones. A matched connection with no owner counts as
+the Organization's. `activity` goes to the whole Organization.
 
 Electron sends `list_workstreams` with a stable request ID, bounded limit,
 optional opaque `(access_or_creation_time, workstream_id)` cursor, and the system-row preference. WorkspaceDO responds
@@ -880,6 +889,24 @@ what that leaves exposed.
 Child archive admission uses the same `parent_archived` ticket field as parent archive. Already-open private-child sockets additionally check the versioned local archive mirror; there is no per-command parent RPC. See [work-stream durable objects](workstream-durable-object.md) for lifecycle delivery.
 
 ## Changelog
+
+### 2026-09-26 — Provider webhooks tell their connections' audience
+
+**What changed:** Provider webhook ingestion (GitHub, Linear, Notion) publishes
+`connector_connections` and `resources` per workspace to the audience of the
+connections the delivery matched: everyone when any of them there is the
+Organization's, otherwise only the owners of the personal ones. `activity`
+still goes to the whole Organization. Before, all three went to everyone.
+
+**Why:** It was the one background path left out of the audience narrowing in
+the entry below. A webhook for somebody's personal GitHub connection made every
+window in the Organization refetch its connections and resources, which only
+the owner can see change.
+
+**Consequences:** The audience is the connections the delivery matched before
+any connector filter, so a delivery a filter drops still tells those owners.
+A new webhook publisher has to pass an audience the same way, or it tells
+everyone.
 
 ### 2026-09-26 — A sync event names who it is for
 

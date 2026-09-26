@@ -143,8 +143,9 @@ the access-revocation walk finds nothing beneath an object whose sockets
 retirement already closed.
 
 The effect receivers a Queue redelivers to (`receiveChildEffects`,
-`applyWorkstreamDirectoryEffects`, `applyWorkstreamRegionalEffect`,
-`applyAutomationDirectory`) are the exception and are **dropped** in the gate
+`applyWorkstreamRegionalEffect`, `applyAutomationDirectory`, and
+`applyWorkstreamDirectoryEffects`, which no production path calls any more but
+the gate still lists) are the exception and are **dropped** in the gate
 instead: their consumers parse a `strictObject` acknowledgement and would treat
 a throw as a delivery failure, so the object answers the shape they expect. One
 read is dropped for the same reason: `WorkspaceDO.canReadWorkstream` answers
