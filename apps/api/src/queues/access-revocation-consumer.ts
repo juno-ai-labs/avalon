@@ -5,6 +5,7 @@ import {
   asWorkstreamId,
   type SubstreamId,
 } from "@rally/contracts";
+import { describeZodIssues } from "@rally/contracts/zod-diagnostics";
 
 import {
   artifactHostDOName,
@@ -297,10 +298,9 @@ export async function consumeAccessRevocationQueue(
     if (!parsed.success) {
       // A message this consumer cannot read will never become readable, so it
       // is acknowledged rather than retried into the dead-letter queue.
-      // `issues`, not `flatten().formErrors`: the latter carries only root-level
-      // problems, and every realistic failure here is a field — a malformed
-      // `workspaceId`, an unknown `target.scope`. Logged as empty, it would say
-      // a message was unreadable without saying which part. The `kind` is the
+      // `describeZodIssues` names each failing field — a malformed
+      // `workspaceId`, an unknown `target.scope` — by its declared path and
+      // issue code, and leaves the rejected values behind. The `kind` is the
       // one breadcrumb of the body itself worth keeping, and it is a literal
       // rather than anything a person wrote.
       const body: unknown = message.body;
@@ -308,8 +308,7 @@ export async function consumeAccessRevocationQueue(
         kind: body !== null && typeof body === "object" && "kind" in body
           ? String((body as { kind: unknown }).kind).slice(0, 64)
           : "absent",
-        errors: parsed.error.issues.slice(0, 4).map((issue) =>
-          `${issue.path.join(".") || "(root)"}: ${issue.code}`),
+        errors: describeZodIssues(parsed.error),
       });
       message.ack();
       return;
