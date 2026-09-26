@@ -3928,10 +3928,13 @@ describe("Durable Objects in the Workers runtime", () => {
       set(ids.recent, "processed", Date.now() - 89 * day);
       set(ids.pendingOld, "pending", old);
       set(ids.failedOld, "failed", old);
-      await state.storage.setAlarm(Date.now());
+      // An hour out, not now: workerd fires a due alarm on its own, and this
+      // read could then land between that alarm's awaits and before its reap.
+      // `runDurableObjectAlarm` runs it now whatever time it is set for.
+      await state.storage.setAlarm(Date.now() + 60 * 60_000);
     });
 
-    await runDurableObjectAlarm(stub);
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
 
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec<{ event_id: string }>(
