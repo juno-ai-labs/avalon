@@ -677,7 +677,6 @@ export interface SpaceDirectoryProjection {
   title: string;
   scope: "personal" | "workspace";
   appearance: SpaceAppearanceProjection | null;
-  archivedAt: number | null;
   createdByUserId: string | null;
   sourceCreatedAt: number;
   sourceUpdatedAt: number;
@@ -1392,10 +1391,9 @@ export class WorkspaceSpaceStorage {
       title: string;
       scope: string;
       appearance_json: string | null;
-      archived_at: number | null;
     } & Record<string, SqlStorageValue>>(
       `SELECT authority_generation, source_version, payload_hash, title, scope,
-              appearance_json, archived_at
+              appearance_json
          FROM spaces WHERE space_id = ?`,
       projection.spaceId,
     ).toArray()[0];
@@ -1413,10 +1411,9 @@ export class WorkspaceSpaceStorage {
     const appearanceJson = projection.appearance
       ? JSON.stringify({ icon: projection.appearance.iconKey, color: projection.appearance.colorKey })
       : current?.appearance_json ?? null;
-    // Archival is this object's alone: `finalizeArchive` and `restore` write
-    // `archived_at` here and nowhere else. The Space's conversation always
-    // reports it null, so taking the projection's value would un-archive a
-    // Space on its next rename, and leave it where `restore` refuses it.
+    // A projection never writes `archived_at`: only `finalizeArchive` and
+    // `restore` do. Taking the conversation's value, always null, un-archived a
+    // Space on its next rename and left it where `restore` refused it.
     const changed = !current
       || current.title !== projection.title
       || current.scope !== projection.scope
@@ -1426,7 +1423,7 @@ export class WorkspaceSpaceStorage {
          space_id, title, scope, appearance_json, archived_at,
          created_by_user_id, system_role, authority_generation, source_version,
          payload_hash, revision, created_at, updated_at, source_created_at, source_updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 1, ?, ?, ?, ?)
+       ) VALUES (?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?, 1, ?, ?, ?, ?)
        ON CONFLICT(space_id) DO UPDATE SET
          title = excluded.title,
          scope = excluded.scope,
@@ -1445,7 +1442,6 @@ export class WorkspaceSpaceStorage {
       projection.title,
       projection.scope,
       appearanceJson,
-      projection.archivedAt,
       projection.createdByUserId,
       projection.authorityGeneration,
       projection.sourceVersion,
