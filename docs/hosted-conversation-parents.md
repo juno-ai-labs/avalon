@@ -191,7 +191,11 @@ person's sockets), and the running background agents changing across a batch of
 child effects (compared before and after; the row goes to every reader). A
 batch of child effects collects both republishes into the same plan as its
 directory follow-ups, so the Channel goes out once per socket for the whole
-batch. An import republishes the Channel's row once it lands, and a reader
+batch: `HostedParentHost.publishChannelRow` queues into that plan rather than
+sending, and whoever constructs the parent with a plan owns sending it
+(`receiveChildEffects`, through `afterParentWrite`). The reasoning is
+[`websocket-architecture.md`](websocket-architecture.md#who-the-workspace-socket-tells-and-how-often)'s.
+An import republishes the Channel's row once it lands, and a reader
 bringing a Channel to the foreground wakes its Main.
 
 Losing a Channel is its row's tombstone, sent to the people the write took it
@@ -386,8 +390,7 @@ that breakout's members, running agents reaching every reader counted where
 each can look, a lost Channel tombstoned while the socket stays open, the
 current list after a resubscribe, nothing said for a pending parent, and Main
 woken by a foreground. `workspace-socket-fanout.test.ts` proves who else a row
-reaches: nobody outside a private Channel, the tombstone to each way of losing
-one, and one row per socket for a batch of effects.
+reaches ([`websocket-architecture.md`](websocket-architecture.md#testing)).
 `conversation-effect-queue.test.ts` proves directory and activity rows land in
 the write and a mention leaves on the Queue; `hosted-parent-outbox.test.ts`
 proves the drain's limits, the retry schedule, the `failed` state, the alarm's
@@ -476,26 +479,6 @@ Space in an Organization now shares one SQLite database and one socket set.
   row is follow-up work.
 
 ## Changelog
-
-### 2026-09-26 — A batch of child effects sends each Channel's row once
-
-**What changed:** `receiveChildEffects` gives the hosted parent a plan to put
-its republishes into instead of sending them, runs `afterChildEffects` before
-the directory follow-ups, and sends the plan once with them.
-
-**Why:** Each envelope in a batch is its own transaction with its own
-follow-up, and the parent's republish went out after them, so one turn's burst
-sent the Channel's row to every socket once per envelope and once more for the
-parent.
-
-**Considered and rejected:** A hold on the Organization object that deferred
-every send while any batch was in flight: concurrent requests interleave at
-awaits, so one batch's hold would have delayed another request's rows.
-
-**Consequences:** `HostedParentHost.publishChannelRow` may queue rather than
-send; a caller that constructs the parent with a plan owns sending it. The
-full entry, and the tombstone rule, are in
-[`websocket-architecture.md`](websocket-architecture.md#changelog).
 
 ### 2026-09-25 — Channel and Space parents move into WorkspaceDO
 
