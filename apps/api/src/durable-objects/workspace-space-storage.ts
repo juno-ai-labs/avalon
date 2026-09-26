@@ -1413,11 +1413,14 @@ export class WorkspaceSpaceStorage {
     const appearanceJson = projection.appearance
       ? JSON.stringify({ icon: projection.appearance.iconKey, color: projection.appearance.colorKey })
       : current?.appearance_json ?? null;
+    // Archival is this object's alone: `finalizeArchive` and `restore` write
+    // `archived_at` here and nowhere else. The Space's conversation always
+    // reports it null, so taking the projection's value would un-archive a
+    // Space on its next rename, and leave it where `restore` refuses it.
     const changed = !current
       || current.title !== projection.title
       || current.scope !== projection.scope
-      || current.appearance_json !== appearanceJson
-      || current.archived_at !== projection.archivedAt;
+      || current.appearance_json !== appearanceJson;
     this.storage.sql.exec(
       `INSERT INTO spaces (
          space_id, title, scope, appearance_json, archived_at,
@@ -1428,7 +1431,6 @@ export class WorkspaceSpaceStorage {
          title = excluded.title,
          scope = excluded.scope,
          appearance_json = excluded.appearance_json,
-         archived_at = excluded.archived_at,
          created_by_user_id = COALESCE(
            spaces.created_by_user_id, excluded.created_by_user_id
          ),
