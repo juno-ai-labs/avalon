@@ -47,7 +47,6 @@ import {
   deliverChildEffects,
   pendingChildEffects,
 } from "./helpers/conversation-effects";
-import { withHostedParent } from "./helpers/hosted-parent";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000ba0");
@@ -404,11 +403,12 @@ describe("a parent with two children", () => {
       }),
     ];
 
-    // Drive the hosted parent directly, below the facade, so its outbox rows
-    // can be read before the Organization applies them. The facade drains the
-    // directory kinds on every write, which is proved below.
-    const queued = await withHostedParent(workspace, SIBLING_WORKSTREAM_ID, (parent, state) => {
-      parent.reserveChild({
+    // Through the facade, the way the Queue consumer and the create route
+    // reach it, and read in the same invocation: the Channel's viewer row and
+    // the Breakout's land in the writes themselves, not in an outbox row a
+    // later drain applies.
+    await runInDurableObject(workspace, async (instance, state) => {
+      await instance.reserveChild({
         ...reserve,
         substreamId: asSubstreamId("0"),
         kind: "main",
@@ -422,48 +422,20 @@ describe("a parent with two children", () => {
           createdAt: "2026-09-01T12:00:00.000Z",
         },
       });
-      parent.reserveChild({ ...reserve, substreamId: SIBLING_CHILD_ID, kind: "child" });
+      await instance.reserveChild({ ...reserve, substreamId: SIBLING_CHILD_ID, kind: "child" });
       for (const envelope of childEffects) {
-        parent.receiveChildEffects({ substreamId: envelope.substreamId, envelopes: [envelope] });
+        await instance.receiveChildEffects({ substreamId: envelope.substreamId, envelopes: [envelope] });
       }
-      return state.storage.sql.exec<{ payload_json: string }>(
-        `SELECT payload_json FROM parent_outbox WHERE parent_id = ? AND effect_kind = 'directory_user'
-          ORDER BY created_at, message_id`,
+      const perChild = state.storage.sql.exec<{ substream_id: string }>(
+        `SELECT substream_id FROM parent_child_viewer_projections WHERE parent_id = ? AND user_id = ? ORDER BY substream_id`,
         SIBLING_WORKSTREAM_ID,
-      ).toArray().map((row) => ParentEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
-    });
-
-    const perChild = await runInDurableObject(workspace, (_instance, state) => state.storage.sql.exec<{
-      substream_id: string;
-    }>(
-      `SELECT substream_id FROM parent_child_viewer_projections WHERE parent_id = ? AND user_id = ? ORDER BY substream_id`,
-      SIBLING_WORKSTREAM_ID,
-      USER_ID,
-    ).toArray());
-    expect(perChild.map((row) => row.substream_id)).toEqual(["0", SIBLING_CHILD_ID]);
-
-    // Main advances the Channel row, while the Breakout carries its own tagged
-    // projection to the Space dashboard. The Breakout must not be folded into
-    // Main even though both projections leave the parent. The first Main row is the creator's provisional row, which the reserve
-    // now publishes through the same outbox rather than by a call back into
-    // the Organization.
-    expect(queued).toHaveLength(3);
-    const main = queued.filter((envelope) => envelope.substreamId === undefined);
-    expect(main).toMatchObject([
-      { sourceVersion: 1, effect: { kind: "directory_user", unreadCount: 0, listable: true } },
-      { sourceVersion: 2, effect: { kind: "directory_user", unreadCount: 2, listable: true } },
-    ]);
-    expect(queued.find((envelope) => envelope.substreamId === SIBLING_CHILD_ID)).toMatchObject({
-      substreamId: SIBLING_CHILD_ID,
-      sourceVersion: 1,
-      effect: { kind: "directory_user", unreadCount: 3, listable: true },
-    });
-
-    // Any facade write drains the directory kinds locally; this one writes
-    // nothing else. Read in the same invocation, so the alarm's own drain
-    // cannot be what applied them.
-    await runInDurableObject(workspace, async (instance, state) => {
-      await instance.flushProvisionalDirectory({ workspaceId: WORKSPACE_ID, parentId: SIBLING_WORKSTREAM_ID });
+        USER_ID,
+      ).toArray();
+      expect(perChild.map((row) => row.substream_id)).toEqual(["0", SIBLING_CHILD_ID]);
+      // Main advances the Channel row (the creator's provisional row at
+      // version 1, then the child's unread at 2), while the Breakout carries
+      // its own tagged projection to the Space dashboard and is not folded
+      // into Main.
       expect(state.storage.sql.exec<{ unread_count: number; waterline: number }>(
         `SELECT unread_count, waterline FROM channel_viewers WHERE workstream_id = ? AND user_id = ?`,
         SIBLING_WORKSTREAM_ID,

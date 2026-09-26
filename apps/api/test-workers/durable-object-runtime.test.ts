@@ -1315,8 +1315,10 @@ describe("Durable Objects in the Workers runtime", () => {
       archivedAt: null,
       nextTerminalActionAt,
     });
-    // Driven on the hosted parent below the Organization facade, so nothing
-    // drains what the parent queued before it is read (docs/testing.md).
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    // Driven on the hosted parent below the Organization facade. What the
+    // parent published is read from its own record of each projection
+    // version, which the directory applied in the same transaction.
     const forwarded = await withHostedParent(stub, WORKSTREAM_ID, (parent, state) => {
       const testable = parent as unknown as TestableHostedParent;
       const deadline = () => state.storage.sql.exec<{ next_terminal_action_at: number | null }>(
@@ -1343,14 +1345,12 @@ describe("Durable Objects in the Workers runtime", () => {
       expect(deadline()).toBe(Date.parse(mainDue));
       expect(parent.childTerminalDeadlines({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID }))
         .toEqual({ items: [{ substreamId: "0", nextTerminalActionAt: mainDue }] });
-      return state.storage.sql.exec<{ payload_json: string }>(
-        `SELECT payload_json FROM parent_outbox
-          WHERE parent_id = ? AND partition_key = 'common'
-          ORDER BY created_at, message_id`,
+      return state.storage.sql.exec<{ state_json: string }>(
+        `SELECT state_json FROM parent_state_changes
+          WHERE parent_id = ? AND state_key = 'common'
+          ORDER BY waterline`,
         WORKSTREAM_ID,
-      ).toArray().map((row) => (JSON.parse(row.payload_json) as {
-        effect: { title: string; nextTerminalActionAt: string | null };
-      }).effect);
+      ).toArray().map((row) => JSON.parse(row.state_json) as { title: string; nextTerminalActionAt: string | null });
     });
     // Every row the workspace hears is the main conversation's, carrying
     // whichever deadline was earliest at the time.
@@ -1385,6 +1385,14 @@ describe("Durable Objects in the Workers runtime", () => {
       youAreMentioned,
       listable: true,
     });
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    await stub.applyMemberStatus({
+      workspaceId: WORKSPACE_ID, sequence: 1, removed: false,
+      relationship: {
+        workspaceId: WORKSPACE_ID, userId: USER_ID, accessClass: "member", role: "member",
+        status: "active", incarnation: "existing-member", revision: 1,
+      },
+    });
     await withHostedParent(stub, WORKSTREAM_ID, (parent, state) => {
       const testable = parent as unknown as TestableHostedParent;
       for (const [substreamId, envelopes] of [
@@ -1413,26 +1421,26 @@ describe("Durable Objects in the Workers runtime", () => {
       expect(effects).toHaveLength(2);
       expect(effects.reduce((sum, effect) => sum + effect.unreadCount, 0)).toBe(5);
       expect(effects.some((effect) => effect.youAreMentioned)).toBe(true);
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM parent_outbox WHERE parent_id = ? AND partition_key IN ('common', ?)`,
-        WORKSTREAM_ID,
-        `user:${USER_ID}`,
-      ).one().count).toBe(2);
+      // Main published once per key, and the Organization's rows are Main's.
       expect(state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM parent_state_changes
           WHERE parent_id = ? AND state_key IN ('common', ?)`,
         WORKSTREAM_ID,
         `user:${USER_ID}`,
       ).one().count).toBe(2);
-      state.storage.sql.exec(
-        `UPDATE parent_outbox SET state = 'inflight' WHERE parent_id = ? AND partition_key = 'common'`,
-        WORKSTREAM_ID,
-      );
-      state.storage.sql.exec(
-        `DELETE FROM parent_outbox WHERE parent_id = ? AND partition_key = ?`,
-        WORKSTREAM_ID,
-        `user:${USER_ID}`,
-      );
+      const directory = () => ({
+        channel: state.storage.sql.exec(
+          `SELECT exact_state, waterline FROM channels WHERE workstream_id = ?`, WORKSTREAM_ID,
+        ).toArray(),
+        viewer: state.storage.sql.exec(
+          `SELECT unread_count, you_are_mentioned FROM channel_viewers WHERE workstream_id = ? AND user_id = ?`,
+          WORKSTREAM_ID, USER_ID,
+        ).toArray(),
+      });
+      expect(directory()).toEqual({
+        channel: [{ exact_state: "completed", waterline: 1 }],
+        viewer: [{ unread_count: 2, you_are_mentioned: 0 }],
+      });
       testable.applyChildEnvelope(
         CHILD_SUBSTREAM_ID,
         childEffectEnvelope(
@@ -1441,14 +1449,14 @@ describe("Durable Objects in the Workers runtime", () => {
           2,
         ),
       );
-      const replacements = state.storage.sql.exec<{ source_version: number; state: string }>(
-        `SELECT source_version, state FROM parent_outbox WHERE parent_id = ? AND partition_key = 'common'
-          ORDER BY source_version`,
-        WORKSTREAM_ID,
-      ).toArray();
       // The later private update is retained locally, not emitted as Main.
-      expect(replacements).toEqual([{ source_version: 1, state: "inflight" }]);
-      state.storage.sql.exec(`DELETE FROM parent_outbox WHERE parent_id = ?`, WORKSTREAM_ID);
+      expect(state.storage.sql.exec<{ waterline: number }>(
+        `SELECT waterline FROM parent_state_changes WHERE parent_id = ? AND state_key = 'common'`,
+        WORKSTREAM_ID,
+      ).toArray()).toEqual([{ waterline: 1 }]);
+      expect(directory().channel).toEqual([{ exact_state: "completed", waterline: 1 }]);
+      expect(state.storage.sql.exec(`SELECT message_id FROM parent_outbox WHERE parent_id = ?`, WORKSTREAM_ID)
+        .toArray()).toEqual([]);
     });
   });
 

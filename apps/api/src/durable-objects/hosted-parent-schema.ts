@@ -148,9 +148,13 @@ export const HOSTED_PARENT_SCHEMA_STATEMENTS: readonly string[] = [
   ) STRICT`,
   `CREATE INDEX parent_state_changes_latest_idx
     ON parent_state_changes(parent_id, state_key, waterline DESC)`,
+  // Only work that leaves the object: a notification to deliver, a mention to
+  // snapshot, a revoked Channel grant's Sidekick revocation, and whatever the
+  // legacy object still had pending at import. A row that cannot be read is
+  // kept as `failed` with its code, for an operator, rather than retried.
   `CREATE TABLE parent_outbox (
-    message_id TEXT PRIMARY KEY,
     parent_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
     partition_key TEXT NOT NULL,
     source_version INTEGER NOT NULL CHECK (source_version > 0),
     source_epoch INTEGER NOT NULL CHECK (source_epoch > 0),
@@ -160,10 +164,12 @@ export const HOSTED_PARENT_SCHEMA_STATEMENTS: readonly string[] = [
     )),
     payload_json TEXT NOT NULL CHECK (json_valid(payload_json) AND length(CAST(payload_json AS BLOB)) <= 1900000),
     payload_hash TEXT NOT NULL,
-    state TEXT NOT NULL CHECK (state IN ('pending', 'inflight')),
+    state TEXT NOT NULL CHECK (state IN ('pending', 'inflight', 'failed')),
     attempts INTEGER NOT NULL CHECK (attempts >= 0),
     not_before INTEGER NOT NULL,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    last_error_code TEXT,
+    PRIMARY KEY (parent_id, message_id)
   ) STRICT`,
   `CREATE INDEX parent_outbox_delivery_idx
     ON parent_outbox(state, not_before, created_at, message_id)`,
@@ -362,15 +368,18 @@ export const HOSTED_PARENT_SCHEMA_STATEMENTS: readonly string[] = [
 
   // Post-commit work a directory batch owes: written in the batch's own
   // transaction, run straight after the commit, taken by the alarm if that run
-  // did not finish.
+  // did not finish. A row that does not parse is kept as `failed` with its
+  // code rather than retried.
   `CREATE TABLE workspace_directory_followups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     followup_json TEXT NOT NULL CHECK (json_valid(followup_json)),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     not_before INTEGER NOT NULL,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'failed')),
+    last_error_code TEXT
   ) STRICT`,
-  `CREATE INDEX workspace_directory_followups_due_idx ON workspace_directory_followups(not_before)`,
+  `CREATE INDEX workspace_directory_followups_due_idx ON workspace_directory_followups(state, not_before)`,
 
   // Each person's workspace relationship as this object last heard it: from a
   // relationship change event (sequence > 0, in D1's order) or, for someone it
