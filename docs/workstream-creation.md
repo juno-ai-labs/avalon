@@ -197,8 +197,8 @@ anchor. In one SQLite transaction it resolves General when the request named no
 Space, writes each membership `active`, stages the defaults each Space hands a
 new member, reserves the main conversation with its provisional directory row,
 and records which Space supplied which reader on the Channel's own authority
-(`applySpaceAccessSource` in its `bornWithSourceApplied` mode, called inside the
-object rather than over RPC). It answers with the Spaces it read, and the
+(`applySpaceAccessSource` with `commitWithPlan`, called inside the object rather
+than over RPC). It answers with the Spaces it read, and the
 coordinator derives the opening audience from them with the same
 `resolveSpaceWorkstreamStart` the object used for the directory row's scope.
 
@@ -588,9 +588,10 @@ already happened.
 **Consequences:** A Space refusal now leaves an unactivated address row keyed
 to the receipt's id, which a retry reuses. A failure after the call leaves an
 active placement and a listed Channel, as a failure after the old settlement
-did, and a retry converges on it. The staged RPCs stay for adding an existing
-Channel to a Space, for the Slack path's `reserveChild` and flush, and for any
-Worker still running the previous coordinator during a deploy.
+did, and a retry under the same client key converges on it; a client that never
+retries leaves that Channel listed with a conversation that never opened.
+Adding an existing Channel to a Space is `addSpaceChannel`
+([`spaces.md`](spaces.md#membership)); the staged membership RPCs are deleted.
 
 ### 2026-09-24 — The caller names the Channel's id, so the sidebar lists it on the keystroke
 

@@ -1300,6 +1300,26 @@ export class HostedParent {
     return ConversationParentReserveChildResultSchema.parse({ reserved: true, authorityGeneration });
   }
 
+  /**
+   * Delete a parent whose main conversation was reserved and never opened:
+   * the rows `reserveChild` and its projections wrote. Refuses (false) once
+   * any child projection has arrived, because by then a conversation exists
+   * that publishes to this parent. Runs in the caller's transaction.
+   */
+  discardUnopenedReservation(): boolean {
+    if (first(this.sql.exec("SELECT 1 AS one FROM parent_child_projections WHERE parent_id = ? LIMIT 1", this.parentId))) {
+      return false;
+    }
+    this.sql.exec("DELETE FROM parent_outbox WHERE parent_id = ?", this.parentId);
+    this.sql.exec("DELETE FROM parent_state_changes WHERE parent_id = ?", this.parentId);
+    this.sql.exec("DELETE FROM parent_state_clock WHERE parent_id = ?", this.parentId);
+    this.sql.exec("DELETE FROM parent_projection_keys WHERE parent_id = ?", this.parentId);
+    this.sql.exec("DELETE FROM parent_children WHERE parent_id = ?", this.parentId);
+    this.sql.exec("DELETE FROM parent_metadata WHERE parent_id = ?", this.parentId);
+    this.sql.exec("DELETE FROM parent_imports WHERE parent_id = ?", this.parentId);
+    return true;
+  }
+
   private insertProvisionalMetadata(
     request: ConversationParentReserveChildRequest,
     directory: NonNullable<ConversationParentReserveChildRequest["directory"]>,
@@ -1458,6 +1478,23 @@ export class HostedParent {
     });
   }
 
+  /** One Space's source as recorded here, with the readers it seated; null when it has none. */
+  recordedSpaceSource(spaceId: string): {
+    scope: "personal" | "workspace"; participantUserIds: UserId[]; spaceRevision: number;
+    membershipGeneration: number; suppliedUserIds: UserId[];
+  } | null {
+    const access = this.channelAccess();
+    const source = access.source(spaceId);
+    if (!source) return null;
+    return {
+      scope: source.scope,
+      participantUserIds: [...source.participantUserIds],
+      spaceRevision: source.spaceRevision,
+      membershipGeneration: source.membershipGeneration,
+      suppliedUserIds: access.suppliedReaders(spaceId),
+    };
+  }
+
   readPersistedSpaceAccessSources(
     input: z.infer<typeof ReadPersistedSpaceAccessSourcesRequestSchema>,
   ): ChannelAccessSources["spaces"] {
@@ -1501,13 +1538,13 @@ export class HostedParent {
     this.assertParent(request.workspaceId, request.parentId);
     const access = this.channelAccess();
     const now = Date.now();
-    const bornWithSourceApplied = request.bornWithSourceApplied ?? false;
+    const commitWithPlan = request.commitWithPlan ?? false;
     return access.operate({
       operationId: request.operationId,
       request: {
         kind: "apply_space_source", spaceId: request.spaceId, scope: request.scope,
         participantUserIds: request.participantUserIds, spaceRevision: request.spaceRevision,
-        membershipGeneration: request.membershipGeneration, bornWithSourceApplied,
+        membershipGeneration: request.membershipGeneration, commitWithPlan,
       },
       resultSchema: ApplySpaceAccessSourceResultSchema,
       now,
@@ -1519,7 +1556,7 @@ export class HostedParent {
           current: request.channel.readers,
           source: { scope: request.scope, participantUserIds: request.participantUserIds },
         });
-        if (!bornWithSourceApplied) return { ok: true as const, plan };
+        if (!commitWithPlan) return { ok: true as const, plan };
         const committed = this.commitSpaceAccessSource(access, {
           spaceId: request.spaceId,
           source: {

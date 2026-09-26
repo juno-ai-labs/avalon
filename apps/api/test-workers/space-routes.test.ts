@@ -40,10 +40,13 @@ import {
 import { createApp } from "../src/app";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
+import { SpaceService } from "../src/services/space-service";
+import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
 import { deliverEffectsToWorkspaceInOrder } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
+import { changeRelationships } from "./helpers/workspace-relationship-events";
 
 /** Its own workspace id: object storage is reset per case, object names are not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000d200");
@@ -330,6 +333,61 @@ describe("POST /spaces", () => {
       .toEqual([expect.objectContaining({ spaceId: created.id, scope: "workspace" })]);
   });
 
+  it("given a conversation that cannot be provisioned, when a Space is created, then the Space is taken back rather than left listed", async () => {
+    // The conversation initializes and then its appearance write fails, the
+    // last step of provisioning: a Space listed at this point has a
+    // conversation nobody can finish, and the next attempt mints a new id.
+    const appearance = vi.spyOn(WorkstreamObjectClient.prototype, "setAppearance")
+      .mockRejectedValueOnce(new Error("conversation_unreachable"));
+
+    const failed = await request("/spaces", OWNER_AUTH, {
+      name: "Company", iconKey: "briefcase", colorKey: "blue", scope: "workspace",
+    });
+    appearance.mockRestore();
+
+    expect(failed).toMatchObject({ status: 503, body: { error: { code: "space_authority_unreachable" } } });
+    expect((await spaceDirectories(OWNER)).active.items.map((item) => item.name)).not.toContain("Company");
+    expect(await workspace().runInspectionSql({
+      sql: `SELECT (SELECT COUNT(*) FROM spaces) AS spaces,
+                   (SELECT COUNT(*) FROM parent_metadata WHERE parent_kind = 'space') AS parents`,
+      bindings: [],
+    })).toMatchObject({ rows: [{ spaces: 0, parents: 0 }] });
+
+    // And a retry succeeds as an ordinary creation.
+    const retried = await createSpace("workspace", "Company");
+    expect((await spaceDirectories(OWNER)).active.items.map((item) => item.id)).toContain(retried.id);
+  });
+
+  it("given a Space whose conversation has published, when its creator asks for it back, then it stays", async () => {
+    const created = await createSpace("workspace", "Company");
+    await settleSpaceEffects(created.id);
+
+    await expect(workspace().cancelSpaceReservation({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: asSpaceId(created.id),
+    })).resolves.toEqual({ cancelled: false });
+    expect((await spaceDirectories(OWNER)).active.items.map((item) => item.id)).toContain(created.id);
+  });
+
+  it("given a caller WorkspaceDO refuses, when they create a Space, then no anchor is written for it", async () => {
+    // A guest: an active Organization relationship, and no Space writes.
+    await changeRelationships(routeEnv(), WORKSPACE_ID, [MEMBER],
+      env.DB.prepare("UPDATE workspace_members SET access_class = 'guest', role = NULL WHERE workspace_id = ? AND user_id = ?")
+        .bind(WORKSPACE_ID, MEMBER));
+    const anchors = async () => (await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM workstream_authority_routes WHERE workspace_id = ?",
+    ).bind(WORKSPACE_ID).first<{ count: number }>())?.count;
+    const before = await anchors();
+
+    // Past the route's own session check, which answers a guest before any
+    // Space code runs: this is about the order inside the service.
+    const refused = await new SpaceService(routeEnv(), MEMBER_AUTH).create({
+      name: "Theirs", iconKey: "briefcase", colorKey: "blue", scope: "workspace",
+    }).then(() => null, (error: unknown) => error);
+
+    expect(refused).toMatchObject({ status: 403, code: "space_access_denied" });
+    expect(await anchors()).toBe(before);
+  });
+
   it("keeps a personal Space personal, and out of a second member's sidebar", async () => {
     const created = await createSpace("personal");
     expect(created.scope).toBe("personal");
@@ -508,7 +566,7 @@ describe("POST /spaces/:id/channels/:workstreamId/move", () => {
 });
 
 describe("a Space and its hosted parent", () => {
-  it("given a parent reservation that fails, when a Space is reserved with its parent, then no Space row commits", async () => {
+  it("given a parent reservation that fails, when a Space is reserved, then no Space row commits", async () => {
     const spaceId = asSpaceId("00000000-0000-7000-8000-00000000d2a1");
     // A parent row for this id under another Organization: `reserveChild`
     // finds it and refuses the identity, inside the reservation's transaction.
@@ -530,7 +588,6 @@ describe("a Space and its hosted parent", () => {
       userId: OWNER,
       space: { name: "Company", iconKey: "briefcase", colorKey: "blue", scope: "workspace" },
       spaceId,
-      reserveParent: true,
     }).then(() => null, (error: unknown) => error);
 
     expect(failure).toBeInstanceOf(Error);
@@ -846,4 +903,139 @@ describe("a Channel's Space membership, driven from WorkspaceDO", () => {
       .map((message) => (message.body as { type?: unknown }).type);
     expect(sent).not.toContain("space_intent_resume");
   });
+
+  it("given a removal that dies before the Channel is asked, when the alarm resumes it, then the readers only that Space supplied are withdrawn", async () => {
+    const mine = await personalSpace("Mine", [OWNER]);
+    const hiring = await personalSpace("Hiring", [OWNER, MEMBER]);
+    const workstreamId = await createChannel("remove-replayed", [asSpaceId(mine.id), asSpaceId(hiring.id)]);
+    expect(await seated(workstreamId, MEMBER)).toBe(true);
+    // The first canonical operation fails: the plan transaction has already
+    // withdrawn the source from the Channel's record, and nobody was removed.
+    const unreachable = vi.spyOn(WorkstreamObjectClient.prototype, "removeParticipant")
+      .mockRejectedValueOnce(new Error("conversation_unreachable"));
+
+    const failed = await request(`/spaces/${hiring.id}/channels/${workstreamId}`, OWNER_AUTH, undefined, "DELETE");
+    unreachable.mockRestore();
+
+    expect(failed.status).toBe(503);
+    expect(await seated(workstreamId, MEMBER)).toBe(true);
+    expect(await intentStates(workstreamId, "remove")).toEqual(["pending"]);
+
+    await resumeOnAlarm();
+
+    // The resume replays the retraction the plan recorded, so the reader the
+    // departing Space supplied is withdrawn, not left as a direct reader.
+    expect(await seated(workstreamId, MEMBER)).toBe(false);
+    expect(await seated(workstreamId, OWNER)).toBe(true);
+    expect(await membershipState(workstreamId, hiring.id)).toBe("removed");
+    expect(await intentStates(workstreamId, "remove")).toEqual(["settled"]);
+  });
+
+  it("given an add that dies after seating a reader, when the alarm resumes it, then the membership settles with that reader attributed", async () => {
+    const mine = await personalSpace("Mine", [OWNER]);
+    const hiring = await personalSpace("Hiring", [OWNER, MEMBER]);
+    const workstreamId = await createChannel("add-replayed", [asSpaceId(mine.id)]);
+
+    await addDyingAfterSeating(workstreamId, hiring.id);
+    expect(await membershipState(workstreamId, hiring.id)).toBe("joining");
+
+    await resumeOnAlarm();
+
+    expect(await membershipState(workstreamId, hiring.id)).toBe("active");
+    expect(await intentStates(workstreamId, "add")).toEqual(["settled"]);
+    expect(await seated(workstreamId, MEMBER)).toBe(true);
+    expect(await spaceReaders(workstreamId, hiring.id)).toEqual([MEMBER]);
+  });
+
+  it("given an add that dies after seating a reader, when the Space moves on before the resume, then that reader is withdrawn with the add", async () => {
+    const mine = await personalSpace("Mine", [OWNER]);
+    const hiring = await personalSpace("Hiring", [OWNER, MEMBER]);
+    const workstreamId = await createChannel("add-superseded", [asSpaceId(mine.id)]);
+
+    await addDyingAfterSeating(workstreamId, hiring.id);
+    // The Space's audience moves after the add was staged: applying the Space
+    // as it is now would be an add nobody asked for.
+    const moved = await workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: asSpaceId(hiring.id),
+      operationId: crypto.randomUUID(),
+      audience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
+    });
+    if (!moved.ok) throw new Error(moved.code);
+
+    await resumeOnAlarm();
+
+    expect(await intentStates(workstreamId, "add")).toEqual(["cancelled"]);
+    expect(await membershipState(workstreamId, hiring.id)).toBe("removed");
+    // The reader the dead attempt seated was recorded as this Space's when it
+    // was planned, so abandoning the add takes them out again.
+    expect(await seated(workstreamId, MEMBER)).toBe(false);
+    expect((await channelSpaceSources(workstreamId)).map((source) => source.spaceId)).toEqual([mine.id]);
+  });
+
+  it("given a removal still in flight, when the alarm reaches its intent, then the alarm leaves it to the request", async () => {
+    const mine = await personalSpace("Mine", [OWNER]);
+    const hiring = await personalSpace("Hiring", [OWNER, MEMBER]);
+    const workstreamId = await createChannel("remove-in-flight", [asSpaceId(mine.id), asSpaceId(hiring.id)]);
+    const original = WorkstreamObjectClient.prototype.removeParticipant;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let removals = 0;
+    const slow = vi.spyOn(WorkstreamObjectClient.prototype, "removeParticipant")
+      .mockImplementation(async function (this: WorkstreamObjectClient, ...args) {
+        removals += 1;
+        // Only the request's own call waits; a second run of the intent would not.
+        if (removals === 1) await held;
+        return original.apply(this, args);
+      });
+
+    const pending = request(`/spaces/${hiring.id}/channels/${workstreamId}`, OWNER_AUTH, undefined, "DELETE");
+    for (let attempt = 0; attempt < 200 && removals === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(removals).toBe(1);
+
+    await resumeOnAlarm();
+    // The alarm claimed the intent and left it: the request holding it is
+    // the one finishing it.
+    expect(removals).toBe(1);
+
+    release();
+    expect(await pending).toMatchObject({ status: 200 });
+    slow.mockRestore();
+    expect(removals).toBe(1);
+    expect(await seated(workstreamId, MEMBER)).toBe(false);
+    expect(await intentStates(workstreamId, "remove")).toEqual(["settled"]);
+  });
 });
+
+/**
+ * An add whose Worker dies after the Channel seated the Space's reader: the
+ * seat goes through and the request then never comes back, so the object is
+ * evicted with the intent staged and the membership `joining`.
+ */
+async function addDyingAfterSeating(workstreamId: WorkstreamId, spaceId: string): Promise<void> {
+  const original = WorkstreamObjectClient.prototype.addParticipant;
+  const hang = vi.spyOn(WorkstreamObjectClient.prototype, "addParticipant")
+    .mockImplementation(async function (this: WorkstreamObjectClient, ...args) {
+      await original.apply(this, args);
+      return new Promise(() => undefined);
+    });
+  const pending = request(`/spaces/${spaceId}/channels`, OWNER_AUTH, { workstreamId })
+    .then(() => null, (error: unknown) => error);
+  for (let attempt = 0; attempt < 400 && !await seated(workstreamId, MEMBER); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  expect(await seated(workstreamId, MEMBER)).toBe(true);
+  await runInDurableObject(workspace(), (_instance, state) => state.abort("add_died_after_seating"))
+    .then(() => null, (error: unknown) => error);
+  await pending;
+  hang.mockRestore();
+}
+
+/** One alarm with every unsettled intent due: the alarm resumes each in place. */
+async function resumeOnAlarm(): Promise<void> {
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec("UPDATE space_intents SET not_before = 0 WHERE state IN ('pending', 'applied')");
+  });
+  await runDurableObjectAlarm(workspace());
+}

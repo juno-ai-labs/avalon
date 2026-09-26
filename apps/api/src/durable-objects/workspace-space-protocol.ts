@@ -66,13 +66,6 @@ export const WorkspaceSpaceReserveRequestSchema = SpaceActorSchema.extend({
    * that lets the Organization allocate it.
    */
   spaceId: SpaceIdSchema.optional(),
-  /**
-   * Reserve the Space's hosted parent (its metadata and provisional directory
-   * row) in the same transaction as the Space. Omitted, the Space is written
-   * alone at source version zero and the caller reserves the parent itself,
-   * which is what a Worker from before this field did.
-   */
-  reserveParent: z.literal(true).optional(),
 }).strict();
 export type WorkspaceSpaceReserveRequest = z.infer<typeof WorkspaceSpaceReserveRequestSchema>;
 
@@ -183,16 +176,6 @@ export const WorkspaceSpaceMembershipMoveRequestSchema = SpaceActorSchema.extend
 }).strict();
 export type WorkspaceSpaceMembershipMoveRequest = z.infer<typeof WorkspaceSpaceMembershipMoveRequestSchema>;
 
-export const WorkspaceSpaceMembershipMoveSettleRequestSchema = WorkspaceSpaceMembershipMoveRequestSchema.extend({
-  operationId: IdSchema,
-  sourceSpaceRevision: z.number().int().positive(),
-  sourceMembershipGeneration: z.number().int().positive(),
-  targetSpaceRevision: z.number().int().positive(),
-  targetMembershipGeneration: z.number().int().positive(),
-}).strict();
-export type WorkspaceSpaceMembershipMoveSettleRequest =
-  z.infer<typeof WorkspaceSpaceMembershipMoveSettleRequestSchema>;
-
 /**
  * A refusal with legacy reader details and actionable Channel ids.
  *
@@ -271,25 +254,6 @@ export const WorkspaceChannelReservationResultSchema = z.discriminatedUnion("sta
 ]);
 export type WorkspaceChannelReservationResult = z.infer<typeof WorkspaceChannelReservationResultSchema>;
 
-export const WorkspaceSpaceMembershipMovePlanResultSchema = z.union([
-  z.strictObject({
-    ok: z.literal(true),
-    equivalentAudience: z.literal(false),
-  }),
-  z.strictObject({
-    ok: z.literal(true),
-    equivalentAudience: z.literal(true),
-    operationId: IdSchema,
-    source: SpaceSummarySchema,
-    target: SpaceSummarySchema,
-    sourceMembershipGeneration: z.number().int().positive(),
-    targetMembershipGeneration: z.number().int().positive(),
-  }),
-  WorkspaceSpaceAudienceFailureSchema,
-]);
-export type WorkspaceSpaceMembershipMovePlanResult =
-  z.infer<typeof WorkspaceSpaceMembershipMovePlanResultSchema>;
-
 /**
  * `moveSpaceMembership`: an equal-audience move committed in one WorkspaceDO
  * transaction, or `moved: false` when the caller has to take the add-then-remove
@@ -307,12 +271,6 @@ export const WorkspaceSpaceMembershipMoveOutcomeSchema = z.union([
   WorkspaceSpaceAudienceFailureSchema,
 ]);
 export type WorkspaceSpaceMembershipMoveOutcome = z.infer<typeof WorkspaceSpaceMembershipMoveOutcomeSchema>;
-
-export const WorkspaceSpaceMembershipMoveResultSchema = z.union([
-  z.strictObject({ ok: z.literal(true), source: SpaceSummarySchema, target: SpaceSummarySchema }),
-  WorkspaceSpaceAudienceFailureSchema,
-]);
-export type WorkspaceSpaceMembershipMoveResult = z.infer<typeof WorkspaceSpaceMembershipMoveResultSchema>;
 
 export const WorkspaceSpaceMutationResultSchema = z.union([
   z.strictObject({ ok: z.literal(true), space: SpaceSummarySchema }),
@@ -495,15 +453,12 @@ export const SpaceIntentKindSchema = z.enum(["add", "remove", "move", "audience"
 export type SpaceIntentKind = z.infer<typeof SpaceIntentKindSchema>;
 
 /**
- * One unsettled Space intent, republished so an interrupted operation finishes.
+ * One unsettled Space intent on the activity Queue.
  *
- * The alarm publishes these only for a stored `move`, which the Worker's
- * `SpaceService.resumeIntent` finishes; every other kind is resumed in
- * WorkspaceDO itself. The consumer still accepts every kind, so messages queued
- * before that finish (for anything but a `move`, by asking WorkspaceDO to
- * resume the intent from its row). Everything the consumer needs to address
- * the work is on the message, because by the time it runs the request that
- * created the intent is long gone.
+ * Nothing publishes these: the alarm resumes every intent in WorkspaceDO. The
+ * consumer accepts every kind so a message already queued finishes, by asking
+ * WorkspaceDO to resume the intent from its row (`resumeSpaceIntent`); it
+ * reads only the address and the requester.
  */
 export const SpaceIntentResumeQueueMessageSchema = z.strictObject({
   type: z.literal("space_intent_resume"),
@@ -530,12 +485,6 @@ export const SpaceIntentResumeQueueMessageSchema = z.strictObject({
   requestedByUserId: UserIdSchema,
 }).strict();
 export type SpaceIntentResumeQueueMessage = z.infer<typeof SpaceIntentResumeQueueMessageSchema>;
-
-export const WorkspaceSpaceGeneralResultSchema = z.union([
-  z.strictObject({ ok: z.literal(true), space: SpaceSummarySchema, created: z.boolean() }),
-  SpaceFailureSchema,
-]);
-export type WorkspaceSpaceGeneralResult = z.infer<typeof WorkspaceSpaceGeneralResultSchema>;
 
 export const WorkspaceSpaceGeneralOpenResultSchema = z.union([
   z.strictObject({ ok: z.literal(true), space: SpaceSummarySchema, created: z.boolean() }),
@@ -716,6 +665,13 @@ export const WorkspaceSpaceChannelChangeRequestSchema = z.strictObject({
 });
 export type WorkspaceSpaceChannelChangeRequest = z.infer<typeof WorkspaceSpaceChannelChangeRequestSchema>;
 
+/** `placeChannelInGeneral`: the cutover homing one Channel, as one of its people. */
+export const WorkspaceGeneralPlacementRequestSchema = z.strictObject({
+  auth: SpaceActorAuthSchema,
+  workstreamId: WorkstreamIdSchema,
+});
+export type WorkspaceGeneralPlacementRequest = z.infer<typeof WorkspaceGeneralPlacementRequestSchema>;
+
 /**
  * Why a Space operation that reached a Channel did not finish, with what the
  * caller needs to say so.
@@ -788,8 +744,8 @@ export const WorkspaceSpaceMemberWalkResultSchema = z.union([
 export type WorkspaceSpaceMemberWalkResult = z.input<typeof WorkspaceSpaceMemberWalkResultSchema>;
 
 /**
- * `resumeSpaceIntent`: finish one staged intent in WorkspaceDO as the actor
- * the caller authenticated. The intent row, not the message that named it, is
+ * `resumeSpaceIntent`: one step of one staged intent in WorkspaceDO, as the
+ * actor the caller authenticated. The intent row, not the message that named it, is
  * what is resumed, because its cursor and fences are the current ones.
  */
 export const WorkspaceSpaceIntentResumeRequestSchema = z.strictObject({
@@ -798,8 +754,12 @@ export const WorkspaceSpaceIntentResumeRequestSchema = z.strictObject({
 });
 export type WorkspaceSpaceIntentResumeRequest = z.infer<typeof WorkspaceSpaceIntentResumeRequestSchema>;
 
+/**
+ * `progressed`: a walk finished one page and has more; the intent is still
+ * unsettled with its cursor advanced.
+ */
 export const WorkspaceSpaceIntentResumeResultSchema = z.union([
-  z.strictObject({ ok: z.literal(true), outcome: z.literal("settled") }),
+  z.strictObject({ ok: z.literal(true), outcome: z.enum(["settled", "progressed"]) }),
   z.strictObject({ ok: z.literal(true), outcome: z.literal("abandoned"), reason: z.string().min(1).max(200) }),
   z.strictObject({ ok: z.literal(false), refusal: SpaceChannelRefusalSchema }),
 ]);
