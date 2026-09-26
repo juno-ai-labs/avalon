@@ -562,12 +562,14 @@ let developmentDockIconUsesAppearancePreview = false;
 const realtimeSocketBroker = new RealtimeSocketBroker(createNodeRealtimeSocketFactory(
   (url) => electronSession.defaultSession.resolveProxy(url),
 ));
-// The main window's Organization socket, relayed to the Settings window so
-// that window holds no socket of its own while there is one to relay. A hidden
-// prewarmed window receives it too: its reads are mounted and must stay fresh.
+// The main window's Organization socket, relayed to the Settings and Sidekicks
+// windows so neither holds a socket of its own while there is one to relay. A
+// hidden prewarmed window receives it too: its reads are mounted and must stay
+// fresh.
 const workspaceSyncRelay = new WorkspaceSyncRelay((event) => {
-  const target = settingsWindow;
-  if (target && !target.isDestroyed()) target.webContents.send(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.relayed, event);
+  for (const target of [settingsWindow, sidekicksWindow]) {
+    if (target && !target.isDestroyed()) target.webContents.send(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.relayed, event);
+  }
 });
 let telemetryIdentity: TelemetryIdentity | null = null;
 let telemetryRoute: ResolvedTelemetryRoute = {
@@ -3350,7 +3352,7 @@ function registerIpc(): void {
     ipc: ipcMain,
     mainWindowContents: () => mainWindow?.webContents,
     relay: workspaceSyncRelay,
-    settingsWindowContents: () => settingsWindow?.webContents,
+    consumerWindowContents: () => [settingsWindow?.webContents, sidekicksWindow?.webContents],
   });
   ipcMain.handle('embedded-browser:state', (event) => embeddedBrowserFor(embeddedBrowserHost(event)).state());
   ipcMain.handle('embedded-browser:command', async (event, raw: unknown) => {

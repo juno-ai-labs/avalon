@@ -43,17 +43,17 @@ import {
  * (its directory projection, its viewers' projections, an activity event, a
  * notification) to its parent and nothing else. The parent keeps one row per
  * child, sums the children into one aggregate, and forwards that aggregate to
- * the workspace through its own outbox. `WorkstreamDO` and `AutomationDO` both
- * extend this; what differs between them (the parent's own row, who may read
- * it, which effect kinds leave it) is answered through the abstract hooks.
+ * the workspace through its own outbox. `SidekickDO` is the only class that
+ * extends this; a Channel's or Space's parent is hosted in WorkspaceDO by
+ * `HostedParent`. What a parent kind decides (its own row, who may read it,
+ * which effect kinds leave it) is answered through the abstract hooks.
  *
  * Both hops are Cloudflare Queue messages carrying the envelope inline. The
  * outbox row is deleted the moment `sendBatch` accepts it: from there retry is
  * the Queue's, and the receiver's receipt makes a redelivery a no-op.
  *
- * Table names are shared between the two classes on purpose. `WorkstreamDO`'s
- * released migrations created them under these names, and giving the new class
- * different ones would have meant every statement here carrying a table-name
+ * Table names are the ones the deleted `WorkstreamDO`'s released migrations
+ * created, kept on purpose: giving the Sidekick class different ones would have meant every statement here carrying a table-name
  * parameter for no reader's benefit.
  */
 

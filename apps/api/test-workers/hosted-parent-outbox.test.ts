@@ -289,15 +289,15 @@ describe("the Organization's parent outbox drain", () => {
     ).nextParentOutboxDueAt())).toBeNull();
   });
 
-  it("keeps an imported directory row whose message id the directory refuses as failed, not retried", async () => {
+  it("keeps a directory row found in the outbox as failed, never applied or retried", async () => {
     const workspace = workspaceStub();
     await recordQueue(workspace);
     const effect: ParentEffect = {
       kind: "directory_common", title: "Imported", description: "", preview: "", scope: "workspace", state: "idle",
       systemKind: null, lastActivityAt: "2026-09-01T12:00:00.000Z", completedAt: null, archivedAt: null,
     } as ParentEffect;
-    // A legacy object's pending row, carried over at import, under a message
-    // id the directory's handoff refuses (it requires a UUIDv7).
+    // Directory rows apply in their parent's own transaction and are never
+    // written to the outbox; the legacy import was the last thing that did.
     const legacy = ParentEffectEnvelopeSchema.parse({
       kind: "parent_effect", contractVersion: 1, region: "global", workspaceId: WORKSPACE_ID,
       parentKind: "workstream", parentId: LATE_CHANNEL_ID, generation: 1, messageId: "legacy-directory-1",
@@ -310,7 +310,7 @@ describe("the Organization's parent outbox drain", () => {
 
     const [kept] = await outboxRows(workspace, LATE_CHANNEL_ID);
     expect(kept).toMatchObject({ state: "failed", attempts: 0 });
-    expect(kept!.last_error_code).toContain("messageId");
+    expect(kept!.last_error_code).toBe("parent_outbox_directory_row");
     expect(await runInDurableObject(workspace, (instance) => (
       instance as unknown as { nextParentOutboxDueAt(): number | null }
     ).nextParentOutboxDueAt())).toBeNull();
@@ -332,6 +332,7 @@ describe("the Organization's parent outbox drain", () => {
           commonChanges: [], viewerChanges: [], breakoutChanges: [], breakoutViewerChanges: [],
           reopenBootstrap: false, watchReconciliations: [], archivalChanges: [], refreshTerminal: false,
           refreshWatchKinds: false, directoryChanged: true, syncTopics: [], refreshProductAlarm: false,
+          channelLosses: [],
         }),
       );
       await state.storage.setAlarm(Date.now() + 60_000);

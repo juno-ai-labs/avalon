@@ -123,13 +123,13 @@ export type WorkspaceSocketState = WorkspaceSyncConnectionState;
  * - `publish`: the main window. It holds the socket and tells main what it
  *   hears — its connection state and each topic change — and detaches when
  *   it unmounts with no successor.
- * - `consume`: the Settings window. It holds no socket while main reports any
+ * - `consume`: the Settings and Sidekicks windows. Each holds no socket while main reports any
  *   publisher, and applies what is relayed for its own Organization through
  *   the same receivers a socket would. With no publisher (the main window
  *   closed, crashed, reloading or fallen into the error boundary) it dials its
  *   own, and puts it down again once one is back.
- * - absent: a window with a socket of its own that relays nothing (Sidekicks,
- *   browser import), or a test.
+ * - absent: a window with a socket of its own that relays nothing (browser
+ *   import), or a test.
  */
 export type WorkspaceSyncRelayRole = 'publish' | 'consume';
 
@@ -231,7 +231,7 @@ function invalidateTopic(
     // The lists themselves are pushed whole by WorkspaceDO, so the topic no
     // longer names them — it carries REST details and the broader Sidekick library.
     automations: [
-      ['automation'], ['automation-draft'], ['sidekicks-library'],
+      ['automation'], ['automation-draft'], ['automation-runs'], ['sidekicks-library'],
       // The workstream's owned and recommended Sidekicks, plus what its
       // conversation loaded. A room's row never travels in the
       // pushed sidebar list, so this topic is what tells its rails to re-read.
@@ -772,6 +772,10 @@ export function WorkspaceSocketProvider({
               void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
               void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks'] });
               void queryClient.invalidateQueries({ queryKey: ['workstream-sidekicks'] });
+              // Relayed as the `automations` topic it amounts to, so the
+              // Sidekicks window, which reads these surfaces and not the list,
+              // hears it without a socket of its own.
+              publishTopics(['automations'], Math.max(lastWaterline, 0));
             }
             return;
           }

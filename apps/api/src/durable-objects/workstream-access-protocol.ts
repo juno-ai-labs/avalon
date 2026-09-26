@@ -199,7 +199,7 @@ export type ConfirmSpaceAccessSourceResult = z.infer<typeof ConfirmSpaceAccessSo
  * Replace one Space source with another when both name the exact same audience.
  *
  * No canonical Channel audience write belongs between these two facts: the
- * effective scope and roster do not change. Keeping this as one WorkstreamDO
+ * effective scope and roster do not change. Keeping this as one hosted-parent
  * transaction transfers the provenance without paying the plan/apply/confirm
  * protocol whose only purpose is to bracket a real audience mutation.
  */

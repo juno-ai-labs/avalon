@@ -21,7 +21,10 @@ export interface WorkstreamAuthorityControl {
   servingContractVersion: number;
 }
 
-/** This Worker implements the complete normalized WorkstreamDO serving contract. */
+/**
+ * This Worker implements the complete normalized object serving contract. The
+ * name is from the deleted `WorkstreamDO`.
+ */
 export const WORKSTREAM_DO_SERVING_CONTRACT_VERSION = 1;
 
 const LEGACY_OPEN = {

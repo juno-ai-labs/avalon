@@ -216,7 +216,7 @@ export async function resolveAgentModelRouting(
  *
  * The work-stream id remains in the Flagship evaluation context, where it is
  * identity and bucketing input. It is deliberately omitted only from the
- * attribute loader: reading WorkstreamDO product facts before the creation
+ * attribute loader: reading the Channel's product facts before the creation
  * path's product/root and first-run commit would either cross the authority
  * fence or expose the runtime shell's placeholders as targeting facts.
  * Workspace attributes are already authoritative and remain available. Later
