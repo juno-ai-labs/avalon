@@ -62,6 +62,7 @@ import {
   pendingParentEffects,
 } from "./helpers/conversation-effects";
 import { hostedParentStub } from "./helpers/hosted-parent";
+import { placeMembership } from "./helpers/space-membership";
 
 /** Its own workspace id: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000d100");
@@ -481,19 +482,7 @@ async function reserve(name: string, scope: "personal" | "workspace" = "workspac
 }
 
 async function place(spaceId: SpaceId, workstreamId: WorkstreamId): Promise<void> {
-  const plan = await workspace().prepareSpaceMembership({
-    workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, workstreamId,
-  });
-  if (!plan.ok) throw new Error(`prepareSpaceMembership refused: ${plan.code}`);
-  const settled = await workspace().finalizeSpaceMembership({
-    workspaceId: WORKSPACE_ID,
-    userId: OWNER,
-    spaceId,
-    workstreamId,
-    spaceRevision: plan.space.revision,
-    membershipGeneration: plan.membershipGeneration,
-  });
-  if (!settled.ok) throw new Error(`finalizeSpaceMembership refused: ${settled.code}`);
+  await placeMembership(workspace(), { workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, workstreamId });
 }
 
 async function page(spaceId: SpaceId, userId: UserId, cursor: string | null = null) {

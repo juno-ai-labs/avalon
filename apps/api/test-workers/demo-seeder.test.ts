@@ -94,10 +94,12 @@ describe("seeding a pack", () => {
       userId: DEMO_PRIYA_ID, space: input, spaceId: id })).toMatchObject({ ok: true, created: true });
     const opened = await playDemoAction(seed, seed.actions[0]!);
     await service.addChannel(id, asWorkstreamId(opened.workstreamId!));
+    // Its hosted parent's provisional projection, and nothing from its
+    // conversation, which was never provisioned.
     expect(await runInDurableObject(workspace, (_instance, state) =>
       state.storage.sql.exec<{ source_version: number }>(
         "SELECT source_version FROM spaces WHERE space_id = ?", id,
-      ).one().source_version)).toBe(0);
+      ).one().source_version)).toBe(1);
     // Fail the regional anchor write on a real second provision, before any
     // first projection reaches WorkspaceDO. No service or object is doubled.
     await env.DB.prepare(`CREATE TRIGGER fail_space_replay BEFORE INSERT ON workstreams

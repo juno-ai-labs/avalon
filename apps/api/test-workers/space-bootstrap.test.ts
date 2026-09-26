@@ -161,6 +161,19 @@ async function archiveInDirectory(workstreamId: string): Promise<void> {
   });
 }
 
+/**
+ * Archive a Channel in its own conversation as well, so its product read
+ * answers 404 and only the Organization's directory can say who reads it.
+ */
+async function archiveInConversation(workstreamId: string): Promise<void> {
+  await runInDurableObject(
+    env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, workstreamId)),
+    (_instance, state) => {
+      state.storage.sql.exec("UPDATE workstream SET archived_at = ? WHERE id = 1", Date.now());
+    },
+  );
+}
+
 async function cutover(): Promise<SpaceBootstrapService> {
   const driver = await spaceBootstrapDriver(creationEnv(), WORKSPACE_ID, "global");
   if (!driver) throw new Error("no active member to drive the cutover");
@@ -429,7 +442,12 @@ describe("the Space cutover", () => {
     const active = await createChannel("active-personal", [privateSpace]);
     const archived = await createChannel("archived-personal", [privateSpace]);
     const organizationWide = await createChannel("organization-wide");
+    const archivedOrganizationWide = await createChannel("archived-organization-wide");
     await archiveInDirectory(archived);
+    // Archived on both sides: its conversation refuses the product read, so
+    // placing it has to observe it from the directory.
+    await archiveInDirectory(archivedOrganizationWide);
+    await archiveInConversation(archivedOrganizationWide);
     await forgetSpaces();
 
     await runWholeCutover();
@@ -440,7 +458,7 @@ describe("the Space cutover", () => {
     // One active membership each, and the archived Channel is one of them: a
     // Channel that is restored later must not come back to an Organization
     // that has no home for it.
-    expect(await membershipRows()).toEqual([active, archived, organizationWide]
+    expect(await membershipRows()).toEqual([active, archived, organizationWide, archivedOrganizationWide]
       .map((workstreamId) => ({ workstream_id: workstreamId, state: "active" }))
       .sort((left, right) => left.workstream_id.localeCompare(right.workstream_id)));
     // General is Organization-wide, so a formerly personal Channel becomes
