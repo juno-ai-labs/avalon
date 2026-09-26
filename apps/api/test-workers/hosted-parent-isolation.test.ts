@@ -18,7 +18,7 @@ import type { ScopeGrantTarget } from "@rally/contracts/scope-grants";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { conversationObjectName } from "../src/durable-objects/names";
-import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
+import { hostedParentStub, insertChannelRow, withHostedParent } from "./helpers/hosted-parent";
 import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
 
 const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000e0001");
@@ -93,6 +93,7 @@ beforeEach(async () => {
         (parent_id, parent_kind, workspace_id, region, authority_generation, title, description, preview, scope,
          exact_state, last_activity_at, created_at, updated_at)
         VALUES (?, 'workstream', ?, 'global', 1, ?, '', '', 'personal', 'idle', 0, 0, 0)`, parentId, workspaceId, title);
+      insertChannelRow(state, parentId, title);
       state.storage.sql.exec(`INSERT INTO parent_children (parent_id, substream_id, kind, created_at, title)
         VALUES (?, '0', 'main', 0, 'Main'), (?, ?, 'child', 0, 'Breakout')`, parentId, parentId, breakout);
     }
@@ -175,7 +176,7 @@ describe("hosted parent isolation", () => {
 
   it("closes Channel A's control socket on a revocation for Channel A and leaves Channel B's open", async () => {
     await runInDurableObject(organization(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE parent_metadata SET scope = 'workspace'");
+      state.storage.sql.exec("UPDATE channels SET scope = 'workspace'");
     });
     const [socketA, socketB] = await Promise.all([openControlSocket(channelA), openControlSocket(channelB)]);
     const closedA = closeOf(socketA);
@@ -201,27 +202,10 @@ describe("hosted parent isolation", () => {
 });
 
 describe("the revocation walk's Channel step, run inside the Organization object", () => {
-  /** A `channels` directory row, which is what the workspace hop enumerates. */
-  async function listChannel(parentId: string): Promise<void> {
-    await runInDurableObject(organization(), (_instance, state) => {
-      state.storage.sql.exec(
-        `INSERT INTO channels
-           (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
-            title, description, preview, scope, exact_state, last_activity_at, origin_type,
-            title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
-            source_created_at, source_updated_at, projected_at)
-         VALUES (?, 1, 1, ?, 'test', 'Channel', '', '', 'workspace', 'idle', 0, 'ad_hoc',
-                 'settled', 0, 0, 0, 0, 0)`,
-        parentId, crypto.randomUUID(),
-      );
-    });
-  }
-
   it("closes each hosted Channel's control sockets and names its conversations in the workspace hop itself", async () => {
     await runInDurableObject(organization(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE parent_metadata SET scope = 'workspace'");
+      state.storage.sql.exec("UPDATE channels SET scope = 'workspace'");
     });
-    for (const parentId of [channelA, channelB]) await listChannel(parentId);
     const [socketA, socketB] = await Promise.all([openControlSocket(channelA), openControlSocket(channelB)]);
     const closedA = closeOf(socketA);
     const closedB = closeOf(socketB);
@@ -243,7 +227,7 @@ describe("the revocation walk's Channel step, run inside the Organization object
   it("answers a narrowing with each closed reader's conversations and the Sidekicks the Channel owns", async () => {
     const owned = "00000000-0000-4000-8000-0000000e00d0";
     await runInDurableObject(organization(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE parent_metadata SET scope = 'workspace'");
+      state.storage.sql.exec("UPDATE channels SET scope = 'workspace'");
       state.storage.sql.exec(
         `INSERT INTO automation_directory
            (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope,
@@ -261,7 +245,7 @@ describe("the revocation walk's Channel step, run inside the Organization object
     const closed = closeOf(socket);
     // The narrowing.
     await runInDurableObject(organization(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE parent_metadata SET scope = 'personal' WHERE parent_id = ?", channelA);
+      state.storage.sql.exec("UPDATE channels SET scope = 'personal' WHERE workstream_id = ?", channelA);
     });
 
     const result = await organization().revokeNarrowedAudienceAccess({ workspaceId, parentId: channelA });
