@@ -12,13 +12,14 @@ import {
   type ProviderWebhookServiceOptions,
 } from "../src/services/provider-webhook-service";
 import { publishWorkspaceSync } from "../src/services/workspace-realtime-service";
+import type * as WorkspaceRealtimeService from "../src/services/workspace-realtime-service";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 // Which audience each publish names is the decision under test; that the
 // Organization object honours an audience is proved on real sockets in
 // `test-workers/workspace-socket-fanout.test.ts`.
 vi.mock("../src/services/workspace-realtime-service", async (importOriginal) => ({
-  ...await importOriginal<typeof import("../src/services/workspace-realtime-service")>(),
+  ...await importOriginal<typeof WorkspaceRealtimeService>(),
   publishWorkspaceSync: vi.fn(async () => 0),
 }));
 
