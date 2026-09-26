@@ -146,10 +146,11 @@ row written in the transaction that caused it:
 - a notification to deliver and a mention to snapshot, which the activity
   Queue's consumer does in a Worker (its apply there is a replay: the record is
   already here);
-- a revoked Channel grant, whose Sidekick revocation is a Queue send;
-- directory and grant rows a legacy object still had pending when it was
-  imported, applied here one at a time through
-  `applyWorkstreamDirectoryEffects`.
+- a revoked Channel grant, whose Sidekick revocation is a Queue send.
+
+A directory row is never written here, because it applies in its parent's own
+transaction. One found here was never going to land, so the drain marks it
+`failed` with the code `parent_outbox_directory_row` and does not apply it.
 
 A write does not drain it: the rows are due at once, and the alarm sends them.
 A failed send puts the row off on the alarm's retry schedule
@@ -316,7 +317,8 @@ directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
 | A local apply fails inside a parent write (a viewer row before its Channel row, a constraint, a schema rejection) | The parent transaction rolls back. A child's delivery throws and the Queue redelivers it; a request fails with the error. Nothing is left in the outbox. |
 | A write meets somebody the member table has never heard of | The transaction rolls back with `workspace_member_unknown`; the ids are learned with one D1 read each and the write runs once more. A second miss fails the write with that code. |
 | A `parent_outbox` send fails | The row stays `pending`, with its code in `last_error_code`, and is due again on the alarm's retry schedule. `parent_effect_delivery_deferred` names the rows. |
-| A `parent_outbox` or `workspace_directory_followups` row does not parse, or an outbox row's destination refuses its shape (a legacy directory row whose message id is not a UUIDv7) | It is kept as `failed` with a `zodDiagnosticCode` naming the field, logged (`parent_outbox_row_unreadable`, `directory_followup_unreadable`), and never retried. An operator reads it with `run_workspace_sql` and deletes or repairs it. |
+| A `parent_outbox` or `workspace_directory_followups` row does not parse (a follow-up row in the shape written before #989 is one), or an outbox row's destination refuses its shape | It is kept as `failed` with a `zodDiagnosticCode` naming the field, logged (`parent_outbox_row_unreadable`, `directory_followup_unreadable`), and never retried. An operator reads it with `run_workspace_sql` and deletes or repairs it. |
+| A directory row is found in `parent_outbox` | It is kept as `failed` with `parent_outbox_directory_row` and not applied. Directory rows apply in the parent's own transaction, so nothing writes one there. |
 | One alarm phase throws | `workspace_alarm_phase_failed` names the phase; the other phases still run, and the alarm then fails and retries. |
 | An Organization held below schema 58 by the meeting-notes cleanup | Migration 72 has not run, so there are no `channels` or `parent_*` tables and every Channel request fails with `no such table`. The object itself still starts and its alarm skips the hosted-parent phases, so the operator retirement RPCs can finish it. Every production object was at schema 70 before this change, so none should be held; the error is loud if one is. |
 | The Organization object is unavailable | Channels and Spaces cannot be opened, listed or changed. That was already true of the sidebar; it is now true of a Channel's viewer check too. |
@@ -370,16 +372,17 @@ Space in an Organization now shares one SQLite database and one socket set.
   is `ON CONFLICT (intent_id) DO NOTHING` and keeps its delivered state;
   activity dedupes on `dedupe_key`), so dropping the ledger is open if it ever
   grows.
-- **The 10 GB object limit is reached by connector events, not by parents.**
-  `workspace_connector_events` grew about 2.1 GB in eight weeks in the busiest
-  Organization, about 0.26 GB a week. At that rate that Organization's object
-  is full in about 30 weeks from 2026-09-25 ((10 - 2.1) / 0.26), around April
-  2027. A full object refuses every write, and since this change that includes
-  every Channel and Space parent in the Organization, not only connector
-  ingest. **Connector-event retention is a precondition of this design**, and
-  has to ship before any Organization's object is within a few GB of the
-  limit; `PRAGMA page_count` times `page_size` through `run_workspace_sql` is
-  the reading.
+- **Connector events, not parents, are what fill the 10 GB object.**
+  `workspace_connector_events` grows about 0.26 GB a week in the busiest
+  Organization. A full object refuses every write, and since the move that
+  includes every Channel and Space parent in the Organization, not only
+  connector ingest. Processed rows now age out after 90 days, through the
+  alarm's `connector_event_reap` phase, so that Organization holds about
+  3.3 GB of them at steady state (90 / 7 × 0.26). Pending, processing and
+  failed rows never age out. The retention and its arithmetic are owned by
+  [`workstream-durable-object.md`](workstream-durable-object.md);
+  `PRAGMA page_count` times `page_size` through `run_workspace_sql` is the
+  reading.
 - **Sockets.** Cloudflare allows 32,768 hibernatable WebSockets per object. The
   Organization object holds every workspace socket and every Channel control
   socket in its Organization: roughly two per open client window, so about 16,000
@@ -396,9 +399,11 @@ Space in an Organization now shares one SQLite database and one socket set.
 - A Space's hidden conversation still holds its participants and resources.
   Moving them into `spaces` is the next step, and removes a `SubstreamAgent` per
   Space.
-- `parent_metadata` and `channels` still hold the same presentation columns,
-  written back to back rather than in one transaction. Folding them into one
-  row is follow-up work.
+- `parent_metadata` and `channels` still hold the same presentation columns.
+  Both are written in the parent's one transaction (the directory apply runs
+  inside it through `applyLocalEffects`), but they are two copies of the same
+  values under different write rules. Folding them into one row is follow-up
+  work.
 
 ## Changelog
 
