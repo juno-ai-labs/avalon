@@ -3258,9 +3258,9 @@ export class WorkspaceSpaceStorage {
    * Every Space this Organization has, archived ones included.
    *
    * For the retirement walk, which has to close an object rather than list a
-   * product surface: an archived Space still holds a hidden main conversation
-   * (a `SubstreamAgent`), and a graph that skipped it would report the
-   * Organization closed with that object still open. Guarded like every
+   * product surface: a Space created before 2026-09-26 still holds a hidden
+   * main conversation (a `SubstreamAgent`), and a graph that skipped it would
+   * report the Organization closed with that object still open. Guarded like every
    * other Space read, so an Organization the cutover never reached enumerates
    * nothing rather than aborting the tombstone on a missing table.
    */

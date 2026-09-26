@@ -7446,7 +7446,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Allocate a Space and answer with it before its hidden conversation exists.
+   * Allocate a Space and answer with it.
    *
    * The Space's row and its hosted parent (metadata, main child and
    * provisional directory projection) are written in one transaction.
@@ -13324,9 +13324,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    *
    * What it deliberately does *not* do is everything the Channel branch does
    * besides the row — resource links, attachment reservations, watch
-   * reconciliation, terminal schedules. A Space has no feed and no resources of
-   * the Organization's; its hidden main conversation holds those, and nothing
-   * here is a sidebar row for it.
+   * reconciliation, terminal schedules. A Space has no feed, its resource
+   * defaults live in `space_defaults`, and nothing here is a sidebar row for it.
    */
   private applySpaceDirectoryEnvelope(
     envelope: ParentEffectEnvelope,
@@ -14847,10 +14846,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         );
       }
       // Archived Spaces too. What is being closed is an object, not a product
-      // surface: an archived Space still has a hidden main conversation, and
-      // a graph that skipped it would report the Organization retired with one
-      // of its objects still open and still answering. The walk retires that
-      // conversation before the Space, the way it does for a Channel.
+      // surface: a Space created before 2026-09-26 still has a hidden main
+      // conversation, and a graph that skipped it would report the
+      // Organization retired with one of its objects still open. The walk
+      // retires child `0` before the Space, the way it does for a Channel; for
+      // a newer Space that object never existed and holds only the tombstone.
       for (const spaceId of this.spaceStorage().allSpaceIds()) {
         sql.exec(
           `INSERT OR IGNORE INTO workspace_retirement_graph
