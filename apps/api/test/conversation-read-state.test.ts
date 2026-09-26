@@ -63,7 +63,7 @@ interface Recorded {
   /** Every product request the addressed object received. */
   productRequests: Array<{ operation: string } & Record<string, unknown>>;
   authorizeViewer: ReturnType<typeof vi.fn>;
-  /** Which parent claims the id, which is what `resolveParent` asks each in turn. */
+  /** Which parent claims the id, which is what `resolveParent` asks the Organization, then the Sidekick. */
   parentKind: ParentKind;
   /** Whether the parent reports itself archived, which only a write is refused for. */
   archived: boolean;
@@ -84,14 +84,19 @@ function environment(recorded: Recorded): Env {
         }),
       }),
     }),
-    WORKSTREAM_DOS: createCloudflareTestBinding<Env["WORKSTREAM_DOS"]>({
-      idFromName: () => createTestDurableObjectId("workstream"),
+    // The Organization object hosts every Channel parent and names the kind in
+    // the same read that returns its authority; an id it does not host falls
+    // through to the Sidekick's own object.
+    WORKSPACE_DOS: createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+      idFromName: () => createTestDurableObjectId("workspace"),
       get: () => ({
-        authority: async () => ({
-          exists: recorded.parentKind === "workstream",
-          authorityGeneration: 7,
-          archived: recorded.archived,
-        }),
+        resolveHostedParent: async () => {
+          const exists = recorded.parentKind === "workstream";
+          return {
+            kind: exists ? "workstream" : null,
+            authority: { exists, authorityGeneration: 7, archived: recorded.archived },
+          };
+        },
         authorizeViewer: recorded.authorizeViewer,
       }),
     }),

@@ -1,8 +1,9 @@
 # Scoped invitations
 
 Scoped invitations offer Main, individual children or a workstream to verified
-email recipients. The invitation and resulting grants live in the same
-WorkstreamDO. Client integration lands in the browser-lite layer of the PR stack
+email recipients. The invitation and resulting grants live in the same Channel
+parent, hosted in `WorkspaceDO`
+([hosted conversation parents](hosted-conversation-parents.md)). Client integration lands in the browser-lite layer of the PR stack
 (#825); this platform layer (#822) owns the protocol. The [lite browser entry](browser-client.md) accepts invitations through this
 protocol. The shared email panel creates and revokes pending invitations from
 the browser conversation header or native participant dialog. The same panel manages direct accepted grants.
@@ -280,7 +281,7 @@ child grant. Creation and acceptance require those handoffs to be complete.
 ### Accepted-share management
 
 The panel lists direct grants in the selected scopes through
-`/sharing/grants/list`. WorkstreamDO admits the authenticated actor against that
+`/sharing/grants/list`. The Channel's parent admits the authenticated actor against that
 exact scope, reads profiles only for its grantees, then rechecks the actor's
 relationship and local grants after those external profile reads. A suspension
 or loss of sharing authority during lookup returns denial rather than stale
@@ -370,7 +371,7 @@ identity authority remains an error, never a grant.
 ## Testing
 
 `pnpm --filter @rally/api test:workers test-workers/scope-invitations.test.ts`
-runs real D1, WorkstreamDO SQLite, RPCs, alarms and HTTP routing. The fixture
+runs real D1, `WorkspaceDO` SQLite, RPCs, alarms and HTTP routing. The fixture
 declares the D1 columns it uses. It covers verified-recipient admission, child-only
 access, atomic multi-target activation, replay after removal/revocation,
 sharer replacement, stable operation/email receipts and identity-only HTTP

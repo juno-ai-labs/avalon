@@ -12,6 +12,10 @@ export type WorkspaceScheduledAlarmPhase =
   | "space_intent_resume"
   | "space_bootstrap"
   | "schedule_reconcile"
+  | "parent_outbox"
+  | "parent_breakouts"
+  | "directory_followup"
+  | "parent_import"
   | "final_rearm";
 
 export type ObservableWorkspaceScheduledAlarmKind =
@@ -21,6 +25,9 @@ export type ObservableWorkspaceScheduledAlarmKind =
   | "watch"
   | "maintenance"
   | "terminal"
+  | "parent_participant_projection"
+  | "parent_participant_migration"
+  | "parent_invitation_delivery"
   | "unknown";
 
 const OBSERVABLE_ALARM_KINDS = new Set<ObservableWorkspaceScheduledAlarmKind>([
@@ -30,6 +37,9 @@ const OBSERVABLE_ALARM_KINDS = new Set<ObservableWorkspaceScheduledAlarmKind>([
   "watch",
   "maintenance",
   "terminal",
+  "parent_participant_projection",
+  "parent_participant_migration",
+  "parent_invitation_delivery",
 ]);
 
 export function observableWorkspaceScheduledAlarmKind(

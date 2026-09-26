@@ -5,8 +5,8 @@
  * finishing.
  *
  * The seeder writes through the room objects; what the presenter sees arrives
- * later, through the effect Queue, and this file holds that Queue so the two
- * moments can be told apart. Seeding completes with every room's provisional
+ * later, when the rooms' effects cross the Queue to the Organization object,
+ * and this file holds that Queue so the two moments can be told apart. Seeding completes with every room's provisional
  * directory row in place — the room *exists* to the presenter — but the mention,
  * the "new" marker, the open question's state and the home screen's count have
  * not arrived, and the barrier says so by name. Delivering the effects through
@@ -15,14 +15,12 @@
  */
 
 import { env } from "cloudflare:workers";
-import { reset } from "cloudflare:test";
+import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { asUserId, asWorkstreamId } from "@rally/contracts";
 import { DemoPackSchema, PLACEHOLDER_DEMO_PACK } from "../src/services/demo-pack";
 import { SpaceService } from "../src/services/space-service";
-
-import type { ParentEffectEnvelope } from "@rally/contracts/conversation-effects";
 
 import { demoReadinessManifest, checkDemoReadiness } from "../src/services/demo-readiness";
 import { demoSeedReceipts, demoSeedSpaceId, openDemoSeedSession } from "../src/services/demo-seeder";
@@ -62,36 +60,44 @@ beforeEach(async () => {
   await seedDemoWorkspaceControlPlane();
 }, 30_000);
 
-function directoryRank(kind: ParentEffectEnvelope["effect"]["kind"]): number {
-  return kind === "directory_common" ? 0 : 1;
-}
-
 /**
- * The child's effects to its parent, then the parent's *directory* effects to
- * the workspace, through the real consumer in the parent's own order.
+ * A room's held effects to its parent, through the real consumer. Returns how
+ * many were held.
  *
- * Only the directory kinds. The parent also queues the presenter's mention
- * notification, and the consumer for that reads identity rows and reaches
- * Slack or email — neither of which this Worker has, so it would ask for a
- * retry forever. Readiness never reads a notification; it reads the projection
- * the notification rides beside, and that is what is delivered here. The
- * notification rows stay pending, exactly as an outage would leave them.
+ * The Organization object hosts the Channel's parent and applies the parent's
+ * directory effects to its own `channels` and `channel_viewers` rows straight
+ * after the write, so that one leg is the whole projection: no directory
+ * effect may still be waiting in `parent_outbox` once it returns. The parent
+ * also queues the presenter's mention notification, whose consumer reaches
+ * Slack or email, which this Worker has neither of. Readiness never reads a
+ * notification, so those rows stay pending, exactly as an outage would leave
+ * them.
  */
-async function deliverDirectoryEffects(workstreamId: string): Promise<number> {
-  await deliverChildEffects(env, demoRoomStub(workstreamId));
+async function deliverRoomEffects(workstreamId: string): Promise<number> {
+  const held = await deliverChildEffects(env, demoRoomStub(workstreamId));
   const parent = parentStubFor(env, "global", {
     workspaceId: DEMO_WORKSPACE_ID,
     parentKind: "workstream",
     parentId: workstreamId,
   });
-  const directory = (await pendingParentEffects(parent))
+  const waiting = (await pendingParentEffects(parent))
     .filter((envelope) => envelope.effect.kind.startsWith("directory_"))
-    .sort((left, right) => directoryRank(left.effect.kind) - directoryRank(right.effect.kind));
-  for (const envelope of directory) {
-    const result = await consumeEffectBodies(env, [envelope]);
-    if (result.retried > 0) throw new Error(`directory effect retried: ${envelope.effect.kind} ${envelope.messageId}`);
-  }
-  return directory.length;
+    .map((envelope) => [envelope.parentId, envelope.effect.kind, envelope.messageId]);
+  expect(waiting).toEqual([]);
+  return held.length;
+}
+
+/** The presenter's `channel_viewers` row for a room, or null before it is projected. */
+async function presenterView(workstreamId: string): Promise<{ you_are_mentioned: number } | null> {
+  const workspace = parentStubFor(env, "global", {
+    workspaceId: DEMO_WORKSPACE_ID,
+    parentKind: "workstream",
+    parentId: workstreamId,
+  });
+  return runInDurableObject(workspace, (_instance, state) => state.storage.sql.exec<{ you_are_mentioned: number }>(
+    "SELECT you_are_mentioned FROM channel_viewers WHERE workstream_id = ? AND user_id = ?",
+    workstreamId, DEMO_PRESENTER_ID,
+  ).toArray()[0] ?? null);
 }
 
 describe("the readiness barrier", () => {
@@ -113,7 +119,7 @@ describe("the readiness barrier", () => {
     for (const receipt of receipts.filter((item) => item.kind === "create_substream")) {
       await deliverChildEffects(env, demoRoomStub(receipt.workstreamId!, receipt.substreamId!));
     }
-    for (const room of manifest.views[0]!.rooms) await deliverDirectoryEffects(room.workstreamId);
+    for (const room of manifest.views[0]!.rooms) await deliverRoomEffects(room.workstreamId);
     const published = receipts.find((receipt) => receipt.kind === "sidekick")!;
     await deliverChildEffects(env, demoRunStub(published.sidekickId!, published.sidekickRunId!));
     const sidekick = parentStubFor(env, "global", {
@@ -171,9 +177,12 @@ describe("the readiness barrier", () => {
       [null, "attention"],
     ]));
 
-    // Both legs, through the real consumer. The projection is what was held.
-    expect(await deliverDirectoryEffects(room!.workstreamId)).toBeGreaterThan(0);
-    expect(await deliverDirectoryEffects(aside!.workstreamId)).toBeGreaterThan(0);
+    // The rooms' effects, through the real consumer. The Organization applies
+    // the directory step in the same call, so the projection is what was held.
+    expect((await presenterView(room!.workstreamId))?.you_are_mentioned ?? 0).toBe(0);
+    expect(await deliverRoomEffects(room!.workstreamId)).toBeGreaterThan(0);
+    expect(await deliverRoomEffects(aside!.workstreamId)).toBeGreaterThan(0);
+    expect(await presenterView(room!.workstreamId)).toMatchObject({ you_are_mentioned: 1 });
 
     const after = await checkDemoReadiness(demoSeedEnv(), { operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest });
     expect(after.gaps).toEqual([]);
@@ -193,13 +202,14 @@ describe("the readiness barrier", () => {
     ]);
 
     // Publication and the briefing are both done, and neither has reached the
-    // presenter: a Sidekick's directory row rides the same Queue a room's does.
+    // presenter: a Sidekick's directory row rides the effect Queue, as a room's does.
     const before = await checkDemoReadiness(demoSeedEnv(), { operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest });
     expect(before.ready).toBe(false);
     expect(before.gaps.map((gap) => gap.code)).toContain("sidekick_missing");
 
     // The run's own conversation reports up to the Sidekick, and the Sidekick
-    // to the workspace — the same two legs a room's projection travels.
+    // to the workspace. A Sidekick is not a hosted parent, so it keeps the
+    // second Queue leg a room's projection no longer takes.
     await deliverChildEffects(env, demoRunStub(published.sidekickId!, published.sidekickRunId!));
     const sidekick = parentStubFor(env, "global", {
       workspaceId: DEMO_WORKSPACE_ID,
@@ -211,7 +221,7 @@ describe("the readiness barrier", () => {
       const result = await consumeEffectBodies(env, [envelope]);
       if (result.retried > 0) throw new Error(`sidekick effect retried: ${envelope.effect.kind}`);
     }
-    for (const room of manifest.views[0]!.rooms) await deliverDirectoryEffects(room.workstreamId);
+    for (const room of manifest.views[0]!.rooms) await deliverRoomEffects(room.workstreamId);
 
     const after = await checkDemoReadiness(demoSeedEnv(), { operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest });
     expect(after.gaps).toEqual([]);

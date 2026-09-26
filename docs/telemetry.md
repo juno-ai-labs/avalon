@@ -21,7 +21,7 @@ embedded in the renderer or a source of product truth.
 | `apps/desktop/src/main/index.ts` | Startup ordering, Crashpad start, process observers, IPC sender validation, upload scheduling, and product integration points. |
 | `apps/desktop/src/main/telemetry-intent.ts` | The renderer-intent allowlist and validator every `telemetry:product-intent` call passes through, kept out of the entry point so it can be tested by running it. |
 | `apps/desktop/src/renderer/lib/telemetry.ts` | Narrow renderer facade for registered screen, product-intent, and error-candidate calls. |
-| `apps/desktop/src/renderer/lib/socket-telemetry.ts` | The one `realtime_socket_state` producer, instantiated per live socket loop by the workspace, WorkstreamDO-control, and SubstreamAgent-feed hooks; it also reports every WorkstreamDO-control and SubstreamAgent-feed connection start. |
+| `apps/desktop/src/renderer/lib/socket-telemetry.ts` | The one `realtime_socket_state` producer, instantiated per live socket loop by the workspace, Channel-control, and SubstreamAgent-feed hooks; it also reports every Channel-control and SubstreamAgent-feed connection start. |
 | `apps/api/src/routes/telemetry.ts` | Bounded bootstrap, anonymous/authenticated event, identity-link, preference, and crash-ingest routes. |
 | `apps/api/src/telemetry-delivery-worker.ts` | Global-only private Worker that owns telemetry destination adapters; PostHog is the first adapter. |
 | `apps/api/src/middleware/api-operation-telemetry.ts` | Content-free timing/outcome signals for an explicit API operation allowlist. |
@@ -139,7 +139,8 @@ Every realtime socket reports its own connection transitions. The renderer is th
 authoritative source because it is the only party that can tell a first
 connection from a reconnection, and how many attempts one took: the room sees an
 admission either way. One `realtime_socket_state` names which socket
-(`workspace`, `workstream_control`, `substream_feed`), whether it is connected,
+(`workspace`, `workstream_control` from desktops released before the Channel
+control socket was retired, `substream_feed`), whether it is connected,
 retrying, or stopped, the bounded cause, and the retry depth as a count bucket.
 Dictation's audio socket is deliberately outside this contract: it is an Azure
 transport with its own lifecycle, not one of the room sockets.
@@ -516,8 +517,8 @@ observed, provider content, PostHog-side retention/access/configuration, legal
 approval, advertising, consent-law determinations, cross-site identity, or
 public-site analytics. The public site remains unchanged. Product analytics are
 advisory and may be incomplete; regional product authority is canonical — D1
-for workspace/control data and, after its guarded cutover, the owning
-WorkstreamDO for work-stream product data.
+for workspace/control data and, after its guarded cutover, the Channel's parent
+in `WorkspaceDO` and its conversations for work-stream product data.
 
 - The authenticated Product analytics preference read times out after 15
   seconds. Existing same-account launches continue collecting into the durable

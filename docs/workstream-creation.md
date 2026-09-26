@@ -181,43 +181,47 @@ that two rows are the same turn.
 ### What the server makes you wait for
 
 Everything. `POST /workstreams` finishes the participant and attachment checks,
-the Space placement below, the address reservation, the authoritative
+the address reservation, the Space placement below, the authoritative
 SubstreamAgent work-stream/opening
 turn/run write, the canonical `transcript_turn_upserted` publication, and the
-Workflows round trip that starts the run. It then synchronously drains the committed directory facts
-through WorkstreamDO into WorkspaceDO, verifies the workspace directory row,
-changes the minimal
-D1 route from `verified` to `active`, and activates email —
+Workflows round trip that starts the run. The placement already applied the
+provisional `channels` row, since the Channel's parent and the directory are
+both in `WorkspaceDO`, and the create changes the minimal D1 route from
+`verified` to `active`, and activates email —
 only then does it answer. The one thing off the path is the naming call, which
 was already deferred before this module existed.
 
-The Space placement is four more awaited steps, in this order, and each of them
-repeats once per Space the Channel is being born into:
+**The Space placement is one WorkspaceDO call, whatever the number of Spaces**:
+`reserveChannelInSpaces`, after the address reservation and before the D1
+anchor. In one SQLite transaction it resolves General when the request named no
+Space, writes each membership `active`, stages the defaults each Space hands a
+new member, reserves the main conversation with its provisional directory row,
+and records which Space supplied which reader on the Channel's own authority
+(`applySpaceAccessSource` with `commitWithPlan`, called inside the object rather
+than over RPC). It answers with the Spaces it read, and the
+coordinator derives the opening audience from them with the same
+`resolveSpaceWorkstreamStart` the object used for the directory row's scope.
 
-1. **Resolving General** (`SpaceService.ensureGeneral`) — *conditional: only when
-   the request named no Space at all*. When the Organization has no General yet
-   this is also where its Space object is provisioned, which is the D1 reads and
-   the object reservations [`spaces.md`](spaces.md#regional-impact) lists;
-   ordinarily General already exists and this is one WorkspaceDO call.
-2. **Staging the membership** (`WorkspaceDO.prepareSpaceMembership`), before the
-   D1 anchor, so a Space the caller may not reach refuses while nothing has been
-   built yet. It answers with the Space revision and membership generation the
-   three steps below are fenced on.
-3. **Settling the membership** (`WorkspaceDO.finalizeSpaceMembership`), before
-   the main conversation is reserved — see the section below for why that order
-   is load-bearing rather than incidental.
-4. **Recording the provenance** on the Channel's own authority
-   (`WorkstreamDO.applySpaceAccessSource`, in its `bornWithSourceApplied` mode),
-   after the reservation, because the Channel's authority asserts a parent
-   identity the reservation is what writes. **One call, not two**: the plan and
-   the commit are normally split so the caller can run the canonical operations
-   that seat the plan in between, and on this path `initialize` has already run
-   them — the Channel opened with the union of every named Space written on it.
-   Every other caller of that RPC still takes both.
+It replaced a staged sequence that was shaped for a Space directory and a
+Channel parent in different objects: `ensureGeneral` (when no Space was named),
+then per Space `prepareSpaceMembership` and `finalizeSpaceMembership`, then
+`reserveChild`, then per Space `applySpaceAccessSource`, then a
+`flushProvisionalDirectory` run beside `initialize` (a no-op by then, because
+`reserveChild` already applies the provisional row), plus a
+`cancelSpaceMembership` per Space on failure. For the common create that names
+no Space, that was five sequential calls and one concurrent call into the same
+object; it is one.
+
+The one case the call cannot finish alone is an Organization with no General
+yet. Making General provisions its own conversation (the D1 reads and object
+reservations [`spaces.md`](spaces.md#regional-impact) lists), which is not a
+write the object can take in a transaction, so it answers `general_missing`,
+the coordinator runs `SpaceService.ensureGeneral`, and asks again. That happens
+once per Organization.
 
 What a Space hands *down* is not on the path: the resources and Sidekick
-recommendations a Space's defaults give a new member Channel are staged by step 3
-and delivered over `ACTIVITY_QUEUE`.
+recommendations a Space's defaults give a new member Channel are staged in the
+placement's transaction and delivered over `ACTIVITY_QUEUE`.
 
 The explicit drain is not the normal delivery mechanism. Ordinary mutations
 use the child and parent SQL outboxes plus alarms. Creation overrides any alarm
@@ -261,33 +265,36 @@ not make them a Space participant. The Spaces' `defaultResourceIds` are unioned 
 caller's origin resources, so a Channel started in a Space begins with what that
 Space hands down.
 
-**The memberships settle before the main conversation is reserved.** That order
-is load-bearing and is not an implementation detail: reserving the child arms
-the parent's recovery alarm, and `drainParentOutboxWithCreationFence` delivers
-the deferred provisional directory row itself if it wins the race with the
-coordinator. A settlement any later would therefore publish, on any failure in
-between, a Channel that is Organization-wide and in no Space at all. Settled
-first, the row carries its placement whichever path publishes it. The Channel's
-own record of *which* Space reaches it is written after the reservation — the
-Channel's authority asserts a parent identity the reservation is what writes —
-and before `initialize`, because which Space reaches a Channel is true of it
-whether or not anybody ever opened it. `initialize` and the parent's directory
-flush then run concurrently: they address two different objects, the flush reads
-only the reservation's own outbox rows, and the settlement above is what keeps a
-`joining` placement from reaching the directory — not the order of these two.
+**The memberships, the reservation and the provenance commit together.** The
+order between them used to be load-bearing: reserving the main conversation
+arms the parent's recovery alarm, which delivers the provisional directory row
+itself if it wins the race with the coordinator, so a settlement any later could
+publish a Channel that is Organization-wide and in no Space at all. In one
+transaction there is no later: the directory row is written in the same commit
+as the memberships, so it can only ever appear placed, and a refusal anywhere in
+it (a Space the caller cannot reach, an archived Space, a source whose Space
+moved) rolls all of it back. Which Space reaches a Channel is recorded before
+`initialize`, because that is true of the Channel whether or not anybody ever
+opens it.
 
-A failure before the settlement cancels every staged membership: a `joining` row
-no list shows and no alarm finishes is a placement that would never become one.
-A failure after it leaves an active membership for a Channel whose conversation
-may never open, which is the residue to prefer — a retry under the same create
-key reuses the same id, and the settlement is idempotent at the generation it
-already has. A replayed receipt reconciles through
-`reconcileReplayedSpaceMembership` rather than staging a second placement.
+A Space refusal therefore leaves nothing in WorkspaceDO and nothing in D1 but
+the idempotency receipt. It does now follow the address reservation, because
+the directory row the same transaction writes carries the address, so a refused
+create leaves an unactivated address row keyed to the id the receipt holds; a
+retry under the same create key reuses it. A failure *after* the call (the D1
+anchor, `initialize`) leaves an active placement and a listed Channel whose
+conversation may never open, which is the residue to prefer: nothing is
+cancelled, the retry reuses the same id, and the call is idempotent for it (an
+active membership keeps its generation and the reservation finds its child
+registered). A replayed receipt reconciles through
+`reconcileReplayedSpaceMembership`, which uses the staged `addChannel` path
+rather than this call because the Channel already exists and its audience has
+to be widened through its canonical operations.
 
 Two creation paths do not go through here, and both call
 `placeConnectorChannelInGeneral` for the same step. The Slack agent opens a
 Channel for a Slack member with no Rally identity and provisions the
-conversation itself; it borrows this module's ordering to place it —
+conversation itself; it keeps this module's former staged ordering to place it —
 `reserveChild` on the parent first, with its directory delivery deferred, then
 the conversation, then the placement, then the flush — because the placement
 addresses the parent authority, and because a Channel is not listed until it has
@@ -360,7 +367,13 @@ than whichever rejection landed first.
   list the workspace immediately.
 - **The pre-flight checks run ahead of the reservation.** A create that is going
   to be refused must not leave an address reserved for a work stream that never
-  exists.
+  exists. The one refusal that follows the reservation is a Space's, because the
+  placement transaction writes the directory row that carries the address; see
+  [The Space a Channel is born in](#the-space-a-channel-is-born-in).
+- **A Channel's Organization-side birth is one transaction.** Memberships,
+  Space defaults, the parent reservation with its provisional directory row, and
+  the Space sources commit in `reserveChannelInSpaces` or not at all; creation
+  never stages a `joining` row or an `add` intent.
 - **A create that names no audience writes a private work stream.** `POST
   /workstreams` carries no scope — a request on the wire cannot claim one — so
   the creator is seated beside whoever they named, those active participant rows
@@ -468,6 +481,13 @@ see
 
 ## Testing
 
+- `apps/api/test-workers/space-creation.test.ts` —
+  `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-creation.test.ts`.
+  On real workerd: the coordinator makes exactly one WorkspaceDO call once
+  General exists; the membership is born `active` with no intent; a refused
+  source write rolls back the membership, the parent and the directory row; a
+  failure after the commit keeps the placement and a retry under the same key
+  finishes on it; a Space's defaults are staged by the placing call.
 - `apps/desktop/src/renderer/screens/new-workstream.test.tsx` —
   `pnpm --filter @rally/desktop exec vitest run src/renderer/screens/new-workstream.test.tsx`.
   Covers the surface appearing on the keystroke, composer node identity across
@@ -534,6 +554,44 @@ see
   to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-09-25 — A Channel is placed and reserved in one WorkspaceDO call
+
+**What changed:** The coordinator's Space placement and parent reservation are
+one RPC, `WorkspaceDO.reserveChannelInSpaces`, which commits the memberships
+(born `active`), the Space defaults, the parent with its provisional directory
+row, and the Space sources in one SQLite transaction. It replaces
+`ensureGeneral`, `prepareSpaceMembership` and `finalizeSpaceMembership` per
+Space, `reserveChild`, `applySpaceAccessSource` per Space, the concurrent
+`flushProvisionalDirectory`, and `cancelSpaceMembership` per Space on failure.
+The call now runs after the address reservation, because the directory row it
+writes carries the address.
+
+**Why:** Creation is the slowest thing a person waits on, and those calls were
+sequential hops into one object: five and one concurrent for the common create
+that names no Space, and 3N+1 plus the concurrent one for N named Spaces. They
+were shaped as a saga when the Space directory and the Channel's parent were
+different objects; both are WorkspaceDO SQLite now, so a transaction gives the
+same guarantees the ordering was buying, and more: a Channel can no longer be
+listed with a half-written placement at all.
+
+**Considered and rejected:** One RPC that ran the same stages inside the
+object, which keeps the `joining` state and its recovery intent for no reader.
+Running the call before the address reservation with no address on the
+provisional row, which would keep a Space refusal ahead of the reservation but
+publish a directory row that changes a moment later; the team may prefer that
+trade, and it is a small change to make. Placing a replayed receipt through the
+new call: the Channel already exists there, and its audience has to be widened
+through its canonical operations, which the birth-mode source recording assumes
+already happened.
+
+**Consequences:** A Space refusal now leaves an unactivated address row keyed
+to the receipt's id, which a retry reuses. A failure after the call leaves an
+active placement and a listed Channel, as a failure after the old settlement
+did, and a retry under the same client key converges on it; a client that never
+retries leaves that Channel listed with a conversation that never opened.
+Adding an existing Channel to a Space is `addSpaceChannel`
+([`spaces.md`](spaces.md#membership)); the staged membership RPCs are deleted.
 
 ### 2026-09-24 — The caller names the Channel's id, so the sidebar lists it on the keystroke
 

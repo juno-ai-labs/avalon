@@ -18,12 +18,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
-import { automationDOName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import { automationDOName, workspaceDOName } from "../src/durable-objects/names";
 import { EngineeringInspectionBridge } from "../src/engineering-inspection-bridge";
 import type { Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
 import { deliverParentEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
+import { hostedParentStub } from "./helpers/hosted-parent";
 import {
   seedInspectableWorkspace,
   seedSecondInspectableWorkspace,
@@ -65,8 +66,7 @@ async function seedRegionalDatabase(): Promise<void> {
  * the Sidekick tools must refuse.
  */
 async function seedRoom(): Promise<void> {
-  const room = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(workstreamDOName("global", WORKSPACE_ID, ROOM_ID)));
-  await room.reserveChild({
+  await hostedParentStub(env, WORKSPACE_ID).reserveChild({
     workspaceId: WORKSPACE_ID,
     parentId: ROOM_ID,
     substreamId: asSubstreamId("0"),

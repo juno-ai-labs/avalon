@@ -5,7 +5,6 @@ import {
   type WorkstreamSocketConnection,
 } from './use-workstream-socket';
 import type { ConversationParentKind } from '@rally/contracts/conversation-parent';
-import { useWorkstreamControlSocket } from './use-workstream-control-socket';
 import { uuidV7 } from './telemetry';
 
 export const RECENT_WORKSTREAM_SOCKET_RETENTION_MS = 5 * 60_000;
@@ -125,16 +124,16 @@ function RetainedWorkstreamSocket({
   socketLeaseId: string;
   workstreamId: string;
 }): null {
+  // A held Channel keeps one socket, its Main feed. Its metadata, breakouts
+  // and background agents ride the Organization socket's Channel rows.
   const feedEnabled = active || background || admitted || controlWarm;
   const initialReason = controlWarm && !active && !background && !admitted
     ? 'hover_warmup'
     : active ? 'active_workstream' : background ? 'background_workstream' : 'retained_workstream';
-  useWorkstreamControlSocket(api, workstreamId, controlWarm || feedEnabled, initialReason, socketLeaseId);
   const connection = useWorkstreamSocket(
     api,
     workstreamId,
     feedEnabled,
-    true,
     initialReason,
     socketLeaseId,
     // Routing can precede the workspace profile. Only the mounted feed admits
@@ -196,11 +195,9 @@ function RetainedWorkstreamSocketOwners({
  * the connection that was just being viewed. Keyed socket owners stay mounted
  * while the unkeyed route subtree keeps its normal in-place reconciliation.
  *
- * Work streams only. Every id here names a WorkstreamDO parent, so the
- * control warm-up a hover starts is always for a parent that has a control
- * socket; an automation's conversation is opened by its own screen through
- * `useRetainedWorkstreamSocket` with `parentKind: 'automation'`, which never
- * matches the pool and so never warms one.
+ * Channels only. An automation's conversation is opened by its own screen
+ * through `useRetainedWorkstreamSocket` with `parentKind: 'automation'`, which
+ * never matches the pool and so is never warmed by it.
  */
 export function WorkstreamSocketPool({
   activeWorkstreamId,
@@ -342,7 +339,7 @@ export function WorkstreamSocketPool({
 }
 
 /**
- * Warm the complete control/feed pair after a deliberate sidebar hover. Feed
+ * Warm a Channel's Main feed after a deliberate sidebar hover. Feed
  * subscriptions opt out of presence, so preparing the first canonical frame
  * does not make a hovered work stream appear viewed.
  */
@@ -397,11 +394,9 @@ export function useWorkstreamSocketOpenContext(
  * hook keeps standalone screen tests and non-shell embeddings compatible
  * without opening a duplicate socket in the real application.
  *
- * The pool retains work streams only: its active id is the one on the
- * `/workstreams/:id` route, and its warm-up opens a WorkstreamDO control
- * socket that an automation does not have. An automation parent, or any
- * substream other than the main one, therefore always takes the direct hook,
- * which mounts no control socket for it.
+ * The pool retains Channel Main feeds only: its active id is the one on the
+ * `/workstreams/:id` route. An automation parent, or any substream other than
+ * the main one, therefore always takes the direct hook.
  */
 export function useRetainedWorkstreamSocket(
   api: WorkstreamSocketApi | null,
@@ -423,7 +418,6 @@ export function useRetainedWorkstreamSocket(
     api,
     parentId,
     enabled && !matchesRetainedConnection,
-    true,
     'active_workstream',
     undefined,
     true,

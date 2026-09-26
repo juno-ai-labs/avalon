@@ -18,7 +18,7 @@ import { holdCreationTraceUntilSendReady, startPerfTrace } from '../lib/perf-tra
 
 import { CONTEXT_SIDEBAR_ENABLED, useUiStore } from '../lib/ui-store';
 
-import type { WorkstreamChildDirectory } from '../lib/use-workstream-control-socket';
+import type { WorkstreamChildDirectory } from '../lib/channel-viewer-state';
 import type { WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
 import { Button, IconButton, InlineError, Modal } from '../components/primitives';

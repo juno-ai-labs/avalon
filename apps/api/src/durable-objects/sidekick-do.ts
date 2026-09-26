@@ -1,4 +1,4 @@
-import { SidekickAttachmentSchema, type SidekickAttachment } from "@rally/contracts";
+import { type SidekickAttachment, SidekickAttachmentSchema } from "@rally/contracts";
 import type { Region } from "@rally/contracts/regions";
 import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationRequest } from '../services/authorization-policy';
 import { z } from "zod";
@@ -24,7 +24,6 @@ import {
   asSubstreamId,
   asUserId,
   asWorkspaceId,
-  asWorkstreamId,
   isExternalEventTrigger,
   semanticConditionsForEventType,
   type AutomationDetail,
@@ -122,7 +121,7 @@ import {
   type DirectoryCommonEffect,
 } from "./conversation-parent-object";
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
-import { automationDOName, substreamLoopId, workspaceDOName, workstreamDOName } from "./names";
+import { automationDOName, substreamLoopId, workspaceDOName } from "./names";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   SCHEDULED_ALARM_SCHEMA_STATEMENTS,
@@ -1334,8 +1333,8 @@ export class SidekickDO extends ConversationParentDurableObject {
       if (row.scope !== "workstream" || !row.owning_workstream_id) {
         return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: false, archived: false });
       }
-      const owner = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS, row.workspace_id,
-        workstreamDOName(this.env.AVALON_REGION, asWorkspaceId(row.workspace_id), asWorkstreamId(row.owning_workstream_id)));
+      const owner = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, row.workspace_id,
+        workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(row.workspace_id)));
       const access = await owner.readManagementAccess({ workspaceId: row.workspace_id,
         parentId: row.owning_workstream_id, userId: request.userId });
       return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: access.allowed,

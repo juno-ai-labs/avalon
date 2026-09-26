@@ -38,8 +38,10 @@ reads use its scope grants. Unmigrated conversations retain the existing behavio
 below until their own handoff. [Scoped invitations](scope-invitations.md) owns
 sharing and handoff behavior; [browser sessions](browser-sessions.md) owns cookie transport.
 
-WorkstreamDO migration 14 installs `scope-grant-storage.ts`'s local tables and
-adds child audience with `restricted` as the preserving default. Mutations use
+`scope-grant-storage.ts` keeps each Channel's grants in `WorkspaceDO`'s
+`parent_grant*` tables, keyed by `parent_id`
+([hosted conversation parents](hosted-conversation-parents.md)), and child
+audience uses `restricted` as the preserving default. Mutations use
 expected-revision checks and immutable operation receipts. Grant changes,
 receipts and pending delivery intents commit in one synchronous transaction.
 Every grant binds the recipient's current membership incarnation. Removing and
@@ -52,7 +54,7 @@ Reusing an operation ID with different input fails; retrying the original input
 returns its original result without reapplying it. Delivery acknowledgement is
 for one exact revision. The storage class alone is not an authorization boundary.
 
-WorkstreamDO's `readScopeAccess` RPC loads the current D1 relationship and reads
+`WorkspaceDO`'s `readScopeAccess` RPC, answered by the hosted parent, loads the current D1 relationship and reads
 its local scope grants, target readiness and lifecycle. `mutateScopeGrant` admits
 the authenticated actor against that same scope and requires an active recipient
 for additions. Implicit workspace-public member reading does not authorize
@@ -81,8 +83,8 @@ Pure policy tests run with `pnpm --filter @rally/api exec vitest run
 test/scope-grant-policy.test.ts`. Storage and populated-schema upgrade tests run
 in real workerd with `pnpm --filter @rally/api test:workers
 test-workers/scope-grant-storage.test.ts`.
-`test-workers/scope-grant-authority.test.ts` additionally drives real WorkstreamDO
-RPC with D1 relationships, including child-only sharing, implicit-member denial,
+`test-workers/scope-grant-authority.test.ts` additionally drives the real hosted
+parent RPC on `WorkspaceDO` with D1 relationships, including child-only sharing, implicit-member denial,
 inheritance and lifecycle/relationship rejection.
 
 A trusted request creates one `AccessContext`. Addresses identify a workspace
@@ -106,7 +108,7 @@ its requests and resource locations before loading a parent, preserving one pare
 RPC across multiple substreams. A mixed response carries migrated scope decisions
 alongside legacy facts; each conversation uses its own authority. Canonical checks reload facts. Search instead reuses a subject-and-resource decision from the regional projection.
 For member reads, a work stream's main SubstreamAgent owns its scope and roster,
-which decide Main alone. WorkstreamDO adds its canonical private-child membership
+which decide Main alone. The Channel's parent adds its canonical private-child membership
 and ready-state facts, which decide a Breakout alone: a Breakout member need not
 read Main, and reading Main does not admit a Breakout.
 An automation supplies its own scope, author, executor and child registry; an
@@ -171,9 +173,10 @@ its own participants — and every **Space** source that currently reaches it. A
 source can only widen: `workspace` anywhere makes the audience
 Organization-wide, and otherwise the readers are the union of every source's
 participants. `apps/api/src/lib/channel-audience.ts` is the only seam allowed to
-derive that union, and WorkstreamDO's migration-18 tables are the only record of
-which source supplied whom ([workstream
-authority](workstream-durable-object.md)).
+derive that union, and the parent's `parent_direct_audience`,
+`parent_space_sources` and `parent_space_readers` rows in `WorkspaceDO` are the
+only record of which source supplied whom
+([hosted conversation parents](hosted-conversation-parents.md)).
 
 None of it admits anybody. `resolveScopedAccess` over the grant ledger, or the
 main conversation's scope and participant rows on a Channel that has never been
@@ -226,7 +229,7 @@ every target at creation and acceptance. A verified mailbox match is necessary
 but insufficient: the sharer's membership incarnation and sharing authority must
 remain valid, the recipient relationship must be active, and local invitation
 revocation must not have won. Acceptance and target grant operations commit in
-one WorkstreamDO transaction. Replays return the receipt without reapplying grants.
+one `WorkspaceDO` transaction. Replays return the receipt without reapplying grants.
 
 ### Evidence and read lifetime
 
@@ -285,6 +288,16 @@ completion: a child is complete only after its inventory is applied. Delivery
 cleanup is revision-fenced so an accepted send cannot erase newer intent, and
 new intent preserves Queue failure backoff. Parent discovery prunes retired
 children; even delayed child jobs check the current parent registry.
+
+Parent discovery for a Channel hosted in WorkspaceDO runs where it is enqueued:
+the Channel's `parent_children` rows are in the same database, so
+`enqueueAuthorizationDiscovery` registers them (the same reconcile
+`registerAuthorizationChildren` runs) in the caller's transaction and queues
+only the per-conversation jobs. The Queue still carries conversation jobs,
+which read a `SubstreamAgent`; Sidekick parents, whose children are in
+`AutomationDO`; and a Channel whose legacy import is still pending, since
+serving it needs the async import. The Worker's parent branch in
+`projectAuthorization` stays for those and for jobs queued before this change.
 
 Deployment enables the core member read path for every workspace. There is no
 legacy/shadow mode, activation flag or comparison gate. `backfill` queues parent
@@ -492,6 +505,19 @@ Worker timestamps; they are not exact replication timestamps. Remove probe deplo
 after the experiment. Pair these results with mutation-to-write-ack queue events.
 
 ## Changelog
+
+### 2026-09-25 — A hosted Channel's parent discovery runs in WorkspaceDO
+
+A parent discovery job for a Channel hosted in WorkspaceDO no longer goes
+WorkspaceDO to Queue to Worker and back for `resolveHostedParent`,
+`listAuthorizationChildren` and `registerAuthorizationChildren`, three calls
+into the object that enqueued it. The registration now runs in the enqueueing
+transaction and only per-conversation jobs are queued. Conversation jobs keep
+the Queue because they read a `SubstreamAgent`, and Sidekick parents because
+their children are in `AutomationDO`. A Channel whose legacy import is pending
+keeps the Queue too: importing it needs an await, which a transaction cannot
+hold. The Worker's parent branch is kept for those and for messages already
+queued at deploy.
 
 ### 2026-09-25 — A superseded push completes, and an unchanged decision skips KV
 

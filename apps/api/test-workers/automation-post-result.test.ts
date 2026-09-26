@@ -12,8 +12,8 @@ import { AgentCommunicationService } from "../src/services/agent-communication-s
  * it; the refusal is the tool's error.
  *
  * The first test drives the whole path: a real run child of a real
- * `AutomationDO`, the provider double calling the tool, the room's
- * `WorkstreamDO` answering `authority`, the room's conversation object
+ * `AutomationDO`, the provider double calling the tool, the room's parent
+ * (hosted by the workspace's `WorkspaceDO`) answering `authority`, the room's conversation object
  * admitting the activation and running on it. The refusals are proved at the
  * narrowest real layer, `appendAutomationActivation` on the room's object,
  * because a room archived between a run's start and its tool call is a race
@@ -39,13 +39,11 @@ import {
 } from "@rally/contracts";
 
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
-import type { WorkstreamDO } from "../src/durable-objects/workstream-do";
 import type { AutomationDO } from "../src/durable-objects/automation-do";
 import {
   automationDOName,
   conversationObjectName,
   workspaceDOName,
-  workstreamDOName,
 } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
 import { SlackAgentService } from "../src/services/slack-agent-service";
@@ -63,6 +61,7 @@ import {
   pendingChildEffects,
 } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
+import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
 import { useOpenRouterDouble, type ProviderCall, type ProviderReply } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
@@ -189,8 +188,9 @@ function automationStub(): DurableObjectStub<AutomationDO> {
   ));
 }
 
+/** The room's parent, hosted by the workspace object. */
 function roomParent() {
-  return env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(workstreamDOName("global", WORKSPACE_ID, ROOM_ID)));
+  return hostedParentStub(env, WORKSPACE_ID);
 }
 
 function roomConversation() {
@@ -844,7 +844,7 @@ describe("post_result", () => {
     )));
     // Sidekick contact authority reads this current membership projection, not team membership.
     await runInDurableObject(workspaceStub(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE workspace_workstream_viewers SET is_participant = 0 WHERE workstream_id = ? AND user_id = ?", ROOM_ID, AUTHOR_ID);
+      state.storage.sql.exec("UPDATE channel_viewers SET is_participant = 0 WHERE workstream_id = ? AND user_id = ?", ROOM_ID, AUTHOR_ID);
     });
     expect(await workspaceStub().workstreamParticipant({ workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, userId: AUTHOR_ID })).toEqual({ participant: false });
     expect((await service.list()).agents.map(agent => agent.agentId)).not.toContain(agentId);
@@ -1229,7 +1229,7 @@ describe("post_result", () => {
       expect(await child.agentRuntimeInfo()).toMatchObject({ status: "executing" });
       await deliverChildEffects(TEST_ENV, roomConversation());
       await deliverChildEffects(TEST_ENV, child);
-      const response = await roomParent().fetch("https://workstream.test/socket", { headers: {
+      const response = await roomParent().fetch("https://workstream.test/parent-socket", { headers: {
         Upgrade: "websocket", "x-rally-workspace-id": WORKSPACE_ID, "x-rally-workstream-id": ROOM_ID,
         "x-rally-user-id": AUTHOR_ID, "x-rally-session-id": SESSION_ID,
         "x-rally-socket-ticket-id": crypto.randomUUID(),
@@ -1302,7 +1302,7 @@ describe("post_result", () => {
           { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe("executing");
         await deliverChildEffects(TEST_ENV, agent.stub);
       }
-      const response = await roomParent().fetch("https://workstream.test/socket", { headers: {
+      const response = await roomParent().fetch("https://workstream.test/parent-socket", { headers: {
         Upgrade: "websocket", "x-rally-workspace-id": WORKSPACE_ID, "x-rally-workstream-id": ROOM_ID,
         "x-rally-user-id": AUTHOR_ID, "x-rally-session-id": SESSION_ID,
         "x-rally-socket-ticket-id": crypto.randomUUID(),
@@ -1317,7 +1317,7 @@ describe("post_result", () => {
       expect(frame.metadata.backgroundAgentCounts).toEqual({ [breakoutId]: 2 });
       expect(frame.metadata.backgroundAgentCount).toBe(2);
       // Someone outside the Breakout never learns its id from the counts.
-      const outsider = await runInDurableObject(roomParent(), (instance) => (instance as unknown as {
+      const outsider = await withHostedParent(roomParent(), ROOM_ID, (parent) => (parent as unknown as {
         metadataForUser(userId: string): { backgroundAgentCounts?: Record<string, number> } | null;
       }).metadataForUser(crypto.randomUUID()));
       expect(outsider?.backgroundAgentCounts).toEqual({});
@@ -1342,10 +1342,10 @@ describe("post_result", () => {
       triggerMessageId: null, activityId: null, executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test",
     });
     let restore!: () => void;
-    await runInDurableObject(roomParent(), (instance: WorkstreamDO) => {
+    await runInDurableObject(roomParent(), (instance: WorkspaceDO) => {
       const reserve = instance.reserveAgentChild;
-      const spy = vi.spyOn(Object.getPrototypeOf(instance) as WorkstreamDO, "reserveAgentChild")
-        .mockImplementation(async function (this: WorkstreamDO, ...args) {
+      const spy = vi.spyOn(Object.getPrototypeOf(instance) as WorkspaceDO, "reserveAgentChild")
+        .mockImplementation(async function (this: WorkspaceDO, ...args) {
           const result = await reserve.apply(this, args);
           // Simulate a generation changing between reservation and bootstrap.
           return { ...result, authorityGeneration: result.authorityGeneration + 1 };
@@ -1395,10 +1395,10 @@ describe("post_result", () => {
         });
       restoreTeam = () => spy.mockRestore();
     });
-    await runInDurableObject(roomParent(), (instance: WorkstreamDO) => {
+    await runInDurableObject(roomParent(), (instance: WorkspaceDO) => {
       const reserve = instance.reserveAgentChild;
-      const spy = vi.spyOn(Object.getPrototypeOf(instance) as WorkstreamDO, "reserveAgentChild")
-        .mockImplementation(async function (this: WorkstreamDO, ...args) {
+      const spy = vi.spyOn(Object.getPrototypeOf(instance) as WorkspaceDO, "reserveAgentChild")
+        .mockImplementation(async function (this: WorkspaceDO, ...args) {
           const result = await reserve.apply(this, args);
           childReserved = true;
           return result;
@@ -1562,7 +1562,7 @@ describe("post_result", () => {
   it("refuses child reservation after archival without registering the child", async () => {
     const childId = asSubstreamId(crypto.randomUUID());
     await runInDurableObject(roomParent(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE workstream_metadata SET archived_at = ?", Date.now());
+      state.storage.sql.exec("UPDATE parent_metadata SET archived_at = ? WHERE parent_id = ?", Date.now(), ROOM_ID);
     });
     await expect(Promise.resolve(roomParent().reserveAgentChild({
       workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: childId, createdByUserId: AUTHOR_ID,
@@ -1572,7 +1572,7 @@ describe("post_result", () => {
       kind: "child", authorityGeneration: 1,
     }))).rejects.toThrow("workstream_archived");
     const registered = await runInDurableObject(roomParent(), (_instance, state) =>
-      state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM conversation_children WHERE substream_id = ?", childId).one().n);
+      state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM parent_children WHERE parent_id = ? AND substream_id = ?", ROOM_ID, childId).one().n);
     expect(registered).toBe(0);
   });
 
@@ -1598,7 +1598,7 @@ describe("post_result", () => {
     const recipientAgentId = agentIdForAddress({ parentKind: "workstream", parentId: ROOM_ID, substreamId: asSubstreamId("0") });
     const senderAgentId = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("0") });
     await runInDurableObject(roomParent(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE workstream_metadata SET archived_at = ?", Date.now());
+      state.storage.sql.exec("UPDATE parent_metadata SET archived_at = ? WHERE parent_id = ?", Date.now(), ROOM_ID);
     });
     const messageId = crypto.randomUUID();
     expect(await roomConversation().admitAgentMessage({
@@ -1661,8 +1661,8 @@ describe("post_result", () => {
 
   it("refuses the activation once the owning room is archived, and the archive pauses the automation", async () => {
     // Archived through the room's own surface; the archive reaches the room's
-    // parent on the first queue leg and the workspace on the second, which
-    // tells the automation its room is gone.
+    // parent, hosted by the workspace, on the queue leg, and the workspace's
+    // directory step tells the automation its room is gone.
     const archived = await post(roomConversation(), "/internal/product", {
       operation: "update",
       auth: AUTH,

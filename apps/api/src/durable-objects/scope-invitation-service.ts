@@ -6,7 +6,7 @@ import { ListScopeInvitationsSchema, ScopeInvitationsListSchema, CreateScopeInvi
 import type { Env } from "../env";
 import { encryptString, decryptString, hmacSha256, timingSafeEqualText } from "../lib/crypto";
 import { uuidV7 } from "../lib/uuid-v7";
-import { ensureGuestRelationship, readWorkspaceRelationship, type WorkspaceRelationship } from "../services/workspace-relationship-service";
+import { ensureGuestRelationship, type WorkspaceRelationship } from "../services/workspace-relationship-service";
 import { sendResendEmail } from "../services/resend";
 import { readConversationPreview } from "../services/conversation-preview";
 import { discardScopeInvitationLinks, issueScopeInvitationLink, scopeInvitationLinkUrl } from "../services/scope-invitation-link";
@@ -33,19 +33,22 @@ export function scopeInvitationOrigin(env: Env): URL | null {
   return origin;
 }
 
-/** Product authority stays in the WorkstreamDO that owns the resulting grants. */
+/** Product authority stays with the parent that owns the resulting grants. */
 export class ScopeInvitationService {
   private readonly invitations: ScopeInvitationStorage;
   constructor(private readonly env: Env, private readonly storage: DurableObjectStorage,
+    private readonly parentId: string,
     private readonly resolve: (request: ScopeAccessRequest, relationship: WorkspaceRelationship | null) => ScopeAccessResult,
     private readonly coverageMatches: (request: z.infer<typeof CreateScopeInvitationsSchema>) => boolean,
-    private readonly enqueueDirectory: (grant: ScopeGrant, now: number) => void) {
-    this.invitations = new ScopeInvitationStorage(storage);
+    private readonly enqueueDirectory: (grant: ScopeGrant, now: number) => void,
+    private readonly readRelationship: (workspaceId: string, userId: string) => Promise<WorkspaceRelationship | null>,
+    private readonly noteRelationship: (relationship: WorkspaceRelationship) => void) {
+    this.invitations = new ScopeInvitationStorage(storage, parentId);
   }
 
   private canShare(targets: z.infer<typeof CreateScopeInvitationsSchema>["targets"], actor: WorkspaceRelationship | null): boolean {
-    if (this.storage.sql.exec("SELECT 1 FROM main_participant_migration WHERE phase = 'pending'").toArray().length ||
-      this.storage.sql.exec("SELECT 1 FROM child_participant_migrations WHERE phase = 'pending' LIMIT 1").toArray().length) return false;
+    if (this.storage.sql.exec("SELECT 1 FROM parent_participant_migrations WHERE parent_id = ? AND phase = 'pending' LIMIT 1",
+      this.parentId).toArray().length) return false;
     return actor !== null && targets.every((target) => {
       const access = this.resolve({ target, userId: actor.userId }, actor);
       return access.allowed && access.writable && access.grantIds.length > 0;
@@ -54,22 +57,25 @@ export class ScopeInvitationService {
 
   private targetsReady(targets: z.infer<typeof CreateScopeInvitationsSchema>["targets"]): boolean {
     if (targets.some((target) => target.kind === "workstream") && this.storage.sql.exec(
-      `SELECT 1 FROM conversation_children child LEFT JOIN child_participant_migrations migration
-        ON migration.substream_id=child.substream_id
-       WHERE child.kind='child' AND child.status='ready' AND child.audience='inherits_workstream'
+      `SELECT 1 FROM parent_children child LEFT JOIN parent_participant_migrations migration
+        ON migration.parent_id=child.parent_id AND migration.substream_id=child.substream_id
+       WHERE child.parent_id=? AND child.kind='child' AND child.status='ready' AND child.audience='inherits_workstream'
          AND (migration.phase IS NULL OR migration.phase!='complete') LIMIT 1`,
+      this.parentId,
     ).toArray().length > 0) return false;
     return targets.every((target) => {
-      const phase = target.kind === "workstream" || target.substreamId === "0"
-        ? this.storage.sql.exec<{ phase: string }>("SELECT phase FROM main_participant_migration WHERE singleton = 1").toArray()[0]?.phase
-        : this.storage.sql.exec<{ phase: string }>("SELECT phase FROM child_participant_migrations WHERE substream_id = ?", target.substreamId).toArray()[0]?.phase;
+      const substreamId = target.kind === "workstream" ? "0" : target.substreamId;
+      const phase = this.storage.sql.exec<{ phase: string }>(
+        "SELECT phase FROM parent_participant_migrations WHERE parent_id = ? AND substream_id = ?",
+        this.parentId, substreamId,
+      ).toArray()[0]?.phase;
       return phase === "complete";
     });
   }
 
   async list(input: z.infer<typeof ListScopeInvitationsSchema>) {
     const request = ListScopeInvitationsSchema.parse(input);
-    const actor = await readWorkspaceRelationship(this.env.DB, request.target.workspaceId, request.actorUserId);
+    const actor = await this.readRelationship(request.target.workspaceId, request.actorUserId);
     if (!this.canShare([request.target], actor)) return ScopeInvitationsListSchema.parse({ status: "denied", reason: "sharing_required" });
     const invitations = this.invitations.summaries().filter((invitation) =>
       invitation.targets.some((target) => target.kind === request.target.kind
@@ -105,7 +111,7 @@ export class ScopeInvitationService {
         tokenHash: await this.tokenHash(id, token),
         deliveryEncrypted: JSON.stringify(await encryptString(JSON.stringify(delivery), this.env.OAUTH_STATE_ENCRYPTION_KEY, `scope-invitation:${id}`)) } };
     }));
-    const actor = await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.actorUserId);
+    const actor = await this.readRelationship(request.workspaceId, request.actorUserId);
     // All external awaits precede local sharing checks and the transaction.
     const outcome = this.record(request, actor, minted.map((invitation) => invitation.record));
     // A denial, a replay and a conflict each leave rows addressing invitations
@@ -168,10 +174,13 @@ export class ScopeInvitationService {
     // share. That grants no conversation access and a retry resumes this step.
     if (initial.summary.status === "accepted" && initial.summary.acceptedByUserId !== request.userId) return denied("invitation_unavailable");
     const recipient = initial.summary.status === "accepted"
-      ? await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.userId)
+      ? await this.readRelationship(request.workspaceId, request.userId)
       : await ensureGuestRelationship(this.env.DB, request.workspaceId, request.userId);
+    // This request just wrote the relationship to D1, so its checks below and
+    // the viewer checks right after it read that, not the table's older answer.
+    if (recipient && initial.summary.status !== "accepted") this.noteRelationship(recipient);
     if (recipient?.status !== "active") return denied("relationship_required");
-    const currentActor = await readWorkspaceRelationship(this.env.DB, request.workspaceId, initial.actorUserId);
+    const currentActor = await this.readRelationship(request.workspaceId, initial.actorUserId);
     if (currentActor?.incarnation !== initial.actorIncarnation) return denied("sharing_required");
     return this.storage.transactionSync(() => {
       const current = this.invitations.read(request.invitationId);
@@ -182,6 +191,7 @@ export class ScopeInvitationService {
       }
       if (!this.canShare(current.summary.targets, currentActor)) return denied("sharing_required");
       const grants = new ScopeGrantStorage(this.storage, request, this.enqueueDirectory);
+      if (request.parentId !== this.parentId) throw new Error("scope_invitation_parent_mismatch");
       for (const [index, target] of current.summary.targets.entries()) {
         const operationId = current.grantOperationIds[index];
         if (!operationId) throw new Error("scope_invitation_grant_operation_missing");
@@ -224,7 +234,7 @@ export class ScopeInvitationService {
 
   async revoke(input: z.infer<typeof RevokeScopeInvitationSchema>): Promise<ScopeInvitationResult> {
     const request = RevokeScopeInvitationSchema.parse(input);
-    const actor = await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.actorUserId);
+    const actor = await this.readRelationship(request.workspaceId, request.actorUserId);
     const current = this.invitations.read(request.invitationId);
     if (!current) return denied("invitation_unavailable");
     if (!this.canShare(current.summary.targets, actor)) return denied("sharing_required");
@@ -285,9 +295,11 @@ export class ScopeInvitationService {
       // Inside the guard with the transcript read: a local read that fails is
       // still only a title, and an invitation must not fail for want of one.
       conversationTitle = substreamId === "0"
-        ? this.storage.sql.exec<{ title: string | null }>("SELECT title FROM workstream_metadata WHERE id = 1").toArray()[0]?.title ?? null
-        : this.storage.sql.exec<{ title: string | null }>("SELECT title FROM conversation_children WHERE substream_id = ?", substreamId)
-          .toArray()[0]?.title ?? null;
+        ? this.storage.sql.exec<{ title: string | null }>("SELECT title FROM parent_metadata WHERE parent_id = ?", this.parentId)
+          .toArray()[0]?.title ?? null
+        : this.storage.sql.exec<{ title: string | null }>(
+          "SELECT title FROM parent_children WHERE parent_id = ? AND substream_id = ?", this.parentId, substreamId,
+        ).toArray()[0]?.title ?? null;
       return { conversationTitle, preview: await readConversationPreview(this.env, {
         workspaceId: target.workspaceId, parentId: target.parentId, substreamId,
         turns: PREVIEW_TURNS, words: PREVIEW_WORDS, bytes: PREVIEW_BYTES,
@@ -334,7 +346,7 @@ export class ScopeInvitationService {
     if (!this.targetsReady(record.summary.targets)) return "migration_pending";
     const target = record.summary.targets[0];
     if (!target) return "sharing_required";
-    const actor = await readWorkspaceRelationship(this.env.DB, target.workspaceId, record.actorUserId);
+    const actor = await this.readRelationship(target.workspaceId, record.actorUserId);
     return actor?.incarnation === record.actorIncarnation && this.canShare(record.summary.targets, actor)
       ? null : "sharing_required";
   }

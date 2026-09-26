@@ -627,7 +627,7 @@ describe("the membership route", () => {
 });
 
 describe("carrying one revocation to the objects", () => {
-  interface Visit { name: string; revocation: unknown }
+  interface Visit { name: string; revocation: unknown; parentId?: string }
 
   function fanOut(options: {
     workstreamIds?: string[];
@@ -636,18 +636,27 @@ describe("carrying one revocation to the objects", () => {
     automationChildren?: string[];
     ownedAutomationIds?: string[];
     narrowedUserIds?: string[];
+    /** What an Organization object that runs the Channel step itself answers with. */
+    channels?: Array<{ workstreamId: string; substreamIds: string[] }>;
+    narrowedLeaves?: { substreams: Array<{ userId: string; substreamIds: string[] }>; automationIds: string[] };
     failAt?: boolean;
   } = {}) {
     const visits: Visit[] = [];
     const listed: Array<{ name: string; request: unknown }> = [];
     const sent: Published[] = [];
     /**
-     * One double serves all four namespaces: the consumer calls
-     * `revokeSocketAccess` on the objects that hold sockets and `listChildren`
-     * on an automation, which holds none of its own, and what each object
-     * answers with is the whole difference between the hops.
+     * One double serves every namespace: the consumer calls
+     * `revokeSocketAccess` on the objects that hold sockets,
+     * `revokeParentSocketAccess` on the Organization object for a Channel
+     * parent it hosts, and `listChildren` on an automation, which holds none of
+     * its own, and what each object answers with is the whole difference
+     * between the hops.
      */
-    const namespace = (answer: () => unknown, owned?: () => unknown): DurableObjectNamespace => {
+    const namespace = (
+      answer: () => unknown,
+      owned?: () => unknown,
+      parent?: () => unknown,
+    ): DurableObjectNamespace => {
       const binding: DurableObjectNamespace = createCloudflareTestBinding<DurableObjectNamespace>({
         idFromName: (name: string) => createTestDurableObjectId(name),
         get: (id: DurableObjectId) => ({
@@ -656,10 +665,15 @@ describe("carrying one revocation to the objects", () => {
             if (options.failAt) throw new Error("object unreachable");
             return answer();
           },
+          revokeParentSocketAccess: async (request: { parentId: string; revocation: unknown }) => {
+            visits.push({ name: id.toString(), revocation: request.revocation, parentId: request.parentId });
+            if (options.failAt) throw new Error("object unreachable");
+            return parent?.();
+          },
           revokeNarrowedAudienceAccess: async (request: unknown) => {
             listed.push({ name: id.toString(), request });
             if (options.failAt) throw new Error("object unreachable");
-            return { closedUserIds: options.narrowedUserIds ?? [] };
+            return { closedUserIds: options.narrowedUserIds ?? [], ...options.narrowedLeaves };
           },
           automationIdsOwnedByWorkstream: async (request: unknown) => {
             listed.push({ name: id.toString(), request });
@@ -689,8 +703,8 @@ describe("carrying one revocation to the objects", () => {
       WORKSPACE_DOS: namespace(() => ({
         workstreamIds: options.workstreamIds ?? [],
         automationIds: options.automationIds ?? [],
-      }), () => ({ automationIds: options.ownedAutomationIds ?? [] })),
-      WORKSTREAM_DOS: namespace(() => ({
+        ...(options.channels ? { channels: options.channels } : {}),
+      }), () => ({ automationIds: options.ownedAutomationIds ?? [] }), () => ({
         substreamIds: options.substreamIds ?? [],
       })),
       SUBSTREAM_AGENTS: namespace(() => undefined),
@@ -832,6 +846,50 @@ describe("carrying one revocation to the objects", () => {
       .toEqual([READER, READER]);
   });
 
+  it("publishes a Channel's conversations directly when the workspace ran its hop, and a hop for the rest", async () => {
+    const IMPORTING = "00000000-0000-7000-8000-0000000000a2";
+    const { env, visits, sent } = fanOut({
+      workstreamIds: [WORKSTREAM, IMPORTING],
+      channels: [{ workstreamId: WORKSTREAM, substreamIds: ["0", SUBSTREAM] }],
+    });
+    await applyAccessRevocation(env, message({ scope: "workspace" }));
+
+    // The Organization object closed the Channel's control sockets and named
+    // its conversations in the same call, so no `workstream` hop goes out for
+    // it. A Channel it did not run (its legacy import is pending) keeps one.
+    expect(visits).toHaveLength(1);
+    expect(targetsOf(sent)).toEqual([
+      { scope: "workstream", workstreamId: IMPORTING },
+      { scope: "substream", workstreamId: WORKSTREAM, substreamId: "0" },
+      { scope: "substream", workstreamId: WORKSTREAM, substreamId: SUBSTREAM },
+    ]);
+  });
+
+  it("publishes only the leaves of a narrowing when the workspace ran each reader's Channel step", async () => {
+    const READER = "00000000-0000-7000-8000-0000000000b1";
+    const OWNED = "00000000-0000-7000-8000-0000000000d2";
+    const { env, sent } = fanOut({
+      narrowedUserIds: [READER],
+      narrowedLeaves: { substreams: [{ userId: READER, substreamIds: ["0"] }], automationIds: [OWNED] },
+    });
+    await applyAccessRevocation(env, AccessRevocationMessageSchema.parse({
+      kind: "access_revoked",
+      reason: "workstream_participant_removed",
+      workspaceId: WORKSPACE,
+      userId: null,
+      sessionId: null,
+      target: { scope: "workstream_audience_narrowed", workstreamId: WORKSTREAM },
+      occurredAt: NOW,
+    }));
+
+    expect(targetsOf(sent)).toEqual([
+      { scope: "substream", workstreamId: WORKSTREAM, substreamId: "0" },
+      { scope: "automation", automationId: OWNED },
+    ]);
+    expect(sent.map((published) => AccessRevocationMessageSchema.parse(published.body).userId))
+      .toEqual([READER, READER]);
+  });
+
   it("publishes nothing for a narrowing nobody was reading through", async () => {
     const { env, sent } = fanOut();
     await applyAccessRevocation(env, AccessRevocationMessageSchema.parse({
@@ -874,9 +932,12 @@ describe("carrying one revocation to the objects", () => {
   });
 
   it("publishes a message for every substream a work stream names", async () => {
-    const { env, sent } = fanOut({ substreamIds: ["0", SUBSTREAM] });
+    const { env, visits, sent } = fanOut({ substreamIds: ["0", SUBSTREAM] });
     await applyAccessRevocation(env, message({ scope: "workstream", workstreamId: WORKSTREAM }));
 
+    // The Organization object is asked about this Channel's parent, not the
+    // Organization's own sockets.
+    expect(visits.map((visit) => visit.parentId)).toEqual([WORKSTREAM]);
     expect(targetsOf(sent)).toEqual([
       { scope: "substream", workstreamId: WORKSTREAM, substreamId: "0" },
       { scope: "substream", workstreamId: WORKSTREAM, substreamId: SUBSTREAM },

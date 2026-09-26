@@ -16,7 +16,6 @@ import {
 } from "@rally/contracts";
 import {
   conversationEffectHash,
-  ParentEffectEnvelopeSchema,
   type ConversationEffect,
   type ConversationEffectEnvelope,
   type ParentEffect,
@@ -34,7 +33,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import { AUTOMATION_DO_SCHEMA_MIGRATIONS, AutomationDO } from "../src/durable-objects/automation-do";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS, WorkspaceDO } from "../src/durable-objects/workspace-do";
-import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-do";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
 import { ScheduledAlarmStore } from "../src/durable-objects/scheduled-alarms";
 import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
@@ -56,7 +54,6 @@ import {
 import {
   consumeEffectBodies,
   deliverEffectsToWorkspaceInOrder,
-  deliverParentEffectsInOrder,
 } from "./helpers/conversation-effects";
 import {
   automationDOName,
@@ -75,6 +72,7 @@ import {
   type WorkspaceOpportunityPersistRequest,
 } from "../src/durable-objects/workspace-opportunity-protocol";
 import { WORKSPACE_LOCAL_TABLES } from "../src/services/workspace-runtime-database";
+import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000101");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-000000000102");
@@ -123,6 +121,7 @@ async function seedOpenAuthority(): Promise<void> {
       status TEXT NOT NULL,
       role TEXT NOT NULL,
       last_seen_at TEXT,
+      revision INTEGER NOT NULL DEFAULT 1,
       PRIMARY KEY (workspace_id, user_id)
     )`),
     env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
@@ -435,7 +434,8 @@ type TestableSubstreamAgent = {
   latestSocketRevocationAt: number;
 };
 
-type TestableWorkstreamDO = {
+/** The hosted parent's per-envelope apply, reached below the facade that drains after it. */
+type TestableHostedParent = {
   applyChildEnvelope(substreamId: string, envelope: ConversationEffectEnvelope): void;
 };
 
@@ -539,9 +539,6 @@ describe("Durable Objects in the Workers runtime", () => {
     const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
       workspaceDOName("global", WORKSPACE_ID),
     ));
-    const workstream = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
-    ));
     const substream = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID, asSubstreamId("0")),
     ));
@@ -549,8 +546,10 @@ describe("Durable Objects in the Workers runtime", () => {
       workspace: await runInDurableObject(workspace, async (instance: WorkspaceDO) => (
         (instance as unknown as { sessionAuth(value: typeof identity): Promise<unknown> }).sessionAuth(identity)
       )),
-      workstream: await runInDurableObject(workstream, async (instance: WorkstreamDO) => (
-        (instance as unknown as { sessionAuth(value: typeof identity): Promise<unknown> }).sessionAuth(identity)
+      // The Channel control socket's own admission, now answered by the
+      // hosted parent inside the Organization object.
+      workstream: await withHostedParent(workspace, WORKSTREAM_ID, (parent) => (
+        (parent as unknown as { sessionAuth(value: typeof identity): Promise<unknown> }).sessionAuth(identity)
       )),
       substream: await runInDurableObject(substream, async (instance: SubstreamAgent) => (
         (instance as unknown as { socketAuth(value: typeof identity): Promise<unknown> }).socketAuth(identity)
@@ -595,9 +594,7 @@ describe("Durable Objects in the Workers runtime", () => {
     expect(fenced.status).toBe(409);
     expect(JSON.parse(fenced.bodyJson)).toEqual({ error: "workstream_runtime_bootstrap_fenced" });
 
-    const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
-    ));
+    const parent = hostedParentStub(env, WORKSPACE_ID);
     const common = childEffectEnvelope({
       kind: "directory_common",
       title: "Native RPC",
@@ -617,11 +614,13 @@ describe("Durable Objects in the Workers runtime", () => {
     });
     // Asserted inside the object: a rejected native RPC on a stub leaves a
     // second rejection the runtime holds, which fails the run under a summary
-    // of passing tests.
-    await runInDurableObject(parent, async (instance: WorkstreamDO) => {
+    // of passing tests. The Organization object picks the parent from the
+    // batch's first envelope, so the mismatch it refuses is a batch that names
+    // a second parent.
+    await runInDurableObject(parent, async (instance: WorkspaceDO) => {
       await expect(instance.receiveChildEffects({
         substreamId: "0",
-        envelopes: [{
+        envelopes: [{ ...common, messageId: "native-rpc-matched" }, {
           ...common,
           messageId: "native-rpc-mismatch",
           parentId: "00000000-0000-7000-8000-000000000199",
@@ -641,9 +640,7 @@ describe("Durable Objects in the Workers runtime", () => {
     // strand every effect already in flight, permanently, since the numbers
     // can never agree again.
     const replayWorkstreamId = asWorkstreamId("00000000-0000-7000-8000-0000000001aa");
-    const replayParent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-      workstreamDOName("global", WORKSPACE_ID, replayWorkstreamId),
-    ));
+    const replayParent = hostedParentStub(env, WORKSPACE_ID);
     const establishedAtTwo = await replayParent.receiveChildEffects({
       substreamId: "0",
       envelopes: [{
@@ -726,29 +723,12 @@ describe("Durable Objects in the Workers runtime", () => {
       );
     });
 
-    const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
-    ));
-    // Apply and capture the parent's forwarding row inside one object input.
-    // Returning from receiveChildEffects arms an immediately-due alarm; if a
-    // test reads the outbox in a later input, the alarm can legitimately win
-    // and send the row to this test Worker's producer-only queue. Keeping this
-    // walk atomic removes that scheduler race while still exercising the real
-    // parent projection and workspace consumer.
-    const parentEnvelopes = await runInDurableObject(parent, async (instance, state) => {
-      await (instance as WorkstreamDO).receiveChildEffects({ substreamId: "0", envelopes: [common] });
-      const rows = state.storage.sql.exec<{ message_id: string; payload_json: string }>(
-        `SELECT message_id, payload_json FROM durable_outbox
-          WHERE json_extract(payload_json, '$.kind') = 'parent_effect'
-          ORDER BY created_at, message_id`,
-      ).toArray();
-      for (const row of rows) {
-        state.storage.sql.exec(`DELETE FROM durable_outbox WHERE message_id = ?`, row.message_id);
-      }
-      return rows.map((row) => ParentEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
+    // The parent step and the directory step are one call now: the
+    // Organization object applies the child's effect to the hosted parent and
+    // then its own directory row from the local outbox, before returning.
+    await expect(workspace.receiveChildEffects({ substreamId: "0", envelopes: [common] })).resolves.toEqual({
+      accepted: [{ messageId: common.messageId, payloadHash: common.payloadHash }],
     });
-    expect(parentEnvelopes.map((envelope) => envelope.effect.kind)).toEqual(["directory_common"]);
-    await expect(consumeEffectBodies(env, parentEnvelopes)).resolves.toEqual({ acked: 1, retried: 0 });
     await runInDurableObject(child, (_instance, state) => {
       state.storage.sql.exec(`DELETE FROM durable_outbox WHERE message_id = ?`, common.messageId);
     });
@@ -763,9 +743,10 @@ describe("Durable Objects in the Workers runtime", () => {
         `SELECT COUNT(*) AS count FROM durable_outbox`,
       ).one().count).toBe(0);
     });
-    await runInDurableObject(parent, (_instance, state) => {
+    await runInDurableObject(workspace, (_instance, state) => {
       expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM durable_outbox`,
+        `SELECT COUNT(*) AS count FROM parent_outbox WHERE parent_id = ?`,
+        WORKSTREAM_ID,
       ).one().count).toBe(0);
     });
   });
@@ -1101,24 +1082,11 @@ describe("Durable Objects in the Workers runtime", () => {
         absentTables: ["agent_run_dispatches", "run_steering"],
       },
       {
-        namespace: env.WORKSTREAM_DOS,
-        name: workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
-        constructor: WorkstreamDO,
-        migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS.length,
-        tables: [
-          "_sql_schema_migrations",
-          "conversation_children",
-          "substream_directory",
-          "durable_outbox",
-          "workstream_socket_ticket_receipts",
-        ],
-      },
-      {
         namespace: env.AUTOMATION_DOS,
         name: automationDOName("global", WORKSPACE_ID, AUTOMATION_ID),
         constructor: AutomationDO,
         migrations: AUTOMATION_DO_SCHEMA_MIGRATIONS.length,
-        // Its own rows beside the parent tables it shares with WorkstreamDO.
+        // Its own rows beside the parent tables the legacy WorkstreamDO had.
         tables: [
           "_sql_schema_migrations",
           "automation",
@@ -1141,12 +1109,20 @@ describe("Durable Objects in the Workers runtime", () => {
           "workspace_connector_event_ingress_receipts",
           "workspace_connector_events",
           "workspace_identity",
-          "workspace_workstream_directory",
+          "channels",
           "workspace_workstream_effect_receipts",
           "workspace_workstream_pins",
           "workspace_workstream_resource_links",
           "pending_attachment_reservations",
-          "workspace_workstream_viewers",
+          "channel_viewers",
+          // Every Channel's and Space's parent state, keyed by parent id.
+          "parent_imports",
+          "parent_metadata",
+          "parent_children",
+          "parent_child_projections",
+          "parent_outbox",
+          "parent_state_changes",
+          "parent_grants",
           "workspace_sync_events",
           "workspace_socket_ticket_receipts",
           "workspace_batch_dispatches",
@@ -1200,25 +1176,24 @@ describe("Durable Objects in the Workers runtime", () => {
           && table.strict !== 1
         ));
         expect(nonStrict).toEqual([]);
-        if (instance instanceof WorkstreamDO) {
+        if (instance instanceof WorkspaceDO) {
           const stateColumns = state.storage.sql.exec<{ name: string }>(
-            `PRAGMA table_info(workstream_state_changes)`,
+            `PRAGMA table_info(parent_state_changes)`,
           ).toArray().map((column) => column.name);
           expect(stateColumns).toEqual(expect.arrayContaining([
+            "parent_id",
             "sequence",
             "state_key",
             "waterline",
             "event_id",
             "state_json",
           ]));
-        }
-        if (instance instanceof WorkspaceDO) {
           const syncColumns = state.storage.sql.exec<{ name: string }>(
             `PRAGMA table_info(workspace_sync_events)`,
           ).toArray().map((column) => column.name);
           expect(syncColumns).toEqual(["waterline", "event_id", "topics_json", "occurred_at"]);
           const directoryColumns = state.storage.sql.exec<{ name: string }>(
-            `PRAGMA table_info(workspace_workstream_directory)`,
+            `PRAGMA table_info(channels)`,
           ).toArray().map((column) => column.name);
           expect(directoryColumns).toEqual(expect.arrayContaining([
             "authority_generation",
@@ -1236,6 +1211,19 @@ describe("Durable Objects in the Workers runtime", () => {
         }
       });
     }
+
+    // The legacy Channel parent is kept only to export an existing object's
+    // rows. Woken with no rows, it must not apply its ledger: that would turn
+    // an id nobody provisioned into a stored object the import then reads.
+    const legacy = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const health = await legacy.fetch("https://object.test/health");
+    expect(await health.json()).toMatchObject({ ok: true, role: "workstream-legacy" });
+    await runInDurableObject(legacy, (instance, state) => {
+      expect(instance).toBeInstanceOf(WorkstreamDO);
+      expect(tableNames(state)).toEqual([]);
+    });
   });
 
   it("gives main and child substreams isolated SQLite databases that survive eviction", async () => {
@@ -1310,10 +1298,7 @@ describe("Durable Objects in the Workers runtime", () => {
   });
 
   it("forwards the earliest Terminal deadline of any conversation and lists which conversations own one", async () => {
-    const stub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
-    ));
-    await fetchAndDrain(stub, "https://workstream.test/health");
+    const stub = hostedParentStub(env, WORKSPACE_ID);
     const at = "2026-08-17T20:00:00.000Z";
     const mainDue = "2026-08-17T21:00:00.000Z";
     const threadDue = "2026-08-17T20:30:00.000Z";
@@ -1330,12 +1315,14 @@ describe("Durable Objects in the Workers runtime", () => {
       archivedAt: null,
       nextTerminalActionAt,
     });
-    // Inspected in the same invocation as the writes, before the drain alarm
-    // can forward and delete what the parent queued (docs/testing.md).
-    const forwarded = await runInDurableObject(stub, async (instance, state) => {
-      const testable = instance as unknown as TestableWorkstreamDO;
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    // Driven on the hosted parent below the Organization facade. What the
+    // parent published is read from its own record of each projection
+    // version, which the directory applied in the same transaction.
+    const forwarded = await withHostedParent(stub, WORKSTREAM_ID, (parent, state) => {
+      const testable = parent as unknown as TestableHostedParent;
       const deadline = () => state.storage.sql.exec<{ next_terminal_action_at: number | null }>(
-        `SELECT next_terminal_action_at FROM workstream_metadata WHERE id = 1`,
+        `SELECT next_terminal_action_at FROM parent_metadata WHERE parent_id = ?`, WORKSTREAM_ID,
       ).one().next_terminal_action_at;
       testable.applyChildEnvelope("0", childEffectEnvelope(common("Main", mainDue), "main-terminal-1"));
       expect(deadline()).toBe(Date.parse(mainDue));
@@ -1346,8 +1333,8 @@ describe("Durable Objects in the Workers runtime", () => {
         common("Thread", threadDue), "thread-terminal-1", 1, WORKSTREAM_ID, CHILD_SUBSTREAM_ID,
       ));
       expect(deadline()).toBe(Date.parse(threadDue));
-      await expect(instance.childTerminalDeadlines({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID }))
-        .resolves.toEqual({ items: [
+      expect(parent.childTerminalDeadlines({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID }))
+        .toEqual({ items: [
           { substreamId: CHILD_SUBSTREAM_ID, nextTerminalActionAt: threadDue },
           { substreamId: "0", nextTerminalActionAt: mainDue },
         ] });
@@ -1356,16 +1343,14 @@ describe("Durable Objects in the Workers runtime", () => {
         common("Thread", null), "thread-terminal-2", 2, WORKSTREAM_ID, CHILD_SUBSTREAM_ID,
       ));
       expect(deadline()).toBe(Date.parse(mainDue));
-      await expect(instance.childTerminalDeadlines({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID }))
-        .resolves.toEqual({ items: [{ substreamId: "0", nextTerminalActionAt: mainDue }] });
-      return state.storage.sql.exec<{ payload_json: string }>(
-        `SELECT payload_json FROM durable_outbox
-          WHERE json_extract(payload_json, '$.kind') = 'parent_effect'
-            AND json_extract(payload_json, '$.partitionKey') = 'common'
-          ORDER BY created_at, message_id`,
-      ).toArray().map((row) => (JSON.parse(row.payload_json) as {
-        effect: { title: string; nextTerminalActionAt: string | null };
-      }).effect);
+      expect(parent.childTerminalDeadlines({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID }))
+        .toEqual({ items: [{ substreamId: "0", nextTerminalActionAt: mainDue }] });
+      return state.storage.sql.exec<{ state_json: string }>(
+        `SELECT state_json FROM parent_state_changes
+          WHERE parent_id = ? AND state_key = 'common'
+          ORDER BY waterline`,
+        WORKSTREAM_ID,
+      ).toArray().map((row) => JSON.parse(row.state_json) as { title: string; nextTerminalActionAt: string | null });
     });
     // Every row the workspace hears is the main conversation's, carrying
     // whichever deadline was earliest at the time.
@@ -1377,10 +1362,7 @@ describe("Durable Objects in the Workers runtime", () => {
   });
 
   it("stores private child projections without changing Main's directory in WorkstreamDO", async () => {
-    const stub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
-    ));
-    await fetchAndDrain(stub, "https://workstream.test/health");
+    const stub = hostedParentStub(env, WORKSPACE_ID);
     const at = "2026-08-17T20:00:00.000Z";
     const later = "2026-08-17T20:01:00.000Z";
     const common = (state: string, lastActivityAt: string, completedAt: string | null) => ({
@@ -1403,8 +1385,16 @@ describe("Durable Objects in the Workers runtime", () => {
       youAreMentioned,
       listable: true,
     });
-    await runInDurableObject(stub, (instance, state) => {
-      const testable = instance as unknown as TestableWorkstreamDO;
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    await stub.applyMemberStatus({
+      workspaceId: WORKSPACE_ID, sequence: 1, removed: false,
+      relationship: {
+        workspaceId: WORKSPACE_ID, userId: USER_ID, accessClass: "member", role: "member",
+        status: "active", incarnation: "existing-member", revision: 1,
+      },
+    });
+    await withHostedParent(stub, WORKSTREAM_ID, (parent, state) => {
+      const testable = parent as unknown as TestableHostedParent;
       for (const [substreamId, envelopes] of [
         ["0", [
           childEffectEnvelope(common("completed", at, at), "main-common"),
@@ -1421,31 +1411,36 @@ describe("Durable Objects in the Workers runtime", () => {
         exact_state: string;
         last_activity_at: number;
         completed_at: number | null;
-      }>(`SELECT exact_state, last_activity_at, completed_at FROM workstream_metadata WHERE id = 1`).one())
+      }>(`SELECT exact_state, last_activity_at, completed_at FROM parent_metadata WHERE parent_id = ?`, WORKSTREAM_ID).one())
         .toEqual({ exact_state: "completed", last_activity_at: Date.parse(at), completed_at: Date.parse(at) });
       const effects = state.storage.sql.exec<{ effect_json: string }>(
-        `SELECT effect_json FROM substream_user_directory WHERE user_id = ? ORDER BY substream_id`,
+        `SELECT effect_json FROM parent_child_viewer_projections WHERE parent_id = ? AND user_id = ? ORDER BY substream_id`,
+        WORKSTREAM_ID,
         USER_ID,
       ).toArray().map((row) => JSON.parse(row.effect_json) as { unreadCount: number; youAreMentioned: boolean });
       expect(effects).toHaveLength(2);
       expect(effects.reduce((sum, effect) => sum + effect.unreadCount, 0)).toBe(5);
       expect(effects.some((effect) => effect.youAreMentioned)).toBe(true);
+      // Main published once per key, and the Organization's rows are Main's.
       expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM durable_outbox WHERE partition_key IN ('common', ?)`,
+        `SELECT COUNT(*) AS count FROM parent_state_changes
+          WHERE parent_id = ? AND state_key IN ('common', ?)`,
+        WORKSTREAM_ID,
         `user:${USER_ID}`,
       ).one().count).toBe(2);
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM workstream_state_changes
-          WHERE state_key IN ('common', ?)`,
-        `user:${USER_ID}`,
-      ).one().count).toBe(2);
-      state.storage.sql.exec(
-        `UPDATE durable_outbox SET state = 'inflight' WHERE partition_key = 'common'`,
-      );
-      state.storage.sql.exec(
-        `DELETE FROM durable_outbox WHERE partition_key = ?`,
-        `user:${USER_ID}`,
-      );
+      const directory = () => ({
+        channel: state.storage.sql.exec(
+          `SELECT exact_state, waterline FROM channels WHERE workstream_id = ?`, WORKSTREAM_ID,
+        ).toArray(),
+        viewer: state.storage.sql.exec(
+          `SELECT unread_count, you_are_mentioned FROM channel_viewers WHERE workstream_id = ? AND user_id = ?`,
+          WORKSTREAM_ID, USER_ID,
+        ).toArray(),
+      });
+      expect(directory()).toEqual({
+        channel: [{ exact_state: "completed", waterline: 1 }],
+        viewer: [{ unread_count: 2, you_are_mentioned: 0 }],
+      });
       testable.applyChildEnvelope(
         CHILD_SUBSTREAM_ID,
         childEffectEnvelope(
@@ -1454,13 +1449,14 @@ describe("Durable Objects in the Workers runtime", () => {
           2,
         ),
       );
-      const replacements = state.storage.sql.exec<{ source_version: number; state: string }>(
-        `SELECT source_version, state FROM durable_outbox WHERE partition_key = 'common'
-          ORDER BY source_version`,
-      ).toArray();
       // The later private update is retained locally, not emitted as Main.
-      expect(replacements).toEqual([{ source_version: 1, state: "inflight" }]);
-      state.storage.sql.exec(`DELETE FROM durable_outbox`);
+      expect(state.storage.sql.exec<{ waterline: number }>(
+        `SELECT waterline FROM parent_state_changes WHERE parent_id = ? AND state_key = 'common'`,
+        WORKSTREAM_ID,
+      ).toArray()).toEqual([{ waterline: 1 }]);
+      expect(directory().channel).toEqual([{ exact_state: "completed", waterline: 1 }]);
+      expect(state.storage.sql.exec(`SELECT message_id FROM parent_outbox WHERE parent_id = ?`, WORKSTREAM_ID)
+        .toArray()).toEqual([]);
     });
   });
 
@@ -2134,10 +2130,7 @@ describe("Durable Objects in the Workers runtime", () => {
 
   it("names a work stream's substreams when its access is revoked", async () => {
     await seedOpenAuthority();
-    const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
-    ));
-    await fetchAndDrain(parent, "https://workstream.test/health");
+    const parent = hostedParentStub(env, WORKSPACE_ID);
     await parent.receiveChildEffects({
       substreamId: "0",
       envelopes: [childEffectEnvelope({
@@ -2153,11 +2146,14 @@ describe("Durable Objects in the Workers runtime", () => {
         archivedAt: null,
       }, "00000000-0000-7000-8000-000000000604")],
     });
-    const result = await parent.revokeSocketAccess({
-      reason: "workspace_membership_removed",
-      workspaceId: WORKSPACE_ID,
-      userId: USER_ID,
-      sessionId: null,
+    const result = await parent.revokeParentSocketAccess({
+      parentId: WORKSTREAM_ID,
+      revocation: {
+        reason: "workspace_membership_removed",
+        workspaceId: WORKSPACE_ID,
+        userId: USER_ID,
+        sessionId: null,
+      },
     });
     // The main substream keeps the historical name and is never in the
     // directory, so a walk that only read the table would skip the one object
@@ -2223,14 +2219,11 @@ describe("Durable Objects in the Workers runtime", () => {
       (frame) => frame.workstream !== null,
     );
     const outsiderPush = nextMessage(outsider);
-    const workstreamStub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
-    ));
-    await holdActivityQueue(workstreamStub);
     const at = "2026-08-21T20:00:00.000Z";
     // A run finishing, as the child reports it: the consumer hands it to the
-    // parent, the parent sums it into the work stream's row, and the workspace
-    // pushes that row to every subscribed sidebar.
+    // Organization object, whose hosted parent sums it into the work stream's
+    // row, and whose directory step then pushes that row to every subscribed
+    // sidebar, in the same delivery.
     await expect(consumeEffectBodies(env, [
       childEffectEnvelope({
         kind: "directory_common",
@@ -2263,9 +2256,12 @@ describe("Durable Objects in the Workers runtime", () => {
         latestMentionAttentionOrdinal: 0,
       }, "00000000-0000-7000-8000-000000000405"),
     ])).resolves.toEqual({ acked: 2, retried: 0 });
-    const forwarded = await deliverParentEffectsInOrder(env, workstreamStub);
-    expect(forwarded.map((envelope) => envelope.effect.kind).sort())
-      .toEqual(["directory_common", "directory_user"]);
+    // Both projections were applied to the directory locally, not queued.
+    await runInDurableObject(workspaceStub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM parent_outbox WHERE parent_id = ?`, WORKSTREAM_ID,
+      ).one().count).toBe(0);
+    });
 
     expect(await participantPush).toMatchObject({
       type: "workspace_workstream_state",
@@ -2329,16 +2325,14 @@ describe("Durable Objects in the Workers runtime", () => {
     const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
-    const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
-    ));
     const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
       workspaceDOName("global", WORKSPACE_ID),
     ));
     // Both outboxes stay readable: the effects are walked to the workspace by
     // hand below, and an alarm that beat the walk would send them nowhere.
+    // The Organization's holds only the activity rows its hosted parent queues.
     await holdActivityQueue(child);
-    await holdActivityQueue(parent);
+    await holdActivityQueue(workspace);
     // Created the way `POST /workstreams` creates one it has no title for: the
     // first line of the request stands in, and `naming` promises a name.
     await runInDurableObject(child, async (instance) => {
@@ -2377,7 +2371,14 @@ describe("Durable Objects in the Workers runtime", () => {
       });
     });
     const created = await deliverEffectsToWorkspaceInOrder(env, child);
-    expect(created.parent.map((envelope) => envelope.effect.kind)).toContain("directory_common");
+    expect(created.child.map((envelope) => envelope.effect.kind)).toContain("directory_common");
+    // The directory step ran in the Organization object as the parent applied
+    // the child's effects; only activity is left for the Queue.
+    expect(created.parent.map((envelope) => envelope.effect.kind)).not.toContain("directory_common");
+    await expect(workspace.lookupWorkstreamDirectory({
+      workspaceId: WORKSPACE_ID,
+      workstreamIds: [WORKSTREAM_ID],
+    })).resolves.toMatchObject({ items: [{ workstreamId: WORKSTREAM_ID }] });
 
     // The participant is watching the sidebar and nothing else: no work-stream
     // room socket, so the `workstream_renamed` event the naming service
@@ -2427,8 +2428,8 @@ describe("Durable Objects in the Workers runtime", () => {
     });
     expect(named.status).toBe(200);
 
-    // The rename rides the same two legs the creation did: child to parent,
-    // parent to workspace. The workspace is what pushes the row.
+    // The rename rides the same leg the creation did: child to the
+    // Organization object, whose directory step pushes the row.
     const renamed = await deliverEffectsToWorkspaceInOrder(env, child);
     expect(renamed.child.map((envelope) => envelope.effect.kind)).toContain("directory_common");
 
@@ -2636,10 +2637,10 @@ describe("Durable Objects in the Workers runtime", () => {
 
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM workspace_workstream_directory`,
+        `SELECT COUNT(*) AS count FROM channels`,
       ).one().count).toBe(3);
       expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM workspace_workstream_viewers`,
+        `SELECT COUNT(*) AS count FROM channel_viewers`,
       ).one().count).toBe(1);
     });
   });
@@ -2801,7 +2802,7 @@ describe("Durable Objects in the Workers runtime", () => {
              CROSS JOIN digits thousands
              WHERE ones.d + tens.d * 10 + hundreds.d * 100 + thousands.d * 1000 < 1252
            )
-           INSERT INTO workspace_workstream_directory
+           INSERT INTO channels
              (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
               title, description, preview, scope, exact_state, system_kind, last_activity_at,
               completed_at, archived_at, email_address, origin_type, origin_label,
@@ -2827,7 +2828,7 @@ describe("Durable Objects in the Workers runtime", () => {
           `WITH RECURSIVE sequence(n) AS (
              SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < 251
            )
-           INSERT INTO workspace_workstream_directory
+           INSERT INTO channels
              (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
               title, description, preview, scope, exact_state, system_kind, last_activity_at,
               completed_at, archived_at, email_address, origin_type, origin_label,
@@ -3065,7 +3066,7 @@ describe("Durable Objects in the Workers runtime", () => {
       requestId: "00000000-0000-7000-8000-000000000288",
       statements: [
         ...[SPACE_ID, OTHER_SPACE_ID].map((spaceId, index) => ({
-          sql: `INSERT INTO workspace_space_directory
+          sql: `INSERT INTO spaces
             (space_id, title, scope, appearance_json, archived_at, created_by_user_id,
              system_role, authority_generation, source_version, payload_hash, revision,
              created_at, updated_at, source_created_at, source_updated_at)
@@ -3144,7 +3145,7 @@ describe("Durable Objects in the Workers runtime", () => {
       workspaceId: WORKSPACE_ID,
       requestId: "00000000-0000-7000-8000-000000000289",
       statements: [{
-        sql: "UPDATE workspace_space_directory SET archived_at = ?, updated_at = ? WHERE space_id = ?",
+        sql: "UPDATE spaces SET archived_at = ?, updated_at = ? WHERE space_id = ?",
         params: [now + 1, now + 1, OTHER_SPACE_ID],
       }],
     });
@@ -4133,11 +4134,75 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
+  it("warms the Channel's Main conversation when someone opens the Channel", async () => {
+    await seedOpenAuthority();
+    const stub = hostedParentStub(env, WORKSPACE_ID);
+    const at = "2026-08-22T12:00:00.000Z";
+    await stub.receiveChildEffects({
+      substreamId: "0",
+      envelopes: [childEffectEnvelope({
+        kind: "directory_common" as const,
+        title: "Warm on open",
+        description: "Main wakes before it is read",
+        preview: "idle",
+        scope: "workspace",
+        state: "idle",
+        systemKind: null,
+        lastActivityAt: at,
+        completedAt: null,
+        archivedAt: null,
+        emailAddress: "workstream@automation.with-avalon.com",
+        createdByUserId: USER_ID,
+        titleStatus: "settled" as const,
+        latestAttentionOrdinal: 1,
+        unreadTrackingStartOrdinal: 0,
+        nextWakeupDueAt: null,
+        nextWakeupPrompt: null,
+        nextTerminalActionAt: null,
+        createdAt: at,
+        updatedAt: at,
+      }, "00000000-0000-7000-8000-000000000711")],
+    });
+    const main = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+
+    const response = await stub.fetch("https://workspace.test/parent-socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000712",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    response.webSocket!.accept();
+
+    // Whether Main is *running* is the observable, and eviction is what asks:
+    // the harness refuses to evict an object that was never started. The wake
+    // is not awaited by the open, so give it a few turns to land. Nothing in
+    // this test addresses Main.
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        await evictDurableObject(main);
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
+    expect(lastError).toBeNull();
+    response.webSocket!.close(1000, "done");
+  });
+
   it("closes a metadata socket when the work stream itself stops admitting its reader", async () => {
     await seedOpenAuthority();
-    const stub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
-    ));
+    const stub = hostedParentStub(env, WORKSPACE_ID);
     const at = "2026-08-22T12:00:00.000Z";
     const otherCreator = "00000000-0000-7000-8000-000000000706";
     const directory = (
@@ -4184,7 +4249,7 @@ describe("Durable Objects in the Workers runtime", () => {
       }, "00000000-0000-7000-8000-000000000702")],
     });
 
-    const response = await stub.fetch("https://workstream.test/socket", {
+    const response = await stub.fetch("https://workspace.test/parent-socket", {
       headers: {
         Upgrade: "websocket",
         "x-rally-workspace-id": WORKSPACE_ID,
@@ -4248,11 +4313,9 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
-  it("serves complete WorkstreamDO metadata without query configuration after hibernation", async () => {
+  it("serves complete Channel metadata without query configuration after hibernation", async () => {
     await seedOpenAuthority();
-    const stub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
-    ));
+    const stub = hostedParentStub(env, WORKSPACE_ID);
     const at = "2026-08-17T20:00:00.000Z";
     const common = {
       kind: "directory_common" as const,
@@ -4296,7 +4359,7 @@ describe("Durable Objects in the Workers runtime", () => {
     expect(initialized.accepted).toHaveLength(2);
 
     const ticketId = "00000000-0000-7000-8000-000000000108";
-    const response = await stub.fetch("https://workstream.test/socket", {
+    const response = await stub.fetch("https://workspace.test/parent-socket", {
       headers: {
         Upgrade: "websocket",
         "x-rally-workspace-id": WORKSPACE_ID,
@@ -4371,46 +4434,6 @@ describe("Durable Objects in the Workers runtime", () => {
       metadata: { title: "Renamed from another client" },
     });
     socket.close(1000, "done");
-  });
-
-  it("warms substream zero when the work stream wakes", async () => {
-    await seedOpenAuthority();
-    const workstreamStub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
-    ));
-    // Give the parent an identity to read: a first wake has no child, and the
-    // guard is what stops it looking for one.
-    const at = "2026-08-21T20:00:00.000Z";
-    expect((await workstreamStub.receiveChildEffects({
-      substreamId: "0",
-      envelopes: [childEffectEnvelope({
-        kind: "directory_common",
-        title: "Rides together",
-        description: "Parent and main child",
-        preview: "Preview",
-        scope: "workspace",
-        state: "idle",
-        systemKind: null,
-        lastActivityAt: at,
-        completedAt: null,
-        archivedAt: null,
-        latestAttentionOrdinal: 1,
-      }, "00000000-0000-7000-8000-000000000701")],
-    })).accepted).toHaveLength(1);
-
-    // Evict the parent and touch it again, so its constructor runs with an
-    // identity in storage. Nothing in this test addresses the child.
-    const substreamStub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
-    ));
-    await evictDurableObject(workstreamStub);
-    await fetchAndDrain(workstreamStub, "https://workstream.test/health");
-
-    // Whether the child is *running* is the observable, and eviction is what
-    // asks: the harness refuses to evict an object that was never started.
-    // Asserting on its schema instead would prove nothing, because reaching in
-    // to look would construct it and run the migrations itself.
-    await expect(evictDurableObject(substreamStub)).resolves.toBeUndefined();
   });
 
   it("reports its own accept time and instance age on the 101, and on nothing else", async () => {
@@ -6674,7 +6697,7 @@ describe("Durable Objects in the Workers runtime", () => {
         automation(WORKSPACE_AUTOMATION_ID, "active", "workspace", null, "Shared digest", 500);
         for (const id of [ROOM_ID, OTHER_ROOM_ID]) {
           state.storage.sql.exec(
-            `INSERT INTO workspace_workstream_directory
+            `INSERT INTO channels
                (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
                 title, description, preview, scope, exact_state, system_kind, last_activity_at,
                 completed_at, archived_at, email_address, origin_type, origin_label,
@@ -6689,7 +6712,7 @@ describe("Durable Objects in the Workers runtime", () => {
           );
         }
         state.storage.sql.exec(
-          `INSERT INTO workspace_workstream_viewers
+          `INSERT INTO channel_viewers
              (workstream_id, user_id, authority_generation, waterline, source_event_id,
               payload_hash, is_participant, participant_added_at, unread_count,
               you_are_mentioned, unseen, listable, seen_attention_ordinal,

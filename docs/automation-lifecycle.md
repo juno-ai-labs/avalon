@@ -102,7 +102,8 @@ and sibling attachments stay independent. Removing an attachment affects future 
 
 Workstream-owned Sidekicks are inherently Recommended. Participants and agents
 can also attach non-archived workspace Sidekicks through the rail picker or the
-Sidekicks plugin's attach/detach tools. WorkstreamDO owns those explicit links.
+Sidekicks plugin's attach/detach tools. The Channel's parent owns those explicit
+links, in `WorkspaceDO`'s `parent_sidekicks`.
 Workstream main and child agents receive only list/attach/detach from this
 plugin; drafting stays in the Sidekick's own authoring conversation.
 Management tools require a user execution principal. Workspace-principal runs
@@ -576,7 +577,7 @@ A run of a room's automation holds one extra plugin, `rally:sidekick-result`
 `post_result`. It is offered only when
 `readRunDefinition().owningWorkstreamId` is not null, so a personal or
 workspace automation cannot post into a room at all. The tool asks
-`WorkstreamDO.authority` for the room's generation and archive state, refuses an
+`WorkspaceDO.authority` (the room's hosted parent) for its generation and archive state, refuses an
 archived or missing room as the tool's error, and calls the room's substream
 `0` `appendAutomationActivation` with `deliveryId = runId`, which appends one
 `automation_activation` message authored by "Automation" (or answers

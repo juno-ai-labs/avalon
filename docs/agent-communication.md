@@ -17,7 +17,7 @@ and UI work is tracked in the [implementation plan](PRDs/2026-09-14_uninterrupte
 | `apps/api/src/services/agent-message-content.ts` | Durable sender/reply content, rendered consistently on admission and context rebuild. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Independent execution, durable message admission and background stop gate. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Owned archive stops and per-conversation background counts from child projections. |
-| `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Ephemeral count updates and clearing unavailable state. |
+| `apps/desktop/src/renderer/lib/channel-viewer-state.ts` | Takes the running background-agent counts from each Channel row on the workspace socket; a tombstoned Channel evicts them. |
 | `apps/desktop/src/renderer/components/workstream-composer.tsx` | Ordinary message entry and a noninteractive background count. |
 | `apps/desktop/src/renderer/components/background-agent-activity.tsx` | Retained count label, composer-edge reveal, shimmer and fading number wheel. |
 | `apps/api/test-workers/agent-teams.test.ts` | Real workerd migration and RPC coverage. |

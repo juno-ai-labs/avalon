@@ -331,7 +331,7 @@ a test that leans on real time either passes by accident or fails on a slow mach
 plus `rendered_status`, `rendered_anonymous`, `rendered_hash`, and `refreshed_at` —
 the four D1 fields the selection/rewrite gate reads. Current title, automation
 origin, work-stream update time, recency, archive, and harness status are not
-copied into this table; they come from `WorkspaceDO.workspace_workstream_directory`.
+copied into this table; they come from `WorkspaceDO.channels`.
 [`data-model.md`](data-model.md) is authoritative for the columns.
 
 ## Apple universal links

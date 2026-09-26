@@ -39,6 +39,8 @@ import {
   type PropsWithChildren,
 } from 'react';
 import { ApiError, mapAutomationSummary, mapWorkstreamSummary, type RallyApi } from './api';
+import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
+import { applyChannelViewerState } from './channel-viewer-state';
 import { retainConversationParents } from './conversation-cache';
 import { useLocalCacheScope } from './local-cache-scope';
 import { desktopBridge } from './platform';
@@ -222,15 +224,17 @@ function invalidateTopic(
  * body and must land in the ledger the same way: a row is only as fresh as its
  * own common/viewer waterline, so the cached copy wins whenever it is newer
  * than the page that just arrived. Returning the cached row rather than the
- * one off the wire is what keeps a page from walking back a state the direct
- * WorkstreamDO socket already advanced.
+ * one off the wire is what keeps a page from walking back a state a later
+ * `workspace_workstream_state` push already advanced.
  */
 function applyDirectoryPage(
   queryClient: ReturnType<typeof useQueryClient>,
   page: Pick<WorkspaceWorkstreamPageEvent, 'items' | 'stateVersions' | 'directoryWaterline' | 'nextCursor'>,
+  localCacheScope: string | null,
 ): WorkstreamPage {
   const versions = new Map(page.stateVersions.map((version) => [version.workstreamId, version]));
-  const items = page.items.map(mapWorkstreamSummary).flatMap((workstream) => {
+  const items = page.items.flatMap((row) => {
+    const workstream = mapWorkstreamSummary(row);
     const version = versions.get(workstream.id);
     if (!version) return [workstream];
     const applied = applyVersionedWorkstreamState(queryClient, {
@@ -243,6 +247,7 @@ function applyDirectoryPage(
     // row after a newer tombstone removed it. Falling back to its wire value is
     // the archive disappear/reappear/disappear race.
     if (!applied.visible) return [];
+    applyChannelViewerState(queryClient, row, version, localCacheScope);
     applyWorkspaceWorkstreamFields(queryClient, workstream.id, {
       pinPosition: workstream.pinPosition,
       spacePins: workstream.spacePins,
@@ -399,7 +404,7 @@ export function WorkspaceSocketProvider({
      * that is the round trip this payload exists to remove.
      */
     const applyConnectedSidebar = (sidebar: WorkspaceSidebar): boolean => {
-      const page = applyDirectoryPage(queryClient, sidebar.workstreams);
+      const page = applyDirectoryPage(queryClient, sidebar.workstreams, localCacheScope);
       const returned = new Set(page.items.map((workstream) => workstream.id));
       const unaccountedFor = (queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [])
         // A pending row cannot be in any answer yet, so it is not a question
@@ -605,7 +610,7 @@ export function WorkspaceSocketProvider({
             mergeCachedWorkstreamPage(queryClient, applyDirectoryPage(queryClient, {
               directoryWaterline: recency.data.directoryWaterline,
               items: [recency.data.workstream], stateVersions: [recency.data.stateVersion], nextCursor: null,
-            }).items);
+            }, localCacheScope).items);
             return;
           }
           const workstreamPage = safeParseSocketEvent(WorkspaceWorkstreamPageEventSchema, decoded);
@@ -614,7 +619,7 @@ export function WorkspaceSocketProvider({
             if (!entry) return;
             pendingDirectoryRequests.delete(workstreamPage.data.requestId);
             window.clearTimeout(entry.timeout);
-            entry.resolve(applyDirectoryPage(queryClient, workstreamPage.data));
+            entry.resolve(applyDirectoryPage(queryClient, workstreamPage.data, localCacheScope));
             return;
           }
           const workstreamState = safeParseSocketEvent(WorkspaceWorkstreamStateEventSchema, decoded);
@@ -632,6 +637,24 @@ export function WorkspaceSocketProvider({
               }),
               visible: workstreamState.data.workstream !== null,
             });
+            if (workstreamState.data.workstream && applied.visible) {
+              applyChannelViewerState(
+                queryClient,
+                workstreamState.data.workstream,
+                workstreamState.data.stateVersion,
+                localCacheScope,
+              );
+              // A Channel the shared navigation lists (a guest's, or one
+              // reached through its breakouts) draws Space and ancestor
+              // presentation from that directory, which this row does not
+              // carry. The one on screen rereads it when its row moves.
+              if (workstreamState.data.workstreamId === foregroundWorkstreamIdRef.current
+                && queryClient.getQueriesData<SharedNavigationDirectory>({ queryKey: ['shared-navigation'] })
+                  .some(([, directory]) => directory?.workstreams
+                    .some((item) => item.parentId === workstreamState.data.workstreamId))) {
+                void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
+              }
+            }
             if (applied.commonApplied) {
               void queryClient.invalidateQueries({
                 queryKey: ['terminal-workstream', workstreamState.data.workstreamId],
