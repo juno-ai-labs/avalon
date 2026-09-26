@@ -374,12 +374,15 @@ function nextMessage(socket: WebSocket): Promise<MessageEvent> {
   return new Promise((resolve) => socket.addEventListener("message", resolve, { once: true }));
 }
 
-/** The next Channel row this socket is pushed, skipping everything else. */
-function nextWorkstreamState(socket: WebSocket): Promise<WorkspaceWorkstreamStateEvent> {
+/** The first Channel row push that satisfies `matches`, skipping the rest. */
+function nextWorkstreamStateWhere(
+  socket: WebSocket,
+  matches: (event: WorkspaceWorkstreamStateEvent) => boolean,
+): Promise<WorkspaceWorkstreamStateEvent> {
   return new Promise((resolve) => {
     const listen = (event: MessageEvent): void => {
       const decoded = WorkspaceWorkstreamStateEventSchema.safeParse(JSON.parse(String(event.data)));
-      if (!decoded.success) return;
+      if (!decoded.success || !matches(decoded.data)) return;
       socket.removeEventListener("message", listen);
       resolve(decoded.data);
     };
@@ -1277,7 +1280,9 @@ describe("WorkspaceDO space authority", () => {
     // The placement has to reach an *open* client. Everything else here reads
     // the connect payload, which a reload produces — and a placement that only
     // appears after one is a placement the person who made it does not see.
-    const pushed = nextWorkstreamState(socket);
+    // The first write to this Channel also closes its import ledger, which
+    // republishes the row as it stood before the placement; wait past that one.
+    const pushed = nextWorkstreamStateWhere(socket, (event) => (event.workstream?.spaceIds.length ?? 0) > 0);
     await place(spaceId, CHANNEL_A);
     const event = await pushed;
 
