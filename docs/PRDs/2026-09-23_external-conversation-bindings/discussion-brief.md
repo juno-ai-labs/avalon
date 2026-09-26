@@ -294,5 +294,7 @@ above remain the record of the first discussion.
 The discussion did **not** authorize implementation, decide every unanswered
 policy, or establish that the future binding path already handled Morgan's past
 reply. The historical “Nothing from me” message remains an example of the gap.
-The proposed architecture explains how a future reply would be directed to the
-Sidekick's 1 PM child and handed to its 2 PM sibling for the agenda.
+The proposed architecture, as revised in the follow-up discussion above,
+directs a future reply to the Sidekick's 1 PM run, which continues and forwards
+the answer to the Sidekick's home Breakout. The 2 PM run reads that Breakout and
+posts the agenda there; no handoff passes directly from one run to the other.
