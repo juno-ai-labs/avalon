@@ -29,8 +29,8 @@ The Mucker flow is these four combined, with no Mucker-specific code.
 | Channel and Space parents, hosted in WorkspaceDO ([hosted conversation parents](../../hosted-conversation-parents.md)) | Space membership, Channel audience, viewer rows and Channel birth (`reserveChannelInSpaces`) in one database | A spawned Channel's birth, its Space placement and its thread binding commit in one WorkspaceDO transaction. |
 | Slack Agent ingress | Verifies event, resolves installation, creates or resumes Channel, writes human message | Normalize the external path and resolve a binding before creating a Channel. |
 | Connector watch registrations (`matchExternalEventDestinations`) | Fan an external event out to Sidekicks and watched resources; a claimed event skips Suggested Work | Candidate home for bindings; see [Reusing watch registrations](#reusing-watch-registrations). |
-| `automation.owning_workstream_id` (`sidekick-do.ts:266`) | The Channel whose Main conversation `sidekick_post_result` posts to | Replace with an owning substream address. |
-| `sidekick_post_result` (`integrations.ts:6431`) | A run's only way to post into a room | Remove; `post_to_conversation` covers it. |
+| `automation.owning_workstream_id` (`sidekick-do.ts:269`) | The Channel whose Main conversation `sidekick_post_result` posts to | Replace with an owning substream address. |
+| `sidekick_post_result` (`integrations.ts:6435`) | A run's only way to post into a room | Remove; `post_to_conversation` covers it. |
 | `authoringOrigin` (`packages/agent-harness/src/prompts/workstream.ts:32`) | Slack-only prompt section; nothing sets it | Remove. |
 | `sidekick_attachments` per SubstreamAgent, `parent_sidekicks` in WorkspaceDO | This conversation may load this Sidekick as a skill | Leave as is. Conversation attachments get their own WorkspaceDO table. |
 | `claimPersistentLoopExecution` (`substream-agent.ts:3895`) | Starts a loop for pending input with no `automationRun` | Restore the run's context when the child belongs to a Sidekick run. |
@@ -156,12 +156,12 @@ each existing value to (`workstream`, id, `"0"`).
 The field's existing duties move with it:
 
 - Only a Sidekick with a home gets a posting tool
-  (`apps/api/src/services/integrations.ts:5367`), so a personal or workspace
+  (`apps/api/src/services/integrations.ts:5371`), so a personal or workspace
   Sidekick still cannot post into a room.
 - Archiving the home still tells the Sidekick. Today WorkspaceDO's
   `notifyOwningRoomArchival` joins `automation_directory` to the `channels`
   directory on `owning_workstream_id` and calls `setOwningRoomArchived`
-  (`workspace-do.ts:10468`). The projection carries the substream too. The
+  (`workspace-do.ts:10405`). The projection carries the substream too. The
   `breakouts` directory is in the same database, so a home Breakout's archive
   is the same local join.
 
@@ -205,7 +205,7 @@ of agent means adding a scope, not new tools.
 | Sidekick run (`parentKind: automation`, `automationRun` present) | The Sidekick's attachments | list, read, post | The Sidekick's run-as user |
 
 In a Sidekick config conversation the tools load where the drafting plugin
-already loads (`integrations.ts:5348`), and a post has no run ID, so its
+already loads (`integrations.ts:5352`), and a post has no run ID, so its
 idempotency key is the caller key alone. In a run they load only when
 `automationRun` is present, which run continuation guarantees for every wake
 of a run child. A Channel or Breakout loop does not get post, because it posts
@@ -213,7 +213,7 @@ to its own conversation by replying.
 
 `sidekick_post_result` is removed, not kept beside the new tool. It is
 hard-wired to the owning Channel's Main conversation and deduplicated on run
-ID alone (`integrations.ts:6431-6518`), and a model offered both would not know
+ID alone (`integrations.ts:6435-6522`), and a model offered both would not know
 which to use. A continued run posts more than once, so the replacement's
 idempotency key includes a caller key such as the reply's event ID.
 
@@ -250,13 +250,13 @@ A message admitted to a run child after the run completed:
 2. `claimPersistentLoopExecution` builds a loop input from the message's stored
    authorization with a new harness run ID and no `automationRun`
    (`substream-agent.ts:3895`, with the input built at `3970`). Only the SidekickDO alarm sets
-   `automationRun` (`sidekick-do.ts:1711-1728`).
+   `automationRun` (`sidekick-do.ts:1749-1770`).
 3. The loop runs as the message's author, so connectors are chosen for that
-   person (`integrations.ts:5415`).
+   person (`integrations.ts:5419`).
 4. The loop has no posting tool, no Sidekick definition or instructions, and
-   takes the non-run authority check (`integrations.ts:6346`).
+   takes the non-run authority check (`integrations.ts:6350`).
 5. The run row stays completed; `onChildCommonAggregate` ignores finished runs
-   (`sidekick-do.ts:1435`).
+   (`sidekick-do.ts:1473`).
 
 Answering an elicitation resumes through the same path, so a Sidekick run that
 asks a question likely loses its run context on resume too. This needs a test.
@@ -275,7 +275,7 @@ When `claimPersistentLoopExecution` wakes a child whose parent kind is
    alarm path builds.
 
 The loop then has the Sidekick's instructions, tools, and authority, and the
-run authority check (`integrations.ts:6385`) passes because the run is running.
+run authority check (`integrations.ts:6389`) passes because the run is running.
 The sender is only the author of the message. `continueRun` does not check who
 sent it: anyone who can reach the run may continue it.
 
