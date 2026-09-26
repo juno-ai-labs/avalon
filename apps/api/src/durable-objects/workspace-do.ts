@@ -9118,12 +9118,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // column, so this fallback is both narrow and replay-compatible.
     const processingLeaseId = request.processingLeaseId ?? request.processingOwnerId;
     const now = Date.now();
-    const changed = this.state.storage.sql.exec<{ event_id: string }>(
+    const settledRow = this.state.storage.sql.exec<{ received_at: number }>(
       `UPDATE workspace_connector_events
           SET processing_status = ?, processed_at = CASE WHEN ? = 'processed' THEN ? ELSE NULL END,
               processing_error = ?, updated_at = ?
         WHERE event_id = ? AND workflow_instance_id = ? AND processing_status = 'processing'
-        RETURNING event_id`,
+        RETURNING received_at`,
       request.outcome,
       request.outcome,
       now,
@@ -9131,8 +9131,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       now,
       request.eventId,
       processingLeaseId,
-    ).toArray().length;
-    if (changed === 1) {
+    ).toArray()[0];
+    if (settledRow !== undefined) {
+      // A processed row is now due for `connector_event_reap`. Nothing else
+      // may arm the alarm in a quiet Organization, so bring it forward here.
+      if (request.outcome === "processed") {
+        await this.ensureAlarmNoLaterThan(settledRow.received_at + CONNECTOR_EVENT_BODY_RETENTION_MS);
+      }
       logInfo(this.env, "connector_event_authority_terminal", {
         workspace_id: request.workspaceId,
         connector_event_id: request.eventId,
