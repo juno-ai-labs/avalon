@@ -8,6 +8,7 @@ import {
   createTestDurableObjectId,
   createTestEnv,
 } from "./helpers/cloudflare-test";
+import { drainWaitUntil } from "./helpers/cloudflare-workers";
 import { sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
 
@@ -79,9 +80,8 @@ describe("connection tool counts in the connection list", () => {
     });
     // Creation proves the server, and the list it answers with finds a row
     // that has never been discovered and discovers it behind the response.
-    await vi.waitFor(() => {
-      expect(storedCount(object, connection.id)).toBe(2);
-    }, { timeout: 5_000 });
+    await drainWaitUntil();
+    expect(storedCount(object, connection.id)).toBe(2);
     expect(published.at(-1)).toEqual(["connector_connections"]);
 
     // Opening Connections now is the list and nothing else.
@@ -102,7 +102,7 @@ describe("connection tool counts in the connection list", () => {
     expect((await service.list()).find((item) => item.id === connection.id)?.toolCount).toBe(3);
   });
 
-  it("reports no count, never zero, for a discovered connection whose discovery has not succeeded", async () => {
+  it("reports no count, never zero, and spends the list's one discovery once when it fails", async () => {
     const { env, auth, object, providerRequests } = fixture();
     const server = stubMcpServer([READ_TOOL], providerRequests);
     const service = new ConnectionService(env, auth);
@@ -113,23 +113,60 @@ describe("connection tool counts in the connection list", () => {
       requestHeaders: { "X-Api-Key": "secret-value" },
       toolPolicy: "all_tools",
     });
-    await vi.waitFor(() => {
-      expect(storedCount(object, connection.id)).toBe(1);
-    }, { timeout: 5_000 });
-    // As a row that predates the column reads, with its server now down.
-    object.prepare("UPDATE connector_connections SET discovered_tool_count = NULL WHERE id = ?").run(connection.id);
+    await drainWaitUntil();
+    expect(storedCount(object, connection.id)).toBe(1);
+    // As a row that predates migration 73 reads, with its server now down.
+    object.prepare(
+      `UPDATE connector_connections
+          SET discovered_tool_count = NULL, tool_count_backfill_attempted_at = NULL
+        WHERE id = ?`,
+    ).run(connection.id);
     server.down = true;
+    providerRequests.length = 0;
     const warnings = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     expect((await service.list()).find((item) => item.id === connection.id)?.toolCount).toBeNull();
-    await vi.waitFor(() => {
-      expect(warnings.mock.calls.map(([entry]) => entry as { event?: string; code?: string }))
-        .toContainEqual(expect.objectContaining({
-          event: "connection_tool_count_refresh_failed",
-          code: "provider_error",
-        }));
-    }, { timeout: 5_000 });
+    await drainWaitUntil();
+    expect(warnings.mock.calls.map(([entry]) => entry as { event?: string; code?: string }))
+      .toContainEqual(expect.objectContaining({
+        event: "connection_tool_count_refresh_failed",
+        code: "provider_error",
+      }));
     expect(storedCount(object, connection.id)).toBeNull();
+    const firstAttempt = providerRequests.length;
+    expect(firstAttempt).toBeGreaterThan(0);
+
+    // A second open of the tab is the list and nothing else: the failed
+    // attempt is not retried behind it.
+    expect((await service.list()).find((item) => item.id === connection.id)?.toolCount).toBeNull();
+    await drainWaitUntil();
+    expect(providerRequests.length).toBe(firstAttempt);
+  });
+
+  it("drops a discovery that finishes after a policy change instead of overwriting the newer count", async () => {
+    const { env, auth, object, providerRequests } = fixture();
+    const server = stubMcpServer([READ_TOOL, WRITE_TOOL], providerRequests);
+    const service = new ConnectionService(env, auth);
+    const { connection } = await service.createCustomMcp({
+      displayName: "Acme docs",
+      scope: "workspace",
+      serverUrl: SERVER_URL,
+      requestHeaders: { "X-Api-Key": "secret-value" },
+      toolPolicy: "all_tools",
+    });
+    await drainWaitUntil();
+    expect(storedCount(object, connection.id)).toBe(2);
+
+    // A discovery taken under `all_tools`, parked at the server's answer.
+    const held = holdNextToolList(server);
+    const late = service.getToolCount(connection.id, new AbortController().signal);
+    await held.arrived;
+    await service.updateCustomMcpToolPolicy(connection.id, "read_only_tools");
+    expect(storedCount(object, connection.id)).toBe(1);
+
+    held.release();
+    expect(await late).toEqual({ count: 2 });
+    expect(storedCount(object, connection.id)).toBe(1);
   });
 
   it("stores what the released per-row endpoint discovers, so older desktops keep the list current", async () => {
@@ -144,9 +181,8 @@ describe("connection tool counts in the connection list", () => {
       requestHeaders: { "X-Api-Key": "secret-value" },
       toolPolicy: "all_tools",
     });
-    await vi.waitFor(() => {
-      expect(storedCount(object, connection.id)).toBe(1);
-    }, { timeout: 5_000 });
+    await drainWaitUntil();
+    expect(storedCount(object, connection.id)).toBe(1);
 
     inventory.push(WRITE_TOOL);
     expect(await service.getToolCount(connection.id, new AbortController().signal)).toEqual({ count: 2 });
@@ -193,8 +229,14 @@ function insertConnection(object: DatabaseSync, input: {
  * registry is built once per env and its hosted-MCP transport keeps the fetch
  * it was built with.
  */
-function stubMcpServer(tools: readonly Record<string, unknown>[], requests: string[]): { down: boolean } {
-  const server = { down: false };
+interface StubMcpServer {
+  down: boolean;
+  /** Taken by the next `tools/list`, which answers only once it resolves. */
+  hold: { arrived: () => void; release: Promise<void> } | null;
+}
+
+function stubMcpServer(tools: readonly Record<string, unknown>[], requests: string[]): StubMcpServer {
+  const server: StubMcpServer = { down: false, hold: null };
   vi.stubGlobal("fetch", async (target: string | URL | Request, init?: RequestInit) => {
     const url = new URL(typeof target === "string" ? target : target instanceof URL ? target.href : target.url);
     requests.push(url.href);
@@ -202,6 +244,12 @@ function stubMcpServer(tools: readonly Record<string, unknown>[], requests: stri
     if (init?.method === "DELETE") return new Response(null, { status: 204 });
     const request = JSON.parse(String(init?.body)) as Record<string, unknown>;
     if (request.method === "notifications/initialized") return new Response(null, { status: 202 });
+    if (request.method === "tools/list" && server.hold) {
+      const hold = server.hold;
+      server.hold = null;
+      hold.arrived();
+      await hold.release;
+    }
     const result = request.method === "initialize"
       ? { protocolVersion: "2025-06-18", capabilities: {} }
       : { tools };
@@ -210,6 +258,14 @@ function stubMcpServer(tools: readonly Record<string, unknown>[], requests: stri
     });
   });
   return server;
+}
+
+function holdNextToolList(server: StubMcpServer): { arrived: Promise<void>; release: () => void } {
+  let arrived!: () => void;
+  let release!: () => void;
+  const arrival = new Promise<void>((resolve) => { arrived = resolve; });
+  server.hold = { arrived, release: new Promise<void>((resolve) => { release = resolve; }) };
+  return { arrived: arrival, release };
 }
 
 function fixture(): {
