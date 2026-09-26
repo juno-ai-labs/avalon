@@ -134,7 +134,7 @@ import { flushAuthorizationDeliveries, type AuthorizationProjectionJob } from '.
 import { AuthorizationStorage, AUTHORIZATION_STORAGE_MIGRATION, AUTHORIZATION_STORAGE_TABLES, AuthorizationLocationSchema } from './authorization-storage';
 import { ONBOARDING_JOURNEY_SQL, OnboardingJourneyStore } from './onboarding-journey';
 import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION, RESOURCE_SEARCH_AUDIENCE_MIGRATION, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
-  resourceSearchRevision, nextResourceSearchDueAt, publishResourceSearch, prepareResourceSearch } from './resource-search-projection';
+  resourceSearchRevision, nextResourceSearchDueAt, publishResourceSearch, prepareResourceSearch, type ResourceSearchPace } from './resource-search-projection';
 import { isDraftUpload, requiresAttachment } from '../services/resource-read-rules';
 import { SEARCH_AUTHORIZATION_PUSH_MIGRATION, nextSearchAuthorizationPush, flushSearchAuthorizationPush } from './search-authorization-projection';
 import { enumerateSearchAuthorizationUniverse, type SearchAuthorizationTarget } from './search-authorization-universe';
@@ -4574,6 +4574,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private readonly initialized: Promise<void>;
   /** This object's own `WORKSPACE_DOS` name; see {@link selfObjectName}. */
   private readonly searchPublications = new Map<string, Promise<void>>();
+  private readonly resourceSearchPace: ResourceSearchPace = { nextBatchAt: 0 };
   private objectName: string | null = null;
   /**
    * When this instance last ran any socket callback: one of the signals the
@@ -5994,7 +5995,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const spacePublication = this.spaceStorage().nextDefaultPublicationDueAt();
     const spaceIntent = this.spaceStorage().nextIntentResumeDueAt();
     const spaceBootstrap = this.spaceStorage().nextBootstrapDueAt();
-    const search = nextResourceSearchDueAt(this.state.storage.sql, this.env);
+    const search = nextResourceSearchDueAt(this.state.storage.sql, this.env, this.resourceSearchPace);
     const searchAuthorization = nextSearchAuthorizationPush(this.state.storage.sql);
     const authorization = this.state.storage.sql.exec<{ due: number | null }>('SELECT MIN(not_before) AS due FROM authorization_delivery').one().due;
     const firstFrame = nextFirstFrameDeadline(this.unheardSockets(), this.socketFirstFrameDeadlineMs);
@@ -6118,7 +6119,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       catch { logWarn(this.env, 'search_authorization_push_deferred', { region: this.env.AVALON_REGION }); }
       try { await flushAuthorizationDeliveries(this.state.storage.sql, this.env.ACTIVITY_QUEUE, now); }
       catch { logWarn(this.env, 'authorization_backfill_dispatch_deferred', { region: this.env.AVALON_REGION }); }
-      try { await publishResourceSearch(this.state.storage.sql, this.env, workspaceId); }
+      try { await publishResourceSearch(this.state.storage.sql, this.env, workspaceId, this.resourceSearchPace); }
       catch { logWarn(this.env, "resource_search_dispatch_deferred", { workspace_id: workspaceId }); }
       await this.instrumentWorkspaceAlarmPhase("space_default_publish", undefined, async () => {
         try {
