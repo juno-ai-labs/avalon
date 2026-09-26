@@ -641,9 +641,9 @@ budgets require team policy; no arbitrary new caps are introduced here.
 
 **What changed:** After the WorkspaceDO dispatches a full batch of 100
 resource references, its next batch waits
-`RESOURCE_SEARCH_BACKLOG_INTERVAL_MS` (30 seconds), and its alarm is set for
-then. A partial batch sets no wait, so a single edit is dispatched as before
-unless it arrives behind a backlog. The wait is held on the object, not stored;
+`RESOURCE_SEARCH_BACKLOG_INTERVAL_MS` (30 seconds) if anything due is still
+pending, and its alarm is set for then. Once the backlog is gone no wait is
+set, so a single edit is dispatched as before unless it arrives behind one. The wait is held on the object, not stored;
 an object that restarts dispatches one batch early.
 
 **Why:** Migration 77 marked all 152,000 of Juno Labs' resources pending, and
