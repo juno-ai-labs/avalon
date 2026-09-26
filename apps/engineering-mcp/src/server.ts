@@ -5,22 +5,17 @@ import {
   EngineeringSidekickListLookupSchema,
   EngineeringSidekickTargetLookupSchema,
   EngineeringSpaceListLookupSchema,
-  EngineeringSpaceTargetLookupSchema,
   EngineeringSqlLookupSchema,
   EngineeringSubstreamListLookupSchema,
   EngineeringSubstreamTargetLookupSchema,
   EngineeringWorkspaceTargetLookupSchema,
   EngineeringWorkstreamListLookupSchema,
-  EngineeringWorkstreamTargetLookupSchema,
   InspectionSqlBindingSchema,
   ListEngineeringWorkspacesResultSchema,
-  ParentImportRetryLookupSchema,
 } from "@rally/contracts/engineering-inspection";
 import {
   ArtifactIdSchema,
   AutomationIdSchema,
-  IdSchema,
-  SpaceIdSchema,
   SubstreamIdSchema,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
@@ -178,7 +173,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   }));
 
   server.registerTool("list_spaces", {
-    description: "List every Space in the authoritative WorkspaceDO for a workspace ID, archived Spaces included. A Space groups Channels; it is a WorkstreamDO under the space role and has no message feed. Until the Space directory projection ships, the list is empty for every workspace, so an empty answer here does not mean the workspace has no Spaces.",
+    description: "List every Space in the authoritative WorkspaceDO for a workspace ID, archived Spaces included. A Space groups Channels; its parent state lives in the WorkspaceDO and it has no message feed. Until the Space directory projection ships, the list is empty for every workspace, so an empty answer here does not mean the workspace has no Spaces.",
     inputSchema: { workspaceId: WorkspaceIdSchema },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ workspaceId }) => tool(principal, "list_spaces", { workspace_id: workspaceId }, async () => {
@@ -223,57 +218,6 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
         authorityGeneration: resolved.value.authorityGeneration,
         query: { sql, bindings },
       }), `Workspace ${workspaceId}`);
-    },
-  ));
-
-  server.registerTool("retry_parent_import", {
-    description: "Retry a Channel's or Space's pending import out of its legacy object now, and return its import ledger row. Use after fixing what the row's last_error_code named.",
-    inputSchema: {
-      workspaceId: WorkspaceIdSchema,
-      parentId: IdSchema.describe("The Channel or Space id, as parent_imports.parent_id names it."),
-    },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, ({ workspaceId, parentId }) => tool(
-    principal,
-    "retry_parent_import",
-    { workspace_id: workspaceId, parent_id: parentId },
-    async () => {
-      const results = await Promise.all(inspectionBindings(env).map((binding) => binding.resolveWorkspace({ workspaceId })));
-      const resolved = oneRegionalTarget(
-        env,
-        results.map((result) => EngineeringWorkspaceTargetLookupSchema.parse(result)),
-        `Workspace ${workspaceId}`,
-      );
-      const result = ParentImportRetryLookupSchema.parse(await resolved.binding.retryParentImport({
-        workspaceId,
-        authorityGeneration: resolved.value.authorityGeneration,
-        parentId,
-      }));
-      if (!result.found) throw new Error(`Workspace ${workspaceId} authority changed before the retry; refused`);
-      return result.value;
-    },
-  ));
-
-  server.registerTool("run_workstream_sql", {
-    description: "Run arbitrary SQLite against a WorkstreamDO. Statements may mutate production state.",
-    inputSchema: { workstreamId: WorkstreamIdSchema, ...sqlInputSchema },
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-  }, ({ workstreamId, sql, bindings = [] }) => tool(
-    principal,
-    "run_workstream_sql",
-    { workstream_id: workstreamId },
-    async () => {
-      const results = await Promise.all(inspectionBindings(env).map((binding) => binding.resolveWorkstream({ workstreamId })));
-      const resolved = oneRegionalTarget(
-        env,
-        results.map((result) => EngineeringWorkstreamTargetLookupSchema.parse(result)),
-        `Work stream ${workstreamId}`,
-      );
-      return executedSql(await resolved.binding.runWorkstreamSql({
-        workstreamId,
-        authorityGeneration: resolved.value.authorityGeneration,
-        query: { sql, bindings },
-      }), `Work stream ${workstreamId}`);
     },
   ));
 
@@ -332,34 +276,6 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
         authorityGeneration: resolved.value.authorityGeneration,
         query: { sql, bindings },
       }), `Sidekick ${sidekickId}`);
-    },
-  ));
-
-  server.registerTool("run_space_sql", {
-    description: "Run arbitrary SQLite against a SpaceDO — a Space's own object, not its hidden conversation. It runs the work-stream schema under the `space_do` migration component. The workspace ID is required because it is part of the Durable Object name. Statements may mutate production state.",
-    inputSchema: {
-      workspaceId: WorkspaceIdSchema,
-      spaceId: SpaceIdSchema,
-      ...sqlInputSchema,
-    },
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-  }, ({ workspaceId, spaceId, sql, bindings = [] }) => tool(
-    principal,
-    "run_space_sql",
-    { workspace_id: workspaceId, space_id: spaceId },
-    async () => {
-      const results = await Promise.all(inspectionBindings(env).map((binding) => binding.resolveSpace({ workspaceId, spaceId })));
-      const resolved = oneRegionalTarget(
-        env,
-        results.map((result) => EngineeringSpaceTargetLookupSchema.parse(result)),
-        `Space ${spaceId}`,
-      );
-      return executedSql(await resolved.binding.runSpaceSql({
-        workspaceId,
-        spaceId,
-        authorityGeneration: resolved.value.authorityGeneration,
-        query: { sql, bindings },
-      }), `Space ${spaceId}`);
     },
   ));
 

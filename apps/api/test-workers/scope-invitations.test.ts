@@ -203,9 +203,9 @@ it("answers a sharing request for a Space id as a scope that does not exist", as
   // refuses a Space id, and the route turns that into a 404 rather than a 500.
   const spaceId = "00000000-0000-7000-8000-0000000005a1";
   await runInDurableObject(hostedParentStub(env, workspaceId), (_instance, state) => {
-    state.storage.sql.exec(
-      "INSERT INTO parent_imports (parent_id, parent_kind, state) VALUES (?, 'space', 'imported')", spaceId,
-    );
+    state.storage.sql.exec(`INSERT INTO parent_metadata
+      (parent_id,parent_kind,workspace_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
+      VALUES (?,'space',?,'global',1,'Space','','','workspace','idle',0,0,0)`, spaceId, workspaceId);
   });
   const app = createApp();
   const actorHeaders = { authorization: `Bearer ${await bearer(actorId, "actor-session", workspaceId)}` };

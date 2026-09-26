@@ -26,19 +26,16 @@ test("rejects direct Durable Object namespace routing operations", () => {
     assert.match(messages[0].message, /durableObjectStubForWorkspace/u);
   }
   assert.equal(lint(`env.CRASH_SYMBOLICATOR.getByName(crashId)`).length, 1);
-  // A Space lives in its Organization's region like everything else it groups,
-  // so its namespace is routed through the same placement-aware resolver.
-  assert.equal(lint(`env.SPACE_DOS.getByName(spaceName)`).length, 1);
 });
 
 test("rejects computed, optional, aliased, and typed namespace routing", () => {
   assert.equal(lint(`env.WORKSPACE_DOS["get"]?.(id)`).length, 1);
-  assert.equal(lint(`const namespace = env.WORKSTREAM_DOS; namespace.idFromName(name)`).length, 1);
+  assert.equal(lint(`const namespace = env.AUTOMATION_DOS; namespace.idFromName(name)`).length, 1);
   assert.equal(lint(`const namespace: DurableObjectNamespace = binding; namespace.get(id)`).length, 1);
-  assert.equal(lint(`const { getByName: resolve } = env.WORKSTREAM_DOS; resolve(name)`).length, 1);
+  assert.equal(lint(`const { getByName: resolve } = env.AUTOMATION_DOS; resolve(name)`).length, 1);
   assert.equal(lint(`const { SUBSTREAM_AGENTS: agents } = env; agents.get(id)`).length, 1);
   assert.equal(lint(`function route(namespace: DurableObjectNamespace) { namespace.get(id); }`).length, 1);
-  assert.equal(lint(`({ WORKSTREAM_DOS }) => WORKSTREAM_DOS.idFromName(name)`).length, 1);
+  assert.equal(lint(`({ AUTOMATION_DOS }) => AUTOMATION_DOS.idFromName(name)`).length, 1);
 });
 
 test("rejects a namespace returned from a direct jurisdiction call", () => {

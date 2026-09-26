@@ -72,12 +72,10 @@ async function servedFlagKeys(): Promise<string[]> {
 
 describe('Ace managed flag protocol', () => {
   it('manages every client-visible product Boolean the API serves, and nothing it does not', async () => {
-    // The gap this closes runs API → Ace, and it is the only direction nothing
-    // else checks. `deployment-contract.test.ts` walks outward from this
-    // catalog to `deploy.mjs`, and the test below pins the catalog to the
-    // contracts enum — both start here, so a flag added to the Worker alone
-    // passes every one of them while being uncreatable in Flagship, invisible
-    // in Ace's list, and rejected by its save route. That is exactly how
+    // The gap this closes runs API → Ace, a direction nothing else checks.
+    // The test below pins the catalog to the contracts enum and starts here,
+    // so a flag added to the Worker alone passes it while being uncreatable in
+    // Flagship, invisible in Ace's list, and rejected by its save route. That is exactly how
     // `multiple-workspaces-enabled` shipped in #464 resolving off for everyone
     // with no way for an operator to turn it on.
     const served = await servedFlagKeys();
