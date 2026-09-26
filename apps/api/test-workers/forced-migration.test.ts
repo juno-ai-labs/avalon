@@ -333,6 +333,18 @@ describe("consumeMigrationCommandQueue", () => {
     expect(delivery.messages[0]).toMatchObject({ acked: true, retried: false });
   });
 
+  it("acknowledges a command for a deleted class instead of retrying it", async () => {
+    // A run dispatched before WorkstreamDO and SpaceDO were deleted can still
+    // be queued after; no binding can ever apply it.
+    const delivery = batch([
+      command({ className: "WorkstreamDO", objectId: workspaceObjectId("05") }),
+      command({ className: "SpaceDO", objectId: workspaceObjectId("06") }),
+    ]);
+    await consumeMigrationCommandQueue(delivery.batch, env);
+
+    for (const message of delivery.messages) expect(message).toMatchObject({ acked: true, retried: false });
+  });
+
   it("retries a command whose object could not be reached", async () => {
     const delivery = batch([command({ className: "MigrationRegistry" })]);
     await consumeMigrationCommandQueue(delivery.batch, env);
