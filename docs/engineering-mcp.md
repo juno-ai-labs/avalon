@@ -201,9 +201,7 @@ It proves bound writes, reads, SQLite metadata, and BLOB serialization.
 
 `apps/api/test-workers/engineering-workspace-inspection.test.ts` proves that a
 workspace is inventoried as active, resolves at the open generation, and
-executes against its initialized WorkspaceDO from regional identity alone, and
-that `retryParentImport` imports a pending parent through the bridge and is
-refused at a stale generation.
+and executes against its initialized WorkspaceDO from regional identity alone.
 
 `apps/api/test-workers/engineering-sidekick-inspection.test.ts` drives the
 bridge's Sidekick tools against a Sidekick created through the real path, and
