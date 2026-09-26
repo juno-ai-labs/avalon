@@ -24,7 +24,7 @@ import { applyWorkspaceRelationshipChange } from "../src/queues/access-revocatio
 import { hostedParentStub } from "./helpers/hosted-parent";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
-const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000e00");
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000005e0");
 const OWNER_ID = asUserId("00000000-0000-7000-8000-000000000e01");
 const SESSION_ID = "00000000-0000-7000-8000-000000000e02";
 const GUEST_ID = asUserId("00000000-0000-7000-8000-000000000e03");
