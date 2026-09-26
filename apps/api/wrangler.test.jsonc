@@ -68,8 +68,6 @@
     "bindings": [
       { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
       { "name": "AUTOMATION_DOS", "class_name": "SidekickDO" },
-      { "name": "WORKSTREAM_DOS", "class_name": "WorkstreamDO" },
-      { "name": "SPACE_DOS", "class_name": "SpaceDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
       { "name": "SLACK_REACTION_TICKERS", "class_name": "SlackReactionTicker" },
       { "name": "ARTIFACT_HOSTS", "class_name": "ArtifactHostDO" },
@@ -82,8 +80,6 @@
       "new_sqlite_classes": [
         "SubstreamAgent",
         "SidekickDO",
-        "WorkstreamDO",
-        "SpaceDO",
         "WorkspaceDO",
         "SlackReactionTicker",
         "ArtifactHostDO",

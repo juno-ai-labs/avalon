@@ -19,11 +19,10 @@ by virtue of product membership.
 - `apps/api/src/durable-objects/scheduled-alarms.ts` makes every scheduled
   authority inherit that RPC. WorkspaceDO, SubstreamAgent, and SidekickDO have
   the capability that way.
-- `apps/api/src/durable-objects/artifact-host-do.ts` and the legacy
-  `workstream-do.ts` (which `SpaceDO` extends) inherit the same base directly.
-  They are not scheduled authorities, so they name the inspectable base in their
-  own declarations rather than picking it up from the scheduler. This MCP routes
-  all six.
+- `apps/api/src/durable-objects/artifact-host-do.ts` inherits the same base
+  directly. It is not a scheduled authority, so it names the inspectable base in
+  its own declaration rather than picking it up from the scheduler. This MCP
+  routes all four.
 - `packages/contracts/src/engineering-inspection.ts` is the runtime-validated
   RPC vocabulary shared by both Workers.
 - `.github/workflows/deploy-api.yml` deploys this Worker only after both
@@ -46,16 +45,13 @@ The regional bridge uses D1 only for identity and routing:
 | --- | --- | --- |
 | `list_workspaces` | Regional `workspaces` identity plus the open authority generation | D1 identity inventory from configured deployments |
 | `list_workstreams` | Regional workspace identity at the open authority generation | `channels` in WorkspaceDO |
-| `list_substreams` | Active work-stream route at the open regional authority generation | `parent_child_projections` and `parent_children` in WorkspaceDO for the parent, plus main substream `0`; the legacy WorkstreamDO's `substream_directory` while the parent's import is still `pending` |
+| `list_substreams` | Active work-stream route at the open regional authority generation | `parent_child_projections` and `parent_children` in WorkspaceDO for the parent, plus main substream `0` |
 | `list_sidekicks` | Regional workspace identity at the open authority generation | `automation_directory` in WorkspaceDO, every lifecycle |
 | `list_spaces` | Regional workspace identity at the open authority generation | `spaces` in WorkspaceDO, archived Spaces included |
 | `list_artifacts` | Regional workspace identity at the open authority generation | `artifact_registry` in WorkspaceDO |
 | `run_workspace_sql` | Resolve, select one region, then revalidate the open workspace authority generation | WorkspaceDO SQLite |
-| `retry_parent_import` | Resolve, select one region, then revalidate the open workspace authority generation, as `run_workspace_sql` | `WorkspaceDO.retryParentImport`: runs a pending Channel or Space import out of its legacy object now and returns its `parent_imports` row |
-| `run_workstream_sql` | Resolve, select one region, then revalidate the active work-stream route generation | Legacy WorkstreamDO SQLite (frozen after export; live Channel parent state is in WorkspaceDO) |
 | `run_substream_sql` | Resolve the active work-stream route and child directory membership, select one region, then revalidate | SubstreamAgent SQLite |
 | `run_sidekick_sql` | Resolve the regional workspace identity and `automation_directory` membership, select one region, then revalidate | SidekickDO SQLite |
-| `run_space_sql` | Resolve the regional workspace identity and `spaces` membership, select one region, then revalidate | Legacy SpaceDO SQLite (frozen after export; live Space parent state is in WorkspaceDO) |
 | `run_artifact_sql` | Resolve the regional workspace identity and `artifact_registry` membership, select one region, then revalidate | ArtifactHostDO SQLite, the supervisor's own |
 
 `run_substream_sql` takes workspace, work-stream, and substream IDs. The parent
@@ -159,21 +155,9 @@ work stream's are.
 Channel and Space parent state lives in WorkspaceDO, in the `parent_*` tables
 keyed by `parent_id`
 ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)), so
-`run_workspace_sql` is the tool for it. `run_workstream_sql` and `run_space_sql`
-still open the legacy `WorkstreamDO` and `SpaceDO`, which hold only the rows
-they had before export and whether they were exported
-(`parent_authority_moved`). They are how an operator confirms a parent moved.
+`run_workspace_sql` is the tool for it.
 
-**`retry_parent_import` is the one tool that is not SQL.** An import that
-fails the same way every time is repaired with the SQL tools, but re-running it
-needs the legacy object's export RPC, which no statement can make. It calls
-`WorkspaceDO.retryParentImport`, the same single-flight import a request runs,
-and returns the ledger row rather than throwing, so the operator sees the next
-code if the repair was not enough. It changes nothing for a parent that is not
-pending. [`runbook.md`](runbook.md#a-channel-or-space-import-is-stuck) is the
-procedure.
-
-**Its hidden main conversation is reached with the substream tools**, under the
+**A Space's hidden main conversation is reached with the substream tools**, under the
 Space id as the parent and `0` as the substream, exactly as a work stream's Main
 is. That works because `SpaceService.create` provisions a Space through
 `bootstrapWorkstreamRuntimeEnvironment`, which writes the active
@@ -181,12 +165,6 @@ is. That works because `SpaceService.create` provisions a Space through
 same row a Channel's creation writes, keyed by parent id whatever the kind. It
 is the only way to inspect a Space's participants and resources, because those
 live on the conversation rather than on the Space's parent rows.
-
-**Its fence is the Sidekick's.** A Space is proved real by its
-`spaces` row, read from a WorkspaceDO that is already open,
-before anything in `SPACE_DOS` is named — so a miss no longer creates an empty
-object and no longer leaves a phantom in the migration tracker's `SpaceDO`
-count.
 
 A stateful artifact's facet database is outside this MCP for the reason above:
 its contents are reachable only through the product's admitted read path.
@@ -218,7 +196,7 @@ identity or authorization.
 ## Testing
 
 `apps/api/test-workers/engineering-inspection.test.ts` calls the inherited RPC
-on real WorkspaceDO, WorkstreamDO, and SubstreamAgent instances under workerd.
+on real WorkspaceDO and SubstreamAgent instances under workerd.
 It proves bound writes, reads, SQLite metadata, and BLOB serialization.
 
 `apps/api/test-workers/engineering-workspace-inspection.test.ts` proves that a
@@ -289,6 +267,25 @@ configuration and administrator-added HTTPS redirect allowlist entries. It also
 ensures the supported Claude, ChatGPT, and Cursor hosted origins remain present.
 Changing that managed provider list remains an explicit Access administration
 decision.
+
+### 2026-09-26 — Remove the legacy parent tools
+
+**What changed:** `retry_parent_import`, `run_workstream_sql` and
+`run_space_sql` are gone, with the bridge's `retryParentImport`,
+`runWorkstreamSql`, `runSpaceSql`, `resolveWorkstream` and `resolveSpace`, and
+`list_substreams` no longer falls back to a legacy object's
+`substream_directory`.
+
+**Why:** `WorkstreamDO` and `SpaceDO` are deleted
+([`hosted-conversation-parents.md`](hosted-conversation-parents.md#changelog)).
+The three tools opened those objects or re-ran their import, and nothing is
+left for either to reach. Channel and Space parent state is read with
+`run_workspace_sql`.
+
+**Consequences:** The MCP and the regional Workers deploy separately, so for
+the length of a rollout an MCP of either build may call a bridge of the other.
+An old MCP calling a removed bridge method fails that one tool call; no other
+tool changes shape.
 
 ### 2026-09-25 — Retry a stuck Channel or Space import
 

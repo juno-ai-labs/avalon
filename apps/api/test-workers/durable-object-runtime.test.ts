@@ -36,7 +36,6 @@ import { WORKSPACE_DO_SCHEMA_MIGRATIONS, WorkspaceDO } from "../src/durable-obje
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
 import { ScheduledAlarmStore } from "../src/durable-objects/scheduled-alarms";
 import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
-import { WorkstreamDO } from "../src/durable-objects/workstream-do";
 import { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import type { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
 import { WorkstreamMessageStorage } from "../src/durable-objects/workstream-message-storage";
@@ -60,7 +59,6 @@ import {
   conversationObjectName,
   substreamLoopId,
   workspaceDOName,
-  workstreamDOName,
 } from "../src/durable-objects/names";
 import { WorkspaceActivityEventListResultSchema } from "../src/durable-objects/workspace-activity-event-protocol";
 import {
@@ -1116,7 +1114,6 @@ describe("Durable Objects in the Workers runtime", () => {
           "pending_attachment_reservations",
           "channel_viewers",
           // Every Channel's and Space's parent state, keyed by parent id.
-          "parent_imports",
           "parent_metadata",
           "parent_children",
           "parent_child_projections",
@@ -1211,19 +1208,6 @@ describe("Durable Objects in the Workers runtime", () => {
         }
       });
     }
-
-    // The legacy Channel parent is kept only to export an existing object's
-    // rows. Woken with no rows, it must not apply its ledger: that would turn
-    // an id nobody provisioned into a stored object the import then reads.
-    const legacy = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
-    ));
-    const health = await legacy.fetch("https://object.test/health");
-    expect(await health.json()).toMatchObject({ ok: true, role: "workstream-legacy" });
-    await runInDurableObject(legacy, (instance, state) => {
-      expect(instance).toBeInstanceOf(WorkstreamDO);
-      expect(tableNames(state)).toEqual([]);
-    });
   });
 
   it("gives main and child substreams isolated SQLite databases that survive eviction", async () => {
@@ -1361,7 +1345,7 @@ describe("Durable Objects in the Workers runtime", () => {
     ].map((effect) => expect.objectContaining({ title: effect.title, nextTerminalActionAt: effect.nextTerminalActionAt })));
   });
 
-  it("stores private child projections without changing Main's directory in WorkstreamDO", async () => {
+  it("stores private child projections without changing Main's directory in the hosted parent", async () => {
     const stub = hostedParentStub(env, WORKSPACE_ID);
     const at = "2026-08-17T20:00:00.000Z";
     const later = "2026-08-17T20:01:00.000Z";

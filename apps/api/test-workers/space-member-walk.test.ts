@@ -221,17 +221,6 @@ async function openMemberChannel(workstreamId: WorkstreamId): Promise<void> {
       workstreamId,
       OWNER,
     );
-    // The directory effect `publishChannel` delivered named a parent this
-    // object had not seen, which queues an import from the legacy object. The
-    // parent written above is the hosted one, so the import is settled here;
-    // left pending, whichever of the alarm and the first parent call reaches it
-    // first decides whether that call finds a target that is not empty.
-    state.storage.sql.exec(
-      `INSERT INTO parent_imports (parent_id, parent_kind, state, source_rows, imported_at)
-       VALUES (?, 'workstream', 'imported', 0, 1)
-       ON CONFLICT (parent_id) DO UPDATE SET state = 'imported', last_error_code = NULL`,
-      workstreamId,
-    );
   });
   await runInDurableObject(conversation(workstreamId), (_instance, state) => {
     seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId });

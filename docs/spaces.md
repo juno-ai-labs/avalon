@@ -537,7 +537,7 @@ A Sidekick target is written in the same transaction that stages it, by
 `addDefault`, `stageDefaultsForMember` (a Channel joining) or a membership move:
 the member Channel's `parent_sidekicks` row is in WorkspaceDO's own SQLite, so
 the target is marked `applied` and nothing is published. That needs the
-Channel's parent hosted here (a `parent_metadata` row and no pending import),
+Channel's parent hosted here (a `parent_metadata` row),
 not archived, and the Sidekick live and workspace-scoped in
 `automation_directory`, and the requester able to manage the Channel;
 otherwise the target takes the Queue as before. Management is asked in place
@@ -802,7 +802,7 @@ runs each through the same `SpaceChannelAccess` path the request takes, as the
 requester, against the fences the intent recorded. An add, a removal or a move
 is finished in that step; a walk advances one page from the cursor on its row
 and is made due again at once with a fresh retry gate, so a large Space is
-walked a page per alarm with the schedule reconcile and imports in between
+walked a page per alarm with the schedule reconcile in between
 rather than behind it. The phase runs last in the alarm for the same reason.
 An intent a request or a Queue delivery is running is skipped (an in-memory
 single-flight keyed by operation id, `spaceIntentRuns`), and a request that
@@ -1835,10 +1835,10 @@ without the column the suite would prove the membership check and not the guest
 one — and, since the workspace socket reads the relationship at accept time,
 every fixture in `test-workers/` that opens one declares it too.
 
-Two cases in `space-authority.test.ts` reach outside WorkspaceDO on purpose,
-because the property is not WorkspaceDO's alone. The archive fan-out drives a
-real `WorkstreamDO` so "the source is gone from each member Channel" is read
-from the Channel rather than inferred from a membership row, and the
+Two cases in `space-authority.test.ts` go past the Space rows on purpose,
+because the property is not the Space's alone. The archive fan-out opens each
+member Channel's hosted parent so "the source is gone from each member Channel"
+is read from the Channel rather than inferred from a membership row, and the
 schema-57 case pins the object the way `meeting-notes-retirement.test.ts` holds
 one — an unfinished external cleanup, the ledger at 57 — then connects a socket,
 because a guarded read that answers empty and an unguarded one that throws look
@@ -2113,8 +2113,8 @@ render, because it declares a contract and can read the answer; the PRD's
 "explicit update-required response rather than a malformed or partial payload"
 is satisfied by refusing rather than by what the old build draws.
 
-The engineering MCP reaches a Space through `list_spaces` and `run_space_sql`,
-both fenced on `spaces` rather than on naming the object — see
+The engineering MCP lists Spaces with `list_spaces`, and a Space's parent
+state is read with `run_workspace_sql` from the `parent_*` tables; see
 [`engineering-mcp.md`](engineering-mcp.md). A Space's hidden main conversation
 is reachable through the substream tools because
 `bootstrapWorkstreamRuntimeEnvironment` writes its `workstream_authority_routes`
