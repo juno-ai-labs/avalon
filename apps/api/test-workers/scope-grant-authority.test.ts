@@ -10,7 +10,7 @@ import { AuthorizationService } from "../src/services/authorization-service";
 import type { Env } from "../src/env";
 import { pendingParentEffects } from "./helpers/conversation-effects";
 import { conversationObjectName } from "../src/durable-objects/names";
-import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
+import { hostedParentStub, insertChannelRow, withHostedParent } from "./helpers/hosted-parent";
 import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
 import { changeRelationships } from "./helpers/workspace-relationship-events";
 
@@ -44,6 +44,7 @@ function insertParentMetadata(state: DurableObjectState, id: string, title: stri
   state.storage.sql.exec(`INSERT INTO parent_metadata
     (parent_id,parent_kind,workspace_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
     VALUES (?,'workstream',?,'global',1,?,'','','personal','idle',0,0,0)`, id, workspaceId, title);
+  insertChannelRow(state, id, title);
 }
 
 async function seedActorGrant(target: ScopeGrantTarget) {
@@ -133,7 +134,7 @@ it("refuses a legacy child migration over an existing conversation grant ledger"
 
 it("does not turn workspace-public member reading into sharing authority", async () => {
   await changeRelationships(env, workspaceId, [actorId], env.DB.prepare("UPDATE workspace_members SET access_class='member',role='member' WHERE user_id=?").bind(actorId));
-  await exec("UPDATE parent_metadata SET scope='workspace' WHERE parent_id=?", parentId);
+  await exec("UPDATE channels SET scope='workspace' WHERE workstream_id=?", parentId);
   expect(await room().readScopeAccess({ userId: actorId, target: main })).toMatchObject({ allowed: true, workspaceMemberAccess: true });
   expect(await room().readScopeAccess({ userId: recipientId, target: main })).toMatchObject({ allowed: false });
   expect(await room().mutateScopeGrant(mutation(main))).toEqual({ status: "denied", reason: "sharing_required" });
@@ -175,7 +176,7 @@ it("rejects inactive actors, inactive recipients, archived scopes and abandoned 
   await changeRelationships(env, workspaceId, [actorId], env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(actorId));
   expect(await room().mutateScopeGrant(mutation())).toEqual({ status: "denied", reason: "sharing_required" });
   await changeRelationships(env, workspaceId, [actorId, recipientId], env.DB.prepare("UPDATE workspace_members SET status='active'"));
-  await exec("UPDATE parent_metadata SET archived_at=1 WHERE parent_id=?", parentId);
+  await exec("UPDATE channels SET archived_at=1 WHERE workstream_id=?", parentId);
   expect(await room().mutateScopeGrant(mutation())).toEqual({ status: "denied", reason: "sharing_required" });
   expect(await room().readScopeAccess({ userId: actorId, target: child })).toMatchObject({ allowed: true, writable: false });
   // Closing a workspace suspends its last active member in the same batch,
@@ -448,7 +449,7 @@ it("lists inherited and archived readable children but omits restricted and unre
   await exec("UPDATE parent_children SET status='ready', archived_at=1 WHERE parent_id=? AND substream_id=?", parentId, childId);
   expect((await room().readSharedWorkstream(request))?.conversations).toHaveLength(2);
   expect((await room().readSharedWorkstream(request))?.archived).toBe(false);
-  await exec("UPDATE parent_metadata SET archived_at=1 WHERE parent_id=?", parentId);
+  await exec("UPDATE channels SET archived_at=1 WHERE workstream_id=?", parentId);
   expect((await room().readSharedWorkstream(request))?.archived).toBe(true);
   expect((await room().readSharedWorkstream(request))?.conversations).toHaveLength(2);
 });
@@ -494,7 +495,7 @@ it("retains implicit Main member admission after participant authority transfer"
       scope: "workspace", originType: "ad_hoc", createdByUserId: actorId, participantUserIds: [actorId], harnessStatus: "idle",
       emailAddress: null, emailRouteStatus: null, systemKind: null, automationRunId: null, plannedFor: null,
       modelOverride: null, now: Date.now() }] });
-  await exec("UPDATE parent_metadata SET scope='workspace' WHERE parent_id=?", parentId);
+  await exec("UPDATE channels SET scope='workspace' WHERE workstream_id=?", parentId);
   await room().beginMainParticipantMigration({ workspaceId, parentId });
   await withHostedParent(room(), parentId, async (hosted) => { await hosted['runMainParticipantMigration'](); });
   const admission = await room().authorizeViewer({ workspaceId, parentId, substreamId: asSubstreamId('0'), userId: recipientId });
