@@ -170,34 +170,57 @@ the tab is one request. The count is what the agent would be offered: tools
 matching the connection's grants and scope.
 
 - **A fixed tool surface** is counted in the list handler from the adapter's
-  `agentPlugin.tools` and the row's grants, with no I/O.
+  `agentPlugin.tools` and the row's grants, with no I/O — and counted as
+  activation expands it: a paginated definition arrives with its generated page
+  tools (`gmail.search` brings `gmail.search_next`; `read_resource` brings a
+  `_next` and `read_resource_previous`). The names come from
+  `paginatedToolNames` in `apps/api/src/services/tool-pagination.ts`, the pure
+  rule `withToolPagination` builds its tools from, so the count and the
+  activation cannot drift. The released per-row endpoint counts the same way.
+  A discovered surface is not expanded, because activation does not expand it.
 - **A live-discovered surface** (hosted MCP, custom MCP) reports
   `connector_connections.discovered_tool_count` (WorkspaceDO migration 73): the
-  count its last discovery found. A discovery counts exactly what activation
+  count its last successful discovery found. A discovery counts exactly what activation
   would expose — the live inventory through the credential door, validated by
   `validateDynamicConnectorTools` — under the existing 20-second Settings
   inventory deadline. It is written when discovery already runs or the
   connection changed: after an OAuth completion or reconnect (in the
   background, behind the handoff), after a passing Test, by the custom-MCP tools
   read and therefore by a tool-policy save, and by the released
-  `GET /connections/:id/tool-count`. A row the list finds never discovered
+  `GET /connections/:id/tool-count`. A row the list finds with no count
   reports `null` and has one discovery started behind the response — one per
   connection, ever: the list claims `tool_count_backfill_attempted_at` (same
   migration) with a returned witness before any provider call, so concurrent
   lists start it once and a failed one is not retried behind later lists.
   After that, only the paths above refresh the count.
-- **The write is fenced** on the `granted_scopes_json` and `config_json` the
-  discovery ran under, so a late answer never overwrites a count a newer
-  policy or grant already changed, and it publishes `connector_connections`
-  only when the stored number moved, which refetches the list in every open
-  client.
-- **`null` is never zero.** A disabled connection, and a discovered one with no
-  successful discovery yet, report `null`; the desktop shows a dash. A
-  discovery that fails leaves the previous count in place and logs
-  `connection_tool_count_refresh_failed` with the adapter's code; the row's
-  status is what says the provider is unhealthy. A connector the region does not
-  register reports `null` and logs `connection_tool_count_unavailable`
-  (`connector_not_registered`).
+- **A failed discovery clears the count.** A timeout, a provider error, or
+  `validateDynamicConnectorTools` refusing the catalog (a name collision) leaves
+  `load_plugin` offering the agent none of those tools, and none of them moves
+  the row's status off `healthy` — so an old number there would read as a
+  working connection. The discovery sets `discovered_tool_count` to `NULL`
+  under the same fence as a successful write and publishes the same way, then
+  logs `connection_tool_count_refresh_failed` with the adapter's code. An
+  authorization refusal is the one failure that keeps the count: the credential
+  door has already marked the row `needs_reconnect`, which is what the badge
+  shows, and a reconnect to the same account offers the same tools. A caller
+  that aborts (a closed per-row request) is not a provider failure and clears
+  nothing.
+- **Every write is fenced** on the `granted_scopes_json`, `config_json` and
+  `provider_account_id` the discovery ran under, so a late answer — a count or a
+  clear — never overwrites what a newer policy, grant or reconnect already
+  changed, and it publishes `connector_connections` with `{ connectionId }`
+  only when the stored value moved, which refetches the list in that
+  connection's audience.
+- **`null` is never zero, and says why.** `Connection.toolCountMissing` names
+  the reason: `disabled`; `connector_unavailable` (the region does not register
+  the connector — static configuration, so it is reported on the row rather
+  than logged on every list, and the registry is read once per list);
+  `counting` (this list just started the connection's one background
+  discovery); `not_counted` (the last discovery failed, or one started earlier
+  has not finished). The desktop draws a dash whose `title` and accessible name
+  say which. The field defaults to `null`, so a region that predates it still
+  parses; the desktop then reads `disabled` from the status and says only that
+  there is no count otherwise.
 - **No staleness window.** Nothing re-discovers a count it already has on a
   timer or an age. A server that changes its catalog with no Rally-side event is
   reflected at the next event above; adding a refresh window is a limit whose
@@ -1365,7 +1388,7 @@ independent change condition, mixed batches, and URL/metadata merge behavior.
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Real-workerd WorkspaceDO schema, Queue/provider replay dedupe, Queue claim fencing and recovery, and terminal settlement. |
 | `apps/api/test-workers/workspace-connections.test.ts` | The typed OAuth attempt lifecycle across the real RPC boundary — settlement witnesses, replay convergence, the member-scoped lazy expiry, the succeeded-over-expiry override — plus webhook receipt claims, their same-transaction expired-receipt sweep, and the generic port's refusal of `webhook_receipts`. |
 | `apps/api/test/connector-oauth-handoff.test.ts`, `apps/api/test/connector-outcome-telemetry.test.ts`, `apps/api/test/granola-connector.test.ts` | The connection service over a real `WorkspaceDO` via `test/helpers/workspace-object-rpcs.ts` — attempt expiry/reconciliation through the service, single-emission outcome telemetry, and that no plaintext credential crosses the recorded RPC boundary during webhook ingestion. |
-| `apps/api/test/connection-tool-count.test.ts` | `GET /connections` tool counts over a real `WorkspaceDO` schema: a fixed surface counted from grants with no provider call, a discovered count stored by creation, a policy save, the custom-MCP tools read and the released per-row endpoint, `null` (never zero) with a named log when discovery has not succeeded, the list's failed discovery attempted once across two lists, and a discovery that finishes after a policy change dropped by the write fence. Background work is awaited with `drainWaitUntil` from the Node `cloudflare:workers` stand-in rather than slept on. |
+| `apps/api/test/connection-tool-count.test.ts` | `GET /connections` tool counts over the migrated regional database and a real `WorkspaceDO` schema, through the service and through the route: a fixed surface counted from grants with its generated page tools and no provider call, `connector_unavailable` for a connector the region does not register, a discovered count stored by creation, a policy save, the custom-MCP tools read and the released per-row endpoint, `null` (never zero) with its reason and a named log when discovery has not succeeded, the list's failed discovery attempted once across two lists, two concurrent lists starting one discovery, a failed discovery (a 5xx, a name collision) clearing the stored count and publishing it, and a discovery that finishes after a policy change or a reconnect dropped by the write fence. Background work is awaited with `drainWaitUntil` from the Node `cloudflare:workers` stand-in rather than slept on. `apps/api/test/tool-pagination.test.ts` pins that `paginatedToolNames` and the expansion name the same tools. |
 | `packages/connectors/src/digestibility-doc.test.ts` | That every declared activity type has a row in [`connector-digestibility.md`](connector-digestibility.md). |
 | `packages/connectors/src/agent-plugin.test.ts` | That each descriptor's provider type and tool order match its manifest. |
 | `packages/connectors/src/observability.test.ts` | The shared adapter and provider-request log layers, level selection, identifier retention, content exclusion, and fail-open observer contract. |
@@ -1398,7 +1421,11 @@ written whenever a discovery already runs (authorization, Test, the custom-MCP
 tools read and policy save, the released per-row endpoint) and once, in the
 background, for a row the list finds never discovered — recorded in
 `tool_count_backfill_attempted_at` before it runs, so it is spent once per
-connection even when it fails. The desktop dropped its
+connection even when it fails. A failed discovery, other than an authorization
+refusal, clears the stored count. A fixed surface is counted with the page
+tools activation generates, from `paginatedToolNames`, the rule the expansion
+itself now builds from. A row with no count carries `toolCountMissing`, and the
+desktop's dash says which reason it is. The desktop dropped its
 per-row `connection-tool-count` queries and reads the list.
 
 **Why:** Opening Connections cost the list plus one `tool-count` request per
@@ -1418,19 +1445,29 @@ looking at). Retrying the list's background discovery until it succeeds (for a
 broken connection that is a live provider call behind every list, the same
 per-open traffic this change removes, only hidden). Deriving the custom-MCP count separately from the activation path
 (the 2026-09-11 rule stands: the count is the agent tool surface, so discovery
-reuses `validateDynamicConnectorTools`).
+reuses `validateDynamicConnectorTools`). Keeping the previous count when a
+discovery fails and relying on the status badge (only an authorization refusal
+moves the status; a timeout, a 5xx or a refused catalog left an old number
+beside a healthy badge while `load_plugin` offered none of those tools).
+Counting authored definitions (the per-row endpoint did, and it undercounted
+every paginated tool the agent is actually offered). A second copy of the
+pagination rule in the count (the two would drift the first time the expansion
+changed). Logging an unregistered connector on every list (static configuration
+repeated per open; the row now says it).
 
-**Consequences:** A discovered count is "as of the last discovery", not live:
-a server that changes its catalog with no Rally-side event shows the old number
-until the next Test, reconnect or tools-pane read. A failed discovery keeps the
-previous count rather than clearing it, which replaces the earlier
-"Unavailable, never stale" rule; the status badge carries the failure. Writers
-must keep the grant/config fence and the `IS NOT` guard, or late discoveries
-overwrite newer policy and every no-op refresh republishes the list to every
-client. A connection whose one list-triggered discovery failed shows a dash
-until an authorization, a passing Test, or a tools-pane read counts it; the
-marker is not re-armed by anything else, deliberately. The per-row endpoint must stay until released desktops no longer call
-it.
+**Consequences:** A discovered count is "as of the last successful discovery",
+not live: a server that changes its catalog with no Rally-side event shows the
+old number until the next Test, reconnect or tools-pane read. A discovery that
+fails for any reason but an authorization refusal clears the count, so the
+"never stale" half of the earlier rule holds, now as a dash with a reason
+rather than "Unavailable". Writers must keep the grant/config/account fence and
+the `IS NOT` guard, on a clear as on a count, or late discoveries overwrite
+newer policy and every no-op refresh republishes the list. A change to how
+activation expands a tool changes `paginatedToolNames`, never a count beside
+it. A connection whose one list-triggered discovery failed shows a dash
+(`not_counted`) until an authorization, a passing Test, or a tools-pane read
+counts it; the marker is not re-armed by anything else, deliberately. The
+per-row endpoint must stay until released desktops no longer call it.
 
 ### 2026-09-22 — Resource grants became a connector primitive
 
