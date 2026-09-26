@@ -272,7 +272,7 @@ describe('shared Queue indexing pipeline', () => {
     expect(tokenizerReads).toBe(0);
   });
 
-  it('indexes a resource in its own delivery from one read, without a job per document', async () => {
+  it('indexes a resource in its own delivery, without a job per document', async () => {
     await seedResource();
     const result = await consume([resourceMessage()]);
     expect(result.explicitAcks).toEqual(['search-0']);
