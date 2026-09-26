@@ -100,7 +100,7 @@ import {
   telemetryCountBucket,
   telemetryJourneyDuration,
 } from "../telemetry/product-usage";
-import { publishWorkspaceSync } from "./workspace-realtime-service";
+import { CONNECTION_SYNC_TOPICS, publishWorkspaceSync } from "./workspace-realtime-service";
 import { persistNormalizedActivity } from "./normalized-activity-service";
 import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 import { WorkstreamObjectClient } from "./workstream-object-client";
@@ -132,14 +132,14 @@ const capabilityScopes: Record<string, readonly string[]> = {
   "sheets.write": GoogleCapabilityScopes.sheetsWrite,
 };
 
-async function publishConnectorWorkspaceSync(env: Env, workspaceId: string): Promise<void> {
+/**
+ * Tell the connection's audience it changed: its owner when it is personal,
+ * everyone when it is the Organization's (`WorkspaceDO.publishSync` reads
+ * which from the connection's row).
+ */
+async function publishConnectorWorkspaceSync(env: Env, workspaceId: string, connectionId: string): Promise<void> {
   try {
-    await publishWorkspaceSync(env, workspaceId, [
-      "connector_connections",
-      "resources",
-      "automations",
-      "digest_schedule",
-    ]);
+    await publishWorkspaceSync(env, workspaceId, CONNECTION_SYNC_TOPICS, { connectionId });
   } catch (error) {
     // Connector authorization is already committed and must not be reported as
     // failed merely because a hibernating sync object was briefly unavailable.
@@ -1218,7 +1218,7 @@ export class ConnectionService {
       { provider: "google", scope: stateData.scope, capabilities: stateData.capabilities, providerAccountId: account.providerAccountId },
     ));
     if (attemptId) await this.finishOAuthAttempt(String(row.workspace_id), attemptId, "succeeded", { connectionId });
-    await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
+    await publishConnectorWorkspaceSync(this.env, String(row.workspace_id), connectionId);
     return this.connectorAttemptTarget({
       provider: "google",
       status: "succeeded",
@@ -1589,7 +1589,7 @@ export class ConnectionService {
       { provider: "github", scope: stateData.scope, capabilities: stateData.capabilities, installationId: providerAccountId },
     ));
     if (attemptId) await this.finishOAuthAttempt(String(row.workspace_id), attemptId, "succeeded", { connectionId });
-    await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
+    await publishConnectorWorkspaceSync(this.env, String(row.workspace_id), connectionId);
     return this.connectorAttemptTarget({
       provider: "github",
       status: "succeeded",
@@ -1855,7 +1855,7 @@ export class ConnectionService {
           connectionId,
           row.workspace_id,
         ).run();
-        await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
+        await publishConnectorWorkspaceSync(this.env, String(row.workspace_id), connectionId);
         throw error;
       }
     }
@@ -1887,7 +1887,7 @@ export class ConnectionService {
           connectionId,
           row.workspace_id,
         ).run();
-        await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
+        await publishConnectorWorkspaceSync(this.env, String(row.workspace_id), connectionId);
         throw error;
       }
     }
@@ -1904,7 +1904,7 @@ export class ConnectionService {
           `UPDATE connector_connections SET status = 'error', error_json = ?, updated_at = ?
            WHERE id = ? AND workspace_id = ? AND connector_type = 'slack'`,
         ).bind(JSON.stringify({ code: "slack_route_registration_failed", message: error instanceof Error ? error.message : "Slack route registration failed", retryable: true }), nowIso(), connectionId, row.workspace_id).run();
-        await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
+        await publishConnectorWorkspaceSync(this.env, String(row.workspace_id), connectionId);
         throw error;
       }
       try {
@@ -1947,7 +1947,7 @@ export class ConnectionService {
           row.workspace_id,
           CUSTOM_MCP_CONNECTOR_TYPE,
         ).run();
-        await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
+        await publishConnectorWorkspaceSync(this.env, String(row.workspace_id), connectionId);
         throw customMcpUnreachable(error);
       }
     }
@@ -1959,7 +1959,7 @@ export class ConnectionService {
       { provider, scope: stateData.scope, capabilities: grantedCapabilities, providerAccountId },
     ));
     if (attemptId) await this.finishOAuthAttempt(String(row.workspace_id), attemptId, "succeeded", { connectionId });
-    await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
+    await publishConnectorWorkspaceSync(this.env, String(row.workspace_id), connectionId);
     // An authorization can change what a discovered connection exposes — new
     // grants, a different account, a server that changed since — so its count
     // is rediscovered behind the handoff rather than in front of it.
@@ -2359,7 +2359,7 @@ export class ConnectionService {
         const installation = await (await this.workspaceObject(connection.workspace_id)).changeConnectorInstallation({ workspaceId: connection.workspace_id, connectionId: id, action: "disconnect" });
         runtimeDeferral(this.recordInstallationAudit(installation, "connector.installation.disconnect"));
         await enqueueConnectorInstallation(this.env, installation);
-        await publishConnectorWorkspaceSync(this.env, connection.workspace_id);
+        await publishConnectorWorkspaceSync(this.env, connection.workspace_id, id);
       }
       const mayRevokeRemotely = connection.connector_type !== "google" && !managedInstallation;
       if (mayRevokeRemotely && adapter.revoke) {
@@ -2772,7 +2772,7 @@ export class ConnectionService {
     }
     await this.syncConnectorIngressRoute(installation.connectionId);
     await enqueueConnectorInstallation(this.env, installation);
-    await publishConnectorWorkspaceSync(this.env, auth.workspaceId);
+    await publishConnectorWorkspaceSync(this.env, auth.workspaceId, installation.connectionId);
     const connection = (await this.list()).find((item) => item.id === installation.connectionId);
     if (!connection) throw new ApiError(409, "connector_setup_superseded", "The connection changed during setup. Reload Settings.");
     // The one moment the signing secret is allowed to leave the region in
@@ -2825,7 +2825,7 @@ export class ConnectionService {
     runtimeDeferral(this.recordInstallationAudit(installation, `connector.installation.${input.action}`));
     await this.syncConnectorIngressRoute(id);
     await enqueueConnectorInstallation(this.env, installation);
-    await publishConnectorWorkspaceSync(this.env, connection.workspace_id);
+    await publishConnectorWorkspaceSync(this.env, connection.workspace_id, id);
     return { installation };
   }
 
@@ -2871,7 +2871,7 @@ export class ConnectionService {
     }
     runtimeDeferral(this.recordInstallationAudit(updated, "connector.credentials.replaced"));
     await enqueueConnectorInstallation(this.env, updated);
-    await publishConnectorWorkspaceSync(this.env, connection.workspace_id);
+    await publishConnectorWorkspaceSync(this.env, connection.workspace_id, id);
     return { installation: updated };
   }
 
@@ -3090,7 +3090,7 @@ export class ConnectionService {
     // Read back before publishing: the read stores the narrowed tool count,
     // so the list a published client refetches already carries it.
     const settings = await this.getCustomMcpSettings(id);
-    await publishConnectorWorkspaceSync(this.env, auth.workspaceId);
+    await publishConnectorWorkspaceSync(this.env, auth.workspaceId, id);
     return settings;
   }
 
@@ -4081,7 +4081,9 @@ export class ConnectionService {
     const settled = finished.attempt;
     await this.emitOAuthOutcome(settled).catch(() => undefined);
     try {
-      await publishWorkspaceSync(this.env, settled.workspaceId, ["connector_oauth_attempts"]);
+      // The attempt is the person's who started it; nobody else polls it.
+      await publishWorkspaceSync(this.env, settled.workspaceId, ["connector_oauth_attempts"],
+        { audienceUserIds: [settled.userId] });
     } catch (error) {
       // The attempt is already durably settled. Reconnect's full workspace
       // snapshot provides another reconciliation edge if this live signal
