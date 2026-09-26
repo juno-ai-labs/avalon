@@ -87,7 +87,10 @@ depicts and then how it is drawn — "two coins, one face on and one behind it a
 an angle" — and stop. A description must not say what an icon is *for*: matching
 a mark to a work stream belongs to the naming pass's model, which has the
 request, and a test fails a description that carries usage language. See
-[`workstream-naming.md`](workstream-naming.md).
+[`workstream-naming.md`](workstream-naming.md). The Sidekick setup chat reads the
+same lines, rendered once by `WORKSTREAM_ICON_CATALOG` in
+`packages/agent-harness/src/prompts/icon-catalog.ts`, so a Channel, a Breakout and
+a Sidekick all choose from one list with one set of descriptions.
 Colors store semantic keys such as `blue` and `purple`, never hex or RGB values.
 Both the swatch and glyph resolve `sys.color.project.<key>` through the current
 appearance. The keys that resolve to the same colour in both appearances live

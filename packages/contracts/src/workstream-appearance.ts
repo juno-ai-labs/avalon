@@ -116,3 +116,18 @@ export const WorkstreamAppearanceSchema = z.strictObject({
 export const WorkstreamAppearancePatchSchema = WorkstreamAppearanceSchema.partial();
 export type WorkstreamAppearance = z.infer<typeof WorkstreamAppearanceSchema>;
 export type WorkstreamAppearancePatch = z.infer<typeof WorkstreamAppearancePatchSchema>;
+
+/**
+ * An icon and a colour both set, as the Sidekick setup chat submits them.
+ *
+ * Neither may be null: the chat always states both. The colour takes the whole
+ * storable vocabulary rather than only the ring, because the chat is told to
+ * keep a Sidekick's current colour and that colour may be `black` or a retired
+ * one. Whether a colour outside the ring is allowed is a question about what is
+ * already stored, so `SidekickDO` answers it, not this schema.
+ */
+export const PickedAppearanceSchema = z.strictObject({
+  icon: WorkstreamIconKeySchema,
+  color: z.enum(PROJECT_COLOR_KEYS_STORABLE),
+});
+export type PickedAppearance = z.infer<typeof PickedAppearanceSchema>;

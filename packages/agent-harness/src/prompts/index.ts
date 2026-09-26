@@ -6,5 +6,6 @@ export * from "./response-formatting";
 export * from "./types";
 export * from "./workstream";
 export * from "./workstream-description";
+export * from "./icon-catalog";
 export * from "./workstream-name";
 export * from "./work-opportunity";
