@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { Tokenizer } from '@huggingface/tokenizers';
 import { workspaceDOName, conversationObjectName } from '../src/durable-objects/names';
 import { consumeActivityQueue } from '../src/queues/activity-consumer';
+import { ResourceSearchProjectionSchema } from '../src/durable-objects/resource-search-projection';
 import { seedWorkstreamRoot, seedParticipantMessage } from './helpers/substream-fixture';
 import { searchDocumentId } from '../src/services/text-search';
 import { searchAudienceGroupId } from '../src/services/search-audience';
@@ -156,8 +157,13 @@ async function consume(bodies: unknown[], overrides: Partial<Env> = {}, drainJob
     expect(child.explicitAcks).toEqual(['search-0']);
   }
   if (!drainJobs) return result;
-  const jobReference = bodies.map((body) => SearchDocumentJobSchema.safeParse(body)).filter((value) => value.success)
-    .map((value) => JSON.stringify(value.data.reference));
+  // A resource is indexed in its source delivery, so its own reference owns the embedding jobs.
+  const jobReference = [
+    ...bodies.map((body) => SearchDocumentJobSchema.safeParse(body)).filter((value) => value.success)
+      .map((value) => JSON.stringify(value.data.reference)),
+    ...bodies.map((body) => ResourceSearchProjectionSchema.safeParse(body)).filter((value) => value.success)
+      .map((value) => JSON.stringify(value.data)),
+  ];
   const jobs = publish.mock.calls.slice(firstSend).flatMap(([messages]) => [...messages])
     .map((message) => SearchEmbeddingBatchSchema.safeParse(message.body)).filter((value) => value.success)
     .map((value) => value.data).filter((job) => jobReference.includes(JSON.stringify(job.reference)));
@@ -177,6 +183,18 @@ function publishedEmbeddingJobs() {
       const parsed = SearchEmbeddingBatchSchema.safeParse(message.body);
       return parsed.success ? [parsed.data] : [];
     });
+}
+
+/**
+ * What `publishSearchIndexingJobs` sent to the real Queue since the spy was
+ * cleared. A WorkspaceDO alarm in the same run can publish its own control
+ * message (a `space_bootstrap`) into the same window, so only embedding
+ * batches are counted.
+ */
+function publishedEmbeddingSends() {
+  return publish.mock.calls.map(([messages]) => [...messages]
+    .filter((message) => SearchEmbeddingBatchSchema.safeParse(message.body).success))
+    .filter((messages) => messages.length);
 }
 
 const RowsSchema = z.array(z.object({ source: z.string(), text: z.string(), record_type: z.string(),
@@ -254,6 +272,16 @@ describe('shared Queue indexing pipeline', () => {
     expect(tokenizerReads).toBe(0);
   });
 
+  it('indexes a resource in its own delivery, without a job per document', async () => {
+    await seedResource();
+    const result = await consume([resourceMessage()]);
+    expect(result.explicitAcks).toEqual(['search-0']);
+    // Every document job read the WorkspaceDO twice; a resource has one live document of three.
+    expect(publish.mock.calls.flatMap(([messages]) => [...messages])
+      .filter((message) => SearchDocumentJobSchema.safeParse(message.body).success)).toEqual([]);
+    expect(liveRows().some((row) => row.source === 'files' && row.record_type !== 'chunk')).toBe(true);
+  });
+
   it('uses the same canonical text, chunks, and embedding inputs for attachments and messages', async () => {
     await seedResource();
     const stub = env.SUBSTREAM_AGENTS.getByName(conversationObjectName('global', workspaceId, parentId, '0'));
@@ -304,8 +332,8 @@ describe('shared Queue indexing pipeline', () => {
     const job = publishedEmbeddingJobs()[0]!;
     publish.mockClear();
     await publishSearchIndexingJobs(env.ACTIVITY_QUEUE, Array.from({ length: 101 }, () => ({ ...job, spans: job.spans.slice(0, 1) })));
-    expect(publish.mock.calls.length).toBeGreaterThan(1);
-    expect(publish.mock.calls.flatMap(([messages]) => [...messages])).toHaveLength(101);
+    expect(publishedEmbeddingSends().length).toBeGreaterThan(1);
+    expect(publishedEmbeddingSends().flat()).toHaveLength(101);
   });
 
   it('splits below 100 messages when the serialized byte budget is reached', async () => {
@@ -318,12 +346,12 @@ describe('shared Queue indexing pipeline', () => {
     expect(count).toBeLessThan(100);
     publish.mockClear();
     await publishSearchIndexingJobs(env.ACTIVITY_QUEUE, Array.from({ length: count }, () => job));
-    expect(publish.mock.calls.length).toBeGreaterThan(1);
-    for (const [messages] of publish.mock.calls) {
-      const total = [...messages].reduce((sum, message) => sum + new TextEncoder().encode(JSON.stringify(message)).byteLength + 100, 0);
+    expect(publishedEmbeddingSends().length).toBeGreaterThan(1);
+    for (const messages of publishedEmbeddingSends()) {
+      const total = messages.reduce((sum, message) => sum + new TextEncoder().encode(JSON.stringify(message)).byteLength + 100, 0);
       expect(total).toBeLessThanOrEqual(256_000);
     }
-    expect(publish.mock.calls.flatMap(([messages]) => [...messages])).toHaveLength(count);
+    expect(publishedEmbeddingSends().flat()).toHaveLength(count);
   });
 
   it('reclaims only the written generation when canonical text changes during the upsert', async () => {

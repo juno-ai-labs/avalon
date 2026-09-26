@@ -660,6 +660,30 @@ cheap discovery and continuation paths.
 
 ## Changelog
 
+### 2026-09-26 — Index the stored object a resource or version points at
+
+**What changed:** WorkspaceDO migration 78 adds partial indexes on
+`content_ref` and `model_content_ref` of `resources` and `resource_versions`.
+The maintenance schedule's `resource_objects` query and
+`listWorkspaceReapableResourceObjects` check each column with its own lookup.
+
+**Why:** For each row in `resource_object_deletion_outbox`, both queries asked
+whether any resource or version still points at the object, and nothing
+indexed those columns. At Juno Labs one staged row (waiting since 2026-09-19)
+made every maintenance refresh read 460,000 rows. A Channel directory effect
+with links runs that refresh, so it was most of the 700 ms of CPU each
+`receiveChildEffects` call cost, about half of that object's time. Only a few
+hundred rows store an object; connector resources store none, so the partial
+indexes are small.
+
+**Considered and rejected:** Keeping the `OR` form with the indexes; workerd's
+planner then chose `resource_versions_workspace_idx` and still read every
+version.
+
+**What a future change has to respect:** keep each lookup on a single column
+and do not add `workspace_id` to it; every row here is this workspace's, and
+naming it lets the planner scan.
+
 ### 2026-09-16 — Publish scoped conversation uploads independently
 
 Guest uploads reuse ordinary draft ownership, message reservations and file
