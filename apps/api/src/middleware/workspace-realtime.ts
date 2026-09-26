@@ -2,7 +2,7 @@ import type { Context, MiddlewareHandler } from "hono";
 
 import type { HonoAppEnv } from "../env";
 import { requestDeferral } from "../lib/defer";
-import { logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import {
   publishWorkspaceSync,
   workspaceSyncPublicationsForMutation,
@@ -41,7 +41,7 @@ export const workspaceRealtimeInvalidation: MiddlewareHandler<HonoAppEnv> = asyn
       logWarn(c.env, "workspace_realtime_publish_failed", {
         workspace_id: auth.workspaceId,
         topics,
-        reason: error instanceof Error ? error.message : "unknown",
+        code: diagnosticErrorCode(error, "workspace_realtime_publish_failed"),
       });
     }));
   }
