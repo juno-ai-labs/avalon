@@ -613,6 +613,17 @@ const browserBridge: RallyDesktopBridge = {
   onSettingsWindowRevealed() {
     return () => undefined;
   },
+  // A browser tab is one window: Settings is a route inside it, sharing the one
+  // socket, so there is nothing to relay and nobody to relay to.
+  async publishWorkspaceSync() {
+    // Nothing listens.
+  },
+  async getWorkspaceSyncSource() {
+    return { revision: 0, source: null };
+  },
+  onWorkspaceSyncRelayed() {
+    return () => undefined;
+  },
   async showDeepLinkError() {
     // No second window to open in a browser tab; the caller falls back to the
     // inline message it holds.
