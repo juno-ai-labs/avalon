@@ -5,8 +5,6 @@ import { describe, expect, it } from "vitest";
 import { asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
 import type { ScopeGrantMutation } from "@rally/contracts/scope-grants";
 import { PARTICIPANT_PROJECTION_ALARM, ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
-import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-do";
-import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import type { HostedParent } from "../src/durable-objects/hosted-parent";
 import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
 
@@ -356,54 +354,6 @@ describe("workstream scope grants in real workerd", () => {
       expect(deliveries(state)).toHaveLength(3);
       expect(() => reopened.mutate(command({ target: { kind: "workstream", ...address, parentId: crypto.randomUUID() } })))
         .toThrow("scope_grant_parent_mismatch");
-    });
-  });
-
-  it("republishes an imported parent's unsent legacy discovery into the grant directory atomically", async () => {
-    // The legacy object's `scope_grant_deliveries` queue is not imported: a
-    // grant whose discovery a legacy object never sent arrives as a bare
-    // `parent_grants` row, and the import republishes every direct grant in
-    // the same transaction as the rest of its local work.
-    const legacy = env.WORKSPACE_DOS.getByName("scope-grant-legacy-outbox");
-    await runInDurableObject(legacy, (instance) => learnIdentity(instance));
-    await withHostedParent(legacy, parentId, (parent, state) => {
-      insertParentMetadata(state, "Parent");
-      const grant = { id: crypto.randomUUID(), userId, target: command().target, active: true, revision: 1, membershipIncarnation: null };
-      state.storage.sql.exec(`INSERT INTO parent_grants (parent_id,user_id,scope_kind,substream_id,grant_json,source_kind,source_id)
-        VALUES (?,?,'conversation',?,?,'direct','')`, parentId, userId, childId, JSON.stringify(grant));
-      state.storage.sql.exec(`CREATE TRIGGER fail_legacy_outbox BEFORE INSERT ON scope_grant_directory
-        BEGIN SELECT RAISE(ABORT, 'directory unavailable'); END`);
-      expect(() => state.storage.transactionSync(() => parent.republishDirectGrants())).toThrow('directory unavailable');
-      // The projection key did not advance without its directory row, so the
-      // retry below still publishes rather than deduplicating to nothing.
-      expect(state.storage.sql.exec("SELECT 1 FROM parent_projection_keys WHERE parent_id=?", parentId).toArray()).toEqual([]);
-      state.storage.sql.exec("DROP TRIGGER fail_legacy_outbox");
-      state.storage.transactionSync(() => parent.republishDirectGrants());
-      expect(deliveries(state).map((item) => item.grant)).toEqual([grant]);
-      expect(directoryRow(state)).toEqual([{ active: 1, source_version: 1 }]);
-      state.storage.transactionSync(() => parent.republishDirectGrants());
-      expect(deliveries(state)).toHaveLength(1);
-    });
-  });
-
-  it("upgrades populated v13 without changing existing private child audiences or roster", async () => {
-    const stub = env.MIGRATION_PROBE_DO!.getByName("scope-grant-upgrade");
-    await stub.ping();
-    await runInDurableObject(stub, (_instance, state) => {
-      applyDurableObjectSqliteMigrations({ storage: state.storage,
-        migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 13),
-        component: "workstream_do", workerVersionId: "v13" });
-      state.storage.sql.exec("INSERT INTO conversation_children (substream_id, kind, created_at) VALUES (?, 'child', 1)", childId);
-      state.storage.sql.exec(`INSERT INTO private_child_memberships
-        (substream_id, user_id, active, version, added_by_user_id, added_at, updated_at)
-        VALUES (?, ?, 1, 7, ?, 1, 1)`, childId, userId, userId);
-      applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS,
-        component: "workstream_do", workerVersionId: "v14" });
-      expect(state.storage.sql.exec<{ audience: string }>("SELECT audience FROM conversation_children WHERE substream_id = ?", childId).one().audience)
-        .toBe("restricted");
-      expect(state.storage.sql.exec<{ version: number; active: number }>("SELECT version, active FROM private_child_memberships WHERE user_id = ?", userId).one())
-        .toEqual({ version: 7, active: 1 });
-      expect(state.storage.sql.exec("SELECT 1 FROM scope_grants WHERE user_id = ?", userId).toArray()).toEqual([]);
     });
   });
 });

@@ -505,7 +505,9 @@ SQL joins.
   `space_viewers`), adds the `parent_*` tables that hold what each legacy
   `WorkstreamDO` and `SpaceDO` held, every one led by `parent_id`, and seeds
   `parent_imports` with one `pending` row per Channel and Space the directory
-  already knew. The table map and the import are in
+  already knew. WorkspaceDO migration 75 drops `parent_imports` once every
+  parent had moved and the legacy classes were deleted. The table map and the
+  history of the move are in
   [`hosted-conversation-parents.md`](hosted-conversation-parents.md).
 - Migration 72 also adds `workspace_member_status`, one row per person: their
   workspace relationship as `relationship_json` (null for someone with none or
@@ -1084,7 +1086,7 @@ has a document, and the column notes above point at it rather than restating it:
 | Pinning and the pinned sidebar section | [`workstream-pinning.md`](workstream-pinning.md) |
 | The automation lifecycle and every table `AutomationDO` owns | [`automation-lifecycle.md`](automation-lifecycle.md) |
 | The conversation-parent contract and the effect legs between the objects | [`workstream-durable-object.md`](workstream-durable-object.md) |
-| Channel and Space parent tables in WorkspaceDO, and their import from the legacy objects | [`hosted-conversation-parents.md`](hosted-conversation-parents.md) |
+| Channel and Space parent tables in WorkspaceDO, and how they moved from the deleted legacy objects | [`hosted-conversation-parents.md`](hosted-conversation-parents.md) |
 | The activity log's semantics and the digest that reads it | [`digests.md`](digests.md) |
 | Model pinning and the flags it overrides | [`feature-flags.md`](feature-flags.md) |
 | Telemetry routing, identities, lifecycle, and destinations | [`telemetry.md`](telemetry.md) |
@@ -1126,9 +1128,6 @@ has a document, and the column notes above point at it rather than restating it:
 
 ## Testing
 
-WorkstreamDO recommendation migration 13 is exercised on a populated v12 object
-by `apps/api/test-workers/conversation-parent-contract.test.ts`; the migration
-preserves parent identity and participants while adding the recommendation table.
 `apps/api/test-workers/automation-do.test.ts` verifies execution snapshots and
 substream-local attachment persistence across the tool-driven recommendation flow.
 

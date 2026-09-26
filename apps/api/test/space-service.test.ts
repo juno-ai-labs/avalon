@@ -180,8 +180,7 @@ function channelDoubles(log: string[]) {
  * to behave for the service under test to reach anything at all.
  */
 function namespaceDouble<
-  T extends Env["WORKSPACE_DOS"] | Env["SUBSTREAM_AGENTS"] | Env["SPACE_DOS"]
-  | Env["AUTOMATION_DOS"] | Env["WORKSTREAM_DOS"],
+  T extends Env["WORKSPACE_DOS"] | Env["SUBSTREAM_AGENTS"] | Env["AUTOMATION_DOS"],
 >(stub: object): T {
   const namespace = {
     idFromName: (name: string) => ({ toString: () => name }),
@@ -231,11 +230,7 @@ function serviceEnv(input: {
     }),
     WORKSPACE_DOS: namespaceDouble<Env["WORKSPACE_DOS"]>(organizationObject(input.workspace, input.room)),
     SUBSTREAM_AGENTS: namespaceDouble<Env["SUBSTREAM_AGENTS"]>(conversation),
-    SPACE_DOS: namespaceDouble<Env["SPACE_DOS"]>({}),
     AUTOMATION_DOS: namespaceDouble<Env["AUTOMATION_DOS"]>({}),
-    // The legacy parent objects answer nothing: every Channel and Space parent
-    // is hosted in WorkspaceDO, so a call that still reached one would throw.
-    WORKSTREAM_DOS: namespaceDouble<Env["WORKSTREAM_DOS"]>({}),
     ACCESS_REVOCATION_QUEUE: createCloudflareTestBinding<Env["ACCESS_REVOCATION_QUEUE"]>(
       (input.revocationQueue ?? { send: vi.fn(async () => undefined) }) as never,
     ),

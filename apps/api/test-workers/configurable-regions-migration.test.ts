@@ -4,7 +4,6 @@ import { runInDurableObject } from 'cloudflare:test';
 import { expect, it } from 'vitest';
 import { applyDurableObjectSqliteMigrations } from '../src/durable-objects/sqlite-migrations';
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from '../src/durable-objects/workspace-do';
-import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from '../src/durable-objects/workstream-do';
 import { AUTOMATION_DO_SCHEMA_MIGRATIONS } from '../src/durable-objects/sidekick-do';
 import { ARTIFACT_HOST_SCHEMA_MIGRATIONS } from '../src/durable-objects/artifact-host-do';
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from '../src/durable-objects/workstream-object-schema';
@@ -12,11 +11,6 @@ import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from '../src/durable-objects/work
 const cases = [
   { component: 'workspace_do', migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS, table: 'workspace_identity', row: {
     id: 1, workspace_id: 'workspace', region: 'global', placement_affinity: 'wnam', created_at: 1, updated_at: 2,
-  } },
-  { component: 'workstream_do', migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS, table: 'workstream_metadata', row: {
-    id: 1, workspace_id: 'workspace', workstream_id: 'workstream', region: 'global', authority_generation: 1,
-    title: 'Preserved title', description: '', preview: '', scope: 'personal', exact_state: 'idle',
-    last_activity_at: 1, created_at: 1, updated_at: 2,
   } },
   { component: 'automation_do', migrations: AUTOMATION_DO_SCHEMA_MIGRATIONS, table: 'automation', row: {
     id: 1, workspace_id: 'workspace', automation_id: 'automation', region: 'global', author_user_id: 'user',

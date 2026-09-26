@@ -164,7 +164,7 @@ trigger does not watch it**, so a write that flips it on an already-indexed row
 must enqueue `resource_search_versions` itself or the row stays searchable
 forever while absent from every other surface. WorkspaceDO migration 52 is the
 worked example.
-WorkspaceDO migration 75 widens that trigger to the inputs of a resource's
+WorkspaceDO migration 76 widens that trigger to the inputs of a resource's
 `audience` (its uploader, attachment status, connection, and whether a Resend
 resource is an email) and adds triggers on `authorization_locations`, so an
 inventory that attaches or detaches a resource rewrites its rows. The inventory
@@ -633,7 +633,7 @@ of the groups that may read it, written by its producer beside the text:
 `conversation:<parent>/<substream>` or `sidekick:<automation>` for turns and
 captured links; for a resource, its connection alone, or its uploader, the
 `members` group where the provider is readable by every member, and every
-conversation its canonical inventory places it in. WorkspaceDO migration 75
+conversation its canonical inventory places it in. WorkspaceDO migration 76
 rewrites a resource when any of those inputs changes. Search does not read the
 attribute yet.
 

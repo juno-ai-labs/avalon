@@ -188,8 +188,6 @@
     "bindings": [
       { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
       { "name": "AUTOMATION_DOS", "class_name": "SidekickDO" },
-      { "name": "WORKSTREAM_DOS", "class_name": "WorkstreamDO" },
-      { "name": "SPACE_DOS", "class_name": "SpaceDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
       { "name": "CRASH_SYMBOLICATOR", "class_name": "CrashSymbolicatorContainer" },
       { "name": "SLACK_REACTION_TICKERS", "class_name": "SlackReactionTicker" },
@@ -227,6 +225,11 @@
   // collided. Its SQLite ledger is the same full migration sequence as
   // WorkstreamDO under its own `space_do` component, so both roles converge on
   // one schema without merging their migration-tracker identities.
+  // v12 irreversibly deletes WorkstreamDO and SpaceDO and every object in their
+  // namespaces. Their parents moved into WorkspaceDO (see
+  // docs/hosted-conversation-parents.md), each Organization imported every
+  // Channel and Space it held, and the legacy objects answered nothing but the
+  // one-time export after that. Rollback cannot restore them.
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["WorkstreamRoom", "WorkspaceScheduler"] },
     { "tag": "v2", "new_sqlite_classes": ["CrashSymbolicatorContainer"] },
@@ -242,7 +245,8 @@
     { "tag": "v8", "deleted_classes": ["BlockDashboardAgent"] },
     { "tag": "v9", "deleted_classes": ["AutomationAgent"], "new_sqlite_classes": ["AutomationDO"] },
     { "tag": "v10", "renamed_classes": [{ "from": "AutomationDO", "to": "SidekickDO" }] },
-    { "tag": "v11", "new_sqlite_classes": ["SpaceDO"] }
+    { "tag": "v11", "new_sqlite_classes": ["SpaceDO"] },
+    { "tag": "v12", "deleted_classes": ["WorkstreamDO", "SpaceDO"] }
   ],
   "queues": {
     "producers": [

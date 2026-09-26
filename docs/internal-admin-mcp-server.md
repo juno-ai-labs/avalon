@@ -220,15 +220,13 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | --- | --- | --- |
 | `list_workspaces` | None | Lists workspace identity records across configured deployments. |
 | `list_workstreams` | `workspaceId` | Reads the authoritative WorkspaceDO work-stream directory. |
-| `list_substreams` | `workstreamId` | Lists main substream `0` and child substreams from the Channel's hosted parent in WorkspaceDO, or from the legacy WorkstreamDO while that parent's import is pending. |
+| `list_substreams` | `workstreamId` | Lists main substream `0` and child substreams from the Channel's hosted parent in WorkspaceDO. |
 | `list_sidekicks` | `workspaceId` | Reads the authoritative WorkspaceDO Sidekick directory, in every lifecycle including deleted. |
 | `list_spaces` | `workspaceId` | Lists the Organization's Spaces, archived ones included. Answers an empty list until a product path creates a Space. |
 | `list_artifacts` | `workspaceId` | Reads the authoritative WorkspaceDO live web artifact registry. |
-| `run_workspace_sql` | `workspaceId`, `sql`, optional `bindings` | Runs arbitrary SQLite in WorkspaceDO. |
-| `run_workstream_sql` | `workstreamId`, `sql`, optional `bindings` | Runs arbitrary SQLite in the legacy WorkstreamDO, which holds only rows not yet imported or already exported. A Channel's live parent state is in WorkspaceDO's `parent_*` tables; use `run_workspace_sql`. |
+| `run_workspace_sql` | `workspaceId`, `sql`, optional `bindings` | Runs arbitrary SQLite in WorkspaceDO, including a Channel's or Space's parent state in the `parent_*` tables. |
 | `run_substream_sql` | `workspaceId`, `workstreamId`, `substreamId`, `sql`, optional `bindings` | Runs arbitrary SQLite in SubstreamAgent. |
 | `run_sidekick_sql` | `workspaceId`, `sidekickId`, `sql`, optional `bindings` | Runs arbitrary SQLite in SidekickDO — the Sidekick itself, not its conversation. |
-| `run_space_sql` | `workspaceId`, `spaceId`, `sql`, optional `bindings` | Runs arbitrary SQLite in the legacy SpaceDO, not the Space's hidden conversation. It runs the work-stream schema under the `space_do` migration component and holds only rows not yet imported or already exported. A Space's live parent state is in WorkspaceDO's `parent_*` tables; use `run_workspace_sql`. |
 | `run_artifact_sql` | `workspaceId`, `artifactId`, `sql`, optional `bindings` | Runs arbitrary SQLite in ArtifactHostDO — the artifact's supervisor, not its facet. |
 
 SQL results include `columns`, JSON-safe `rows`, `rowsRead`, and `rowsWritten`.

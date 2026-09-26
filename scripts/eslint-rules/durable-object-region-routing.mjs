@@ -3,8 +3,6 @@ const durableObjectBindings = new Set([
   "SUBSTREAM_AGENTS",
   "AUTOMATION_DOS",
   "WORKSPACE_DOS",
-  "WORKSTREAM_DOS",
-  "SPACE_DOS",
   "ARTIFACT_HOSTS",
 ]);
 
