@@ -331,6 +331,36 @@ break working Sidekicks at rollout.
 join conversations on its own, but it does join the ones a configured Sidekick
 names.
 
+### 2026-09-26: Leaving a private room does not remove Rally access
+
+**Decided:** When someone leaves a private Slack channel or group DM, their
+access to the linked Rally Space and its Channels stays as it is until someone
+changes it in Rally. This is today's connector admission, which keeps
+membership after a person leaves the provider room.
+
+**Why:** Rally's own access checks are the authority for persisted Rally work,
+and the existing behavior already works this way. Mirroring provider
+departures would make Slack membership an unreviewed authority over Rally
+content, which key design decision 4 already declines for bot removal.
+
+**Changes:** Resolves open question 1 as agreed, which blocked private shared
+rooms. Private channels and group DMs can ship. The private-room acceptance
+criterion now applies without a precondition. Non-goal 5 (provider-wide
+access mirroring) stays deferred.
+
+### 2026-09-26: No view of a run
+
+**Decided:** Rally does not build a screen for a Sidekick run. A run continues
+from input that reaches it through a bound thread or an answer to a question
+the run asked. Typing into a run is out of scope.
+
+**Why:** The Mucker flow does not need it, and a run view is a new surface
+(route, who is seated, composer, reopened state) with no request behind it.
+
+**Changes:** Resolves open question 6 as agreed. Narrows goal 6: input from a
+Rally user typing into a run is not built. A forward the model misses stays
+invisible to people; the Breakout simply lacks that answer.
+
 ## Key design decisions
 
 1. **Bind by provider identity, not display name.** Duplicate or changed names
@@ -465,10 +495,11 @@ This ships to everybody on merge, with no feature flag.
 - A group DM message reaches ingress through `message.mpim` and uses the same
   binding path as channel messages. A one-to-one Rally/user DM does not create
   a Space.
-- Once open question 1 is answered: inviting Rally to a private channel or
-  group DM creates exactly one linked Space, and a private source never
-  becomes Organization-readable solely because its member count exceeds the
-  current Slack threshold. Private rooms do not ship before that.
+- Inviting Rally to a private channel or group DM creates exactly one linked
+  Space, and a private source never becomes Organization-readable solely
+  because its member count exceeds the current Slack threshold. A person who
+  leaves the private room keeps their Rally access until it is changed in
+  Rally.
 - Each DM the 1 PM Mucker run sends with the workspace bot binds its exact
   reply thread to that run. A founder's thread reply continues that run, even
   after it completed, with the Sidekick's instructions, tools, and run-as
@@ -500,34 +531,26 @@ This ships to everybody on merge, with no feature flag.
 
 ## Open questions
 
-1. **Private-room access:** Should leaving a private Slack channel or group DM
-   revoke future Rally access, or does Rally membership persist until changed
-   in Rally? The answer changes the Space audience contract and the treatment
-   of retained content. Private shared rooms must not ship without it.
-2. **Existing bot memberships:** What explicit action selects already-joined
+1. **Existing bot memberships:** What explicit action selects already-joined
    channels and group DMs for linking after proactive joining stops?
-3. **Rally-side placement:** Is the linked Space a required placement until
+2. **Rally-side placement:** Is the linked Space a required placement until
    unlinking, or may a user move its Channel away while the thread still routes
    there?
-4. **Provider naming:** Should later provider renames update an untouched Rally
+3. **Provider naming:** Should later provider renames update an untouched Rally
    Space title, or should the initial name always remain independent?
-5. **Unconfirmed outbound delivery:** If the provider accepts an outbound root
+4. **Unconfirmed outbound delivery:** If the provider accepts an outbound root
    message but its response is lost, how can Rally recover that exact root ID
    before routing a reply? Without a provider receipt or a reliable correlation
    event, this is an uncollected state, not a reason to guess.
-6. **A view of a run:** Nobody but the run-as user is seated in a run, and no
-   screen shows one. Should Rally build a run view (route, who is seated,
-   composer, reopened state), or should only bound threads and elicitation
-   answers continue a run?
-7. **Showing a reopened run:** How does the Sidekick's run history show a run
+5. **Showing a reopened run:** How does the Sidekick's run history show a run
    that completed, reopened, and completed again?
-8. **Detaching:** No tool or screen removes an attachment yet. Where does a
+6. **Detaching:** No tool or screen removes an attachment yet. Where does a
    person do that?
-9. **Edited and deleted answers:** If a founder edits or deletes an answer
+7. **Edited and deleted answers:** If a founder edits or deletes an answer
    after it was forwarded, does the forward change, and does a posted agenda?
-10. **Posting for Channel and Breakout agents:** Should a Breakout agent be
-    able to post to its Channel's Main conversation, and should a Channel agent
-    reach its Breakouts? Both fit the same scope rule; neither is needed yet.
-11. **What a sender sees after suspension:** A reply to a suspended binding
-    creates no Rally work. Should the bot tell the sender, and what should it
-    say?
+8. **Posting for Channel and Breakout agents:** Should a Breakout agent be
+   able to post to its Channel's Main conversation, and should a Channel agent
+   reach its Breakouts? Both fit the same scope rule; neither is needed yet.
+9. **What a sender sees after suspension:** A reply to a suspended binding
+   creates no Rally work. Should the bot tell the sender, and what should it
+   say?
