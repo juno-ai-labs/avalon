@@ -4760,8 +4760,8 @@ async function createMainWindow(): Promise<void> {
   });
   mainWindow.on('closed', () => {
     realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
-    // The Settings window may outlive this one (macOS), and dials its own
-    // socket the moment it hears there is nothing left to relay.
+    // The Settings and Sidekicks windows may outlive this one, and each dials
+    // its own socket the moment it hears there is nothing left to relay.
     workspaceSyncRelay.release();
     rendererReady = false;
     conversationDetailsExpansion = 0;
