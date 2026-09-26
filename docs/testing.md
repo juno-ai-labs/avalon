@@ -3,14 +3,15 @@
 Which suite a new test belongs in, which runtime it runs on, and the check that
 has to pass before it is worth keeping. Read it before adding tests to a change.
 
-Two rules run through everything below. **Default to the real Cloudflare
-pipeline**: real workerd and a real Durable Object for anything the runtime
-decides, and the checked-in migrations against real SQLite for anything a query
-decides — a double stands in for something that *cannot* be run here, never for
+Two rules run through everything below, and one boundary sits beside them.
+**Default to the real Cloudflare pipeline**: real workerd and a real Durable
+Object for anything the runtime decides, and the checked-in migrations against
+real SQLite for anything a query decides — a double stands in for something that *cannot* be run here, never for
 setup that was inconvenient. And **prove the test can fail**, at the integration
 rungs: an integration test that stays green while the behavior under it is broken
 is not covering that behavior, and the suite is worse off for it because the name
-says otherwise.
+says otherwise. The boundary: [do not test CI or deployment
+configuration](#do-not-test-ci-or-deployment-configuration).
 
 [`e2e.md`](e2e.md) owns the manual acceptance flows and the live-Worker smoke
 check; [`type-safety-boundaries.md`](type-safety-boundaries.md) owns how a test
@@ -188,6 +189,25 @@ but that helper only types a value that is already mocked). Mocking a module
 replaces code the change is supposed to protect, and the mock keeps passing after
 the real module's contract moves. If the subject's dependencies are all mocked,
 the test covers the wiring of the mocks.
+
+## Do not test CI or deployment configuration
+
+**Never write a test whose subject is CI or deployment.** That covers a test
+that reads a `.github/workflows` file, a Wrangler or deploy config, or the order
+of deploy steps, and a test of a script whose only job is to provision, select a
+deploy mode, or check health around a deploy. Such a test restates the
+configuration in a second place, so it fails exactly when somebody changes the
+configuration on purpose: disabling the Azure reviewer workflow on 2026-09-26
+turned `main` red for no reason but its test. It also proves nothing the run
+itself does not: a workflow that is wrong fails when it runs, and a deploy that
+is wrong fails the deploy. That is the monitoring this team relies on
+([`AGENTS.md`](../AGENTS.md#where-we-are)).
+
+What stays tested is code that decides something about data or a shipped
+artifact, however it is invoked: the D1 migration tooling (`migrate-d1`,
+`d1-baseline`, `classify-pending-d1-migrations`) and the desktop release
+scripts that plan, sign, notarize and publish a build. Test that logic as code,
+through its own functions, never by asserting where a workflow calls it.
 
 ## Timeouts and waiting
 
