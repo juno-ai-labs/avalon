@@ -1431,7 +1431,9 @@ its row when the Queue accepted the message, and the receiver committed the
 effect with its receipt. A sender outbox row that persists means the Queue is
 refusing the send (`substream_outbox_batch_deferred`,
 `parent_effect_enqueue_failed`, or `parent_effect_delivery_deferred` for a hosted
-parent); no outbox row and no receipt means the Queue
+parent, whose `parent_outbox.last_error_code` holds the reason; a hosted row in
+state `failed` did not parse and is never retried, see
+`parent_outbox_row_unreadable`); no outbox row and no receipt means the Queue
 holds the message or has dead-lettered it
 (`conversation_effect_processing_failed` names the throw). There is no
 acknowledgement RPC to retry. Never delete an object outbox row to clear an

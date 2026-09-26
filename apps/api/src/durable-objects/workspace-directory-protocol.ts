@@ -281,8 +281,9 @@ export const WorkspaceDirectoryResourceAccessResultSchema = deferredZodSchema(()
 }));
 
 /**
- * The most directory envelopes one apply accepts. A caller holding more, such
- * as the Organization's own `parent_outbox` drain, splits them at this size.
+ * The most directory envelopes one apply RPC accepts. Its callers (the Queue
+ * consumer and the outbox drain's legacy rows) send one at a time; a hosted
+ * parent's own effects never take this path.
  */
 export const MAX_DIRECTORY_APPLY_ENVELOPES = 25;
 

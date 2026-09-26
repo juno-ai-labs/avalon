@@ -54,6 +54,12 @@ const SPACE_ARCHIVE_MEMBER_CONCURRENCY = 6;
 export interface SpaceChannelAccessHost {
   readonly env: Env;
   readonly storage: DurableObjectStorage;
+  /**
+   * Run `run` in one transaction, learning anybody it met that the member
+   * table had never heard of and running it once more; the first run rolled
+   * back whole.
+   */
+  transaction<T>(run: () => T): Promise<T>;
   spaceStorage(): WorkspaceSpaceStorage;
   hostedParent(parentId: string, workspaceId: string): Promise<HostedParent>;
   /** The directory's audience for an archived Channel, whose product read answers 404. */
@@ -556,7 +562,7 @@ export class SpaceChannelAccess {
       return { ok: false, refusal: conversationRefusal(error) };
     }
     const address = { workspaceId: actor.workspaceId, parentId: workstreamId };
-    const outcome = this.host.storage.transactionSync(() => storage.resumeStagedMove({
+    const outcome = await this.host.transaction(() => storage.resumeStagedMove({
       operationId: intent.operationId,
       userId: intent.requestedByUserId,
       sourceSpaceId,
@@ -650,7 +656,7 @@ export class SpaceChannelAccess {
       application: { plan: SpaceAccessApplication; source: ConfirmedAccessSource } | null;
     };
     try {
-      planned = this.host.storage.transactionSync(() => {
+      planned = await this.host.transaction(() => {
         const source = input.plan();
         const intentId = input.operationId();
         const step = (name: string) => (intentId === null ? uuidV7() : stableUuidSync([intentId, name]));
@@ -732,7 +738,7 @@ export class SpaceChannelAccess {
         return { ok: false, refusal: conversationRefusal(error) };
       }
       await this.rollbackApplication(actor, parent, spaceId, workstreamId, error.seated, planned.application.source);
-      if (input.abandon) this.host.storage.transactionSync(input.abandon);
+      if (input.abandon) await this.host.transaction(input.abandon);
       if (asApiError(error.cause)?.code === "workstream_audience_restricted_content") {
         return { ok: false, refusal: channelRefused("space_membership_content_fence", title).refusal };
       }
@@ -741,7 +747,7 @@ export class SpaceChannelAccess {
 
     let superseded = false;
     try {
-      const value = this.host.storage.transactionSync(() => {
+      const value = await this.host.transaction(() => {
         if (planned.application) {
           const confirmed = parent.confirmSpaceAccessSource({
             ...address,
@@ -767,7 +773,7 @@ export class SpaceChannelAccess {
         if (superseded) await this.withdrawUnconfirmedSeats(actor, client, parent, workstreamId, spaceId, seated);
         else await this.rollbackApplication(actor, parent, spaceId, workstreamId, seated, planned.application.source);
       }
-      if (input.abandon) this.host.storage.transactionSync(input.abandon);
+      if (input.abandon) await this.host.transaction(input.abandon);
       return { ok: false, refusal: error.refusal };
     }
   }
@@ -815,7 +821,7 @@ export class SpaceChannelAccess {
     source: ConfirmedAccessSource,
   ): Promise<void> {
     try {
-      this.host.storage.transactionSync(() => parent.confirmSpaceAccessSource({
+      await this.host.transaction(() => parent.confirmSpaceAccessSource({
         workspaceId: actor.workspaceId,
         parentId: workstreamId,
         spaceId,

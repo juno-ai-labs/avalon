@@ -565,7 +565,7 @@ describe("creating a work stream", () => {
       .resolves.toMatchObject({ children: [{ substreamId: "0", kind: "main" }] });
   });
 
-  it("keeps the provisional visibility fence when recovery wins the deferred-delivery race", async () => {
+  it("fails a reservation whose provisional directory row cannot be written, and leaves nothing to recover", async () => {
     const workstreamId = asWorkstreamId("00000000-0000-7000-8000-000000000bb9");
     const now = "2026-09-17T20:00:00.000Z";
     await env.DB.prepare(
@@ -577,51 +577,46 @@ describe("creating a work stream", () => {
                '{}', ?, ?, NULL, ?)`,
     ).bind(WORKSPACE_ID, workstreamId, `global:${WORKSPACE_ID}:${workstreamId}`, now, now, now).run();
     const parent = hostedParentStub(env, WORKSPACE_ID);
-    // The directory apply straight after the parent write fails, as a D1 or
-    // socket failure would, so the provisional row is left to the recovery
-    // path: the `parent_outbox` row that committed with the reservation, and
-    // the alarm that reapplies it.
-    await runInDurableObject(parent, (_instance, state) => {
-      state.storage.sql.exec(`CREATE TRIGGER fail_provisional_directory BEFORE INSERT ON channels
-        BEGIN SELECT RAISE(ABORT, 'directory unavailable'); END`);
-    });
-    await parent.reserveChild({
+    const reservation = {
       workspaceId: WORKSPACE_ID,
       parentId: workstreamId,
       substreamId: asSubstreamId("0"),
-      kind: "main",
+      kind: "main" as const,
       createdByUserId: USER_ID,
       authorityGeneration: 1,
       deferDirectoryDelivery: true,
       directory: {
         title: "Recovered creation fence",
         description: "Alarm delivery remains direct",
-        scope: "personal",
+        scope: "personal" as const,
         systemKind: null,
         emailAddress: null,
-        titleStatus: "settled",
+        titleStatus: "settled" as const,
         createdAt: now,
       },
+    };
+    // The provisional row lands in the reservation's own transaction, so a
+    // directory that refuses it refuses the reservation: the caller sees the
+    // failure, and no parent or outbox row is left for a later repair.
+    await runInDurableObject(parent, (_instance, state) => {
+      state.storage.sql.exec(`CREATE TRIGGER fail_provisional_directory BEFORE INSERT ON channels
+        BEGIN SELECT RAISE(ABORT, 'directory unavailable'); END`);
     });
+    const refused = await parent.reserveChild(reservation).then(() => null, (error: unknown) => error);
+    expect(String(refused)).toContain("directory unavailable");
     await runInDurableObject(parent, (_instance, state) => {
       expect(state.storage.sql.exec("SELECT 1 FROM channels WHERE workstream_id = ?", workstreamId).toArray()).toEqual([]);
-      expect(state.storage.sql.exec(
-        "SELECT effect_kind FROM parent_outbox WHERE parent_id = ? ORDER BY effect_kind", workstreamId,
-      ).toArray()).toEqual([{ effect_kind: "directory_common" }, { effect_kind: "directory_user" }]);
+      expect(state.storage.sql.exec("SELECT 1 FROM parent_metadata WHERE parent_id = ?", workstreamId).toArray()).toEqual([]);
+      expect(state.storage.sql.exec("SELECT 1 FROM parent_outbox WHERE parent_id = ?", workstreamId).toArray()).toEqual([]);
       state.storage.sql.exec("DROP TRIGGER fail_provisional_directory");
     });
 
-    // The failed apply defers the rows by a few seconds; the alarm is what
-    // delivers them once they are due.
-    await expect.poll(async () => {
-      await runDurableObjectAlarm(parent);
-      return runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{
-        title: string;
-        waterline: number;
-      }>(
-        `SELECT title, waterline FROM channels WHERE workstream_id = ?`,
-        workstreamId,
-      ).toArray());
-    }, { timeout: 15_000, interval: 500 }).toEqual([{ title: "Recovered creation fence", waterline: 1 }]);
+    // The caller's retry is the recovery.
+    await parent.reserveChild(reservation);
+    await runInDurableObject(parent, (_instance, state) => {
+      expect(state.storage.sql.exec<{ title: string; waterline: number }>(
+        `SELECT title, waterline FROM channels WHERE workstream_id = ?`, workstreamId,
+      ).toArray()).toEqual([{ title: "Recovered creation fence", waterline: 1 }]);
+    });
   });
 });

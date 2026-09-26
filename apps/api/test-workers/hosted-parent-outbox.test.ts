@@ -5,11 +5,14 @@
  *
  * `conversation-effect-queue.test.ts` proves one activity row leaves on
  * `ACTIVITY_QUEUE`. This file proves the limits the drain keeps around that
- * send (docs/hosted-conversation-parents.md, "The local outbox"): a row too
- * large for one Queue message is dropped rather than retried, due rows are
- * split into `sendBatch` calls under the per-call size, a refused batch defers
- * only its own rows, two drains never send the same row, and a viewer row that
- * arrived before its Channel's row is applied as soon as that row lands.
+ * send (docs/hosted-conversation-parents.md, "The outbox is work that leaves
+ * the object"): a row too large for one Queue message is dropped rather than
+ * retried, due rows are split into `sendBatch` calls under the per-call size,
+ * a refused batch defers only its own rows on the alarm's retry schedule, two
+ * drains never send the same row, a row that cannot be read is kept as failed
+ * without blocking the rest, and one failing alarm phase does not skip the
+ * others. A viewer effect that reaches its parent before the Channel's row
+ * fails its delivery rather than waiting in the outbox.
  *
  * The Queue is replaced on the object's `env` by a recorder, so what the real
  * drain handed the binding, call by call, is what is asserted on.
@@ -31,7 +34,9 @@ import {
 } from "@rally/contracts";
 
 import type { Env } from "../src/env";
+import { QUEUE_BATCH_MAX_BYTES } from "../src/durable-objects/conversation-parent-object";
 import { notePendingParentImport, parentImportState } from "../src/durable-objects/hosted-parent-import";
+import { SCHEDULED_ALARM_RETRY_BASE_MS } from "../src/durable-objects/scheduled-alarms";
 import { hostedParentStub } from "./helpers/hosted-parent";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
@@ -41,9 +46,6 @@ const SESSION_ID = "00000000-0000-7000-8000-000000000e02";
 const CHANNEL_ID = "00000000-0000-7000-8000-000000000e03";
 const IMPORTED_CHANNEL_ID = "00000000-0000-7000-8000-000000000e04";
 const LATE_CHANNEL_ID = "00000000-0000-7000-8000-000000000e05";
-
-/** Cloudflare's per-call `sendBatch` size, less the headroom the drain keeps. */
-const QUEUE_BATCH_MAX_BYTES = 250_000;
 
 const encoder = new TextEncoder();
 
@@ -173,17 +175,19 @@ interface OutboxRow extends Record<string, SqlStorageValue> {
   effect_kind: string;
   attempts: number;
   not_before: number;
+  state: string;
+  last_error_code: string | null;
 }
 
 async function outboxRows(stub: DurableObjectStub, parentId: string): Promise<OutboxRow[]> {
   return runInDurableObject(stub, (_instance, state) => state.storage.sql.exec<OutboxRow>(
-    `SELECT message_id, effect_kind, attempts, not_before FROM parent_outbox
+    `SELECT message_id, effect_kind, attempts, not_before, state, last_error_code FROM parent_outbox
       WHERE parent_id = ? ORDER BY message_id`,
     parentId,
   ).toArray());
 }
 
-/** The drain every entry point uses: the alarm, an import, and (local only) a parent write. */
+/** The drain the alarm and an import run; a parent write leaves its rows to the alarm. */
 async function drain(stub: DurableObjectStub): Promise<void> {
   await runInDurableObject(stub, async (instance) => {
     await (instance as unknown as { drainParentOutbox(): Promise<void> }).drainParentOutbox();
@@ -225,7 +229,7 @@ describe("the Organization's parent outbox drain", () => {
     expect(await outboxRows(workspace, CHANNEL_ID)).toEqual([]);
   });
 
-  it("keeps a refused batch's rows pending with a retry delay while the other batches leave", async () => {
+  it("keeps a refused batch's rows pending on the alarm's retry schedule while the other batches leave", async () => {
     const workspace = workspaceStub();
     const recorder = await recordQueue(workspace);
     const envelopes = Array.from({ length: 7 }, (_, index) => activityEnvelope(CHANNEL_ID, index + 1, 60_000));
@@ -245,9 +249,110 @@ describe("the Organization's parent outbox drain", () => {
     const pending = await outboxRows(workspace, CHANNEL_ID);
     expect(pending.map((row) => row.message_id)).toEqual([...refusedIds].sort());
     for (const row of pending) {
-      expect(row.attempts).toBe(1);
-      expect(row.not_before).toBeGreaterThan(before);
+      expect(row).toMatchObject({ attempts: 1, state: "pending", last_error_code: "activity_queue_refused_by_test" });
+      // The first step of the alarm's schedule is at least half its base.
+      expect(row.not_before).toBeGreaterThanOrEqual(before + SCHEDULED_ALARM_RETRY_BASE_MS / 2);
     }
+
+    // Refused again, each row waits longer: the schedule doubles per attempt.
+    await runInDurableObject(workspace, (_instance, state) => {
+      state.storage.sql.exec("UPDATE parent_outbox SET not_before = 0 WHERE parent_id = ?", CHANNEL_ID);
+    });
+    const again = Date.now();
+    await drain(workspace);
+    for (const row of await outboxRows(workspace, CHANNEL_ID)) {
+      expect(row.attempts).toBe(2);
+      expect(row.not_before).toBeGreaterThanOrEqual(again + SCHEDULED_ALARM_RETRY_BASE_MS);
+    }
+  });
+
+  it("keeps a row it cannot read as failed, with its code, and still sends the rows behind it", async () => {
+    const workspace = workspaceStub();
+    const recorder = await recordQueue(workspace);
+    const good = [activityEnvelope(CHANNEL_ID, 1, 100), activityEnvelope(CHANNEL_ID, 2, 100)];
+    await seedOutbox(workspace, good);
+    // Valid JSON the envelope schema refuses, under another parent and the
+    // same message id as a good row: the rows are keyed by parent and
+    // message, so both are held.
+    await runInDurableObject(workspace, (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO parent_outbox
+           (parent_id, message_id, partition_key, source_version, source_epoch, effect_kind,
+            payload_json, payload_hash, state, attempts, not_before, created_at)
+         VALUES (?, ?, 'activity', 1, 1, 'activity_event', ?, 'unreadable', 'pending', 0, 0, 0)`,
+        LATE_CHANNEL_ID, good[0]!.messageId, JSON.stringify({ kind: "parent_effect", contractVersion: 1 }),
+      );
+    });
+
+    await drain(workspace);
+
+    expect(sentIds(recorder)).toEqual(good.map((envelope) => envelope.messageId));
+    expect(await outboxRows(workspace, CHANNEL_ID)).toEqual([]);
+    const [kept] = await outboxRows(workspace, LATE_CHANNEL_ID);
+    expect(kept).toMatchObject({ state: "failed", attempts: 0 });
+    expect(kept!.last_error_code).toMatch(/^parent_outbox_row_invalid:/u);
+    // Never due again, so it is not the first row of every later pass.
+    await drain(workspace);
+    expect(recorder.calls).toHaveLength(1);
+    expect(await runInDurableObject(workspace, (instance) => (
+      instance as unknown as { nextParentOutboxDueAt(): number | null }
+    ).nextParentOutboxDueAt())).toBeNull();
+  });
+
+  it("keeps an imported directory row whose message id the directory refuses as failed, not retried", async () => {
+    const workspace = workspaceStub();
+    await recordQueue(workspace);
+    const effect: ParentEffect = {
+      kind: "directory_common", title: "Imported", description: "", preview: "", scope: "workspace", state: "idle",
+      systemKind: null, lastActivityAt: "2026-09-01T12:00:00.000Z", completedAt: null, archivedAt: null,
+    } as ParentEffect;
+    // A legacy object's pending row, carried over at import, under a message
+    // id the directory's handoff refuses (it requires a UUIDv7).
+    const legacy = ParentEffectEnvelopeSchema.parse({
+      kind: "parent_effect", contractVersion: 1, region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: LATE_CHANNEL_ID, generation: 1, messageId: "legacy-directory-1",
+      partitionKey: "common", sourceVersion: 1, requiredProjectionVersion: null,
+      payloadHash: conversationEffectHash(effect), effect,
+    });
+    await seedOutbox(workspace, [legacy]);
+
+    await drain(workspace);
+
+    const [kept] = await outboxRows(workspace, LATE_CHANNEL_ID);
+    expect(kept).toMatchObject({ state: "failed", attempts: 0 });
+    expect(kept!.last_error_code).toContain("messageId");
+    expect(await runInDurableObject(workspace, (instance) => (
+      instance as unknown as { nextParentOutboxDueAt(): number | null }
+    ).nextParentOutboxDueAt())).toBeNull();
+  });
+
+  it("runs every hosted alarm phase when one throws, and still fails the alarm", async () => {
+    const workspace = workspaceStub();
+    await recordQueue(workspace);
+    await runInDurableObject(workspace, async (instance, state) => {
+      (instance as unknown as { drainParentOutbox(): Promise<void> }).drainParentOutbox = async () => {
+        throw new Error("parent_outbox_failed_by_test");
+      };
+      // A follow-up due now, which the phase after the outbox runs.
+      state.storage.sql.exec(
+        `INSERT INTO workspace_directory_followups (followup_json, attempts, not_before, created_at)
+         VALUES (?, 0, 0, 0)`,
+        JSON.stringify({
+          workspaceId: WORKSPACE_ID, publishSnapshotAll: false, snapshotUsers: [], reachChangedUsers: [],
+          commonChanges: [], viewerChanges: [], breakoutChanges: [], breakoutViewerChanges: [],
+          reopenBootstrap: false, watchReconciliations: [], archivalChanges: [], refreshTerminal: false,
+          refreshWatchKinds: false, directoryChanged: true, syncTopics: [], refreshProductAlarm: false,
+        }),
+      );
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+
+    const failed = await runDurableObjectAlarm(workspace).then(() => null, (error: unknown) => error);
+
+    expect(String(failed)).toContain("parent_outbox_failed_by_test");
+    expect(await runInDurableObject(workspace, (_instance, state) => (
+      state.storage.sql.exec("SELECT id FROM workspace_directory_followups").toArray()
+    ))).toEqual([]);
   });
 
   it("sends each row once when an import's drain starts while the alarm's is still sending", async () => {
@@ -284,32 +389,28 @@ describe("the Organization's parent outbox drain", () => {
     expect(await outboxRows(workspace, CHANNEL_ID)).toEqual([]);
   });
 
-  it("applies a viewer row refused before its Channel row existed in the drain that applies that Channel row", async () => {
+  it("fails a viewer effect that reaches its parent before the Channel's row, and applies its redelivery", async () => {
     const workspace = workspaceStub();
     await recordQueue(workspace);
     // Common and viewer effects travel on different partitions, so the
-    // viewer's can reach the parent first. Its local apply in the parent write
-    // is refused on the missing Channel row and rolled back alone, leaving an
-    // outbox row; the drain after the write is refused the same way, and has
-    // to put the row off rather than leave it due, which would spin the alarm
-    // until the Channel row arrived.
-    await workspace.receiveChildEffects({
-      substreamId: "0",
-      envelopes: [childEnvelope(LATE_CHANNEL_ID, 1, "user", {
-        kind: "directory_user",
-        userId: USER_ID,
-        isParticipant: true,
-        participantAddedAt: "2026-09-01T12:00:00.000Z",
-        unreadCount: 3,
-        youAreMentioned: false,
-        unseen: false,
-        listable: true,
-      })],
+    // viewer's can reach the parent first. Its apply has no Channel row to
+    // land on, so the parent's transaction fails with it and the Queue
+    // redelivers the message; nothing waits in the outbox, and no receipt
+    // answers the redelivery.
+    const viewer = childEnvelope(LATE_CHANNEL_ID, 1, "user", {
+      kind: "directory_user",
+      userId: USER_ID,
+      isParticipant: true,
+      participantAddedAt: "2026-09-01T12:00:00.000Z",
+      unreadCount: 3,
+      youAreMentioned: false,
+      unseen: false,
+      listable: true,
     });
-    const deferred = await outboxRows(workspace, LATE_CHANNEL_ID);
-    expect(deferred).toMatchObject([{ effect_kind: "directory_user", attempts: 1 }]);
-    const retryAt = deferred[0]!.not_before;
-    expect(retryAt).toBeGreaterThan(Date.now());
+    const refused = await workspace.receiveChildEffects({ substreamId: "0", envelopes: [viewer] })
+      .then(() => null, (error: unknown) => error);
+    expect(String(refused)).toContain("FOREIGN KEY");
+    expect(await outboxRows(workspace, LATE_CHANNEL_ID)).toEqual([]);
     expect(await viewerUnread(workspace)).toEqual([]);
 
     await workspace.receiveChildEffects({
@@ -327,10 +428,8 @@ describe("the Organization's parent outbox drain", () => {
         archivedAt: null,
       })],
     });
+    await workspace.receiveChildEffects({ substreamId: "0", envelopes: [viewer] });
 
-    // Before the viewer row's retry delay ran out: the Channel row landed in
-    // its own parent write, and that is what makes the viewer row due.
-    expect(Date.now()).toBeLessThan(retryAt);
     expect(await viewerUnread(workspace)).toEqual([{ unread_count: 3 }]);
     expect(await outboxRows(workspace, LATE_CHANNEL_ID)).toEqual([]);
   });
