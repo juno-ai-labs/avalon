@@ -398,11 +398,11 @@ Space in an Organization now shares one SQLite database and one socket set.
 - Spaces created before 2026-09-26 still have an idle hidden conversation
   object. Nothing writes or reads it ([`spaces.md`](spaces.md#the-retired-hidden-conversation));
   deleting those objects is its own decision.
-- `parent_metadata` still stores the 19 presentation columns `channels` holds,
-  though no reader uses them: `metadataRow()` takes them from the directory row
-  (see the changelog). Dropping them, down to identity and bookkeeping, is the
-  follow-up migration; `forwardChildTerminalDeadline`'s own
-  `next_terminal_action_at` compare is the one write-path read to replace first.
+- `parent_metadata` still stores the 19 presentation columns `channels` holds.
+  `metadataRow()` no longer reads them (see the changelog); the one remaining
+  read is `forwardChildTerminalDeadline`'s own `next_terminal_action_at`
+  compare, on the write path. Replacing that compare, then dropping the
+  columns down to identity and bookkeeping, is the follow-up migration.
 
 ## Changelog
 
