@@ -274,9 +274,9 @@ above remain the record of the first discussion.
   with the Sidekick's instructions, tools, and run-as authority.
 - **Anyone who can reach a run may continue it.** This settles question 12:
   anyone in a bound thread may answer.
-- **A Sidekick's home is an owning substream.** `owning_workstream_id` becomes
-  a full conversation address, and the Slack-only `authoringOrigin` prompt field
-  is removed.
+- **A Sidekick's home can be a Breakout.** An `owning_substream_id` column
+  joins `owning_workstream_id`, and the Slack-only `authoringOrigin` prompt
+  field is removed.
 - **Conversation tools are general.** Any Rally agent can be given list, read,
   and post with a scope; a Channel or Breakout agent can read its own Channel
   and Breakout. `sidekick_post_result` is removed so it is not confused with
