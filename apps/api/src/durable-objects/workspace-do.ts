@@ -4399,17 +4399,27 @@ const DirectoryFollowUpSchema = z.strictObject({
   syncTopics: z.array(WorkspaceSyncTopicSchema),
   refreshProductAlarm: z.boolean(),
   /**
-   * Per Channel, the people this batch may have taken it from, or `"all"`
-   * when it may have been taken from every reader (a scope narrowed or an
-   * archive of an Organization-wide Channel). Each is owed the Channel's row
-   * if they still see it and its tombstone if they do not; nobody else who
-   * cannot see it is sent anything. Absent on a row recorded before the field
-   * existed, which is read as `"all"` for its `commonChanges` so no tombstone
-   * is lost across the deploy.
+   * Per Channel, the people this batch may have taken it from, named inside
+   * the batch's transaction from the rows as they were before it. Each is owed
+   * the Channel's row if they still see it and its tombstone if they do not;
+   * nobody else who cannot see it is sent anything.
+   *
+   * Two older shapes are still read, and neither means everyone: a row
+   * recorded before the field existed (absent, for its `commonChanges`) and a
+   * `"all"` entry, which an earlier build wrote for an Organization-wide
+   * Channel. Both are owed to the people who still hold a viewer row for the
+   * Channel (`legacyChannelLosers`): someone who joined afterwards never saw
+   * it.
    */
   channelLosses: z.array(z.tuple([z.string(), z.union([z.literal("all"), z.array(z.string())])])).optional(),
 });
 type DirectoryFollowUp = z.infer<typeof DirectoryFollowUpSchema>;
+
+/** The audience half of `publishSync`'s detail; `memberUserIds` is read elsewhere. */
+const SyncAudienceSchema = z.object({
+  audienceUserIds: z.array(UserIdSchema).optional(),
+  connectionId: z.string().min(1).optional(),
+});
 
 /**
  * Who one Channel's workspace-socket row is owed to after a post-commit pass.
@@ -4424,14 +4434,15 @@ type DirectoryFollowUp = z.infer<typeof DirectoryFollowUpSchema>;
 interface ChannelRowAudience {
   readers: boolean;
   users: Set<string>;
-  lost: Set<string> | "all";
+  lost: Set<string>;
 }
 
 /**
  * The Channel rows a post-commit pass owes, collected so each Channel goes out
  * once per socket however many writes in the pass touched it, and each
  * person's row is built once for all of their sockets
- * (`WorkspaceDO.publishChannelRows`).
+ * (`WorkspaceDO.publishChannelRows`). A directory batch also collects its
+ * `channelLosses` in one before recording them.
  */
 class ChannelRowPlan {
   readonly channels = new Map<string, ChannelRowAudience>();
@@ -4454,32 +4465,10 @@ class ChannelRowPlan {
     for (const userId of userIds) audience.users.add(userId);
   }
 
-  lost(channelId: string, userIds: Iterable<string> | "all"): void {
+  lost(channelId: string, userIds: Iterable<string>): void {
     const audience = this.audience(channelId);
-    if (audience.lost === "all") return;
-    if (userIds === "all") {
-      audience.lost = "all";
-      return;
-    }
     for (const userId of userIds) audience.lost.add(userId);
   }
-}
-
-/** Merge one batch's losses for a Channel into what the batch already holds. */
-function noteChannelLoss(
-  losses: Map<string, Set<string> | "all">,
-  channelId: string,
-  lost: readonly string[] | "all",
-): void {
-  const current = losses.get(channelId);
-  if (current === "all") return;
-  if (lost === "all") {
-    losses.set(channelId, "all");
-    return;
-  }
-  const users = current ?? new Set<string>();
-  for (const userId of lost) users.add(userId);
-  losses.set(channelId, users);
 }
 
 function mergeViewerChanges(
@@ -6749,10 +6738,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /** Who a sync event is for: `null` for the whole Organization. */
   private syncAudience(detail: { audienceUserIds?: string[]; connectionId?: string } | undefined): Set<string> | null {
-    if (detail?.connectionId !== undefined) {
+    // Parsed here, not thrown raw: a `ZodError` reaches the RPC caller as a
+    // bare `Error` with nothing in it (`docs/naming-a-schema-failure.md`).
+    const parsed = SyncAudienceSchema.safeParse(detail ?? {});
+    if (!parsed.success) {
+      throw new Error(zodDiagnosticCode(parsed.error, "workspace_sync_audience") ?? "workspace_sync_audience_invalid");
+    }
+    const { audienceUserIds, connectionId } = parsed.data;
+    if (connectionId !== undefined) {
       const connection = this.state.storage.sql.exec<{ scope: string; owner_user_id: string | null }>(
         `SELECT scope, owner_user_id FROM connector_connections WHERE id = ?`,
-        z.string().parse(detail.connectionId),
+        connectionId,
       ).toArray()[0];
       // A connection this object does not hold is told to everyone, as every
       // connection change was before audiences existed: an invalidation names
@@ -6760,8 +6756,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return connection?.scope === "personal" && connection.owner_user_id !== null
         ? new Set([connection.owner_user_id]) : null;
     }
-    const audience = z.array(UserIdSchema).optional().parse(detail?.audienceUserIds);
-    return audience === undefined ? null : new Set(audience);
+    return audienceUserIds === undefined ? null : new Set(audienceUserIds);
   }
 
   /**
@@ -10097,7 +10092,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // Who may have lost each Channel in this batch, decided here against the
     // rows as they were before it: once the batch commits, "who could see it
     // a moment ago" is no longer answerable.
-    const channelLosses = new Map<string, Set<string> | "all">();
+    const channelLosses = new ChannelRowPlan();
     const breakoutDirectoryReady = breakoutEnvelopes.length === 0
       || this.breakoutStorage().ready();
     for (const envelope of spaceEnvelopes) {
@@ -10127,7 +10122,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     for (const envelope of channelEnvelopes) {
       const applied = this.applyDirectoryEnvelope(envelope, activeUsers);
       directoryChanged = directoryChanged || applied.changed;
-      if (applied.lost !== null) noteChannelLoss(channelLosses, envelope.parentId, applied.lost);
+      if (applied.lost !== null) channelLosses.lost(envelope.parentId, applied.lost);
       // A replay reconciles as well as a first application, the way the watch
       // registrations below do. The row and its receipt commit inside the call
       // above, while the publications happen after the awaits that follow this
@@ -10228,7 +10223,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         directoryChanged,
         syncTopics: [],
         refreshProductAlarm: false,
-        channelLosses: [...channelLosses].map(([id, lost]) => [id, lost === "all" ? "all" : [...lost]]),
+        channelLosses: [...channelLosses.channels].map(([id, { lost }]) => [id, [...lost]]),
       },
     };
   }
@@ -10273,9 +10268,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * The Channel rows and sync topics every follow-up in the pass owes are
    * collected and sent once, after the last one ran: a turn's burst of child
    * effects records one follow-up per envelope, and each used to push the same
-   * Channel's row to every socket again. A row is deleted only once that send
-   * is done; if it throws, every follow-up of the pass is put off with it, and
-   * a retry sends the rows as they stand then.
+   * Channel's row to every socket again.
+   *
+   * A finished follow-up is deleted whatever those sends do. The rows are
+   * best effort (`publishChannelRows` never throws, and a socket that missed
+   * one gets the current row when it reconnects), so a failed send is not a
+   * reason to re-run every follow-up's reconciliations and notices on the
+   * alarm. The topics are durable: if publishing them throws, they are
+   * recorded as a follow-up of their own, and only they are retried.
    */
   private async runDirectoryFollowUps(
     entries: readonly (number | { id: number; json: string })[],
@@ -10283,19 +10283,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   ): Promise<void> {
     const topics = new Set<WorkspaceSyncTopic>();
     let topicsWorkspaceId: string | null = null;
-    const finished: { id: number; attempts: number; workspaceId: string }[] = [];
-    const defer = (id: number, attempts: number, workspaceId: string, error: unknown) => {
-      this.state.storage.sql.exec(
-        `UPDATE workspace_directory_followups SET attempts = attempts + 1, not_before = ? WHERE id = ?`,
-        Date.now() + scheduledAlarmRetryDelay(attempts + 1), id,
-      );
-      logWarn(this.env, "directory_followup_deferred", {
-        workspace_id: workspaceId,
-        followup_id: id,
-        attempts: attempts + 1,
-        code: diagnosticErrorCode(error, "directory_followup_failed"),
-      });
-    };
     for (const entry of entries) {
       const id = typeof entry === "number" ? entry : entry.id;
       const row = this.state.storage.sql.exec<{ followup_json: string; attempts: number }>(
@@ -10318,22 +10305,34 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         await this.runDirectoryFollowUp(followUp, rows);
         for (const topic of followUp.syncTopics) topics.add(topic);
         if (followUp.syncTopics.length > 0) topicsWorkspaceId = followUp.workspaceId;
-        finished.push({ id, attempts: row.attempts, workspaceId: followUp.workspaceId });
+        this.state.storage.sql.exec(`DELETE FROM workspace_directory_followups WHERE id = ?`, id);
       } catch (error) {
-        defer(id, row.attempts, followUp.workspaceId, error);
+        this.state.storage.sql.exec(
+          `UPDATE workspace_directory_followups SET attempts = attempts + 1, not_before = ? WHERE id = ?`,
+          Date.now() + scheduledAlarmRetryDelay(row.attempts + 1), id,
+        );
+        logWarn(this.env, "directory_followup_deferred", {
+          workspace_id: followUp.workspaceId,
+          followup_id: id,
+          attempts: row.attempts + 1,
+          code: diagnosticErrorCode(error, "directory_followup_failed"),
+        });
       }
     }
-    try {
-      this.publishChannelRows(rows);
-      if (topicsWorkspaceId !== null) {
+    this.publishChannelRows(rows);
+    if (topicsWorkspaceId !== null) {
+      try {
         await this.publishSync([...topics], topicsWorkspaceId,
           this.placementAffinity() ?? await workspacePlacementAffinity(this.env, topicsWorkspaceId));
+      } catch (error) {
+        const followUp = WorkspaceDO.emptyDirectoryFollowUp(topicsWorkspaceId);
+        followUp.syncTopics = [...topics];
+        this.recordDirectoryFollowUp(followUp);
+        logWarn(this.env, "directory_followup_sync_deferred", {
+          workspace_id: topicsWorkspaceId,
+          code: diagnosticErrorCode(error, "directory_followup_sync_failed"),
+        });
       }
-      for (const { id } of finished) {
-        this.state.storage.sql.exec(`DELETE FROM workspace_directory_followups WHERE id = ?`, id);
-      }
-    } catch (error) {
-      for (const { id, attempts, workspaceId } of finished) defer(id, attempts, workspaceId, error);
     }
     await this.armNextAlarm();
   }
@@ -10409,9 +10408,58 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     for (const [workstreamId, lost] of followUp.channelLosses
       ?? followUp.commonChanges.map((workstreamId) => [workstreamId, "all"] as const)) {
-      rows.lost(workstreamId, lost);
+      if (lost !== "all") {
+        rows.lost(workstreamId, lost);
+        continue;
+      }
+      // A follow-up recorded by an earlier build, which named nobody.
+      rows.readers(workstreamId);
+      rows.lost(workstreamId, this.legacyChannelLosers(workstreamId));
     }
     if (followUp.refreshProductAlarm) await this.refreshProductAlarm();
+  }
+
+  /**
+   * Who a follow-up that named nobody owes a Channel's tombstone to: whoever
+   * still holds a viewer row for it, at any generation. A participant who was
+   * removed keeps a non-participant row, so they are here; somebody who never
+   * had a relationship with the Channel, including someone who joined the
+   * Organization after the write, is not, and a null row would tell them a
+   * private Channel exists. The price is the reader of an Organization-wide
+   * Channel who never had a row, who keeps it on screen until a reconnect
+   * reloads the sidebar; only a follow-up written before losses were named
+   * pays it.
+   */
+  private legacyChannelLosers(workstreamId: string): string[] {
+    return this.state.storage.sql.exec<{ user_id: string }>(
+      `SELECT DISTINCT user_id FROM channel_viewers WHERE workstream_id = ?`, workstreamId,
+    ).toArray().map((row) => row.user_id);
+  }
+
+  /**
+   * Who could have a Channel on screen just before the write being applied
+   * may take it from them, read inside that write's transaction: its
+   * participants at `generation`, and for an Organization-wide Channel every
+   * member socket subscribed now. The sockets stand in for "every member"
+   * because they are exactly who holds the Channel: a member with no socket is
+   * answered with a sidebar that already reflects this write when they
+   * connect, and the member table cannot list everyone anyway, since it learns
+   * a member from before it existed only when something asks about them.
+   * Somebody who joins or connects after this read is owed nothing, however
+   * late the follow-up runs.
+   */
+  private channelReadersBefore(workstreamId: string, generation: number, organizationWide: boolean): string[] {
+    const readers = new Set(this.state.storage.sql.exec<{ user_id: string }>(
+      `SELECT user_id FROM channel_viewers
+        WHERE workstream_id = ? AND authority_generation = ? AND is_participant = 1`,
+      workstreamId, generation,
+    ).toArray().map((row) => row.user_id));
+    if (!organizationWide) return [...readers];
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (attachment?.subscribed && (attachment.accessClass ?? "member") === "member") readers.add(attachment.userId);
+    }
+    return [...readers];
   }
 
   // ---------------------------------------------------------------------------
@@ -13638,11 +13686,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     replayed: boolean;
     /**
      * Who may have stopped seeing the Channel: the viewer whose participation
-     * moved, the Channel's participants when it was archived or re-generated,
-     * or `"all"` when an Organization-wide Channel narrowed, archived or
-     * re-generated. Null when nobody could have lost it.
+     * moved, or, when the Channel was archived, narrowed or re-generated,
+     * everyone who could see it just before (`channelReadersBefore`). Null
+     * when nobody could have lost it.
      */
-    lost: readonly string[] | "all" | null;
+    lost: readonly string[] | null;
   } {
     return this.state.storage.transactionSync(() => {
       const receipt = this.state.storage.sql.exec<{ payload_hash: string }>(
@@ -13666,7 +13714,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       let changed = false;
       let participantMembershipChanged = false;
       let archivalChanged = false;
-      let lost: readonly string[] | "all" | null = null;
+      let lost: readonly string[] | null = null;
       if (envelope.effect.kind === "directory_common") {
         const current = this.state.storage.sql.exec<StoredProjection & {
           archived_at: number | null;
@@ -13815,11 +13863,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             || (current.scope === "workspace" && effect.scope !== "workspace")
             || current.authority_generation !== envelope.generation
           )) {
-            lost = current.scope === "workspace" ? "all" : this.state.storage.sql.exec<{ user_id: string }>(
-              `SELECT user_id FROM channel_viewers
-                WHERE workstream_id = ? AND authority_generation = ? AND is_participant = 1`,
-              envelope.parentId, current.authority_generation,
-            ).toArray().map((row) => row.user_id);
+            lost = this.channelReadersBefore(
+              envelope.parentId, current.authority_generation, current.scope === "workspace",
+            );
           }
         }
       } else if (envelope.effect.kind === "directory_user") {
@@ -14114,9 +14160,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * together, so a person who cannot see it costs nothing; each person owed a
    * row then costs one set of reads for all of their Channels, not one per
    * socket per Channel.
+   *
+   * Never throws. Every caller has already committed the change the rows
+   * describe, and a row is best effort: a person whose row cannot be built is
+   * logged with the reason and skipped, and everybody else is still sent
+   * theirs.
    */
   private publishChannelRows(plan: ChannelRowPlan): void {
     if (plan.channels.size === 0) return;
+    try {
+      this.sendChannelRows(plan);
+    } catch (error) {
+      logWarn(this.env, "channel_rows_publish_failed", {
+        workspace_id: this.workspaceId(),
+        code: diagnosticErrorCode(error, "channel_rows_publish_failed"),
+      });
+    }
+  }
+
+  private sendChannelRows(plan: ChannelRowPlan): void {
     // No authorization re-check on the way out: an open socket is closed by
     // the access-revocation queue, never by a publisher asking again
     // (`docs/access-revocation.md`). The relationship a socket was admitted
@@ -14162,7 +14224,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       for (const [key, person] of people) {
         const sees = channel.archived_at === null
           && (channel.scope === "workspace" || participants.get(workstreamId)?.has(person.userId) === true);
-        const lost = audience.lost === "all" || audience.lost.has(person.userId);
+        const lost = audience.lost.has(person.userId);
         if (!lost && !(sees && (audience.readers || audience.users.has(person.userId)))) continue;
         const ids = owed.get(key);
         if (ids) ids.push(workstreamId);
@@ -14178,7 +14240,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     };
     for (const [key, workstreamIds] of owed) {
       const person = people.get(key)!;
-      for (const payload of this.channelRowPayloads(person, workstreamIds, shared)) {
+      let payloads: string[];
+      try {
+        payloads = this.channelRowPayloads(person, workstreamIds, shared);
+      } catch (error) {
+        logWarn(this.env, "channel_row_publish_failed", {
+          workspace_id: person.workspaceId,
+          user_id: person.userId,
+          code: diagnosticErrorCode(error, "channel_row_publish_failed"),
+        });
+        continue;
+      }
+      for (const payload of payloads) {
         for (const socket of person.sockets) {
           try {
             socket.send(payload);
@@ -14587,7 +14660,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   ): void {
     this.state.waitUntil(Promise.all([
       ...(includeDirectory ? [this.publishDirectorySync(workspaceId)] : []),
-      Promise.resolve(this.publishChannelRowToReaders(workstreamId)),
+      // Deferred into the chain so nothing it throws can fail the committed write.
+      Promise.resolve().then(() => this.publishChannelRowToReaders(workstreamId)),
       this.armNextAlarm(),
     ]).then(() => undefined).catch((error: unknown) => {
       logWarn(this.env, "space_membership_convergence_deferred", {
@@ -14802,7 +14876,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       events = [WorkspaceSocketSyncEventSchema.parse(newest ? {
         type: "workspace_sync",
         eventId: newest.event_id,
-        waterline: newest.waterline,
+        // The log's waterline, not this person's newest event's: events for
+        // other people after it are skipped, not pending, and a cursor left
+        // behind them would fall out of the pruning window and cost a
+        // `history_unavailable` refetch of everything.
+        waterline: latest,
         occurredAt: new Date(newest.occurred_at).toISOString(),
         topics: WORKSPACE_SYNC_TOPICS.filter((topic) => changedTopics.has(topic)),
         reason: "change",

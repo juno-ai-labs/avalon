@@ -679,7 +679,7 @@ export class WorkspaceService {
    * committed, and on a self-demotion their next request no longer carried the
    * standing to retry. `workspaceRealtimeInvalidation` treats publication the
    * same way for every other mutation; this route is not in
-   * `workspaceSyncTopicsForMutation`, so it does it here.
+   * `workspaceSyncPublicationsForMutation`, so it does it here.
    *
    * Two topics, and no `memberUserIds`: the roster every administrator reads and
    * the workspace profile that carries a person's own role both go stale, but
