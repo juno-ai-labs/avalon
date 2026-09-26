@@ -77,11 +77,43 @@ interface TableMapping {
   columns: Record<string, (row: LegacyRow) => SqlStorageValue>;
 }
 
+/**
+ * A deterministic import failure, with the code the ledger, the log and the
+ * caller all see. Its message is the code: a Durable Object RPC carries a
+ * rejection's message across and drops its `cause`.
+ */
+export class ParentImportError extends Error {
+  constructor(readonly code: string) {
+    super(code);
+    this.name = "ParentImportError";
+  }
+}
+
 function column(name: string): (row: LegacyRow) => SqlStorageValue {
   return (row) => {
-    if (!(name in row)) throw new Error(`parent_import_column_missing:${name}`);
+    if (!(name in row)) throw new ParentImportError(`parent_import_column_missing:${name}`);
     return row[name] ?? null;
   };
+}
+
+/**
+ * Which SQLite rule refused a row. The table and the rule are schema shape;
+ * the rest of SQLite's message names columns and can quote a value, so it
+ * stays behind.
+ */
+function rejectedRowCode(hosted: string, error: unknown): string {
+  if (error instanceof ParentImportError) {
+    return `parent_import_row_rejected:${hosted}:${error.code.replace(/^parent_import_/u, "")}`;
+  }
+  const message = error instanceof Error ? error.message : "";
+  const rule = /UNIQUE constraint failed/u.test(message) ? "unique"
+    : /CHECK constraint failed/u.test(message) ? "check"
+    : /NOT NULL constraint failed/u.test(message) ? "not_null"
+    : /FOREIGN KEY constraint failed/u.test(message) ? "foreign_key"
+    : /has no column named|no such column/u.test(message) ? "column"
+    : /participant_authority_transferred/u.test(message) ? "participant_authority_transferred"
+    : "sqlite";
+  return `parent_import_row_rejected:${hosted}:${rule}`;
 }
 
 function columns(...names: string[]): Record<string, (row: LegacyRow) => SqlStorageValue> {
@@ -261,8 +293,13 @@ export interface ParentImportResult {
  * Write one exported parent under its id and close its ledger row.
  *
  * Synchronous and one transaction, so the ledger says `imported` exactly when
- * every row is here. A second call for the same parent is refused by the
- * ledger rather than merged, because the first one already moved everything.
+ * every row is here. `afterRows` runs in that same transaction once the rows
+ * are in, so what the caller derives from them commits with them or not at
+ * all. A second call for the same parent is refused by the ledger rather than
+ * merged, because the first one already moved everything.
+ *
+ * Every refusal of a row is a `ParentImportError` naming the hosted table and
+ * the rule, so an operator can find the row without reproducing the import.
  */
 export function importLegacyParent(
   storage: DurableObjectStorage,
@@ -271,31 +308,37 @@ export function importLegacyParent(
   kind: "workstream" | "space",
   exported: LegacyParentExport,
   now: number,
+  afterRows: () => void = () => {},
 ): ParentImportResult {
   const data = LegacyParentExportSchema.parse(exported);
-  if (data.found && data.parentId !== parentId) throw new Error("parent_import_identity_mismatch");
+  if (data.found && data.parentId !== parentId) throw new ParentImportError("parent_import_identity_mismatch");
   return storage.transactionSync(() => {
     const ledger = storage.sql.exec<{ state: string }>(
       "SELECT state FROM parent_imports WHERE parent_id = ?", parentId,
     ).toArray()[0];
     if (ledger?.state === "imported") return { rows: 0, found: data.found };
     if (storage.sql.exec("SELECT 1 FROM parent_metadata WHERE parent_id = ?", parentId).toArray().length > 0) {
-      throw new Error("parent_import_target_not_empty");
+      throw new ParentImportError("parent_import_target_not_empty");
     }
     let rows = 0;
     if (data.found) {
       for (const mapping of tableMappings(kind)) {
         for (const row of data.tables[mapping.legacy] ?? []) {
-          const names = ["parent_id", ...Object.keys(mapping.columns)];
-          const values = [parentId, ...Object.values(mapping.columns).map((read) => read(row))];
-          storage.sql.exec(
-            `INSERT INTO ${mapping.hosted} (${names.join(", ")}) VALUES (${names.map(() => "?").join(", ")})`,
-            ...values,
-          );
+          try {
+            const names = ["parent_id", ...Object.keys(mapping.columns)];
+            const values = [parentId, ...Object.values(mapping.columns).map((read) => read(row))];
+            storage.sql.exec(
+              `INSERT INTO ${mapping.hosted} (${names.join(", ")}) VALUES (${names.map(() => "?").join(", ")})`,
+              ...values,
+            );
+          } catch (error) {
+            throw new ParentImportError(rejectedRowCode(mapping.hosted, error));
+          }
           rows += 1;
         }
       }
       rescheduleImportedWork(storage.sql, alarms, parentId, now);
+      afterRows();
     }
     storage.sql.exec(
       `INSERT INTO parent_imports (parent_id, parent_kind, state, source_rows, imported_at)
@@ -379,18 +422,24 @@ export function nextParentImportDueAt(sql: SqlStorage): number | null {
 }
 
 /**
- * A failed import backs off and names why. The schedule is the activity
- * Queue's own retry (5 s doubling to 300 s, `workstream-durable-object.md`'s
- * failure table) rather than a new number: an import is retried for the reasons
- * a Queue delivery is, a legacy object that is briefly unreachable.
+ * A failed import names why, and when the alarm tries it next. `retryAt` is
+ * the alarm's schedule only: a request for the parent retries at once whatever
+ * `not_before` says, so the schedule bounds how often an unopened parent is
+ * retried, never how long an opened one waits.
  */
-export function deferParentImport(sql: SqlStorage, parentId: string, errorCode: string, now: number): void {
+export function recordParentImportFailure(
+  sql: SqlStorage,
+  parentId: string,
+  errorCode: string,
+  retryAt: (attempt: number) => number,
+): void {
+  const attempts = sql.exec<{ attempts: number }>(
+    "SELECT attempts FROM parent_imports WHERE parent_id = ? AND state = 'pending'", parentId,
+  ).toArray()[0]?.attempts;
+  if (attempts === undefined) return;
   sql.exec(
-    `UPDATE parent_imports
-        SET attempts = attempts + 1,
-            not_before = ? + MIN(300000, 5000 * (1 << MIN(attempts, 6))),
-            last_error_code = ?
+    `UPDATE parent_imports SET attempts = ?, not_before = ?, last_error_code = ?
       WHERE parent_id = ? AND state = 'pending'`,
-    now, errorCode.slice(0, 200), parentId,
+    attempts + 1, retryAt(attempts + 1), errorCode.slice(0, 200), parentId,
   );
 }

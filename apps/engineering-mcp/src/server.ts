@@ -14,10 +14,12 @@ import {
   EngineeringWorkstreamTargetLookupSchema,
   InspectionSqlBindingSchema,
   ListEngineeringWorkspacesResultSchema,
+  ParentImportRetryLookupSchema,
 } from "@rally/contracts/engineering-inspection";
 import {
   ArtifactIdSchema,
   AutomationIdSchema,
+  IdSchema,
   SpaceIdSchema,
   SubstreamIdSchema,
   WorkspaceIdSchema,
@@ -221,6 +223,34 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
         authorityGeneration: resolved.value.authorityGeneration,
         query: { sql, bindings },
       }), `Workspace ${workspaceId}`);
+    },
+  ));
+
+  server.registerTool("retry_parent_import", {
+    description: "Retry a Channel's or Space's pending import out of its legacy object now, and return its import ledger row. Use after fixing what the row's last_error_code named.",
+    inputSchema: {
+      workspaceId: WorkspaceIdSchema,
+      parentId: IdSchema.describe("The Channel or Space id, as parent_imports.parent_id names it."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, ({ workspaceId, parentId }) => tool(
+    principal,
+    "retry_parent_import",
+    { workspace_id: workspaceId, parent_id: parentId },
+    async () => {
+      const results = await Promise.all(inspectionBindings(env).map((binding) => binding.resolveWorkspace({ workspaceId })));
+      const resolved = oneRegionalTarget(
+        env,
+        results.map((result) => EngineeringWorkspaceTargetLookupSchema.parse(result)),
+        `Workspace ${workspaceId}`,
+      );
+      const result = ParentImportRetryLookupSchema.parse(await resolved.binding.retryParentImport({
+        workspaceId,
+        authorityGeneration: resolved.value.authorityGeneration,
+        parentId,
+      }));
+      if (!result.found) throw new Error(`Workspace ${workspaceId} authority changed before the retry; refused`);
+      return result.value;
     },
   ));
 
