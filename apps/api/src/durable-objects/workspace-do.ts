@@ -4828,6 +4828,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * A parent for a method only a Channel has: grants, invitations, sharing
+   * and conversation seats. A Space id reaches this facade through the same
+   * routes (the sharing routes take any parent id), and the Space role does
+   * not refuse those writes itself, so the facade does.
+   */
+  private async channelParent(parentId: string, workspaceId?: string): Promise<HostedParent> {
+    const parent = await this.hostedParent(parentId, workspaceId);
+    if (parent.role.kind !== "workstream") throw new Error("channel_parent_required");
+    return parent;
+  }
+
+  /**
    * An Organization object that has never been initialized learns its own id
    * from the first parent request, as it did from the first directory effect
    * when the parents were other objects. An id that disagrees is refused.
@@ -5329,35 +5341,35 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   // Grants, invitations and the participant handoff.
 
   async scopeSharingOptions(input: Parameters<HostedParent["scopeSharingOptions"]>[0]) {
-    return (await this.hostedParent(input.parentId, input.workspaceId)).scopeSharingOptions(input);
+    return (await this.channelParent(input.parentId, input.workspaceId)).scopeSharingOptions(input);
   }
 
   async listManagedScopeGrants(input: Parameters<HostedParent["listManagedScopeGrants"]>[0]) {
-    return (await this.hostedParent(input.target.parentId, input.target.workspaceId)).listManagedScopeGrants(input);
+    return (await this.channelParent(input.target.parentId, input.target.workspaceId)).listManagedScopeGrants(input);
   }
 
   async listScopeInvitations(input: Parameters<HostedParent["listScopeInvitations"]>[0]) {
-    return (await this.hostedParent(input.target.parentId, input.target.workspaceId)).listScopeInvitations(input);
+    return (await this.channelParent(input.target.parentId, input.target.workspaceId)).listScopeInvitations(input);
   }
 
   async createScopeInvitations(input: Parameters<HostedParent["createScopeInvitations"]>[0]) {
-    const result = await (await this.hostedParent(input.parentId, input.workspaceId)).createScopeInvitations(input);
+    const result = await (await this.channelParent(input.parentId, input.workspaceId)).createScopeInvitations(input);
     await this.afterParentWrite();
     return result;
   }
 
   async acceptScopeInvitation(input: Parameters<HostedParent["acceptScopeInvitation"]>[0]) {
-    const result = await (await this.hostedParent(input.parentId, input.workspaceId)).acceptScopeInvitation(input);
+    const result = await (await this.channelParent(input.parentId, input.workspaceId)).acceptScopeInvitation(input);
     await this.afterParentWrite();
     return result;
   }
 
   async describeScopeInvitation(input: Parameters<HostedParent["describeScopeInvitation"]>[0]) {
-    return (await this.hostedParent(input.parentId, input.workspaceId)).describeScopeInvitation(input);
+    return (await this.channelParent(input.parentId, input.workspaceId)).describeScopeInvitation(input);
   }
 
   async revokeScopeInvitation(input: Parameters<HostedParent["revokeScopeInvitation"]>[0]) {
-    return (await this.hostedParent(input.parentId, input.workspaceId)).revokeScopeInvitation(input);
+    return (await this.channelParent(input.parentId, input.workspaceId)).revokeScopeInvitation(input);
   }
 
   async readScopeAccess(input: Parameters<HostedParent["readScopeAccess"]>[0]) {
@@ -5365,30 +5377,30 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async readSharedWorkstream(input: Parameters<HostedParent["readSharedWorkstream"]>[0]) {
-    return (await this.hostedParent(input.parentId, input.workspaceId)).readSharedWorkstream(input);
+    return (await this.channelParent(input.parentId, input.workspaceId)).readSharedWorkstream(input);
   }
 
   async mutateScopeGrant(input: Parameters<HostedParent["mutateScopeGrant"]>[0]) {
-    const result = await (await this.hostedParent(input.target.parentId, input.target.workspaceId)).mutateScopeGrant(input);
+    const result = await (await this.channelParent(input.target.parentId, input.target.workspaceId)).mutateScopeGrant(input);
     await this.afterParentWrite();
     return result;
   }
 
   async mutateParticipantGrant(input: Parameters<HostedParent["mutateParticipantGrant"]>[0]) {
-    const result = await (await this.hostedParent(input.target.parentId, input.target.workspaceId))
+    const result = await (await this.channelParent(input.target.parentId, input.target.workspaceId))
       .mutateParticipantGrant(input);
     await this.afterParentWrite();
     return result;
   }
 
   async admitConnectorParticipants(input: Parameters<HostedParent["admitConnectorParticipants"]>[0]) {
-    const result = await (await this.hostedParent(input.parentId, input.workspaceId)).admitConnectorParticipants(input);
+    const result = await (await this.channelParent(input.parentId, input.workspaceId)).admitConnectorParticipants(input);
     await this.afterParentWrite();
     return result;
   }
 
   async joinConversation(input: Parameters<HostedParent["joinConversation"]>[0]) {
-    const result = await (await this.hostedParent(input.target.parentId, input.target.workspaceId)).joinConversation(input);
+    const result = await (await this.channelParent(input.target.parentId, input.target.workspaceId)).joinConversation(input);
     await this.afterParentWrite();
     return result;
   }
@@ -10372,33 +10384,60 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * has never heard of: a member from before the table existed.
    */
   private async readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null> {
-    const row = this.state.storage.sql.exec<{ relationship_json: string | null }>(
-      `SELECT relationship_json FROM workspace_member_status WHERE user_id = ?`, userId,
-    ).toArray()[0];
-    if (row) {
-      return row.relationship_json === null ? null : WorkspaceRelationshipSchema.parse(JSON.parse(row.relationship_json));
-    }
+    const known = this.knownRelationship(userId);
+    if (known !== undefined) return known;
     const relationship = await readWorkspaceRelationship(this.env.DB, workspaceId, userId);
-    this.recordReadRelationship(userId, relationship);
+    if (relationship) {
+      this.noteRelationship(relationship);
+    } else {
+      // Somebody with no relationship. A row that arrived during the read came
+      // from an event or another read, and either is at least as new as this.
+      this.state.storage.sql.exec(
+        `INSERT INTO workspace_member_status (user_id, relationship_json, removed_incarnation, active, sequence, updated_at)
+         VALUES (?, NULL, NULL, 0, 0, ?) ON CONFLICT (user_id) DO NOTHING`,
+        userId, Date.now(),
+      );
+    }
     return relationship;
   }
 
-  /** A relationship this request read from or wrote to D1. It never replaces an event's answer. */
-  private noteRelationship(relationship: WorkspaceRelationship): void {
-    this.recordReadRelationship(relationship.userId, relationship);
+  /** The table's answer, with no D1 read; `undefined` for somebody it has never heard of. */
+  private knownRelationship(userId: string): WorkspaceRelationship | null | undefined {
+    const row = this.state.storage.sql.exec<{ relationship_json: string | null }>(
+      `SELECT relationship_json FROM workspace_member_status WHERE user_id = ?`, userId,
+    ).toArray()[0];
+    if (!row) return undefined;
+    return row.relationship_json === null ? null : WorkspaceRelationshipSchema.parse(JSON.parse(row.relationship_json));
   }
 
-  private recordReadRelationship(userId: string, relationship: WorkspaceRelationship | null): void {
+  /**
+   * A relationship this request just read from or wrote to D1. It replaces
+   * the stored row only when it is provably newer: the stored relationship
+   * was removed (or never existed) and this is a different incarnation, as
+   * for a guest removed and invited again, or it is the same incarnation at a
+   * higher revision. Anything else is left alone: an event may have landed
+   * while the request waited on D1, and it is at least as new as the read. A
+   * removed incarnation never comes back, and a live row of another
+   * incarnation cannot be ordered against this one. The sequence is kept, so
+   * every event after it still applies.
+   */
+  private noteRelationship(relationship: WorkspaceRelationship): void {
     this.state.storage.sql.exec(
-      `INSERT INTO workspace_member_status (user_id, relationship_json, active, sequence, updated_at)
-       VALUES (?, ?, ?, 0, ?)
+      `INSERT INTO workspace_member_status (user_id, relationship_json, removed_incarnation, active, sequence, updated_at)
+       VALUES (?, ?, NULL, ?, 0, ?)
        ON CONFLICT (user_id) DO UPDATE SET relationship_json = excluded.relationship_json,
-         active = excluded.active, updated_at = excluded.updated_at
-       WHERE workspace_member_status.sequence = 0`,
-      userId,
-      relationship === null ? null : JSON.stringify(relationship),
-      relationship?.status === "active" ? 1 : 0,
+         removed_incarnation = NULL, active = excluded.active, updated_at = excluded.updated_at
+       WHERE (workspace_member_status.relationship_json IS NULL
+               AND workspace_member_status.removed_incarnation IS NOT ?)
+          OR (json_extract(workspace_member_status.relationship_json, '$.incarnation') = ?
+               AND json_extract(workspace_member_status.relationship_json, '$.revision') < ?)`,
+      relationship.userId,
+      JSON.stringify(relationship),
+      relationship.status === "active" ? 1 : 0,
       Date.now(),
+      relationship.incarnation,
+      relationship.incarnation,
+      relationship.revision,
     );
   }
 
@@ -10437,16 +10476,30 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const active = !request.removed && request.relationship.status === "active";
     let followUpId: number | null = null;
     const applied = this.state.storage.transactionSync(() => {
-      const current = this.state.storage.sql.exec<{ sequence: number }>(
-        `SELECT sequence FROM workspace_member_status WHERE user_id = ?`, userId,
+      const current = this.state.storage.sql.exec<{ sequence: number; incarnation: string | null; revision: number | null }>(
+        `SELECT sequence, json_extract(relationship_json, '$.incarnation') AS incarnation,
+                json_extract(relationship_json, '$.revision') AS revision
+           FROM workspace_member_status WHERE user_id = ?`, userId,
       ).toArray()[0];
       if (current && current.sequence >= request.sequence) return false;
+      if (!request.removed && current?.incarnation === request.relationship.incarnation
+        && (current.revision ?? 0) > request.relationship.revision) {
+        // A request already recorded a later revision it read from D1; this
+        // event is an older step on the way there. Take its place in the order
+        // without moving the answer backwards.
+        this.state.storage.sql.exec(
+          `UPDATE workspace_member_status SET sequence = ? WHERE user_id = ?`, request.sequence, userId,
+        );
+        return true;
+      }
       this.state.storage.sql.exec(
-        `INSERT INTO workspace_member_status (user_id, relationship_json, active, sequence, updated_at)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO workspace_member_status (user_id, relationship_json, removed_incarnation, active, sequence, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT (user_id) DO UPDATE SET relationship_json = excluded.relationship_json,
-           active = excluded.active, sequence = excluded.sequence, updated_at = excluded.updated_at`,
-        userId, request.removed ? null : JSON.stringify(request.relationship), active ? 1 : 0,
+           removed_incarnation = excluded.removed_incarnation, active = excluded.active,
+           sequence = excluded.sequence, updated_at = excluded.updated_at`,
+        userId, request.removed ? null : JSON.stringify(request.relationship),
+        request.removed ? request.relationship.incarnation : null, active ? 1 : 0,
         request.sequence, Date.now(),
       );
       if (!active) {
@@ -14362,7 +14415,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   private spaceStorage(): WorkspaceSpaceStorage {
-    return new WorkspaceSpaceStorage(this.state.storage);
+    return new WorkspaceSpaceStorage(this.state.storage, (workstreamId, userId) => this.canManageChannelNow(workstreamId, userId));
+  }
+
+  /**
+   * Channel management, from this object's own tables: the relationship
+   * table and the Channel's grants. False for somebody the table has never
+   * heard of, since learning them takes a D1 read; the caller sends that
+   * case the long way round.
+   */
+  private canManageChannelNow(workstreamId: string, userId: string): boolean {
+    const workspaceId = this.workspaceId();
+    const relationship = this.knownRelationship(userId);
+    if (!workspaceId || relationship?.status !== "active" || relationship.accessClass !== "member") return false;
+    const access = new HostedParent(this.hostedParentHost(), workstreamId, HOSTED_CHANNEL_ROLE).managementAccess(
+      { workspaceId: asWorkspaceId(workspaceId), parentId: workstreamId, userId: asUserId(userId) }, relationship,
+    );
+    return access.allowed && access.writable;
   }
 
   private breakoutStorage(): WorkspaceBreakoutStorage {

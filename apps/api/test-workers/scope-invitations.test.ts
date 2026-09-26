@@ -198,6 +198,22 @@ async function bearer(userId: typeof actorId, sessionId: string, workspace: type
     .sign(new TextEncoder().encode(env.SESSION_SIGNING_KEY));
 }
 
+it("answers a sharing request for a Space id as a scope that does not exist", async () => {
+  // Grants, invitations and sharing are Channel-only. The Organization object
+  // refuses a Space id, and the route turns that into a 404 rather than a 500.
+  const spaceId = "00000000-0000-7000-8000-0000000005a1";
+  await runInDurableObject(hostedParentStub(env, workspaceId), (_instance, state) => {
+    state.storage.sql.exec(
+      "INSERT INTO parent_imports (parent_id, parent_kind, state) VALUES (?, 'space', 'imported')", spaceId,
+    );
+  });
+  const app = createApp();
+  const actorHeaders = { authorization: `Bearer ${await bearer(actorId, "actor-session", workspaceId)}` };
+  const response = await app.request(`/sharing/${spaceId}/options`, { headers: actorHeaders }, env);
+  expect(response.status).toBe(404);
+  expect(await response.json()).toMatchObject({ error: { code: "scope_not_found" } });
+});
+
 it("routes sharing from the authenticated actor and accepts from an identity-only session", async () => {
   const app = createApp();
   const actorHeaders = { authorization: `Bearer ${await bearer(actorId, "actor-session", workspaceId)}`, "content-type": "application/json" };
@@ -214,6 +230,36 @@ it("routes sharing from the authenticated actor and accepts from an identity-onl
   expect(accepted.status).toBe(200);
   expect(await accepted.json()).toMatchObject({ status: "accepted", invitation: { acceptedByUserId: recipientId } });
   expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: true });
+});
+
+it("publishes the guest relationship an acceptance created without waiting for the cron", async () => {
+  // The slice of D1's durable relationship publication this route reads: the
+  // intent row the membership trigger writes, as migration 0109 does.
+  await env.DB.batch([
+    env.DB.prepare(`CREATE TABLE workspace_relationship_deliveries (sequence INTEGER PRIMARY KEY,
+      workspace_id TEXT, user_id TEXT, incarnation TEXT, revision INTEGER, change_kind TEXT, access_class TEXT,
+      role TEXT, status TEXT, dispatched_at TEXT, processed_at TEXT)`),
+    env.DB.prepare(`CREATE TRIGGER workspace_member_delivery_insert AFTER INSERT ON workspace_members BEGIN
+      INSERT INTO workspace_relationship_deliveries
+        (workspace_id, user_id, incarnation, revision, change_kind, access_class, role, status)
+      VALUES (NEW.workspace_id, NEW.user_id, NEW.incarnation, NEW.revision, 'upsert', NEW.access_class, NEW.role, NEW.status);
+    END`),
+  ]);
+  const send = vi.spyOn(env.ACCESS_REVOCATION_QUEUE, "send");
+  const app = createApp();
+  const request = await create();
+  const headers = { authorization: `Bearer ${await bearer(recipientId, "recipient-session", null)}`, "content-type": "application/json" };
+  const accepted = await app.request("/sharing/accept", { method: "POST", headers,
+    body: JSON.stringify({ workspaceId, parentId, invitationId: request.invitationId, token: request.token }) }, env);
+  expect(accepted.status).toBe(200);
+  await vi.waitFor(async () => {
+    expect(await env.DB.prepare("SELECT dispatched_at FROM workspace_relationship_deliveries WHERE user_id = ?")
+      .bind(recipientId).first()).toEqual({ dispatched_at: expect.any(String) as unknown });
+  }, { timeout: 5_000, interval: 25 });
+  expect(send).toHaveBeenCalledWith(expect.objectContaining({
+    kind: "workspace_relationship_changed", removed: false,
+    relationship: expect.objectContaining({ userId: recipientId, accessClass: "guest" }) as unknown,
+  }));
 });
 
 it("names the field when an invitation is asked to expire past the end of time", async () => {
