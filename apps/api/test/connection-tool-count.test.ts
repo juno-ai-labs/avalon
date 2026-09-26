@@ -67,7 +67,7 @@ describe("connection tool counts in the connection list", () => {
   });
 
   it("reports the count a discovered connection's last discovery stored, and follows a policy change", async () => {
-    const { env, auth, object, providerRequests, published } = fixture();
+    const { env, auth, object, providerRequests, published, publishedConnectionIds } = fixture();
     const inventory: Record<string, unknown>[] = [READ_TOOL, WRITE_TOOL];
     stubMcpServer(inventory, providerRequests);
     const service = new ConnectionService(env, auth);
@@ -83,6 +83,8 @@ describe("connection tool counts in the connection list", () => {
     await drainWaitUntil();
     expect(storedCount(object, connection.id)).toBe(2);
     expect(published.at(-1)).toEqual(["connector_connections"]);
+    // Only the connection's own audience refetches: its owner if personal.
+    expect(publishedConnectionIds.at(-1)).toBe(connection.id);
 
     // Opening Connections now is the list and nothing else.
     providerRequests.length = 0;
@@ -167,6 +169,32 @@ describe("connection tool counts in the connection list", () => {
     held.release();
     expect(await late).toEqual({ count: 2 });
     expect(storedCount(object, connection.id)).toBe(1);
+  });
+
+  it("drops a discovery that finishes after a reconnect to another account", async () => {
+    const { env, auth, object, providerRequests } = fixture();
+    const server = stubMcpServer([READ_TOOL, WRITE_TOOL], providerRequests);
+    const service = new ConnectionService(env, auth);
+    const { connection } = await service.createCustomMcp({
+      displayName: "Acme docs",
+      scope: "workspace",
+      serverUrl: SERVER_URL,
+      requestHeaders: { "X-Api-Key": "secret-value" },
+      toolPolicy: "all_tools",
+    });
+    await drainWaitUntil();
+
+    const held = holdNextToolList(server);
+    const late = service.getToolCount(connection.id, new AbortController().signal);
+    await held.arrived;
+    // A reconnect as someone else lands while the discovery is in flight.
+    object.prepare(
+      "UPDATE connector_connections SET provider_account_id = 'another-account', discovered_tool_count = NULL WHERE id = ?",
+    ).run(connection.id);
+
+    held.release();
+    expect(await late).toEqual({ count: 2 });
+    expect(storedCount(object, connection.id)).toBeNull();
   });
 
   it("stores what the released per-row endpoint discovers, so older desktops keep the list current", async () => {
@@ -274,6 +302,7 @@ function fixture(): {
   object: DatabaseSync;
   providerRequests: string[];
   published: string[][];
+  publishedConnectionIds: Array<string | null>;
 } {
   const regional = new DatabaseSync(":memory:");
   databases.push(regional);
@@ -298,10 +327,12 @@ function fixture(): {
     register: (created) => { databases.push(created); },
   });
   const published: string[][] = [];
+  const publishedConnectionIds: Array<string | null> = [];
   const stub = {
     ...workspaceObjectRpcs(workspace.instance, ["executeRuntimeSql"]),
-    publishSync: async (topics: string[]) => {
+    publishSync: async (topics: string[], _workspaceId: string, _placement: unknown, detail?: { connectionId?: string }) => {
       published.push([...topics]);
+      publishedConnectionIds.push(detail?.connectionId ?? null);
       return 0;
     },
   };
@@ -314,6 +345,7 @@ function fixture(): {
     object: workspace.objectDatabase,
     providerRequests: [],
     published,
+    publishedConnectionIds,
     env: createTestEnv({
       DB: sqliteD1(regional),
       AVALON_REGION: "global",
