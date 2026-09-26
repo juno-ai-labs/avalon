@@ -545,6 +545,12 @@ the affected rows could not be listed and the whole fleet re-projects instead.
 Both migrations are lazy in the same way as 47 and 52: use **Force a
 migration** for both classes in each region to make the pass complete, then
 watch the regional activity Queue drain and its dead-letter queue stay empty.
+WorkspaceDO migration 77 and SubstreamAgent migration 70 run the same two
+passes a third time, so every lexical row written before migration 76 is
+rewritten with its `audience`. Existing semantic chunk rows keep no audience
+(see the changelog). The pass also retries each link capture that failed
+before. Force both classes in each region, then confirm with a Turbopuffer
+count that no live lexical row lacks `audience` before search filters on it.
 
 Object alarms dispatch pending references only when the regional Turbopuffer key
 and `OPENROUTER_API_KEY` are present. Otherwise intents remain pending and search

@@ -1,7 +1,7 @@
 import { CONVERSATION_LINK_SEARCH_SCHEMA } from './conversation-link-search';
 import { TOOL_PAGE_SCHEMA, TOOL_PAGE_CONSUMER_INDEX } from './tool-page-storage';
 import { PARTICIPANT_AUTHORITY_TRANSFER_SCHEMA } from "./participant-authority-transfer";
-import { CONVERSATION_DISPLAY_SEARCH_MIGRATION_STATEMENTS, CONVERSATION_SEARCH_REPROJECTION_MIGRATION_STATEMENTS, TRANSCRIPT_SEARCH_MIGRATION_STATEMENTS } from './search-projection-outbox';
+import { CONVERSATION_DISPLAY_SEARCH_MIGRATION_STATEMENTS, CONVERSATION_SEARCH_AUDIENCE_MIGRATION_STATEMENTS, CONVERSATION_SEARCH_REPROJECTION_MIGRATION_STATEMENTS, TRANSCRIPT_SEARCH_MIGRATION_STATEMENTS } from './search-projection-outbox';
 /**
  * Object-local SQL schema for the existing one-room-per-work-stream namespace.
  *
@@ -3386,6 +3386,11 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     version: 69,
     description: "record which conversation a background agent works for",
     statements: [`ALTER TABLE background_agent ADD COLUMN root_substream_id TEXT`],
+  },
+  {
+    version: 70,
+    description: "requeue every committed turn so its search rows carry an audience",
+    statements: CONVERSATION_SEARCH_AUDIENCE_MIGRATION_STATEMENTS,
   },
 ];
 
