@@ -108,6 +108,40 @@ export async function bootstrapWorkstreamRuntimeEnvironment(
   parentId: string,
   parentKind: ConversationParentKind,
 ): Promise<Env> {
+  const authority = await claimParentAnchor(env, workspaceId, parentId, parentKind);
+  const stub = await durableObjectStubForWorkspace(
+    env,
+    env.SUBSTREAM_AGENTS,
+    workspaceId,
+    conversationObjectName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(parentId)),
+  );
+  const response = await stub.bootstrapRuntime({
+    workspaceId: asWorkspaceId(workspaceId),
+    parentKind,
+    parentId,
+    generation: authority.generation,
+  });
+  if (response.status < 200 || response.status >= 300) {
+    const body = rpcResultBody(response) as { error?: unknown } | null;
+    throw new Error(typeof body?.error === "string" ? body.error : "workstream_runtime_bootstrap_failed");
+  }
+  // Product operations now use typed object ports. The caller keeps its
+  // original environment instead of receiving a database-shaped authority
+  // overlay whose table-name matcher silently chose a destination.
+  return env;
+}
+
+/**
+ * Write a parent's D1 anchor and regional route, and claim its id against a
+ * Channel create that names the same one. Opens no object: a Space is this
+ * and nothing more, and a conversation parent is this plus its main object.
+ */
+export async function claimParentAnchor(
+  env: Env,
+  workspaceId: string,
+  parentId: string,
+  parentKind: ConversationParentKind,
+): Promise<{ generation: number }> {
   // `workstream_authority_routes` and the `workstreams` anchor are keyed by
   // parent id whatever the kind: every reader of the route (loop activation,
   // socket admission, the notification generation fence) keys on the same id,
@@ -148,26 +182,7 @@ export async function bootstrapWorkstreamRuntimeEnvironment(
   if (claimed) {
     throw new ApiError(409, "workstream_id_unavailable", "This conversation id is already claimed by a channel create");
   }
-  const stub = await durableObjectStubForWorkspace(
-    env,
-    env.SUBSTREAM_AGENTS,
-    workspaceId,
-    conversationObjectName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(workstreamId)),
-  );
-  const response = await stub.bootstrapRuntime({
-    workspaceId: asWorkspaceId(workspaceId),
-    parentKind,
-    parentId,
-    generation: authority.generation,
-  });
-  if (response.status < 200 || response.status >= 300) {
-    const body = rpcResultBody(response) as { error?: unknown } | null;
-    throw new Error(typeof body?.error === "string" ? body.error : "workstream_runtime_bootstrap_failed");
-  }
-  // Product operations now use typed object ports. The caller keeps its
-  // original environment instead of receiving a database-shaped authority
-  // overlay whose table-name matcher silently chose a destination.
-  return env;
+  return authority;
 }
 
 /**

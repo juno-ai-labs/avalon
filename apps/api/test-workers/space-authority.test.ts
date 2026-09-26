@@ -1005,7 +1005,6 @@ describe("WorkspaceDO space authority", () => {
     for (const refusal of channelChanges) {
       expect(refusal).toMatchObject({ ok: false, refusal: { about: "space", code: "space_access_denied" } });
     }
-    await expect(workspace().cancelSpaceReservation(asMember)).resolves.toEqual({ cancelled: false });
 
     // Nothing moved: the Space is as its own participant left it.
     await expect(workspace().spaceSummary({
@@ -2066,32 +2065,6 @@ describe("WorkspaceDO space authority", () => {
   });
 
   /**
-   * What a cancelled reservation takes with it, both directions.
-   *
-   * A Space whose object never opened is a Space that never existed, so it
-   * leaves the Organization's list and the list of *its* Channels goes with the
-   * container it was about. The delete names no user: the reservation was
-   * cancelled for everybody.
-   */
-  it("given an arranged reservation, when it is cancelled, then no order still names it", async () => {
-    const keep = await reserve("Company");
-    const doomed = await reserve("Half-made");
-    await workspace().reorderContainer({
-      workspaceId: WORKSPACE_ID,
-      userId: OWNER,
-      order: { container: { kind: "organization" }, itemIds: [doomed, keep] },
-    });
-
-    await expect(workspace().cancelSpaceReservation({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: doomed,
-    })).resolves.toEqual({ cancelled: true });
-
-    const ordering = await personalOrder(OWNER);
-    expect(storedItemIds(ordering, "organization")).toEqual([keep]);
-    expect(storedItemIds(ordering, "space", doomed)).toBeNull();
-  });
-
-  /**
    * Archive takes nothing, and that is the decision rather than an omission.
    *
    * `directory()` filters `archived_at IS NULL`, so an archived Space is
@@ -2222,42 +2195,6 @@ describe("WorkspaceDO space authority", () => {
       .toEqual([second, first]);
     expect((await spaceDirectories(MEMBER)).active.items.map((item) => item.id))
       .toEqual([first, second]);
-  });
-
-  it("given a reservation whose object never opened, when it is cancelled, then nothing remains", async () => {
-    const spaceId = await reserve("Half-made");
-
-    await expect(workspace().cancelSpaceReservation({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId,
-    })).resolves.toEqual({ cancelled: true });
-    expect((await spaceDirectories(OWNER)).active.items).toEqual([]);
-    // The hosted parent the reservation wrote goes in the same transaction.
-    for (const table of ["parent_metadata", "parent_children", "parent_projection_keys", "parent_state_changes"]) {
-      expect(await workspace().runInspectionSql({
-        sql: `SELECT COUNT(*) AS count FROM ${table} WHERE parent_id = ?`,
-        bindings: [spaceId],
-      })).toMatchObject({ rows: [{ count: 0 }] });
-    }
-
-    // And only the reservation this caller made: any member may otherwise
-    // delete whatever anybody else is in the middle of creating.
-    const mine = await reserve("Mine", "workspace", MEMBER);
-    await expect(workspace().cancelSpaceReservation({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: mine,
-    })).resolves.toEqual({ cancelled: false });
-    await expect(workspace().cancelSpaceReservation({
-      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: mine,
-    })).resolves.toEqual({ cancelled: true });
-
-    // Not once a Channel has been placed in it: the Space is that Channel's
-    // home, and taking it back would leave the Channel pointing at nothing.
-    const held = await reserve("Held");
-    await publishChannel(CHANNEL_A, null);
-    await place(held, CHANNEL_A);
-    await expect(workspace().cancelSpaceReservation({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: held,
-    })).resolves.toEqual({ cancelled: false });
-    expect((await spaceDirectories(OWNER)).active.items.map((item) => item.id)).toEqual([held]);
   });
 
   it("given a Space's presentation change, when it is recorded, then the summary answers immediately", async () => {
