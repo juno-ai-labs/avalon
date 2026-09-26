@@ -1651,6 +1651,48 @@ describe("WorkspaceDO space authority", () => {
       .toEqual([{ workstream_id: CHANNEL_C }]);
   });
 
+  it("given a Space archived in WorkspaceDO, then its hosted parent reads it archived too", async () => {
+    const spaceId = await reserve("Hiring");
+    const access = () => workspace().readManagementAccess({ workspaceId: WORKSPACE_ID, parentId: spaceId, userId: OWNER });
+    expect(await access()).toMatchObject({ allowed: true, writable: true });
+    // Only the Space row, as `finalizeArchive` writes it: the parent's own
+    // copy of `archived_at` never learns of a Space's archive.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE spaces SET archived_at = ? WHERE space_id = ?", Date.now(), spaceId);
+    });
+    expect(await access()).toMatchObject({ allowed: true, writable: false });
+  });
+
+  it("given a member Channel archived on its directory row, when a Sidekick default is added, then its target takes the Queue", async () => {
+    const sidekickId = "00000000-0000-7000-8000-00000000cf1e";
+    const spaceId = await reserve("Company");
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO automation_directory
+           (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope,
+            owning_workstream_id, title, description, next_run_at, projected_at)
+         VALUES (?, ?, ?, 1, 'test', 'active', 'workspace', NULL, 'Shared', '', NULL, 0)`,
+        sidekickId, WORKSPACE_ID, OWNER,
+      );
+    });
+    await openMemberChannel(CHANNEL_A);
+    await publishChannel(CHANNEL_A, null);
+    await place(spaceId, CHANNEL_A);
+    // Archived where every reader looks; the parent's own copy still says
+    // active, which is the stale copy the in-place check must not trust.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE channels SET archived_at = ? WHERE workstream_id = ?", Date.now(), CHANNEL_A);
+    });
+
+    await expect(workspace().addSpaceDefault({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, kind: "sidekick", targetId: sidekickId,
+    })).resolves.toMatchObject({ ok: true });
+
+    const rows = async (sql: string) => (await workspace().runInspectionSql({ sql, bindings: [CHANNEL_A] })).rows;
+    expect(await rows("SELECT sidekick_id FROM parent_sidekicks WHERE parent_id = ?")).toEqual([]);
+    expect(await rows("SELECT state FROM space_default_targets WHERE workstream_id = ?")).toEqual([{ state: "pending" }]);
+  });
+
   it("given a Sidekick default from a member who cannot manage a member Channel, then that Channel's target takes the Queue", async () => {
     const sidekickId = "00000000-0000-7000-8000-00000000cf1b";
     // An Organization-wide Space admits any active member, so the Space's own
