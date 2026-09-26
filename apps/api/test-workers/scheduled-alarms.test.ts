@@ -247,18 +247,20 @@ describe("the shared Durable Object alarm list", () => {
         { phase: "parent_breakouts", alarmKind: undefined },
         // Post-commit work a directory write recorded and did not finish.
         { phase: "directory_followup", alarmKind: undefined },
-        // The Space authority's three phases sit where the Project one used to,
-        // before the sweep, for the same reason it did: each publishes onto the
-        // activity Queue, and a rejected send has to leave its rows claimed and
-        // pending rather than spin this alarm.
+        // The Space authority's two publishing phases sit before the sweep:
+        // each publishes onto the activity Queue, and a rejected send has to
+        // leave its rows claimed and pending rather than spin this alarm.
         { phase: "space_default_publish", alarmKind: undefined },
         { phase: "space_bootstrap", alarmKind: undefined },
-        { phase: "space_intent_resume", alarmKind: undefined },
         { phase: "activity_reap", alarmKind: undefined },
         { phase: "schedule_reconcile", alarmKind: undefined },
-        // Background imports last: a page is up to one cold RPC per parent,
+        // Background imports late: a page is up to one cold RPC per parent,
         // and a Channel someone opens imports on that request instead.
         { phase: "parent_import", alarmKind: undefined },
+        // Interrupted Space operations last: each step waits on a Channel's
+        // conversation, and one step per intent per alarm keeps the phases
+        // above from waiting behind a large Space.
+        { phase: "space_intent_resume", alarmKind: undefined },
         { phase: "final_rearm", alarmKind: undefined },
       ]);
       expect(finished).toBe(1);

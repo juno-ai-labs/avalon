@@ -618,18 +618,8 @@ async function consumeOne(message: Message<unknown>, env: Env,
       principal: "connector",
     };
     try {
-      const resumed = await new SpaceService(env, auth).resumeIntent({
-        operationId: intent.operationId,
-        kind: intent.kind,
-        spaceId: intent.spaceId,
-        workstreamId: intent.workstreamId,
-        spaceRevision: intent.spaceRevision,
-        membershipGeneration: intent.membershipGeneration,
-        sourceSpaceId: intent.sourceSpaceId,
-        sourceSpaceRevision: intent.sourceSpaceRevision,
-        sourceMembershipGeneration: intent.sourceMembershipGeneration,
-        cursor: intent.cursor,
-      });
+      // WorkspaceDO resumes the intent from its row, whatever its kind.
+      const resumed = await new SpaceService(env, auth).resumeIntent(intent.operationId);
       // An intent that settled without doing its work is the one outcome
       // nothing else would say out loud: the row reads `settled`, the queue is
       // clear, and the operation the person asked for never reached its member
