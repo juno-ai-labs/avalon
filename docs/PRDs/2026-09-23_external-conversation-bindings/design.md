@@ -29,17 +29,20 @@ The Mucker flow is these four combined, with no Mucker-specific code.
 | Channel and Space parents, hosted in WorkspaceDO ([hosted conversation parents](../../hosted-conversation-parents.md)) | Space membership, Channel audience, viewer rows and Channel birth (`reserveChannelInSpaces`) in one database | A spawned Channel's birth, its Space placement and its thread binding commit in one WorkspaceDO transaction. |
 | Slack Agent ingress | Verifies event, resolves installation, creates or resumes Channel, writes human message | Normalize the external path and resolve a binding before creating a Channel. |
 | Connector watch registrations (`matchExternalEventDestinations`) | Fan an external event out to Sidekicks and watched resources; a claimed event skips Suggested Work | Candidate home for bindings; see [Reusing watch registrations](#reusing-watch-registrations). |
-| `automation.owning_workstream_id` (`sidekick-do.ts:269`) | The Channel whose Main conversation `sidekick_post_result` posts to | Replace with an owning substream address. |
-| `sidekick_post_result` (`integrations.ts:6435`) | A run's only way to post into a room | Remove; `conversation_post` covers it. |
+| `automation.owning_workstream_id` (`sidekick-do.ts:279`) | The Channel whose Main conversation `post_result` posts to | Replace with an owning substream address. |
+| `post_result` in the `rally:sidekick-result` plugin (`createAutomationPostResultPlugin`, `integrations.ts:6435`) | A run's only way to post into a room | Remove; `conversation_post` covers it. |
 | `authoringOrigin` (`packages/agent-harness/src/prompts/workstream.ts:32`) | Slack-only prompt section; nothing sets it | Remove. |
 | `sidekick_attachments` per SubstreamAgent, `parent_sidekicks` in WorkspaceDO | This conversation may load this Sidekick as a skill | Leave as is. Conversation attachments get their own WorkspaceDO table. |
-| `claimPersistentLoopExecution` (`substream-agent.ts:3895`) | Starts a loop for pending input with no `automationRun` | Restore the run's context when the child belongs to a Sidekick run. |
+| `SubstreamAgent.claimPersistentLoopExecution` (`substream-agent.ts:3895`) | Starts a loop for pending input with no `automationRun` | Restore the run's context when the child belongs to a Sidekick run. |
 
 ## Connector-neutral contract
 
 The adapter reports an **external path**: an ordered list of segments from the
 outermost provider container to the conversation a message belongs to. Slack
-gives `[channel]` for a room and `[channel, thread_ts]` for a thread. Discord
+gives `[channel]` for a room and `[channel, thread_ts]` for a thread. In a
+room that does not allow threads, an addressed message gets the synthetic path
+`[channel, message_ts]`, so each addressed message has its own key under the
+room. Discord
 could give `[guild, channel, thread]`; email could give `[thread]`. Each
 segment carries the facts the adapter can verify about it:
 
@@ -76,7 +79,7 @@ Binding {
            or a Space ID
   deliver: none | converse
   spawn?:  { on: addressed_to_rally, create: channel_in_space }
-  state:   pending | active | suspended
+  state:   active | suspended
 }
 ```
 
@@ -134,6 +137,26 @@ their rows.
   A send whose result is lost has no binding, and a reply to it is not matched
   by text or timing.
 
+Creating a binding is part of the same WorkspaceDO transaction as whatever it
+points at, so there is no half-created state to resume: a failure writes
+nothing and the provider event is retried.
+
+### Suspending bindings
+
+A binding stops routing when it is `suspended` or has a suspended ancestor.
+Suspension keeps the row and its target. These suspend a binding:
+
+- the bot leaving the room, the room being archived, or the connection
+  disconnecting (the room binding, and so every thread beneath it);
+- the Sidekick a binding targets being deleted (every binding to its runs);
+- a person closing the binding from the run or the Sidekick.
+
+A paused Sidekick keeps its bindings; `continueRun` refuses while it is paused.
+Whether an outbound binding also expires after a set time is an open question
+that blocks the build, and its duration is the team's number to set. A reply to
+a suspended binding creates no Rally work and is logged with the code
+`binding_suspended`.
+
 ### Reusing watch registrations
 
 `WorkspaceDO.matchExternalEventDestinations` already matches external events
@@ -157,7 +180,7 @@ each existing value to (`workstream`, id, `"0"`).
 The field's existing duties move with it:
 
 - Only a Sidekick with a home gets a posting tool
-  (`apps/api/src/services/integrations.ts:5371`), so a personal or workspace
+  (`postResultPlugin` in `loadHarnessTools`, `apps/api/src/services/integrations.ts:5371`), so a personal or workspace
   Sidekick still cannot post into a room.
 - Archiving the home still tells the Sidekick. Today WorkspaceDO's
   `notifyOwningRoomArchival` joins `automation_directory` to the `channels`
@@ -212,7 +235,7 @@ contract, written to [`agent-tools.md`](../../agent-tools.md) and
 | Tool order | `list`, `read`, `post`, `attach` |
 
 **Availability.** The host derives the scope from the loop input when it loads
-tools, next to the Sidekick plugin (`integrations.ts:5352`). A loop with no
+tools, next to the Sidekick plugin (`sidekickPlugin` in `loadHarnessTools`, `integrations.ts:5352`). A loop with no
 scope gets no plugin. The model never supplies or widens a scope. In a
 Sidekick run the plugin loads only when `automationRun` is present, which run
 continuation guarantees for every wake of a run child.
@@ -277,6 +300,9 @@ for a Breakout, because a Breakout id is unique only within its Channel.
 - Output: `{ conversations: [{ conversationId, kind: "channel" | "breakout",
   title, isHome: boolean, isOwn: boolean }], nextPageId: string | null }`.
   `isOwn` marks the loop's own conversation.
+- Each call re-admits the acting principal to every conversation in scope and
+  omits any it can no longer open, archived or deleted ones included. These are
+  local reads of WorkspaceDO's directories and viewer rows.
 
 `conversation_read`
 
@@ -388,10 +414,12 @@ In a Sidekick config conversation there is no Sidekick run; a post's key uses
 that loop's own harness run id, which every loop activation has. A Channel or Breakout loop does not get post, because it
 posts to its own conversation by replying.
 
-`sidekick_post_result` is removed, not kept beside the new tool. It is
-hard-wired to the owning Channel's Main conversation and deduplicated on run
-ID alone (`integrations.ts:6435-6522`), and a model offered both would not know
-which to use.
+The `rally:sidekick-result` plugin and its model-visible `post_result` tool
+are removed, not kept beside the new tool. `post_result` is hard-wired to the
+owning Channel's Main conversation and deduplicated on run ID alone
+(`createAutomationPostResultPlugin`, `integrations.ts:6435-6522`), and a model
+offered both would not know which to use. Its `sidekick_post_result_*` error
+codes and activity names go with it.
 
 A read or post first admits the acting principal to the target conversation.
 For a Channel or Breakout that is the conversation-parent contract WorkspaceDO
@@ -426,13 +454,13 @@ A message admitted to a run child after the run completed:
 2. `claimPersistentLoopExecution` builds a loop input from the message's stored
    authorization with a new harness run ID and no `automationRun`
    (`substream-agent.ts:3895`, with the input built at `3970`). Only the SidekickDO alarm sets
-   `automationRun` (`sidekick-do.ts:1749-1770`).
+   `automationRun` (the `activateWorkstreamLoop` call in `sidekick-do.ts:1749-1770`).
 3. The loop runs as the message's author, so connectors are chosen for that
-   person (`integrations.ts:5419`).
+   person (`connectorSelectionPriority`, `integrations.ts:5419`).
 4. The loop has no posting tool, no Sidekick definition or instructions, and
-   takes the non-run authority check (`integrations.ts:6350`).
+   takes the non-run authority check (`readRunAuthority`, `integrations.ts:6350`).
 5. The run row stays completed; `onChildCommonAggregate` ignores finished runs
-   (`sidekick-do.ts:1473`).
+   (`SidekickDO.onChildCommonAggregate`, `sidekick-do.ts:1473`).
 
 Answering an elicitation resumes through the same path, so a Sidekick run that
 asks a question likely loses its run context on resume too. This needs a test.
@@ -451,7 +479,7 @@ When `claimPersistentLoopExecution` wakes a child whose parent kind is
    alarm path builds.
 
 The loop then has the Sidekick's instructions, tools, and authority, and the
-run authority check (`integrations.ts:6389`) passes because the run is running.
+run authority check (`readRunAuthority`, `integrations.ts:6389`) passes because the run is running.
 The sender is only the author of the message. `continueRun` does not check who
 sent it: anyone who can reach the run may continue it.
 
@@ -479,6 +507,16 @@ a missing forward shows as an answer in the run feed that is absent from the
 Breakout.
 
 ## Audience and authorization
+
+**A message that arrives through a bound thread takes the audience of the
+conversation it lands in**, like any message posted there. The provider room it
+came from is recorded as its source, not as its audience. So when a continued
+Mucker run forwards a founder's answer to the home Breakout, the audience
+check compares the run's conversation with the Breakout, not the founder's DM
+with the Breakout. The founder answered a request from the Sidekick, and the
+Sidekick's run feed is where that answer lives in Rally. The outbound request
+should say where answers go, which the Sidekick's instructions can state; the
+design does not enforce that wording.
 
 The source conversation says who could speak there. Rally decides who may read
 persisted Rally work. Public shared rooms can use an Organization-wide Space;
@@ -508,12 +546,14 @@ retains membership after departure.
 | Bot leaves, channel archives, connection disconnects | Suspend the room binding; its threads stop resolving; retain Rally work and binding identity for reactivation. |
 | Slack Connect `channel_id_changed` | Atomically move the room path and every path beneath it to the new ID while preserving targets. |
 | Slack group DM adds people and Slack creates a new DM | Treat the new provider room ID as a separate source. Never copy or merge Rally history on the strength of a similar member list. |
-| `is_non_threadable` group DM | Only an explicit addressed message starts a Channel; no implicit reply routing without a provider thread identity. |
+| `is_non_threadable` group DM | An addressed message gets the path `[channel, message_ts]` and the room's spawn rule starts a Channel for it; two addressed messages start two Channels. An unaddressed message resolves nothing, since there is no thread to reply in. |
 | Provider retry or reordered delivery | Unique path key and event receipt prevent duplicate Space, Channel, message, or run continuation. |
 
 Slack's app manifest (`config/provider-apps/slack.json`) lacks `message.mpim`
-despite carrying `mpim:history`, so the group-DM path needs a subscription
-change. The public-channel join sweep and the `channel_created` join path
+despite carrying `mpim:history`, and lacks `channel_id_changed`, so both need a
+subscription change. Until an installation carries `channel_id_changed`, a
+Slack Connect ID change routes nothing under the new ID rather than guessing
+continuity from the channel name. The public-channel join sweep and the `channel_created` join path
 (`apps/api/src/services/slack-agent-service.ts:1451`) must stop. Existing
 subscriptions to `member_joined_channel` and `member_left_channel` remain useful
 for source membership and lifecycle. Slack's provider semantics are documented
@@ -539,7 +579,14 @@ Channel, SidekickDO, and SubstreamAgent authorities:
 - duplicate and out-of-order invite plus mention;
 - public, private, and MPIM classification;
 - two threads in one room; a bound reply versus an unrelated message;
-- a suspended room stopping its threads;
+- a suspended room stopping its threads, including a thread that already has
+  an active binding;
+- two addressed messages in a non-threadable group DM starting two Channels;
+- a binding suspended by Sidekick deletion, disconnect or a person closing it
+  routing nothing, and a Slack Connect `channel_id_changed` event moving every
+  path under the room;
+- `conversation_list` omitting a conversation after the principal loses access;
+- a forward to a home Breakout that includes someone who was not in the DM;
 - the one-to-one DM exception;
 - an outbound send writing a binding, and a lost receipt writing none;
 - input to a completed run child continuing it with `automationRun` and the
