@@ -398,13 +398,44 @@ Space in an Organization now shares one SQLite database and one socket set.
 - Spaces created before 2026-09-26 still have an idle hidden conversation
   object. Nothing writes or reads it ([`spaces.md`](spaces.md#the-retired-hidden-conversation));
   deleting those objects is its own decision.
-- `parent_metadata` and `channels` still hold the same presentation columns.
-  Both are written in the parent's one transaction (the directory apply runs
-  inside it through `applyLocalEffects`), but they are two copies of the same
-  values under different write rules. Folding them into one row is follow-up
-  work.
+- `parent_metadata` still stores the 19 presentation columns `channels` holds,
+  though no reader uses them: `metadataRow()` takes them from the directory row
+  (see the changelog). Dropping them, down to identity and bookkeeping, is the
+  follow-up migration; `forwardChildTerminalDeadline`'s own
+  `next_terminal_action_at` compare is the one write-path read to replace first.
 
 ## Changelog
+
+### 2026-09-26 — A parent reads its presentation from its directory row
+
+**What changed:** `HostedParent.metadataRow()` is one statement that joins
+`parent_metadata` to `channels` (a Channel) or `spaces` (a Space's title, scope
+and archive state) by primary key and takes every duplicated column from the
+directory row. It falls back to `parent_metadata` only when the parent has no
+directory row yet, keyed on the row rather than on NULL, because `archived_at`
+and the other optional columns are NULL on purpose. The invitation title and
+the in-place Sidekick default read `channels` directly.
+`forwardChildTerminalDeadline` keeps reading its own column, because it
+compares inside the transaction that writes it, before the directory row
+flushes.
+
+**Why:** Two copies of a Channel's scope, archive state and title meant the
+parent's own gates (child reservation, management access, viewer admission)
+could disagree with every sidebar and search reader, which already trusts the
+directory row. A read-only audit of all 20 Organizations on 2026-09-26 found
+the copies identical on all 19 columns for every Channel. The only difference
+was the two archived Spaces: `parent_metadata` never recorded their archive,
+because a Space's archive is WorkspaceDO's own write. Reading `spaces` makes a
+Space's parent agree with it.
+
+**Considered and rejected:** Rewriting each of the ~30 readers to name the
+table it wants. The one query keeps every reader unchanged and costs the same
+single primary-key read. Dropping the columns in the same change: the read
+switch is reversible on its own, the migration is not, so they ship apart.
+
+**Consequences:** A test or tool that changes a parent's scope or archive
+state by writing `parent_metadata` now changes nothing a parent reads; write
+`channels` or `spaces`. The next change drops the duplicated columns.
 
 ### 2026-09-26 — The legacy parent classes and the import are deleted
 
