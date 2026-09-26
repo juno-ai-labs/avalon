@@ -456,7 +456,7 @@ describe("substream preparation on workerd", () => {
     });
     // Miniflare cannot implement jurisdiction selection; retain real objects
     // and replace only that unsupported namespace operation.
-    const localJurisdiction = <T extends Env["WORKSPACE_DOS"] | Env["WORKSTREAM_DOS"]>(namespace: T): T => new Proxy(namespace, {
+    const localJurisdiction = <T extends Env["WORKSPACE_DOS"]>(namespace: T): T => new Proxy(namespace, {
       get(target, property) {
         if (property === "jurisdiction") return () => target;
         const value = Reflect.get(target, property);
@@ -470,7 +470,6 @@ describe("substream preparation on workerd", () => {
     }
     await deliverParentEffects({ ...TEST_ENV,
       WORKSPACE_DOS: localJurisdiction(TEST_ENV.WORKSPACE_DOS),
-      WORKSTREAM_DOS: localJurisdiction(TEST_ENV.WORKSTREAM_DOS),
       APP_ENV: "production", RESEND_API_KEY: "test-only",
       RESEND_NOTIFICATION_FROM_EMAIL: "Rally <test@example.test>",
     }, parent());

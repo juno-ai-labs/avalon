@@ -37,13 +37,9 @@ import type { ScopeGrantMutation, ScopeGrantMutationResult } from "@rally/contra
 import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
 import { RALLY_HEADERS } from "@rally/contracts/http-headers";
 
-import { latestMigrationVersion } from "../src/durable-objects/migration-reporting";
-import { conversationObjectName, spaceDOName } from "../src/durable-objects/names";
+import { conversationObjectName } from "../src/durable-objects/names";
 import type { ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
 import type { Env } from "../src/env";
-import { SpaceDO } from "../src/durable-objects/space-do";
-import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
-import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-do-schema";
 import { consumeEffectBodies } from "./helpers/conversation-effects";
 import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
 
@@ -54,9 +50,6 @@ const CHANNEL_ID = asWorkstreamId("00000000-0000-7000-8000-00000000ce03");
 const USER_ID = asUserId("00000000-0000-7000-8000-00000000ce04");
 const ACTOR_ID = asUserId("00000000-0000-7000-8000-00000000ce05");
 
-const spaceName = spaceDOName("global", WORKSPACE_ID, SPACE_ID);
-/** The legacy Space object, which now only exports and reports its migration identity. */
-const legacySpace = () => env.SPACE_DOS.getByName(spaceName);
 /** The Organization object, which hosts both the Space's and the Channel's parent. */
 const workspace = () => hostedParentStub(env, WORKSPACE_ID);
 
@@ -272,64 +265,6 @@ beforeEach(async () => {
 });
 
 describe("a Space's hosted parent", () => {
-  it("applies its own migration component and answers a forced migration as a SpaceDO", async () => {
-    const command = {
-      commandId: crypto.randomUUID(),
-      runId: crypto.randomUUID(),
-      className: "SpaceDO",
-      objectId: env.SPACE_DOS.idFromName(spaceName).toString(),
-      objectName: spaceName,
-      region: "global",
-      requestedAt: Date.now(),
-    };
-    // A legacy Space that was never created still answers the tracker under
-    // its own identity, and stays uncreated: applying the ledger would turn
-    // the question into a stored object.
-    expect(await legacySpace().forceMigration(command)).toMatchObject({
-      className: "SpaceDO",
-      component: "space_do",
-      schemaVersion: 0,
-    });
-
-    // A deployed legacy Space: its ledger was applied under its own component
-    // up to some earlier version. Rebuilt from that storage, the constructor
-    // applies the rest under the same component. The role's migration
-    // identity, not the class it extends: a plan that reported `workstream_do`
-    // would file every Space's schema version under the Channel rollup, and
-    // one that reported `WorkstreamDO` would make this object refuse the
-    // command the tracker sends it. The *ledger* is the Channel's, which is
-    // why the version is the Channel's head.
-    const result = await runInDurableObject(legacySpace(), async (_instance, state) => {
-      applyDurableObjectSqliteMigrations({
-        storage: state.storage,
-        migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS.slice(0, 1),
-        component: "space_do",
-        workerVersionId: "test",
-      });
-      return new SpaceDO(state, env).forceMigration(command);
-    });
-    expect(result).toMatchObject({
-      className: "SpaceDO",
-      component: "space_do",
-      schemaVersion: latestMigrationVersion(WORKSTREAM_DO_SCHEMA_MIGRATIONS),
-    });
-
-    await runInDurableObject(legacySpace(), (_instance, state) => {
-      // Every version the Channel ledger holds, receipted under this object's
-      // own component. A Space replays history it never had, because one
-      // array applied twice is what keeps a table added for a Channel from
-      // having to be written a second time for a Space.
-      expect(state.storage.sql.exec<{ version: number }>(
-        "SELECT version FROM _sql_schema_migrations ORDER BY version",
-      ).toArray()).toEqual(WORKSTREAM_DO_SCHEMA_MIGRATIONS.map(({ version }) => ({ version })));
-      for (const table of ["scope_grants", "conversation_children", "durable_outbox", "object_retirement"]) {
-        expect(state.storage.sql.exec(
-          "SELECT name FROM sqlite_master WHERE type='table' AND name=?", table,
-        ).toArray()).toHaveLength(1);
-      }
-    });
-  });
-
   it("refuses a client socket upgrade", async () => {
     await seedParents();
     const response = await workspace().fetch("https://workspace.test/parent-socket", {

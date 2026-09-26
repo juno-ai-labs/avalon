@@ -48,10 +48,6 @@ import {
   type ParentEffect,
 } from "@rally/contracts/conversation-effects";
 
-import { notePendingParentImport } from "../src/durable-objects/hosted-parent-import";
-import { workstreamDOName } from "../src/durable-objects/names";
-import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
-import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-do-schema";
 import {
   SPACE_CHANNEL_PAGE_SIZE,
   WorkspaceSpaceStorage,
@@ -77,9 +73,6 @@ const BREAKOUT_TWO = asSubstreamId("00000000-0000-7000-8000-00000000d107");
 
 /** The Organization object, which also hosts every Channel parent in it. */
 const workspace = () => hostedParentStub(env, WORKSPACE_ID);
-/** A Channel's legacy parent object, which only exports its rows to the Organization object. */
-const legacyChannelObject = (workstreamId: WorkstreamId) =>
-  env.WORKSTREAM_DOS.getByName(workstreamDOName("global", WORKSPACE_ID, workstreamId));
 
 let effectSequence = 0;
 
@@ -373,104 +366,6 @@ async function openChannelObject(workstreamId: WorkstreamId): Promise<void> {
   });
 }
 
-/** A child's stored projection, as a deployed legacy Channel object holds it. */
-interface LegacyProjection {
-  substreamId: string;
-  common: ConversationEffect;
-  viewers: ConversationEffect[];
-  /** Whether the legacy object had already forwarded this child's common row. */
-  forwarded?: boolean;
-}
-
-/**
- * A deployed legacy Channel object that stored its children's projections,
- * with the Organization's import ledger saying the parent is still there.
- *
- * Seeded as rows because the legacy class no longer receives child effects:
- * it only exports. The rows are the ones its ledger wrote before the move.
- */
-async function seedLegacyChannel(workstreamId: WorkstreamId, projections: LegacyProjection[]): Promise<void> {
-  await runInDurableObject(legacyChannelObject(workstreamId), (instance, state) => {
-    applyDurableObjectSqliteMigrations({
-      storage: state.storage,
-      migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS,
-      component: "workstream_do",
-      workerVersionId: "test",
-    });
-    state.storage.sql.exec(
-      `INSERT INTO workstream_metadata
-         (id, workspace_id, workstream_id, region, authority_generation, title,
-          description, preview, scope, exact_state, last_activity_at,
-          created_at, updated_at)
-       VALUES (1, ?, ?, 'global', 1, 'Roadmap', '', '', 'workspace', 'idle', 1, 1, 1)`,
-      WORKSPACE_ID,
-      workstreamId,
-    );
-    state.storage.sql.exec(
-      `INSERT INTO conversation_children (substream_id, kind, created_by_user_id, created_at, status, updated_at)
-       VALUES ('0', 'main', ?, 1, 'ready', 1)`,
-      OWNER,
-    );
-    for (const projection of projections) {
-      state.storage.sql.exec(
-        `INSERT INTO conversation_children (substream_id, kind, created_by_user_id, created_at, status, updated_at)
-         VALUES (?, 'child', ?, 1, 'ready', 1)`,
-        projection.substreamId,
-        OWNER,
-      );
-      state.storage.sql.exec(
-        `INSERT INTO substream_directory (substream_id, source_version, payload_hash, effect_json, updated_at)
-         VALUES (?, 1, ?, ?, 1)`,
-        projection.substreamId,
-        conversationEffectHash(projection.common),
-        JSON.stringify(projection.common),
-      );
-      for (const viewer of projection.viewers) {
-        if (viewer.kind !== "directory_user") throw new Error("legacy viewer projection must be directory_user");
-        state.storage.sql.exec(
-          `INSERT INTO substream_user_directory
-             (substream_id, user_id, source_version, payload_hash, effect_json, updated_at)
-           VALUES (?, ?, 1, ?, ?, 1)`,
-          projection.substreamId,
-          viewer.userId,
-          conversationEffectHash(viewer),
-          JSON.stringify(viewer),
-        );
-      }
-      if (projection.forwarded) {
-        state.storage.sql.exec(
-          `INSERT INTO projection_keys (projection_key, next_version, last_payload_hash, updated_at)
-           VALUES (?, 2, 'fnv1a64:0000000000000000', 1)`,
-          `substream:${projection.substreamId}:common`,
-        );
-      }
-    }
-    // The instance decided it was empty when it started, before the ledger
-    // above existed. A deployed object with this ledger starts not empty.
-    (instance as unknown as { empty: boolean }).empty = false;
-  });
-}
-
-/**
- * Hand the parent back to its legacy object: the Organization holds no hosted
- * rows for it, and its import ledger says it is still to be imported.
- *
- * A case opens the hosted parent first and removes it here, because a
- * directory effect for a parent the Organization does not host notes it for
- * import, and the alarm would then import it at a moment the case does not
- * choose. One transaction, so the alarm sees either the open parent or the
- * pending one.
- */
-async function markParentPendingImport(workstreamId: WorkstreamId): Promise<void> {
-  await runInDurableObject(workspace(), (_instance, state) => {
-    state.storage.transactionSync(() => {
-      state.storage.sql.exec("DELETE FROM parent_children WHERE parent_id = ?", workstreamId);
-      state.storage.sql.exec("DELETE FROM parent_metadata WHERE parent_id = ?", workstreamId);
-      notePendingParentImport(state.storage.sql, workstreamId, "workstream");
-    });
-  });
-}
-
 async function reserve(name: string, scope: "personal" | "workspace" = "workspace"): Promise<SpaceId> {
   const result = await workspace().reserveSpace({
     workspaceId: WORKSPACE_ID,
@@ -582,45 +477,6 @@ beforeEach(async () => {
 });
 
 describe("space dashboard conversation page", () => {
-  it("replays breakout projections that were already stored when forwarding shipped", async () => {
-    await openChannelObject(CHANNEL_A);
-    await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
-
-    // The deployed state before breakout forwarding: the legacy Channel object
-    // already held its children's current projections, but had never created
-    // parent projection keys or outbox rows for them. The legacy object's
-    // migration 19 replayed them once across the fleet; an object that missed
-    // that pass is made to converge by the import into the Organization.
-    await seedLegacyChannel(CHANNEL_A, [
-      {
-        substreamId: BREAKOUT_ONE,
-        common: breakoutCommonEffect("Pricing"),
-        viewers: [viewerEffect(OWNER) as ConversationEffect],
-      },
-      {
-        substreamId: BREAKOUT_TWO,
-        common: { ...breakoutCommonEffect("Background worker"), backgroundAgent: true },
-        viewers: [viewerEffect(OWNER) as ConversationEffect],
-      },
-    ]);
-    await markParentPendingImport(CHANNEL_A);
-    expect(await breakoutRows()).toMatchObject({ rows: [] });
-
-    // Any request for the parent imports it first.
-    await workspace().listChildren({ workspaceId: WORKSPACE_ID, parentId: CHANNEL_A });
-
-    // The replayed directory rows are applied inside the Organization object
-    // and never wait in its outbox for the Queue.
-    expect(await pendingParentEffects(workspace())).toEqual([]);
-    expect(await breakoutRows()).toMatchObject({
-      rows: [{ workstream_id: CHANNEL_A, substream_id: BREAKOUT_ONE, title: "Pricing" }],
-    });
-    await expect(inspect("SELECT substream_id, user_id FROM breakout_viewers"))
-      .resolves.toMatchObject({ rows: [{ substream_id: BREAKOUT_ONE, user_id: OWNER }] });
-    const owner = await connectViewer(OWNER);
-    expect(owner.initialChannelCounts).toEqual([1]);
-  });
-
   it("given a breakout projection, when its Channel forwards it, then it lands in the breakout tables", async () => {
     await openChannelObject(CHANNEL_A);
 
@@ -1480,48 +1336,5 @@ describe("space dashboard conversation page", () => {
     await expect(inspect(`SELECT substream_id FROM breakouts WHERE archived_at IS NULL`))
       .resolves.toMatchObject({ rows: [] });
     expect((await connectViewer(OWNER)).initialChannelCounts).toEqual([0]);
-  });
-
-  it("retracts background agents a Channel already forwarded as breakouts when it is imported", async () => {
-    await openChannelObject(CHANNEL_A);
-    await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
-    // What the Organization holds: both children as breakouts, the agent's
-    // first, unmarked projection among them.
-    await publishBreakoutProjection(CHANNEL_A, BREAKOUT_ONE, [
-      breakoutCommonEffect("Pricing"),
-      viewerEffect(OWNER) as ConversationEffect,
-    ]);
-    await publishBreakoutProjection(CHANNEL_A, BREAKOUT_TWO, [
-      breakoutCommonEffect("Worker", { state: "idle" }),
-      viewerEffect(OWNER, { unseen: true }) as ConversationEffect,
-    ]);
-
-    // The deployed state: the agent's later, marked projection reached the
-    // legacy Channel object and stopped there, so the Channel knows it is an
-    // agent while the Organization still holds its first, unmarked row. The
-    // legacy object's migration 20 retracted these once across the fleet; an
-    // object that missed that pass is made to converge by the import.
-    await seedLegacyChannel(CHANNEL_A, [
-      {
-        substreamId: BREAKOUT_ONE,
-        common: breakoutCommonEffect("Pricing"),
-        viewers: [viewerEffect(OWNER) as ConversationEffect],
-        forwarded: true,
-      },
-      {
-        substreamId: BREAKOUT_TWO,
-        common: { ...breakoutCommonEffect("Worker", { state: "idle" }), backgroundAgent: true },
-        viewers: [viewerEffect(OWNER, { unseen: true }) as ConversationEffect],
-        forwarded: true,
-      },
-    ]);
-    expect((await connectViewer(OWNER)).initialChannelCounts).toEqual([2]);
-
-    await markParentPendingImport(CHANNEL_A);
-    await workspace().listChildren({ workspaceId: WORKSPACE_ID, parentId: CHANNEL_A });
-
-    await expect(inspect(`SELECT substream_id FROM breakouts WHERE archived_at IS NULL`))
-      .resolves.toMatchObject({ rows: [{ substream_id: BREAKOUT_ONE }] });
-    expect((await connectViewer(OWNER)).initialChannelCounts).toEqual([1]);
   });
 });

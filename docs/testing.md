@@ -949,7 +949,6 @@ The remaining methods without a workerd RPC exercise are:
 | `WorkspaceDO` | `activityEventSource`, `applyWorkstreamRegionalEffect`, `dueWorkstreamDirectory`, `existingOpportunities`, `getOpportunity`, `latestActivityEventCursor`, `notificationDirectoryState`, `opportunityWindow`, `resourceAccess`, `workstreamScheduleTargets` |
 | `SubstreamAgent` | `publishEvent` |
 | `AutomationDO` | Re-derive with the grep above: `AutomationDO` is new. |
-| `WorkstreamDO` (legacy) | `receiveChildEffects`, which only forwards to `WorkspaceDO`. Its one other method, `exportParentState`, is driven through the import in `hosted-parent-import.test.ts`; see [`hosted-conversation-parents.md`](hosted-conversation-parents.md). |
 
 **Uncovered here does not mean untested** — several have Node suites over their
 storage class, which is the right rung for what the SQL decides. It means

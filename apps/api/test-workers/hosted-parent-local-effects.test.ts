@@ -270,10 +270,8 @@ describe("a hosted parent's write", () => {
       envelopes: [malformed as unknown as ReturnType<typeof childEnvelope>],
     }).then(() => null, (error: unknown) => error);
     expect(String(refused)).toContain("envelopes.0.effect");
-    // Not recorded as a parent a legacy object may hold, which is what the
-    // first envelope would otherwise have started.
     await runInDurableObject(workspace(), (_instance, state) => {
-      expect(state.storage.sql.exec("SELECT parent_id FROM parent_imports WHERE parent_id = ?", unknownParent).toArray())
+      expect(state.storage.sql.exec("SELECT parent_id FROM parent_metadata WHERE parent_id = ?", unknownParent).toArray())
         .toEqual([]);
     });
   });

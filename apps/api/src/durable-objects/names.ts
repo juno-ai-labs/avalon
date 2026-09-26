@@ -2,10 +2,8 @@ import type {
   ArtifactId,
   AutomationId,
   Region,
-  SpaceId,
   SubstreamId,
   WorkspaceId,
-  WorkstreamId,
 } from "@rally/contracts";
 
 /** One regional workspace control object. */
@@ -20,35 +18,6 @@ export function automationDOName(
   automationId: AutomationId,
 ): string {
   return `${region}:${workspaceId}:automation:${automationId}`;
-}
-
-/** One non-agent control object for each work stream: the parent of its substreams. */
-export function workstreamDOName(
-  region: Region,
-  workspaceId: WorkspaceId,
-  workstreamId: WorkstreamId,
-): string {
-  return `${region}:${workspaceId}:${workstreamId}`;
-}
-
-/**
- * One Space object: the parent of a Space's hidden main conversation.
- *
- * It carries the `space` role word where `workstreamDOName` carries nothing,
- * even though both are `<region>:<workspace>:<uuid>` otherwise. A Space id and
- * a work-stream id are both bare UUIDs drawn from the same generator, and the
- * two live in different namespaces where an accidental collision would be
- * harmless — but the name is also what an operator reads in a migration report,
- * and a name that cannot say which of the two it is makes the report useless
- * for finding the object that is stuck. The word is in
- * `FIXED_SEGMENTS`, without which the report silently drops the name.
- */
-export function spaceDOName(
-  region: Region,
-  workspaceId: WorkspaceId,
-  spaceId: SpaceId,
-): string {
-  return `${region}:${workspaceId}:space:${spaceId}`;
 }
 
 /**

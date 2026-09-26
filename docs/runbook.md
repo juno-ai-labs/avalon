@@ -1450,59 +1450,6 @@ the runtime router was bypassed; quarantine and fix that path, and never recreat
 the table or fall back to D1. Identity, membership, routing, migration/control,
 audit, and telemetry remain valid D1 writers.
 
-### A Channel or Space import is stuck
-
-Each Channel and Space parent moves out of its legacy `WorkstreamDO` or
-`SpaceDO` into the Organization's `WorkspaceDO` once, on the first request that
-needs it or on the alarm ([`hosted-conversation-parents.md`](hosted-conversation-parents.md#moving-an-existing-parent)).
-A stuck import shows as every request for that Channel failing with
-`parent_import_unavailable:<code>`, and as `hosted_parent_import_deferred`
-warnings carrying `workspace_id`, `parent_id`, `parent_kind` and the same
-`code`. The legacy object is already frozen by then, so the Channel stays
-unavailable until the import lands: treat it as an outage of that Channel.
-
-Find every stuck parent in an Organization with the engineering MCP's
-`run_workspace_sql`:
-
-```sql
-SELECT parent_id, parent_kind, attempts, not_before, last_error_code
-  FROM parent_imports
- WHERE state = 'pending'
- ORDER BY attempts DESC, parent_id;
-```
-
-A row with a low `attempts` and no code is simply not due yet. What the code
-says to do:
-
-| `last_error_code` | Meaning | Repair |
-| --- | --- | --- |
-| `parent_export_failed…`, or a runtime error code | The legacy object could not be reached or its answer did not parse. | Usually transient: the next request retries at once and the alarm on its backoff. If `attempts` keeps climbing, read the legacy object with `run_workstream_sql` (or `run_space_sql`). |
-| `parent_export_identity_mismatch`, `parent_import_identity_mismatch` | The legacy object's `workstream_metadata` names a different Organization or parent than the ledger does. | Do not edit it to match. Compare `SELECT workspace_id, workstream_id FROM workstream_metadata` in the legacy object with the directory; this is a routing fault, not a data fault. |
-| `parent_import_target_not_empty` | `parent_metadata` already has a row for this id in `WorkspaceDO`, so the import would collide with it. | Read that row and the legacy copy. Only once the legacy copy is confirmed to be the complete one, delete the hosted rows for that `parent_id` and retry. |
-| `parent_import_row_rejected:<table>:<rule>` | SQLite refused a legacy row in hosted table `<table>` (`unique`, `check`, `not_null`, `foreign_key`, `column`). `unique` on `parent_state_changes.event_id`, `parent_invitations.token_hash` or `parent_outbox.message_id` is a collision with another parent: those columns are unique across the Organization. | Find the colliding row (`SELECT parent_id FROM <table> WHERE <column> = ?`) and repair whichever copy is wrong. The legacy object is frozen for the product but `run_workstream_sql` still writes to it. |
-| `parent_import_failed:<path>:<code>` | The import's replay could not parse a stored row; the path names the field (a direct grant's `grant_json`, a breakout's `effect_json`). | Fix that row in the legacy object. |
-| `parent_import_column_missing:…` | The legacy object's schema is older than the export expects. | Check its `_sql_schema_migrations`; the legacy object applies its own ledger when it wakes. |
-
-Nothing of a parent lands until the whole import does, so there is never a
-half-imported parent to clean up. After the repair, retry with the MCP's
-`retry_parent_import` (workspace id and parent id). It runs the same import a
-request runs and returns the ledger row: `state: "imported"` means done; still
-`pending` returns the new `lastErrorCode`. Opening the Channel retries too.
-
-**Before a change deletes the legacy classes**, confirm no Organization still
-owes an import. In every region, for every Organization `list_workspaces`
-returns and that is not retired (`SELECT COUNT(*) FROM object_retirement` is
-`0`), `SELECT COUNT(*) FROM parent_imports WHERE state = 'pending'` must be
-`0`. A retired Organization keeps its pending rows for good: retirement drops
-the import and arms no alarm, and nothing reads its Channels again, so its rows
-are residue rather than a debt. The ledger is seeded by `WorkspaceDO` migration 72 when each object first
-wakes on the new code, so first confirm in the migration tracker
-([The Durable Object migration tracker](#the-durable-object-migration-tracker))
-that every `WorkspaceDO` is at schema 72 or later; an object that has not woken
-has not written its pending rows yet. Also confirm the activity Queue's
-dead-letter queue is empty, since a legacy-addressed effect adds a pending row
-when it is redriven.
-
 - Electron supplies the Mac timezone during ticket exchange. It seeds an account whose
   `timezone_source` is still `client` and never writes over one somebody chose in settings;
   a client that sends no zone leaves the account alone, because there is no server-side default.
