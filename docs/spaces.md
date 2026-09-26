@@ -69,10 +69,11 @@ Channel has a home lives here and nowhere else.
 
 **WorkspaceDO owns what the Space is.** Its name and appearance
 (`noteSpacePresentation`), scope and participants (`noteSpaceAudience`),
-resource defaults (`addSpaceDefault`), archive and restore are written straight
-to `spaces`, `space_viewers` and `space_defaults`. A Sidekick default is also
-recommended on the Space's hosted parent, which is the list a Channel created
-in the Space reads. Nothing outside WorkspaceDO holds a copy.
+defaults (`addSpaceDefault`), archive and restore are written straight to
+`spaces`, `space_viewers` and `space_defaults`, each authorized from those rows.
+A Sidekick default also writes the recommendation on the Space's hosted parent,
+the list a Channel created in the Space reads, in the same call. Nothing outside
+WorkspaceDO holds a copy.
 
 **Each Channel's parent owns its own audience.** A Space never writes one. Every
 membership, audience change, archive and restore asks the Channel's own
@@ -145,10 +146,10 @@ idle; retiring them, and the `SubstreamAgent` guard that refuses a Space parent
 an agent loop, is left for later.
 
 **A failure on the path to a Space's authority is named
-`space_authority_unreachable`.** The seam is now the D1 anchor at creation and
-the Sidekick recommendation on the hosted parent. A rejection there that is not
-the object's own refusal arrives over RPC with no code on it, and used to reach
-a person as `internal_error`. `SpaceService.throughSpaceAuthority` is the one
+`space_authority_unreachable`.** The seam is now the D1 anchor at creation, the
+one Space step outside WorkspaceDO. A rejection there that is not its own
+refusal arrives with no code on it, and used to reach a person as
+`internal_error`. `SpaceService.throughSpaceAuthority` is the one
 place that names it; a refusal the object *chose* keeps its own code.
 
 ### Membership
@@ -1476,7 +1477,7 @@ Space to move its placement or into the pinned section to pin it.
   other exceptions have no person on the request: `recordSpaceIntentReceipt`,
   `spaceBootstrapStatus` and the default-target settlements are server-to-server,
   and each says so where it is defined.
-- **A Space's hidden main conversation is not addressable as a Channel.** Every
+- **A Space's retired conversation is not addressable as a Channel.** Every
   product request carries the parent kind the caller expects and is refused
   `conversation_parent_kind_mismatch` when the object disagrees. A conversation
   is reached by id, every member is handed every Space id on the socket, and the
@@ -1556,11 +1557,10 @@ This module owns the Space relationship inside one Organization: identity,
 directory projection, per-person order, membership, the default registry and its
 delivery, and the staged intents that make a cross-object operation resumable.
 
-It does **not** own what a Space *is* — the name, appearance, scope,
-participants and attachments belong to the Space's hosted parent and its
-hidden main conversation, documented in
-[`hosted-conversation-parents.md`](hosted-conversation-parents.md) and
-[`workstream-durable-object.md`](workstream-durable-object.md). It does not own
+It also owns what a Space *is*: the name, appearance, scope, participants and
+defaults are rows in the same tables, and a Sidekick default's recommendation
+is written on the Space's hosted parent in the same call
+([`hosted-conversation-parents.md`](hosted-conversation-parents.md)). It does not own
 a Channel's audience; that is the Channel's own authority, reached through its
 canonical operations and documented in
 [`authorization.md`](authorization.md) and
@@ -2070,10 +2070,10 @@ is satisfied by refusing rather than by what the old build draws.
 
 The engineering MCP lists Spaces with `list_spaces`, and a Space's parent
 state is read with `run_workspace_sql` from the `parent_*` tables; see
-[`engineering-mcp.md`](engineering-mcp.md). A Space's hidden main conversation
-is reachable through the substream tools because
-`bootstrapWorkstreamRuntimeEnvironment` writes its `workstream_authority_routes`
-row under the Space id.
+[`engineering-mcp.md`](engineering-mcp.md). Everything a Space holds is in
+those tables and `spaces`, `space_viewers` and `space_defaults`; a Space
+created before 2026-09-26 also has an idle conversation the substream tools can
+still open under the Space id.
 
 A non-empty regional activity dead-letter queue remains the terminal failure
 signal for default delivery and for a `move` intent's resumption. Every other
@@ -2090,9 +2090,12 @@ default target.
 **What changed:** `SpaceService` no longer writes a Space's hidden main
 conversation. Creation writes the D1 anchor (`claimParentAnchor`, split out of
 `bootstrapWorkstreamRuntimeEnvironment`) and reserves the Space in WorkspaceDO,
-and opens no object. A rename, an audience change and a resource default are
-one WorkspaceDO write each; a Sidekick default still also goes to the hosted
-parent. A directory effect a legacy Space conversation still has in flight is
+and opens no object. A rename, an audience change and a default are one
+WorkspaceDO write each; a Sidekick default's recommendation on the Space's
+hosted parent is written inside `addSpaceDefault`/`removeSpaceDefault`,
+authorized from the Space rows. A resource default refuses an upload draft
+(`attachment_draft_requires_message`, `ResourceService.getAttachable`), the
+check the conversation's `attachResource` used to make. A directory effect a legacy Space conversation still has in flight is
 acknowledged by the Space's hosted parent and applied nowhere. Deleted:
 `provisionSpaceConversation`, `provisionOrTakeBack`, the audience rollbacks,
 `WorkstreamObjectClient.forSpace`, and the take-back path
@@ -2119,7 +2122,9 @@ create taking a Space's id.
 
 **Consequences:** A Space has no conversation to fail, so there is no
 take-back and no `space_authority_unreachable` from an edit; the seam is now
-the anchor and the Sidekick recommendation. Anything new a Space needs to hold
+the anchor. The Space's hosted parent holds no current copy of its audience,
+so nothing may authorize a Space write there: a Sidekick recommendation
+authorized by the hosted parent refused a participant added after creation. Anything new a Space needs to hold
 goes in WorkspaceDO. Retiring the idle objects, and the `SubstreamAgent`
 guard that refuses a Space parent a loop, is left for later.
 

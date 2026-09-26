@@ -1529,13 +1529,22 @@ export class HostedParent {
     const access = await this.readManagementAccess({ workspaceId: request.workspaceId, parentId: request.parentId, userId: request.userId });
     if (!access.allowed) throw new Error("sidekick_attachment_participant_required");
     if (!access.writable) throw new Error("sidekick_attachment_workstream_archived");
-    if (request.attached) {
-      this.sql.exec(`INSERT OR IGNORE INTO parent_sidekicks (parent_id, sidekick_id, attached_at) VALUES (?, ?, ?)`,
-        this.parentId, request.sidekickId, Date.now());
-    } else {
-      this.sql.exec(`DELETE FROM parent_sidekicks WHERE parent_id = ? AND sidekick_id = ?`, this.parentId, request.sidekickId);
-    }
+    this.writeSidekickRecommendation(request.sidekickId, request.attached);
     return this.recommendedSidekickIds({ workspaceId: request.workspaceId, parentId: request.parentId });
+  }
+
+  /**
+   * The recommendation row alone, for a caller that has already authorized
+   * the write: a Space's default, which WorkspaceDO authorizes from the Space
+   * rows because this parent holds no current copy of a Space's audience.
+   */
+  writeSidekickRecommendation(sidekickId: string, attached: boolean): void {
+    if (attached) {
+      this.sql.exec(`INSERT OR IGNORE INTO parent_sidekicks (parent_id, sidekick_id, attached_at) VALUES (?, ?, ?)`,
+        this.parentId, sidekickId, Date.now());
+    } else {
+      this.sql.exec(`DELETE FROM parent_sidekicks WHERE parent_id = ? AND sidekick_id = ?`, this.parentId, sidekickId);
+    }
   }
 
   // ---------------------------------------------------------------------------

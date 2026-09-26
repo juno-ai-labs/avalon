@@ -499,10 +499,11 @@ export class SpaceService {
   /**
    * Add a resource or a Sidekick every member Channel inherits.
    *
-   * A resource is one WorkspaceDO registration, which both records the default
-   * and stages and fences its delivery. A Sidekick is also recommended on the
-   * Space's hosted parent first, because that is the list a Channel created in
-   * the Space reads. The audience preflight runs before either: the full
+   * One WorkspaceDO call records the default and stages and fences its
+   * delivery; for a Sidekick it also writes the recommendation a Channel
+   * created in the Space reads from the Space's hosted parent, authorized from
+   * the Space rows like every other Space write. The audience preflight runs
+   * first: the full
    * effective audience of every member Channel has to fit inside what the
    * resource or Sidekick admits, and a default that fails that test must not be
    * published at all.
@@ -510,28 +511,22 @@ export class SpaceService {
   async addDefault(spaceId: SpaceId, kind: SpaceDefaultKind, targetId: string): Promise<SpaceSummary> {
     const space = await this.editable(spaceId);
     if (kind === "resource") {
-      await new ResourceService(this.env, this.auth).get(targetId);
+      await new ResourceService(this.env, this.auth).getAttachable(targetId);
       await this.assertResourceAudience(space, targetId);
     } else {
       await this.assertSidekickScope(targetId);
     }
-    await this.setDefaultAttachment(spaceId, space.name, kind, targetId, true);
-    try {
-      const result = WorkspaceSpaceDefaultResultSchema.parse(await (await this.workspace()).addSpaceDefault({
-        workspaceId: asWorkspaceId(this.auth.workspaceId),
-        userId: asUserId(this.auth.userId),
-        spaceId,
-        kind,
-        targetId,
-      }));
-      if (!result.ok) {
-        throw spaceRefusal(result.code, space.name, result.unreachableUserIds, result.blockedWorkstreamIds);
-      }
-      return result.space;
-    } catch (error) {
-      await this.setDefaultAttachment(spaceId, space.name, kind, targetId, false);
-      throw error;
+    const result = WorkspaceSpaceDefaultResultSchema.parse(await (await this.workspace()).addSpaceDefault({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+      spaceId,
+      kind,
+      targetId,
+    }));
+    if (!result.ok) {
+      throw spaceRefusal(result.code, space.name, result.unreachableUserIds, result.blockedWorkstreamIds);
     }
+    return result.space;
   }
 
   /**
@@ -544,42 +539,13 @@ export class SpaceService {
    */
   async removeDefault(spaceId: SpaceId, kind: SpaceDefaultKind, targetId: string): Promise<SpaceSummary> {
     const space = await this.editable(spaceId);
-    await this.setDefaultAttachment(spaceId, space.name, kind, targetId, false);
-    try {
-      return this.settled(await (await this.workspace()).removeSpaceDefault({
-        workspaceId: asWorkspaceId(this.auth.workspaceId),
-        userId: asUserId(this.auth.userId),
-        spaceId,
-        kind,
-        targetId,
-      }), space.name);
-    } catch (error) {
-      await this.setDefaultAttachment(spaceId, space.name, kind, targetId, true);
-      throw error;
-    }
-  }
-
-  private async setDefaultAttachment(
-    spaceId: SpaceId,
-    spaceName: string,
-    kind: SpaceDefaultKind,
-    targetId: string,
-    attached: boolean,
-  ): Promise<void> {
-    // A resource default lives only in WorkspaceDO's registry.
-    if (kind === "resource") return;
-    await this.throughSpaceAuthority(
+    return this.settled(await (await this.workspace()).removeSpaceDefault({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
       spaceId,
-      spaceName,
-      attached ? "attach_default_sidekick" : "detach_default_sidekick",
-      async () => (await this.spaceParent()).setSidekickRecommendation({
-        workspaceId: this.auth.workspaceId,
-        parentId: spaceId,
-        userId: this.auth.userId,
-        sidekickId: targetId,
-        attached,
-      }),
-    );
+      kind,
+      targetId,
+    }), space.name);
   }
 
   /**
@@ -812,10 +778,9 @@ export class SpaceService {
    * One piece of work against the Space's *own* authority, with its failure
    * named.
    *
-   * The D1 anchor at creation and the Sidekick recommendation on the hosted
-   * parent are the two steps that leave this Worker, and a rejection that is
-   * not the object's own refusal crosses that hop as a bare `Error` with no
-   * code on it. Every one of those used to arrive at the route as
+   * The D1 anchor at creation is the one Space step outside WorkspaceDO, and
+   * a rejection there that is not its own refusal arrives as a bare `Error`
+   * with no code on it. Every one of those used to arrive at the route as
    * `internal_error` — the same word the Worker uses for every unhandled
    * failure it has — so a Space whose authority could not answer was
    * indistinguishable in a log from a bug in the route beside it.
@@ -860,16 +825,6 @@ export class SpaceService {
       conversationObjectName(
         this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId), workstreamId,
       ),
-    );
-  }
-
-  /** The Organization object, which hosts every Space's parent. */
-  private spaceParent() {
-    return durableObjectStubForWorkspace(
-      this.env,
-      this.env.WORKSPACE_DOS,
-      this.auth.workspaceId,
-      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)),
     );
   }
 

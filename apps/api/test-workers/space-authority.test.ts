@@ -1639,7 +1639,9 @@ describe("WorkspaceDO space authority", () => {
     expect(await rows("SELECT parent_id, sidekick_id FROM parent_sidekicks ORDER BY parent_id")).toEqual([
       { parent_id: CHANNEL_A, sidekick_id: sidekickId },
       { parent_id: CHANNEL_B, sidekick_id: sidekickId },
-    ]);
+      // The Space's own recommendation, which a Channel born in it reads.
+      { parent_id: spaceId, sidekick_id: sidekickId },
+    ].sort((left, right) => left.parent_id.localeCompare(right.parent_id)));
     expect(await rows("SELECT workstream_id, state FROM space_default_targets ORDER BY workstream_id")).toEqual([
       { workstream_id: CHANNEL_A, state: "applied" },
       { workstream_id: CHANNEL_B, state: "applied" },
@@ -1683,13 +1685,46 @@ describe("WorkspaceDO space authority", () => {
     expect(added).toMatchObject({ ok: true });
 
     const rows = async (sql: string) => (await workspace().runInspectionSql({ sql, bindings: [] })).rows;
-    expect(await rows("SELECT parent_id FROM parent_sidekicks")).toEqual([]);
+    // Only the Space's own recommendation: neither Channel was written in place.
+    expect(await rows("SELECT parent_id FROM parent_sidekicks")).toEqual([{ parent_id: spaceId }]);
     expect(await rows("SELECT workstream_id, state FROM space_default_targets ORDER BY workstream_id")).toEqual([
       { workstream_id: CHANNEL_A, state: "pending" },
       { workstream_id: CHANNEL_B, state: "pending" },
     ]);
     expect(await rows("SELECT workstream_id FROM space_default_publications ORDER BY workstream_id"))
       .toEqual([{ workstream_id: CHANNEL_A }, { workstream_id: CHANNEL_B }]);
+  });
+
+  it("given a participant added after creation, when they add and remove a Sidekick default, then the Space's recommendation follows", async () => {
+    const sidekickId = "00000000-0000-7000-8000-00000000cf1c";
+    const spaceId = await reserve("Hiring", "personal");
+    await workspace().applyMemberStatus({
+      workspaceId: WORKSPACE_ID, sequence: 1, removed: false,
+      relationship: { workspaceId: WORKSPACE_ID, userId: MEMBER, accessClass: "member", role: "member",
+        status: "active", incarnation: "existing-member", revision: 1 },
+    });
+    // The audience lives in the Space rows alone; the Space's hosted parent
+    // still knows only its creator, so authorizing there would refuse MEMBER.
+    await workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      spaceId,
+      operationId: "00000000-0000-7000-8000-00000000cf1d",
+      audience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
+    });
+    const rows = async () => (await workspace().runInspectionSql({
+      sql: "SELECT sidekick_id FROM parent_sidekicks WHERE parent_id = ?", bindings: [spaceId],
+    })).rows;
+
+    await expect(workspace().addSpaceDefault({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId, kind: "sidekick", targetId: sidekickId,
+    })).resolves.toMatchObject({ ok: true });
+    expect(await rows()).toEqual([{ sidekick_id: sidekickId }]);
+
+    await expect(workspace().removeSpaceDefault({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId, kind: "sidekick", targetId: sidekickId,
+    })).resolves.toMatchObject({ ok: true });
+    expect(await rows()).toEqual([]);
   });
 
   it("given a Space id, when a Channel-only grant or invitation method is asked, then it is refused and writes nothing", async () => {
