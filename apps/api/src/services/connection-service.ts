@@ -23,6 +23,7 @@ import {
   assertGitHubCapabilitiesGranted,
   isFirefliesEventType,
   connectorCapabilitySupportsScope,
+  connectorObservationErrorCode,
   connectorScopeIsConnectable,
   createWebhookSecret,
   discoverGitHubConnectionRepositories,
@@ -85,7 +86,12 @@ import {
 } from "../lib/desktop-handoff";
 import { createGitHubInstallState } from "../lib/github-install-state";
 import { createRegionRoutedState } from "../lib/region-routed-state";
-import { validateUnstoredConnectorCredential, withAuthorizedConnection } from "./connector-connection-access";
+import {
+  isReconnectRequiredConnectorError,
+  validateUnstoredConnectorCredential,
+  withAuthorizedConnection,
+} from "./connector-connection-access";
+import { paginatedToolNames } from "./tool-pagination";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { GitHubRoutingService } from "./github-routing-service";
@@ -99,7 +105,7 @@ import {
   telemetryCountBucket,
   telemetryJourneyDuration,
 } from "../telemetry/product-usage";
-import { publishWorkspaceSync } from "./workspace-realtime-service";
+import { CONNECTION_SYNC_TOPICS, publishWorkspaceSync } from "./workspace-realtime-service";
 import { persistNormalizedActivity } from "./normalized-activity-service";
 import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 import { WorkstreamObjectClient } from "./workstream-object-client";
@@ -131,14 +137,19 @@ const capabilityScopes: Record<string, readonly string[]> = {
   "sheets.write": GoogleCapabilityScopes.sheetsWrite,
 };
 
-async function publishConnectorWorkspaceSync(env: Env, workspaceId: string): Promise<void> {
+/**
+ * Tell the connection's audience it changed: its owner when it is personal,
+ * everyone when it is the Organization's (`WorkspaceDO.publishSync` reads
+ * which from the connection's row).
+ *
+ * Only for a change no `/connections` request's middleware publishes: an OAuth
+ * completion (a provider's redirect, with no session; the Canva loopback
+ * shares its code) and background discovery. A request's own write is
+ * published once, after its response, by `workspaceRealtimeInvalidation`.
+ */
+async function publishConnectorWorkspaceSync(env: Env, workspaceId: string, connectionId: string): Promise<void> {
   try {
-    await publishWorkspaceSync(env, workspaceId, [
-      "connector_connections",
-      "resources",
-      "automations",
-      "digest_schedule",
-    ]);
+    await publishWorkspaceSync(env, workspaceId, CONNECTION_SYNC_TOPICS, { connectionId });
   } catch (error) {
     // Connector authorization is already committed and must not be reported as
     // failed merely because a hibernating sync object was briefly unavailable.
@@ -501,12 +512,89 @@ export class ConnectionService {
       { workspaceId: auth.workspaceId, userId: auth.userId },
       rows.map((row) => ({ id: String(row.id), connector_type: row.connector_type, status: row.status })),
     );
+    const adapterFor = this.registeredAdapters();
     return rows.map((row) => connectionFromRow({
       ...row,
       owner_name: typeof row.owner_user_id === "string"
         ? ownerNames.get(row.owner_user_id) ?? null
         : null,
-    }, userDelivery.get(String(row.id)) ?? null));
+    }, userDelivery.get(String(row.id)) ?? null, this.listedToolCount(auth.workspaceId, row, adapterFor)));
+  }
+
+  /**
+   * The Tools column for one listed row, without leaving this request.
+   *
+   * Opening Connections used to cost the list plus one `tool-count` request per
+   * row, each waiting on the list and some of them calling a third party. A
+   * fixed tool surface is a pure function of the catalog and the row's grants,
+   * so it is counted here. A discovered one is whatever its last successful
+   * discovery stored (a failed one clears it); a row with no count has one
+   * discovery started behind this response, whose answer reaches open clients
+   * through the `connector_connections` topic. One, ever: the attempt is
+   * recorded on the row before it runs, so a discovery that fails is not
+   * retried behind every later list — that would put a provider call behind
+   * each open again, only hidden. After that the paths that already discover
+   * (authorization, Test, the tools pane, the per-row endpoint) are the only
+   * refresh. Nothing here re-discovers a count it already has, because a staleness window is a
+   * limit whose number is the team's to choose
+   * (docs/adding-security-defensive-and-other-limits.md), and every path that
+   * can change the count already refreshes it (docs/connectors.md#settings-tool-counts).
+   *
+   * A connector this region does not register is static configuration, not an
+   * event, so it is reported on the row (`connector_unavailable`) rather than
+   * logged on every list.
+   */
+  private listedToolCount(
+    workspaceId: string,
+    row: Record<string, unknown>,
+    adapterFor: (connectorType: string) => ResolvedConnectorAdapter | null,
+  ): Pick<Connection, "toolCount" | "toolCountMissing"> {
+    if (row.status === "disabled") return { toolCount: null, toolCountMissing: "disabled" };
+    const adapter = adapterFor(String(row.connector_type));
+    if (!adapter) return { toolCount: null, toolCountMissing: "connector_unavailable" };
+    const scope: Scope = row.scope === "workspace" ? "workspace" : "personal";
+    const granted = parseJson<string[]>(row.granted_scopes_json, []);
+    if (!dynamicConnectorCapability(adapter, scope, granted)) {
+      return { toolCount: offeredStaticToolCount(adapter, scope, granted), toolCountMissing: null };
+    }
+    if (typeof row.discovered_tool_count === "number") {
+      return { toolCount: row.discovered_tool_count, toolCountMissing: null };
+    }
+    if (row.tool_count_backfill_attempted_at != null) return { toolCount: null, toolCountMissing: "not_counted" };
+    runtimeDeferral(this.backfillDiscoveredToolCount(workspaceId, String(row.id)));
+    return { toolCount: null, toolCountMissing: "counting" };
+  }
+
+  /**
+   * The list's one discovery for a never-discovered row. Claimed with a
+   * returned witness before any provider call, so concurrent lists — every
+   * member's window focusing at once — start it once between them, and a
+   * failure leaves the claim in place.
+   */
+  private async backfillDiscoveredToolCount(workspaceId: string, connectionId: string): Promise<void> {
+    try {
+      const claimed = await this.env.DB.prepare(
+        `UPDATE connector_connections SET tool_count_backfill_attempted_at = ?
+          WHERE id = ? AND workspace_id = ? AND status <> 'disabled'
+            AND discovered_tool_count IS NULL AND tool_count_backfill_attempted_at IS NULL
+          RETURNING id`,
+      ).bind(nowIso(), connectionId, workspaceId).first<{ id: string }>();
+      if (claimed?.id !== connectionId) return;
+    } catch (error) {
+      logWarn(this.env, "connection_tool_count_refresh_failed", {
+        connection_id: connectionId,
+        code: diagnosticErrorCode(error, "backfill_claim_failed"),
+      });
+      return;
+    }
+    await this.refreshDiscoveredToolCount(workspaceId, connectionId);
+  }
+
+  /** The registry's adapters by type, read once for a whole list rather than scanned per row. */
+  private registeredAdapters(): (connectorType: string) => ResolvedConnectorAdapter | null {
+    const registry = this.registry();
+    const registered = new Set(registry.list().map((manifest) => manifest.type));
+    return (connectorType) => registered.has(connectorType) ? registry.get(connectorType) : null;
   }
 
   /**
@@ -556,30 +644,150 @@ export class ConnectionService {
     return rows.filter((row) => row.status !== "disabled" || retained.has(String(row.id)));
   }
 
+  /**
+   * One connection's count, read live. Kept for desktops released before
+   * `GET /connections` carried the count; the current desktop never calls it.
+   * A discovery made here is stored like any other, so an older client's read
+   * also keeps the list's count current.
+   */
   async getToolCount(id: string, signal: AbortSignal): Promise<{ count: number }> {
     const connection = await this.loadVisible(id);
     this.assertConnectionEnabled(connection);
     const adapter = this.registry().get(connection.connector_type);
-    const granted = new Set(parseJson<string[]>(connection.granted_scopes_json, []));
-    const dynamic = adapter.dynamicAgentTools;
-    const definitions = dynamicConnectorCapability(adapter, connection.scope, [...granted])
-      ? await withSettingsInventoryDeadline(async (inventorySignal) => withAuthorizedConnection(
+    const granted = parseJson<string[]>(connection.granted_scopes_json, []);
+    if (!dynamicConnectorCapability(adapter, connection.scope, granted)) {
+      return { count: offeredStaticToolCount(adapter, connection.scope, granted) };
+    }
+    const count = await this.discoverToolCount(connection, adapter, granted, signal);
+    await this.storeDiscoveredToolCount(connection, count);
+    return { count };
+  }
+
+  /**
+   * Run the discovery an activation runs and count what it would expose: the
+   * live inventory through the credential door, validated exactly as
+   * `load_plugin` validates it, so a name collision refuses here too rather
+   * than being counted.
+   *
+   * A discovery that fails clears the stored count (see
+   * `forgetDiscoveredToolCount`) before the failure reaches its caller.
+   */
+  private async discoverToolCount(
+    connection: StoredConnection,
+    adapter: ResolvedConnectorAdapter,
+    granted: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<number> {
+    try {
+      const definitions = await withSettingsInventoryDeadline(async (inventorySignal) => withAuthorizedConnection(
+        this.env,
+        { connection: await this.context(connection), adapter, signal: inventorySignal },
+        async (authorized) => validateDynamicConnectorTools(
           this.env,
-          { connection: await this.context(connection), adapter, signal: inventorySignal },
-          async (authorized) => validateDynamicConnectorTools(
-            this.env,
-            adapter,
-            connection.scope,
-            [...granted],
-            stableConnectionWireName(connection.model_plugin_id),
-            await dynamic!.discover(authorized, inventorySignal),
-          ),
-        ), signal)
-      : adapter.agentPlugin.tools;
-    return {
-      count: definitions.filter((tool) => granted.has(tool.capability)
-        && connectorCapabilitySupportsScope(adapter, tool.capability, connection.scope)).length,
-    };
+          adapter,
+          connection.scope,
+          granted,
+          stableConnectionWireName(connection.model_plugin_id),
+          await adapter.dynamicAgentTools!.discover(authorized, inventorySignal),
+        ),
+      ), signal);
+      return grantedToolCount(adapter, connection.scope, granted, definitions);
+    } catch (error) {
+      // A caller that went away is not evidence about the provider.
+      if (!signal?.aborted) await this.forgetDiscoveredToolCount(connection, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Clear a discovered count a discovery just failed to confirm, so the row
+   * reads "not counted" rather than an old number beside a healthy badge. A
+   * timeout, a provider error, or `validateDynamicConnectorTools` refusing a
+   * name collision all leave the connection offering the agent nothing this
+   * count describes, and none of them moves the row's status. An authorization
+   * refusal is the one exception: the credential door has already marked the
+   * row `needs_reconnect`, which is the truthful signal, and the count is what
+   * a reconnect to the same account will offer again. Fenced like any other
+   * write, so it never clears a count a newer policy or reconnect stored.
+   */
+  private async forgetDiscoveredToolCount(connection: StoredConnection, error: unknown): Promise<void> {
+    if (isReconnectRequiredConnectorError(error)) return;
+    try {
+      await this.storeDiscoveredToolCount(connection, null);
+    } catch (clearError) {
+      logWarn(this.env, "connection_tool_count_clear_failed", {
+        connection_id: connection.id,
+        code: diagnosticErrorCode(clearError, "clear_failed"),
+      });
+    }
+  }
+
+  /**
+   * Store what a discovery found and tell open clients when it moved.
+   *
+   * Fenced on the grants, configuration and provider account the discovery
+   * ran under: a custom MCP policy saved, or a reconnect that changed the
+   * grants or the account, while this discovery was in flight has already
+   * changed what the count means, so the late answer is dropped rather than
+   * written over the newer truth. A token alone is not fenced: a new token for
+   * the same account and grants lists the same tools, and polls and the
+   * discovery's own token refresh rewrite the row, so fencing on `updated_at`
+   * or the credential would drop good counts. The
+   * `IS NOT` keeps an unchanged count from publishing a topic every client
+   * would refetch the list for. `null` is a failed discovery clearing the
+   * count, under the same fence and the same publish.
+   */
+  private async storeDiscoveredToolCount(connection: StoredConnection, count: number | null): Promise<void> {
+    const changed = await this.env.DB.prepare(
+      `UPDATE connector_connections SET discovered_tool_count = ?
+        WHERE id = ? AND workspace_id = ? AND status <> 'disabled'
+          AND granted_scopes_json = ? AND config_json = ? AND provider_account_id IS ?
+          AND discovered_tool_count IS NOT ?
+        RETURNING id`,
+    ).bind(
+      count,
+      connection.id,
+      connection.workspace_id,
+      String(connection.granted_scopes_json),
+      String(connection.config_json),
+      connection.provider_account_id,
+      count,
+    ).first<{ id: string }>();
+    if (changed?.id !== connection.id) return;
+    try {
+      await publishWorkspaceSync(this.env, connection.workspace_id, ["connector_connections"], { connectionId: connection.id });
+    } catch (error) {
+      // The count is stored; a client that missed this push reads it on its
+      // next list, which focus already triggers.
+      logWarn(this.env, "connection_tool_count_publish_failed", {
+        connection_id: connection.id,
+        code: diagnosticErrorCode(error, "publish_failed"),
+      });
+    }
+  }
+
+  /**
+   * Discover and store a connection's count in the background, after whatever
+   * changed it has answered. Every failure is logged by name and otherwise
+   * swallowed: the count is a Settings label, and the work that scheduled
+   * this — an authorization, a Test, a list — has already succeeded.
+   */
+  private async refreshDiscoveredToolCount(workspaceId: string, connectionId: string): Promise<void> {
+    try {
+      const connection = await this.env.DB.prepare(
+        `SELECT * FROM connector_connections WHERE id = ? AND workspace_id = ? AND status <> 'disabled'`,
+      ).bind(connectionId, workspaceId).first<StoredConnection>();
+      if (!connection) return;
+      const adapter = this.registry().get(connection.connector_type);
+      const granted = parseJson<string[]>(connection.granted_scopes_json, []);
+      if (!dynamicConnectorCapability(adapter, connection.scope, granted)) return;
+      await this.storeDiscoveredToolCount(connection, await this.discoverToolCount(connection, adapter, granted));
+    } catch (error) {
+      logWarn(this.env, "connection_tool_count_refresh_failed", {
+        connection_id: connectionId,
+        code: toolDiscoveryFailureCode(error),
+      });
+    }
   }
 
   async getGitHubRepositoryAccess(id: string): Promise<GitHubRepositoryAccessSettings> {
@@ -1060,7 +1268,7 @@ export class ConnectionService {
       { provider: "google", scope: stateData.scope, capabilities: stateData.capabilities, providerAccountId: account.providerAccountId },
     ));
     if (attemptId) await this.finishOAuthAttempt(String(row.workspace_id), attemptId, "succeeded", { connectionId });
-    await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
+    await publishConnectorWorkspaceSync(this.env, String(row.workspace_id), connectionId);
     return this.connectorAttemptTarget({
       provider: "google",
       status: "succeeded",
@@ -1431,7 +1639,7 @@ export class ConnectionService {
       { provider: "github", scope: stateData.scope, capabilities: stateData.capabilities, installationId: providerAccountId },
     ));
     if (attemptId) await this.finishOAuthAttempt(String(row.workspace_id), attemptId, "succeeded", { connectionId });
-    await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
+    await publishConnectorWorkspaceSync(this.env, String(row.workspace_id), connectionId);
     return this.connectorAttemptTarget({
       provider: "github",
       status: "succeeded",
@@ -1697,7 +1905,7 @@ export class ConnectionService {
           connectionId,
           row.workspace_id,
         ).run();
-        await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
+        await publishConnectorWorkspaceSync(this.env, String(row.workspace_id), connectionId);
         throw error;
       }
     }
@@ -1729,7 +1937,7 @@ export class ConnectionService {
           connectionId,
           row.workspace_id,
         ).run();
-        await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
+        await publishConnectorWorkspaceSync(this.env, String(row.workspace_id), connectionId);
         throw error;
       }
     }
@@ -1746,7 +1954,7 @@ export class ConnectionService {
           `UPDATE connector_connections SET status = 'error', error_json = ?, updated_at = ?
            WHERE id = ? AND workspace_id = ? AND connector_type = 'slack'`,
         ).bind(JSON.stringify({ code: "slack_route_registration_failed", message: error instanceof Error ? error.message : "Slack route registration failed", retryable: true }), nowIso(), connectionId, row.workspace_id).run();
-        await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
+        await publishConnectorWorkspaceSync(this.env, String(row.workspace_id), connectionId);
         throw error;
       }
       try {
@@ -1789,7 +1997,7 @@ export class ConnectionService {
           row.workspace_id,
           CUSTOM_MCP_CONNECTOR_TYPE,
         ).run();
-        await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
+        await publishConnectorWorkspaceSync(this.env, String(row.workspace_id), connectionId);
         throw customMcpUnreachable(error);
       }
     }
@@ -1801,7 +2009,13 @@ export class ConnectionService {
       { provider, scope: stateData.scope, capabilities: grantedCapabilities, providerAccountId },
     ));
     if (attemptId) await this.finishOAuthAttempt(String(row.workspace_id), attemptId, "succeeded", { connectionId });
-    await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
+    await publishConnectorWorkspaceSync(this.env, String(row.workspace_id), connectionId);
+    // An authorization can change what a discovered connection exposes — new
+    // grants, a different account, a server that changed since — so its count
+    // is rediscovered behind the handoff rather than in front of it.
+    if (dynamicConnectorCapability(adapter, stateData.scope, grantedCapabilities)) {
+      runtimeDeferral(this.refreshDiscoveredToolCount(String(row.workspace_id), connectionId));
+    }
     return this.connectorAttemptTarget({
       provider,
       status: "succeeded",
@@ -2165,6 +2379,11 @@ export class ConnectionService {
       id,
     ).run();
     const appliedHealth = result.ok ? "healthy" : result.reconnectRequired ? "needs_reconnect" : "error";
+    // Test is the one control a person has for "look at this connection
+    // again", so a passing one also refreshes a discovered count.
+    if (result.ok && dynamicConnectorCapability(adapter, connection.scope, parseJson(connection.granted_scopes_json, []))) {
+      runtimeDeferral(this.refreshDiscoveredToolCount(connection.workspace_id, id));
+    }
     await this.emitConnectorAction(
       connection,
       "test",
@@ -2190,7 +2409,6 @@ export class ConnectionService {
         const installation = await (await this.workspaceObject(connection.workspace_id)).changeConnectorInstallation({ workspaceId: connection.workspace_id, connectionId: id, action: "disconnect" });
         runtimeDeferral(this.recordInstallationAudit(installation, "connector.installation.disconnect"));
         await enqueueConnectorInstallation(this.env, installation);
-        await publishConnectorWorkspaceSync(this.env, connection.workspace_id);
       }
       const mayRevokeRemotely = connection.connector_type !== "google" && !managedInstallation;
       if (mayRevokeRemotely && adapter.revoke) {
@@ -2603,7 +2821,6 @@ export class ConnectionService {
     }
     await this.syncConnectorIngressRoute(installation.connectionId);
     await enqueueConnectorInstallation(this.env, installation);
-    await publishConnectorWorkspaceSync(this.env, auth.workspaceId);
     const connection = (await this.list()).find((item) => item.id === installation.connectionId);
     if (!connection) throw new ApiError(409, "connector_setup_superseded", "The connection changed during setup. Reload Settings.");
     // The one moment the signing secret is allowed to leave the region in
@@ -2656,7 +2873,6 @@ export class ConnectionService {
     runtimeDeferral(this.recordInstallationAudit(installation, `connector.installation.${input.action}`));
     await this.syncConnectorIngressRoute(id);
     await enqueueConnectorInstallation(this.env, installation);
-    await publishConnectorWorkspaceSync(this.env, connection.workspace_id);
     return { installation };
   }
 
@@ -2702,7 +2918,6 @@ export class ConnectionService {
     }
     runtimeDeferral(this.recordInstallationAudit(updated, "connector.credentials.replaced"));
     await enqueueConnectorInstallation(this.env, updated);
-    await publishConnectorWorkspaceSync(this.env, connection.workspace_id);
     return { installation: updated };
   }
 
@@ -2852,6 +3067,14 @@ export class ConnectionService {
       tools = inventory.tools;
     } catch (error) {
       toolsUnavailable = connectorFailureMessage(error);
+      if (connection.status !== "disabled") await this.forgetDiscoveredToolCount(connection, error);
+    }
+    // This read is a discovery already paid for: the same `tools/list` under
+    // the same policy selection an activation applies, so the tools it admits
+    // are the connection's count. Stored before answering, so a policy save
+    // that re-reads through here hands the list its narrowed number at once.
+    if (toolsUnavailable === null && connection.status !== "disabled") {
+      await this.storeDiscoveredToolCount(connection, tools.filter((tool) => tool.available).length);
     }
     return {
       connectionId: String(connection.id),
@@ -2911,7 +3134,8 @@ export class ConnectionService {
       serverUrl: config.serverUrl,
       toolPolicy,
     }));
-    await publishConnectorWorkspaceSync(this.env, auth.workspaceId);
+    // Read back before answering: the read stores the narrowed tool count, so
+    // the list a client refetches on the middleware's publish already has it.
     return this.getCustomMcpSettings(id);
   }
 
@@ -3902,7 +4126,9 @@ export class ConnectionService {
     const settled = finished.attempt;
     await this.emitOAuthOutcome(settled).catch(() => undefined);
     try {
-      await publishWorkspaceSync(this.env, settled.workspaceId, ["connector_oauth_attempts"]);
+      // The attempt is the person's who started it; nobody else polls it.
+      await publishWorkspaceSync(this.env, settled.workspaceId, ["connector_oauth_attempts"],
+        { audienceUserIds: [settled.userId] });
     } catch (error) {
       // The attempt is already durably settled. Reconnect's full workspace
       // snapshot provides another reconciliation edge if this live signal
@@ -4702,6 +4928,45 @@ export const __connectionServiceTesting = {
   oauthAttemptIdValue,
   assertLinearNativeAgentCapabilityEnabled,
 };
+
+/** The tools among `definitions` this connection's grants and scope admit. */
+function grantedToolCount(
+  adapter: ResolvedConnectorAdapter,
+  scope: Scope,
+  granted: readonly string[],
+  definitions: readonly { capability: string }[],
+): number {
+  return grantedDefinitions(adapter, scope, granted, definitions).length;
+}
+
+function grantedDefinitions<Definition extends { capability: string }>(
+  adapter: ResolvedConnectorAdapter,
+  scope: Scope,
+  granted: readonly string[],
+  definitions: readonly Definition[],
+): Definition[] {
+  return definitions.filter((tool) => granted.includes(tool.capability)
+    && connectorCapabilitySupportsScope(adapter, tool.capability, scope));
+}
+
+/**
+ * The tools a fixed-surface connection offers the agent: each authored
+ * definition its grants and scope admit, as activation expands it — a
+ * paginated one arrives with its generated page tools (`paginatedToolNames`,
+ * the rule `withToolPagination` builds from). A discovered surface is not
+ * expanded, because activation does not expand it either.
+ */
+function offeredStaticToolCount(adapter: ResolvedConnectorAdapter, scope: Scope, granted: readonly string[]): number {
+  return grantedDefinitions(adapter, scope, granted, adapter.agentPlugin.tools)
+    .reduce((count, definition) => count + paginatedToolNames(definition).length, 0);
+}
+
+/** A discovery failure by name: the adapter's own code, the deadline, or the platform's. */
+function toolDiscoveryFailureCode(error: unknown): string {
+  if (error instanceof ConnectorError) return connectorObservationErrorCode(error);
+  if (error instanceof Error && error.name === "TimeoutError") return "inventory_deadline_exceeded";
+  return diagnosticErrorCode(error, "tool_discovery_failed");
+}
 
 /** Reuse the existing Settings MCP inventory budget for every tool inventory read. */
 function withSettingsInventoryDeadline<T>(

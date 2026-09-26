@@ -851,6 +851,27 @@ export const ConnectionSchema = z.object({
     label: z.string().min(1).max(80),
     description: z.string().min(1).max(240),
   }).nullable().default(null),
+  /**
+   * How many agent tools this connection exposes, so Settings can draw the
+   * Tools column from this one response rather than one request per row.
+   *
+   * A connector with a fixed tool surface is counted from its catalog and
+   * grants, with the page tools activation generates beside a paginated one.
+   * One whose tools come from live provider discovery reports the count its
+   * last successful discovery found. Null means there is no count to show, and
+   * `toolCountMissing` says why; it is never a stand-in for zero. Defaults to
+   * null so a region that does not send it yet still parses.
+   */
+  toolCount: z.number().int().nonnegative().nullable().default(null),
+  /**
+   * Why `toolCount` is null, so Settings can say so rather than draw a bare
+   * dash: `disabled`; `connector_unavailable` (this region does not register
+   * the connector); `counting` (this list just started the connection's one
+   * background discovery); `not_counted` (a discovered connection whose last
+   * discovery failed, or has not finished). Null whenever there is a count,
+   * and from a region that predates the field.
+   */
+  toolCountMissing: z.enum(["disabled", "connector_unavailable", "counting", "not_counted"]).nullable().default(null),
   lastSyncAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema
 });

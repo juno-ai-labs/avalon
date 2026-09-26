@@ -104,6 +104,12 @@ settings pane renders it beside the endpoint, the authentication mode, and the
 policy control. A tool the policy withholds stays listed and marked, so a person
 can see what is being held back rather than watching it disappear.
 
+That read is also a discovery, so it stores the number of tools the policy
+admits as the connection's tool count before answering; a policy save reads the
+catalog back through the same path, which is how the Connections list shows the
+narrowed count straight away. See
+[`connectors.md`](connectors.md#settings-tool-counts).
+
 Settings and the public support guide explain that admitted tools execute within
 the connection's granted access and the person's request, without per-tool
 confirmation prompts. Server annotations remain informational and cannot grant

@@ -82,6 +82,8 @@ const detail = {
     status: 'needs_reconnect' as const,
     settingsKind: null,
     userDelivery: null,
+    toolCount: null,
+    toolCountMissing: null,
     lastSyncAt: null,
     createdAt: timestamp,
   }],

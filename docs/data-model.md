@@ -271,7 +271,8 @@ common directory, per-viewer overlays, pins, inverted indexes, activity,
 opportunities, receipts, consumed socket tickets, Channel and Space parent
 state in the `parent_*` tables, and a bounded monotonic
 `workspace_sync_events` log. A sync row names
-typed query topics; it never embeds the underlying row. Membership, invitations,
+typed query topics, and for a per-person change the people it was sent to; it
+never embeds the underlying row. Membership, invitations,
 user profiles, placement routes, and migration control remain D1 authorities.
 
 `WorkspaceDO.parent_metadata` is different: one row per Channel or Space, it is
@@ -871,7 +872,14 @@ column catalog; what follows is only what WorkspaceDO still holds.
   capabilities, cursors, and health. Migration
   `0072_notion_connection_scope_split.sql` uses the capability dialect to move
   historical Notion public-integration bot rows from personal to workspace
-  scope while preserving new `notion.personal.mcp` ownership.
+  scope while preserving new `notion.personal.mcp` ownership. WorkspaceDO
+  migration 73 adds `discovered_tool_count`, the number of tools a connection
+  with a live-discovered tool surface exposed at its last discovery (NULL until
+  the first, and again after a discovery that failed for any reason but an
+  authorization refusal), and `tool_count_backfill_attempted_at`, which spends the
+  connection list's one background discovery;
+  [`connectors.md`](connectors.md#settings-tool-counts) owns when each is
+  written.
 
 - `slack_installation_routes` is the opaque Global team-to-region directory;
   `slack_user_links`, `slack_agent_sessions`, and durable `slack_ingress_jobs`

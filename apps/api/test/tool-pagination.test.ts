@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { asWorkspaceId } from "@rally/contracts";
 import { formatToolArgumentValidationError } from "@rally/agent-harness";
 import type { HarnessTool, HarnessToolContext } from "@rally/agent-harness";
-import { withToolPagination, type PaginationHost } from "../src/services/tool-pagination";
+import { paginatedToolNames, withToolPagination, type PaginationHost } from "../src/services/tool-pagination";
 
 // Projection-only tests. Receipt lifecycle and RPC are tested on real workerd.
 const context: HarnessToolContext = {
@@ -92,6 +92,24 @@ describe("model-facing authored pagination", () => {
     vi.mocked(authority.receipts.claimPage).mockRejectedValue(new Error("page_id_invalid: restart the read"));
     await expect(next.execute(input, context)).rejects.toThrow("page_id_invalid");
     expect(authority.receipts.claimPage).toHaveBeenCalledWith(expect.objectContaining(input));
+  });
+
+  it.each([
+    { name: "list_resources", sourceOnly: false, names: ["list_resources", "list_resources_next"] },
+    { name: "read_resource", sourceOnly: false, names: ["read_resource", "read_resource_next", "read_resource_previous"] },
+    { name: "search_resource", sourceOnly: true, names: ["search_resource"] },
+  ])("names the tools $name expands to, exactly as the expansion builds them", ({ name, sourceOnly, names }) => {
+    const source = tool(name);
+    if (sourceOnly) source.definition.pagination!.sourceOnly = true;
+    // Settings counts with the pure rule; activation builds with the wrapper.
+    expect(paginatedToolNames(source.definition)).toEqual(names);
+    expect(withToolPagination(source, host()).map((expanded) => expanded.definition.name)).toEqual(names);
+  });
+
+  it("names an unpaginated tool alone", () => {
+    const source = tool();
+    delete source.definition.pagination;
+    expect(paginatedToolNames(source.definition)).toEqual(["list_resources"]);
   });
 
   it("explains the correct source field for forward and backward resource reads", () => {

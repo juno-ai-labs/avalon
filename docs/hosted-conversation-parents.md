@@ -188,13 +188,21 @@ Most changes reach the row through the directory apply. Two do not, and the
 parent republishes the row itself when they happen: a breakout list that moved
 for someone (`advancePrivateChildrenVersion` notes whom; the row goes to that
 person's sockets), and the running background agents changing across a batch of
-child effects (compared before and after; the row goes to every socket). An
-import republishes the Channel's row once it lands, and a reader bringing a
-Channel to the foreground wakes its Main.
+child effects (compared before and after; the row goes to every reader). A
+batch of child effects collects both republishes into the same plan as its
+directory follow-ups, so the Channel goes out once per socket for the whole
+batch: `HostedParentHost.publishChannelRow` queues into that plan rather than
+sending, and whoever constructs the parent with a plan owns sending it
+(`receiveChildEffects`, through `afterParentWrite`). The reasoning is
+[`websocket-architecture.md`](websocket-architecture.md#who-the-workspace-socket-tells-and-how-often)'s.
+An import republishes the Channel's row once it lands, and a reader
+bringing a Channel to the foreground wakes its Main.
 
-Losing a Channel needs nothing new: the row is republished as a tombstone to a
-reader who can no longer see it, the client evicts its cached Channel, and the
-workspace socket stays open for the sidebar.
+Losing a Channel is its row's tombstone, sent to the people the write took it
+from and to nobody else: the client evicts its cached Channel, and the
+workspace socket stays open for the sidebar. Who that is, per kind of write,
+and why nobody who never saw the Channel is sent one, is in
+[`websocket-architecture.md`](websocket-architecture.md#who-the-workspace-socket-tells-and-how-often).
 
 The Channel control socket (`/parent-socket`, tagged `parent-control:<id>`)
 still works for desktops released before this and for the iOS client, and its
@@ -381,7 +389,8 @@ socket: each viewer's own breakouts per Channel, a roster change reaching only
 that breakout's members, running agents reaching every reader counted where
 each can look, a lost Channel tombstoned while the socket stays open, the
 current list after a resubscribe, nothing said for a pending parent, and Main
-woken by a foreground.
+woken by a foreground. `workspace-socket-fanout.test.ts` proves who else a row
+reaches ([`websocket-architecture.md`](websocket-architecture.md#testing)).
 `conversation-effect-queue.test.ts` proves directory and activity rows land in
 the write and a mention leaves on the Queue; `hosted-parent-outbox.test.ts`
 proves the drain's limits, the retry schedule, the `failed` state, the alarm's

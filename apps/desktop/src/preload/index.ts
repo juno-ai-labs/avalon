@@ -25,6 +25,12 @@ import {
 import type { DesktopSettingsSection } from '../common/settings';
 import { parseDesktopSettingsSection } from '../common/settings';
 import type { ThemeChoice } from '../common/themes';
+import {
+  WORKSPACE_SYNC_RELAY_IPC_CHANNELS,
+  createWorkspaceSyncRelayInbox,
+  isWorkspaceSyncRelayEvent,
+  type WorkspaceSyncSourceSnapshot,
+} from '../common/workspace-sync-relay';
 
 const deepLinkListeners = new Set<(navigation: DesktopDeepLinkNavigation) => void>();
 const queuedDeepLinks: DesktopDeepLinkNavigation[] = [];
@@ -45,6 +51,7 @@ function parseDeepLinkErrorNotice(raw: unknown): DesktopDeepLinkErrorNotice | nu
 const applicationForegroundListeners = new Set<(foregrounded: boolean) => void>();
 const realtimeSocketListeners = new Set<(event: DesktopRealtimeSocketEvent) => void>();
 const embeddedBrowserListeners = new Set<(state: EmbeddedBrowserState) => void>();
+const workspaceSyncInbox = createWorkspaceSyncRelayInbox();
 
 ipcRenderer.on('embedded-browser:state', (_event, raw: unknown) => {
   if (!raw || typeof raw !== 'object' || !('tabs' in raw) || !Array.isArray(raw.tabs)) return;
@@ -56,6 +63,14 @@ ipcRenderer.on(REALTIME_SOCKET_IPC_CHANNELS.event, (_event, rawEvent: unknown) =
   const parsed = parseRealtimeSocketEvent(rawEvent);
   if (!parsed) return;
   for (const listener of realtimeSocketListeners) listener(parsed);
+});
+
+// Installed before React starts, so relayed news that lands before the
+// settings provider listens is held for it rather than lost. Main built each
+// event from its own closed parse of the main window's publication, so this
+// checks only the structure the inbox reads.
+ipcRenderer.on(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.relayed, (_event, rawEvent: unknown) => {
+  if (isWorkspaceSyncRelayEvent(rawEvent)) workspaceSyncInbox.receive(rawEvent);
 });
 
 ipcRenderer.on('application:foreground-changed', (_event, rawForegrounded: unknown) => {
@@ -277,6 +292,11 @@ const bridge: RallyDesktopBridge = {
     ipcRenderer.on('session:changed', handler);
     return () => ipcRenderer.removeListener('session:changed', handler);
   },
+  publishWorkspaceSync: (publication) =>
+    ipcRenderer.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.publish, publication) as Promise<void>,
+  getWorkspaceSyncSource: () =>
+    ipcRenderer.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.source) as Promise<WorkspaceSyncSourceSnapshot>,
+  onWorkspaceSyncRelayed: (listener) => workspaceSyncInbox.subscribe(listener),
   openRealtimeSocket: (input) => ipcRenderer.invoke(REALTIME_SOCKET_IPC_CHANNELS.open, input) as Promise<void>,
   sendRealtimeSocket: (input) => ipcRenderer.invoke(REALTIME_SOCKET_IPC_CHANNELS.send, input) as Promise<void>,
   closeRealtimeSocket: (input) => ipcRenderer.invoke(REALTIME_SOCKET_IPC_CHANNELS.close, input) as Promise<void>,

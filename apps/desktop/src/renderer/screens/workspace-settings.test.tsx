@@ -20,7 +20,6 @@ const api = vi.hoisted(() => ({
   getWorkspaceMembers: vi.fn(),
   promoteWorkspaceGuest: vi.fn(),
   getConnections: vi.fn(),
-  getConnectionToolCount: vi.fn(),
   getGitHubRepositoryAccessSettings: vi.fn(),
   updateGitHubRepositoryAccessSettings: vi.fn(),
   getAvailableConnectorTypes: vi.fn(),
@@ -272,7 +271,6 @@ describe('Organization settings', () => {
     api.getWorkspaceMembers.mockResolvedValue([owner, member]);
     api.getWorkspaceInvitations.mockResolvedValue([invitation]);
     api.getConnections.mockResolvedValue([]);
-    api.getConnectionToolCount.mockResolvedValue(7);
     // Every existing test in this file was written before digestsEnabled
     // existed and expects the section to be there; a test that cares about it
     // being hidden overrides this with its own resolved value.
@@ -830,11 +828,12 @@ describe('Organization settings', () => {
 
   it('refreshes the count when a policy save finishes after returning to Connections', async () => {
     const connectionId = '00000000-0000-7000-8000-000000000030';
-    api.getConnections.mockResolvedValue([{
+    const listed = (toolCount: number) => [{
       id: connectionId, connectorType: 'custom_mcp', scope: 'workspace',
       displayName: 'Acme docs', capabilities: ['custom_mcp.tools'],
-      status: 'healthy', settingsKind: 'custom_mcp_tools',
-    }]);
+      status: 'healthy', settingsKind: 'custom_mcp_tools', toolCount,
+    }];
+    api.getConnections.mockResolvedValue(listed(2));
     const settings = {
       connectionId, connectionName: 'Acme docs', scope: 'workspace' as const,
       serverUrl: 'https://mcp.acme.test/mcp', authMode: 'headers' as const,
@@ -846,7 +845,6 @@ describe('Organization settings', () => {
     api.updateCustomMcpToolPolicy.mockImplementationOnce(() => new Promise((resolve) => {
       finishPolicySave = () => resolve({ ...settings, toolPolicy: 'read_only_tools' });
     }));
-    api.getConnectionToolCount.mockResolvedValue(2);
     renderSettings();
     const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
     fireEvent.click(await within(navigation).findByRole('button', { name: 'MCP tools' }));
@@ -860,7 +858,9 @@ describe('Organization settings', () => {
     const table = await screen.findByRole('table', { name: 'Organization connections' });
     expect(await within(table).findByRole('cell', { name: '2' })).toBeVisible();
 
-    api.getConnectionToolCount.mockResolvedValue(1);
+    // The save stores the narrowed count server-side; the list read after it
+    // is what carries the new number.
+    api.getConnections.mockResolvedValue(listed(1));
     await act(async () => finishPolicySave());
     expect(await within(table).findByRole('cell', { name: '1' })).toBeVisible();
     expect(within(table).queryByRole('cell', { name: '2' })).not.toBeInTheDocument();
@@ -1776,24 +1776,66 @@ describe('Organization settings', () => {
     expect(within(linearCard!).queryByRole('button', { name: 'Connect for organization' })).not.toBeInTheDocument();
   });
 
-  it('does not request tool inventories for disabled connections', async () => {
-    api.getConnections.mockResolvedValue([{
-      id: 'disabled-tools', modelPluginId: 'plugin_google', connectorType: 'google',
-      scope: 'you', displayName: 'Disabled Google', capabilities: ['gmail.read'], status: 'disabled',
-    }]);
+  it('draws each tool count from the connection list, with a dash where there is no count', async () => {
+    api.getConnections.mockResolvedValue([
+      {
+        id: 'static-tools', modelPluginId: 'plugin_google', connectorType: 'google',
+        scope: 'you', displayName: 'Google tools', capabilities: ['gmail.read'], status: 'healthy',
+        toolCount: 5,
+      },
+      {
+        id: 'empty-server', modelPluginId: 'plugin_custom_mcp', connectorType: 'custom_mcp',
+        scope: 'you', displayName: 'Empty server', capabilities: ['custom_mcp.tools'], status: 'healthy',
+        toolCount: 0,
+      },
+      {
+        id: 'never-discovered', modelPluginId: 'plugin_granola', connectorType: 'granola',
+        scope: 'you', displayName: 'Granola notes', capabilities: ['granola.personal.read'], status: 'healthy',
+        toolCountMissing: 'counting',
+      },
+      {
+        id: 'failed-discovery', modelPluginId: 'plugin_granola_2', connectorType: 'granola',
+        scope: 'you', displayName: 'Granola archive', capabilities: ['granola.personal.read'], status: 'healthy',
+        toolCountMissing: 'not_counted',
+      },
+      {
+        id: 'unregistered', modelPluginId: 'plugin_linear', connectorType: 'linear',
+        scope: 'you', displayName: 'Linear issues', capabilities: ['linear.read'], status: 'healthy',
+        toolCountMissing: 'connector_unavailable',
+      },
+      {
+        // As a region that predates the reason reports a disabled row.
+        id: 'disabled-tools', modelPluginId: 'plugin_google_2', connectorType: 'google',
+        scope: 'you', displayName: 'Disabled Google', capabilities: ['gmail.read'], status: 'disabled',
+      },
+    ]);
     renderSettings();
     openSettingsSection('Connections');
-    const row = (await screen.findByText('Disabled Google')).closest('tr')!;
-    expect(within(row).getByRole('cell', { name: '—' })).toBeVisible();
-    expect(api.getConnectionToolCount).not.toHaveBeenCalled();
-    expect(within(row).queryByText('Unavailable')).not.toBeInTheDocument();
+    const table = await screen.findByRole('table', { name: 'Personal connections' });
+    const row = (name: string) => within(table).getByText(name).closest('tr')!;
+
+    await waitFor(() => expect(within(row('Google tools')).getByRole('cell', { name: '5' })).toBeVisible());
+    // Zero is a count: a server that offers nothing reads 0, not a dash.
+    expect(within(row('Empty server')).getByRole('cell', { name: '0' })).toHaveTextContent(/^0$/);
+    // No count is not zero: each dash says which of its reasons it is.
+    const dash = (name: string, label: string) => {
+      const cell = within(row(name)).getByRole('cell', { name: label });
+      expect(cell).toHaveTextContent(/^—$/);
+      expect(cell).toHaveAttribute('title', label);
+    };
+    dash('Granola notes', 'No tool count yet: counting this connection’s tools');
+    dash('Granola archive', 'No tool count: the last tool discovery did not succeed');
+    dash('Linear issues', 'No tool count: this connector is not available in this region');
+    dash('Disabled Google', 'No tool count: this connection is disabled');
+    // One request draws the whole column.
+    expect(api.getConnections).toHaveBeenCalledTimes(1);
   });
 
-  it('refreshes tool counts on reveal and replaces stale counts when discovery fails', async () => {
+  it('shows the count a refetched list reports after the window is revealed again', async () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
     });
-    api.getConnections.mockResolvedValue([{
+    const listed = (toolCount: number) => [{
       id: 'tool-count-connection',
       modelPluginId: 'plugin_google',
       connectorType: 'google',
@@ -1801,25 +1843,19 @@ describe('Organization settings', () => {
       displayName: 'Google tools',
       capabilities: ['gmail.read'],
       status: 'healthy',
-    }]);
+      toolCount,
+    }];
+    api.getConnections.mockResolvedValue(listed(7));
     renderSettings(workspace, client);
     openSettingsSection('Connections');
     const table = await screen.findByRole('table', { name: 'Personal connections' });
     expect(await within(table).findByRole('cell', { name: '7' })).toBeVisible();
 
-    const countKey = ['connection-tool-count', 'tool-count-connection', ['gmail.read'], 'healthy'];
-    act(() => revealWindow());
-    expect(api.getConnectionToolCount).toHaveBeenCalledTimes(1);
-    ageCacheEntry(client, countKey, 30_000);
-    api.getConnectionToolCount.mockResolvedValue(9);
+    ageCacheEntry(client, ['connections'], 30_000);
+    api.getConnections.mockResolvedValue(listed(9));
     act(() => revealWindow());
     expect(await within(table).findByRole('cell', { name: '9' })).toBeVisible();
-
-    ageCacheEntry(client, countKey, 30_000);
-    api.getConnectionToolCount.mockRejectedValue(new Error('Provider unavailable'));
-    act(() => revealWindow());
-    expect(await within(table).findByRole('cell', { name: 'Unavailable' })).toBeVisible();
-    expect(within(table).queryByRole('cell', { name: '9' })).not.toBeInTheDocument();
+    expect(within(table).queryByRole('cell', { name: '7' })).not.toBeInTheDocument();
   });
 
   it('separates personal and organization connections into tables with scoped empty states', async () => {
@@ -1835,6 +1871,7 @@ describe('Organization settings', () => {
       status: 'healthy',
       lastSyncAt: null,
       createdAt: '2026-08-01T00:00:00.000Z',
+      toolCount: 7,
     }]);
 
     renderSettings();
@@ -2757,7 +2794,6 @@ describe('Closing the settings window with Escape', () => {
     api.getWorkspaceMembers.mockResolvedValue([owner]);
     api.getWorkspaceInvitations.mockResolvedValue([]);
     api.getConnections.mockResolvedValue([]);
-    api.getConnectionToolCount.mockResolvedValue(7);
     api.getAvailableConnectorTypes.mockResolvedValue([]);
     api.getTerminalWorkspaceSettings.mockResolvedValue({
       availability: 'supported', mode: 'trusted_only', revision: 1, verificationState: 'verified',

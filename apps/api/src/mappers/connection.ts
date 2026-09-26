@@ -19,6 +19,7 @@ const ConnectionRowSchema = z.object({
 export function connectionFromRow(
   input: unknown,
   userDelivery: Connection["userDelivery"] = null,
+  tools: Pick<Connection, "toolCount" | "toolCountMissing"> = { toolCount: null, toolCountMissing: null },
 ): Connection {
   const row = ConnectionRowSchema.parse(input);
   const grantedCapabilities: unknown = JSON.parse(row.granted_scopes_json);
@@ -39,6 +40,8 @@ export function connectionFromRow(
         ? "custom_mcp_tools"
         : null,
     userDelivery,
+    toolCount: tools.toolCount,
+    toolCountMissing: tools.toolCountMissing,
     lastSyncAt: row.last_sync_at,
     createdAt: row.created_at,
   } satisfies Record<keyof Connection, unknown>;
