@@ -24,6 +24,7 @@ before a search needs it.
 - `apps/api/src/services/search-indexing-pipeline.ts`: shared chunk planning and independently retriable batch indexing.
 - `apps/api/src/services/search-indexing-jobs.ts`: reference-only batch contracts and Queue publication.
 - `apps/api/src/services/search-document.ts`: canonical document, display and deletion contracts.
+- `apps/api/src/services/search-audience.ts`: the groups a row's `audience` names and the one place a group becomes its stored UUID.
 - `apps/api/src/services/search-embedding.ts`: pinned Qwen tokenizer and embedding integration.
 - `apps/api/src/services/semantic-chunks.ts`: recursive and sliding-window semantic chunks.
 - `apps/api/test/semantic-chunks.test.ts`: coverage, Unicode, overlap, and token budgets.
@@ -46,8 +47,8 @@ Hashing the complete semantic identity once keeps the name within Turbopuffer's
 [published 128-character namespace limit](https://turbopuffer.com/docs/write).
 A document records its source, canonical source ID, scope ID, substream, revision, text,
 the display a result renders (title, source label, time, transcript position, link URL,
-MIME type and archive state), and, for semantic records, embedding. The producing object
-writes the display beside the text from its own tables; a deletion watermark and a row
+MIME type and archive state), the groups that may read it (`audience`), and, for semantic records, embedding. The producing object
+writes the display and the audience beside the text from its own tables; a deletion watermark and a row
 written before the display existed carry none. `searchDocumentId` hashes the source, scope, and source ID into a
 stable ID within Turbopuffer's 64-byte string-ID limit. Updates use conditional
 writes. Deletion replaces the document with a content-free revision watermark,
@@ -163,6 +164,12 @@ trigger does not watch it**, so a write that flips it on an already-indexed row
 must enqueue `resource_search_versions` itself or the row stays searchable
 forever while absent from every other surface. WorkspaceDO migration 52 is the
 worked example.
+WorkspaceDO migration 76 widens that trigger to the inputs of a resource's
+`audience` (its uploader, attachment status, connection, and whether a Resend
+resource is an email) and adds triggers on `authorization_locations`, so an
+inventory that attaches or detaches a resource rewrites its rows. The inventory
+writer changes only the location rows that differ, so an unchanged inventory
+rewrites nothing.
 Duplicate description keys use the final occurrence, matching `JSON.parse`.
 Content hashes conservatively invalidate same-reference body replacements,
 including the one-time hash backfill during extraction.
@@ -345,6 +352,7 @@ reloaded from a canonical source.
 - Source loaders admit each candidate batch before rendering it. A new request admits again; an admitted result may finish after a concurrent revocation, which reaches the projection within its push delay rather than before the next page. A repeat served from the desktop's 30-second window is not a new request and readmits nothing, so that window is added to the push delay for an excerpt already on screen. The window runs from the first page's admission, not from the last continuation, because the pages of one query share a single freshness stamp and paging would otherwise renew a page nobody had readmitted. For two of the three row kinds what it exposes is the excerpt, because opening the row is its own authorized read: a message row hydrates its canonical transcript, a file row goes through `/search/resources/:id/preview`. A **link** row is the exception, and the exception is not only about the excerpt. Opening one hands `location.url` straight to the browser and asks nobody, and that URL is never rendered — the row shows the excerpt and the source label — so it is content behind the row rather than something the reader had already seen. The window therefore extends by up to 30 seconds the period in which a revoked link can be opened without a check. Re-deriving a link on click, the way the other two kinds are, is the fix if that is not acceptable; it needs an endpoint that does not exist, and would change link-opening on every path rather than only the cached one. Signing out, surrendering the active workspace, or losing the stored credential all clear the client (`queryClient.clear()`), and changing workspace or member is a different key, so none of those carry the window across.
 - Namespace identity includes the embedding model and dimensions. Mixing spaces
   makes vector distances meaningless.
+- A row's `audience` names where it lives (its conversation, Sidekick, connection, uploader and, for a resource, the conversations it is attached in), never the people who may read it. A person's access changes must never require rewriting rows; a row is rewritten only when its own location changes. An empty or absent audience admits nobody: organization-wide readability is the explicit `members` group. Every group becomes a UUID only through `searchAudienceGroupId`.
 - Deleted revisions win against replayed upserts at the same revision. Removing
   a tombstone prematurely can allow an old write to resurrect a document.
 - Keys remain server secrets; callers cannot select credentials or a namespace.
@@ -615,6 +623,41 @@ Worker's private network. Captures are snapshots and are not refreshed just beca
 the same URL is mentioned again. Missing extraction/capture work remains observable
 through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
+
+## Changelog
+
+### 2026-09-26 — Rows carry the groups that may read them
+
+**What changed:** Every lexical and semantic row gains `audience`, a `[]uuid`
+of the groups that may read it, written by its producer beside the text:
+`conversation:<parent>/<substream>` or `sidekick:<automation>` for turns and
+captured links; for a resource, its connection alone, or its uploader, the
+`members` group where the provider is readable by every member, and every
+conversation its canonical inventory places it in. WorkspaceDO migration 76
+rewrites a resource when any of those inputs changes. Search does not read the
+attribute yet.
+
+**Why:** It is the first step of
+[search audience filtering](PRDs/2026-09-26_search-audience-filtering/prd.md),
+which moves the read decision into the Turbopuffer query and deletes the
+per-(person, document) decision store in WorkspaceDO. That store re-derived
+about 152,000 keys a day for a 6,738-key store at Juno Labs and leaked a key per
+agent run through memory search. The field ships alone because of the version
+skew rule above: a consumer on the old build strips it, and the next deploy's
+re-projection fills the rows the window wrote without it.
+
+**Considered and rejected:** Storing reader user IDs on rows, Turbopuffer's
+simplest permissions example; every roster change would patch every row of a
+Channel, and each patch is billed at least one query over the whole namespace.
+A separate audience patch job for attachment changes; the resource
+re-projection already rewrites the row, at the cost of re-embedding the
+resource's chunks on each attach or detach, which is rare.
+
+**What a future change has to respect:** a new way for a person to reach a row
+belongs on the person's side, not in the row's audience, unless it is a
+property of where the row lives. The re-projection that backfills `audience`
+does not rewrite existing semantic chunk rows (their IDs already exist), so a
+semantic read path must not filter on `audience` until those rows carry it.
 
 ### 2026-09-11 — An unlisted resource leaves the index
 

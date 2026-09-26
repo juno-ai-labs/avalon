@@ -133,8 +133,9 @@ import { SearchAuthorizationSnapshotSchema, SearchAuthorizationTargetSchema, sea
 import { flushAuthorizationDeliveries, type AuthorizationProjectionJob } from './authorization-projection';
 import { AuthorizationStorage, AUTHORIZATION_STORAGE_MIGRATION, AUTHORIZATION_STORAGE_TABLES, AuthorizationLocationSchema } from './authorization-storage';
 import { ONBOARDING_JOURNEY_SQL, OnboardingJourneyStore } from './onboarding-journey';
-import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
+import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION, RESOURCE_SEARCH_AUDIENCE_MIGRATION, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
   resourceSearchRevision, nextResourceSearchDueAt, publishResourceSearch, prepareResourceSearch } from './resource-search-projection';
+import { isDraftUpload, requiresAttachment } from '../services/resource-read-rules';
 import { SEARCH_AUTHORIZATION_PUSH_MIGRATION, nextSearchAuthorizationPush, flushSearchAuthorizationPush } from './search-authorization-projection';
 import { enumerateSearchAuthorizationUniverse, type SearchAuthorizationTarget } from './search-authorization-universe';
 import { resolveWorkspaceEventResources } from "./workspace-event-resources";
@@ -3830,6 +3831,12 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   statements: [
     "DROP TABLE parent_imports",
   ],
+}, {
+  version: 76,
+  description: "rewrite a resource's search rows when who may read it changes",
+  // Search rows now carry their audience; see
+  // docs/PRDs/2026-09-26_search-audience-filtering/design.md.
+  statements: RESOURCE_SEARCH_AUDIENCE_MIGRATION,
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -13297,9 +13304,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         connectionAllowed: !row.connection_id || Boolean(connection && connection.status !== 'disabled'
           && (connection.scope === 'workspace' || connection.owner_user_id === request.userId)),
         noteAllowed: row.provider !== 'avalon_note',
-        draftAllowed: row.provider !== 'avalon_upload' || row.attachment_status === 'attached' || owned,
-        requiresAttachment: ((row.provider === 'avalon_upload' || row.provider === 'avalon_generated') && !owned)
-          || (row.provider === 'resend' && row.resource_type === 'email'),
+        draftAllowed: !isDraftUpload(row) || owned,
+        requiresAttachment: requiresAttachment(row, owned),
         locations: locations.locations(resourceId), projectionComplete: coverage.complete, discoveryAt,
       };
     });
