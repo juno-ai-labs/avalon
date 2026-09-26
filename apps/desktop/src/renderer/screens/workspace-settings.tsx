@@ -12,7 +12,7 @@ import { SettingCopy, SettingLabel } from '../settings/setting-label';
 import { SettingsSearchResults, useRevealSetting } from '../settings/search-results';
 import { SidebarSearch } from '../components/sidebar-search';
 import { digestDeliverySetting } from '../settings/digest-provider';
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import {
   GitBranch,
@@ -521,18 +521,6 @@ export function WorkspaceSettingsScreen({
     refetchOnWindowFocus: true,
     staleTime: 5_000,
   });
-  const connectionToolCounts = useQueries({
-    queries: (connections.data ?? []).map((connection) => ({
-      queryKey: ['connection-tool-count', connection.id, connection.capabilities, connection.status],
-      queryFn: ({ signal }: { signal: AbortSignal }) => api!.getConnectionToolCount(connection.id, signal),
-      enabled: Boolean(api && activeSection === 'connections' && connection.status !== 'disabled'),
-      refetchOnWindowFocus: true,
-      staleTime: 5_000,
-    })),
-  });
-  const toolCountByConnection = new Map((connections.data ?? []).map((connection, index) => [
-    connection.id, connectionToolCounts[index],
-  ]));
   const githubSettingsConnections = useMemo(
     () => (connections.data ?? []).filter((connection) => (
       connection.settingsKind === 'github_repository_access'
@@ -598,7 +586,9 @@ export function WorkspaceSettingsScreen({
     ),
     onSuccess: (settings) => {
       queryClient.setQueryData(['custom-mcp-settings', settings.connectionId], settings);
-      void queryClient.invalidateQueries({ queryKey: ['connection-tool-count', settings.connectionId] });
+      // The save stored the narrowed count on the connection before answering,
+      // so the list read after it already carries the new number.
+      void queryClient.invalidateQueries({ queryKey: ['connections'] });
     },
     onError: async () => {
       await queryClient.invalidateQueries({ queryKey: ['custom-mcp-settings', customMcpSettingsConnectionId] });
@@ -1634,11 +1624,9 @@ export function WorkspaceSettingsScreen({
                                   </span>
                                 </td>
                                 <td><Badge>{connection.status === 'reconnect_required' ? 'Reconnect required' : connection.status}</Badge></td>
-                                <td className="settings-connection-tools">{connection.status === 'disabled'
-                                  ? '—'
-                                  : toolCountByConnection.get(connection.id)?.isError
-                                  ? 'Unavailable'
-                                  : toolCountByConnection.get(connection.id)?.data ?? 'Loading…'}</td>
+                                {/* From the list itself: a row with no count (disabled, or a
+                                    discovered connection not yet discovered) reads as a dash, never 0. */}
+                                <td className="settings-connection-tools">{connection.toolCount ?? '—'}</td>
                                 <td>
                                   <span className="settings-connection-actions">
                                     {isAdmin && connection.scope === 'workspace' && hasWorkspaceInstallationSurface(connection.connectorType) && (

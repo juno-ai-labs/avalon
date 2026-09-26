@@ -164,20 +164,45 @@ mechanism and provider recipe are in
 
 ### Settings tool counts
 
-The Connections tables show numeric counts under the Tools heading using `GET /connections/:id/tool-count`.
-The visible-connection authorization check runs before counting. Static connectors
-count agent tools matching the connection's grants and scope; dynamic connectors
-read their live inventory through the normal credential-refresh boundary, including
-any server tool policy and the same connection-prefixed name validation used
-at agent activation. Tool inventory reads share the existing 20-second Settings MCP
-deadline, composed with the caller’s cancellation signal. Each row loads independently so a slow provider does not
-hold up the table. Counts share the connection list’s five-second freshness window to avoid duplicate
-provider calls on an immediate reveal, then refresh when Settings regains focus. A failed inventory
-displays “Unavailable”, including after an earlier successful read, never a stale
-count or a fabricated zero. Saving an MCP tool policy invalidates the count,
-including if the user returns to Connections while the save is pending. The Tools
-column remains visible in narrow Settings windows. Disabled connections show a dash
-and do not request an inventory.
+The Connections tables show a numeric count under the Tools heading, and every
+count arrives in `GET /connections` itself (`Connection.toolCount`), so opening
+the tab is one request. The count is what the agent would be offered: tools
+matching the connection's grants and scope.
+
+- **A fixed tool surface** is counted in the list handler from the adapter's
+  `agentPlugin.tools` and the row's grants, with no I/O.
+- **A live-discovered surface** (hosted MCP, custom MCP) reports
+  `connector_connections.discovered_tool_count` (WorkspaceDO migration 73): the
+  count its last discovery found. A discovery counts exactly what activation
+  would expose — the live inventory through the credential door, validated by
+  `validateDynamicConnectorTools` — under the existing 20-second Settings
+  inventory deadline. It is written when discovery already runs or the
+  connection changed: after an OAuth completion or reconnect (in the
+  background, behind the handoff), after a passing Test, by the custom-MCP tools
+  read and therefore by a tool-policy save, and by the released
+  `GET /connections/:id/tool-count`. A row the list finds never discovered
+  reports `null` and has one discovery started behind the response.
+- **The write is fenced** on the `granted_scopes_json` and `config_json` the
+  discovery ran under, so a late answer never overwrites a count a newer
+  policy or grant already changed, and it publishes `connector_connections`
+  only when the stored number moved, which refetches the list in every open
+  client.
+- **`null` is never zero.** A disabled connection, and a discovered one with no
+  successful discovery yet, report `null`; the desktop shows a dash. A
+  discovery that fails leaves the previous count in place and logs
+  `connection_tool_count_refresh_failed` with the adapter's code; the row's
+  status is what says the provider is unhealthy. A connector the region does not
+  register reports `null` and logs `connection_tool_count_unavailable`
+  (`connector_not_registered`).
+- **No staleness window.** Nothing re-discovers a count it already has on a
+  timer or an age. A server that changes its catalog with no Rally-side event is
+  reflected at the next event above; adding a refresh window is a limit whose
+  number the team has not chosen
+  ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)).
+
+`GET /connections/:id/tool-count` stays for desktops released before the list
+carried the count. It still discovers live on each call; the current desktop
+never calls it.
 
 ### Credential freshness
 
@@ -1336,6 +1361,7 @@ independent change condition, mixed batches, and URL/metadata merge behavior.
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Real-workerd WorkspaceDO schema, Queue/provider replay dedupe, Queue claim fencing and recovery, and terminal settlement. |
 | `apps/api/test-workers/workspace-connections.test.ts` | The typed OAuth attempt lifecycle across the real RPC boundary — settlement witnesses, replay convergence, the member-scoped lazy expiry, the succeeded-over-expiry override — plus webhook receipt claims, their same-transaction expired-receipt sweep, and the generic port's refusal of `webhook_receipts`. |
 | `apps/api/test/connector-oauth-handoff.test.ts`, `apps/api/test/connector-outcome-telemetry.test.ts`, `apps/api/test/granola-connector.test.ts` | The connection service over a real `WorkspaceDO` via `test/helpers/workspace-object-rpcs.ts` — attempt expiry/reconciliation through the service, single-emission outcome telemetry, and that no plaintext credential crosses the recorded RPC boundary during webhook ingestion. |
+| `apps/api/test/connection-tool-count.test.ts` | `GET /connections` tool counts over a real `WorkspaceDO` schema: a fixed surface counted from grants with no provider call, a discovered count stored by creation, a policy save, the custom-MCP tools read and the released per-row endpoint, and `null` (never zero) with a named log when discovery has not succeeded. |
 | `packages/connectors/src/digestibility-doc.test.ts` | That every declared activity type has a row in [`connector-digestibility.md`](connector-digestibility.md). |
 | `packages/connectors/src/agent-plugin.test.ts` | That each descriptor's provider type and tool order match its manifest. |
 | `packages/connectors/src/observability.test.ts` | The shared adapter and provider-request log layers, level selection, identifier retention, content exclusion, and fail-open observer contract. |
@@ -1358,6 +1384,43 @@ active workspace guest is insufficient after the addressed share is revoked.
 Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
+
+### 2026-09-26 — Tool counts ride the connection list
+
+**What changed:** `GET /connections` returns each connection's tool count. A
+fixed tool surface is counted in the handler from the catalog and grants; a
+live-discovered surface reports `discovered_tool_count`, a WorkspaceDO column
+written whenever a discovery already runs (authorization, Test, the custom-MCP
+tools read and policy save, the released per-row endpoint) and once, in the
+background, for a row the list finds never discovered. The desktop dropped its
+per-row `connection-tool-count` queries and reads the list.
+
+**Why:** Opening Connections cost the list plus one `tool-count` request per
+row, and the per-row requests could not start until the list answered — a
+waterfall of 1 + N requests, some of which called a third-party MCP server
+live on every open and on every window focus. No socket topic covered those
+queries, so the count was either refetched on focus or stale anyway. A count
+is a property of the connection; carrying it on the row makes the tab one
+request and moves provider calls to the moments something could have changed
+the answer.
+
+**Considered and rejected:** Keeping the per-row requests but starting them in
+parallel with the list (still N provider calls per open). Caching the live
+count with a TTL or a periodic refresh (a staleness limit whose number is the
+team's, not this change's, and a timer spending provider calls nobody is
+looking at). Deriving the custom-MCP count separately from the activation path
+(the 2026-09-11 rule stands: the count is the agent tool surface, so discovery
+reuses `validateDynamicConnectorTools`).
+
+**Consequences:** A discovered count is "as of the last discovery", not live:
+a server that changes its catalog with no Rally-side event shows the old number
+until the next Test, reconnect or tools-pane read. A failed discovery keeps the
+previous count rather than clearing it, which replaces the earlier
+"Unavailable, never stale" rule; the status badge carries the failure. Writers
+must keep the grant/config fence and the `IS NOT` guard, or late discoveries
+overwrite newer policy and every no-op refresh republishes the list to every
+client. The per-row endpoint must stay until released desktops no longer call
+it.
 
 ### 2026-09-22 — Resource grants became a connector primitive
 
