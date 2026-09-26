@@ -138,20 +138,20 @@ describe('durable resource search projection', () => {
         ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>({ sendBatch: async (messages) => { sent.push(Array.from(messages).length); } }) };
       const pending = () => sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM resource_search_versions WHERE pending = 1').one().n;
       const pace = { nextBatchAt: 0 };
-      await publishResourceSearch(sql, configured, workspaceId, pace, 60_000);
+      await publishResourceSearch(sql, configured, workspaceId, pace);
       expect([sent, pending()]).toEqual([[100], 50]);
       // A backlog remains, so the next batch and the alarm both wait.
-      await publishResourceSearch(sql, configured, workspaceId, pace, 60_000);
+      await publishResourceSearch(sql, configured, workspaceId, pace);
       expect([sent, pending()]).toEqual([[100], 50]);
       expect(nextResourceSearchDueAt(sql, configured, pace)).toBe(pace.nextBatchAt);
       expect(pace.nextBatchAt).toBeGreaterThan(Date.now());
       // Once it has passed, the rest goes, and a partial batch sets no wait.
       pace.nextBatchAt = 0;
-      await publishResourceSearch(sql, configured, workspaceId, pace, 60_000);
+      await publishResourceSearch(sql, configured, workspaceId, pace);
       expect([sent, pending(), pace.nextBatchAt]).toEqual([[100, 50], 0, 0]);
       // A last batch that happens to be full leaves no backlog either.
       sql.exec("UPDATE resource_search_versions SET pending = 1 WHERE resource_id IN (SELECT resource_id FROM resource_search_versions ORDER BY resource_id LIMIT 100)");
-      await publishResourceSearch(sql, configured, workspaceId, pace, 60_000);
+      await publishResourceSearch(sql, configured, workspaceId, pace);
       expect([sent, pending(), pace.nextBatchAt]).toEqual([[100, 50, 100], 0, 0]);
     });
   });
