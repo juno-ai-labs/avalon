@@ -147,6 +147,8 @@ Mounting the screen starts `/workspace/members`, `/connections`,
 `/connections/catalog`, `/feature-flags`, `/workspace/invitations` for an admin,
 and `getApplicationSettings` over IPC. A section adds one more when it is
 selected: `/workspace/terminal`, GitHub repository access, or custom MCP tools.
+The Connections section adds none: each row's tool count arrives in
+`/connections` itself ([`connectors.md`](connectors.md#settings-tool-counts)).
 
 The roster the Workspace section draws is also where a member is made an
 administrator or handed back: each row an administrator may act on carries a
