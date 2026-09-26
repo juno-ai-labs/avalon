@@ -5037,8 +5037,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         await send();
         this.deleteParentOutboxRows(batch.map((entry) => entry.envelope));
       } catch (error) {
-        // A destination that refuses the row's shape (a legacy directory row
-        // whose message id is not a UUIDv7) refuses it on every attempt.
+        // A destination that refuses the row's shape refuses it on every
+        // attempt.
         if (error instanceof z.ZodError) {
           const code = zodDiagnosticCode(error, "parent_outbox_row") ?? "parent_outbox_row_invalid";
           for (const { envelope } of batch) this.failParentOutboxRow(workspaceId, envelope.parentId, envelope.messageId, code);

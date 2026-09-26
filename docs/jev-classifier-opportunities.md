@@ -163,8 +163,8 @@ threshold degrades to the current cost rather than to a wrong answer. That
 property is what makes this the cheapest candidate to try.
 
 **What has to be measured first.** This one has the best corpus in the tree,
-and all of it is already retained. The inputs: connector event bodies for 396
-days and activity events for 90
+and all of it is already retained. The inputs: processed connector event bodies
+and activity events, each for 90 days
 (`CONNECTOR_EVENT_BODY_RETENTION_MS`, `ACTIVITY_EVENT_RETENTION_MS` in
 `workspace-do.ts`). The decisions: every admitted opportunity with its
 `admission_reasoning` and `source_fingerprint` in `work_opportunities`. The
