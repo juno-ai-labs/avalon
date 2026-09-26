@@ -181,7 +181,11 @@ matching the connection's grants and scope.
   background, behind the handoff), after a passing Test, by the custom-MCP tools
   read and therefore by a tool-policy save, and by the released
   `GET /connections/:id/tool-count`. A row the list finds never discovered
-  reports `null` and has one discovery started behind the response.
+  reports `null` and has one discovery started behind the response — one per
+  connection, ever: the list claims `tool_count_backfill_attempted_at` (same
+  migration) with a returned witness before any provider call, so concurrent
+  lists start it once and a failed one is not retried behind later lists.
+  After that, only the paths above refresh the count.
 - **The write is fenced** on the `granted_scopes_json` and `config_json` the
   discovery ran under, so a late answer never overwrites a count a newer
   policy or grant already changed, and it publishes `connector_connections`
@@ -1361,7 +1365,7 @@ independent change condition, mixed batches, and URL/metadata merge behavior.
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Real-workerd WorkspaceDO schema, Queue/provider replay dedupe, Queue claim fencing and recovery, and terminal settlement. |
 | `apps/api/test-workers/workspace-connections.test.ts` | The typed OAuth attempt lifecycle across the real RPC boundary — settlement witnesses, replay convergence, the member-scoped lazy expiry, the succeeded-over-expiry override — plus webhook receipt claims, their same-transaction expired-receipt sweep, and the generic port's refusal of `webhook_receipts`. |
 | `apps/api/test/connector-oauth-handoff.test.ts`, `apps/api/test/connector-outcome-telemetry.test.ts`, `apps/api/test/granola-connector.test.ts` | The connection service over a real `WorkspaceDO` via `test/helpers/workspace-object-rpcs.ts` — attempt expiry/reconciliation through the service, single-emission outcome telemetry, and that no plaintext credential crosses the recorded RPC boundary during webhook ingestion. |
-| `apps/api/test/connection-tool-count.test.ts` | `GET /connections` tool counts over a real `WorkspaceDO` schema: a fixed surface counted from grants with no provider call, a discovered count stored by creation, a policy save, the custom-MCP tools read and the released per-row endpoint, and `null` (never zero) with a named log when discovery has not succeeded. |
+| `apps/api/test/connection-tool-count.test.ts` | `GET /connections` tool counts over a real `WorkspaceDO` schema: a fixed surface counted from grants with no provider call, a discovered count stored by creation, a policy save, the custom-MCP tools read and the released per-row endpoint, `null` (never zero) with a named log when discovery has not succeeded, the list's failed discovery attempted once across two lists, and a discovery that finishes after a policy change dropped by the write fence. Background work is awaited with `drainWaitUntil` from the Node `cloudflare:workers` stand-in rather than slept on. |
 | `packages/connectors/src/digestibility-doc.test.ts` | That every declared activity type has a row in [`connector-digestibility.md`](connector-digestibility.md). |
 | `packages/connectors/src/agent-plugin.test.ts` | That each descriptor's provider type and tool order match its manifest. |
 | `packages/connectors/src/observability.test.ts` | The shared adapter and provider-request log layers, level selection, identifier retention, content exclusion, and fail-open observer contract. |
@@ -1392,7 +1396,9 @@ fixed tool surface is counted in the handler from the catalog and grants; a
 live-discovered surface reports `discovered_tool_count`, a WorkspaceDO column
 written whenever a discovery already runs (authorization, Test, the custom-MCP
 tools read and policy save, the released per-row endpoint) and once, in the
-background, for a row the list finds never discovered. The desktop dropped its
+background, for a row the list finds never discovered — recorded in
+`tool_count_backfill_attempted_at` before it runs, so it is spent once per
+connection even when it fails. The desktop dropped its
 per-row `connection-tool-count` queries and reads the list.
 
 **Why:** Opening Connections cost the list plus one `tool-count` request per
@@ -1408,7 +1414,9 @@ the answer.
 parallel with the list (still N provider calls per open). Caching the live
 count with a TTL or a periodic refresh (a staleness limit whose number is the
 team's, not this change's, and a timer spending provider calls nobody is
-looking at). Deriving the custom-MCP count separately from the activation path
+looking at). Retrying the list's background discovery until it succeeds (for a
+broken connection that is a live provider call behind every list, the same
+per-open traffic this change removes, only hidden). Deriving the custom-MCP count separately from the activation path
 (the 2026-09-11 rule stands: the count is the agent tool surface, so discovery
 reuses `validateDynamicConnectorTools`).
 
@@ -1419,7 +1427,9 @@ previous count rather than clearing it, which replaces the earlier
 "Unavailable, never stale" rule; the status badge carries the failure. Writers
 must keep the grant/config fence and the `IS NOT` guard, or late discoveries
 overwrite newer policy and every no-op refresh republishes the list to every
-client. The per-row endpoint must stay until released desktops no longer call
+client. A connection whose one list-triggered discovery failed shows a dash
+until an authorization, a passing Test, or a tools-pane read counts it; the
+marker is not re-armed by anything else, deliberately. The per-row endpoint must stay until released desktops no longer call
 it.
 
 ### 2026-09-22 — Resource grants became a connector primitive
