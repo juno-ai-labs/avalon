@@ -307,10 +307,11 @@ export interface WorkstreamConnection {
   userDelivery?: AutomationUserDelivery;
   /**
    * Agent tools this connection exposes, as `GET /connections` reported it.
-   * Absent when the server has no count to give — a disabled connection, or a
-   * discovered one never yet discovered — which is never the same as zero.
+   * Absent when the server has no count to give, which is never the same as
+   * zero; `toolCountMissing` then says why, when the region reports it.
    */
   toolCount?: number;
+  toolCountMissing?: 'disabled' | 'connector_unavailable' | 'counting' | 'not_counted';
 }
 
 export interface AutomationUserDelivery {

@@ -86,7 +86,12 @@ import {
 } from "../lib/desktop-handoff";
 import { createGitHubInstallState } from "../lib/github-install-state";
 import { createRegionRoutedState } from "../lib/region-routed-state";
-import { validateUnstoredConnectorCredential, withAuthorizedConnection } from "./connector-connection-access";
+import {
+  isReconnectRequiredConnectorError,
+  validateUnstoredConnectorCredential,
+  withAuthorizedConnection,
+} from "./connector-connection-access";
+import { paginatedToolNames } from "./tool-pagination";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { GitHubRoutingService } from "./github-routing-service";
@@ -507,12 +512,13 @@ export class ConnectionService {
       { workspaceId: auth.workspaceId, userId: auth.userId },
       rows.map((row) => ({ id: String(row.id), connector_type: row.connector_type, status: row.status })),
     );
+    const adapterFor = this.registeredAdapters();
     return rows.map((row) => connectionFromRow({
       ...row,
       owner_name: typeof row.owner_user_id === "string"
         ? ownerNames.get(row.owner_user_id) ?? null
         : null,
-    }, userDelivery.get(String(row.id)) ?? null, this.listedToolCount(auth.workspaceId, row)));
+    }, userDelivery.get(String(row.id)) ?? null, this.listedToolCount(auth.workspaceId, row, adapterFor)));
   }
 
   /**
@@ -521,8 +527,8 @@ export class ConnectionService {
    * Opening Connections used to cost the list plus one `tool-count` request per
    * row, each waiting on the list and some of them calling a third party. A
    * fixed tool surface is a pure function of the catalog and the row's grants,
-   * so it is counted here. A discovered one is whatever its last discovery
-   * stored; a row that has never been discovered reports null and has one
+   * so it is counted here. A discovered one is whatever its last successful
+   * discovery stored (a failed one clears it); a row with no count has one
    * discovery started behind this response, whose answer reaches open clients
    * through the `connector_connections` topic. One, ever: the attempt is
    * recorded on the row before it runs, so a discovery that fails is not
@@ -533,29 +539,30 @@ export class ConnectionService {
    * limit whose number is the team's to choose
    * (docs/adding-security-defensive-and-other-limits.md), and every path that
    * can change the count already refreshes it (docs/connectors.md#settings-tool-counts).
+   *
+   * A connector this region does not register is static configuration, not an
+   * event, so it is reported on the row (`connector_unavailable`) rather than
+   * logged on every list.
    */
-  private listedToolCount(workspaceId: string, row: Record<string, unknown>): number | null {
-    if (row.status === "disabled") return null;
-    const connectorType = String(row.connector_type);
-    const adapter = this.registeredAdapter(connectorType);
-    if (!adapter) {
-      logWarn(this.env, "connection_tool_count_unavailable", {
-        connection_id: String(row.id),
-        connector_type: connectorType,
-        code: "connector_not_registered",
-      });
-      return null;
-    }
+  private listedToolCount(
+    workspaceId: string,
+    row: Record<string, unknown>,
+    adapterFor: (connectorType: string) => ResolvedConnectorAdapter | null,
+  ): Pick<Connection, "toolCount" | "toolCountMissing"> {
+    if (row.status === "disabled") return { toolCount: null, toolCountMissing: "disabled" };
+    const adapter = adapterFor(String(row.connector_type));
+    if (!adapter) return { toolCount: null, toolCountMissing: "connector_unavailable" };
     const scope: Scope = row.scope === "workspace" ? "workspace" : "personal";
     const granted = parseJson<string[]>(row.granted_scopes_json, []);
     if (!dynamicConnectorCapability(adapter, scope, granted)) {
-      return grantedToolCount(adapter, scope, granted, adapter.agentPlugin.tools);
+      return { toolCount: offeredStaticToolCount(adapter, scope, granted), toolCountMissing: null };
     }
-    if (typeof row.discovered_tool_count === "number") return row.discovered_tool_count;
-    if (row.tool_count_backfill_attempted_at == null) {
-      runtimeDeferral(this.backfillDiscoveredToolCount(workspaceId, String(row.id)));
+    if (typeof row.discovered_tool_count === "number") {
+      return { toolCount: row.discovered_tool_count, toolCountMissing: null };
     }
-    return null;
+    if (row.tool_count_backfill_attempted_at != null) return { toolCount: null, toolCountMissing: "not_counted" };
+    runtimeDeferral(this.backfillDiscoveredToolCount(workspaceId, String(row.id)));
+    return { toolCount: null, toolCountMissing: "counting" };
   }
 
   /**
@@ -583,11 +590,11 @@ export class ConnectionService {
     await this.refreshDiscoveredToolCount(workspaceId, connectionId);
   }
 
-  private registeredAdapter(connectorType: string): ResolvedConnectorAdapter | null {
+  /** The registry's adapters by type, read once for a whole list rather than scanned per row. */
+  private registeredAdapters(): (connectorType: string) => ResolvedConnectorAdapter | null {
     const registry = this.registry();
-    return registry.list().some((manifest) => manifest.type === connectorType)
-      ? registry.get(connectorType)
-      : null;
+    const registered = new Set(registry.list().map((manifest) => manifest.type));
+    return (connectorType) => registered.has(connectorType) ? registry.get(connectorType) : null;
   }
 
   /**
@@ -649,7 +656,7 @@ export class ConnectionService {
     const adapter = this.registry().get(connection.connector_type);
     const granted = parseJson<string[]>(connection.granted_scopes_json, []);
     if (!dynamicConnectorCapability(adapter, connection.scope, granted)) {
-      return { count: grantedToolCount(adapter, connection.scope, granted, adapter.agentPlugin.tools) };
+      return { count: offeredStaticToolCount(adapter, connection.scope, granted) };
     }
     const count = await this.discoverToolCount(connection, adapter, granted, signal);
     await this.storeDiscoveredToolCount(connection, count);
@@ -661,6 +668,9 @@ export class ConnectionService {
    * live inventory through the credential door, validated exactly as
    * `load_plugin` validates it, so a name collision refuses here too rather
    * than being counted.
+   *
+   * A discovery that fails clears the stored count (see
+   * `forgetDiscoveredToolCount`) before the failure reaches its caller.
    */
   private async discoverToolCount(
     connection: StoredConnection,
@@ -668,19 +678,48 @@ export class ConnectionService {
     granted: readonly string[],
     signal?: AbortSignal,
   ): Promise<number> {
-    const definitions = await withSettingsInventoryDeadline(async (inventorySignal) => withAuthorizedConnection(
-      this.env,
-      { connection: await this.context(connection), adapter, signal: inventorySignal },
-      async (authorized) => validateDynamicConnectorTools(
+    try {
+      const definitions = await withSettingsInventoryDeadline(async (inventorySignal) => withAuthorizedConnection(
         this.env,
-        adapter,
-        connection.scope,
-        granted,
-        stableConnectionWireName(connection.model_plugin_id),
-        await adapter.dynamicAgentTools!.discover(authorized, inventorySignal),
-      ),
-    ), signal);
-    return grantedToolCount(adapter, connection.scope, granted, definitions);
+        { connection: await this.context(connection), adapter, signal: inventorySignal },
+        async (authorized) => validateDynamicConnectorTools(
+          this.env,
+          adapter,
+          connection.scope,
+          granted,
+          stableConnectionWireName(connection.model_plugin_id),
+          await adapter.dynamicAgentTools!.discover(authorized, inventorySignal),
+        ),
+      ), signal);
+      return grantedToolCount(adapter, connection.scope, granted, definitions);
+    } catch (error) {
+      // A caller that went away is not evidence about the provider.
+      if (!signal?.aborted) await this.forgetDiscoveredToolCount(connection, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Clear a discovered count a discovery just failed to confirm, so the row
+   * reads "not counted" rather than an old number beside a healthy badge. A
+   * timeout, a provider error, or `validateDynamicConnectorTools` refusing a
+   * name collision all leave the connection offering the agent nothing this
+   * count describes, and none of them moves the row's status. An authorization
+   * refusal is the one exception: the credential door has already marked the
+   * row `needs_reconnect`, which is the truthful signal, and the count is what
+   * a reconnect to the same account will offer again. Fenced like any other
+   * write, so it never clears a count a newer policy or reconnect stored.
+   */
+  private async forgetDiscoveredToolCount(connection: StoredConnection, error: unknown): Promise<void> {
+    if (isReconnectRequiredConnectorError(error)) return;
+    try {
+      await this.storeDiscoveredToolCount(connection, null);
+    } catch (clearError) {
+      logWarn(this.env, "connection_tool_count_clear_failed", {
+        connection_id: connection.id,
+        code: diagnosticErrorCode(clearError, "clear_failed"),
+      });
+    }
   }
 
   /**
@@ -695,9 +734,10 @@ export class ConnectionService {
    * discovery's own token refresh rewrite the row, so fencing on `updated_at`
    * or the credential would drop good counts. The
    * `IS NOT` keeps an unchanged count from publishing a topic every client
-   * would refetch the list for.
+   * would refetch the list for. `null` is a failed discovery clearing the
+   * count, under the same fence and the same publish.
    */
-  private async storeDiscoveredToolCount(connection: StoredConnection, count: number): Promise<void> {
+  private async storeDiscoveredToolCount(connection: StoredConnection, count: number | null): Promise<void> {
     const changed = await this.env.DB.prepare(
       `UPDATE connector_connections SET discovered_tool_count = ?
         WHERE id = ? AND workspace_id = ? AND status <> 'disabled'
@@ -3027,6 +3067,7 @@ export class ConnectionService {
       tools = inventory.tools;
     } catch (error) {
       toolsUnavailable = connectorFailureMessage(error);
+      if (connection.status !== "disabled") await this.forgetDiscoveredToolCount(connection, error);
     }
     // This read is a discovery already paid for: the same `tools/list` under
     // the same policy selection an activation applies, so the tools it admits
@@ -4896,8 +4937,29 @@ function grantedToolCount(
   granted: readonly string[],
   definitions: readonly { capability: string }[],
 ): number {
+  return grantedDefinitions(adapter, scope, granted, definitions).length;
+}
+
+function grantedDefinitions<Definition extends { capability: string }>(
+  adapter: ResolvedConnectorAdapter,
+  scope: Scope,
+  granted: readonly string[],
+  definitions: readonly Definition[],
+): Definition[] {
   return definitions.filter((tool) => granted.includes(tool.capability)
-    && connectorCapabilitySupportsScope(adapter, tool.capability, scope)).length;
+    && connectorCapabilitySupportsScope(adapter, tool.capability, scope));
+}
+
+/**
+ * The tools a fixed-surface connection offers the agent: each authored
+ * definition its grants and scope admit, as activation expands it — a
+ * paginated one arrives with its generated page tools (`paginatedToolNames`,
+ * the rule `withToolPagination` builds from). A discovered surface is not
+ * expanded, because activation does not expand it either.
+ */
+function offeredStaticToolCount(adapter: ResolvedConnectorAdapter, scope: Scope, granted: readonly string[]): number {
+  return grantedDefinitions(adapter, scope, granted, adapter.agentPlugin.tools)
+    .reduce((count, definition) => count + paginatedToolNames(definition).length, 0);
 }
 
 /** A discovery failure by name: the adapter's own code, the deadline, or the platform's. */

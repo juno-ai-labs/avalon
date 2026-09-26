@@ -1,7 +1,11 @@
 import { asUserId, asWorkspaceId } from "@rally/contracts";
-import { DatabaseSync } from "node:sqlite";
+import { Hono } from "hono";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AuthContext, Env } from "../src/env";
+import type { AuthContext, Env, HonoAppEnv } from "../src/env";
+import { requireAuth } from "../src/middleware/auth";
+import { errorHandler } from "../src/middleware/errors";
+import { connectionRoutes } from "../src/routes/connections";
 import { ConnectionService } from "../src/services/connection-service";
 import {
   createCloudflareTestBinding,
@@ -9,15 +13,15 @@ import {
   createTestEnv,
 } from "./helpers/cloudflare-test";
 import { drainWaitUntil } from "./helpers/cloudflare-workers";
-import { sqliteD1 } from "./helpers/sqlite-d1";
+import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
 
 /**
  * `GET /connections` carries each row's tool count, so Settings draws the Tools
- * column from one request. The rows live in a real `WorkspaceDO` built from its
- * own migration ledger — the stored count is a column its migration 73 added —
- * and only the provider (a Streamable HTTP MCP server) and the socket publish
- * are doubled.
+ * column from one request. The regional database is the checked-in migrations;
+ * the rows live in a real `WorkspaceDO` built from its own migration ledger —
+ * the stored count is a column its migration 73 added — and only the provider
+ * (a Streamable HTTP MCP server) and the socket publish are doubled.
  */
 
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000011");
@@ -42,9 +46,11 @@ afterEach(() => {
 });
 
 describe("connection tool counts in the connection list", () => {
-  it("counts a fixed tool surface from the row's grants without calling the provider", async () => {
+  it("counts a fixed tool surface from the row's grants, with the page tools activation adds, without calling the provider", async () => {
     const { env, auth, object, providerRequests } = fixture();
     const service = new ConnectionService(env, auth);
+    // `gmail.read` authors five tools, one of them (`gmail.search`) paginated:
+    // activation offers `gmail.search_next` beside it, so the agent sees six.
     insertConnection(object, {
       id: "00000000-0000-7000-8000-000000000101",
       connectorType: "google",
@@ -59,11 +65,29 @@ describe("connection tool counts in the connection list", () => {
 
     const listed = await service.list();
 
-    expect(listed.map((connection) => [connection.id, connection.toolCount])).toEqual([
-      ["00000000-0000-7000-8000-000000000101", 5],
-      ["00000000-0000-7000-8000-000000000102", 1],
+    expect(listed.map((connection) => [connection.id, connection.toolCount, connection.toolCountMissing])).toEqual([
+      ["00000000-0000-7000-8000-000000000101", 6, null],
+      ["00000000-0000-7000-8000-000000000102", 1, null],
     ]);
     expect(providerRequests).toEqual([]);
+  });
+
+  it("says a row has no count because this region does not register its connector", async () => {
+    const { env, auth, object } = fixture();
+    const service = new ConnectionService(env, auth);
+    // Linear is registered only where its OAuth client is configured, and
+    // this env configures none — as a region whose rollout gate is off.
+    insertConnection(object, {
+      id: "00000000-0000-7000-8000-000000000104",
+      connectorType: "linear",
+      grants: ["linear.read"],
+    });
+
+    const listed = await service.list();
+
+    expect(listed.map((connection) => [connection.id, connection.toolCount, connection.toolCountMissing])).toEqual([
+      ["00000000-0000-7000-8000-000000000104", null, "connector_unavailable"],
+    ]);
   });
 
   it("reports the count a discovered connection's last discovery stored, and follows a policy change", async () => {
@@ -108,26 +132,16 @@ describe("connection tool counts in the connection list", () => {
     const { env, auth, object, providerRequests } = fixture();
     const server = stubMcpServer([READ_TOOL], providerRequests);
     const service = new ConnectionService(env, auth);
-    const { connection } = await service.createCustomMcp({
-      displayName: "Acme docs",
-      scope: "workspace",
-      serverUrl: SERVER_URL,
-      requestHeaders: { "X-Api-Key": "secret-value" },
-      toolPolicy: "all_tools",
-    });
-    await drainWaitUntil();
+    const { connection } = await createAndCount(service);
     expect(storedCount(object, connection.id)).toBe(1);
     // As a row that predates migration 73 reads, with its server now down.
-    object.prepare(
-      `UPDATE connector_connections
-          SET discovered_tool_count = NULL, tool_count_backfill_attempted_at = NULL
-        WHERE id = ?`,
-    ).run(connection.id);
+    forgetCount(object, connection.id);
     server.down = true;
     providerRequests.length = 0;
     const warnings = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
-    expect((await service.list()).find((item) => item.id === connection.id)?.toolCount).toBeNull();
+    // The list that starts the discovery says so.
+    expect(listed(await service.list(), connection.id)).toEqual({ toolCount: null, toolCountMissing: "counting" });
     await drainWaitUntil();
     expect(warnings.mock.calls.map(([entry]) => entry as { event?: string; code?: string }))
       .toContainEqual(expect.objectContaining({
@@ -139,24 +153,68 @@ describe("connection tool counts in the connection list", () => {
     expect(firstAttempt).toBeGreaterThan(0);
 
     // A second open of the tab is the list and nothing else: the failed
-    // attempt is not retried behind it.
-    expect((await service.list()).find((item) => item.id === connection.id)?.toolCount).toBeNull();
+    // attempt is not retried behind it, and the row says it is not counted.
+    expect(listed(await service.list(), connection.id)).toEqual({ toolCount: null, toolCountMissing: "not_counted" });
     await drainWaitUntil();
     expect(providerRequests.length).toBe(firstAttempt);
+  });
+
+  it("starts one discovery between two lists that find the same row uncounted at once", async () => {
+    const { env, auth, object, providerRequests } = fixture();
+    const server = stubMcpServer([READ_TOOL, WRITE_TOOL], providerRequests);
+    const service = new ConnectionService(env, auth);
+    const { connection } = await createAndCount(service);
+    forgetCount(object, connection.id);
+    server.toolLists = 0;
+
+    // Two members' windows focusing together: both lists read the row
+    // uncounted and unclaimed before either background claim runs.
+    const [first, second] = await Promise.all([service.list(), service.list()]);
+    expect(listed(first, connection.id).toolCountMissing).toBe("counting");
+    expect(listed(second, connection.id).toolCountMissing).toBe("counting");
+    await drainWaitUntil();
+
+    expect(server.toolLists).toBe(1);
+    expect(storedCount(object, connection.id)).toBe(2);
+  });
+
+  it("clears a stored count when a discovery fails, so a broken connection never shows its old number", async () => {
+    const { env, auth, object, providerRequests, published, publishedConnectionIds } = fixture();
+    const inventory: Record<string, unknown>[] = [READ_TOOL, WRITE_TOOL];
+    const server = stubMcpServer(inventory, providerRequests);
+    const service = new ConnectionService(env, auth);
+    const { connection } = await createAndCount(service);
+    expect(storedCount(object, connection.id)).toBe(2);
+    published.length = 0;
+    publishedConnectionIds.length = 0;
+
+    // A 5xx leaves the row `healthy` — only an authorization refusal moves
+    // the status — so the count is what has to stop claiming tools.
+    server.down = true;
+    await expect(service.getToolCount(connection.id, new AbortController().signal)).rejects.toThrow();
+    expect(storedCount(object, connection.id)).toBeNull();
+    expect(listed(await service.list(), connection.id)).toEqual({ toolCount: null, toolCountMissing: "not_counted" });
+    // Open clients are told, once, and only the connection's audience.
+    expect(published).toEqual([["connector_connections"]]);
+    expect(publishedConnectionIds).toEqual([connection.id]);
+
+    // A server that recovers is counted by the next discovery.
+    server.down = false;
+    expect(await service.getToolCount(connection.id, new AbortController().signal)).toEqual({ count: 2 });
+    expect(storedCount(object, connection.id)).toBe(2);
+
+    // A catalog `load_plugin` would refuse — two names that collide once
+    // normalized — offers the agent none of these tools, so it clears too.
+    inventory.push({ ...READ_TOOL, name: "search-docs" });
+    await expect(service.getToolCount(connection.id, new AbortController().signal)).rejects.toThrow();
+    expect(storedCount(object, connection.id)).toBeNull();
   });
 
   it("drops a discovery that finishes after a policy change instead of overwriting the newer count", async () => {
     const { env, auth, object, providerRequests } = fixture();
     const server = stubMcpServer([READ_TOOL, WRITE_TOOL], providerRequests);
     const service = new ConnectionService(env, auth);
-    const { connection } = await service.createCustomMcp({
-      displayName: "Acme docs",
-      scope: "workspace",
-      serverUrl: SERVER_URL,
-      requestHeaders: { "X-Api-Key": "secret-value" },
-      toolPolicy: "all_tools",
-    });
-    await drainWaitUntil();
+    const { connection } = await createAndCount(service);
     expect(storedCount(object, connection.id)).toBe(2);
 
     // A discovery taken under `all_tools`, parked at the server's answer.
@@ -175,14 +233,7 @@ describe("connection tool counts in the connection list", () => {
     const { env, auth, object, providerRequests } = fixture();
     const server = stubMcpServer([READ_TOOL, WRITE_TOOL], providerRequests);
     const service = new ConnectionService(env, auth);
-    const { connection } = await service.createCustomMcp({
-      displayName: "Acme docs",
-      scope: "workspace",
-      serverUrl: SERVER_URL,
-      requestHeaders: { "X-Api-Key": "secret-value" },
-      toolPolicy: "all_tools",
-    });
-    await drainWaitUntil();
+    const { connection } = await createAndCount(service);
 
     const held = holdNextToolList(server);
     const late = service.getToolCount(connection.id, new AbortController().signal);
@@ -202,21 +253,70 @@ describe("connection tool counts in the connection list", () => {
     const inventory: Record<string, unknown>[] = [READ_TOOL];
     stubMcpServer(inventory, providerRequests);
     const service = new ConnectionService(env, auth);
-    const { connection } = await service.createCustomMcp({
-      displayName: "Acme docs",
-      scope: "workspace",
-      serverUrl: SERVER_URL,
-      requestHeaders: { "X-Api-Key": "secret-value" },
-      toolPolicy: "all_tools",
-    });
-    await drainWaitUntil();
+    const { connection } = await createAndCount(service);
     expect(storedCount(object, connection.id)).toBe(1);
 
     inventory.push(WRITE_TOOL);
     expect(await service.getToolCount(connection.id, new AbortController().signal)).toEqual({ count: 2 });
     expect(storedCount(object, connection.id)).toBe(2);
   });
+
+  it("carries the count and the reason it is missing through GET /connections", async () => {
+    const { env, object } = fixture({ devAuth: true });
+    insertConnection(object, {
+      id: "00000000-0000-7000-8000-000000000105",
+      connectorType: "google",
+      grants: ["gmail.read"],
+    });
+    insertConnection(object, {
+      id: "00000000-0000-7000-8000-000000000106",
+      connectorType: "linear",
+      grants: ["linear.read"],
+    });
+    const app = new Hono<HonoAppEnv>();
+    app.use("*", requireAuth);
+    app.route("/connections", connectionRoutes);
+    app.onError(errorHandler);
+
+    const response = await app.request("/connections", {
+      headers: { "x-rally-dev-user-id": USER_ID, "x-rally-dev-workspace-id": WORKSPACE_ID },
+    }, env);
+
+    expect(response.status).toBe(200);
+    const body = await response.json() as { items: Array<{ id: string; toolCount: unknown; toolCountMissing: unknown }> };
+    expect(body.items.map((item) => [item.id, item.toolCount, item.toolCountMissing])).toEqual([
+      ["00000000-0000-7000-8000-000000000105", 6, null],
+      ["00000000-0000-7000-8000-000000000106", null, "connector_unavailable"],
+    ]);
+  });
 });
+
+async function createAndCount(service: ConnectionService) {
+  const created = await service.createCustomMcp({
+    displayName: "Acme docs",
+    scope: "workspace",
+    serverUrl: SERVER_URL,
+    requestHeaders: { "X-Api-Key": "secret-value" },
+    toolPolicy: "all_tools",
+  });
+  await drainWaitUntil();
+  return created;
+}
+
+function listed(connections: Awaited<ReturnType<ConnectionService["list"]>>, id: string) {
+  const connection = connections.find((item) => item.id === id);
+  if (!connection) throw new Error(`connection ${id} is not listed`);
+  return { toolCount: connection.toolCount, toolCountMissing: connection.toolCountMissing };
+}
+
+/** As a row that predates migration 73 reads: never counted, never claimed. */
+function forgetCount(object: DatabaseSync, connectionId: string): void {
+  object.prepare(
+    `UPDATE connector_connections
+        SET discovered_tool_count = NULL, tool_count_backfill_attempted_at = NULL
+      WHERE id = ?`,
+  ).run(connectionId);
+}
 
 function storedCount(object: DatabaseSync, connectionId: string): number | null {
   const row = object.prepare(
@@ -242,7 +342,7 @@ function insertConnection(object: DatabaseSync, input: {
     WORKSPACE_ID,
     input.connectorType,
     USER_ID,
-    `Google ${input.id.slice(-3)}`,
+    `Connection ${input.id.slice(-3)}`,
     JSON.stringify(input.grants),
     input.modelPluginId ?? `plugin_${input.connectorType}`,
     "2026-09-26T00:00:00.000Z",
@@ -259,12 +359,14 @@ function insertConnection(object: DatabaseSync, input: {
  */
 interface StubMcpServer {
   down: boolean;
+  /** How many `tools/list` requests reached the server: one per discovery. */
+  toolLists: number;
   /** Taken by the next `tools/list`, which answers only once it resolves. */
   hold: { arrived: () => void; release: Promise<void> } | null;
 }
 
 function stubMcpServer(tools: readonly Record<string, unknown>[], requests: string[]): StubMcpServer {
-  const server: StubMcpServer = { down: false, hold: null };
+  const server: StubMcpServer = { down: false, toolLists: 0, hold: null };
   vi.stubGlobal("fetch", async (target: string | URL | Request, init?: RequestInit) => {
     const url = new URL(typeof target === "string" ? target : target instanceof URL ? target.href : target.url);
     requests.push(url.href);
@@ -272,6 +374,7 @@ function stubMcpServer(tools: readonly Record<string, unknown>[], requests: stri
     if (init?.method === "DELETE") return new Response(null, { status: 204 });
     const request = JSON.parse(String(init?.body)) as Record<string, unknown>;
     if (request.method === "notifications/initialized") return new Response(null, { status: 202 });
+    if (request.method === "tools/list") server.toolLists += 1;
     if (request.method === "tools/list" && server.hold) {
       const hold = server.hold;
       server.hold = null;
@@ -296,7 +399,7 @@ function holdNextToolList(server: StubMcpServer): { arrived: Promise<void>; rele
   return { arrived: arrival, release };
 }
 
-function fixture(): {
+function fixture(options: { devAuth?: boolean } = {}): {
   env: Env;
   auth: AuthContext;
   object: DatabaseSync;
@@ -304,23 +407,15 @@ function fixture(): {
   published: string[][];
   publishedConnectionIds: Array<string | null>;
 } {
-  const regional = new DatabaseSync(":memory:");
+  const regional = migratedSqliteDatabase();
   databases.push(regional);
-  regional.exec(`
-    CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL);
-    CREATE TABLE connector_ingress_routes (
-      connection_id TEXT PRIMARY KEY,
-      workspace_id TEXT NOT NULL,
-      region TEXT NOT NULL,
-      connector_type TEXT NOT NULL,
-      scope TEXT NOT NULL,
-      provider_account_id TEXT,
-      provider_user_id TEXT,
-      status TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-  `);
-  regional.prepare("INSERT INTO users (id, name) VALUES (?, 'Workspace Owner')").run(USER_ID);
+  const at = "2026-09-26T00:00:00.000Z";
+  regional.prepare(`INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+    VALUES (?, 'tool-count', 'tool-count@example.test', 'Workspace Owner', ?, ?)`).run(USER_ID, at, at);
+  regional.prepare(`INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+    VALUES (?, 'Tool count', 'tool-count', 'global', ?, ?, ?)`).run(WORKSPACE_ID, USER_ID, at, at);
+  regional.prepare(`INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+    VALUES (?, ?, 'owner', 'active', ?)`).run(WORKSPACE_ID, USER_ID, at);
   const workspace = createTestWorkspaceDO({
     workspaceId: WORKSPACE_ID,
     regionalDatabase: regional,
@@ -349,7 +444,9 @@ function fixture(): {
     env: createTestEnv({
       DB: sqliteD1(regional),
       AVALON_REGION: "global",
-      APP_ENV: "test",
+      ...(options.devAuth
+        ? { APP_ENV: "development", RALLY_DEV_AUTH: "true" }
+        : { APP_ENV: "test" }),
       PUBLIC_API_BASE_URL: "https://api.rallywith.ai",
       CONNECTOR_CREDENTIALS_KEY: "test-connector-credentials-key",
       CONNECTOR_CREDENTIALS_KEY_VERSION: "1",

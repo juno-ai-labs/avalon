@@ -83,6 +83,7 @@ const detail = {
     settingsKind: null,
     userDelivery: null,
     toolCount: null,
+    toolCountMissing: null,
     lastSyncAt: null,
     createdAt: timestamp,
   }],
