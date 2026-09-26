@@ -258,6 +258,7 @@ function WorkspaceApp(): React.JSX.Element {
       // The main window publishes its socket to main and Settings consumes it,
       // so a desktop holds one Organization socket rather than one per window.
       relay={surface === 'settings' ? 'consume' : mainSurface ? 'publish' : undefined}
+      region={session!.workspace!.region}
       workspaceId={session!.workspace!.id}
     >
       {/* The directory connection and profile request start together. Keep this
