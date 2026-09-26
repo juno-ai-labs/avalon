@@ -856,7 +856,8 @@ export class WorkstreamService {
   async update(id: string, input: UpdateWorkstreamInput) {
     const client = await this.authoritativeClient(id);
     if (input.scope === undefined) return client.update(input);
-    // The conversation is asked before `WORKSTREAM_DOS` is addressed at all.
+    // The conversation is asked before the Channel parent `WorkspaceDO` hosts
+    // is addressed at all.
     // It is the object that knows which parent kind this id belongs to, and a
     // Space's hidden main conversation refuses a Channel product request by
     // name; reaching the Channel authority first would address a Space id as
