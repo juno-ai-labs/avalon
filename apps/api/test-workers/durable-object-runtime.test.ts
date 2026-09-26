@@ -1191,7 +1191,7 @@ describe("Durable Objects in the Workers runtime", () => {
           const syncColumns = state.storage.sql.exec<{ name: string }>(
             `PRAGMA table_info(workspace_sync_events)`,
           ).toArray().map((column) => column.name);
-          expect(syncColumns).toEqual(["waterline", "event_id", "topics_json", "occurred_at"]);
+          expect(syncColumns).toEqual(["waterline", "event_id", "topics_json", "occurred_at", "audience_json"]);
           const directoryColumns = state.storage.sql.exec<{ name: string }>(
             `PRAGMA table_info(channels)`,
           ).toArray().map((column) => column.name);
@@ -2218,7 +2218,8 @@ describe("Durable Objects in the Workers runtime", () => {
       "workspace_workstream_state",
       (frame) => frame.workstream !== null,
     );
-    const outsiderPush = nextMessage(outsider);
+    const outsiderFrames: string[] = [];
+    outsider.addEventListener("message", (event) => { outsiderFrames.push(String(event.data)); });
     const at = "2026-08-21T20:00:00.000Z";
     // A run finishing, as the child reports it: the consumer hands it to the
     // Organization object, whose hosted parent sums it into the work stream's
@@ -2268,15 +2269,16 @@ describe("Durable Objects in the Workers runtime", () => {
       workstreamId: WORKSTREAM_ID,
       workstream: { harnessStatus: "completed", title: "Finished while the sidebar watched" },
     });
-    // The outsider is subscribed to the same workspace and gets the frame, but
-    // it carries a tombstone rather than the row: a personal work stream they
-    // do not participate in must not become readable because someone else's
-    // run finished.
-    expect(JSON.parse(String((await outsiderPush).data))).toMatchObject({
-      type: "workspace_workstream_state",
-      workstreamId: WORKSTREAM_ID,
-      workstream: null,
+    // The outsider is subscribed to the same workspace and hears nothing of
+    // it, not even a tombstone: a personal work stream they never saw is not
+    // theirs to learn the id of because someone else's run finished. Every
+    // frame sent before the ping has arrived once its auto-response has.
+    const pong = new Promise<void>((resolve) => {
+      outsider.addEventListener("message", (event) => { if (String(event.data) === "pong") resolve(); });
     });
+    outsider.send("ping");
+    await pong;
+    expect(outsiderFrames.filter((frame) => frame.includes(WORKSTREAM_ID))).toEqual([]);
   });
 
   it("pushes a generated name to a participant who never opened the work stream", async () => {

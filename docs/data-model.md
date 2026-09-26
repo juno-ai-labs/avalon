@@ -271,7 +271,8 @@ common directory, per-viewer overlays, pins, inverted indexes, activity,
 opportunities, receipts, consumed socket tickets, Channel and Space parent
 state in the `parent_*` tables, and a bounded monotonic
 `workspace_sync_events` log. A sync row names
-typed query topics; it never embeds the underlying row. Membership, invitations,
+typed query topics, and for a per-person change the people it was sent to; it
+never embeds the underlying row. Membership, invitations,
 user profiles, placement routes, and migration control remain D1 authorities.
 
 `WorkspaceDO.parent_metadata` is different: one row per Channel or Space, it is

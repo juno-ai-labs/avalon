@@ -1536,7 +1536,7 @@ already have committed across the object boundary.
 | `_sql_schema_migrations` | One row per immutable schema version; shared runner metadata. |
 | `workspace_identity` | Singleton row (`id = 1`) binding the object to workspace, region, and immutable placement affinity. |
 | `workspace_socket_ticket_receipts` | One consumed workspace-scoped ticket including user, expiry, and consumption time; its expiry index supports bounded cleanup. |
-| `workspace_sync_events` | Monotonic `waterline`, UUIDv7 `event_id`, JSON topic set, and occurrence time for the bounded 1,024-event reconciliation window. Rows are invalidations only, never workspace data copies. |
+| `workspace_sync_events` | Monotonic `waterline`, UUIDv7 `event_id`, JSON topic set, the audience a per-person event was sent to (`audience_json`, `NULL` for the whole Organization; replay honours it), and occurrence time for the bounded 1,024-event reconciliation window. Rows are invalidations only, never workspace data copies. |
 | `object_retirement` | Singleton (`id = 1`): the retirement tombstone — instant, operation, actor, reason. Present in all four object classes from one shared constant; migration 40 here. [`workspace-retirement.md`](workspace-retirement.md). |
 | `workspace_retirement_graph` | `(parent_kind, parent_id)`: one row per work stream and automation recorded before the tombstone, with a nullable `retired_at` receipt the walk writes. Migration 41. |
 | `workspace_connector_events` | Complete authoritative normalized provider event, connection/workspace scope, bounded JSON/text fields, provider/dedupe unique keys, local insertion sequence, and processing claim/terminal state. It is never shared with another workspace. |

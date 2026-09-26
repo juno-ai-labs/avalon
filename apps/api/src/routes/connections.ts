@@ -27,6 +27,7 @@ import { z } from "zod";
 import { telemetryOperationId } from "../telemetry/api-emitter";
 import type { HonoAppEnv } from "../env";
 import { getAuth } from "../middleware/auth";
+import { noteChangedConnection } from "../middleware/workspace-realtime";
 import { ApiError } from "../lib/api-error";
 import { classifyConnectorOAuthCallbackFailure } from "../lib/connector-oauth-error";
 import { desktopHandoffUrl, unknownConnectorAttemptFailureTarget } from "../lib/desktop-handoff";
@@ -301,10 +302,12 @@ connectionRoutes.post("/slack/start", zValidator("json", slackStart), async (c) 
  * before it is returned, so a typo in a URL or a header is answered here rather
  * than inside somebody's run three days later.
  */
-connectionRoutes.post("/custom-mcp", zValidator("json", CreateCustomMcpConnectionRequestSchema), async (c) =>
-  c.json(CreatedConnectionSchema.parse(
-    await new ConnectionService(c.env, getAuth(c)).createCustomMcp(c.req.valid("json"))), 201),
-);
+connectionRoutes.post("/custom-mcp", zValidator("json", CreateCustomMcpConnectionRequestSchema), async (c) => {
+  const created = await new ConnectionService(c.env, getAuth(c)).createCustomMcp(c.req.valid("json"));
+  // Either scope: a personal server's invalidation is its owner's alone.
+  noteChangedConnection(c, created.connection.id);
+  return c.json(CreatedConnectionSchema.parse(created), 201);
+});
 connectionRoutes.post("/custom-mcp/start", zValidator("json", StartCustomMcpConnectionRequestSchema), async (c) => {
   const service = new ConnectionService(c.env, getAuth(c));
   return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
@@ -388,9 +391,11 @@ connectionRoutes.delete("/:id", zValidator("param", idParam), async (c) => {
   await new ConnectionService(c.env, getAuth(c)).disable(c.req.valid("param").id);
   return c.body(null, 204);
 });
-connectionRoutes.post("/webhook", zValidator("json", CreateWebhookConnectionRequestSchema), async (c) =>
-  c.json(WebhookConnectionSchema.parse(await new ConnectionService(c.env, getAuth(c)).createWebhook(c.req.valid("json"))), 201),
-);
+connectionRoutes.post("/webhook", zValidator("json", CreateWebhookConnectionRequestSchema), async (c) => {
+  const created = await new ConnectionService(c.env, getAuth(c)).createWebhook(c.req.valid("json"));
+  noteChangedConnection(c, created.connection.id);
+  return c.json(WebhookConnectionSchema.parse(created), 201);
+});
 connectionRoutes.post("/:id/webhook-secret/rotate", zValidator("param", idParam), async (c) =>
   c.json(WebhookCredentialsSchema.parse(
     await new ConnectionService(c.env, getAuth(c)).rotateWebhookSecret(c.req.valid("param").id))),
