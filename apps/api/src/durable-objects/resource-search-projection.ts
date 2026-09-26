@@ -159,8 +159,10 @@ export async function publishResourceSearch(sql: SqlStorage, env: Env, workspace
       type: 'resource_search_projection_v1', region: env.AVALON_REGION, workspaceId, resourceId: row.resource_id,
     }) })));
     for (const row of rows) sql.exec('UPDATE resource_search_versions SET pending = 0 WHERE resource_id = ? AND revision = ?', row.resource_id, row.revision);
-    // A full batch means a backlog; a partial one leaves nothing to pace.
-    if (pace && rows.length === RESOURCE_SEARCH_BATCH) pace.nextBatchAt = Date.now() + intervalMs;
+    // Only a backlog is paced: once nothing due is left, the next edit goes at once.
+    if (pace && rows.length === RESOURCE_SEARCH_BATCH && sql.exec(
+      'SELECT 1 FROM resource_search_versions WHERE pending = 1 AND not_before <= ? LIMIT 1', Date.now(),
+    ).toArray().length) pace.nextBatchAt = Date.now() + intervalMs;
   } catch (error) {
     // Use the regional-effect outbox dispatch retry interval.
     for (const row of rows) sql.exec('UPDATE resource_search_versions SET not_before = ? WHERE resource_id = ? AND revision = ?', Date.now() + 5_000, row.resource_id, row.revision);

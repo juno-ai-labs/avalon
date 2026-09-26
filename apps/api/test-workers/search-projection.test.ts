@@ -120,7 +120,7 @@ describe('conversation page capture', () => {
 });
 
 describe('durable resource search projection', () => {
-  it('waits out the backlog interval after a full batch, and not after a partial one', async () => {
+  it('waits out the backlog interval only while a backlog remains', async () => {
     const stub = env.MIGRATION_PROBE_DO!.getByName('resource-search-pace');
     await stub.ping();
     await runInDurableObject(stub, async (_instance, state) => {
@@ -149,6 +149,10 @@ describe('durable resource search projection', () => {
       pace.nextBatchAt = 0;
       await publishResourceSearch(sql, configured, workspaceId, pace, 60_000);
       expect([sent, pending(), pace.nextBatchAt]).toEqual([[100, 50], 0, 0]);
+      // A last batch that happens to be full leaves no backlog either.
+      sql.exec("UPDATE resource_search_versions SET pending = 1 WHERE resource_id IN (SELECT resource_id FROM resource_search_versions ORDER BY resource_id LIMIT 100)");
+      await publishResourceSearch(sql, configured, workspaceId, pace, 60_000);
+      expect([sent, pending(), pace.nextBatchAt]).toEqual([[100, 50, 100], 0, 0]);
     });
   });
 
