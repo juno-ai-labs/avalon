@@ -136,6 +136,11 @@ const capabilityScopes: Record<string, readonly string[]> = {
  * Tell the connection's audience it changed: its owner when it is personal,
  * everyone when it is the Organization's (`WorkspaceDO.publishSync` reads
  * which from the connection's row).
+ *
+ * Only for a change no `/connections` request's middleware publishes: an OAuth
+ * completion (a provider's redirect, with no session; the Canva loopback
+ * shares its code) and background discovery. A request's own write is
+ * published once, after its response, by `workspaceRealtimeInvalidation`.
  */
 async function publishConnectorWorkspaceSync(env: Env, workspaceId: string, connectionId: string): Promise<void> {
   try {
@@ -2364,7 +2369,6 @@ export class ConnectionService {
         const installation = await (await this.workspaceObject(connection.workspace_id)).changeConnectorInstallation({ workspaceId: connection.workspace_id, connectionId: id, action: "disconnect" });
         runtimeDeferral(this.recordInstallationAudit(installation, "connector.installation.disconnect"));
         await enqueueConnectorInstallation(this.env, installation);
-        await publishConnectorWorkspaceSync(this.env, connection.workspace_id, id);
       }
       const mayRevokeRemotely = connection.connector_type !== "google" && !managedInstallation;
       if (mayRevokeRemotely && adapter.revoke) {
@@ -2777,7 +2781,6 @@ export class ConnectionService {
     }
     await this.syncConnectorIngressRoute(installation.connectionId);
     await enqueueConnectorInstallation(this.env, installation);
-    await publishConnectorWorkspaceSync(this.env, auth.workspaceId, installation.connectionId);
     const connection = (await this.list()).find((item) => item.id === installation.connectionId);
     if (!connection) throw new ApiError(409, "connector_setup_superseded", "The connection changed during setup. Reload Settings.");
     // The one moment the signing secret is allowed to leave the region in
@@ -2830,7 +2833,6 @@ export class ConnectionService {
     runtimeDeferral(this.recordInstallationAudit(installation, `connector.installation.${input.action}`));
     await this.syncConnectorIngressRoute(id);
     await enqueueConnectorInstallation(this.env, installation);
-    await publishConnectorWorkspaceSync(this.env, connection.workspace_id, id);
     return { installation };
   }
 
@@ -2876,7 +2878,6 @@ export class ConnectionService {
     }
     runtimeDeferral(this.recordInstallationAudit(updated, "connector.credentials.replaced"));
     await enqueueConnectorInstallation(this.env, updated);
-    await publishConnectorWorkspaceSync(this.env, connection.workspace_id, id);
     return { installation: updated };
   }
 
@@ -3095,7 +3096,6 @@ export class ConnectionService {
     // Read back before publishing: the read stores the narrowed tool count,
     // so the list a published client refetches already carries it.
     const settings = await this.getCustomMcpSettings(id);
-    await publishConnectorWorkspaceSync(this.env, auth.workspaceId, id);
     return settings;
   }
 

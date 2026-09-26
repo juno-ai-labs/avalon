@@ -287,7 +287,11 @@ reconnect's replay unions only the events sent to that person; a person who
 missed only other people's events is answered `resume`. `history_unavailable`
 names every topic to everyone, which is each person's own invalidation and
 carries no data. A waterline another person's event took is simply skipped by
-this client, whose guard only needs the numbers it does see to rise.
+this client, whose guard only needs the numbers it does see to rise. A replay
+therefore answers at the log's newest waterline, not at the newest event it
+unioned: a cursor left at the person's own last event would trail every later
+event for somebody else, fall out of the pruning window, and cost a
+`history_unavailable` refetch of everything.
 
 Its complete topic catalog, and whose each one is:
 
@@ -312,7 +316,12 @@ Its complete topic catalog, and whose each one is:
 `workspaceSyncPublicationsForMutation` maps each authenticated write to its
 topics and one of three audiences: `organization`, `actor` (the person who
 wrote), or `connection` (the id in the path, or the one a creating route names
-with `noteChangedConnection`; none named is everyone). A connection write
+with `noteChangedConnection`; none named is everyone). The map is the one
+publisher of a `/connections` request's own write, after its response; the
+connection service publishes only what no request carries — an OAuth
+completion, which a provider's redirect reaches without a session (and which
+the Canva loopback, `POST /connections/canva/complete`, runs, so that route
+maps to nothing), and background tool-count discovery. A connection write
 publishes `connector_connections`, `resources` and `digest_schedule`, and not
 `automations`: no Sidekick read consults a connection, which a Sidekick reads
 only when one is applied or its principal is claimed, both of them Sidekick
@@ -830,7 +839,7 @@ receipt.
 | `apps/api/test-workers/workspace-socket-first-frame.test.ts`, `apps/api/test/socket-first-frame-watch.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts`; `pnpm --filter @rally/api test` | The first-frame watch, through the real accept and alarm paths: a silent socket on a silent object resets it, logs, and is dropped, also while the region is closed for maintenance and after its client has already closed it; each of the three "still hearing sockets" signals alone prevents a reset, including after a hibernation wake; the ledger forgets a socket once it speaks, lets go of a judged row, and does not reset a fresh instance after a reset or an eviction; accepting pulls the alarm in. |
 | `apps/api/test-workers/message-to-output-pipeline.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Fresh message admission and its private receipt on the authenticated SubstreamAgent socket, stable turn identity after hibernation/resend, and the message-to-provider pipeline on real workerd. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx`, `workstream-state-store.test.ts` | `pnpm --filter @rally/desktop test` | One persistent workspace connection, truthful terminal errors for access/session/protocol closes, correlated directory pages/pagination, immediate offline page rejection, waterline resume, stale/duplicate rejection across both sockets, independent common/viewer ordering, and idempotent command resend. |
-| `apps/api/test-workers/workspace-socket-fanout.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-socket-fanout.test.ts` | Sync topic audiences on real sockets: a per-person topic reaches its owner alone, live and on replay after a reconnect; a personal connection's change reaches its owner and an Organization connection's reaches everyone; an Organization-wide topic still reaches everyone. Also the Channel row's audience, per [`websocket-architecture.md`](websocket-architecture.md#testing). |
+| `apps/api/test-workers/workspace-socket-fanout.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-socket-fanout.test.ts` | Sync topic audiences on real sockets, live and on replay, and the Channel row's; the full list is in [`websocket-architecture.md`](websocket-architecture.md#testing). |
 | `apps/api/test/workspace-realtime-service.test.ts` | `pnpm --filter @rally/api exec vitest run test/workspace-realtime-service.test.ts` | The mutation map: each write's topics and audience. |
 | `apps/api/test-workers/channel-viewer-state.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Each viewer's own breakouts on the connect sidebar, per Channel; a roster change pushed to that breakout's members only; running background agents pushed to every reader and counted only where each can look; a lost Channel tombstoned without closing the socket; the current list after a resubscribe; nothing said for a parent still waiting for its import; foregrounding a Channel warms its Main. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` (breakouts block) | `pnpm --filter @rally/desktop test` | The breakout list and running agents taken from sidebar and pushed rows and kept with no screen observing them, waterline order, silence on an absent field, eviction on a tombstone, receipt-backed appearance, and pruning the disk cache to the roster. |
@@ -870,15 +879,23 @@ what that leaves exposed.
 
 Child archive admission uses the same `parent_archived` ticket field as parent archive. Already-open private-child sockets additionally check the versioned local archive mirror; there is no per-command parent RPC. See [work-stream durable objects](workstream-durable-object.md) for lifecycle delivery.
 
+## Changelog
+
 ### 2026-09-26 — A sync event names who it is for
 
 **What changed:** `publishSync` takes an audience (people, or a connection
 whose audience is its owner when personal and everyone otherwise), sends only
 to it, and stores it in `workspace_sync_events.audience_json` (WorkspaceDO
-migration 73) so replay after a reconnect reaches the same people. The mutation
+migration 74) so replay after a reconnect reaches the same people. The mutation
 map gives each write its audience: a digest, an onboarding journey, a telemetry
 preference and an OAuth attempt are the writer's; a connection write is the
-connection's, and no longer names `automations`.
+connection's, and no longer names `automations`. A `/connections` request's
+own write is published once, by the middleware: the connection service's
+duplicate publishes for request-path writes (disconnecting, installation
+changes, key replacement, custom MCP tool policy, the Canva loopback) are gone,
+and it publishes only OAuth completions and background discovery. A replay
+answers at the log's newest waterline rather than the newest event it
+unioned for that person.
 
 **Why:** Every topic went to every socket. One person's digest edit, or their
 personal connector's OAuth, tool policy or GitHub settings, made every window
@@ -889,13 +906,18 @@ away replays the unfiltered log and the narrowing is undone. Having each
 connection route publish with the scope it had loaded, which adds an awaited
 RPC to requests whose middleware publish is deferred; `WorkspaceDO` reads the
 connection's scope from its own row instead. New per-person topics, which the
-closed topic enum would make every older desktop reject.
+closed topic enum would make every older desktop reject. Keeping both the
+middleware and the service publishing a request's connection write: each
+such write reached every socket in its audience twice.
 
 **Consequences:** A publisher of a per-person change has to pass its audience;
 without one the event still goes to everyone, which costs refetches but hides
 nothing, since an event names topics and never data. Connection-scoped events
 are decided by the row as it stands at publish time: a connection deleted
-before its publish is told to everyone. See
+before its publish is told to everyone. A new `/connections` route relies on
+the mutation map (naming a created connection with `noteChangedConnection`)
+and must not publish again from the service; a completion or background path
+no request reaches is the only place the service publishes. See
 [`websocket-architecture.md`](websocket-architecture.md) for the Channel-row
 half of this change.
 

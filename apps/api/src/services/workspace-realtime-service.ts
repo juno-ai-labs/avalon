@@ -13,8 +13,8 @@ import {
 
 /**
  * Who a sync event is news to, beyond the whole Organization it goes to by
- * default. `docs/websocket-architecture.md` has the table of which topic is
- * per person.
+ * default. `docs/realtime-sockets.md` has the table of which topic is per
+ * person.
  */
 export interface WorkspaceSyncDetail {
   /** Members a membership change added or removed; each gets its search decisions projected. */
@@ -73,6 +73,10 @@ export const CONNECTION_SYNC_TOPICS: readonly WorkspaceSyncTopic[] = [
  *   `WorkspaceDO.publishSync` reads from the connection's own row. The id is
  *   the path's; a route that creates a connection names it with
  *   `noteChangedConnection`, and a write that names none is told to everyone.
+ *
+ * This map is the one publisher of a `/connections` request's own write; the
+ * connection service publishes only what no request carries (an OAuth
+ * completion, background discovery), so a write is not told twice.
  */
 export type WorkspaceSyncAudience =
   | { kind: "organization" }
@@ -106,8 +110,9 @@ function connectionPublications(pathname: string): WorkspaceSyncPublication[] {
   if (first === "slack" && second === "link") {
     return [{ topics: ["connector_connections", "digest_schedule"], audience: ACTOR }];
   }
-  // Canva is personal-only, and completing it is the person's own connection.
-  if (first === "canva" && second === "complete") return [{ topics: [...CONNECTION_SYNC_TOPICS], audience: ACTOR }];
+  // The Canva loopback runs the provider's OAuth completion, which publishes
+  // the connection's topics to its audience itself, as every completion does.
+  if (first === "canva" && second === "complete") return [];
   // Routes that only ever create an Organization connection.
   if ((first === "x" && second === undefined) || (second === "workspace" && (first === "ashby" || first === "granola"))) {
     return [{ topics: [...CONNECTION_SYNC_TOPICS], audience: ORGANIZATION }];
