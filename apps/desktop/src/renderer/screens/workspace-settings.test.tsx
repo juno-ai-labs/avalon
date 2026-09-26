@@ -1784,10 +1784,27 @@ describe('Organization settings', () => {
         toolCount: 5,
       },
       {
-        id: 'never-discovered', modelPluginId: 'plugin_granola', connectorType: 'granola',
-        scope: 'you', displayName: 'Granola notes', capabilities: ['granola.personal.read'], status: 'healthy',
+        id: 'empty-server', modelPluginId: 'plugin_custom_mcp', connectorType: 'custom_mcp',
+        scope: 'you', displayName: 'Empty server', capabilities: ['custom_mcp.tools'], status: 'healthy',
+        toolCount: 0,
       },
       {
+        id: 'never-discovered', modelPluginId: 'plugin_granola', connectorType: 'granola',
+        scope: 'you', displayName: 'Granola notes', capabilities: ['granola.personal.read'], status: 'healthy',
+        toolCountMissing: 'counting',
+      },
+      {
+        id: 'failed-discovery', modelPluginId: 'plugin_granola_2', connectorType: 'granola',
+        scope: 'you', displayName: 'Granola archive', capabilities: ['granola.personal.read'], status: 'healthy',
+        toolCountMissing: 'not_counted',
+      },
+      {
+        id: 'unregistered', modelPluginId: 'plugin_linear', connectorType: 'linear',
+        scope: 'you', displayName: 'Linear issues', capabilities: ['linear.read'], status: 'healthy',
+        toolCountMissing: 'connector_unavailable',
+      },
+      {
+        // As a region that predates the reason reports a disabled row.
         id: 'disabled-tools', modelPluginId: 'plugin_google_2', connectorType: 'google',
         scope: 'you', displayName: 'Disabled Google', capabilities: ['gmail.read'], status: 'disabled',
       },
@@ -1798,11 +1815,18 @@ describe('Organization settings', () => {
     const row = (name: string) => within(table).getByText(name).closest('tr')!;
 
     await waitFor(() => expect(within(row('Google tools')).getByRole('cell', { name: '5' })).toBeVisible());
-    // No count is not zero: a discovered connection that has never been
-    // discovered, and a disabled one, read as a dash.
-    expect(within(row('Granola notes')).getByRole('cell', { name: '—' })).toBeVisible();
-    expect(within(row('Disabled Google')).getByRole('cell', { name: '—' })).toBeVisible();
-    expect(within(table).queryByRole('cell', { name: '0' })).not.toBeInTheDocument();
+    // Zero is a count: a server that offers nothing reads 0, not a dash.
+    expect(within(row('Empty server')).getByRole('cell', { name: '0' })).toHaveTextContent(/^0$/);
+    // No count is not zero: each dash says which of its reasons it is.
+    const dash = (name: string, label: string) => {
+      const cell = within(row(name)).getByRole('cell', { name: label });
+      expect(cell).toHaveTextContent(/^—$/);
+      expect(cell).toHaveAttribute('title', label);
+    };
+    dash('Granola notes', 'No tool count yet: counting this connection’s tools');
+    dash('Granola archive', 'No tool count: the last tool discovery did not succeed');
+    dash('Linear issues', 'No tool count: this connector is not available in this region');
+    dash('Disabled Google', 'No tool count: this connection is disabled');
     // One request draws the whole column.
     expect(api.getConnections).toHaveBeenCalledTimes(1);
   });
