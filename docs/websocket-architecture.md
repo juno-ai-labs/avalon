@@ -237,6 +237,69 @@ from serialized attachments. Exact `ping` frames are answered by the runtime's
 auto-response facility without waking the object. The client therefore keeps
 useful sockets warm without requiring an always-running Durable Object instance.
 
+### Who the workspace socket tells, and how often
+
+Every workspace socket in an Organization lands in one `WorkspaceDO`, so each
+send that object makes is decided per socket. Two kinds of send carry most of
+the traffic, and neither goes to every socket by default.
+
+**A Channel's row** (`workspace_workstream_state`) goes to:
+
+- everybody who can see the Channel now, for a change to the Channel itself
+  (its common row, its facepile, its breakout total, its running agents); a
+  Channel is seen when it is not archived and is either Organization-wide or
+  the person is one of its participants at the Channel's authority generation;
+- the one person whose own row moved (unread, mention, breakout list), if they
+  can see it;
+- **the people the write may have taken the Channel from**, who are sent the
+  row if they still see it and the `workstream: null` tombstone if they do not.
+
+Nobody else is sent anything. A tombstone to someone who never saw the Channel
+would name a private Channel and say when it moved, and it has no job to do on
+the client: the desktop's receiver removes the row, and there is no row to
+remove. The people who may have lost a Channel are worked out inside the
+directory transaction, against the rows as they were before it, because once
+the batch commits "who could see it a moment ago" is no longer answerable.
+They are carried in the directory follow-up (`channelLosses`) as a set of
+people or `"all"`:
+
+| What the write did | Who is owed the tombstone |
+| --- | --- |
+| A viewer row stopped being a participant, or was deleted for a person who is no longer an active member | That person. |
+| The Channel was archived | Everyone who could see it: `"all"` for an Organization-wide Channel, its participants otherwise. |
+| An Organization-wide Channel narrowed to its participants | `"all"`; the participants still see it and get the row. |
+| A new authority generation replaced the row | As for an archive; each participant's row reappears when their viewer row arrives at the new generation. |
+| A person left the Organization (`applyMemberStatus`) | That person, for each Channel they sat in; their socket stays open until the revocation walk closes it. |
+
+A follow-up recorded before `channelLosses` existed is read as `"all"` for its
+common changes, so no tombstone is lost across the deploy.
+
+Each person's rows are **built once** for all of their sockets and all of the
+Channels they are owed, from one set of reads, and sent to each socket.
+Whether each person can see each Channel is decided from two reads for every
+planned Channel together, so a person who cannot see a Channel costs nothing.
+
+The rows are **coalesced per post-commit pass.** A batch of child effects
+applies each envelope in its own transaction and records a follow-up per
+envelope; the pass (`runDirectoryFollowUps`, reached through
+`afterParentWrite`) collects every Channel those follow-ups touched, and the
+hosted parent's own republish (a breakout roster or the running agents moving)
+joins the same plan, so a turn's burst of changes sends each Channel once per
+socket. The sync topics the pass's activity records moved are published once
+the same way. Nothing here waits on anything: the plan is sent synchronously
+after the last follow-up ran, with no `await` or round trip added to the
+request.
+
+**A sync topic** (`workspace_sync`) goes to everybody unless its event names an
+audience: the people whose own setting moved, or the connection a write
+changed, whose audience is its owner when it is personal and everyone when it
+is the Organization's. The event is stored with that audience
+(`workspace_sync_events.audience_json`), so a reconnect's replay unions only
+the events that were sent to that person. `history_unavailable` still names
+every topic, which is the person's own invalidation and carries no data.
+[`realtime-sockets.md`](realtime-sockets.md) has the topic catalog and each
+topic's audience.
+
 ### Reconnect and teardown
 
 The control and feed state machines reconnect independently with their existing
@@ -349,6 +412,15 @@ open transport as success.
   Channel's metadata, breakouts and running agents are its row on the workspace
   socket; a per-Channel metadata socket would bring back the second copy of
   that row this topology removed.
+- **A Channel's row reaches only the people who can see the Channel, and the
+  people a write just took it from.** A null row sent to anybody else names a
+  private Channel and when it moved; a tombstone withheld from somebody who
+  lost the Channel leaves it on their screen. A new way to take a Channel from
+  someone has to add them to the batch's `channelLosses`, or it has to be one
+  of the transitions `applyDirectoryEnvelope` already compares.
+- **A per-person sync event is stored with its audience and replayed only to
+  it.** Replaying it to everyone after a reconnect would undo the live send's
+  narrowing for every client that was briefly away.
 - **Nothing sits on the click-to-feed path but the feed.** The Channel's row is
   already on the client when the feed is asked for, so opening waits for no
   metadata.
@@ -447,6 +519,7 @@ move the workspace synchronization socket or dictation transport into Node.
 | `apps/desktop/src/renderer/lib/realtime-socket.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/realtime-socket.test.ts` | Browser-shaped state/events, IPC calls, and one multiplexed preload listener for a socket swarm. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/workstream-socket-pool.test.tsx` | Feed ownership with no Channel control ticket ever requested, route retention, expiry, overlap, speculative feed warming, and navigation promotion. |
 | `apps/api/test-workers/channel-viewer-state.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/channel-viewer-state.test.ts` | A Channel's breakouts and running background agents on the real workspace socket: per viewer and per Channel, pushed on a roster or agent change, tombstoned without closing the socket, current after a resubscribe, and Main warmed on foreground. |
+| `apps/api/test-workers/workspace-socket-fanout.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-socket-fanout.test.ts` | Who the workspace socket tells, on real sockets: a private Channel's change reaches nobody outside it; the tombstone reaches a removed participant, the readers of a narrowed or archived Channel, the participants of a re-generated one, and a member who left the Organization, and nobody who never saw the Channel; one person's two sockets get the same row, built once (a counting wrapper on `channelRowPayloads`); a burst of five changes in one delivery is one row per socket; a per-person topic reaches its owner alone, live and on replay; a personal connection's change reaches its owner and an Organization connection's reaches everyone. |
 | `apps/desktop/src/renderer/components/app-shell.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/app-shell.test.tsx` | Active/background selection, including all pins, five recent unpinned rows, and additional running rows. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/durable-object-runtime.test.ts` | Real-workerd upgrade, hibernation, attachment, snapshot, replay, read-only feed, and revocation behavior. |
 
@@ -537,6 +610,46 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-09-26 — The workspace socket tells each change to the people it is about, once
+
+**What changed:** A Channel's row is sent to the people who can see the
+Channel now and to the people the write may have taken it from, who get the
+tombstone; nobody else hears of it. Each person's row is built once for all of
+their sockets, and one post-commit pass sends each Channel once per socket
+however many writes in it touched the Channel. A sync event can name an
+audience (people, or a connection whose owner is the audience when it is
+personal), is stored with it, and replays only to it; the mutation map now says
+per write who it is for, and a connection write no longer names `automations`.
+
+**Why:** Every Channel change looped over every subscribed socket in the
+Organization and, per socket, ran about six queries, parsed and serialized a
+row, and sent it. The directory row's `LEFT JOIN` gave every socket a row, so a
+viewer who could not see the Channel was sent `workstream: null`: every
+message in a private Channel told every non-member its id and when it was
+active. A person with several windows had the same row built per window, and a
+turn's burst of effects (one transaction, and one follow-up, per envelope)
+sent one full row per effect. Sync topics had no audience at all, so one
+person's digest edit or personal connector OAuth invalidated every socket in
+the Organization.
+
+**Considered and rejected:** Deciding tombstones at publish time with a
+"could have seen it" test (any viewer row, any generation): it misses the
+readers of an Organization-wide Channel who have no viewer row when it
+narrows, and sends tombstones for ever to people who once had a row. Per-Channel
+subscriptions on the workspace socket, rejected again for the reasons the
+2026-09-25 entry gives. Publishing connection changes from each route handler,
+which would have added an awaited RPC to requests that now defer it; the
+connection's audience is read by `WorkspaceDO` from its own row instead.
+
+**Consequences:** A change that can take a Channel away from someone has to
+name them in `channelLosses` (or be a transition `applyDirectoryEnvelope`
+compares): a tombstone nobody is owed is not sent. A new sync topic that is
+one person's has to be published with an audience; the table in
+[`realtime-sockets.md`](realtime-sockets.md) says which topics are. A connection
+change still invalidates `resources` and `digest_schedule` for its whole
+audience, because a workspace connection's resources and digest destinations
+belong to everyone.
 
 ### 2026-09-25 — A Channel's metadata rides the workspace socket; the control socket is retired
 
