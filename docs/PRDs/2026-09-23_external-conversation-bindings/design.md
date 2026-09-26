@@ -612,10 +612,9 @@ silently opening the audience.
 Provider actors without Rally accounts remain external actors on their own
 turns; receiving a Slack event does not create a Rally member or personal tool
 grant. A continued Sidekick run acts as its run-as user regardless of who sent
-the input. The unresolved policy is whether a person who leaves the provider
-room keeps their prior Rally participation. That answer belongs in the product
-contract before private-room rollout, because current connector admission
-retains membership after departure.
+the input. A person who leaves a private provider room keeps their Rally
+access until it is changed in Rally, as current connector admission already
+does (see the PRD's decision log).
 
 ## Slack adapter and lifecycle cases
 
