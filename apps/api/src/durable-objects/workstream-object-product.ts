@@ -95,7 +95,7 @@ import {
 } from "./scheduled-alarms";
 import { WorkstreamIdentityStorage } from "./workstream-identity-storage";
 import { spaceVisibleToViewerSql } from "./workspace-space-storage";
-import { substreamLoopId, workspaceDOName, workstreamDOName } from "./names";
+import { substreamLoopId, workspaceDOName } from "./names";
 import { ParticipantAuthorityTransferStorage } from "./participant-authority-transfer";
 import { workstreamImportHash } from "./workstream-import-hash";
 import { WorkspaceReserveDraftAttachmentsResultSchema } from "./workspace-draft-attachment-protocol";
@@ -1916,8 +1916,8 @@ export class WorkstreamObjectProductService {
            ON membership.space_id = pin.space_id
           AND membership.workstream_id = pin.workstream_id
           AND membership.state = 'active'
-         JOIN workspace_space_directory space ON space.space_id = pin.space_id
-         LEFT JOIN workspace_space_viewers viewer
+         JOIN spaces space ON space.space_id = pin.space_id
+         LEFT JOIN space_viewers viewer
            ON viewer.space_id = space.space_id
           AND viewer.user_id = ? AND viewer.is_participant = 1
         WHERE pin.workstream_id = ? AND pin.user_id = ? AND space.archived_at IS NULL
@@ -2808,8 +2808,8 @@ export class WorkstreamObjectProductService {
     if (identity?.parentKind !== "workstream" || this.externalSubstreamId() !== "0") return false;
     if (new ParticipantAuthorityTransferStorage(this.storage).currentTransferId() === null) return false;
     const parent = await durableObjectStubForWorkspace(
-      this.env, this.env.WORKSTREAM_DOS, identity.workspaceId,
-      workstreamDOName(this.env.AVALON_REGION, identity.workspaceId, asWorkstreamId(identity.parentId)),
+      this.env, this.env.WORKSPACE_DOS, identity.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)),
     );
     const result = await parent.mutateParticipantGrant({
       operationId: await stableUuid(["narrow-scope-seat", identity.parentId, auth.userId]),
@@ -2846,8 +2846,8 @@ export class WorkstreamObjectProductService {
       || new ParticipantAuthorityTransferStorage(this.storage).currentTransferId() === null) return;
     const target = { kind: "conversation" as const, workspaceId: identity.workspaceId,
       parentId: identity.parentId, substreamId: this.externalSubstreamId() };
-    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS, identity.workspaceId,
-      workstreamDOName(this.env.AVALON_REGION, identity.workspaceId, asWorkstreamId(identity.parentId)));
+    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, identity.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)));
     for (const userId of missingUserIds) {
       const request = { target, actorUserId: auth.userId, userId: asUserId(userId), active: true,
         operationId: await stableUuid(["message-participant", target, auth.userId, clientMessageId, userId]) };

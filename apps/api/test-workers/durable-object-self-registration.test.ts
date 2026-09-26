@@ -9,35 +9,35 @@
  * with the binding it answers on and a thunk that derives the name a shared
  * helper would resolve, from identity written to its own storage.
  *
- * Those four registrations and four name derivations were covered only
+ * The legacy `WorkstreamDO` and `SpaceDO` no longer register: they only export
+ * their rows to the Organization object and never call their own names
+ * (`docs/hosted-conversation-parents.md`).
+ *
+ * Those registrations and name derivations were covered only
  * incidentally before, and incidental coverage is exactly what let the product
  * service keep an unregistered environment through the first draft of this
- * change. The last case here is the regression test for that: it is not enough
+ * change. The product-service case here is the regression test for that: it is not enough
  * that the object holds a registered environment, if the collaborators it builds
  * and keeps do not.
  */
 import { env } from "cloudflare:workers";
 import type { DurableObject as RpcDurableObject } from "cloudflare:workers";
-import { asSpaceId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   conversationObjectName,
-  spaceDOName,
   workspaceDOName,
-  workstreamDOName,
 } from "../src/durable-objects/names";
 import { durableObjectSelfForId } from "../src/lib/durable-object-self";
 import {
-  boot,
   seedWorkstreamRoot,
   WORKSPACE_ID,
   WORKSTREAM_ID,
 } from "./helpers/substream-fixture";
 
 const OTHER_WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000004b1");
-const SPACE_ID = asSpaceId("00000000-0000-7000-8000-0000000004b4");
 
 /**
  * The internals these tests read on purpose.
@@ -134,73 +134,4 @@ describe("a Durable Object's registration of its own identity", () => {
       expect(selfFor(held.env, env.WORKSTREAM_DOS, name)).toBeNull();
     });
   });
-
-  it("lets a WorkstreamDO recognize itself with or without its metadata", async () => {
-    const name = workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID);
-    const stub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(name));
-    await boot(stub);
-
-    await runInDurableObject(stub, (instance, state) => {
-      const held = internals(instance);
-      expect(selfFor(held.env, env.WORKSTREAM_DOS, name)).not.toBeNull();
-
-      state.storage.sql.exec(
-        `INSERT INTO workstream_metadata
-           (id, workspace_id, workstream_id, region, authority_generation, title,
-            description, preview, scope, exact_state, last_activity_at,
-            created_at, updated_at)
-         VALUES (1, ?, ?, 'global', 1, 'Fixture', '', '', 'workspace', 'idle', 1, 1, 1)`,
-        WORKSPACE_ID,
-        WORKSTREAM_ID,
-      );
-
-      expect(selfFor(held.env, env.WORKSTREAM_DOS, name)).not.toBeNull();
-      expect(selfFor(
-        held.env,
-        env.WORKSTREAM_DOS,
-        workstreamDOName("global", WORKSPACE_ID, OTHER_WORKSTREAM_ID),
-      )).toBeNull();
-      // The main `SubstreamAgent` shares this logical name, so only the binding
-      // separates them — and it still does, whether or not the two namespaces
-      // happen to hash a name to the same id.
-      expect(selfFor(held.env, env.SUBSTREAM_AGENTS, name)).toBeNull();
-    });
-  });
-
-  it("lets a SpaceDO recognize itself under its own binding and name", async () => {
-    // The registration the role supplies, which is the half a subclass most
-    // easily gets wrong: `SpaceDO` inherits the constructor that registers, so
-    // an inherited `env.WORKSTREAM_DOS` and `workstreamDOName` would make every
-    // Space resolve its own name out through the work-stream namespace and land
-    // on a different object — with nothing failing on either side.
-    const name = spaceDOName("global", WORKSPACE_ID, SPACE_ID);
-    const stub = env.SPACE_DOS.get(env.SPACE_DOS.idFromName(name));
-    await boot(stub);
-
-    await runInDurableObject(stub, (instance, state) => {
-      const held = internals(instance);
-      expect(selfFor(held.env, env.SPACE_DOS, name)).not.toBeNull();
-
-      state.storage.sql.exec(
-        `INSERT INTO workstream_metadata
-           (id, workspace_id, workstream_id, region, authority_generation, title,
-            description, preview, scope, exact_state, last_activity_at,
-            created_at, updated_at)
-         VALUES (1, ?, ?, 'global', 1, 'Hiring', '', '', 'workspace', 'idle', 1, 1, 1)`,
-        WORKSPACE_ID,
-        SPACE_ID,
-      );
-
-      // With identity written, the name is derived — and it is the Space name,
-      // not the work-stream name the same id would have produced.
-      expect(selfFor(held.env, env.SPACE_DOS, name)).not.toBeNull();
-      expect(selfFor(
-        held.env,
-        env.SPACE_DOS,
-        workstreamDOName("global", WORKSPACE_ID, asWorkstreamId(SPACE_ID)),
-      )).toBeNull();
-      expect(selfFor(held.env, env.WORKSTREAM_DOS, name)).toBeNull();
-    });
-  });
-
 });

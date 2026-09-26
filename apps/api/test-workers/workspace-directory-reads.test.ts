@@ -151,7 +151,7 @@ async function seedSpacePlacements(
   await runInDurableObject(workspace(), (_instance, state) => {
     for (const [spaceId, workstreamIds] of placements) {
       state.storage.sql.exec(
-        `INSERT INTO workspace_space_directory
+        `INSERT INTO spaces
            (space_id, title, scope, appearance_json, archived_at, created_by_user_id,
             system_role, authority_generation, source_version, payload_hash, revision,
             created_at, updated_at, source_created_at, source_updated_at)
@@ -198,7 +198,7 @@ async function establishWorkspace(): Promise<void> {
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspace_members (incarnation TEXT DEFAULT 'existing-member',
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
       role TEXT NOT NULL, access_class TEXT NOT NULL DEFAULT 'member',
-      last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
+      last_seen_at TEXT, revision INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (workspace_id, user_id)
     )`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (workspace_incarnation TEXT DEFAULT 'existing-member',
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
@@ -620,7 +620,7 @@ describe("what the workspace object answers about its work streams", () => {
       await runInDurableObject(workspace(), (_instance, state) => {
         for (const [userId, projectedAt] of recency) {
           state.storage.sql.exec(
-            `UPDATE workspace_workstream_viewers
+            `UPDATE channel_viewers
                 SET projected_at = ?
               WHERE workstream_id = ? AND user_id = ?`,
             projectedAt,

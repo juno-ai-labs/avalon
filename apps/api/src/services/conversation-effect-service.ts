@@ -1,6 +1,6 @@
 import type { WorkspaceNotificationIntentDelivery } from "../durable-objects/workspace-notification-intent-protocol";
 import { enqueuePushDelivery } from "./push-delivery-service";
-import { asWorkspaceId, asWorkstreamId, asUserId, asSubstreamId } from "@rally/contracts";
+import { asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -14,7 +14,7 @@ import {
   isDirectoryEffect,
   type ParentEffectEnvelope,
 } from "@rally/contracts/conversation-effects";
-import { workspaceDOName, workstreamDOName } from "../durable-objects/names";
+import { workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceDirectoryApplyResultSchema,
   WorkspaceDirectoryNotificationStateSchema,
@@ -243,8 +243,8 @@ export async function notificationDeliveryContext(env: Env, row: WorkspaceNotifi
     : WorkstreamMentionNotificationEffectSchema.parse(payload);
   const childId = effect.substreamId && effect.substreamId !== "0" ? effect.substreamId : null;
   if (childId) {
-    const parent = await durableObjectStubForWorkspace(env, env.WORKSTREAM_DOS, typedWorkspaceId,
-      workstreamDOName(env.AVALON_REGION, typedWorkspaceId, asWorkstreamId(row.workstreamId)));
+    const parent = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, typedWorkspaceId,
+      workspaceDOName(env.AVALON_REGION, asWorkspaceId(typedWorkspaceId)));
     const access = await parent.authorizeViewer({ workspaceId: typedWorkspaceId, parentId: row.workstreamId,
       userId: asUserId(row.recipientUserId), substreamId: asSubstreamId(childId) });
     if (!access.authorized || access.archived) {

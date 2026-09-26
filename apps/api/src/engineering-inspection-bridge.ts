@@ -15,6 +15,8 @@ import {
   EngineeringWorkstreamListLookupSchema,
   ListEngineeringWorkspacesInputSchema,
   ListEngineeringWorkspacesResultSchema,
+  ParentImportRetryInputSchema,
+  ParentImportRetryLookupSchema,
   SidekickInspectionInputSchema,
   SidekickSqlInspectionInputSchema,
   SpaceInspectionInputSchema,
@@ -41,6 +43,7 @@ import {
   type EngineeringWorkstreamListLookup,
   type EngineeringWorkstreamTargetLookup,
   type ListEngineeringWorkspacesResult,
+  type ParentImportRetryLookup,
 } from "@rally/contracts/engineering-inspection";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { z } from "zod";
@@ -163,12 +166,30 @@ async function resolveInspectionSubstreamRoute(
     // main substream, so this check cannot materialize a previously absent DO.
     return route;
   }
-  const workstream = await workstreamStub(env, route);
-  const directory = await workstream.runInspectionSql({
-    sql: `SELECT substream_id FROM substream_directory WHERE substream_id = ?`,
-    bindings: [input.substreamId],
+  const known = await inspectionSubstreamIds(env, route);
+  return known.includes(input.substreamId) ? route : null;
+}
+
+/**
+ * Every conversation a Channel's parent has heard from. The parent is hosted
+ * by the Organization object now; a Channel whose rows have not moved yet is
+ * read from its legacy object, which still holds them.
+ */
+async function inspectionSubstreamIds(env: Env, route: InspectionWorkstreamRoute): Promise<string[]> {
+  const workspace = await workspaceStub(env, route.workspace_id);
+  const hosted = await workspace.runInspectionSql({
+    sql: `SELECT substream_id FROM parent_child_projections WHERE parent_id = ?
+          UNION SELECT substream_id FROM parent_children WHERE parent_id = ?
+          UNION SELECT 'pending:' || state FROM parent_imports WHERE parent_id = ? AND state = 'pending'`,
+    bindings: [route.workstream_id, route.workstream_id, route.workstream_id],
   });
-  return directory.rows.length === 0 ? null : route;
+  const ids = hosted.rows.map((row) => String(row.substream_id));
+  if (!ids.includes("pending:pending")) return ids;
+  const legacy = await (await workstreamStub(env, route)).runInspectionSql({
+    sql: `SELECT substream_id FROM substream_directory`,
+    bindings: [],
+  });
+  return legacy.rows.map((row) => String(row.substream_id));
 }
 
 /**
@@ -211,7 +232,7 @@ async function resolveInspectionSidekickRoute(
  * A Space is fenced by its workspace and then by the Organization's own record
  * of it.
  *
- * The same fence a Sidekick has: `workspace_space_directory` is the row that
+ * The same fence a Sidekick has: `spaces` is the row that
  * proves the object exists, read from an object that is already open, so a miss
  * is answered without naming anything in `SPACE_DOS`. Naming a Durable Object
  * creates it, and an id that is not a Space would otherwise leave an empty
@@ -235,7 +256,7 @@ async function resolveInspectionSpaceRoute(
   if (!route) return null;
   const workspace = await workspaceStub(env, input.workspaceId);
   const directory = await workspace.runInspectionSql({
-    sql: `SELECT space_id FROM workspace_space_directory WHERE space_id = ?`,
+    sql: `SELECT space_id FROM spaces WHERE space_id = ?`,
     bindings: [input.spaceId],
   });
   return directory.rows.length === 0 ? null : route;
@@ -338,7 +359,7 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     const result = await workspace.runInspectionSql({
       sql: `SELECT workstream_id, title, scope, exact_state, system_kind,
                    last_activity_at, archived_at
-              FROM workspace_workstream_directory
+              FROM channels
              ORDER BY last_activity_at DESC, workstream_id`,
       bindings: [],
     });
@@ -366,21 +387,15 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     const request = parseRpcInput(WorkstreamInspectionInputSchema, input, "listSubstreams");
     const route = await resolveInspectionWorkstreamRoute(this.env, request.workstreamId);
     if (!route) return { found: false };
-    const workstream = await workstreamStub(this.env, route);
-    const result = await workstream.runInspectionSql({
-      sql: `SELECT '0' AS substream_id
-            UNION
-            SELECT substream_id FROM substream_directory
-            ORDER BY substream_id`,
-      bindings: [],
-    });
+    const substreamIds = [...new Set(["0", ...await inspectionSubstreamIds(this.env, route)])].sort();
     return EngineeringSubstreamListLookupSchema.parse({
       found: true,
       value: {
         region: this.env.AVALON_REGION,
         workspaceId: route.workspace_id,
         workstreamId: route.workstream_id,
-        items: z.array(SubstreamDirectoryRowSchema).parse(result.rows).map((row) => ({
+        items: z.array(SubstreamDirectoryRowSchema).parse(substreamIds.map((substreamId) => ({ substream_id: substreamId })))
+          .map((row) => ({
           workspaceId: route.workspace_id,
           workstreamId: route.workstream_id,
           substreamId: row.substream_id,
@@ -429,7 +444,7 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
   /**
    * Every Space in a workspace, archived ones included.
    *
-   * Read from `workspace_space_directory` the way `listSidekicks` reads
+   * Read from `spaces` the way `listSidekicks` reads
    * `automation_directory`: the Organization's projection is what says a Space
    * exists, and an archived Space is a common inspection target even though no
    * product list shows it.
@@ -442,7 +457,7 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     const workspace = await workspaceStub(this.env, request.workspaceId);
     const result = await workspace.runInspectionSql({
       sql: `SELECT space_id, title, scope, system_role, archived_at
-              FROM workspace_space_directory
+              FROM spaces
              ORDER BY created_at, space_id`,
       bindings: [],
     });
@@ -607,6 +622,26 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         substreamId: null,
         result: await workspace.runInspectionSql(request.query),
       },
+    });
+  }
+
+  /**
+   * The one repair here that is not SQL: re-running a Channel's or Space's
+   * legacy import, which needs the export RPC the console cannot make.
+   * Fenced like `runWorkspaceSql`.
+   */
+  async retryParentImport(input: unknown): Promise<ParentImportRetryLookup> {
+    const request = parseRpcInput(ParentImportRetryInputSchema, input, "retryParentImport");
+    if (!await resolveInspectionWorkspaceRoute(
+      this.env,
+      request.workspaceId,
+      request.authorityGeneration,
+    )) return { found: false };
+    const workspace = await workspaceStub(this.env, request.workspaceId);
+    const ledger = await workspace.retryParentImport({ workspaceId: request.workspaceId, parentId: request.parentId });
+    return ParentImportRetryLookupSchema.parse({
+      found: true,
+      value: { region: this.env.AVALON_REGION, workspaceId: request.workspaceId, parentId: request.parentId, ...ledger },
     });
   }
 

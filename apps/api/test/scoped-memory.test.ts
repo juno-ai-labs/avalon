@@ -320,7 +320,7 @@ function fixture(): {
     register: (created) => { openDatabases.push(created); },
   });
   const memoryRpcs = workspaceObjectRpcs(workspaceObject.instance, [...MEMORY_OBJECT_METHODS, 'publishSync', 'listSearchAuthorizationSnapshots',
-    'enumerateSearchAuthorization', 'registerSearchAuthorization', 'revokeSocketAccess']);
+    'enumerateSearchAuthorization', 'registerSearchAuthorization', 'revokeSocketAccess', 'applyMemberStatus']);
   const envWith = (rpcs: Record<string, unknown>): Env => createTestEnv({
     DB: sqliteD1(database),
     ACCESS_REVOCATION_QUEUE: { send: async () => undefined, sendBatch: async () => undefined },

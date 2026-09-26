@@ -46,17 +46,12 @@ import {
   type TranscriptOverlay,
 } from './transcript';
 import { requestSocketTicket } from './socket-ticket-request';
-import type * as WorkstreamControlSocketModule from './use-workstream-control-socket';
 
 function overlayMessages(queryClient: QueryClient, workstreamId: string): Message[] {
   return (queryClient.getQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId)) ?? [])
     .map((overlay) => overlay.message);
 }
 
-vi.mock('./use-workstream-control-socket', async (importOriginal) => ({
-  ...await importOriginal<typeof WorkstreamControlSocketModule>(),
-  useWorkstreamControlSocket: vi.fn(),
-}));
 
 import type * as TelemetryModule from './telemetry';
 import {
@@ -200,7 +195,6 @@ function socketApiWith(overrides: Partial<WorkstreamSocketApi>): WorkstreamSocke
   return {
     viewerUserId: null,
     getSocketTicket: vi.fn(unexpected),
-    getWorkstreamControlSocketTicket: vi.fn(unexpected),
     messageMentionPayload: vi.fn(async () => []),
     ...overrides,
   } satisfies WorkstreamSocketApi;
@@ -816,7 +810,7 @@ describe('useWorkstreamSocket', () => {
       getSocketTicket,
     });
     const { result } = renderHook(() => useWorkstreamSocket(
-      api, workstreamId, true, false, 'active_workstream', undefined, true, substreamId,
+      api, workstreamId, true, 'active_workstream', undefined, true, substreamId,
     ), {
       wrapper: createWrapper(queryClient),
     });
@@ -966,7 +960,7 @@ describe('useWorkstreamSocket', () => {
       };
     });
     const { result } = renderHook(() => useWorkstreamSocket(
-      socketApiWith({ getSocketTicket }), workstreamId, true, false,
+      socketApiWith({ getSocketTicket }), workstreamId, true,
       'active_workstream', undefined, true, substreamId,
     ), { wrapper: createWrapper(queryClient) });
     await flushPromises();
@@ -1006,7 +1000,7 @@ describe('useWorkstreamSocket', () => {
       })),
     });
     const { result } = renderHook(() => useWorkstreamSocket(
-      api, workstreamId, true, false, 'active_workstream', undefined, true, substreamId,
+      api, workstreamId, true, 'active_workstream', undefined, true, substreamId,
     ), { wrapper: createWrapper(queryClient) });
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
@@ -1053,7 +1047,7 @@ describe('useWorkstreamSocket', () => {
       })),
     });
     renderHook(() => useWorkstreamSocket(
-      api, workstreamId, true, false,
+      api, workstreamId, true,
       'active_workstream', undefined, true, substreamId,
     ), { wrapper: createWrapper(queryClient) });
     await flushPromises();
@@ -1554,7 +1548,6 @@ describe('useWorkstreamSocket', () => {
       api,
       workstreamId,
       true,
-      false,
       'active_workstream',
       undefined,
       true,
@@ -1792,7 +1785,6 @@ describe('useWorkstreamSocket', () => {
       api,
       workstreamId,
       true,
-      false,
       'active_workstream',
       undefined,
       true,
@@ -3740,7 +3732,7 @@ describe('useWorkstreamSocket', () => {
         protocols: socketTicketProtocols('socket-ticket'),
       })),
     });
-    renderHook(() => useWorkstreamSocket(api, workstreamId, true, true, 'active_workstream', undefined, true, 'child'), { wrapper: createWrapper(queryClient) });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true, 'active_workstream', undefined, true, 'child'), { wrapper: createWrapper(queryClient) });
 
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
@@ -3932,7 +3924,7 @@ describe('useWorkstreamSocket', () => {
     const api = socketApiWith({ getSocketTicket });
     const openAttemptId = markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 0);
     renderHook(
-      () => useWorkstreamSocket(api, workstreamId, true, false, 'background_workstream'),
+      () => useWorkstreamSocket(api, workstreamId, true, 'background_workstream'),
       { wrapper: createWrapper(queryClient) },
     );
 
@@ -5183,7 +5175,7 @@ it('keeps inference delays attempt-scoped and clears them on settlement and conv
     url: `wss://api.rally.test/workstreams/${parentId}`, ticket: 'socket-ticket',
     protocols: socketTicketProtocols('socket-ticket'),
   })) });
-  const { result, rerender } = renderHook(({ substreamId }) => useWorkstreamSocket(api, parentId, true, false, "active_workstream", undefined, true, substreamId), {
+  const { result, rerender } = renderHook(({ substreamId }) => useWorkstreamSocket(api, parentId, true, "active_workstream", undefined, true, substreamId), {
     initialProps: { substreamId: '0' }, wrapper: createWrapper(queryClient),
   });
   await flushPromises();

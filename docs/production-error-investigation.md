@@ -206,8 +206,8 @@ full procedure is in
 ### Authoritative state and delivery machinery
 
 When an event says an action was requested or a log says a handler ran, inspect
-the store that owns the resulting fact. WorkspaceDO, WorkstreamDO,
-SubstreamAgent, D1 control tables, Queue receipts, and outboxes answer different
+the store that owns the resulting fact. WorkspaceDO (which also hosts every
+Channel and Space parent), SubstreamAgent, D1 control tables, Queue receipts, and outboxes answer different
 questions. Do not create a cross-store “truth” by choosing whichever copy is
 easiest to query.
 

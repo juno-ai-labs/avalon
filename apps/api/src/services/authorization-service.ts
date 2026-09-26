@@ -10,7 +10,7 @@ import { conversationParentStub } from './conversation-parent-client';
 import { ApiError } from '../lib/api-error';
 import { logWarn } from '../observability/logger';
 import type { AutomationDO } from '../durable-objects/automation-do';
-import type { WorkstreamDO } from '../durable-objects/workstream-do';
+import type { WorkspaceDO } from '../durable-objects/workspace-do';
 import type { WorkstreamResourceStorage } from '../durable-objects/workstream-resource-storage';
 import {
   AccessContext, evaluateReadPolicy,
@@ -103,7 +103,7 @@ export class AuthorizationService {
 
 /** Owner observations, including settled reads, live for exactly one batch. */
 class AuthorizationBatch {
-  private readonly parents = new Map<string, Promise<Awaited<ReturnType<WorkstreamDO['readAuthorizationFacts']>>>>();
+  private readonly parents = new Map<string, Promise<Awaited<ReturnType<WorkspaceDO['readAuthorizationFacts']>>>>();
   private readonly automations = new Map<string, Promise<Awaited<ReturnType<AutomationDO['readAuthorizationFacts']>>>>();
   private readonly automationViewers = new Map<string, Promise<Awaited<ReturnType<AutomationDO['authorizeViewer']>> & { validatedAt: number }>>();
   private readonly identities = new Map<string, Promise<Awaited<ReturnType<ReturnType<typeof createIdentityObjectPort>['readAuthorizationFacts']>>>>();
@@ -196,7 +196,7 @@ class AuthorizationBatch {
       // to is decided in exactly one place in the tree.
       const parent = await conversationParentStub(this.env, {
         workspaceId: subject.workspaceId, parentKind: 'workstream', parentId: resource.parentId,
-      }) as DurableObjectStub<WorkstreamDO>;
+      }) as DurableObjectStub<WorkspaceDO>;
       const facts = await parent.readAuthorizationFacts(request);
       return facts.exists && facts.authority === "legacy" ? { ...facts, validatedAt: Math.min(facts.validatedAt, facts.main.validatedAt) } : facts;
     });

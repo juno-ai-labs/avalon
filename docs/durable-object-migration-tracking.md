@@ -8,7 +8,10 @@ implementation, and it is nonetheless a distinct *class* here: it reports
 component `space_do` under class name `SpaceDO`, from the *same* ledger
 `workstream_do` runs. Sharing the work-stream component would have put two
 version histories under one rollup and made the class fence below meaningless;
-sharing the ledger costs nothing, because the two classes are one class. Nothing in
+sharing the ledger costs nothing, because the two classes are one class. Both
+are now legacy: Channel and Space parents live in `WorkspaceDO`, and these
+classes stay deployed, and tracked, only until every object has exported its rows
+([`hosted-conversation-parents.md`](hosted-conversation-parents.md)). Nothing in
 Cloudflare's account model can answer the question that follows from that:
 **which objects are on which schema version, and which of them are broken?** A
 Durable Object namespace can be enumerated for object IDs, but an ID carries no

@@ -36,15 +36,18 @@ it("upgrades a populated v68 breakout directory without losing its row and const
       component: "workspace_do", workerVersionId: "with-breakout-appearance", now: 2,
     });
     const sql = state.storage.sql;
+    // Migration 72 renamed the directory to `breakouts`; the v68 row has to
+    // survive both the appearance column and the rename.
+    expect(sql.exec("SELECT name FROM sqlite_schema WHERE name = 'workspace_breakout_directory'").toArray()).toEqual([]);
     expect(sql.exec<{ substream_id: string; title: string; appearance_json: string | null }>(
-      "SELECT substream_id, title, appearance_json FROM workspace_breakout_directory",
+      "SELECT substream_id, title, appearance_json FROM breakouts",
     ).toArray()).toEqual([{ substream_id: "breakout-1", title: "Existing breakout", appearance_json: null }]);
     expect(() => sql.exec(
-      "UPDATE workspace_breakout_directory SET appearance_json = 'not json' WHERE substream_id = 'breakout-1'",
+      "UPDATE breakouts SET appearance_json = 'not json' WHERE substream_id = 'breakout-1'",
     )).toThrow();
-    sql.exec("UPDATE workspace_breakout_directory SET appearance_json = '{\"icon\":\"sparkles\"}' WHERE substream_id = 'breakout-1'");
+    sql.exec("UPDATE breakouts SET appearance_json = '{\"icon\":\"sparkles\"}' WHERE substream_id = 'breakout-1'");
     expect(sql.exec<{ appearance_json: string }>(
-      "SELECT appearance_json FROM workspace_breakout_directory WHERE substream_id = 'breakout-1'",
+      "SELECT appearance_json FROM breakouts WHERE substream_id = 'breakout-1'",
     ).one().appearance_json).toBe('{"icon":"sparkles"}');
     expect(sql.exec("PRAGMA foreign_key_check").toArray()).toEqual([]);
   });

@@ -107,7 +107,7 @@ function seedDraft(database: DatabaseSync, id: string, createdAt: string): void 
 
 function linkToWorkstream(database: DatabaseSync, resourceId: string): void {
   database.prepare(
-    `INSERT OR IGNORE INTO workspace_workstream_directory
+    `INSERT OR IGNORE INTO channels
        (workstream_id, authority_generation, waterline, source_event_id, payload_hash, title,
         description, preview, scope, exact_state, last_activity_at, origin_type, title_status,
         latest_attention_ordinal, unread_tracking_start_ordinal, source_created_at,

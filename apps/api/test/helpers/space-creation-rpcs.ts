@@ -4,18 +4,17 @@ import { vi } from "vitest";
 /**
  * The Space half of a create, for a Node suite whose subject is something else.
  *
- * Every Channel is born in a Space — `workstream-object-creation-service.ts`
- * stages a membership, records the source on the Channel's own authority, and
- * settles the membership before the conversation is reserved — so a test about
- * Slack assignment, origin attachment or the audience a create asks for now
- * passes through three WorkspaceDO RPCs and, on the Channel's room, either one
- * or two. One is the ordinary create, which records the source in the birth
- * mode because the conversation opened with that audience already written; two
- * is the connector placement, which widens an existing Channel between the plan
- * and the commit. Both are doubled here, because this helper serves both.
+ * Every Channel is born in a Space. The ordinary create
+ * (`workstream-object-creation-service.ts`) places and reserves it with one
+ * WorkspaceDO call, `reserveChannelInSpaces`; a Channel added to a Space after
+ * it exists goes through `addSpaceChannel`, one call in which WorkspaceDO widens
+ * its audience through its conversation (a replayed create), or through the
+ * staged membership RPCs and the Channel's plan-then-confirm source RPCs (the
+ * connector placement). All of them are doubled here, because this helper
+ * serves each.
  *
  * These doubles answer the *steady* case: the Space already exists, so nothing
- * provisions a `SpaceDO`, and every step succeeds. That is deliberate. What a
+ * provisions its parent, and every step succeeds. That is deliberate. What a
  * Space does to a creation is proved against real storage in
  * `test-workers/space-creation.test.ts` and as arithmetic in
  * `test/workstream-space-start.test.ts`; re-implementing any of it here would
@@ -29,19 +28,6 @@ import { vi } from "vitest";
  * audience has to name a Space that supplies none, which is what
  * {@link PERSONAL_SPACE_ID} is for.
  */
-
-/**
- * What the creation observed the Channel as before this source was applied.
- *
- * Declared so a caller can read the direct half of the audience off the spy:
- * once an Organization-wide Space has widened it, this is the only place the
- * scope the caller asked for is still visible.
- */
-interface SpaceSourceApplication {
-  channel: { readers: { scope: string } };
-  /** The birth mode: this call commits the source, and no confirmation follows. */
-  bornWithSourceApplied?: boolean;
-}
 
 /** The Organization's General, already open, so `ensureGeneral` provisions nothing. */
 export const GENERAL_SPACE_ID = asSpaceId("00000000-0000-7000-8000-00000000fe11");
@@ -74,50 +60,48 @@ function summary(spaceId: string) {
 export function spaceCreationWorkspaceRpcs() {
   return {
     // A replayed create re-adds the Channel through the full `addChannel`,
-    // which asks the Organization whether the Channel is one this caller can
-    // see before it stages anything. Idempotent in production; here it is one
+    // which is one WorkspaceDO call. Idempotent in production; here it is one
     // more RPC a replay case has to get past.
-    canReadWorkstream: vi.fn(async () => true),
-    ensureGeneralSpace: vi.fn(async () => ({
+    addSpaceChannel: vi.fn(async (input: { spaceId: string }) => ({
+      ok: true as const,
+      space: summary(input.spaceId),
+    })),
+    // The create's one Organization-side call. The input is declared so a
+    // caller can read what the creation asked for, which is the direct half of
+    // the audience an Organization-wide Space widens past on its way to
+    // `initialize`.
+    reserveChannelInSpaces: vi.fn(async (input: {
+      spaceIds: string[];
+      requestedScope: string;
+      authorityGeneration: number;
+    }) => ({
+      status: "reserved" as const,
+      authorityGeneration: input.authorityGeneration,
+      spaces: (input.spaceIds.length > 0 ? input.spaceIds : [GENERAL_SPACE_ID]).map(summary),
+    })),
+    openGeneralSpace: vi.fn(async () => ({
       ok: true as const,
       created: false as const,
       space: summary(GENERAL_SPACE_ID),
     })),
-    prepareSpaceMembership: vi.fn(async (input: { spaceId: string }) => ({
+    // The connector path's placement of a Channel it provisioned itself.
+    placeChannelInGeneral: vi.fn(async () => ({
       ok: true as const,
-      space: summary(input.spaceId),
-      membershipGeneration: 1,
-    })),
-    finalizeSpaceMembership: vi.fn(async (input: { spaceId: string }) => ({
-      ok: true as const,
-      space: summary(input.spaceId),
-    })),
-    cancelSpaceMembership: vi.fn(async (input: { spaceId: string }) => ({
-      ok: true as const,
-      space: summary(input.spaceId),
+      space: summary(GENERAL_SPACE_ID),
     })),
   };
 }
 
 /**
- * The Channel's side: the source the Space supplies, applied and confirmed.
+ * The Channel's side of a placement into an existing Channel: the source the
+ * Space supplies, planned and then confirmed.
  *
  * `seatUserIds` is empty because neither Space here has a roster — General
- * seats nobody individually, and the personal one is empty by construction —
- * so the observation handed back is the one the caller passed in.
+ * seats nobody individually, and the personal one is empty by construction.
  */
 export function spaceCreationRoomRpcs() {
   return {
-    // The input is declared so a caller can read what the creation observed the
-    // Channel as — the direct half of the audience, which an Organization-wide
-    // Space widens past on its way to `initialize`.
-    applySpaceAccessSource: vi.fn<(input: SpaceSourceApplication) => Promise<{
-      ok: true;
-      plan: { seatUserIds: string[] };
-      suppliedUserIds?: string[];
-    }>>(async (input) => (input.bornWithSourceApplied
-      ? { ok: true, plan: { seatUserIds: [] }, suppliedUserIds: [] }
-      : { ok: true, plan: { seatUserIds: [] } })),
+    applySpaceAccessSource: vi.fn(async () => ({ ok: true as const, plan: { seatUserIds: [] as string[] } })),
     confirmSpaceAccessSource: vi.fn(async () => ({ ok: true as const })),
   };
 }

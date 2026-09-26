@@ -9,19 +9,20 @@ and local handoff state, Terminal egress policy history, digests and shared
 schedules, resources/notes/watches and R2 lifecycle references, shared memory,
 external-delivery intents/attempts, inbound-email processing receipts,
 dictation socket admission, the cross-work-stream directory,
-first-party activity, and suggested work.
+first-party activity, suggested work, and every Channel's and Space's
+conversation-parent state, as `parent_*` rows keyed by parent id
+([`hosted-conversation-parents.md`](hosted-conversation-parents.md)).
 
 Each automation is authoritative in its own `AutomationDO`, a conversation
-parent beside `WorkstreamDO`. WorkspaceDO stores only its content-free sidebar
+parent beside the Channel and Space parents hosted in `WorkspaceDO`. WorkspaceDO stores only its content-free sidebar
 row plus the external-event registrations that fan a connector event out. See
 [`automation-lifecycle.md`](automation-lifecycle.md). D1 keeps no rebuildable
 workspace product serving projection. Serving contract 1 makes each `SubstreamAgent` SQLite database the product authority for
 one independently ordered substream after the guarded regional generation opens;
-its non-agent parent (`WorkstreamDO` for a work stream, `AutomationDO` for an
-automation, `SpaceDO` — the same class as `WorkstreamDO` under a different role
-— for a Space) owns the aggregate metadata and the parent outbox. The stored
-`workstream.parent_kind` is the closed three-value vocabulary those three
-classes answer to, widened to admit `space` by conversation-object schema
+its non-agent parent (a hosted Channel or Space parent in `WorkspaceDO`, or
+`AutomationDO` for an automation) owns the aggregate metadata and the parent
+outbox. The stored `workstream.parent_kind` is the closed three-value
+vocabulary those parents answer to, widened to admit `space` by conversation-object schema
 version 66. Legacy D1 workspace-product activity/opportunity rows are
 maintenance import input and are scrubbed before each verified WorkspaceDO route
 becomes active. Migration 0090 removes those sources, the per-work-stream source
@@ -69,8 +70,9 @@ read-watermark and child projection writes do not. See
 
 ## Sidekick loading and attachment storage
 
-WorkstreamDO migration 13 adds `workstream_sidekick_attachments`, keyed by
-workspace Sidekick ID with its attachment time. Workstream-owned Sidekicks use
+WorkstreamDO migration 13 added `workstream_sidekick_attachments`, keyed by
+workspace Sidekick ID with its attachment time; it is now `parent_sidekicks` in
+`WorkspaceDO`, keyed by parent id. Workstream-owned Sidekicks use
 their existing ownership relation. These relations recommend catalog entries
 in all substreams; `sidekick_attachments` remains local to each SubstreamAgent.
 Execution snapshots optionally contain `recommendedRefs` for compatibility with
@@ -89,9 +91,9 @@ SidekickDO migration 3 adds automation.loadable, atomically maintained with the 
 | `apps/api/src/mappers/connection.ts` | D1 row schemas parsed at the read — the pattern the remaining hand-coercing control-plane readers are converging on. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | The separate versioned authority schema local to one `SubstreamAgent`. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Canonical transcript fact ownership, participant and exact Bind projections, range snapshots, activities, and compaction checkpoints. |
-| `apps/api/src/durable-objects/workspace-do.ts`, `workspace-product-schema.ts`, `workspace-domain-schema.ts`, `workspace-product-storage.ts`, `workspace-runtime-sql.ts`, `workstream-do.ts` | SQL schemas and repositories for authoritative workspace product state, typed compatibility SQL, sync/command routing, bounded invalidation replay, non-agent child aggregation, and work-stream metadata sockets. |
+| `apps/api/src/durable-objects/workspace-do.ts`, `workspace-product-schema.ts`, `workspace-domain-schema.ts`, `workspace-product-storage.ts`, `workspace-runtime-sql.ts`, `hosted-parent.ts`, `hosted-parent-schema.ts` | SQL schemas and repositories for authoritative workspace product state, typed compatibility SQL, sync/command routing, bounded invalidation replay, Channel and Space parent state and child aggregation, and Channel control sockets. |
 | `apps/api/src/services/workspace-runtime-database.ts` | D1-compatible routing port that sends an allowlisted workspace-product statement to typed WorkspaceDO RPC while leaving global/regional control SQL in D1; mixed-authority batches fail closed, and so does any single statement — read or write — naming both a WorkspaceDO table and a regional-only one. |
-| `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Typed, runtime-validated cross-object query and effect contracts joining WorkstreamDO facts to WorkspaceDO serving state without cross-database SQL. |
+| `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Typed, runtime-validated query and effect contracts joining conversation-parent facts to WorkspaceDO serving state. |
 | `packages/contracts` | The camel-cased shapes the columns are mapped into. |
 
 ### Early-access acquisition
@@ -266,15 +268,17 @@ resource/note/watch/memory records, external-delivery state, inbound-email proce
 exclusive leases, dictation admission (one-time transcription ticket receipts
 and the concurrency session leases the per-user/per-workspace caps count), the
 common directory, per-viewer overlays, pins, inverted indexes, activity,
-opportunities, receipts, consumed socket tickets, and a bounded monotonic
+opportunities, receipts, consumed socket tickets, Channel and Space parent
+state in the `parent_*` tables, and a bounded monotonic
 `workspace_sync_events` log. A sync row names
 typed query topics; it never embeds the underlying row. Membership, invitations,
 user profiles, placement routes, and migration control remain D1 authorities.
 
-`WorkstreamDO.workstream_metadata` is different: it is the authoritative
-parent metadata projected from Main. Its revision covers complete common metadata;
-only Main entries in `substream_user_directory` produce the parent viewer overlay.
-Child title and lifecycle live in `conversation_children`, whose nullable
+`WorkspaceDO.parent_metadata` is different: one row per Channel or Space, it is
+the authoritative parent metadata projected from Main. Its revision covers
+complete common metadata; only Main entries in `parent_child_viewer_projections`
+produce the parent viewer overlay. Child title and lifecycle live in
+`parent_children`, whose nullable
 `archived_at` is independent of creation readiness. Archive retains membership
 and transcript while excluding the child from the visible directory. A WebSocket
 snapshot includes nulls so a client can delete a former email,
@@ -300,7 +304,7 @@ SQL joins.
 
 - The main `SubstreamAgent`'s object-local `workstream` row is the product root;
   each provisioned child carries the bounded root facts needed to authorize and
-  project its own context, while `WorkstreamDO.workstream_metadata` is the
+  project its own context, while `WorkspaceDO.parent_metadata` is the
   Main-derived parent view. `workstream_key` is the conversation parent id and
   `parent_kind` (v39, widened by v66) says whether that parent is a work stream,
   an automation, or a Space; `origin_type`, `automation_subscription_id`, `automation_run_id`,
@@ -328,10 +332,10 @@ SQL joins.
   [`workstream-descriptions.md`](workstream-descriptions.md).
 - `workstream.scope` answers who may read a work stream, in the same
   `personal`/`workspace` vocabulary `notes.scope` uses. Privacy is a declared
-  property of the row rather than a rule each caller has to remember. WorkstreamDO
-  enforces the authoritative participant/scope rule and publishes its viewer
-  projection to WorkspaceDO, whose directory applies it for lists and socket
-  admission without consulting D1.
+  property of the row rather than a rule each caller has to remember. The
+  Channel's hosted parent enforces the authoritative participant/scope rule and
+  publishes its viewer projection to WorkspaceDO's directory, which applies it
+  for lists and socket admission without consulting D1.
 - **`personal` means “an active participant” at every serving
   boundary.** Detail authorization, sockets, workspace lists, pins, visibility
   checks, resource reads, and Suggested Work all use that
@@ -348,7 +352,7 @@ SQL joins.
   member; the personal window is an inference boundary, not a narrowing of the
   source. Restricted activity may enter a personal work stream only when every
   active participant is in its permitted user set. Suggested
-  context persists that source audience and WorkstreamDO rechecks it before
+  context persists that source audience and the main `SubstreamAgent` rechecks it before
   storing, reading, or resolving a card; a legacy row with no auditable audience
   is not visible.
 - **A work stream is born `personal`, and every path that means otherwise says
@@ -454,8 +458,9 @@ SQL joins.
   recommended Sidekick, an audience — is the Channel's own and survives. See
   [`projects.md`](projects.md).
 - WorkspaceDO migration 63 adds the Space authority that replaced those rows:
-  `workspace_space_directory` and `workspace_space_viewers` are the *projection*
-  a Space's own object publishes, so they carry the generation, source version
+  `spaces` and `space_viewers` (created as `workspace_space_directory` and
+  `workspace_space_viewers`, renamed by migration 72) are the *projection*
+  a Space's parent publishes, so they carry the generation, source version
   and payload hash each effect is fenced on rather than being written by a
   mutation; a reservation is written at source version zero so the first real
   projection supersedes it. `workspace_container_order` is every list a person
@@ -479,18 +484,44 @@ SQL joins.
   `system_role` makes General singular. See [`spaces.md`](spaces.md).
 - **WorkspaceDO migration 65 adds the Organization's view of a Channel's
   breakouts.**
-  `workspace_breakout_directory` is one row per `(workstream_id, substream_id)`
-  and `workspace_breakout_viewers` is its per-person half, both applied from
+  `breakouts` is one row per `(workstream_id, substream_id)`
+  and `breakout_viewers` is its per-person half (created as
+  `workspace_breakout_directory` and `workspace_breakout_viewers`, renamed by
+  migration 72), both applied from
   the `directory_common` and `directory_user` effects a Channel now forwards on
   its breakouts' behalf, under the same generation-then-version fence and the
   same `workspace_workstream_effect_receipts` receipt the Channel directory
   uses. They are separate tables rather than a `substream_id` column on
-  `workspace_workstream_directory` because every other query over that table
+  `channels` because every other query over that table
   reads it as one row per Channel. Their columns are spelled the way the
   Channel directory spells the same facts, because one code-owned SQL predicate
   is rendered against both. The dashboard's refresh signal has **no** table of
   its own: a client is told to read its page again over the socket and nothing
   is written. See [`spaces.md`](spaces.md#the-refresh-signal).
+- **WorkspaceDO migration 72 hosts Channel and Space conversation parents.** It
+  renames the directory tables to the product's names (`channels`,
+  `channel_viewers`, `breakouts`, `breakout_viewers`, `spaces`,
+  `space_viewers`), adds the `parent_*` tables that hold what each legacy
+  `WorkstreamDO` and `SpaceDO` held, every one led by `parent_id`, and seeds
+  `parent_imports` with one `pending` row per Channel and Space the directory
+  already knew. The table map and the import are in
+  [`hosted-conversation-parents.md`](hosted-conversation-parents.md).
+- Migration 72 also adds `workspace_member_status`, one row per person: their
+  workspace relationship as `relationship_json` (null for someone with none or
+  removed), `active`, the D1 delivery `sequence` of the last relationship event
+  applied (0 when only a D1 read has been recorded), and `removed_incarnation`,
+  the incarnation a removal event ended. It is a projection of D1's
+  `workspace_members`, fed by `workspace_relationship_changed` events; access
+  checks inside `WorkspaceDO` read it instead of D1. A D1 read or write a
+  request makes replaces a row only when provably newer (a new incarnation over
+  a removed one, or a higher revision of the same one), and a removed
+  incarnation never comes back. See
+  [`hosted-conversation-parents.md`](hosted-conversation-parents.md#workspace-relationships-are-local).
+- `workspace_directory_followups` holds the post-commit work a directory change
+  owes (socket publishes, Space snapshots, schedule and watch refreshes) as
+  `followup_json`, written in the same transaction as the change, run straight
+  after the commit and deleted once it has run; `attempts` and `not_before`
+  let the alarm retry one whose run failed. Nothing reads it but that runner.
 - Object-local `participants` records explicit participation reasons, and
   `first_opened_at` — null until that person opens the work stream, which is
   what makes "you were added to this and have never been here" a state the
@@ -594,13 +625,13 @@ names are kept because D1 migrations are immutable and every reader of the
 route keys on the same pair. Likewise `workstream_email_routes.automation_subscription_id`
 keeps its name and holds the automation id. Common/per-user
 list queries, pins, and resource discovery use `WorkspaceDO`'s
-`workspace_workstream_*` tables. D1 has
+`channels`, `channel_viewers` and `workspace_workstream_*` tables. D1 has
 no projection fallback when that object is unavailable.
 
 ### Automations and execution
 
 **An automation's own state is not here.** Each automation is a named
-`AutomationDO` Durable Object, a conversation parent like `WorkstreamDO`, that
+`AutomationDO` Durable Object, a conversation parent like a Channel's, that
 owns its definition revisions, lifecycle, schedules, runs (each a child
 substream under it), and inbound-email receipts.
 [`automation-lifecycle.md`](automation-lifecycle.md) is that schema's map and
@@ -734,12 +765,13 @@ column catalog; what follows is only what WorkspaceDO still holds.
 
 ### Activity log and digests
 
-- `WorkspaceDO.workspace_workstream_effect_receipts` is the inbox for queued
-  WorkstreamDO directory, activity, resource-link, and
-  mention-delivery effects. Message ID and payload hash detect replay or
+- `WorkspaceDO.workspace_workstream_effect_receipts` is the inbox for parent
+  directory, activity, resource-link, and mention-delivery effects, whether
+  applied in a hosted parent's own transaction or delivered by the activity
+  Queue. Message ID and payload hash detect replay or
   conflict; generation and per-key waterlines reject stale mutable state.
-- `WorkspaceDO.workspace_workstream_directory` and
-  `workspace_workstream_viewers` are authoritative common and viewer-specific
+- `WorkspaceDO.channels` and
+  `channel_viewers` are authoritative common and viewer-specific
   query rows; `viewers.unseen` is the projection of the membership row's
   `first_opened_at`, so the sidebar reads it without a cross-object call. Equal
   generation/waterline with a different hash is rejected.
@@ -991,8 +1023,9 @@ The tables have distinct lifecycles rather than one catch-all event store:
    only the bounded normalized connector event needed to reach WorkspaceDO.
 
 9. **Who may read a work stream is decided by Durable Object authority.**
-   WorkstreamDO owns scope and participants; WorkspaceDO serves the projected
-   viewer decision for cross-work-stream lists and admission. D1 is never a
+   The Channel's hosted parent in WorkspaceDO owns scope and participants;
+   WorkspaceDO's directory serves the projected viewer decision for
+   cross-work-stream lists and admission. D1 is never a
    visibility fallback.
 
 10. **Migration files are immutable after deployment.** New schema changes receive
@@ -1015,9 +1048,12 @@ The tables have distinct lifecycles rather than one catch-all event store:
 14. **An effect is acknowledged to the Queue only after the owning receiver
     commits the effect and its receipt together, and the sender's outbox row is
     deleted when `sendBatch` accepts the message, because retry is the Queue's.**
-    A child's effects commit in its parent (`WorkstreamDO` or `AutomationDO`);
-    directory/user effects, an automation's row, and first-party
-    activity/mention effects commit in WorkspaceDO. External notification
+    A child's effects commit in its parent (a hosted Channel or Space parent in
+    WorkspaceDO, or `AutomationDO`); directory/user effects, an automation's
+    row, and first-party activity/mention effects commit in WorkspaceDO. A
+    hosted parent's directory effects are applied in the parent write's own
+    transaction, with no Queue hop and no outbox row; its `parent_outbox` holds
+    only work that leaves the object. External notification
     intent and delivery state also commit there; D1 supplies only current
     member/user identity and opaque provider routing. Queue order and
     uniqueness are never trusted, generation/version fences mutable state, and
@@ -1040,6 +1076,7 @@ has a document, and the column notes above point at it rather than restating it:
 | Pinning and the pinned sidebar section | [`workstream-pinning.md`](workstream-pinning.md) |
 | The automation lifecycle and every table `AutomationDO` owns | [`automation-lifecycle.md`](automation-lifecycle.md) |
 | The conversation-parent contract and the effect legs between the objects | [`workstream-durable-object.md`](workstream-durable-object.md) |
+| Channel and Space parent tables in WorkspaceDO, and their import from the legacy objects | [`hosted-conversation-parents.md`](hosted-conversation-parents.md) |
 | The activity log's semantics and the digest that reads it | [`digests.md`](digests.md) |
 | Model pinning and the flags it overrides | [`feature-flags.md`](feature-flags.md) |
 | Telemetry routing, identities, lifecycle, and destinations | [`telemetry.md`](telemetry.md) |
@@ -1149,7 +1186,7 @@ its rows.
 
 ## Scoped participant authority (implementation in progress)
 
-Unpublished WorkstreamDO migration 14 owns exact grants, immutable operation
+Unpublished WorkstreamDO migration 14 added exact grants, immutable operation
 receipts, participant migration tokens and projection targets. Its
 `participant_projection_deliveries` row holds the latest effective roster
 payload per conversation/user, including revocation tombstones. Successful
@@ -1158,11 +1195,15 @@ viewer admission still needs its version. A new desired revision clears the
 acknowledgement in the same transaction as the grant and alarm. Source-side
 Substream migration 62 freezes legacy roster writers and records applied
 projection revisions. See [workstream authority](workstream-durable-object.md)
-for handoff and delivery ordering; live migration remains disabled.
+for handoff and delivery ordering; live migration remains disabled. These tables
+now live in WorkspaceDO as `parent_grants`, `parent_grant_operations`,
+`parent_participant_migrations`, `parent_participant_targets` and
+`parent_participant_deliveries`, keyed by `parent_id`
+([table map](hosted-conversation-parents.md#table-map)).
 
 ## Space-derived Channel access
 
-WorkstreamDO migration 18 makes each Channel the provenance authority for its
+WorkstreamDO migration 18 made each Channel the provenance authority for its
 own readers. `workstream_direct_audience` records the Channel's audience on its
 own account, backfilled from `workstream_metadata.scope` — which becomes the
 *effective* audience the moment a Space widens the Channel and can no longer
@@ -1175,9 +1216,11 @@ every access operation on its exact request, in the shape
 `source_id`; existing rows backfill as `direct` through the defaults, which is
 what they were.
 
-Every Space runs the same version: `SPACE_ROLE` applies
-`WORKSTREAM_DO_SCHEMA_MIGRATIONS` under component `space_do`, so one appended
-version reaches both classes. No regional D1 table is involved: the provenance is
+These tables now live in WorkspaceDO as `parent_direct_audience`,
+`parent_space_sources`, `parent_space_readers`, `parent_access_operations` and
+`parent_grants`, keyed by `parent_id`
+([table map](hosted-conversation-parents.md#table-map)). A Space's parent uses
+the same tables as a Channel's. No regional D1 table is involved: the provenance is
 Channel-local, and the audience it plans is still written by the main
 conversation's scope and participant rows or by the grant ledger. See
 [workstream authority](workstream-durable-object.md) for the union rule and

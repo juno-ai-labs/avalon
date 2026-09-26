@@ -162,7 +162,7 @@ const WORKSPACE_LOCAL_TABLE_PATTERNS = WORKSPACE_LOCAL_TABLES.map((table) => ({
  * one of these alongside a local table is asking two databases one question.
  * The list is deliberately short and explicit rather than "everything not in
  * `WORKSPACE_LOCAL_TABLES`": the object also holds tables that list does not
- * name — `workspace_workstream_directory`, `work_opportunities`,
+ * name — `channels`, `work_opportunities`,
  * `workspace_activity_events` and their neighbours — and treating those as
  * regional would refuse statements that are correct today.
  *

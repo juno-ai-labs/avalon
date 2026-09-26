@@ -208,8 +208,8 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   // written by the directory handoff, both inside the object; a runtime
   // statement naming a breakout would be a surface listing one, and nothing
   // outside a Space dashboard lists one at all.
-  "workspace_breakout_directory",
-  "workspace_breakout_viewers",
+  "breakouts",
+  "breakout_viewers",
   "workspace_batch_dispatch_targets",
   "workspace_batch_dispatches",
   "workspace_container_order",
@@ -218,17 +218,51 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "external_registration_generations", // Owned by typed registration RPC only.
   "retired_meeting_resources", // Operator-only cleanup manifest.
   "workspace_identity",
-  "workspace_space_directory",
+  "spaces",
   "workspace_space_state",
-  "workspace_space_viewers",
+  "space_viewers",
   "workspace_sidebar_list_state",
   "workspace_socket_ticket_receipts",
   "workspace_socket_unheard", // The first-frame watch's ledger; socket paths and the alarm only.
   "workspace_sync_events",
-  "workspace_workstream_directory",
+  "channels",
   "workspace_workstream_effect_receipts",
   "workspace_workstream_resource_links",
-  "workspace_workstream_viewers",
+  "channel_viewers",
+  // Hosted Channel and Space parents (WorkspaceDO migration 72). Every row is
+  // read and written by `HostedParent` and the import through the object's own
+  // storage, scoped by `parent_id`; no runtime statement names a parent's
+  // state.
+  "parent_imports",
+  "parent_metadata",
+  "parent_children",
+  "parent_child_projections",
+  "parent_child_viewer_projections",
+  "parent_child_receipts",
+  "parent_projection_keys",
+  "parent_state_clock",
+  "parent_state_changes",
+  "parent_outbox",
+  "workspace_directory_followups", // Written only by the directory apply in the same transaction.
+  "workspace_member_status", // Written only by relationship events and the relationship reader.
+  "parent_breakout_preparations",
+  "parent_breakout_members",
+  "parent_breakout_member_effects",
+  "parent_grant_revision",
+  "parent_grants",
+  "parent_grant_operations",
+  "parent_grant_imports",
+  "parent_participant_targets",
+  "parent_participant_migrations",
+  "parent_participant_deliveries",
+  "parent_invitation_operations",
+  "parent_invitations",
+  "parent_connector_admissions",
+  "parent_sidekicks",
+  "parent_direct_audience",
+  "parent_space_sources",
+  "parent_space_readers",
+  "parent_access_operations",
 ] as const;
 
 /** Every table WorkspaceDO's migrations leave standing, in application order. */

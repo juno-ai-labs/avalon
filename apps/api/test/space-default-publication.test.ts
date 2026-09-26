@@ -14,12 +14,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   publishSpaceBootstrapWork,
   publishSpaceDefaultTargets,
-  publishSpaceIntentResumes,
 } from "../src/durable-objects/workspace-space-default-publication";
 import type {
   SpaceBootstrapClaim,
   WorkspaceSpaceDefaultPublication,
-  WorkspaceSpaceIntentClaim,
 } from "../src/durable-objects/workspace-space-storage";
 
 const WORKSPACE_ID = "00000000-0000-7000-8000-0000000000e1";
@@ -28,7 +26,6 @@ const CHANNEL_ID = asWorkstreamId("00000000-0000-7000-8000-0000000000e3");
 const RESOURCE_ID = "00000000-0000-7000-8000-0000000000e4";
 const SIDEKICK_ID = "00000000-0000-7000-8000-0000000000e5";
 const OWNER = asUserId("00000000-0000-7000-8000-0000000000e6");
-const OPERATION_ID = "00000000-0000-7000-8000-0000000000e7";
 
 function publication(
   kind: "resource" | "sidekick",
@@ -46,31 +43,13 @@ function publication(
   };
 }
 
-const INTENT: WorkspaceSpaceIntentClaim = {
-  operationId: OPERATION_ID,
-  kind: "audience",
-  spaceId: SPACE_ID,
-  workstreamId: null,
-  spaceRevision: 5,
-  membershipGeneration: null,
-  sourceSpaceId: null,
-  sourceSpaceRevision: null,
-  sourceMembershipGeneration: null,
-  // Where the interrupted walk got to. It travels on the message because the
-  // resume continues the walk rather than restarting it.
-  cursor: "MDAwMDAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGMx",
-  requestedByUserId: OWNER,
-};
-
 function storageDouble(input: {
   bootstrap?: SpaceBootstrapClaim | null;
   publications?: WorkspaceSpaceDefaultPublication[];
-  intents?: WorkspaceSpaceIntentClaim[];
 }) {
   return {
     claimDefaultPublications: vi.fn(() => input.publications ?? []),
     acceptDefaultPublications: vi.fn(),
-    claimIntentResumes: vi.fn(() => input.intents ?? []),
     claimBootstrap: vi.fn(() => input.bootstrap ?? null),
   };
 }
@@ -134,73 +113,6 @@ describe("publishing Space default targets", () => {
     // would have marked work the Queue never took.
     expect(storage.claimDefaultPublications).toHaveBeenCalledWith(1_000, expect.any(Function));
     expect(storage.acceptDefaultPublications).not.toHaveBeenCalled();
-  });
-});
-
-describe("republishing unsettled Space intents", () => {
-  it("given an unsettled intent, when the alarm runs, then it is put back on the Queue", async () => {
-    const storage = storageDouble({ intents: [INTENT] });
-    const sendBatch = vi.fn(async () => undefined);
-
-    await expect(publishSpaceIntentResumes({
-      storage,
-      queue: { sendBatch },
-      workspaceId: WORKSPACE_ID,
-      region: "global",
-      now: 2_000,
-      retryAt: (attempt) => 2_000 + attempt * 60_000,
-    })).resolves.toBe(1);
-
-    // Everything the consumer needs to address the work travels on the message:
-    // by the time it runs, the request that staged the intent is gone.
-    expect(sendBatch).toHaveBeenCalledWith([{ body: {
-      type: "space_intent_resume",
-      region: "global",
-      workspaceId: WORKSPACE_ID,
-      operationId: OPERATION_ID,
-      kind: "audience",
-      spaceId: SPACE_ID,
-      workstreamId: null,
-      spaceRevision: 5,
-      membershipGeneration: null,
-      sourceSpaceId: null,
-      sourceSpaceRevision: null,
-      sourceMembershipGeneration: null,
-      cursor: "MDAwMDAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGMx",
-      requestedByUserId: OWNER,
-    } }]);
-  });
-
-  it("carries both source fences when the unsettled intent is a move", async () => {
-    const sourceSpaceId = asSpaceId("00000000-0000-7000-8000-0000000000ef");
-    const storage = storageDouble({ intents: [{
-      ...INTENT,
-      kind: "move",
-      workstreamId: CHANNEL_ID,
-      membershipGeneration: 7,
-      sourceSpaceId,
-      sourceSpaceRevision: 4,
-      sourceMembershipGeneration: 6,
-      cursor: null,
-    }] });
-    const sendBatch = vi.fn(async () => undefined);
-
-    await publishSpaceIntentResumes({
-      storage,
-      queue: { sendBatch },
-      workspaceId: WORKSPACE_ID,
-      region: "global",
-      now: 2_000,
-      retryAt: (attempt) => 2_000 + attempt * 60_000,
-    });
-
-    expect(sendBatch).toHaveBeenCalledWith([{ body: expect.objectContaining({
-      kind: "move",
-      membershipGeneration: 7,
-      sourceSpaceId,
-      sourceSpaceRevision: 4,
-      sourceMembershipGeneration: 6,
-    }) }]);
   });
 });
 

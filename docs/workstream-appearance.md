@@ -28,7 +28,7 @@ own storage and its own glyph treatment.
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | `patchCachedWorkstreamAppearance`, the receipt-time write that puts a committed choice on the sidebar row ahead of the directory projection, and `patchCachedGeneratedIcon`, the naming pass's, which additionally declines a row that already has an icon. Neither touches the cached detail. Built on `patchCachedWorkstream`, the write for any unversioned fact both caches must agree on. |
 | `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | `useCachedWorkstreamAppearance`, the read side: one work stream's appearance off the sidebar row, for a surface that must move with that row rather than with the detail. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Orders the picker's choices on the addressed conversation socket and applies each one to the relevant Channel or Breakout cache row when its receipt arrives. |
-| `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Reconciles a receipt-backed Breakout row with parent directory snapshots: a pre-command snapshot cannot undo the commit, while a genuinely different authoritative appearance wins. |
+| `apps/desktop/src/renderer/lib/channel-viewer-state.ts` | Reconciles a receipt-backed Breakout row with parent directory snapshots: a pre-command snapshot cannot undo the commit, while a genuinely different authoritative appearance wins. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Authoritative Channel-or-Breakout write, command receipt, and common-state publication. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Projects each Breakout's stored appearance into the parent-owned Breakout directory. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Every conversation object's nullable `workstream.appearance_json`. |
@@ -41,15 +41,16 @@ own storage and its own glyph treatment.
 The header uses the retained Main conversation socket even when a private child
 is selected. `set_workstream_appearance` carries a partial appearance and a unique
 operation ID. Main commits the merged value, idempotency receipt, and common
-outbox effect together. WorkstreamDO forwards that common state to WorkspaceDO
-and publishes it to its control sockets. Existing versioned state handling
+outbox effect together. The Channel's parent in `WorkspaceDO` applies that
+common state to the directory and publishes it to its control sockets. Existing versioned state handling
 updates the header, sidebar, and cached detail. Reconnection obtains the same
 appearance in the canonical snapshot.
 
 That projection is the durable path, not the fast one. From the commit it
-crosses Main's outbox alarm, a Queue hop to WorkstreamDO, WorkstreamDO's outbox
-alarm, a second Queue hop to WorkspaceDO, and only then a state push: seconds,
-while the receipt comes back in one socket round trip. The picker previews its
+crosses Main's outbox alarm and a Queue hop to `WorkspaceDO`, which applies the
+parent step and the directory step back to back, and only then a state push.
+That is still slower than the receipt, which comes back in one socket round
+trip. The picker previews its
 own trigger locally, so the header moved at once and the sidebar row did not. The
 client now closes that gap on the receipt: when Main acknowledges a choice, the
 socket hook merges the patch over the current appearance on the sidebar row, the

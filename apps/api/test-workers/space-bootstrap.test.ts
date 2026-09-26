@@ -113,8 +113,8 @@ async function forgetSpaces(): Promise<void> {
   await runInDurableObject(workspace(), (_instance, state) => {
     for (const table of [
       "space_channel_memberships",
-      "workspace_space_directory",
-      "workspace_space_viewers",
+      "spaces",
+      "space_viewers",
       "workspace_container_order",
     ]) state.storage.sql.exec(`DELETE FROM ${table}`);
     state.storage.sql.exec(
@@ -154,11 +154,24 @@ async function forgetMembership(workstreamId: string): Promise<void> {
 async function archiveInDirectory(workstreamId: string): Promise<void> {
   await runInDurableObject(workspace(), (_instance, state) => {
     state.storage.sql.exec(
-      "UPDATE workspace_workstream_directory SET archived_at = ? WHERE workstream_id = ?",
+      "UPDATE channels SET archived_at = ? WHERE workstream_id = ?",
       Date.now(),
       workstreamId,
     );
   });
+}
+
+/**
+ * Archive a Channel in its own conversation as well, so its product read
+ * answers 404 and only the Organization's directory can say who reads it.
+ */
+async function archiveInConversation(workstreamId: string): Promise<void> {
+  await runInDurableObject(
+    env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, workstreamId)),
+    (_instance, state) => {
+      state.storage.sql.exec("UPDATE workstream SET archived_at = ? WHERE id = 1", Date.now());
+    },
+  );
 }
 
 async function cutover(): Promise<SpaceBootstrapService> {
@@ -211,7 +224,7 @@ async function membershipRows(): Promise<Array<{ workstream_id: string; state: s
 
 async function generalCount(): Promise<number> {
   const result = await workspace().runInspectionSql({
-    sql: "SELECT COUNT(*) AS count FROM workspace_space_directory WHERE system_role = 'general'",
+    sql: "SELECT COUNT(*) AS count FROM spaces WHERE system_role = 'general'",
     bindings: [],
   });
   return (result.rows[0] as { count: number }).count;
@@ -367,7 +380,7 @@ async function directoryRow(workstreamId: string): Promise<{
   authority_generation: number;
 } | undefined> {
   const result = await workspace().runInspectionSql({
-    sql: `SELECT title, waterline, authority_generation FROM workspace_workstream_directory
+    sql: `SELECT title, waterline, authority_generation FROM channels
            WHERE workstream_id = ?`,
     bindings: [workstreamId],
   });
@@ -429,7 +442,12 @@ describe("the Space cutover", () => {
     const active = await createChannel("active-personal", [privateSpace]);
     const archived = await createChannel("archived-personal", [privateSpace]);
     const organizationWide = await createChannel("organization-wide");
+    const archivedOrganizationWide = await createChannel("archived-organization-wide");
     await archiveInDirectory(archived);
+    // Archived on both sides: its conversation refuses the product read, so
+    // placing it has to observe it from the directory.
+    await archiveInDirectory(archivedOrganizationWide);
+    await archiveInConversation(archivedOrganizationWide);
     await forgetSpaces();
 
     await runWholeCutover();
@@ -440,7 +458,7 @@ describe("the Space cutover", () => {
     // One active membership each, and the archived Channel is one of them: a
     // Channel that is restored later must not come back to an Organization
     // that has no home for it.
-    expect(await membershipRows()).toEqual([active, archived, organizationWide]
+    expect(await membershipRows()).toEqual([active, archived, organizationWide, archivedOrganizationWide]
       .map((workstreamId) => ({ workstream_id: workstreamId, state: "active" }))
       .sort((left, right) => left.workstream_id.localeCompare(right.workstream_id)));
     // General is Organization-wide, so a formerly personal Channel becomes

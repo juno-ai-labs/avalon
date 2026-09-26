@@ -1330,7 +1330,7 @@ Google connector ingestion currently polls Gmail history, Calendar sync/completi
 
 ## Realtime operations and cost controls
 
-- Use deterministic region/workspace IDs for `WorkspaceDO`, region/workspace/work-stream IDs for model-free `WorkstreamDO`, and append the external substream ID for each independently provisioned `SubstreamAgent`. Never allocate an object per socket, user, turn, tool call, or retry.
+- Use deterministic region/workspace IDs for `WorkspaceDO`, which also hosts every Channel and Space parent, and region/workspace/work-stream plus the external substream ID for each independently provisioned `SubstreamAgent`. Never allocate an object per socket, user, turn, tool call, or retry.
 
 - Respect the authority boundary. REST reads the selected `SubstreamAgent`, its
   parent holds aggregate metadata/outbox, and D1 contains only authority
@@ -1346,17 +1346,17 @@ Google connector ingestion currently polls Gmail history, Calendar sync/completi
 - Keep `acceptWebSocket` and serialized attachments. Replacing them with the standard WebSocket API prevents Durable Object hibernation.
 
 - Keep exact text `ping`/`pong` in `setWebSocketAutoResponse`. The
-  SubstreamAgent feed jitters its heartbeat across 45–55 seconds; WorkspaceDO
-  and WorkstreamDO control sockets use a fixed 50-second
+  SubstreamAgent feed jitters its heartbeat across 45–55 seconds; the WorkspaceDO
+  socket uses a fixed 50-second
   heartbeat. Every role waits 15 seconds for `pong` and reconnects with
   equal-jitter exponential backoff capped at 30 seconds. Auto-responses must not
   perform application work.
 
 - Expect one native Chromium WorkspaceDO socket per signed-in Electron
-  renderer/workspace, plus one main-process Node WorkstreamDO metadata socket
-  and one substream `0` feed for the active work stream, every pin, the five most
-  recent unpinned rows, every visible live-state row, and recently viewed pairs
-  still inside retention. Navigation must not reopen the WorkspaceDO socket. An
+  renderer/workspace, plus one main-process Node substream `0` feed for the
+  active work stream, every pin, the five most recent unpinned rows, every
+  visible live-state row, and recently viewed feeds still inside retention, and
+  no Channel control socket (`/socket/workstreams/:id`). Navigation must not reopen the WorkspaceDO socket. An
   idle row outside those roles should retain neither child socket. Proactive
   feeds send `publishPresence: false`; verify “Viewing now” against WorkspaceDO
   foreground presence rather than socket counts. Brokered frames are limited to
@@ -1378,11 +1378,11 @@ Google connector ingestion currently polls Gmail history, Calendar sync/completi
   the desktop invalidates every workspace surface once rather than polling.
 
 - Verify aggregate convergence by changing title/description/state/read and
-  mention metadata, evicting WorkstreamDO, then subscribing again. Confirm each
-  transition created `workstream_state_changes` and `durable_outbox` rows with
-  a UUIDv7 and increasing common or viewer waterline. The direct work-stream
-  socket and Queue-delayed workspace socket must carry the same identity for
-  each matching common or viewer row;
+  mention metadata, evicting `WorkspaceDO`, then subscribing again. Confirm each
+  transition created a `parent_state_changes` row with a UUIDv7 and increasing
+  common or viewer waterline. Every republish of a Channel row on the
+  workspace socket must carry the same identity for each matching common or
+  viewer row;
   the shared Electron cache must clear nullable fields, ignore duplicate/lower
   waterlines independently, reject an older directory page's pin position, and
   remove the row on authorization revocation. Reconnect the WorkspaceDO socket
@@ -1399,7 +1399,7 @@ Google connector ingestion currently polls Gmail history, Calendar sync/completi
 
 Cloudflare can terminate long-lived connections during network deployments, so recovery—not socket immortality—is the contract. Verify that a forced disconnect reconnects with a cursor, replays only newer events when available, and refreshes REST state when the room replies `resync_required` without dropping the active checkpoint that frame carries.
 
-### WorkstreamDO authority steady-state operations
+### Work-stream authority steady-state operations
 
 Configured deployments completed the one-time maintenance cutover and are permanently at
 `durable_object_open` in `workstream_authority_control`. The campaign machinery
@@ -1413,13 +1413,15 @@ request and fails closed — do not delete it, and never edit
 live work-stream-to-object directory: creation writes it, and regional effect
 delivery fences on its `state`/`generation`.
 
-For a missing or stale product fact, inspect the parent's (`WorkstreamDO` or
-`AutomationDO`) `durable_outbox`, the source child's `durable_outbox`, and the
-parent's `child_effect_receipts` first. For a
-missing sidebar badge/resource route/suggestion feedback row, inspect
+For a missing or stale product fact, inspect the source child's `durable_outbox`
+and the parent's outbox and receipts first: `parent_outbox` and
+`parent_child_receipts` in `WorkspaceDO` for a Channel or Space (see
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md)), or
+`durable_outbox` and `child_effect_receipts` in `AutomationDO` for a Sidekick.
+For a missing sidebar badge/resource route/suggestion feedback row, inspect
 `WorkspaceDO.workspace_workstream_effect_receipts` and the corresponding
-`workspace_workstream_*` row's authority generation, waterline, and UUIDv7
-`source_event_id`. For a missing digest event, Slack mention, or email
+`channels` or `channel_viewers` row's authority generation, waterline, and
+UUIDv7 `source_event_id`. For a missing digest event, Slack mention, or email
 notification, inspect that same
 `WorkspaceDO.workspace_workstream_effect_receipts` table — activity and mention
 effects commit their receipt in the object transaction that commits the event
@@ -1428,7 +1430,10 @@ receipt with no sender outbox row is the normal end state: the sender deleted
 its row when the Queue accepted the message, and the receiver committed the
 effect with its receipt. A sender outbox row that persists means the Queue is
 refusing the send (`substream_outbox_batch_deferred`,
-`parent_effect_enqueue_failed`); no outbox row and no receipt means the Queue
+`parent_effect_enqueue_failed`, or `parent_effect_delivery_deferred` for a hosted
+parent, whose `parent_outbox.last_error_code` holds the reason; a hosted row in
+state `failed` did not parse and is never retried, see
+`parent_outbox_row_unreadable`); no outbox row and no receipt means the Queue
 holds the message or has dead-lettered it
 (`conversation_effect_processing_failed` names the throw). There is no
 acknowledgement RPC to retry. Never delete an object outbox row to clear an
@@ -1444,6 +1449,56 @@ post-cutover `no such table` or `no such column` from a product statement means
 the runtime router was bypassed; quarantine and fix that path, and never recreate
 the table or fall back to D1. Identity, membership, routing, migration/control,
 audit, and telemetry remain valid D1 writers.
+
+### A Channel or Space import is stuck
+
+Each Channel and Space parent moves out of its legacy `WorkstreamDO` or
+`SpaceDO` into the Organization's `WorkspaceDO` once, on the first request that
+needs it or on the alarm ([`hosted-conversation-parents.md`](hosted-conversation-parents.md#moving-an-existing-parent)).
+A stuck import shows as every request for that Channel failing with
+`parent_import_unavailable:<code>`, and as `hosted_parent_import_deferred`
+warnings carrying `workspace_id`, `parent_id`, `parent_kind` and the same
+`code`. The legacy object is already frozen by then, so the Channel stays
+unavailable until the import lands: treat it as an outage of that Channel.
+
+Find every stuck parent in an Organization with the engineering MCP's
+`run_workspace_sql`:
+
+```sql
+SELECT parent_id, parent_kind, attempts, not_before, last_error_code
+  FROM parent_imports
+ WHERE state = 'pending'
+ ORDER BY attempts DESC, parent_id;
+```
+
+A row with a low `attempts` and no code is simply not due yet. What the code
+says to do:
+
+| `last_error_code` | Meaning | Repair |
+| --- | --- | --- |
+| `parent_export_failed…`, or a runtime error code | The legacy object could not be reached or its answer did not parse. | Usually transient: the next request retries at once and the alarm on its backoff. If `attempts` keeps climbing, read the legacy object with `run_workstream_sql` (or `run_space_sql`). |
+| `parent_export_identity_mismatch`, `parent_import_identity_mismatch` | The legacy object's `workstream_metadata` names a different Organization or parent than the ledger does. | Do not edit it to match. Compare `SELECT workspace_id, workstream_id FROM workstream_metadata` in the legacy object with the directory; this is a routing fault, not a data fault. |
+| `parent_import_target_not_empty` | `parent_metadata` already has a row for this id in `WorkspaceDO`, so the import would collide with it. | Read that row and the legacy copy. Only once the legacy copy is confirmed to be the complete one, delete the hosted rows for that `parent_id` and retry. |
+| `parent_import_row_rejected:<table>:<rule>` | SQLite refused a legacy row in hosted table `<table>` (`unique`, `check`, `not_null`, `foreign_key`, `column`). `unique` on `parent_state_changes.event_id`, `parent_invitations.token_hash` or `parent_outbox.message_id` is a collision with another parent: those columns are unique across the Organization. | Find the colliding row (`SELECT parent_id FROM <table> WHERE <column> = ?`) and repair whichever copy is wrong. The legacy object is frozen for the product but `run_workstream_sql` still writes to it. |
+| `parent_import_failed:<path>:<code>` | The import's replay could not parse a stored row; the path names the field (a direct grant's `grant_json`, a breakout's `effect_json`). | Fix that row in the legacy object. |
+| `parent_import_column_missing:…` | The legacy object's schema is older than the export expects. | Check its `_sql_schema_migrations`; the legacy object applies its own ledger when it wakes. |
+
+Nothing of a parent lands until the whole import does, so there is never a
+half-imported parent to clean up. After the repair, retry with the MCP's
+`retry_parent_import` (workspace id and parent id). It runs the same import a
+request runs and returns the ledger row: `state: "imported"` means done; still
+`pending` returns the new `lastErrorCode`. Opening the Channel retries too.
+
+**Before a change deletes the legacy classes**, confirm no Organization still
+owes an import. In every region, for every Organization `list_workspaces`
+returns, `SELECT COUNT(*) FROM parent_imports WHERE state = 'pending'` must be
+`0`. The ledger is seeded by `WorkspaceDO` migration 72 when each object first
+wakes on the new code, so first confirm in the migration tracker
+([The Durable Object migration tracker](#the-durable-object-migration-tracker))
+that every `WorkspaceDO` is at schema 72 or later; an object that has not woken
+has not written its pending rows yet. Also confirm the activity Queue's
+dead-letter queue is empty, since a legacy-addressed effect adds a pending row
+when it is redriven.
 
 - Electron supplies the Mac timezone during ticket exchange. It seeds an account whose
   `timezone_source` is still `client` and never writes over one somebody chose in settings;
@@ -2386,8 +2441,8 @@ Retain the previous regional key during rotation. Decrypt with the stored key ve
 - Before the authority phase opens, D1 is canonical for work streams, messages,
   runs, schedules, connector metadata, and audit events. After it opens, each
   `SubstreamAgent` is canonical for its substream product tables,
-  `WorkstreamDO` is canonical for aggregate metadata/outbox, `WorkspaceDO` is
-  canonical for cross-work-stream directory/viewer/pin/resource/feedback
+  `WorkspaceDO` is canonical for each Channel and Space parent's aggregate
+  metadata/outbox and for cross-work-stream directory/viewer/pin/resource/feedback
   indexes and every workspace-scoped product module, and D1 stays canonical for
   identity/membership, routing, migration/control, and operational
   audit/telemetry only.

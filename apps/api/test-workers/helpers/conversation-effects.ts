@@ -1,9 +1,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import {
   asAutomationId,
-  asSpaceId,
   asWorkspaceId,
-  asWorkstreamId,
   ConversationEffectEnvelopeSchema,
   ParentEffectEnvelopeSchema,
   type ConversationEffectEnvelope,
@@ -11,7 +9,7 @@ import {
   type ParentEffectEnvelope,
 } from "@rally/contracts";
 import type { Env } from "../../src/env";
-import { automationDOName, spaceDOName, workstreamDOName } from "../../src/durable-objects/names";
+import { automationDOName, workspaceDOName } from "../../src/durable-objects/names";
 import { consumeActivityQueue } from "../../src/queues/activity-consumer";
 
 /**
@@ -30,10 +28,22 @@ type OutboxRow = {
   payload_json: string;
 };
 
+/**
+ * The outbox a stub keeps: a conversation's and a Sidekick's `durable_outbox`,
+ * or the `parent_outbox` the Organization object keeps for every Channel and
+ * Space parent it hosts.
+ */
+function outboxTable(state: DurableObjectState, kind: "conversation_effect" | "parent_effect"): string {
+  if (kind === "conversation_effect") return "durable_outbox";
+  return state.storage.sql.exec(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'parent_outbox'",
+  ).toArray().length > 0 ? "parent_outbox" : "durable_outbox";
+}
+
 async function pendingRows(stub: DurableObjectStub, kind: "conversation_effect" | "parent_effect"): Promise<OutboxRow[]> {
   return runInDurableObject(stub, (_instance, state) =>
     state.storage.sql.exec<OutboxRow>(
-      `SELECT message_id, payload_json FROM durable_outbox
+      `SELECT message_id, payload_json FROM ${outboxTable(state, kind)}
         WHERE state IN ('pending', 'inflight')
           AND json_extract(payload_json, '$.kind') = ?
         ORDER BY created_at, message_id`,
@@ -41,11 +51,12 @@ async function pendingRows(stub: DurableObjectStub, kind: "conversation_effect" 
     ).toArray());
 }
 
-async function deleteRows(stub: DurableObjectStub, rows: OutboxRow[]): Promise<void> {
+async function deleteRows(stub: DurableObjectStub, rows: OutboxRow[], kind: "conversation_effect" | "parent_effect"): Promise<void> {
   if (rows.length === 0) return;
   await runInDurableObject(stub, (_instance, state) => {
+    const table = outboxTable(state, kind);
     for (const row of rows) {
-      state.storage.sql.exec(`DELETE FROM durable_outbox WHERE message_id = ?`, row.message_id);
+      state.storage.sql.exec(`DELETE FROM ${table} WHERE message_id = ?`, row.message_id);
     }
   });
 }
@@ -113,7 +124,7 @@ export async function deliverChildEffects(env: Env, child: DurableObjectStub): P
   const envelopes = rows.map((row) => ConversationEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
   if (envelopes.length === 0) return envelopes;
   await deliverUntilSettled(env, envelopes, "conversation");
-  await deleteRows(child, rows);
+  await deleteRows(child, rows, "conversation_effect");
   return envelopes;
 }
 
@@ -123,7 +134,7 @@ export async function deliverParentEffects(env: Env, parent: DurableObjectStub):
   const envelopes = rows.map((row) => ParentEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
   if (envelopes.length === 0) return envelopes;
   await deliverUntilSettled(env, envelopes, "parent");
-  await deleteRows(parent, rows);
+  await deleteRows(parent, rows, "parent_effect");
   return envelopes;
 }
 
@@ -137,13 +148,9 @@ export function parentStubFor(
       automationDOName(region, asWorkspaceId(parent.workspaceId), asAutomationId(parent.parentId)),
     ));
   }
-  if (parent.parentKind === "space") {
-    return env.SPACE_DOS.get(env.SPACE_DOS.idFromName(
-      spaceDOName(region, asWorkspaceId(parent.workspaceId), asSpaceId(parent.parentId)),
-    ));
-  }
-  return env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-    workstreamDOName(region, asWorkspaceId(parent.workspaceId), asWorkstreamId(parent.parentId)),
+  // A Channel's and a Space's parent is hosted by the Organization object.
+  return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+    workspaceDOName(region, asWorkspaceId(parent.workspaceId)),
   ));
 }
 
@@ -203,7 +210,7 @@ export async function deliverParentEffectsInOrder(
     if (result.retried > 0) {
       throw new Error(`parent effect delivery retried ${envelope.effect.kind} ${envelope.messageId}`);
     }
-    await deleteRows(parent, [row]);
+    await deleteRows(parent, [row], "parent_effect");
     delivered.push(envelope);
   }
   return delivered;

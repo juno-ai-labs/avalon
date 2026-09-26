@@ -1,7 +1,6 @@
 import {
   asUserId,
   asWorkspaceId,
-  type SpaceId,
   type WorkstreamId,
 } from "@rally/contracts";
 
@@ -9,18 +8,14 @@ import { conversationObjectName, workspaceDOName } from "../durable-objects/name
 import {
   WorkspaceSpaceBootstrapFinalizeResultSchema,
   WorkspaceSpaceBootstrapPageSchema,
-  WorkspaceSpaceMembershipPlanResultSchema,
-  WorkspaceSpaceMutationResultSchema,
+  WorkspaceSpaceChannelChangeResultSchema,
   type SpaceBootstrapChannel,
   type WorkspaceSpaceBootstrapSettleRequest,
 } from "../durable-objects/workspace-space-protocol";
-import type { ObservedChannel } from "../durable-objects/workstream-access-protocol";
 import type { AuthContext, Env } from "../env";
 import { boundParameterChunks } from "../durable-objects/bound-parameters";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { uuidV7 } from "../lib/uuid-v7";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
-import { ChannelAccessService } from "./channel-access-service";
 import { SpaceService } from "./space-service";
 
 /**
@@ -146,7 +141,7 @@ export class SpaceBootstrapService {
         placed.push(channel.workstreamId);
         continue;
       }
-      const outcome = await this.place(channel, page.generalSpaceId, actors);
+      const outcome = await this.place(channel, actors);
       if (outcome === null) placed.push(channel.workstreamId);
       else blocked.push({ workstreamId: channel.workstreamId, code: outcome });
     }
@@ -225,8 +220,8 @@ export class SpaceBootstrapService {
    * have a home, so it takes the same step a page would take for it.
    */
   async placeChannel(channel: SpaceBootstrapChannel): Promise<string | null> {
-    const general = await new SpaceService(this.env, this.driver).ensureGeneral();
-    return this.place(channel, general.id, await this.activeActors([channel]));
+    await new SpaceService(this.env, this.driver).ensureGeneral();
+    return this.place(channel, await this.activeActors([channel]));
   }
 
   /**
@@ -268,63 +263,33 @@ export class SpaceBootstrapService {
     return { actor };
   }
 
-  /** Place one Channel in General, or name the refusal that stopped it. */
+  /**
+   * Place one Channel in General, or name the refusal that stopped it.
+   *
+   * One WorkspaceDO call as the actor: it stages the membership, asks the
+   * Channel's conversation for General's audience and activates the
+   * membership, the same path a person adding a Channel takes, able to place
+   * an archived Channel as well.
+   */
   private async place(
     channel: SpaceBootstrapChannel,
-    generalSpaceId: SpaceId,
     actors: ReadonlyMap<string, AuthContext>,
   ): Promise<string | null> {
     const admission = await this.admit(channel, actors);
     if (!("actor" in admission)) return admission.code;
     const { actor } = admission;
-    const workspace = await this.workspace();
-    const plan = WorkspaceSpaceMembershipPlanResultSchema.parse(await workspace.prepareSpaceMembership({
-      workspaceId: asWorkspaceId(this.driver.workspaceId),
-      userId: asUserId(actor.userId),
-      spaceId: generalSpaceId,
+    const placed = WorkspaceSpaceChannelChangeResultSchema.parse(await (await this.workspace()).placeChannelInGeneral({
+      auth: {
+        sessionId: actor.sessionId,
+        userId: asUserId(actor.userId),
+        workspaceId: asWorkspaceId(actor.workspaceId),
+        region: actor.region,
+        role: actor.role,
+        ...(actor.principal ? { principal: actor.principal } : {}),
+      },
       workstreamId: channel.workstreamId,
     }));
-    if (!plan.ok) return plan.code;
-    const settle = {
-      workspaceId: asWorkspaceId(this.driver.workspaceId),
-      userId: asUserId(actor.userId),
-      spaceId: generalSpaceId,
-      workstreamId: channel.workstreamId,
-      spaceRevision: plan.space.revision,
-      membershipGeneration: plan.membershipGeneration,
-    };
-    let sourceApplied = false;
-    const access = new ChannelAccessService(this.env, actor);
-    try {
-      // Through the one seam, with the observation the Organization already
-      // holds: `get` answers 404 for an archived Channel, and the cutover has
-      // to place those too.
-      await access.applySpaceSource(channel.workstreamId, {
-        spaceId: generalSpaceId,
-        scope: plan.space.scope,
-        participantUserIds: plan.space.participants.map((participant) => participant.userId),
-        spaceRevision: plan.space.revision,
-        membershipGeneration: plan.membershipGeneration,
-        operationId: uuidV7(),
-      }, { channel: observedFromDirectory(channel), title: "" });
-      sourceApplied = true;
-      const settled = WorkspaceSpaceMutationResultSchema.parse(
-        await workspace.finalizeSpaceMembership(settle),
-      );
-      if (!settled.ok) throw new Error(settled.code);
-      return null;
-    } catch (error) {
-      if (sourceApplied) {
-        await access.retractSpaceSource(
-          channel.workstreamId,
-          generalSpaceId,
-          uuidV7(),
-          plan.space.revision,
-        );
-      }
-      await workspace.cancelSpaceMembership(settle).catch(() => undefined);
-      return diagnosticErrorCode(error, "space_bootstrap_placement_failed");
-    }
+    return placed.ok ? null : placed.refusal.code;
   }
 
   /**
@@ -394,24 +359,6 @@ export class SpaceBootstrapService {
 }
 
 /**
- * The Channel as the Organization's own directory projection describes it.
- *
- * The cutover cannot read a Channel's conversation for this — `get` refuses an
- * archived one, and every Channel it walks is one nobody has asked about — and
- * it does not need to: the projection is the Organization's record of the same
- * two facts the plan is computed from.
- */
-function observedFromDirectory(channel: SpaceBootstrapChannel): ObservedChannel {
-  const participantUserIds = channel.participantUserIds.map((userId) => asUserId(userId));
-  return {
-    readers: channel.scope === "workspace"
-      ? { scope: "workspace" }
-      : { scope: "personal", userIds: participantUserIds },
-    participantUserIds,
-  };
-}
-
-/**
  * An active member to drive one Organization's cutover.
  *
  * Owners first, then administrators, then anybody: the driver is what acts on
@@ -446,7 +393,6 @@ export async function spaceBootstrapDriver(
     principal: "connector",
   };
 }
-
 
 /**
  * Open a new Organization's General Space before its first usable session.

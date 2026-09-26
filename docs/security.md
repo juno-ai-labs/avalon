@@ -375,8 +375,8 @@ that admitted them. Migration 0110 backfills existing sessions; insert and
 workspace-selection triggers bind newly selected memberships. Reassigning the
 same workspace ID does not rebind a session. Promotion preserves membership
 incarnation, while removal/rejoin creates a different one. HTTP authentication,
-refresh rotation, and WorkspaceDO/WorkstreamDO/SubstreamAgent socket session
-checks require the stored and current incarnations to match. Refresh performs
+refresh rotation, and the workspace, Channel control and SubstreamAgent socket
+session checks require the stored and current incarnations to match. Refresh performs
 that check in the token-rotation update, so rejected old credentials do not
 rotate the session. Identity-only sessions remain valid for workspace selection.
 This supplements durable revocation delivery; it does not replace closing
@@ -430,7 +430,7 @@ admission path.
 
 Native renderer WebSockets may be constructed only from a URL returned by an
 authenticated ticket endpoint; ESLint enforces that provenance at each
-production constructor. Electron's WorkstreamDO and SubstreamAgent connections
+production constructor. Electron's Channel control and SubstreamAgent connections
 instead cross a typed preload bridge to the main-process broker. Main accepts
 that capability only from the primary application window, validates the URL
 against configured regional `ws`/`wss` origins and the declared control/feed
@@ -849,7 +849,7 @@ bound it on the thing a placeholder cannot fake, and add the bound to
 - **A native WebSocket in the renderer is constructed only from a URL an
   authenticated ticket endpoint returned; Electron's work-stream broker is
   narrower still.** Its typed IPC accepts only configured regional
-  WorkstreamDO/SubstreamAgent paths from main or Sidekicks windows, and main supplies the
+  Channel-control/SubstreamAgent paths from main or Sidekicks windows, and main supplies the
   application Origin.
 
 - **A URL schema names its accepted scheme contract explicitly.** Bare Zod URL

@@ -14,9 +14,9 @@ import { useSelectedModel } from "./helpers/selected-model";
  *
  * The person who created it is about to open it, and the Worker's visibility
  * checks read the workspace directory, so creation cannot leave the row to the
- * child's first effect and the two Queue hops behind it. `reserveChild` on the
- * parent writes a provisional row into WorkspaceDO synchronously, the one
- * parent-to-workspace RPC the design keeps. This drives the real creation
+ * child's first effect and the Queue hop behind it. `reserveChild` on the
+ * parent, which WorkspaceDO hosts, applies a provisional row to the directory
+ * straight after the parent write. This drives the real creation
  * service against real objects and real D1; the test Worker has no Queue
  * consumer, so a row that reaches the workspace can only have come that way.
  */
@@ -28,11 +28,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { asSpaceId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type SpaceId } from "@rally/contracts";
 
 import type { AuthContext, Env } from "../src/env";
-import { conversationObjectName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
+import { changeRelationships } from "./helpers/workspace-relationship-events";
+import { hostedParentStub } from "./helpers/hosted-parent";
 
 useSelectedModel();
 const provider = useOpenRouterDouble((call) => ({ say: call.body.response_format ? JSON.stringify({ title: "Garden irrigation", icon: "lightbulb" }) : "Continuing the imported conversation." }));
@@ -153,7 +155,7 @@ describe("creating a work stream", () => {
       spaceIds: [await personalSpace()],
     }, { messages: [{ role: "user", text: "A prepared start" }] });
     const parentId = asWorkstreamId(created.workstream.id);
-    const parent = env.WORKSTREAM_DOS.getByName(workstreamDOName("global", WORKSPACE_ID, parentId));
+    const parent = hostedParentStub(env, WORKSPACE_ID);
     const target = { kind: "conversation" as const, workspaceId: WORKSPACE_ID, parentId, substreamId: asSubstreamId("0") };
     expect(await parent.createScopeInvitations({ workspaceId: WORKSPACE_ID, parentId, actorUserId: USER_ID,
       operationId: crypto.randomUUID(), emails: ["recipient@example.test"], expiresAt: null, targets: [target] }))
@@ -167,7 +169,7 @@ describe("creating a work stream", () => {
       });
     if (creatorAssignment) {
       await runInDurableObject(parent, (_instance,state) => {
-        state.storage.sql.exec(`CREATE TRIGGER fail_connector_admission BEFORE INSERT ON connector_participant_admissions
+        state.storage.sql.exec(`CREATE TRIGGER fail_connector_admission BEFORE INSERT ON parent_connector_admissions
           BEGIN SELECT RAISE(ABORT, 'connector admission unavailable'); END`);
       });
       await expect(admit(input.eventId)).rejects.toThrow("connector admission unavailable");
@@ -188,7 +190,9 @@ describe("creating a work stream", () => {
       expect(await parent.mutateScopeGrant({ operationId: crypto.randomUUID(), target, userId: recipient,
         actorUserId: USER_ID, active: false, expectedRevision: revision })).toMatchObject({ status: "committed" });
     } else {
-      await env.DB.prepare("UPDATE workspace_members SET access_class='member',revision=2 WHERE user_id=?").bind(recipient).run();
+      // A promotion, and the relationship event the product sends for it.
+      await changeRelationships(env, WORKSPACE_ID, [recipient],
+        env.DB.prepare("UPDATE workspace_members SET access_class='member',revision=2 WHERE user_id=?").bind(recipient));
     }
     await admit(input.eventId);
     expect(await parent.readScopeAccess({ userId: recipient, target })).toMatchObject({ allowed: false });
@@ -232,9 +236,10 @@ describe("creating a work stream", () => {
     const input = { title: "Shared from birth", clientMessageId: "initial-grant-owner", participantUserIds: [] };
     const history = { messages: [{ role: "user" as const, text: "A prepared start" }] };
     const created = await service.createPrepared(input, history);
-    const parent = env.WORKSTREAM_DOS.getByName(workstreamDOName("global", WORKSPACE_ID, asWorkstreamId(created.workstream.id)));
+    const parent = hostedParentStub(env, WORKSPACE_ID);
+    const parentId = created.workstream.id;
     await runInDurableObject(parent, (_instance, state) => {
-      expect(state.storage.sql.exec("SELECT 1 FROM main_participant_migration").toArray()).toEqual([]);
+      expect(state.storage.sql.exec("SELECT 1 FROM parent_participant_migrations WHERE parent_id = ? AND substream_id = '0'", parentId).toArray()).toEqual([]);
     });
     expect((await service.createPrepared(input, history)).workstream.id).toBe(created.workstream.id);
     expect(await parent.createScopeInvitations({ workspaceId: WORKSPACE_ID, parentId: created.workstream.id,
@@ -242,8 +247,8 @@ describe("creating a work stream", () => {
       targets: [{ kind: "conversation", workspaceId: WORKSPACE_ID, parentId: created.workstream.id, substreamId: asSubstreamId("0") }] }))
       .toMatchObject({ status: "created" });
     const authority = await runInDurableObject(parent, (_instance, state) => ({
-      migration: state.storage.sql.exec("SELECT transfer_id,phase FROM main_participant_migration").one(),
-      grants: state.storage.sql.exec("SELECT user_id,scope_kind,json_extract(grant_json,'$.revision') AS revision,json_extract(grant_json,'$.active') AS active FROM scope_grants").toArray(),
+      migration: state.storage.sql.exec("SELECT transfer_id,phase FROM parent_participant_migrations WHERE parent_id = ? AND substream_id = '0'", parentId).one(),
+      grants: state.storage.sql.exec("SELECT user_id,scope_kind,json_extract(grant_json,'$.revision') AS revision,json_extract(grant_json,'$.active') AS active FROM parent_grants WHERE parent_id = ?", parentId).toArray(),
     }));
     expect(authority.migration).toMatchObject({ phase: "complete" });
     expect(authority.grants).toEqual([{ user_id: USER_ID, scope_kind: "workstream", revision: 1, active: 1 }]);
@@ -255,8 +260,8 @@ describe("creating a work stream", () => {
       parentId: created.workstream.id } })).toMatchObject({ allowed: true, writable: true });
     expect((await service.createPrepared(input, history)).workstream.id).toBe(created.workstream.id);
     await runInDurableObject(parent, (_instance, state) => {
-      expect(state.storage.sql.exec("SELECT transfer_id,phase FROM main_participant_migration").one()).toEqual(authority.migration);
-      expect(state.storage.sql.exec("SELECT user_id,scope_kind,json_extract(grant_json,'$.revision') AS revision,json_extract(grant_json,'$.active') AS active FROM scope_grants").toArray()).toEqual(authority.grants);
+      expect(state.storage.sql.exec("SELECT transfer_id,phase FROM parent_participant_migrations WHERE parent_id = ? AND substream_id = '0'", parentId).one()).toEqual(authority.migration);
+      expect(state.storage.sql.exec("SELECT user_id,scope_kind,json_extract(grant_json,'$.revision') AS revision,json_extract(grant_json,'$.active') AS active FROM parent_grants WHERE parent_id = ?", parentId).toArray()).toEqual(authority.grants);
     });
   });
 
@@ -533,7 +538,7 @@ describe("creating a work stream", () => {
       created_by_user_id: string | null;
     }>(
       `SELECT workstream_id, title, waterline, authority_generation, created_by_user_id
-         FROM workspace_workstream_directory WHERE workstream_id = ?`,
+         FROM channels WHERE workstream_id = ?`,
       workstreamId,
     ).toArray());
     expect(directory).toEqual([{
@@ -547,7 +552,7 @@ describe("creating a work stream", () => {
       is_participant: number;
       waterline: number;
     }>(
-      `SELECT is_participant, waterline FROM workspace_workstream_viewers
+      `SELECT is_participant, waterline FROM channel_viewers
         WHERE workstream_id = ? AND user_id = ?`,
       workstreamId,
       USER_ID,
@@ -555,14 +560,12 @@ describe("creating a work stream", () => {
     expect(viewer).toEqual([{ is_participant: 1, waterline: 1 }]);
 
     // The same call registered the main conversation with its parent.
-    const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-      workstreamDOName("global", WORKSPACE_ID, asWorkstreamId(workstreamId)),
-    ));
+    const parent = hostedParentStub(env, WORKSPACE_ID);
     await expect(parent.listChildren({ workspaceId: WORKSPACE_ID, parentId: workstreamId }))
       .resolves.toMatchObject({ children: [{ substreamId: "0", kind: "main" }] });
   });
 
-  it("keeps the provisional visibility fence when recovery wins the deferred-delivery race", async () => {
+  it("fails a reservation whose provisional directory row cannot be written, and leaves nothing to recover", async () => {
     const workstreamId = asWorkstreamId("00000000-0000-7000-8000-000000000bb9");
     const now = "2026-09-17T20:00:00.000Z";
     await env.DB.prepare(
@@ -573,37 +576,47 @@ describe("creating a work stream", () => {
        VALUES (?, ?, 1, ?, 'verified', 0, 0, 0, 'created_in_do', 'created_in_do',
                '{}', ?, ?, NULL, ?)`,
     ).bind(WORKSPACE_ID, workstreamId, `global:${WORKSPACE_ID}:${workstreamId}`, now, now, now).run();
-    const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-      workstreamDOName("global", WORKSPACE_ID, workstreamId),
-    ));
-    await parent.reserveChild({
+    const parent = hostedParentStub(env, WORKSPACE_ID);
+    const reservation = {
       workspaceId: WORKSPACE_ID,
       parentId: workstreamId,
       substreamId: asSubstreamId("0"),
-      kind: "main",
+      kind: "main" as const,
       createdByUserId: USER_ID,
       authorityGeneration: 1,
       deferDirectoryDelivery: true,
       directory: {
         title: "Recovered creation fence",
         description: "Alarm delivery remains direct",
-        scope: "personal",
+        scope: "personal" as const,
         systemKind: null,
         emailAddress: null,
-        titleStatus: "settled",
+        titleStatus: "settled" as const,
         createdAt: now,
       },
+    };
+    // The provisional row lands in the reservation's own transaction, so a
+    // directory that refuses it refuses the reservation: the caller sees the
+    // failure, and no parent or outbox row is left for a later repair.
+    await runInDurableObject(parent, (_instance, state) => {
+      state.storage.sql.exec(`CREATE TRIGGER fail_provisional_directory BEFORE INSERT ON channels
+        BEGIN SELECT RAISE(ABORT, 'directory unavailable'); END`);
+    });
+    const refused = await parent.reserveChild(reservation).then(() => null, (error: unknown) => error);
+    expect(String(refused)).toContain("directory unavailable");
+    await runInDurableObject(parent, (_instance, state) => {
+      expect(state.storage.sql.exec("SELECT 1 FROM channels WHERE workstream_id = ?", workstreamId).toArray()).toEqual([]);
+      expect(state.storage.sql.exec("SELECT 1 FROM parent_metadata WHERE parent_id = ?", workstreamId).toArray()).toEqual([]);
+      expect(state.storage.sql.exec("SELECT 1 FROM parent_outbox WHERE parent_id = ?", workstreamId).toArray()).toEqual([]);
+      state.storage.sql.exec("DROP TRIGGER fail_provisional_directory");
     });
 
-    await expect.poll(async () => {
-      await runDurableObjectAlarm(parent);
-      return runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{
-        title: string;
-        waterline: number;
-      }>(
-        `SELECT title, waterline FROM workspace_workstream_directory WHERE workstream_id = ?`,
-        workstreamId,
-      ).toArray());
-    }).toEqual([{ title: "Recovered creation fence", waterline: 1 }]);
+    // The caller's retry is the recovery.
+    await parent.reserveChild(reservation);
+    await runInDurableObject(parent, (_instance, state) => {
+      expect(state.storage.sql.exec<{ title: string; waterline: number }>(
+        `SELECT title, waterline FROM channels WHERE workstream_id = ?`, workstreamId,
+      ).toArray()).toEqual([{ title: "Recovered creation fence", waterline: 1 }]);
+    });
   });
 });

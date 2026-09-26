@@ -8,7 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type UserId } from "@rally/contracts";
 import type { AuthContext, Env } from "../src/env";
-import { conversationObjectName, workstreamDOName, workspaceDOName } from "../src/durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
+import { participantMigrationAlarmKey } from "../src/durable-objects/scope-grant-storage";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { SubstreamCreationService } from "../src/services/substream-creation-service";
 import {
@@ -17,6 +18,7 @@ import {
 } from "../src/services/workstream-runtime-database";
 import { consumeEffectBodies, deliverEffectsToWorkspace, deliverChildEffects, pendingChildEffects, pendingParentEffects, deliverParentEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
+import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { post, seedParticipantMessage, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
@@ -51,10 +53,9 @@ const provider = useOpenRouterDouble((call) => ({ say: call.stream
     ? JSON.stringify({ classification: "both", confidence: 1, rationaleCode: "imperative" })
     : JSON.stringify({ summary: "A frozen source summary." }) }));
 
+/** The Channel's parent, hosted by its Organization object. */
 function parent() {
-  return env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-    workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
-  ));
+  return hostedParentStub(env, WORKSPACE_ID);
 }
 
 function conversation(substreamId = "0") {
@@ -181,14 +182,14 @@ describe("substream preparation on workerd", () => {
     await env.DB.prepare("UPDATE workspace_members SET access_class='guest',role=NULL WHERE user_id=?")
       .bind(OTHER_ID).run();
     await runInDurableObject(parent(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE workstream_metadata SET scope='personal' WHERE id=1");
+      state.storage.sql.exec("UPDATE parent_metadata SET scope='personal' WHERE parent_id=?", WORKSTREAM_ID);
     });
     expect(await parent().mutateParticipantGrant({ actorUserId: CREATOR_ID, userId: OTHER_ID,
       target: { kind: "conversation", workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId: asSubstreamId("0") },
       operationId: crypto.randomUUID(), active: true })).toMatchObject({ status: "committed" });
     // The held effect queue leaves directory delivery pending. Admission must
     // use the same authority throughout creation, not wait for a sidebar row.
-    expect(await parent().canReadWorkstream(OTHER_ID)).toBe(false);
+    expect(await withHostedParent(parent(), WORKSTREAM_ID, (hosted) => hosted.canRead(OTHER_ID))).toBe(false);
     const service = new SubstreamCreationService(TEST_ENV, { ...otherAuth, role: null });
     const prepared = await service.prepare(WORKSTREAM_ID, {
       operationId: crypto.randomUUID(), title: "Guest-created child", throughTurnId: "source-turn-1",
@@ -218,33 +219,33 @@ describe("substream preparation on workerd", () => {
     await runInDurableObject(parent(), (_instance, state) => {
       // The product currently creates restricted children. Exercise both stored
       // audience policies through the same real publication and handoff path.
-      state.storage.sql.exec("UPDATE conversation_children SET audience=? WHERE substream_id=?", audience, prepared.substreamId);
+      state.storage.sql.exec("UPDATE parent_children SET audience=? WHERE parent_id=? AND substream_id=?", audience, WORKSTREAM_ID, prepared.substreamId);
     });
     if (interrupted) {
       await runInDurableObject(parent(), (_instance, state) => {
-        state.storage.sql.exec(`CREATE TRIGGER fail_child_handoff BEFORE UPDATE OF phase ON child_participant_migrations
+        state.storage.sql.exec(`CREATE TRIGGER fail_child_handoff BEFORE UPDATE OF phase ON parent_participant_migrations
           WHEN NEW.phase='complete' BEGIN SELECT RAISE(ABORT, 'child handoff unavailable'); END`);
       });
       await expect(service.confirm(WORKSTREAM_ID, operationId)).rejects.toThrow("child handoff unavailable");
       await runInDurableObject(parent(), async (_instance, state) => {
-        expect(state.storage.sql.exec("SELECT status FROM conversation_children WHERE substream_id=?", prepared.substreamId)
+        expect(state.storage.sql.exec("SELECT status FROM parent_children WHERE parent_id=? AND substream_id=?", WORKSTREAM_ID, prepared.substreamId)
           .one()).toEqual({ status: "ready" });
-        expect(state.storage.sql.exec("SELECT phase FROM child_participant_migrations WHERE substream_id=?", prepared.substreamId)
+        expect(state.storage.sql.exec("SELECT phase FROM parent_participant_migrations WHERE parent_id=? AND substream_id=?", WORKSTREAM_ID, prepared.substreamId)
           .one()).toEqual({ phase: "pending" });
-        expect(state.storage.sql.exec("SELECT 1 FROM _internal_durable_alarms WHERE kind='child_participant_migration' AND alarm_key=?", prepared.substreamId)
-          .toArray()).toHaveLength(1);
+        expect(state.storage.sql.exec("SELECT 1 FROM _internal_durable_alarms WHERE kind='parent_participant_migration' AND alarm_key=?",
+          participantMigrationAlarmKey(WORKSTREAM_ID, prepared.substreamId)).toArray()).toHaveLength(1);
         state.storage.sql.exec("DROP TRIGGER fail_child_handoff");
-        state.storage.sql.exec("UPDATE _internal_durable_alarms SET retry_at=0 WHERE kind='child_participant_migration'");
+        state.storage.sql.exec("UPDATE _internal_durable_alarms SET retry_at=0 WHERE kind='parent_participant_migration'");
         await state.storage.setAlarm(Date.now());
       });
       await runDurableObjectAlarm(parent());
       await expect.poll(() => runInDurableObject(parent(), (_instance, state) =>
-        state.storage.sql.exec<{ phase: string }>("SELECT phase FROM child_participant_migrations WHERE substream_id=?", prepared.substreamId)
+        state.storage.sql.exec<{ phase: string }>("SELECT phase FROM parent_participant_migrations WHERE parent_id=? AND substream_id=?", WORKSTREAM_ID, prepared.substreamId)
           .one().phase), { timeout: 10_000 }).toBe("complete");
     }
     const created = await service.confirm(WORKSTREAM_ID, operationId);
     await runInDurableObject(parent(), (_instance, state) => {
-      expect(state.storage.sql.exec("SELECT phase FROM child_participant_migrations WHERE substream_id=?", created.substreamId)
+      expect(state.storage.sql.exec("SELECT phase FROM parent_participant_migrations WHERE parent_id=? AND substream_id=?", WORKSTREAM_ID, created.substreamId)
         .toArray()).toEqual([{ phase: "complete" }]);
     });
     expect(await parent().readScopeAccess({ userId: OTHER_ID, target: { kind: "conversation",
@@ -314,10 +315,10 @@ describe("substream preparation on workerd", () => {
     expect(result.status).toBe(200);
     await deliverChildEffects(TEST_ENV, conversation(substreamId));
     await runInDurableObject(parent(), (_instance, state) => {
-      expect(state.storage.sql.exec(`SELECT 1 FROM substream_user_directory WHERE substream_id = '0' AND user_id = ?`, OTHER_ID).toArray()).toEqual([]);
-      expect(state.storage.sql.exec(`SELECT 1 FROM substream_user_directory WHERE substream_id = ? AND user_id = ?`, substreamId, OTHER_ID).toArray()).toHaveLength(1);
-      expect(state.storage.sql.exec(`SELECT 1 FROM child_effect_receipts WHERE substream_id = ?`, substreamId).toArray().length).toBeGreaterThan(0);
-      expect(state.storage.sql.exec<{ title: string }>(`SELECT title FROM workstream_metadata WHERE id = 1`).one().title).toBe("Source");
+      expect(state.storage.sql.exec(`SELECT 1 FROM parent_child_viewer_projections WHERE parent_id = ? AND substream_id = '0' AND user_id = ?`, WORKSTREAM_ID, OTHER_ID).toArray()).toEqual([]);
+      expect(state.storage.sql.exec(`SELECT 1 FROM parent_child_viewer_projections WHERE parent_id = ? AND substream_id = ? AND user_id = ?`, WORKSTREAM_ID, substreamId, OTHER_ID).toArray()).toHaveLength(1);
+      expect(state.storage.sql.exec(`SELECT 1 FROM parent_child_receipts WHERE parent_id = ? AND substream_id = ?`, WORKSTREAM_ID, substreamId).toArray().length).toBeGreaterThan(0);
+      expect(state.storage.sql.exec<{ title: string }>(`SELECT title FROM parent_metadata WHERE parent_id = ?`, WORKSTREAM_ID).one().title).toBe("Source");
     });
   });
 
@@ -326,11 +327,11 @@ describe("substream preparation on workerd", () => {
     const operationId = "00000000-0000-7000-8000-00000000ce23";
     await service.prepare(WORKSTREAM_ID, { operationId, title: "Pending membership", throughTurnId: "source-turn-1" });
     await runInDurableObject(parent(), (_instance, state) => {
-      state.storage.sql.exec(`UPDATE private_child_membership_effects SET not_before = ?`, Date.now() + 60_000);
+      state.storage.sql.exec(`UPDATE parent_breakout_member_effects SET not_before = ? WHERE parent_id = ?`, Date.now() + 60_000, WORKSTREAM_ID);
     });
     await expect(service.confirm(WORKSTREAM_ID, operationId)).rejects.toThrow("private_child_membership_delivery_pending");
     expect((await parent().listVisiblePrivateChildren({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, userId: CREATOR_ID })).children).toEqual([]);
-    await runInDurableObject(parent(), (_instance, state) => { state.storage.sql.exec(`UPDATE private_child_membership_effects SET not_before = 0`); });
+    await runInDurableObject(parent(), (_instance, state) => { state.storage.sql.exec(`UPDATE parent_breakout_member_effects SET not_before = 0 WHERE parent_id = ?`, WORKSTREAM_ID); });
     await expect(service.confirm(WORKSTREAM_ID, operationId)).resolves.toHaveProperty("substreamId");
   });
 
@@ -360,7 +361,7 @@ describe("substream preparation on workerd", () => {
       await deliverParentEffects(TEST_ENV, parent());
     }
     const originalMain = await runInDurableObject(parent(), (_instance, state) =>
-      state.storage.sql.exec(`SELECT effect_json FROM substream_user_directory WHERE substream_id = '0' AND user_id = ?`, OTHER_ID).toArray());
+      state.storage.sql.exec(`SELECT effect_json FROM parent_child_viewer_projections WHERE parent_id = ? AND substream_id = '0' AND user_id = ?`, WORKSTREAM_ID, OTHER_ID).toArray());
     const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
     const operationId = "00000000-0000-7000-8000-00000000ce31";
     await service.prepare(WORKSTREAM_ID, { operationId, title: "Mentioning child", throughTurnId: "source-turn-1" });
@@ -375,7 +376,8 @@ describe("substream preparation on workerd", () => {
     await deliverParentEffects(TEST_ENV, parent());
     const childWaterline = () => runInDurableObject(parent(), (_instance, state) =>
       state.storage.sql.exec<{ waterline: number }>(
-        `SELECT MAX(waterline) AS waterline FROM workstream_state_changes WHERE state_key = ?`,
+        `SELECT MAX(waterline) AS waterline FROM parent_state_changes WHERE parent_id = ? AND state_key = ?`,
+        WORKSTREAM_ID,
         `children:${OTHER_ID}`,
       ).one().waterline);
     const childWaterlineBeforeMention = await childWaterline();
@@ -482,24 +484,29 @@ describe("substream preparation on workerd", () => {
     expect(await workspace.notificationDirectoryState({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, userId: OTHER_ID }))
       .toMatchObject({ listable: mainParticipant, title: "Source" });
     expect(await runInDurableObject(workspace, (_instance, state) => state.storage.sql.exec(
-      `SELECT is_participant, unread_count, you_are_mentioned FROM workspace_workstream_viewers
+      `SELECT is_participant, unread_count, you_are_mentioned FROM channel_viewers
         WHERE workstream_id = ? AND user_id = ?`, WORKSTREAM_ID, OTHER_ID,
     ).one())).toEqual({ is_participant: Number(mainParticipant), unread_count: 0, you_are_mentioned: 0 });
     expect(await runInDurableObject(parent(), (_instance, state) =>
-      state.storage.sql.exec(`SELECT effect_json FROM substream_user_directory WHERE substream_id = '0' AND user_id = ?`, OTHER_ID).toArray())).toEqual(originalMain);
+      state.storage.sql.exec(`SELECT effect_json FROM parent_child_viewer_projections WHERE parent_id = ? AND substream_id = '0' AND user_id = ?`, WORKSTREAM_ID, OTHER_ID).toArray())).toEqual(originalMain);
 
     // Everything addressed to the Channel's own surface rather than a person
     // stays here: a private child is in no feed, no digest and no Channel
-    // sidebar aggregate. Its own tagged projection does leave, because the
-    // Space dashboard lists Breakouts beside their Channel without merging a
-    // Breakout's title or activity into the Channel row.
+    // sidebar aggregate. Its own tagged projection does reach the directory,
+    // because the Space dashboard lists Breakouts beside their Channel without
+    // merging a Breakout's title or activity into the Channel row. Directory
+    // effects are applied inside the Organization object rather than queued,
+    // so what is asserted is the rows they left: the Breakout's own, and the
+    // Channel's, still carrying the Channel's title.
     expect(forwarded.some((envelope) => envelope.effect.kind === "activity_event")).toBe(false);
-    expect(forwarded.some((envelope) => envelope.effect.kind === "directory_common"
-      && envelope.substreamId === undefined)).toBe(false);
-    expect(forwarded.some((envelope) => envelope.effect.kind === "directory_common"
-      && envelope.substreamId === substreamId)).toBe(true);
+    expect(await runInDurableObject(workspace, (_instance, state) => state.storage.sql.exec(
+      "SELECT title FROM channels WHERE workstream_id = ?", WORKSTREAM_ID,
+    ).toArray())).toEqual([{ title: "Source" }]);
+    expect(await runInDurableObject(workspace, (_instance, state) => state.storage.sql.exec(
+      "SELECT title FROM breakouts WHERE workstream_id = ? AND substream_id = ?", WORKSTREAM_ID, substreamId,
+    ).toArray())).toEqual([{ title: "Mentioning child" }]);
     expect(await runInDurableObject(parent(), (_instance, state) =>
-      state.storage.sql.exec<{ title: string }>(`SELECT title FROM workstream_metadata WHERE id = 1`).one().title,
+      state.storage.sql.exec<{ title: string }>(`SELECT title FROM parent_metadata WHERE parent_id = ?`, WORKSTREAM_ID).one().title,
     )).toBe("Source");
 
 
