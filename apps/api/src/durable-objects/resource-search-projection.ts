@@ -60,7 +60,7 @@ export const RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION = [
 ];
 
 /**
- * Migration 75: a resource's rows also carry who may read them (its search
+ * Migration 76: a resource's rows also carry who may read them (its search
  * audience, see `services/search-audience.ts`), so a change to any input of
  * that audience must rewrite them too. The update trigger additionally
  * watches the uploader, the attachment status (a draft becoming sent), a
@@ -156,7 +156,7 @@ export async function prepareResourceSearch(sql: SqlStorage, env: Env, workspace
   const text = row && category && (documentId === undefined || documentId === categoryId) ? await resourceSearchText(env, row) : null;
   if (resourceSearchRevision(sql, resourceId) !== revision) throw new Error('search_source_changed');
   // Read after the revision check, with no await between: a location change
-  // bumps the revision (migration 75), so these are the locations of this revision.
+  // bumps the revision (migration 76), so these are the locations of this revision.
   const audience = row ? resourceSearchAudience(workspaceId, {
     provider: String(row.provider), resource_type: String(row.resource_type),
     uploaded_by_user_id: typeof row.uploaded_by_user_id === 'string' ? row.uploaded_by_user_id : null,

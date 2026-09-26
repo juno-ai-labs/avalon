@@ -8,7 +8,6 @@ import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import {
   conversationObjectName,
   workspaceDOName,
-  workstreamDOName,
 } from "../src/durable-objects/names";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000ea1");
@@ -20,9 +19,6 @@ describe("internal Durable Object SQLite inspection RPC", () => {
     const stubs = [
       env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
         workspaceDOName("global", WORKSPACE_ID),
-      )),
-      env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-        workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
       )),
       env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
         conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID, SUBSTREAM_ID),
@@ -44,9 +40,6 @@ describe("internal Durable Object SQLite inspection RPC", () => {
     const authorities = [
       env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
         workspaceDOName("global", WORKSPACE_ID),
-      )),
-      env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-        workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
       )),
       env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
         conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID, SUBSTREAM_ID),

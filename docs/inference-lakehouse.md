@@ -235,19 +235,13 @@ does not block provider dispatch or results. `apps/api/test-workers/runtime-defe
 smoke-tests the shared primitive against real workerd.
 `apps/api/test-workers/queue-dispatch.test.ts` proves the real Worker dispatches
 the queue before product maintenance fencing. Harness tests prove exact request
-and response events. `scripts/ensure-cloudflare-inference-lakehouse.test.mjs`
-uses a stateful Cloudflare API double to prove the two-pass empty-account
-bootstrap, idempotent reconciliation, pinned-ID drift fences, zero-network
-binding materialization, check-mode non-mutation, immutable drift checks, and
-workflow ordering. `ensure-cloudflare-queues.test.mjs` pins each producer,
-consumer, and DLQ name.
+and response events.
 
 Run the focused suites with:
 
 ```text
 pnpm --filter @rally/api exec vitest run test/inference-lakehouse.test.ts
 pnpm --filter @rally/api test:workers -- queue-dispatch.test.ts
-node --test scripts/ensure-cloudflare-inference-lakehouse.test.mjs
 ```
 
 ## Data model

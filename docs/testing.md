@@ -3,14 +3,15 @@
 Which suite a new test belongs in, which runtime it runs on, and the check that
 has to pass before it is worth keeping. Read it before adding tests to a change.
 
-Two rules run through everything below. **Default to the real Cloudflare
-pipeline**: real workerd and a real Durable Object for anything the runtime
-decides, and the checked-in migrations against real SQLite for anything a query
-decides — a double stands in for something that *cannot* be run here, never for
+Two rules run through everything below, and one boundary sits beside them.
+**Default to the real Cloudflare pipeline**: real workerd and a real Durable
+Object for anything the runtime decides, and the checked-in migrations against
+real SQLite for anything a query decides — a double stands in for something that *cannot* be run here, never for
 setup that was inconvenient. And **prove the test can fail**, at the integration
 rungs: an integration test that stays green while the behavior under it is broken
 is not covering that behavior, and the suite is worse off for it because the name
-says otherwise.
+says otherwise. The boundary: [do not test CI or deployment
+configuration](#do-not-test-ci-or-deployment-configuration).
 
 [`e2e.md`](e2e.md) owns the manual acceptance flows and the live-Worker smoke
 check; [`type-safety-boundaries.md`](type-safety-boundaries.md) owns how a test
@@ -30,7 +31,7 @@ once and passes on a rerun.
 | `apps/site/test/**/*.test.ts`, `apps/release-retention/test/**/*.test.ts` | `pnpm --filter @rally/site test`, `pnpm --filter @rally/release-retention test` | Node. The public site Worker and the release-retention Worker, each with its own R2 builder. |
 | `scripts/*.test.mjs` | `pnpm test:scripts` | `node --test`. The repository's own tooling and the ESLint boundary rules, including `ios-project.test.mjs` for the native iOS packaging invariants. |
 | `apps/ios/RallyTests`, `apps/ios/RallyUITests` | Xcode → Product → Test on the Rally scheme | XCTest on the iOS 26 SDK. PKCE, deep links, transcript mapping, and sign-in chrome. **Not** covered by `pnpm test`; the sandbox has no iOS SDK. |
-| `apps/desktop/scripts/*.test.mjs` | `pnpm --filter @rally/desktop test:release` | `node --test`. The release planner and workflow invariants — **not** covered by `pnpm test:scripts`, whose name suggests otherwise. |
+| `apps/desktop/scripts/*.test.mjs` | `pnpm --filter @rally/desktop test:release` | `node --test`. The release planner and release scripts — **not** covered by `pnpm test:scripts`, whose name suggests otherwise. |
 | `apps/api/scripts/test-crash-symbolicator-container.mjs` | `pnpm --filter @rally/api test:crash-symbolicator-container` | Docker. Builds and exercises the symbolicator image. |
 | `scripts/smoke-local.mjs` | `pnpm smoke:local` against a running `pnpm dev:api:local` | Configured regional Workers under `wrangler dev`, with the local D1 database. |
 | `scripts/e2e-local.mjs` | `pnpm e2e:local` against a running `pnpm dev:api:local`, after `pnpm db:open-authority` | The full member pipeline over the live local stack — happy, sad, and chaos lanes, with real model calls when `OPENROUTER_API_KEY` is configured. See [`e2e.md`](e2e.md#automated-behavioral-lane). |
@@ -188,6 +189,25 @@ but that helper only types a value that is already mocked). Mocking a module
 replaces code the change is supposed to protect, and the mock keeps passing after
 the real module's contract moves. If the subject's dependencies are all mocked,
 the test covers the wiring of the mocks.
+
+## Do not test CI or deployment configuration
+
+**Never write a test whose subject is CI or deployment.** That covers a test
+that reads a `.github/workflows` file, a Wrangler or deploy config, or the order
+of deploy steps, and a test of a script whose only job is to provision, select a
+deploy mode, or check health around a deploy. Such a test restates the
+configuration in a second place, so it fails exactly when somebody changes the
+configuration on purpose: disabling the Azure reviewer workflow on 2026-09-26
+turned `main` red for no reason but its test. It also proves nothing the run
+itself does not: a workflow that is wrong fails when it runs, and a deploy that
+is wrong fails the deploy. That is the monitoring this team relies on
+([`AGENTS.md`](../AGENTS.md#where-we-are)).
+
+What stays tested is code that decides something about data or a shipped
+artifact, however it is invoked: the D1 migration tooling (`migrate-d1`,
+`d1-baseline`, `classify-pending-d1-migrations`) and the desktop release
+scripts that plan, sign, notarize and publish a build. Test that logic as code,
+through its own functions, never by asserting where a workflow calls it.
 
 ## Timeouts and waiting
 
@@ -439,7 +459,7 @@ of an open pull request, so running those locally buys confidence rather than
 correctness. Two things qualify that. The gates outside the matrix have no
 backstop at all — `pnpm docs:check`, `pnpm smoke:local`, `pnpm e2e:local` are in
 no lane — and that is the distinction the bullets below draw. And `ci.yml`
-triggers on `pull_request` alone, pinned by `scripts/ci-workflow.test.mjs`, so a
+triggers on `pull_request` alone, so a
 branch with no pull request open runs nothing; since a pull request here is
 opened ready for review rather than as a draft, that is most of a change's life.
 
@@ -949,7 +969,6 @@ The remaining methods without a workerd RPC exercise are:
 | `WorkspaceDO` | `activityEventSource`, `applyWorkstreamRegionalEffect`, `dueWorkstreamDirectory`, `existingOpportunities`, `getOpportunity`, `latestActivityEventCursor`, `notificationDirectoryState`, `opportunityWindow`, `resourceAccess`, `workstreamScheduleTargets` |
 | `SubstreamAgent` | `publishEvent` |
 | `AutomationDO` | Re-derive with the grep above: `AutomationDO` is new. |
-| `WorkstreamDO` (legacy) | `receiveChildEffects`, which only forwards to `WorkspaceDO`. Its one other method, `exportParentState`, is driven through the import in `hosted-parent-import.test.ts`; see [`hosted-conversation-parents.md`](hosted-conversation-parents.md). |
 
 **Uncovered here does not mean untested** — several have Node suites over their
 storage class, which is the right rung for what the SQL decides. It means

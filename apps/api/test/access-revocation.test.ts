@@ -709,7 +709,6 @@ describe("carrying one revocation to the objects", () => {
       })),
       SUBSTREAM_AGENTS: namespace(() => undefined),
       AUTOMATION_DOS: namespace(() => undefined),
-      SPACE_DOS: namespace(() => undefined),
       ACCESS_REVOCATION_QUEUE: {
         send: async (body: unknown) => { sent.push({ body }); },
         sendBatch: async (messages: Array<{ body: unknown }>) => { sent.push(...messages); },

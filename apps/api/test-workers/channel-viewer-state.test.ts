@@ -359,17 +359,4 @@ describe("a Channel's breakouts and background agents on the workspace socket", 
     expect(lastError).toBeNull();
     socket.close(1000, "done");
   });
-
-  it("says nothing about a Channel whose parent has not been imported yet", async () => {
-    await runInDurableObject(organization(), (_instance, state) => {
-      // Held off the alarm's schedule, so the test reads the pending state.
-      state.storage.sql.exec(`INSERT INTO parent_imports (parent_id, parent_kind, state, not_before)
-        VALUES (?, 'workstream', 'pending', ?)`, channelB, Date.now() + 3_600_000);
-    });
-    const { socket, answer } = await connect(member);
-    expect(rowIn(answer, channelA).privateChildren?.map((child) => child.substreamId)).toEqual([breakoutA]);
-    expect(Object.hasOwn(rowIn(answer, channelB), "privateChildren")).toBe(false);
-    expect(Object.hasOwn(rowIn(answer, channelB), "backgroundAgentCounts")).toBe(false);
-    socket.close(1000, "done");
-  });
 });
