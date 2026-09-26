@@ -294,15 +294,14 @@ it("applies committed grants to the grant directory in the same object even when
   });
   expect((await listSharedNavigationDirectory(env, workspaceId, recipientId, true))
     .workstreams[0]?.conversations[0]?.needsAttention).toBe(false);
-  // Hold the candidate index stale: the revocation's directory apply fails and
-  // waits in the outbox for the alarm, which is the window this test covers.
-  await exec(`CREATE TRIGGER hold_grant_directory BEFORE UPDATE ON scope_grant_directory
-    BEGIN SELECT RAISE(ABORT, 'grant directory held by test'); END`);
+  // The revocation's directory row lands in the revocation's own transaction.
   await room().mutateScopeGrant({ ...mutation(), active: false, expectedRevision: added.grant.revision });
-  expect((await pendingParentEffects(room())).filter((item) => item.effect.kind === "scope_grant_directory"))
-    .toMatchObject([{ effect: { grant: { userId: recipientId, active: false } } }]);
-  // The workspace still contains the added candidate, but the canonical grant
-  // has already been revoked. No directory apply is needed to stop exposing labels.
+  expect(await directory.listScopeGrantCandidates({ workspaceId, userId: recipientId,
+    membershipIncarnation: recipientId })).toEqual([]);
+  // A candidate index that still named the Channel (a directory row restored
+  // from before the revocation) would not expose it either: the canonical
+  // grant is what the listing reads.
+  await exec(`UPDATE scope_grant_directory SET active = 1 WHERE parent_id = ? AND user_id = ?`, parentId, recipientId);
   expect(await directory.listScopeGrantCandidates({ workspaceId, userId: recipientId,
     membershipIncarnation: recipientId })).toEqual([parentId]);
   expect(await listSharedDirectory(env, workspaceId, recipientId)).toEqual({ workstreams: [] });

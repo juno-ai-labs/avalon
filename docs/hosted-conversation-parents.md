@@ -135,34 +135,69 @@ end of the outermost one it hands what it published to
 - the activity row and the notification record
   (`applyWorkstreamRegionalEnvelope`).
 
-Each envelope is applied in its own savepoint, so one that throws is rolled
-back alone and the parent change still commits. The sends that follow a
-directory change (socket publishes, Space snapshots, schedule refresh, watch
-reconciliation, archival notices to owned Sidekicks) cannot run inside a
-transaction. They are recorded as a `workspace_directory_followups` row in the
-same transaction, run straight after the commit, and taken by the alarm's
-`directory_followup` phase if that run did not finish.
+All of it lands or none of it does. An apply that throws fails the parent
+transaction: a child's effects are then redelivered by their Queue message (the
+receipts answer the envelopes of the batch that already committed), and a
+request's write fails where the caller sees it. A viewer row whose Channel row
+is not there yet is such a failure, and the redelivery after the Channel row
+lands applies it.
 
-### The outbox is the fallback
+The sends that follow a directory change (socket publishes, Space snapshots,
+schedule refresh, watch reconciliation, archival notices to owned Sidekicks)
+cannot run inside a transaction. They are recorded as a
+`workspace_directory_followups` row in the same transaction, run straight after
+the commit, and taken by the alarm's `directory_followup` phase if that run did
+not finish. A row is parsed when it is read back; one that does not parse is
+kept as `failed` with its code (`directory_followup_unreadable` is logged) and
+never run again.
 
-`parent_outbox` now holds only what could not land in the transaction or has
-to leave the object:
+### People the member table has never heard of
 
-- a viewer row for someone the member table has never heard of (the drain
-  learns their relationship with one D1 read, then applies it);
-- a row whose apply threw, such as a viewer row whose Channel row is not there
-  yet (made due again the moment that Channel row lands);
+The directory filters viewer rows by the Organization's own member table (see
+below), so a transaction that has to write a viewer row must know the person.
+The people a delivery or a request names are learned before the transaction:
+`receiveChildEffects` reads the member table for every viewer and notification
+recipient its envelopes name, and asks D1 once for each it has never heard of
+(`readRelationship`, which records the answer). A transaction that still meets
+somebody unknown, such as a creator's row published inside `reserveChild`,
+throws `UnknownMembersError` and rolls back whole; `withMembersLearned` learns
+the ids it names with one D1 read each and runs the operation once more from
+the same state. Every facade write goes through `parentWrite`, which is that
+retry followed by the post-commit follow-ups.
+
+### The outbox is work that leaves the object
+
+`parent_outbox` holds only work that has to leave the Organization object, each
+row written in the transaction that caused it:
+
 - a notification to deliver and a mention to snapshot, which the activity
-  Queue's consumer does in a Worker (its apply is a replay: the record is
+  Queue's consumer does in a Worker (its apply there is a replay: the record is
   already here);
-- a revoked Channel grant, whose Sidekick revocation is a Queue send.
+- a revoked Channel grant, whose Sidekick revocation is a Queue send;
+- directory and grant rows the legacy object still had pending at import,
+  applied here one at a time through `applyWorkstreamDirectoryEffects`, the
+  entry point a legacy Queue message takes.
 
-The drain keeps the legacy drain's limits: directory rows are applied at most
-`MAX_DIRECTORY_APPLY_ENVELOPES` at a time, Queue rows go in `sendBatch` calls
-under the Queue's per-call size, and a single row too large for one Queue
-message is deleted with a `parent_effect_oversized` warning. One drain runs at
-a time, so a drain started by a request's import and one started by the alarm
-cannot send the same rows.
+A write does not drain it: the rows are due at once, and the alarm sends them.
+A failed send puts the row off on the alarm's retry schedule
+(`scheduledAlarmRetryDelay`, by the row's own attempt count) and records its
+code. A row that does not parse, or whose destination refuses its shape, is
+kept as `failed` with its code
+(`parent_outbox_row_unreadable` is logged), is never due again, and does not
+hold up the rows behind it. Queue rows go in `sendBatch` calls under the
+Queue's per-call size, and a single row too large for one Queue message is
+deleted with a `parent_effect_oversized` warning. One drain runs at a time, so
+a drain started by a request's import and one started by the alarm cannot send
+the same rows. Rows are keyed by `(parent_id, message_id)`.
+
+### The alarm's phases
+
+The alarm runs the hosted phases (`parent_outbox`, `parent_breakouts`,
+`directory_followup`) first and the background import (`parent_import`) last.
+Each phase's throw is caught and logged as `workspace_alarm_phase_failed` with
+the phase and its code, and the phases after it still run; the first throw is
+rethrown once they have, so the alarm fails and retries as before instead of
+re-arming at once for rows the failed phase left due.
 
 ### Workspace relationships are local
 
@@ -223,11 +258,15 @@ receipts already fell back to past their retention.
   that exists, and a write would create rows the import then collides with.
 - **The legacy object answers nothing after export but export.** A write that
   landed there after the rows were copied would be lost silently.
-- **What a parent publishes commits with the parent change.** The directory,
-  grant directory, activity and notification rows are applied in its
-  transaction; anything that cannot be (a follow-up send, a row that has to
-  wait, work that leaves the object) is recorded durably in that same
-  transaction, as a follow-up row or an outbox row.
+- **What a parent publishes commits with the parent change, or the change does
+  not commit.** The directory, grant directory, activity and notification rows
+  are applied in its transaction, and an apply that throws fails it; work that
+  cannot run inside a transaction (a follow-up send, work that leaves the
+  object) is recorded durably in that same transaction, as a follow-up row or
+  an outbox row. Nothing is parked in the outbox to hide a failure.
+- **A hosted-parent write runs through `parentWrite` or `withMembersLearned`.**
+  Anything else meets `UnknownMembersError` on the first person the member
+  table has not heard of, and fails.
 - **An event's relationship is never replaced by a D1 read.** Events carry D1's
   sequence; a D1 read is only for someone never heard of.
 - **Parent-kind is carried, never probed.** A lookup that tries a namespace to
@@ -249,7 +288,11 @@ directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
 | --- | --- |
 | The legacy object cannot be reached during an import | The request that needed the parent fails with `parent_import_unavailable`; the ledger row stays `pending` and the next request or alarm retries it. |
 | A legacy object that was never created (an id the directory knew but no object held) | Its export returns no metadata; the parent is marked `imported` empty. |
-| The directory apply fails after a parent commit | The `parent_outbox` row stays and the alarm reapplies it; the apply is idempotent on generation, waterline and payload hash. |
+| A local apply fails inside a parent write (a viewer row before its Channel row, a constraint, a schema rejection) | The parent transaction rolls back. A child's delivery throws and the Queue redelivers it; a request fails with the error. Nothing is left in the outbox. |
+| A write meets somebody the member table has never heard of | The transaction rolls back with `workspace_member_unknown`; the ids are learned with one D1 read each and the write runs once more. A second miss fails the write with that code. |
+| A `parent_outbox` send fails | The row stays `pending`, with its code in `last_error_code`, and is due again on the alarm's retry schedule. `parent_effect_delivery_deferred` names the rows. |
+| A `parent_outbox` or `workspace_directory_followups` row does not parse, or an outbox row's destination refuses its shape (a legacy directory row whose message id is not a UUIDv7) | It is kept as `failed` with a `zodDiagnosticCode` naming the field, logged (`parent_outbox_row_unreadable`, `directory_followup_unreadable`), and never retried. An operator reads it with `run_workspace_sql` and deletes or repairs it. |
+| One alarm phase throws | `workspace_alarm_phase_failed` names the phase; the other phases still run, and the alarm then fails and retries. |
 | A Queue message addressed to the legacy object arrives after export | The legacy object forwards it to `WorkspaceDO`. |
 | An Organization held below schema 58 by the meeting-notes cleanup | Migration 72 has not run, so there are no `channels` or `parent_*` tables and every Channel request fails with `no such table`. The object itself still starts and its alarm skips the hosted-parent phases, so the operator retirement RPCs can finish it. Every production object was at schema 70 before this change, so none should be held; the error is loud if one is. |
 | The Organization object is unavailable | Channels and Spaces cannot be opened, listed or changed. That was already true of the sidebar; it is now true of a Channel's viewer check too. |
@@ -262,8 +305,13 @@ workerd that the first request to the Organization object imports it, that the
 legacy object is frozen and answers 410, and that a parent whose legacy object
 never existed closes its ledger row without creating that object. A Space uses
 the same code with a different namespace and is not covered separately.
-`conversation-effect-queue.test.ts` proves the outbox drain: directory rows
-applied in the object, activity and notification rows sent to the Queue. The
+`conversation-effect-queue.test.ts` proves directory and activity rows land in
+the write and a mention leaves on the Queue; `hosted-parent-outbox.test.ts`
+proves the drain's limits, the retry schedule, the `failed` state, the alarm's
+phase isolation and that a viewer effect before its Channel row fails its
+delivery; `hosted-parent-local-effects.test.ts` proves the all-or-nothing
+write, learning an unknown person before the transaction and by retry, and the
+follow-up rows. The
 conversation-parent contract tests (`conversation-parent-contract.test.ts` and
 its neighbours) run against the hosted parent. Run with
 `pnpm --filter @rally/api test:workers`.
@@ -304,8 +352,18 @@ audience would still live in different objects. Zero-downtime dual writes for
 the move were rejected for the per-parent export: a parent is frozen for one
 RPC, which is cheaper to build and to verify.
 
+A parent's published effects land in its own transaction, all or nothing, and
+`parent_outbox` keeps only work that leaves the object. An earlier cut of this
+change applied each effect in its own savepoint and parked any that threw in
+the outbox, with deferral, member-resolution and release machinery around it,
+and one unparseable row there stopped every write in the Organization. Failing
+the write instead lets the Queue's redelivery or the caller see the failure;
+unknown people are learned before the transaction or by one retry.
+
 **Consequences:** The Organization object now answers every Channel viewer
-check, so its handlers have to stay short. The Channel control socket is served
+check, so its handlers have to stay short. A hosted-parent write has to go
+through `parentWrite` or `withMembersLearned`, and a local apply that can fail
+fails the write. The Channel control socket is served
 by the Organization object, which is also where it is revoked. The legacy
 parent warmed a Channel's Main conversation whenever it woke; the Organization
 object is rarely asleep, so it now warms Main when a Channel control socket

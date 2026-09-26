@@ -26,6 +26,7 @@ import { createApp } from "../src/app";
 import { ArtifactOpenService } from "../src/services/artifact-open-service";
 import { __integrationTesting, runWorkstreamHarness } from "../src/services/integrations";
 import { encryptString } from "../src/lib/crypto";
+import { readWorkspaceRelationship } from "../src/services/workspace-relationship-service";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import { AutomationService } from "../src/services/automation-service";
 import { consumeAccessRevocationQueue } from "../src/queues/access-revocation-consumer";
@@ -2765,6 +2766,20 @@ describe("a member's message travels the whole pipeline", () => {
         state.storage.sql.exec(`INSERT OR IGNORE INTO parent_metadata
           (parent_id,parent_kind,workspace_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
           VALUES (?,'workstream',?,'global',1,'Child migration','','','personal','idle',0,0,0)`,WORKSTREAM_ID,WORKSPACE_ID);
+        // A hosted parent's Channel row is written with its metadata, and its
+        // viewer rows land in the same transactions as the parent's writes,
+        // so the Organization's directory holds the row at the parent's first
+        // common version.
+        state.storage.sql.exec(`INSERT OR IGNORE INTO channels
+          (workstream_id,authority_generation,waterline,source_event_id,payload_hash,title,description,preview,scope,
+           exact_state,last_activity_at,origin_type,title_status,latest_attention_ordinal,unread_tracking_start_ordinal,
+           source_created_at,source_updated_at,projected_at)
+          VALUES (?,1,1,?,'fixture','Child migration','','','personal','idle',0,'ad_hoc','settled',0,0,0,0,0)`,
+        WORKSTREAM_ID,crypto.randomUUID());
+        state.storage.sql.exec(`INSERT OR IGNORE INTO parent_projection_keys(parent_id,projection_key,next_version,last_payload_hash,updated_at)
+          VALUES (?,'common',2,'fixture',0)`,WORKSTREAM_ID);
+        // Its authorization inventory is walked, as a created Channel's is.
+        state.storage.sql.exec("INSERT OR IGNORE INTO authorization_backfill(parent_id,parent_kind,completed) VALUES (?,'workstream',1)",WORKSTREAM_ID);
         state.storage.sql.exec("INSERT OR IGNORE INTO parent_children(parent_id,substream_id,kind,created_by_user_id,created_at) VALUES (?,?,'child',?,0)",WORKSTREAM_ID,substreamId,USER_ID);
         state.storage.sql.exec(`INSERT INTO parent_breakout_members
           (parent_id,substream_id,user_id,active,version,added_by_user_id,added_at,updated_at) VALUES (?,?,?,1,2,?,10,10)`,
@@ -2823,6 +2838,12 @@ describe("a member's message travels the whole pipeline", () => {
       expect(added.outcome).toBe("added");
       await env.DB.prepare("UPDATE workspace_members SET access_class='guest',role=NULL WHERE workspace_id=? AND user_id=?")
         .bind(WORKSPACE_ID,USER_ID).run();
+      // The relationship change event the D1 write would publish: the
+      // Organization answers access from its own member table, which may
+      // already hold this person as a member.
+      const demoted = await readWorkspaceRelationship(env.DB,WORKSPACE_ID,USER_ID);
+      expect(await parent.applyMemberStatus({ workspaceId:WORKSPACE_ID,sequence:1,removed:false,relationship:demoted! }))
+        .toEqual({ applied:true });
       const renamed = await product(child,{ operation:"update",auth:{ ...AUTH,role:null },input:{ title:"Guest collaboration" } });
       expect(renamed.status).toBe(200);
       expect(renamed.body).toMatchObject({ title:"Guest collaboration" });

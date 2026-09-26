@@ -203,7 +203,7 @@ const CHILD_EFFECT_RECEIPT_RETENTION_MS = 180 * 24 * 60 * 60_000;
  * under the per-call one.
  */
 const QUEUE_BATCH_MAX_MESSAGES = 100;
-const QUEUE_BATCH_MAX_BYTES = 250_000;
+export const QUEUE_BATCH_MAX_BYTES = 250_000;
 
 const effectBytes = new TextEncoder();
 
