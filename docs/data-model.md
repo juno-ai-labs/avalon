@@ -276,9 +276,9 @@ never embeds the underlying row. Membership, invitations,
 user profiles, placement routes, and migration control remain D1 authorities.
 
 `WorkspaceDO.parent_metadata` is different: one row per Channel or Space, it is
-the parent's identity and generation, with a copy of the metadata projected
-from Main that its readers take from the `channels` or `spaces` row instead. Its revision covers
-complete common metadata; only Main entries in `parent_child_viewer_projections`
+the parent's identity, generation and revision; what Main says about the parent
+lives on its `channels` or `spaces` row. Its revision advances with every
+common effect; only Main entries in `parent_child_viewer_projections`
 produce the parent viewer overlay. Child title and lifecycle live in
 `parent_children`, whose nullable
 `archived_at` is independent of creation readiness. Archive retains membership

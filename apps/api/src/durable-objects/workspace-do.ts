@@ -3850,6 +3850,31 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // row in place, and existing semantic chunks are left alone. A row in
   // backoff keeps its `not_before`, as in 47.
   statements: ['UPDATE resource_search_versions SET pending = 1'],
+}, {
+  version: 78,
+  description: "narrow parent_metadata to a parent's identity",
+  // A parent reads its presentation from its directory row (`channels`,
+  // `spaces`) since the change before this one, so the 19 copied columns are
+  // dead weight written on every Main effect. Nothing references this table,
+  // so a plain rebuild keeps the rows. See docs/hosted-conversation-parents.md.
+  statements: [
+    `CREATE TABLE parent_metadata_v78 (
+      parent_id TEXT PRIMARY KEY,
+      parent_kind TEXT NOT NULL CHECK (parent_kind IN ('workstream', 'space')),
+      workspace_id TEXT NOT NULL,
+      region TEXT NOT NULL,
+      authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),
+      revision INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    ) STRICT`,
+    `INSERT INTO parent_metadata_v78
+       (parent_id, parent_kind, workspace_id, region, authority_generation, revision, created_at, updated_at)
+     SELECT parent_id, parent_kind, workspace_id, region, authority_generation, revision, created_at, updated_at
+       FROM parent_metadata`,
+    "DROP TABLE parent_metadata",
+    "ALTER TABLE parent_metadata_v78 RENAME TO parent_metadata",
+  ],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
