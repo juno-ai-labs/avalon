@@ -3134,10 +3134,9 @@ export class ConnectionService {
       serverUrl: config.serverUrl,
       toolPolicy,
     }));
-    // Read back before publishing: the read stores the narrowed tool count,
-    // so the list a published client refetches already carries it.
-    const settings = await this.getCustomMcpSettings(id);
-    return settings;
+    // Read back before answering: the read stores the narrowed tool count, so
+    // the list a client refetches on the middleware's publish already has it.
+    return this.getCustomMcpSettings(id);
   }
 
   /**
