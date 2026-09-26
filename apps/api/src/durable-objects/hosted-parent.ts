@@ -566,39 +566,21 @@ interface StoredStateRow extends Record<string, SqlStorageValue> {
 }
 
 /**
- * A parent's identity from `parent_metadata`, and what it looks like from its
- * directory row: `channels` for a Channel, `spaces` for a Space's title, scope
- * and archive state. The directory row is the copy every sidebar and search
- * reader already trusts, so the parent reads the same one. A parent with no
- * directory row yet, such as a reservation inside its own transaction before
- * the provisional projection flushes, falls back to its own columns; the
- * fallback keys on the row, not on NULL, because `archived_at` and the other
- * optional columns are NULL on purpose.
+ * A parent's identity from `parent_metadata`, and its presentation from its
+ * directory row: every column from `channels` for a Channel; for a Space its
+ * title, scope and archive state from `spaces` and the rest, which only a
+ * Channel's surfaces show, from its own row.
  */
-const PARENT_ROW_SQL = `SELECT m.parent_kind, m.revision, m.authority_generation, m.workspace_id, m.parent_id, m.region,
-  CASE WHEN c.workstream_id IS NOT NULL THEN c.title WHEN s.space_id IS NOT NULL THEN s.title ELSE m.title END AS title,
-  CASE WHEN c.workstream_id IS NOT NULL THEN c.description ELSE m.description END AS description,
-  CASE WHEN c.workstream_id IS NOT NULL THEN c.preview ELSE m.preview END AS preview,
-  CASE WHEN c.workstream_id IS NOT NULL THEN c.scope WHEN s.space_id IS NOT NULL THEN s.scope ELSE m.scope END AS scope,
-  CASE WHEN c.workstream_id IS NOT NULL THEN c.exact_state ELSE m.exact_state END AS exact_state,
-  CASE WHEN c.workstream_id IS NOT NULL THEN c.system_kind ELSE m.system_kind END AS system_kind,
-  CASE WHEN c.workstream_id IS NOT NULL THEN c.last_activity_at ELSE m.last_activity_at END AS last_activity_at,
-  CASE WHEN c.workstream_id IS NOT NULL THEN c.completed_at ELSE m.completed_at END AS completed_at,
-  CASE WHEN c.workstream_id IS NOT NULL THEN c.archived_at WHEN s.space_id IS NOT NULL THEN s.archived_at ELSE m.archived_at END AS archived_at,
-  CASE WHEN c.workstream_id IS NOT NULL THEN c.email_address ELSE m.email_address END AS email_address,
-  CASE WHEN c.workstream_id IS NOT NULL THEN c.created_by_user_id ELSE m.created_by_user_id END AS created_by_user_id,
-  CASE WHEN c.workstream_id IS NOT NULL THEN c.title_status ELSE m.title_status END AS title_status,
-  CASE WHEN c.workstream_id IS NOT NULL THEN c.latest_attention_ordinal ELSE m.latest_attention_ordinal END AS latest_attention_ordinal,
-  CASE WHEN c.workstream_id IS NOT NULL THEN c.unread_tracking_start_ordinal ELSE m.unread_tracking_start_ordinal END AS unread_tracking_start_ordinal,
-  CASE WHEN c.workstream_id IS NOT NULL THEN c.next_wakeup_due_at ELSE m.next_wakeup_due_at END AS next_wakeup_due_at,
-  CASE WHEN c.workstream_id IS NOT NULL THEN c.next_wakeup_prompt ELSE m.next_wakeup_prompt END AS next_wakeup_prompt,
-  CASE WHEN c.workstream_id IS NOT NULL THEN c.next_terminal_action_at ELSE m.next_terminal_action_at END AS next_terminal_action_at,
-  CASE WHEN c.workstream_id IS NOT NULL THEN c.source_created_at ELSE m.source_created_at END AS source_created_at,
-  CASE WHEN c.workstream_id IS NOT NULL THEN c.source_updated_at ELSE m.source_updated_at END AS source_updated_at
-  FROM parent_metadata m
-  LEFT JOIN channels c ON m.parent_kind = 'workstream' AND c.workstream_id = m.parent_id
-  LEFT JOIN spaces s ON m.parent_kind = 'space' AND s.space_id = m.parent_id
+const CHANNEL_PARENT_ROW_SQL = `SELECT m.parent_kind, m.revision, m.authority_generation, m.workspace_id, m.parent_id, m.region,
+  c.title, c.description, c.preview, c.scope, c.exact_state, c.system_kind, c.last_activity_at, c.completed_at, c.archived_at, c.email_address, c.created_by_user_id, c.title_status, c.latest_attention_ordinal, c.unread_tracking_start_ordinal, c.next_wakeup_due_at, c.next_wakeup_prompt, c.next_terminal_action_at, c.source_created_at, c.source_updated_at
+  FROM parent_metadata m JOIN channels c ON c.workstream_id = m.parent_id
  WHERE m.parent_id = ?`;
+const SPACE_PARENT_ROW_SQL = `SELECT m.parent_kind, m.revision, m.authority_generation, m.workspace_id, m.parent_id, m.region,
+  s.title, m.description, m.preview, s.scope, m.exact_state, m.system_kind, m.last_activity_at, m.completed_at, s.archived_at, m.email_address, m.created_by_user_id, m.title_status, m.latest_attention_ordinal, m.unread_tracking_start_ordinal, m.next_wakeup_due_at, m.next_wakeup_prompt, m.next_terminal_action_at, m.source_created_at, m.source_updated_at
+  FROM parent_metadata m JOIN spaces s ON s.space_id = m.parent_id
+ WHERE m.parent_id = ?`;
+/** Before the directory row exists: a reservation inside its own transaction, or a child's placeholder. */
+const OWN_PARENT_ROW_SQL = "SELECT * FROM parent_metadata WHERE parent_id = ?";
 
 export class HostedParent {
   constructor(
@@ -665,7 +647,9 @@ export class HostedParent {
   // ---------------------------------------------------------------------------
 
   metadataRow(): ParentMetadataRow | null {
-    return first(this.sql.exec<ParentMetadataRow>(PARENT_ROW_SQL, this.parentId));
+    const directory = this.role.kind === "space" ? SPACE_PARENT_ROW_SQL : CHANNEL_PARENT_ROW_SQL;
+    return first(this.sql.exec<ParentMetadataRow>(directory, this.parentId))
+      ?? first(this.sql.exec<ParentMetadataRow>(OWN_PARENT_ROW_SQL, this.parentId));
   }
 
   private parentIdentity(): {
@@ -995,8 +979,8 @@ export class HostedParent {
     if (!this.mainCommonProjection()) return;
     const aggregate = this.aggregateCommon();
     const dueAt = epoch(aggregate.nextTerminalActionAt);
-    // The parent's own bookkeeping, read inside the transaction that writes
-    // it: the directory row only catches up when this transaction flushes.
+    // Change detection against the parent's own bookkeeping column, which
+    // survives the column drop: this decides whether to publish at all.
     const current = first(this.sql.exec<{ next_terminal_action_at: number | null }>(
       "SELECT next_terminal_action_at FROM parent_metadata WHERE parent_id = ?", this.parentId,
     ));
