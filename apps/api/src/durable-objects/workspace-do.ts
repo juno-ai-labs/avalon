@@ -3795,6 +3795,15 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 72,
   description: "host channel and space parents; name the directories channels, breakouts and spaces",
   statements: [...HOSTED_PARENT_SCHEMA_STATEMENTS],
+}, {
+  version: 73,
+  description: "remember how many tools a discovered connection last exposed",
+  // Read by `GET /connections` so Settings needs no per-row provider call; NULL
+  // until the first discovery. See docs/connectors.md#settings-tool-counts.
+  statements: [
+    `ALTER TABLE connector_connections ADD COLUMN discovered_tool_count INTEGER
+      CHECK (discovered_tool_count IS NULL OR discovered_tool_count >= 0)`,
+  ],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {

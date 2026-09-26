@@ -305,6 +305,12 @@ export interface WorkstreamConnection {
   settingsKind?: 'github_repository_access' | 'custom_mcp_tools';
   /** Set when this connection can hand automation results to the signed-in user. */
   userDelivery?: AutomationUserDelivery;
+  /**
+   * Agent tools this connection exposes, as `GET /connections` reported it.
+   * Absent when the server has no count to give — a disabled connection, or a
+   * discovered one never yet discovered — which is never the same as zero.
+   */
+  toolCount?: number;
 }
 
 export interface AutomationUserDelivery {
