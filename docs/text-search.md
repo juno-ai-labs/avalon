@@ -637,6 +637,36 @@ budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
 
+### 2026-09-26 — A workspace's resource backlog is dispatched 100 every 30 seconds
+
+**What changed:** After the WorkspaceDO dispatches a full batch of 100
+resource references, its next batch waits
+`RESOURCE_SEARCH_BACKLOG_INTERVAL_MS` (30 seconds), and its alarm is set for
+then. A partial batch sets no wait, so a single edit is dispatched as before
+unless it arrives behind a backlog. The wait is held on the object, not stored;
+an object that restarts dispatches one batch early.
+
+**Why:** Migration 77 marked all 152,000 of Juno Labs' resources pending, and
+the alarm dispatched batch after batch with nothing between them. Each
+resource becomes three document jobs, and each job calls
+`prepareResourceSearchDocument` back on the same object, which returned
+`durable_object_overloaded` to 38,000 calls in 30 minutes and failed connector
+events and search-authorization pushes beside them. The backfill was paused by
+hand (`not_before` set to 2100-01-01 on the pending rows) until this shipped.
+Adam set the interval: 200 resources a minute, about 10 calls a second into the
+object, finishing Juno Labs in about ten hours.
+
+**Considered and rejected:** Acknowledging completion from the consumer so the
+object dispatches only when the previous batch is done (the open question
+above); right, but too large for an incident fix. Pausing by pushing
+`not_before` forward on every remaining row after each batch; it rewrites the
+whole backlog on every batch.
+
+**What a future change has to respect:** a whole-workspace re-projection is now
+bounded by this interval, so its duration is the workspace's resource count
+divided by 200 a minute. A change to the batch size or the jobs per resource
+changes the load this number was chosen against.
+
 ### 2026-09-26 — Rows carry the groups that may read them
 
 **What changed:** Every lexical and semantic row gains `audience`, a `[]uuid`

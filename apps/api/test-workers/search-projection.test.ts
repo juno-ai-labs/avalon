@@ -120,6 +120,38 @@ describe('conversation page capture', () => {
 });
 
 describe('durable resource search projection', () => {
+  it('waits out the backlog interval after a full batch, and not after a partial one', async () => {
+    const stub = env.MIGRATION_PROBE_DO!.getByName('resource-search-pace');
+    await stub.ping();
+    await runInDurableObject(stub, async (_instance, state) => {
+      applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+        component: 'workspace_do', workerVersionId: 'pace', now: 1_000 });
+      const sql = state.storage.sql;
+      sql.exec("INSERT INTO workspace_identity VALUES (1, ?, 'global', 'wnam', 0, 0)", workspaceId);
+      for (let index = 0; index < 150; index += 1) {
+        sql.exec(`INSERT INTO resources (id, workspace_id, resource_type, provider, title, metadata_json, created_at, updated_at)
+          VALUES (?, ?, 'generated_file', 'avalon_generated', 'Plan', '{}', '2026-09-26T00:00:00Z', '2026-09-26T00:00:00Z')`,
+        `00000000-0000-7000-8000-${String(index).padStart(12, '0')}`, workspaceId);
+      }
+      const sent: number[] = [];
+      const configured = { ...env, TURBO_PUFFER_DEV_API_KEY: 'test-only', OPENROUTER_API_KEY: 'test-only',
+        ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>({ sendBatch: async (messages) => { sent.push(Array.from(messages).length); } }) };
+      const pending = () => sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM resource_search_versions WHERE pending = 1').one().n;
+      const pace = { nextBatchAt: 0 };
+      await publishResourceSearch(sql, configured, workspaceId, pace, 60_000);
+      expect([sent, pending()]).toEqual([[100], 50]);
+      // A backlog remains, so the next batch and the alarm both wait.
+      await publishResourceSearch(sql, configured, workspaceId, pace, 60_000);
+      expect([sent, pending()]).toEqual([[100], 50]);
+      expect(nextResourceSearchDueAt(sql, configured, pace)).toBe(pace.nextBatchAt);
+      expect(pace.nextBatchAt).toBeGreaterThan(Date.now());
+      // Once it has passed, the rest goes, and a partial batch sets no wait.
+      pace.nextBatchAt = 0;
+      await publishResourceSearch(sql, configured, workspaceId, pace, 60_000);
+      expect([sent, pending(), pace.nextBatchAt]).toEqual([[100, 50], 0, 0]);
+    });
+  });
+
   it('records create, edits, and deletion with a retained monotonic watermark', async () => {
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName('global', workspaceId)));
     await runInDurableObject(stub, async (_instance, state) => {
