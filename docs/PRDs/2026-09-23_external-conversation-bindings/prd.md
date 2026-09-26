@@ -118,9 +118,10 @@ synthetic provider name as the product title. The Space remains a Rally object,
 so subsequent provider renames do not silently overwrite a title someone has
 chosen in Rally.
 
-A pending creation can show as loading in Rally. If Slack membership or the
-Space authority cannot be verified, Rally does not claim the link succeeded;
-the invitation can be retried. A disconnected installation leaves existing
+Linking is one WorkspaceDO transaction: either the Space exists and is linked,
+or nothing was written. If Slack membership or the Space authority cannot be
+verified, Rally does not claim the link succeeded; the invitation can be
+retried. A disconnected installation leaves existing
 Rally work readable under Rally's access rules but stops provider routing.
 
 ### Request and Channel
@@ -176,9 +177,11 @@ tools, with the home listed first and used as the default post target. Only
 the config conversation can attach, and a Sidekick may attach only to a
 conversation where reading and posting cannot widen who sees the content.
 
-**`sidekick_post_result` is removed.** It could post only to the owning
-Channel's Main conversation, and beside a general post tool a model would not
-know which to use. The post conversation tool covers everything it did.
+**`post_result` is removed.** The `rally:sidekick-result` plugin offers it
+to the model as `post_result` (its error codes and activity keep the older
+`sidekick_post_result` name). It could post only to the owning Channel's Main
+conversation, and beside a general post tool a model would not know which to
+use. `conversation_post` covers everything it did.
 
 ### Continuing a run
 
@@ -329,8 +332,8 @@ failures, sequences and evaluations) is in
 The agent is still forbidden to reach any conversation outside its scope, to
 widen its own scope, or to attach from a run. It never supplies an
 idempotency key; the host derives one so a retried post lands once. Messages it
-reads are treated as other people's words, not instructions. `sidekick_post_result`
-is removed.
+reads are treated as other people's words, not instructions. The
+`rally:sidekick-result` plugin and its `post_result` tool are removed.
 
 While it works, people see ordinary tool activity in the transcript, and each
 post appears in the target conversation as a message from the Sidekick or
@@ -339,8 +342,11 @@ agent. Following the tool execution policy, no call asks anyone to confirm it.
 ## Provider configuration
 
 Slack's current app subscribes to `member_joined_channel` and has `mpim:read`
-and `mpim:history`, but it does not subscribe to `message.mpim`. The latter is
-needed to receive group DM replies. The public-channel join sweep and
+and `mpim:history`, but it does not subscribe to `message.mpim` or
+`channel_id_changed`. The first is needed to receive group DM replies; the
+second to keep a Slack Connect channel's bindings when Slack changes its ID.
+Until `channel_id_changed` is subscribed on an installation, a changed ID
+routes nothing rather than guessing. The public-channel join sweep and
 `channel_created` join path must be removed from the active behavior. Scope and
 subscription changes must be checked against the installed app manifest and
 existing installations before rollout.
@@ -386,7 +392,16 @@ should be a Breakout is changed explicitly.
   cannot read or post to a conversation it is not attached to.
 - A Breakout agent can list and read its own Breakout and its Channel's Main
   conversation, and cannot read any other conversation.
-- No agent is offered `sidekick_post_result`.
+- No loop is offered `post_result`, and the `rally:sidekick-result` plugin
+  no longer loads.
+- In a Slack group DM that does not allow threads, two messages addressed to
+  Rally create two Channels, and an unaddressed message creates nothing.
+- A founder's answer is forwarded to a home Breakout that includes someone who
+  was not in the founder's DM.
+- A Slack Connect channel whose ID changes keeps routing to the same Space and
+  Channels, starting from the `channel_id_changed` event.
+- A reply to a binding suspended by Sidekick deletion, disconnect, or a
+  person closing it creates no Rally work.
 - Removal, archive, disconnect, provider ID change, and retry preserve the
   binding's identity or suspend it without moving messages to another target.
 
@@ -407,9 +422,13 @@ should be a Breakout is changed explicitly.
    message but its response is lost, how can Rally recover that exact root ID
    before routing a reply? Without a provider receipt or a reliable correlation
    event, this is an uncollected state, not a reason to guess.
-6. **When a bound thread stops routing:** A run's state no longer decides this,
-   since input reopens a finished run. What closes an outbound binding, and what
-   does a sender see afterward?
+6. **How long an outbound binding lives (blocks the build):** A run's state no
+   longer decides this, since input reopens a finished run, and a binding lets
+   its senders act through the run-as user's connectors. The design suspends a
+   binding when its Sidekick is deleted, its connection disconnects, or a person
+   closes it. Whether bindings also expire after a set time, and after how
+   long, is the team's number to set. What a sender sees after suspension is
+   also open.
 7. **Audience rule for attaching:** Reading and posting both move content, so
    the rule may amount to "same audience or narrower in both directions". Is
    that too strict for a Sidekick whose home is a Breakout inside a wider
