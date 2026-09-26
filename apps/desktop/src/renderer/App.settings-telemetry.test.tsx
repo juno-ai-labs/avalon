@@ -26,6 +26,9 @@ vi.mock('./lib/platform', () => ({
       revealListeners.add(listener);
       return () => revealListeners.delete(listener);
     },
+    // A value rather than the inert `undefined`: the settings surface reads
+    // it as the relay's source, and nobody publishing is the honest answer.
+    getWorkspaceSyncSource: async () => ({ revision: 0, source: null }),
   } as Record<string, unknown>, {
     // The bridge's own convention decides the inert shape: `onX` is a
     // subscription and answers with an unsubscribe, everything else is invoked
