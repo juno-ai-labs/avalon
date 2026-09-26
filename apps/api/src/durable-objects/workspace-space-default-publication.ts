@@ -4,15 +4,12 @@ import { publishFencedTargets } from "./fenced-target-publication";
 import {
   SpaceBootstrapQueueMessageSchema,
   SpaceDefaultQueueMessageSchema,
-  SpaceIntentResumeQueueMessageSchema,
   type SpaceBootstrapQueueMessage,
   type SpaceDefaultQueueMessage,
-  type SpaceIntentResumeQueueMessage,
 } from "./workspace-space-protocol";
 import type {
   SpaceBootstrapClaim,
   WorkspaceSpaceDefaultPublication,
-  WorkspaceSpaceIntentClaim,
 } from "./workspace-space-storage";
 
 export interface SpaceDefaultPublicationStorage {
@@ -24,16 +21,11 @@ export interface SpaceDefaultPublicationStorage {
     publications: readonly WorkspaceSpaceDefaultPublication[],
     now?: number,
   ): void;
-  claimIntentResumes(now: number, retryAt: (attempt: number) => number): WorkspaceSpaceIntentClaim[];
   claimBootstrap(now: number, retryAt: (attempt: number) => number): SpaceBootstrapClaim | null;
 }
 
 export interface SpacePublicationQueue {
   sendBatch(messages: Array<{ body: SpaceDefaultQueueMessage }>): Promise<unknown>;
-}
-
-export interface SpaceIntentQueue {
-  sendBatch(messages: Array<{ body: SpaceIntentResumeQueueMessage }>): Promise<unknown>;
 }
 
 export interface SpacePublicationInput {
@@ -66,66 +58,6 @@ export async function publishSpaceDefaultTargets(input: SpacePublicationInput): 
     now: input.now,
     retryAt: input.retryAt,
   });
-}
-
-/**
- * Claim the cross-object operations that never settled, and hand each to
- * whoever finishes it.
- *
- * A Space audience change, a membership, an archive: each stages an intent in
- * WorkspaceDO before touching another object, and a request that dies between
- * the two leaves the intent `pending`. Nothing else notices (the caller is
- * gone and the Channel was never asked), so the alarm is what finishes it.
- * WorkspaceDO finishes an intent itself when `inPlace` says it can, and those
- * come back to the caller; every other one goes onto the activity Queue for
- * the consumer to re-run.
- *
- * Claimed the way a default target is: the retry gate advances before the send
- * or the in-place run, so a failure is retried later rather than immediately,
- * and a duplicate is safe because every step it re-runs is fenced on the Space
- * revision and membership generation the intent recorded.
- */
-export async function publishSpaceIntentResumes(input: {
-  storage: SpaceDefaultPublicationStorage;
-  queue: SpaceIntentQueue;
-  workspaceId: string;
-  region: Region;
-  now: number;
-  retryAt: (attempt: number) => number;
-  inPlace?: (intent: WorkspaceSpaceIntentClaim) => boolean;
-}): Promise<{ published: number; inPlace: WorkspaceSpaceIntentClaim[] }> {
-  const local: WorkspaceSpaceIntentClaim[] = [];
-  const published = await publishFencedTargets({
-    claim: (now, retryAt) => input.storage.claimIntentResumes(now, retryAt).filter((intent) => {
-      if (!input.inPlace?.(intent)) return true;
-      local.push(intent);
-      return false;
-    }),
-    // The claim already advanced each intent's gate, and the intent settles
-    // when the consumer's work finishes rather than when the Queue takes the
-    // message, so acceptance records nothing here.
-    accept: () => undefined,
-    message: (intent) => SpaceIntentResumeQueueMessageSchema.parse({
-      type: "space_intent_resume",
-      region: input.region,
-      workspaceId: input.workspaceId,
-      operationId: intent.operationId,
-      kind: intent.kind,
-      spaceId: intent.spaceId,
-      workstreamId: intent.workstreamId,
-      spaceRevision: intent.spaceRevision,
-      membershipGeneration: intent.membershipGeneration,
-      sourceSpaceId: intent.sourceSpaceId,
-      sourceSpaceRevision: intent.sourceSpaceRevision,
-      sourceMembershipGeneration: intent.sourceMembershipGeneration,
-      cursor: intent.cursor,
-      requestedByUserId: intent.requestedByUserId,
-    }),
-    queue: input.queue,
-    now: input.now,
-    retryAt: input.retryAt,
-  });
-  return { published, inPlace: local };
 }
 
 /**

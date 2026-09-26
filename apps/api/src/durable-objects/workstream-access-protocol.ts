@@ -97,15 +97,13 @@ export const NoteChannelDirectReaderRequestSchema = ChannelAccessAddressSchema.e
 });
 
 /**
- * A plan — and, in one named case, the commit as well.
+ * A plan, and with `commitWithPlan` the commit as well.
  *
- * Ordinarily it records no source. What it holds instead is a receipt, so a
- * redelivery answers what the first attempt did rather than recomputing a delta
- * against a Channel the first attempt has already changed. The source itself is
- * committed by {@link ConfirmSpaceAccessSourceRequestSchema}, because between
- * the two the caller runs the canonical operations that seat the plan's
- * readers. `bornWithSourceApplied` is the case where there is nothing to run in
- * between; the doc comment there says why that is only ever true at birth.
+ * Either way it holds a receipt, so a redelivery under the same operation id
+ * answers what the first attempt did rather than recomputing a delta against a
+ * Channel the first attempt has already changed. Without `commitWithPlan` the
+ * source is committed by {@link ConfirmSpaceAccessSourceRequestSchema} once the
+ * caller has run the canonical operations that seat the plan's readers.
  */
 export const ApplySpaceAccessSourceRequestSchema = ChannelAccessAddressSchema.extend({
   spaceId: SpaceIdSchema,
@@ -118,25 +116,23 @@ export const ApplySpaceAccessSourceRequestSchema = ChannelAccessAddressSchema.ex
   operationId: IdSchema,
   channel: ObservedChannelSchema,
   /**
-   * The caller asserting that the Channel was **born** with this source's
-   * audience already applied, so this call commits the source as well as
-   * planning it.
+   * Commit the source in this call, recording the readers the plan seats as
+   * supplied by it.
    *
-   * That assertion is only true at birth. The creation coordinator derives the
-   * union of every named Space and hands it to `initialize`, so the
-   * conversation opens with the scope and the roster this source implies
-   * already written — there is no widening left for the caller to ask the
-   * Channel for, and therefore no step between the plan and its commit for a
-   * crash to land in. Every other caller has one: it applies the plan through
-   * the Channel's canonical scope and participant operations, and a source
-   * recorded before those ran would claim a Space reaches this Channel while
-   * that Space had seated nobody.
+   * Two callers. The Channel creation reservation, where the conversation
+   * opens with the union of its Spaces' audiences already written, so there is
+   * no canonical operation left to run. And WorkspaceDO's `SpaceChannelAccess`,
+   * which commits the plan in the transaction that stages the intent: the
+   * intent is resumed until it settles, so a crash between this commit and the
+   * seating is finished or withdrawn by the resume, and the readers already
+   * seated are attributed to this Space either way. Until then the source names
+   * readers who may not be seated yet.
    *
    * Absent means false, and the normalized value is part of the receipt's
    * request fence: a redelivery under the other mode is a different request
    * rather than a convergence on the wrong answer.
    */
-  bornWithSourceApplied: z.boolean().optional(),
+  commitWithPlan: z.boolean().optional(),
 });
 export type ApplySpaceAccessSourceRequest = z.infer<typeof ApplySpaceAccessSourceRequestSchema>;
 
@@ -150,7 +146,7 @@ export const ApplySpaceAccessSourceResultSchema = z.discriminatedUnion("ok", [
     plan: SpaceAccessApplicationSchema,
     /**
      * What a confirmation would have answered, present exactly when
-     * `bornWithSourceApplied` committed the source here: every reader this
+     * `commitWithPlan` committed the source here: every reader this
      * Space is now recorded as supplying. Absent otherwise, because nothing
      * has been recorded yet.
      */
@@ -161,24 +157,12 @@ export const ApplySpaceAccessSourceResultSchema = z.discriminatedUnion("ok", [
 export type ApplySpaceAccessSourceResult = z.infer<typeof ApplySpaceAccessSourceResultSchema>;
 
 /**
- * The source a confirmation commits, when the confirmation is the one that
- * commits it.
+ * The source a confirmation commits, with the readers the caller seated.
  *
- * Present on the confirmation rather than on the application because the
- * application is a plan: recording a source before the audience it describes
- * has been applied leaves, after any crash between the two, provenance that
- * supplies nobody — a Space the Channel claims reaches it and that seated no
- * reader. The confirmation is the first moment the Channel's readers and its
- * record of why can be made true together.
- *
- * **The split is the caller's canonical operations, so the one call that has
- * none does not need it.** A Space joining a Channel that already exists is
- * widened by the caller between the plan and this commit, which is the step the
- * two calls exist to bracket; a Channel *born* into a Space opened with that
- * audience already written, so `bornWithSourceApplied` on the application does
- * exactly what this body does, in the application's own transaction. Anything
- * with a canonical operation in the middle — an add, an audience change, a
- * restore, a placement by the cutover — stays two calls.
+ * After an application that committed with its plan this is the same source
+ * again, and it is what fences the settlement: a newer source for the same
+ * Space refuses it, and a rollback confirms what was really seated before it
+ * retracts.
  *
  * Absent means "attribute these readers to a source that is already here",
  * which is what a narrowing does: it seats readers a Space has supplied all

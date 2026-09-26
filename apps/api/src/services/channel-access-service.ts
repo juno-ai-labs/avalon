@@ -3,7 +3,6 @@ import {
   asWorkspaceId,
   type ChannelAccessSources,
   type SpaceErrorCode,
-  type SpaceId,
   type SpaceScope,
   type UserId,
   type WorkstreamDetail,
@@ -11,10 +10,8 @@ import {
 
 import { workspaceDOName } from "../durable-objects/names";
 import type {
-  ConfirmedAccessSource,
   ObservedChannel,
   SetChannelDirectScopeResult,
-  SpaceAccessRetraction,
 } from "../durable-objects/workstream-access-protocol";
 import type { AuthContext, Env } from "../env";
 import { ApiError, asApiError } from "../lib/api-error";
@@ -24,46 +21,20 @@ import { uuidV7 } from "../lib/uuid-v7";
 import { logWarn } from "../observability/logger";
 import {
   publishChannelNarrowing,
-  runSpaceSourceApplication,
-  runSpaceSourceRetraction,
-  type SpaceSourceApplicationInterrupted,
 } from "./space-source-operations";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 
 export { publishChannelNarrowing };
 
 /**
- * The audience a Space supplies to one Channel.
+ * A Channel's own audience against the Space sources that reach it: reading
+ * who supplies whom, and changing the Channel's direct scope and readers
+ * without revoking what a Space still supplies.
  *
- * `spaceRevision` and `membershipGeneration` are the Space as it was when this
- * work was staged. They are the caller's to supply because the Channel cannot
- * read them, and they are what the Channel re-reads before committing so a
- * staged application that lost a race cannot overwrite a newer one.
- */
-export interface SpaceAccessSource {
-  spaceId: SpaceId;
-  scope: SpaceScope;
-  participantUserIds: readonly UserId[];
-  spaceRevision: number;
-  membershipGeneration: number;
-  operationId: string;
-}
-
-/**
- * The one seam between a Space and a Channel's audience.
- *
- * Every caller — a membership change, a Space audience change, the cutover,
- * creation — goes through `applySpaceSource` and `retractSpaceSource`, and
- * nothing here knows which of them is calling. What it does is always the same
- * three steps: read what the Channel's readers are, ask the Channel's own
- * authority for the delta that its provenance implies, and apply that delta
- * through the Channel's canonical scope and participant operations.
- *
- * The third step is the point. Those operations are where the retained-content
- * containment preflight and its SQL triggers run, and where a Channel that has
- * migrated to grant authority writes a grant instead of a participant row. A
- * service that wrote the audience itself would need a second copy of both, and
- * would be the second place an audience could be widened without the fence.
+ * A Space's source itself is applied and withdrawn by WorkspaceDO
+ * (`SpaceChannelAccess`), through the same canonical scope and participant
+ * operations, which are where the retained-content containment preflight and
+ * its SQL triggers run.
  */
 export class ChannelAccessService {
   constructor(
@@ -163,17 +134,6 @@ export class ChannelAccessService {
       ...this.address(workstreamId),
       channel: observed.channel,
     });
-  }
-
-  /**
-   * Read persisted Space provenance while converging a WorkspaceDO-staged move.
-   * The durable intent is the authorization; mutable caller access is not
-   * rechecked after the move may already have changed Channel provenance.
-   */
-  async readPersistedSpaceSources(workstreamId: string): Promise<ChannelAccessSources["spaces"]> {
-    return (await this.room()).readPersistedSpaceAccessSources(
-      this.address(workstreamId),
-    );
   }
 
   /**
@@ -330,255 +290,6 @@ export class ChannelAccessService {
     await (await this.room()).noteDirectReader({
       ...this.address(workstreamId),
       userId: asUserId(userId),
-    });
-  }
-
-  /**
-   * Apply a Space's source to one Channel.
-   *
-   * `known` is for a caller that already has the Channel's readers and cannot
-   * ask for them: the cutover walks archived Channels, and `get` answers 404
-   * for an archived one, so the observation comes from the Organization's own
-   * directory projection instead. It is the same two facts either way — who may
-   * read, and who is listed — and the plan is computed from them by the
-   * Channel's own authority, not here.
-   */
-  async applySpaceSource(
-    workstreamId: string,
-    source: SpaceAccessSource,
-    known?: { channel: ObservedChannel; title: string },
-  ): Promise<void> {
-    const client = this.client(workstreamId);
-    const detail = known ? null : await client.get();
-    const observed = known?.channel ?? this.observed(detail!);
-    const title = known?.title ?? detail!.title;
-    const room = await this.room();
-    const applied = await room.applySpaceAccessSource({
-      ...this.address(workstreamId),
-      spaceId: source.spaceId,
-      scope: source.scope,
-      participantUserIds: [...source.participantUserIds],
-      spaceRevision: source.spaceRevision,
-      membershipGeneration: source.membershipGeneration,
-      operationId: source.operationId,
-      channel: observed,
-    });
-    if (!applied.ok) throw spaceAccessError(applied.code, title);
-
-    // The source the confirmation below commits, and the Channel as it was
-    // before any of this ran. Carried rather than re-read: by the time the
-    // confirmation lands the audience may already be Organization-wide
-    // because of this very source.
-    const confirmedSource = {
-      scope: source.scope,
-      participantUserIds: [...source.participantUserIds],
-      spaceRevision: source.spaceRevision,
-      membershipGeneration: source.membershipGeneration,
-      channel: observed,
-    };
-
-    let seated: UserId[];
-    try {
-      seated = await runSpaceSourceApplication(client, source.spaceId, applied.plan);
-    } catch (error) {
-      const interrupted = error as SpaceSourceApplicationInterrupted;
-      await this.rollbackSpaceSource(workstreamId, source.spaceId, interrupted.seated, confirmedSource);
-      const refusal = asApiError(interrupted.cause);
-      if (refusal?.code === "workstream_audience_restricted_content") {
-        throw spaceAccessError("space_membership_content_fence", title);
-      }
-      throw interrupted.cause;
-    }
-
-    const confirmed = await room.confirmSpaceAccessSource({
-      ...this.address(workstreamId),
-      spaceId: source.spaceId,
-      operationId: uuidV7(),
-      seatedUserIds: seated,
-      source: confirmedSource,
-    });
-    if (!confirmed.ok) {
-      await this.rollbackUnconfirmedSeating(workstreamId, source.spaceId, seated);
-      throw spaceAccessError(confirmed.code, title);
-    }
-  }
-
-  /**
-   * Withdraw a Space's source from one Channel.
-   *
-   * `expectedSpaceRevision` is what an audience change carries and a removal or
-   * an archive does not: a convergence that retracts in order to re-apply has
-   * to lose to a newer one, and the row the application's fence reads is the
-   * row this call deletes.
-   */
-  async retractSpaceSource(
-    workstreamId: string,
-    spaceId: SpaceId,
-    operationId: string,
-    expectedSpaceRevision?: number,
-  ): Promise<void> {
-    const observation = await this.observation(workstreamId);
-    const observed = observation.channel;
-    const room = await this.room();
-    const retracted = await room.retractSpaceAccessSource({
-      ...this.address(workstreamId),
-      spaceId,
-      operationId,
-      ...(expectedSpaceRevision === undefined ? {} : { expectedSpaceRevision }),
-      channel: observed,
-    });
-    if (!retracted.ok) throw spaceAccessError(retracted.code, observation.title);
-    // Read *after* the retraction, so what comes back is exactly the sources
-    // that survived it — which is where the plan's survivors come from, and
-    // which the plan itself cannot say because it is a list of readers. Only
-    // when there is somebody to attribute: a retraction that seats nobody is
-    // the common case and owes no extra hop.
-    const remaining = retracted.plan.seatUserIds.length === 0
-      ? []
-      : (await room.readAccessSources({ ...this.address(workstreamId), channel: observed })).spaces;
-    await this.applyRetraction(workstreamId, spaceId, retracted.plan, remaining);
-  }
-
-  /**
-   * Withdraw what an application seated after it failed part way through.
-   *
-   * Nothing seated is nothing to withdraw: the application records no source,
-   * so a failure before the first canonical add leaves the Channel exactly as
-   * it was and this returns without touching it. There is no half-applied
-   * audience and no orphaned provenance to clean up, which is the whole reason
-   * the source moved to the confirmation.
-   *
-   * Otherwise the readers that *were* seated are attributed first — committing
-   * the source as the successful path would have — and then withdrawn through
-   * the same retraction the product path uses, rather than an unwind of its
-   * own: the plan is computed against the Channel as it is now and against the
-   * other sources that still reach it, so a reader another Space also supplies
-   * survives a rollback exactly as it survives a removal.
-   */
-  private async rollbackSpaceSource(
-    workstreamId: string,
-    spaceId: SpaceId,
-    seated: readonly UserId[],
-    source: ConfirmedAccessSource,
-  ): Promise<void> {
-    if (seated.length === 0) return;
-    try {
-      const room = await this.room();
-      await room.confirmSpaceAccessSource({
-        ...this.address(workstreamId),
-        spaceId,
-        operationId: uuidV7(),
-        seatedUserIds: [...seated],
-        source,
-      });
-      await this.retractSpaceSource(workstreamId, spaceId, uuidV7());
-    } catch (error) {
-      // The refusal the caller is about to see is the useful one; this is the
-      // cleanup that could not finish, and it is named so the leftover source
-      // can be found rather than inferred from a later surprise.
-      logWarn(this.env, "space_access_rollback_failed", {
-        workstream_id: workstreamId,
-        space_id: spaceId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  /**
-   * Remove readers this attempt seated after its confirmation loses a fence.
-   *
-   * The stale source was never committed, so confirming it just to use the
-   * ordinary retraction path would lose the same fence again. Re-read the
-   * sources that did win, keep every reader their live union still names, and
-   * withdraw only the now-unowned seats. A direct grant is protected by the
-   * scope-grant authority even if it appeared between this read and removal.
-   */
-  private async rollbackUnconfirmedSeating(
-    workstreamId: string,
-    spaceId: SpaceId,
-    seated: readonly UserId[],
-  ): Promise<void> {
-    if (seated.length === 0) return;
-    try {
-      const current = await this.readSources(workstreamId);
-      const retained = new Set(effectiveChannelAudience({
-        direct: current.direct,
-        sources: current.spaces.map((space) => ({
-          sourceId: space.spaceId,
-          scope: space.scope,
-          participantUserIds: space.participantUserIds,
-        })),
-      }).participantUserIds);
-      const client = this.client(workstreamId);
-      for (const userId of seated) {
-        if (retained.has(userId)) continue;
-        await client.removeParticipant(userId, { spaceSourceId: spaceId });
-      }
-    } catch (error) {
-      logWarn(this.env, "space_access_unconfirmed_seating_rollback_failed", {
-        workstream_id: workstreamId,
-        space_id: spaceId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  /**
-   * Apply a retraction through the Channel's canonical operations.
-   *
-   * Seat, then attribute, then narrow, then remove. Seating first is what keeps
-   * a narrowing from revoking access a surviving source still provides — the
-   * readers it supplies were never seated while everybody could read — and
-   * removing last means nobody is taken out of an audience that is still about
-   * to change.
-   *
-   * A survivor is seated and attributed under a Space that **remains**, never
-   * under the one leaving. Naming the departing Space is not a cosmetic
-   * mis-labelling: its source row is already gone, so the attribution cannot
-   * commit at all, and the reader is left with a grant pointing at nothing.
-   * The Space that really supplies them then retracts with no provenance for
-   * them and leaves behind a reader nobody can account for — the same failure
-   * the attribution in `narrowDirectScope` exists to prevent, on the other
-   * path into the same state.
-   *
-   * A survivor no remaining Space lists is the direct source's, and is seated
-   * as the Channel's own with no source at all. One several Spaces list is
-   * attributed to each of them, because access is the live union and any one of
-   * them departing must leave the others' claim standing.
-   */
-  private async applyRetraction(
-    workstreamId: string,
-    spaceId: SpaceId,
-    plan: SpaceAccessRetraction,
-    remaining: ChannelAccessSources["spaces"],
-  ): Promise<void> {
-    const room = await this.room();
-    await runSpaceSourceRetraction({
-      env: this.env,
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      workstreamId,
-      client: this.client(workstreamId),
-      spaceId,
-      plan,
-      remaining,
-      attribute: async (attributions) => {
-        for (const { spaceId: supplierId, userIds } of attributions) {
-          const confirmed = await room.confirmSpaceAccessSource({
-            ...this.address(workstreamId),
-            spaceId: supplierId,
-            operationId: uuidV7(),
-            seatedUserIds: userIds,
-          });
-          if (!confirmed.ok) {
-            // Named rather than thrown, for the reason `narrowDirectScope` names
-            // its own: the readers are seated and can read, and failing here would
-            // leave the Channel in the Space it has already been taken out of.
-            logWarn(this.env, "channel_retraction_attribution_refused", {
-              workstream_id: workstreamId, space_id: supplierId, code: confirmed.code,
-            });
-          }
-        }
-      },
     });
   }
 }

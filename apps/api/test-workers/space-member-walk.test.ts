@@ -21,6 +21,7 @@ import {
   createMessageBatch,
   getQueueResult,
   reset,
+  runDurableObjectAlarm,
   runInDurableObject,
 } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -43,7 +44,9 @@ import { SPACE_BOOTSTRAP_PAGE_SIZE } from "../src/durable-objects/workspace-spac
 import type { AuthContext } from "../src/env";
 import { consumeActivityQueue } from "../src/queues/activity-consumer";
 import { SpaceService } from "../src/services/space-service";
+import { placeMembership, withSpaceStorage } from "./helpers/space-membership";
 import { seedWorkstreamRoot } from "./helpers/substream-fixture";
+import { changeRelationships } from "./helpers/workspace-relationship-events";
 
 /** Its own workspace id: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000ba00");
@@ -60,6 +63,9 @@ const AUTH: AuthContext = {
   region: "global",
   role: "owner",
 };
+
+/** The owner as WorkspaceDO acts for them on a Channel's conversation. */
+const ACTOR = { sessionId: SESSION_ID, userId: OWNER, workspaceId: WORKSPACE_ID, region: "global" as const, role: "owner" as const };
 
 /**
  * One more Channel than a page holds, which is the smallest fixture that has a
@@ -181,19 +187,7 @@ async function reserve(name: string, scope: "workspace" | "personal" = "workspac
 }
 
 async function place(spaceId: SpaceId, workstreamId: WorkstreamId): Promise<void> {
-  const plan = await workspace().prepareSpaceMembership({
-    workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, workstreamId,
-  });
-  if (!plan.ok) throw new Error(`prepareSpaceMembership refused: ${plan.code}`);
-  const settled = await workspace().finalizeSpaceMembership({
-    workspaceId: WORKSPACE_ID,
-    userId: OWNER,
-    spaceId,
-    workstreamId,
-    spaceRevision: plan.space.revision,
-    membershipGeneration: plan.membershipGeneration,
-  });
-  if (!settled.ok) throw new Error(`finalizeSpaceMembership refused: ${settled.code}`);
+  await placeMembership(workspace(), { workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, workstreamId });
 }
 
 const observedChannel = {
@@ -309,9 +303,15 @@ async function spaceSourceIds(workstreamId: WorkstreamId): Promise<string[]> {
   return sources.spaces.map((source) => source.spaceId);
 }
 
-/** The cursor shape the storage writes: base64url of the Channel id. */
-function cursorAt(workstreamId: WorkstreamId): string {
-  return btoa(workstreamId).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
+/**
+ * One alarm with every unsettled intent due, which is how an interrupted
+ * operation is finished: the alarm resumes it in place, as its requester.
+ */
+async function resumeOnAlarm(): Promise<void> {
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec("UPDATE space_intents SET not_before = 0 WHERE state IN ('pending', 'applied')");
+  });
+  await runDurableObjectAlarm(workspace());
 }
 
 function intentRow(operationId: string) {
@@ -369,15 +369,7 @@ describe("a Space fan-out over more members than one page", () => {
     await seatSpaceSource(broken, departing);
     await seatSpaceSource(broken, staying);
 
-    await new SpaceService(env, AUTH).resumeIntent({
-      operationId: intent.operation_id,
-      kind: "archive",
-      spaceId: departing,
-      workstreamId: null,
-      spaceRevision: 2,
-      membershipGeneration: null,
-      cursor: intent.cursor,
-    });
+    await resumeOnAlarm();
 
     // Every member is settled, the second page included: the walk crosses the
     // page bound rather than stopping at it.
@@ -392,14 +384,11 @@ describe("a Space fan-out over more members than one page", () => {
       .resolves.toMatchObject({ rows: [{ state: "settled" }] });
   }, 120_000);
 
-  it("given a restore that never walked, when it resumes, then it re-applies the source from the cursor on", async () => {
+  it("given a restore that never walked, when the alarm resumes it, then every member has the source again", async () => {
     const departing = await reserve("Company");
     const staying = await reserve("Recruiting");
-    // Two Channels, because what this is about is the `restore` branch of the
-    // resume rather than the page bound the case above already crosses.
-    const walked = CHANNELS[0]!;
-    const remaining = CHANNELS[1]!;
-    for (const workstreamId of [walked, remaining]) {
+    const members = [CHANNELS[0]!, CHANNELS[1]!];
+    for (const workstreamId of members) {
       await publishChannel(workstreamId);
       await place(departing, workstreamId);
       await place(staying, workstreamId);
@@ -407,45 +396,68 @@ describe("a Space fan-out over more members than one page", () => {
       await seatSpaceSource(workstreamId, departing);
       await seatSpaceSource(workstreamId, staying);
     }
-    const service = new SpaceService(env, AUTH);
-    await service.archive(departing);
-    expect(await spaceSourceIds(remaining)).toEqual([staying]);
+    await new SpaceService(env, AUTH).archive(departing);
+    for (const workstreamId of members) expect(await spaceSourceIds(workstreamId)).toEqual([staying]);
 
     // The restore commits and the request dies before it asks any Channel for
-    // anything: the Space is active again in the directory and on every socket,
-    // and no member holds its source. Before this staged an intent, that state
-    // was the one Space operation nothing would ever notice.
+    // anything: the Space is active again in the directory and on every
+    // socket, and no member holds its source.
     const operationId = crypto.randomUUID();
     const restored = await workspace().restoreSpace({
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: departing, operationId,
     });
     if (!restored.ok) throw new Error(restored.code);
-    expect(await spaceSourceIds(remaining)).toEqual([staying]);
-    // The walk got as far as the first member and wrote its page, which is the
-    // cursor the resume reads off the row.
-    await workspace().recordSpaceIntentReceipt({
-      workspaceId: WORKSPACE_ID, userId: OWNER, operationId, receipt: "restore_page", settled: false,
-      cursor: cursorAt(walked),
-    });
+    expect(await spaceSourceIds(members[1]!)).toEqual([staying]);
 
-    await service.resumeIntent({
-      operationId,
-      kind: "restore",
-      spaceId: departing,
-      workstreamId: null,
-      spaceRevision: restored.space.revision,
-      membershipGeneration: null,
-      cursor: cursorAt(walked),
-    });
+    await resumeOnAlarm();
 
-    // The member the walk had not reached has the source back; the one behind
-    // the cursor is left where the interrupted walk left it.
-    expect(await spaceSourceIds(remaining)).toEqual([departing, staying].sort());
-    expect(await spaceSourceIds(walked)).toEqual([staying]);
+    for (const workstreamId of members) {
+      expect(await spaceSourceIds(workstreamId)).toEqual([departing, staying].sort());
+    }
     await expect(intentRow(operationId)).resolves.toMatchObject({ rows: [{ state: "settled" }] });
   }, 120_000);
 
-  it("given an audience change overtaken by a newer one, when the older resumes, then its members converge on the Space as it is now", async () => {
+  it("given an archive staged over more members than a page, when it is resumed, then each step walks one page from the cursor on the row", async () => {
+    const departing = await reserve("Company");
+    const staying = await reserve("Recruiting");
+    for (const workstreamId of CHANNELS) {
+      await publishChannel(workstreamId);
+      await place(departing, workstreamId);
+      await place(staying, workstreamId);
+      await openMemberChannel(workstreamId);
+      await seatSpaceSource(workstreamId, departing);
+      await seatSpaceSource(workstreamId, staying);
+    }
+    // Staged, and the request that would have walked it never does.
+    const operationId = crypto.randomUUID();
+    const staged = await workspace().prepareSpaceArchive({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: departing, operationId,
+    });
+    if (!staged.ok) throw new Error(staged.code);
+    const lastMember = CHANNELS[SPACE_BOOTSTRAP_PAGE_SIZE]!;
+
+    const first = await workspace().resumeSpaceIntent({ auth: ACTOR, operationId });
+
+    // One page: the first page's members have lost the source, the member on
+    // the second page still has it, and the row says where the next step starts.
+    expect(first).toEqual({ ok: true, outcome: "progressed" });
+    expect(await spaceSourceIds(CHANNELS[0]!)).toEqual([staying]);
+    expect(await spaceSourceIds(lastMember)).toEqual([departing, staying].sort());
+    const row = await intentRow(operationId);
+    const cursor = (row.rows[0] as { cursor: string | null }).cursor;
+    expect(atob(cursor!.replaceAll("-", "+").replaceAll("_", "/"))).toBe(CHANNELS[SPACE_BOOTSTRAP_PAGE_SIZE - 1]);
+    const firstPageOperations = await operationCounts(CHANNELS.slice(0, SPACE_BOOTSTRAP_PAGE_SIZE));
+
+    await resumeOnAlarm();
+
+    // The next step starts from that cursor: the second page is walked, the
+    // first is not walked again, and the archive is finalized.
+    expect(await spaceSourceIds(lastMember)).toEqual([staying]);
+    expect(await operationCounts(CHANNELS.slice(0, SPACE_BOOTSTRAP_PAGE_SIZE))).toEqual(firstPageOperations);
+    await expect(intentRow(operationId)).resolves.toMatchObject({ rows: [{ state: "settled" }] });
+  }, 180_000);
+
+  it("given an audience change overtaken by a newer one, when the alarm resumes the older, then its members converge on the Space as it is now", async () => {
     const spaceId = await reserve("Side work", "personal");
     const channel = CHANNELS[0]!;
     await publishChannel(channel);
@@ -466,15 +478,7 @@ describe("a Space fan-out over more members than one page", () => {
     });
     if (!newer.ok) throw new Error(newer.code);
 
-    await expect(new SpaceService(env, AUTH).resumeIntent({
-      operationId,
-      kind: "audience",
-      spaceId,
-      workstreamId: null,
-      spaceRevision: staged.space.revision,
-      membershipGeneration: null,
-      cursor: null,
-    })).resolves.toEqual({ outcome: "settled" });
+    await resumeOnAlarm();
 
     // The walk is still an interrupted one, so it converges on the newer
     // Space rather than abandoning and leaving the Channel on neither roster.
@@ -634,5 +638,181 @@ describe("a Space fan-out over more members than one page", () => {
       .toContain("requester_reach_lost");
     const outcome = await getQueueResult(batch, createExecutionContext());
     expect(outcome.retryMessages).toHaveLength(0);
+  }, 60_000);
+
+  it("given a requester who is no longer an active member, when the alarm reaches their intent, then nothing runs as them and the reason is on the row", async () => {
+    const spaceId = await reserve("Company");
+    const channel = CHANNELS[0]!;
+    await publishChannel(channel);
+    await place(spaceId, channel);
+    await openMemberChannel(channel);
+    await seatSpaceSource(channel, spaceId);
+
+    // The second member stages an audience change and leaves the Organization
+    // before its walk reaches the Channel.
+    const operationId = crypto.randomUUID();
+    const staged = await workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId, operationId,
+      audience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
+    });
+    if (!staged.ok) throw new Error(staged.code);
+    await changeRelationships(env, WORKSPACE_ID, [MEMBER],
+      env.DB.prepare("UPDATE workspace_members SET status = 'suspended' WHERE workspace_id = ? AND user_id = ?")
+        .bind(WORKSPACE_ID, MEMBER));
+    const operationsBefore = await operationCounts([channel]);
+
+    await resumeOnAlarm();
+
+    // Nobody acted as them: the Channel was not asked for anything, and the
+    // intent is still unsettled with the reason it did not run on it.
+    expect(await operationCounts([channel])).toEqual(operationsBefore);
+    expect(await spaceSource(channel, spaceId)).toMatchObject({ scope: "workspace" });
+    const row = await workspace().runInspectionSql({
+      sql: "SELECT state, last_error_code FROM space_intents WHERE operation_id = ?",
+      bindings: [operationId],
+    });
+    expect(row.rows[0]).toMatchObject({ state: "pending", last_error_code: "space_intent_requester_inactive" });
+  }, 60_000);
+});
+
+/**
+ * A `move` intent at rest, the way a Worker that staged equal-audience moves
+ * left one: the target membership `joining` at the next generation and the
+ * intent naming both Spaces' fences. Nothing stages these any more, so the
+ * rows are written as that Worker's prepare wrote them.
+ */
+async function storedMove(input: {
+  sourceSpaceId: SpaceId;
+  targetSpaceId: SpaceId;
+  workstreamId: WorkstreamId;
+  operationId?: string;
+}): Promise<string> {
+  const operationId = input.operationId ?? crypto.randomUUID();
+  await withSpaceStorage(workspace(), (storage) => {
+    const source = storage.readable(OWNER, input.sourceSpaceId);
+    const target = storage.readable(OWNER, input.targetSpaceId);
+    if (source === false || target === false) throw new Error("move Spaces missing");
+    storage.recordIntent({
+      operationId,
+      kind: "move",
+      spaceId: input.targetSpaceId,
+      workstreamId: input.workstreamId,
+      spaceRevision: target.revision,
+      membershipGeneration: 1,
+      sourceSpaceId: input.sourceSpaceId,
+      sourceSpaceRevision: source.revision,
+      sourceMembershipGeneration: 1,
+      deliveryGeneration: null,
+      requestedByUserId: OWNER,
+      // Due later, as a staged intent is: the test decides when the alarm runs.
+      notBefore: Date.now() + 60_000,
+    });
+  });
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec(
+      `INSERT INTO space_channel_memberships (space_id, workstream_id, state, generation, joined_at, updated_at, removed_at)
+       VALUES (?, ?, 'joining', 1, 1, 1, NULL)`,
+      input.targetSpaceId,
+      input.workstreamId,
+    );
+  });
+  return operationId;
+}
+
+async function memberships(workstreamId: WorkstreamId) {
+  return (await workspace().runInspectionSql({
+    sql: "SELECT space_id, state FROM space_channel_memberships WHERE workstream_id = ? ORDER BY space_id",
+    bindings: [workstreamId],
+  })).rows;
+}
+
+describe("a stored move, resumed in place", () => {
+  const ownerOnly = { scope: "personal" as const, participantUserIds: [OWNER] };
+
+  it("given a move whose provenance swap already committed, when the alarm resumes it, then the memberships switch in one step", async () => {
+    const source = await reserve("Source", "personal");
+    const target = await reserve("Target", "personal");
+    const channel = CHANNELS[0]!;
+    await publishChannel(channel);
+    await place(source, channel);
+    await openMemberChannel(channel);
+    await seatSpaceSource(channel, source, ownerOnly);
+    const operationId = await storedMove({ sourceSpaceId: source, targetSpaceId: target, workstreamId: channel });
+    // What the staging Worker did next, before it died: the Channel's record
+    // moved from the source Space to the target.
+    const swapped = await workspace().replaceEquivalentSpaceAccessSource({
+      workspaceId: WORKSPACE_ID, parentId: channel, sourceSpaceId: source, targetSpaceId: target,
+      ...ownerOnly, sourceSpaceRevision: 1, sourceMembershipGeneration: 1,
+      targetSpaceRevision: 1, targetMembershipGeneration: 1, operationId: crypto.randomUUID(),
+    });
+    expect(swapped).toEqual({ ok: true });
+
+    await resumeOnAlarm();
+
+    expect(await memberships(channel)).toEqual(expect.arrayContaining([
+      { space_id: source, state: "removed" },
+      { space_id: target, state: "active" },
+    ]));
+    expect(await spaceSourceIds(channel)).toEqual([target]);
+    await expect(intentRow(operationId)).resolves.toMatchObject({ rows: [{ state: "settled" }] });
+  }, 60_000);
+
+  it("given a move whose Spaces no longer grant the same readers, when the alarm resumes it, then it becomes an add to the target and a removal from the source", async () => {
+    const source = await reserve("Source", "personal");
+    const target = await reserve("Target", "personal");
+    const channel = CHANNELS[0]!;
+    await publishChannel(channel);
+    await place(source, channel);
+    await openMemberChannel(channel);
+    await seatSpaceSource(channel, source, ownerOnly);
+    const operationId = await storedMove({ sourceSpaceId: source, targetSpaceId: target, workstreamId: channel });
+    // The target's audience moved after the move was staged, so moving the
+    // record across unchanged would grant the wrong readers.
+    const widened = await workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: target, operationId: crypto.randomUUID(),
+      audience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
+    });
+    if (!widened.ok) throw new Error(widened.code);
+
+    await resumeOnAlarm();
+
+    expect(await memberships(channel)).toEqual(expect.arrayContaining([
+      { space_id: source, state: "removed" },
+      { space_id: target, state: "active" },
+    ]));
+    expect(await spaceSource(channel, target)).toMatchObject({ participantUserIds: [OWNER, MEMBER] });
+    expect(await spaceSourceIds(channel)).toEqual([target]);
+    await expect(intentRow(operationId)).resolves.toMatchObject({ rows: [{ state: "cancelled" }] });
+  }, 60_000);
+
+  it("given two stored moves from one placement, when the alarm resumes both, then the first wins and the other target never activates", async () => {
+    const source = await reserve("Source", "personal");
+    const winner = await reserve("Winner", "personal");
+    const older = await reserve("Older", "personal");
+    const channel = CHANNELS[0]!;
+    await publishChannel(channel);
+    await place(source, channel);
+    await openMemberChannel(channel);
+    await seatSpaceSource(channel, source, ownerOnly);
+    // Equally due, so the alarm takes them in operation id order.
+    const winning = await storedMove({
+      sourceSpaceId: source, targetSpaceId: winner, workstreamId: channel,
+      operationId: "00000000-0000-7000-8000-00000000ba10",
+    });
+    const losing = await storedMove({
+      sourceSpaceId: source, targetSpaceId: older, workstreamId: channel,
+      operationId: "00000000-0000-7000-8000-00000000ba11",
+    });
+
+    await resumeOnAlarm();
+
+    expect(await memberships(channel)).toEqual(expect.arrayContaining([
+      { space_id: source, state: "removed" },
+      { space_id: winner, state: "active" },
+      { space_id: older, state: "removed" },
+    ]));
+    expect(await spaceSourceIds(channel)).toEqual([winner]);
+    await expect(intentRow(winning)).resolves.toMatchObject({ rows: [{ state: "settled" }] });
+    await expect(intentRow(losing)).resolves.toMatchObject({ rows: [{ state: "cancelled" }] });
   }, 60_000);
 });
