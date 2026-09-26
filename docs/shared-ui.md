@@ -101,7 +101,7 @@ responsive boundary and below, the host shows an unsupported-width state
 instead of presenting a compressed or partial hierarchy.
 
 Theme application stamps the same `data-theme` attribute before rendering. Desktop
-installs the native theme reporter/broadcast adapter; browser installs system
+installs the native theme reporter/broadcast adapter; browser and Sideline install system
 appearance observation. Visual primitives share the same theme subscription.
 
 Sidekick management options are requested when management controls open. Transcript
