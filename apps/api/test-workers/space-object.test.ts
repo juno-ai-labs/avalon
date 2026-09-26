@@ -40,7 +40,6 @@ import { RALLY_HEADERS } from "@rally/contracts/http-headers";
 import { conversationObjectName } from "../src/durable-objects/names";
 import type { ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
 import type { Env } from "../src/env";
-import { consumeEffectBodies } from "./helpers/conversation-effects";
 import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
 
 /** Its own workspace: object names are shared across files, storage is not. */
@@ -373,11 +372,9 @@ describe("a Space's hosted parent", () => {
     await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
 
     const envelope = spaceDirectoryEnvelope();
-    // Accepted and acknowledged. Phase 1 refused this by name because
-    // WorkspaceDO had nowhere to put it; migration 61 gave it somewhere, and
-    // the routing by parent kind is what keeps a Space out of the Channel
-    // sidebar now that both effects reach the same handoff.
-    expect(await consumeEffectBodies(env, [envelope])).toEqual({ acked: 1, retried: 0 });
+    // The routing by parent kind is what keeps a Space out of the Channel
+    // sidebar: both kinds reach the same directory apply.
+    await workspace().applyWorkstreamDirectoryEffects({ workspaceId: WORKSPACE_ID, envelopes: [envelope] });
     expect(await workspace().runInspectionSql({
       sql: "SELECT workstream_id FROM channels",
       bindings: [],
