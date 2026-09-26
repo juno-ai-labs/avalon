@@ -155,7 +155,68 @@ so they are decided deliberately:
 
 ## Decision log
 
-None yet.
+### 2026-09-26 — The four design decisions are approved as written
+
+**Decided:** Adam approved key design decisions 1 to 7 and the four open
+decisions put to him: reverse "an index attribute never grants access" for
+search; compute each person's groups live per search; narrow guests out of
+workspace-connector rows; read classic Channel rosters from `channel_viewers`.
+
+**Why:** Approval was given in the working session that wrote this PRD, before
+its pull request merged.
+
+**Changes:** Nothing in the agreed scope.
+
+### 2026-09-26 — Attach and detach rewrite a resource through its existing re-projection
+
+**Decided:** No separate audience patch job. WorkspaceDO migration 75 adds
+triggers on `authorization_locations`, and the inventory writer now changes
+only the location rows that differ, so an attach or detach bumps that
+resource's search revision and the existing pipeline rewrites every row.
+
+**Why:** Building phase 1 found that attach and detach never re-indexed a
+resource at all: they change `authorization_locations`, which no search trigger
+watched, and the resource update trigger did not watch `attachment_status`
+either, so publishing a draft did not re-index it. A new revision rewrites the
+lexical row and the semantic chunks with the new audience through machinery
+that already handles races. The cost is re-embedding a resource's chunks on
+each attach or detach; there were 226 locations in all at Juno Labs.
+
+**Changes:** Supersedes the patch job [`design.md`](design.md) left open as a
+fallback. Shipped in the phase 1 pull request.
+
+### 2026-09-26 — The resource-type trigger watches only email-ness
+
+**Decided:** Migration 75's update trigger reacts to a Resend resource becoming
+or ceasing to be an email, not to every `resource_type` change.
+
+**Why:** `resource_type` enters a resource's audience only through that rule.
+Watching the whole column re-indexed connector resources whose type a
+discovery pass rewrites, which an existing cost test forbids.
+
+**Changes:** None to scope.
+
+### 2026-09-26 — `run_as_user_id` moves to the person-side phase
+
+**Decided:** `automation_directory.run_as_user_id` ships with the person-side
+function (phase 3), not in phase 1.
+
+**Why:** Only the person side reads it, and phase 1 is kept to what rows carry.
+
+**Changes:** Rollout step 1 no longer includes it. It must land in or before the
+deploy that switches the read path.
+
+### 2026-09-26 — Existing semantic chunk rows gain `audience` only on their next content change
+
+**Decided:** The phase 2 re-projection does not rewrite existing semantic chunk
+rows. The pipeline skips a chunk whose deterministic ID already exists.
+
+**Why:** Member search reads only the lexical namespace, so phase 3 does not
+need them. Rewriting every chunk would re-embed the whole fleet.
+
+**Changes:** Adds a precondition: any future semantic read path must first
+backfill `audience` on chunk rows (for example with `patch_by_filter` per
+source), recorded in [text search](../../text-search.md#changelog).
 
 ## Key design decisions
 

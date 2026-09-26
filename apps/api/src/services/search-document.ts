@@ -40,6 +40,10 @@ export const SearchDocumentSchema = z.object({
   // Connector resources name their connection: one projected decision per
   // (subject, connection) admits every row the connection synced.
   connectionId: z.string().optional(),
+  // The groups that may read this row, named by where it lives (see
+  // `search-audience.ts`). Optional while rows written before it exist; a live
+  // row without it admits nobody once search filters on it.
+  audience: z.array(z.string()).optional(),
   revision: z.number().int().positive(),
   // Null is a retained deletion watermark; empty text is a live document.
   text: z.string().nullable(),
