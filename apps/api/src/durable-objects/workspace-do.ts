@@ -733,12 +733,14 @@ import {
 } from "./hosted-parent";
 import { planParentEffectBatches } from "./conversation-parent-object";
 import {
-  deferParentImport,
   dueParentImports,
   importLegacyParent,
   LegacyParentExportSchema,
   nextParentImportDueAt,
   notePendingParentImport,
+  ParentImportError,
+  parentImportState,
+  recordParentImportFailure,
 } from "./hosted-parent-import";
 import {
   HostedParticipantProjectionAlarmSchema,
@@ -4851,26 +4853,47 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(workspaceId);
   }
 
-  /** Import a parent still held by its legacy object, once, before it is served. */
+  /**
+   * Import a parent still held by its legacy object, once, before it is served.
+   *
+   * Single-flight per parent, and retried on every request that needs it: a
+   * request never waits out the alarm's backoff, because the person asking is
+   * the one the import is for. The alarm retries an unopened parent on
+   * `scheduledAlarmRetryDelay`'s schedule.
+   */
   private async ensureParentImported(parentId: string): Promise<void> {
-    const ledger = this.state.storage.sql.exec<{ state: string; not_before: number; last_error_code: string | null }>(
-      "SELECT state, not_before, last_error_code FROM parent_imports WHERE parent_id = ?", parentId,
-    ).toArray()[0];
-    if (ledger?.state !== "pending") return;
+    if (parentImportState(this.state.storage.sql, parentId) !== "pending") return;
     let inFlight = this.parentImportsInFlight.get(parentId);
-    // A failed import waits out its backoff on the request path too, so an
-    // unreachable legacy object is asked once per step of the schedule rather
-    // than once per viewer check. The caller gets the reason it failed.
-    if (!inFlight && ledger.not_before > Date.now()) {
-      throw new Error("parent_import_unavailable", {
-        cause: new Error(ledger.last_error_code ?? "parent_import_deferred"),
-      });
-    }
     if (!inFlight) {
       inFlight = this.importHostedParent(parentId).finally(() => this.parentImportsInFlight.delete(parentId));
       this.parentImportsInFlight.set(parentId, inFlight);
     }
     await inFlight;
+  }
+
+  /**
+   * Operator repair: import one pending parent now and say what happened.
+   *
+   * The same single-flight import a request runs, answered with the ledger row
+   * instead of a thrown error, so an operator who has fixed what the last
+   * attempt's code named (`docs/runbook.md`, "A Channel or Space import is
+   * stuck") sees whether it took. A parent that is not pending is left alone.
+   */
+  async retryParentImport(input: { workspaceId: string; parentId: string }): Promise<{
+    state: "pending" | "imported" | null;
+    attempts: number;
+    lastErrorCode: string | null;
+  }> {
+    const request = parseRpcInput(
+      z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema }), input, "retry_parent_import",
+    );
+    await this.initialized;
+    this.assertWorkspace(request.workspaceId);
+    await this.ensureParentImported(request.parentId).catch(() => undefined);
+    const row = this.state.storage.sql.exec<{ state: "pending" | "imported"; attempts: number; last_error_code: string | null }>(
+      "SELECT state, attempts, last_error_code FROM parent_imports WHERE parent_id = ?", request.parentId,
+    ).toArray()[0];
+    return { state: row?.state ?? null, attempts: row?.attempts ?? 0, lastErrorCode: row?.last_error_code ?? null };
   }
 
   private async importHostedParent(parentId: string): Promise<void> {
@@ -4881,40 +4904,40 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const name = kind === "space"
       ? spaceDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), asSpaceId(parentId))
       : workstreamDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(parentId));
+    // Every failure, before or after the export, is recorded with its code
+    // and thrown with that code in the message: `cause` does not survive the
+    // RPC hop back to the caller.
+    const fail = (code: string): Error => {
+      const now = Date.now();
+      recordParentImportFailure(this.state.storage.sql, parentId, code,
+        (attempt) => now + scheduledAlarmRetryDelay(attempt));
+      logWarn(this.env, "hosted_parent_import_deferred", {
+        workspace_id: workspaceId, parent_id: parentId, parent_kind: kind, code,
+      });
+      return new Error(`parent_import_unavailable:${code}`);
+    };
     let exported;
     try {
       const legacy = await durableObjectStubForWorkspace(this.env, namespace, workspaceId, name);
       exported = LegacyParentExportSchema.parse(await legacy.exportParentState({ workspaceId: asWorkspaceId(workspaceId), parentId }));
     } catch (error) {
-      const code = diagnosticErrorCode(error, "parent_export_failed");
-      deferParentImport(this.state.storage.sql, parentId, code, Date.now());
-      logWarn(this.env, "hosted_parent_import_deferred", {
-        workspace_id: workspaceId, parent_id: parentId, parent_kind: kind, code,
-      });
-      throw new Error("parent_import_unavailable", { cause: error });
+      throw fail(diagnosticErrorCode(error, "parent_export_failed"));
     }
     const now = Date.now();
+    const parent = new HostedParent(this.hostedParentHost(), parentId, kind === "space" ? HOSTED_SPACE_ROLE : HOSTED_CHANNEL_ROLE);
     let result;
     try {
-      result = importLegacyParent(this.state.storage, this.scheduledAlarms, parentId, kind, exported, now);
-    } catch (error) {
-      // The rows arrived but did not fit: an identity mismatch or a target
-      // that is not empty. Retrying at once would only repeat it.
-      const code = diagnosticErrorCode(error, "parent_import_failed");
-      deferParentImport(this.state.storage.sql, parentId, code, now);
-      logWarn(this.env, "hosted_parent_import_deferred", {
-        workspace_id: workspaceId, parent_id: parentId, parent_kind: kind, code,
+      // The legacy migrations 19 and 20 replayed breakout projections once
+      // across the fleet; running them here makes an object that missed that
+      // pass converge, and costs nothing on one that did. They run in the
+      // import's transaction, so a parent is never `imported` without them.
+      result = importLegacyParent(this.state.storage, this.scheduledAlarms, parentId, kind, exported, now, () => {
+        parent.replayStoredBreakoutProjections(now);
+        parent.republishDirectGrants(now);
       });
-      throw new Error("parent_import_unavailable", { cause: error });
+    } catch (error) {
+      throw fail(error instanceof ParentImportError ? error.code : diagnosticErrorCode(error, "parent_import_failed"));
     }
-    // The legacy migrations 19 and 20 replayed breakout projections once
-    // across the fleet; running them here makes an object that missed that
-    // pass converge, and costs nothing on one that did.
-    const parent = new HostedParent(this.hostedParentHost(), parentId, kind === "space" ? HOSTED_SPACE_ROLE : HOSTED_CHANNEL_ROLE);
-    this.state.storage.transactionSync(() => {
-      parent.replayStoredBreakoutProjections(now);
-      parent.republishDirectGrants(now);
-    });
     logInfo(this.env, "hosted_parent_imported", {
       workspace_id: workspaceId, parent_id: parentId, parent_kind: kind, rows: result.rows, found: result.found,
     });
@@ -5180,14 +5203,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   // The conversation-parent contract.
 
   /**
-   * Which kind of hosted parent an id names, with its authority, in one call.
-   * `null` kind is an id this object hosts no parent for — a Sidekick, or
-   * nothing — which the caller then asks its own object about.
-   */
-  /**
-   * Which kind of parent an id names, with its authority, and, when a viewer
-   * is named, that viewer's decision too: opening a Channel conversation is
-   * then one call to this object rather than a resolve and a check in turn.
+   * Which kind of hosted parent an id names, with its authority, and, when a
+   * viewer is named, that viewer's decision too: opening a Channel
+   * conversation is then one call to this object rather than a resolve and a
+   * check in turn. `null` kind is an id this object hosts no parent for (a
+   * Sidekick, or nothing), which the caller then asks its own object about.
    */
   async resolveHostedParent(input: {
     workspaceId: string;
