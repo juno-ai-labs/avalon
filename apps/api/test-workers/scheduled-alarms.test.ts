@@ -253,6 +253,7 @@ describe("the shared Durable Object alarm list", () => {
         { phase: "space_default_publish", alarmKind: undefined },
         { phase: "space_bootstrap", alarmKind: undefined },
         { phase: "activity_reap", alarmKind: undefined },
+        { phase: "connector_event_reap", alarmKind: undefined },
         { phase: "schedule_reconcile", alarmKind: undefined },
         // Interrupted Space operations last: each step waits on a Channel's
         // conversation, and one step per intent per alarm keeps the phases

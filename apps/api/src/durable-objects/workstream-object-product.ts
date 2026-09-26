@@ -449,7 +449,8 @@ function userFromRow(row: UserRow) {
 }
 
 /**
- * Product repository for one WorkstreamDO.
+ * Product repository for one conversation: the `SubstreamAgent` whose storage
+ * this is.
  *
  * Every method reads or mutates only this object's normalized SQL for product
  * state. Regional D1 is consulted only for current workspace membership,
@@ -5814,7 +5815,10 @@ export class WorkstreamObjectProductService {
     return committed.result;
   }
 
-  /** Seed or repair the parent WorkstreamDO after import/restore. */
+  /**
+   * Seed or repair this conversation's directory rows in its parent after
+   * import/restore.
+   */
   async enqueueDirectorySnapshot(): Promise<void> {
     await this.objectStore.commitWithRegionalEffects(
       () => undefined,

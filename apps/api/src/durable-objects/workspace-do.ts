@@ -1159,10 +1159,21 @@ const CONNECTOR_EVENT_INGRESS_RECEIPT_RETENTION_MS = 30 * 24 * 60 * 60_000;
 // only for Queue claims. A retiring Workflow can retry multiple 15-minute
 // processing attempts, so its claim remains exclusive until it settles.
 const CONNECTOR_EVENT_PROCESSING_LEASE_MS = 15 * 60_000;
-// Thirteen months, deliberately the most generous window in the fleet: event
-// bodies are provenance input, and the 10 GB object ceiling is the only hard
-// bound this fence exists to protect.
-const CONNECTOR_EVENT_BODY_RETENTION_MS = 396 * 24 * 60 * 60_000;
+// Ninety days, set by the owner on 2026-09-26. Processed event bodies are the
+// largest rows in the object: the busiest Organization adds about 0.26 GB a
+// week, so the earlier 396 days held about 14.7 GB against the 10 GB object
+// ceiling, and 90 days holds about 3.3 GB. Every reader of a processed event
+// (opportunity windows, reaped 30 days after they finish; a run's trigger
+// context; an opportunity's origin) reaches back well inside that. Only
+// processed rows age out: their two unique keys are the replay fence, so a
+// provider redelivering an event older than this would be processed again.
+const CONNECTOR_EVENT_BODY_RETENTION_MS = 90 * 24 * 60 * 60_000;
+/**
+ * Processed event bodies deleted per alarm pass. The number the ingest path
+ * used before the reap moved here; the alarm re-arms at once while any are
+ * due, so a backlog drains a page at a time.
+ */
+const CONNECTOR_EVENT_REAP_PAGE = 50;
 const ACTIVITY_EVENT_RETENTION_MS = 90 * 24 * 60 * 60_000;
 const PRODUCT_ALARM_BATCH = 6;
 /** How often a workspace rechecks a region that is closed for maintenance. */
@@ -4418,15 +4429,8 @@ const DirectoryFollowUpSchema = z.strictObject({
    * the batch's transaction from the rows as they were before it. Each is owed
    * the Channel's row if they still see it and its tombstone if they do not;
    * nobody else who cannot see it is sent anything.
-   *
-   * Two older shapes are still read, and neither means everyone: a row
-   * recorded before the field existed (absent, for its `commonChanges`) and a
-   * `"all"` entry, which an earlier build wrote for an Organization-wide
-   * Channel. Both are owed to the people who still hold a viewer row for the
-   * Channel (`legacyChannelLosers`): someone who joined afterwards never saw
-   * it.
    */
-  channelLosses: z.array(z.tuple([z.string(), z.union([z.literal("all"), z.array(z.string())])])).optional(),
+  channelLosses: z.array(z.tuple([z.string(), z.array(z.string())])),
 });
 type DirectoryFollowUp = z.infer<typeof DirectoryFollowUpSchema>;
 
@@ -5010,9 +5014,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /**
    * Deliver every due `parent_outbox` row: a notification or mention on the
-   * activity Queue, whose consumer delivers it in a Worker; a revoked Channel
-   * grant's Sidekick revocation; and a directory row a legacy object still
-   * had pending when it was imported, applied here. A row is deleted only once
+   * activity Queue, whose consumer delivers it in a Worker, and a revoked
+   * Channel grant's Sidekick revocation. A row is deleted only once
    * its destination has it; a failure puts it off on the alarm's retry
    * schedule, and a row that does not parse is kept as `failed` and never
    * retried. Rows are not claimed: the alarm is the only drain, and an alarm
@@ -5050,8 +5053,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         await send();
         this.deleteParentOutboxRows(batch.map((entry) => entry.envelope));
       } catch (error) {
-        // A destination that refuses the row's shape (a legacy directory row
-        // whose message id is not a UUIDv7) refuses it on every attempt.
+        // A destination that refuses the row's shape refuses it on every
+        // attempt.
         if (error instanceof z.ZodError) {
           const code = zodDiagnosticCode(error, "parent_outbox_row") ?? "parent_outbox_row_invalid";
           for (const { envelope } of batch) this.failParentOutboxRow(workspaceId, envelope.parentId, envelope.messageId, code);
@@ -5067,15 +5070,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         });
       }
     };
-    // Only the legacy object's own pending rows, carried over at import, are
-    // directory rows. Each is applied on its own, through the entry point a
-    // legacy Queue message takes, so one that cannot land yet waits alone.
-    for (const entry of envelopes) {
-      const { envelope } = entry;
+    // A directory row applies in its parent's own transaction and is never
+    // written here; one found here was never going to land.
+    for (const { envelope } of envelopes) {
       if (envelope.effect.kind !== "directory_common" && envelope.effect.kind !== "directory_user") continue;
-      await deliver([entry], async () => {
-        await this.applyWorkstreamDirectoryEffects({ workspaceId, envelopes: [envelope] });
-      });
+      this.failParentOutboxRow(workspaceId, envelope.parentId, envelope.messageId, "parent_outbox_directory_row");
     }
     for (const entry of envelopes) {
       if (entry.envelope.effect.kind !== "scope_grant_directory") continue;
@@ -5989,6 +5988,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const oldest = this.state.storage.sql.exec<{ created_at: number | null }>(
       `SELECT MIN(created_at) AS created_at FROM workspace_activity_events`,
     ).one().created_at;
+    const oldestProcessedEvent = this.state.storage.sql.exec<{ received_at: number | null }>(
+      `SELECT MIN(received_at) AS received_at FROM workspace_connector_events WHERE processing_status = 'processed'`,
+    ).one().received_at;
     const spacePublication = this.spaceStorage().nextDefaultPublicationDueAt();
     const spaceIntent = this.spaceStorage().nextIntentResumeDueAt();
     const spaceBootstrap = this.spaceStorage().nextBootstrapDueAt();
@@ -6005,6 +6007,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ...(directoryFollowUp === null ? [] : [directoryFollowUp]),
       ...(parentBreakouts === null ? [] : [parentBreakouts]),
       ...(oldest === null ? [] : [Number(oldest) + ACTIVITY_EVENT_RETENTION_MS]),
+      ...(oldestProcessedEvent === null ? [] : [Number(oldestProcessedEvent) + CONNECTOR_EVENT_BODY_RETENTION_MS]),
       ...(spacePublication === null ? [] : [spacePublication]),
       ...(spaceIntent === null ? [] : [spaceIntent]),
       ...(spaceBootstrap === null ? [] : [spaceBootstrap]),
@@ -6159,6 +6162,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     await isolated("activity_reap", async () => {
       this.reapExpiredActivityEvents(now);
+    });
+    await isolated("connector_event_reap", async () => {
+      this.reapExpiredConnectorEvents(now);
     });
     // Re-derive the whole index before this alarm ends, exactly as the object
     // that used to own it did. A target that just fired has advanced its own
@@ -8955,21 +8961,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             )`,
           now - CONNECTOR_EVENT_INGRESS_RECEIPT_RETENTION_MS,
         );
-        // Processed event bodies are the highest-volume rows in the object,
-        // and the only unbounded ones absent this reap. Thirteen months —
-        // matching the longest regional retention anywhere in Avalon — dwarfs
-        // every consumer's reach-back (opportunity evidence expires in weeks
-        // and start snapshots copy what they need), so this is a size fence,
-        // not a semantics change. Pending/failed rows never age out.
-        this.state.storage.sql.exec(
-          `DELETE FROM workspace_connector_events
-            WHERE event_id IN (
-              SELECT event_id FROM workspace_connector_events
-               WHERE processing_status = 'processed' AND received_at < ?
-               ORDER BY received_at, event_sequence LIMIT 50
-            )`,
-          now - CONNECTOR_EVENT_BODY_RETENTION_MS,
-        );
         return {
           eventId,
           duplicate: Boolean(canonical),
@@ -9143,12 +9134,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // column, so this fallback is both narrow and replay-compatible.
     const processingLeaseId = request.processingLeaseId ?? request.processingOwnerId;
     const now = Date.now();
-    const changed = this.state.storage.sql.exec<{ event_id: string }>(
+    const settledRow = this.state.storage.sql.exec<{ received_at: number }>(
       `UPDATE workspace_connector_events
           SET processing_status = ?, processed_at = CASE WHEN ? = 'processed' THEN ? ELSE NULL END,
               processing_error = ?, updated_at = ?
         WHERE event_id = ? AND workflow_instance_id = ? AND processing_status = 'processing'
-        RETURNING event_id`,
+        RETURNING received_at`,
       request.outcome,
       request.outcome,
       now,
@@ -9156,8 +9147,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       now,
       request.eventId,
       processingLeaseId,
-    ).toArray().length;
-    if (changed === 1) {
+    ).toArray()[0];
+    if (settledRow !== undefined) {
+      // A processed row is now due for `connector_event_reap`. Nothing else
+      // may arm the alarm in a quiet Organization, so bring it forward here.
+      if (request.outcome === "processed") {
+        await this.ensureAlarmNoLaterThan(settledRow.received_at + CONNECTOR_EVENT_BODY_RETENTION_MS);
+      }
       logInfo(this.env, "connector_event_authority_terminal", {
         workspace_id: request.workspaceId,
         connector_event_id: request.eventId,
@@ -9178,8 +9174,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const settled = this.state.storage.sql.exec<{
       processing_status: WorkspaceConnectorEventRow["processing_status"];
       workflow_instance_id: string | null;
+      received_at: number;
     }>(
-      `SELECT processing_status, workflow_instance_id
+      `SELECT processing_status, workflow_instance_id, received_at
          FROM workspace_connector_events WHERE event_id = ?`,
       request.eventId,
     ).toArray()[0];
@@ -9187,6 +9184,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       settled?.workflow_instance_id === processingLeaseId
       && settled.processing_status === request.outcome
     ) {
+      // The first settle may have committed its row and died before arming.
+      if (request.outcome === "processed") {
+        await this.ensureAlarmNoLaterThan(settled.received_at + CONNECTOR_EVENT_BODY_RETENTION_MS);
+      }
       logInfo(this.env, "connector_event_authority_terminal", {
         workspace_id: request.workspaceId,
         connector_event_id: request.eventId,
@@ -9829,13 +9830,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
 
   /**
-   * Commit directory effects that arrive from outside a hosted parent's own
-   * transaction: a legacy parent's in-flight Queue message, or a legacy
-   * outbox row carried over at import. The same synchronous core runs inside
-   * a hosted parent's transaction (`applyLocalEffects`); this entry point
-   * learns anyone the member table has not heard of first, which is the one
-   * step that needs D1. An envelope that cannot be applied throws, and the
-   * Queue or the drain retries it.
+   * Commit directory effects from outside a hosted parent's own transaction.
+   * No production path calls this since the legacy parent objects were
+   * deleted: every hosted parent applies its directory step in its own
+   * transaction (`applyLocalEffects`). Tests use it to seed the directory the
+   * way a parent's publish would, learning unknown members first.
    */
   async applyWorkstreamDirectoryEffects(
     input: WorkspaceDirectoryApplyRequest,
@@ -9946,8 +9945,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
     }
     for (const envelope of breakoutEnvelopes) {
-      // Migration 19 in WorkstreamDO replays quiet stored projections only
-      // once. An Organization held at schema 57 has no breakout tables yet,
+      // The deleted WorkstreamDO's migration 19 replayed quiet stored
+      // projections only once. An Organization held at schema 57 has no breakout tables yet,
       // so do not receipt or acknowledge that delivery: the activity Queue's
       // existing incomplete-acceptance path keeps it retryable until migration
       // 63 creates the destination.
@@ -10082,7 +10081,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       && followUp.watchReconciliations.length === 0 && followUp.archivalChanges.length === 0
       && !followUp.refreshTerminal && !followUp.refreshWatchKinds && !followUp.directoryChanged
       && followUp.syncTopics.length === 0 && !followUp.refreshProductAlarm
-      && (followUp.channelLosses?.length ?? 0) === 0;
+      && followUp.channelLosses.length === 0;
   }
 
   /**
@@ -10251,34 +10250,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         if (!commonChanges.has(workstreamId)) rows.users(workstreamId, users);
       }
     }
-    for (const [workstreamId, lost] of followUp.channelLosses
-      ?? followUp.commonChanges.map((workstreamId) => [workstreamId, "all"] as const)) {
-      if (lost !== "all") {
-        rows.lost(workstreamId, lost);
-        continue;
-      }
-      // A follow-up recorded by an earlier build, which named nobody.
-      rows.readers(workstreamId);
-      rows.lost(workstreamId, this.legacyChannelLosers(workstreamId));
-    }
+    for (const [workstreamId, lost] of followUp.channelLosses) rows.lost(workstreamId, lost);
     if (followUp.refreshProductAlarm) await this.refreshProductAlarm();
-  }
-
-  /**
-   * Who a follow-up that named nobody owes a Channel's tombstone to: whoever
-   * still holds a viewer row for it, at any generation. A participant who was
-   * removed keeps a non-participant row, so they are here; somebody who never
-   * had a relationship with the Channel, including someone who joined the
-   * Organization after the write, is not, and a null row would tell them a
-   * private Channel exists. The price is the reader of an Organization-wide
-   * Channel who never had a row, who keeps it on screen until a reconnect
-   * reloads the sidebar; only a follow-up written before losses were named
-   * pays it.
-   */
-  private legacyChannelLosers(workstreamId: string): string[] {
-    return this.state.storage.sql.exec<{ user_id: string }>(
-      `SELECT DISTINCT user_id FROM channel_viewers WHERE workstream_id = ?`, workstreamId,
-    ).toArray().map((row) => row.user_id);
   }
 
   /**
@@ -10621,7 +10594,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Apply one WorkstreamDO activity/mention effect and its replay receipt in a
+   * Apply one Channel or Space parent's activity/mention effect and its replay receipt in a
    * single transaction. The caller resolves current D1 identity (actor, target
    * membership, mention recipient) before the call; the object never reaches
    * back into the regional database mid-transaction, and the receipt can never
@@ -11052,7 +11025,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /**
    * The title to show as a generated work stream's origin label.
    *
-   * WorkstreamDO renders the summary and does not hold the automation's
+   * The Channel's main conversation renders the summary and does not hold the automation's
    * directory row. It used to read it as SQL through the workspace runtime
    * facade, which routes by table name and sends an unrecognised one to the
    * regional database — which is how this read came to answer
@@ -14548,6 +14521,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).bind(workspaceId, userId).first());
   }
 
+  /**
+   * Delete one page of processed connector event bodies past retention, on
+   * the alarm rather than inside each ingest, so ingest stays short and an
+   * Organization that stops receiving events still ages its old ones out.
+   * Pending, processing and failed rows are never deleted.
+   */
+  private reapExpiredConnectorEvents(now: number): void {
+    this.state.storage.sql.exec(
+      `DELETE FROM workspace_connector_events
+        WHERE event_id IN (
+          SELECT event_id FROM workspace_connector_events
+           WHERE processing_status = 'processed' AND received_at < ?
+           ORDER BY received_at, event_sequence LIMIT ?
+        )`,
+      now - CONNECTOR_EVENT_BODY_RETENTION_MS,
+      CONNECTOR_EVENT_REAP_PAGE,
+    );
+  }
+
   private reapExpiredActivityEvents(now: number): void {
     this.state.storage.sql.exec(
       `DELETE FROM workspace_activity_events
@@ -14900,11 +14892,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         );
       }
       // Archived Spaces too. What is being closed is an object, not a product
-      // surface: an archived Space is still a `SpaceDO` holding a hidden main
-      // conversation, and a graph that skipped it would report the
-      // Organization retired with one of its objects still open and still
-      // answering. The walk retires that conversation before the Space, the
-      // way it does for a Channel, because a Space is the same class.
+      // surface: an archived Space still has a hidden main conversation, and
+      // a graph that skipped it would report the Organization retired with one
+      // of its objects still open and still answering. The walk retires that
+      // conversation before the Space, the way it does for a Channel.
       for (const spaceId of this.spaceStorage().allSpaceIds()) {
         sql.exec(
           `INSERT OR IGNORE INTO workspace_retirement_graph
@@ -15049,7 +15040,7 @@ applyRetirementGate(WorkspaceDO, {
     // other two exist to avoid. `applied: false` is its ordinary "nothing
     // changed" answer, which is true of a workspace that is closed.
     applyAutomationDirectory: () => ({ applied: false }),
-    // A visibility question answered rather than refused, as on `WorkstreamDO`:
+    // A visibility question answered rather than refused, as the deleted `WorkstreamDO` did:
     // nobody can read anything in a retired workspace, and a caller that asks
     // can act on `false` where it cannot act on a throw.
     canReadWorkstream: () => false,

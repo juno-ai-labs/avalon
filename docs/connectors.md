@@ -1081,7 +1081,15 @@ Manifests and facets are cross-validated at registry construction: a connector t
    transient failure calls per-message `retry()` and an exhausted message enters
    the existing regional activities DLQ.
 9. Each match becomes its own message on the same regional Queue, carrying the registration, the destination, and the event inline. The consumer calls `AutomationDO.admitExternalEvent` or `SubstreamAgent.appendWatchedResourceEvent`; the destination re-checks its own lifecycle and activation boundary and admits at most one occurrence per canonical event, keyed on the event id, so there is no delivery ledger and no lease to settle.
-10. WorkspaceDO retains/reaps the canonical event according to product retention. Legacy D1 `activities` rows are imported and scrubbed before the route opens; live events never create a D1 body handoff.
+10. WorkspaceDO deletes a `processed` event 90 days after it was received, on its alarm's `connector_event_reap` phase; pending, processing and failed events never age out. The retention and its arithmetic are in [`workstream-durable-object.md`](workstream-durable-object.md). Legacy D1 `activities` rows are imported and scrubbed before the route opens; live events never create a D1 body handoff.
+
+When it enqueues a delivery (step 4), provider webhook ingestion (GitHub,
+Linear, Notion, through `services/provider-webhook-service.ts`) tells the
+workspace socket what moved. `connector_connections` and `resources` go, per workspace, to the
+audience of the connections the delivery matched: everybody when any of them
+there is Organization-scope, otherwise only the owners of the personal ones,
+since a personal connection's resources are its owner's alone. `activity` goes
+to the whole Organization.
 
 **Why the event is present in ingress but absent from processing:** the first
 Queue message must be self-contained because no canonical WorkspaceDO event
@@ -1385,7 +1393,7 @@ independent change condition, mixed batches, and URL/metadata merge behavior.
 | `packages/connectors/src/index.test.ts`, `apps/api/test/tool-schema-sanitization.test.ts` | Gmail new/reply MIME and request bodies, metadata/read-capability failures before writes, and equivalent acceptance of valid and invalid arguments in the authored/provider schema and executor. Gmail HTTP is the capability double; no email is sent by these tests. |
 | `apps/api/test/connector-poll-reliability.test.ts` | `normalizeHighWatermark` on both load and commit, the bounded retries, and backlog scheduling. |
 | `apps/api/test/connector-event-authority.test.ts` | WorkspaceDO event admission/replay and frozen pre-cutover activity rows ignored once object authority is open. |
-| `apps/api/test-workers/durable-object-runtime.test.ts` | Real-workerd WorkspaceDO schema, Queue/provider replay dedupe, Queue claim fencing and recovery, and terminal settlement. |
+| `apps/api/test-workers/durable-object-runtime.test.ts` | Real-workerd WorkspaceDO schema, Queue/provider replay dedupe, Queue claim fencing and recovery, terminal settlement, and the alarm aging processed events out at 90 days while keeping every event still in flight. |
 | `apps/api/test-workers/workspace-connections.test.ts` | The typed OAuth attempt lifecycle across the real RPC boundary — settlement witnesses, replay convergence, the member-scoped lazy expiry, the succeeded-over-expiry override — plus webhook receipt claims, their same-transaction expired-receipt sweep, and the generic port's refusal of `webhook_receipts`. |
 | `apps/api/test/connector-oauth-handoff.test.ts`, `apps/api/test/connector-outcome-telemetry.test.ts`, `apps/api/test/granola-connector.test.ts` | The connection service over a real `WorkspaceDO` via `test/helpers/workspace-object-rpcs.ts` — attempt expiry/reconciliation through the service, single-emission outcome telemetry, and that no plaintext credential crosses the recorded RPC boundary during webhook ingestion. |
 | `apps/api/test/connection-tool-count.test.ts` | `GET /connections` tool counts over the migrated regional database and a real `WorkspaceDO` schema, through the service and through the route: a fixed surface counted from grants with its generated page tools and no provider call, `connector_unavailable` for a connector the region does not register, a discovered count stored by creation, a policy save, the custom-MCP tools read and the released per-row endpoint, `null` (never zero) with its reason and a named log when discovery has not succeeded, the list's failed discovery attempted once across two lists, two concurrent lists starting one discovery, a failed discovery (a 5xx, a name collision) clearing the stored count and publishing it, and a discovery that finishes after a policy change or a reconnect dropped by the write fence. Background work is awaited with `drainWaitUntil` from the Node `cloudflare:workers` stand-in rather than slept on. `apps/api/test/tool-pagination.test.ts` pins that `paginatedToolNames` and the expansion name the same tools. |

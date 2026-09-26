@@ -468,12 +468,13 @@ export class ProviderWebhookService {
       input.routingAccountIds,
       input.routingUserId,
     );
+    const matchedConnections = connections;
     const matchedWorkspaceIds = [...new Set(connections.map((connection) => connection.workspaceId))];
     if (input.filterConnections) {
       connections = await input.filterConnections(connections);
     }
     if (connections.length === 0) {
-      await this.publishWorkspaceChanges(matchedWorkspaceIds, ["connector_connections"]);
+      await this.publishConnectionChanges(matchedConnections, ["connector_connections"]);
       return { accepted: true, duplicate: false, activityCount: 0 };
     }
 
@@ -640,11 +641,8 @@ export class ProviderWebhookService {
         payloadRef,
         queueActivities,
       );
-      await this.publishWorkspaceChanges(matchedWorkspaceIds, [
-        "connector_connections",
-        "resources",
-        "activity",
-      ]);
+      await this.publishConnectionChanges(matchedConnections, ["connector_connections", "resources"]);
+      await this.publishWorkspaceChanges(matchedWorkspaceIds, ["activity"]);
       return {
         accepted: true,
         duplicate,
@@ -680,16 +678,44 @@ export class ProviderWebhookService {
       payloadRef,
       queueActivities,
     );
-    await this.publishWorkspaceChanges(matchedWorkspaceIds, [
-      "connector_connections",
-      "resources",
-      "activity",
-    ]);
+    await this.publishConnectionChanges(matchedConnections, ["connector_connections", "resources"]);
+    await this.publishWorkspaceChanges(matchedWorkspaceIds, ["activity"]);
     return {
       accepted: true,
       duplicate,
       activityCount: duplicate ? 0 : insertedActivityIds.length,
     };
+  }
+
+  /**
+   * Tell the people who can see these connections that their rows and
+   * resources moved. A personal connection's resources are its owner's alone
+   * (`resource-service.ts` lists them only for the owner), so a workspace
+   * whose matched connections are all personal tells only their owners; one
+   * with an Organization connection tells everybody.
+   */
+  private async publishConnectionChanges(
+    connections: readonly ConnectorConnectionContext[],
+    topics: Parameters<typeof publishWorkspaceSync>[2],
+  ): Promise<void> {
+    const byWorkspace = new Map<string, ConnectorConnectionContext[]>();
+    for (const connection of connections) {
+      byWorkspace.set(connection.workspaceId, [...(byWorkspace.get(connection.workspaceId) ?? []), connection]);
+    }
+    await Promise.all([...byWorkspace].map(async ([workspaceId, matched]) => {
+      const owners = matched.some((connection) => connection.scope === "workspace" || !connection.ownerUserId)
+        ? null
+        : [...new Set(matched.flatMap((connection) => (connection.ownerUserId ? [connection.ownerUserId] : [])))];
+      try {
+        await publishWorkspaceSync(this.env, workspaceId, topics, owners ? { audienceUserIds: owners } : undefined);
+      } catch (error) {
+        logWarn(this.env, "provider_webhook_workspace_sync_publish_failed", {
+          workspace_id: workspaceId,
+          topics,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      }
+    }));
   }
 
   private async publishWorkspaceChanges(

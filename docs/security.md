@@ -222,7 +222,7 @@ same as desktop.
   singleton window rather than a privileged remote page. It holds no workspace
   socket while the main window publishes one through main; that relay's sender
   checks and what may cross it are in
-  [`websocket-architecture.md`](websocket-architecture.md#one-workspace-socket-per-desktop-the-settings-relay).
+  [`websocket-architecture.md`](websocket-architecture.md#one-workspace-socket-per-desktop-the-organization-sync-relay).
 - Application → Developer → **Debug enabled** shares the same
   `application-settings.json` file but crosses no trust boundary: it only reveals
   debugging affordances the renderer already holds, such as copying a work

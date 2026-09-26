@@ -602,7 +602,8 @@ export function createTerminalWorkspaceBackup(
           WHERE workspace_id = ? AND object_ref = ? AND cleanup_eligible = 0`,
       ).bind(input.workspaceId, objectRef);
     // Same two authorities and ordering as the final-diff preserver: resource
-    // and outbox via WorkspaceDO, followed by the WorkstreamDO link.
+    // and outbox via WorkspaceDO, followed by the conversation's link
+    // (`SubstreamAgent`).
     // As above, an ambiguous resource/link response keeps staging fenced until
     // pointer state is observable.
     await resourceStatement.run();

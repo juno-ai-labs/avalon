@@ -23,7 +23,6 @@ import {
 import { consumeActivityQueue } from "../src/queues/activity-consumer";
 import { workspaceConnectorEventQueueMessage } from "../src/services/workspace-connector-event-ingress";
 import {
-  applyQueuedWorkspaceDirectoryEffect,
   applyWorkstreamRegionalEffect,
   processWorkstreamNotificationIntent,
 } from "../src/services/conversation-effect-service";
@@ -471,37 +470,6 @@ describe("a parent's effects on the regional delivery plane", () => {
     }
   });
 
-  it("hands a directory effect to WorkspaceDO and insists on its receipt", async () => {
-    const database = seedAuthority();
-    const workspace = workspaceSyncNamespace();
-    const env = regionalEnv(database, workspace);
-    const envelope = message(directoryCommon(), {
-      messageId: MESSAGE_ID,
-      partitionKey: "common",
-      sourceVersion: 7,
-    });
-    try {
-      await applyQueuedWorkspaceDirectoryEffect(env, envelope);
-      expect(workspace.applyWorkstreamDirectoryEffects).toHaveBeenCalledWith({
-        workspaceId: WORKSPACE_ID,
-        envelopes: [envelope],
-      });
-      // An apply that accepted nothing is not a delivery: the Queue has to
-      // bring the message back, not drop it on the strength of a 200.
-      workspace.applyWorkstreamDirectoryEffects.mockResolvedValueOnce({ accepted: [], directoryChanged: false });
-      await expect(applyQueuedWorkspaceDirectoryEffect(env, envelope))
-        .rejects.toThrow("workspace_directory_effect_ack_incomplete");
-      await expect(applyQueuedWorkspaceDirectoryEffect(env, message(activityEvent("Not a directory effect"), {
-        messageId: `activity:${MESSAGE_ID}`,
-        partitionKey: `activity:${MESSAGE_ID}`,
-        sourceVersion: 1,
-      }))).rejects.toThrow("non_workspace_effect_misdirected_to_workspace_do");
-    } finally {
-      database.close();
-      workspace.database.close();
-    }
-  });
-
   it("stores activity and mention intent in WorkspaceDO, then erases delivered content", async () => {
     const database = seedAuthority();
     const workspace = workspaceSyncNamespace();
@@ -935,7 +903,9 @@ describe("the activity Queue consumer's effect legs", () => {
     }
   });
 
-  it("applies a parent's directory effect to WorkspaceDO and acknowledges it", async () => {
+  it("never applies a parent's directory effect that arrives on the Queue, and retries it", async () => {
+    // Directory effects apply in their parent's own transaction; nothing has
+    // put one on the Queue since the legacy parent objects were deleted.
     const database = seedAuthority();
     const workspace = workspaceSyncNamespace();
     const env = regionalEnv(database, workspace);
@@ -945,24 +915,18 @@ describe("the activity Queue consumer's effect legs", () => {
       sourceVersion: 7,
     });
     const { batch, ack, retry } = queued(envelope);
-    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       await consumeActivityQueue(batch, env);
-      expect(workspace.applyWorkstreamDirectoryEffects).toHaveBeenCalledWith({
-        workspaceId: WORKSPACE_ID,
-        envelopes: [envelope],
-      });
-      expect(workspace.applyAutomationDirectory).not.toHaveBeenCalled();
-      expect(ack).toHaveBeenCalledOnce();
-      expect(retry).not.toHaveBeenCalled();
-      expect(info).toHaveBeenCalledWith(expect.objectContaining({
-        event: "conversation_effect_terminal",
-        message_id: MESSAGE_ID,
-        effect_kind: "directory_common",
-        outcome: "applied",
-        reason: "directory_effect_applied",
+      expect(workspace.applyWorkstreamDirectoryEffects).not.toHaveBeenCalled();
+      expect(ack).not.toHaveBeenCalled();
+      expect(retry).toHaveBeenCalledOnce();
+      expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+        event: "conversation_effect_processing_failed",
+        reason: "workspace_owned_effect_misdirected_to_regional_queue",
       }));
     } finally {
+      warn.mockRestore();
       database.close();
       workspace.database.close();
     }

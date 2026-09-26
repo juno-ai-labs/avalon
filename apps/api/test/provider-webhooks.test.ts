@@ -11,7 +11,17 @@ import {
   type ProviderWebhookRawBody,
   type ProviderWebhookServiceOptions,
 } from "../src/services/provider-webhook-service";
+import { publishWorkspaceSync } from "../src/services/workspace-realtime-service";
+import type * as WorkspaceRealtimeService from "../src/services/workspace-realtime-service";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+
+// Which audience each publish names is the decision under test; that the
+// Organization object honours an audience is proved on real sockets in
+// `test-workers/workspace-socket-fanout.test.ts`.
+vi.mock("../src/services/workspace-realtime-service", async (importOriginal) => ({
+  ...await importOriginal<typeof WorkspaceRealtimeService>(),
+  publishWorkspaceSync: vi.fn(async () => 0),
+}));
 
 const NOW = Date.parse("2026-08-01T18:00:00.000Z");
 const ENCRYPTION_KEY = "provider-webhook-test-encryption-key";
@@ -967,6 +977,62 @@ describe("provider-wide webhook ingestion", () => {
     });
     expect(linearFetch).toHaveBeenCalledTimes(1);
     expect(database.activities.map((activity) => activity.connectionScope).sort()).toEqual(["personal", "workspace"]);
+    // An Organization connection matched too, so everybody hears of it.
+    expect(vi.mocked(publishWorkspaceSync)).toHaveBeenCalledWith(
+      expect.anything(), WORKSPACE_ONE, ["connector_connections", "resources"], undefined,
+    );
+  });
+
+  it("tells only the owner of a personal connection that its resources moved", async () => {
+    vi.mocked(publishWorkspaceSync).mockClear();
+    const database = new FakeDatabase();
+    database.connections.push(await connection({
+      id: CONNECTION_TWO,
+      workspaceId: WORKSPACE_ONE,
+      provider: "linear",
+      providerAccountId: "linear-org-1",
+      scope: "personal",
+      ownerUserId: USER_ONE,
+      credentials: {
+        organizationId: "linear-org-1",
+        oauthActor: "user",
+        authorizedUserId: "linear-user-1",
+        accessToken: "personal-linear-token",
+      },
+    }));
+    const service = serviceFor(database, new FakeBucket(), new FakeQueue(), {
+      LINEAR_OAUTH_CLIENT_ID: "linear-client",
+      LINEAR_OAUTH_CLIENT_SECRET: "linear-client-secret",
+    }, {
+      fetch: vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(
+        JSON.stringify({ data: { resource: { id: "issue-2" } } }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )),
+    });
+    const rawBody = JSON.stringify({
+      action: "update",
+      type: "Issue",
+      organizationId: "linear-org-1",
+      webhookId: "linear-webhook-issue",
+      webhookTimestamp: NOW,
+      createdAt: new Date(NOW).toISOString(),
+      data: { id: "issue-2", identifier: "AVA-2", title: "Personal issue" },
+      actor: { id: "linear-user-1", name: "Adam", email: "adam@example.com" },
+    });
+    const headers = new Headers({
+      "linear-delivery": "00000000-0000-4000-8000-000000000034",
+      "linear-event": "Issue",
+      "linear-signature": await hmacHex(LINEAR_SECRET, rawBody),
+      "linear-timestamp": String(NOW),
+    });
+
+    await expect(service.ingestLinear(rawBody, headers)).resolves.toMatchObject({ accepted: true, activityCount: 1 });
+
+    expect(vi.mocked(publishWorkspaceSync)).toHaveBeenCalledWith(
+      expect.anything(), WORKSPACE_ONE, ["connector_connections", "resources"], { audienceUserIds: [USER_ONE] },
+    );
+    // Activity is Organization-wide news; its own rows decide who can read it.
+    expect(vi.mocked(publishWorkspaceSync)).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ONE, ["activity"]);
   });
 
   it("marks a personal Linear connection for reconnect when access proof loses authorization", async () => {
