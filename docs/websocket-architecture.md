@@ -9,6 +9,11 @@ substream `0` feed is dialled by a Node broker in the main process. The split
 lets the desktop open a useful swarm in parallel without moving protocol state
 or product caches out of the renderer.
 
+A desktop holds **one** workspace socket, in the main window: the Settings
+window consumes it through main rather than dialling its own, and dials only
+while no main window is publishing — see
+[the Settings relay](#one-workspace-socket-per-desktop-the-settings-relay).
+
 An automation's page uses the same feed socket kind: its conversation is
 substream `0` under the automation, dialled through the same broker and the
 same `/socket/conversations/:parentId/:substreamId` route, opened on demand
@@ -49,7 +54,10 @@ protocol inside each Durable Object.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/renderer/lib/workspace-workstream-sockets.tsx` | Selects the active work stream, every pinned work stream, the five most recently active unpinned work streams, and any additional running work stream for proactive connection. |
-| `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Owns the singleton native Chromium WorkspaceDO socket, workspace subscription, directory paging, replay, and outbound message-command queue. |
+| `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Owns the singleton native Chromium WorkspaceDO socket, workspace subscription, directory paging, replay, and outbound message-command queue. Its `relay` prop makes the main window publish what the socket hears and the Settings window consume it instead of dialling. |
+| `apps/desktop/src/common/workspace-sync-relay.ts` | The relay's IPC channel names and message types, the `{ region, workspaceId }` comparison every hop uses, the preload's structural check, and the preload's inbox that holds news arriving before any listener. Dependency-free for the sandboxed preload. |
+| `apps/desktop/src/main/workspace-sync-relay.ts` | Main's relay state: the closed Zod parse of what the main window publishes, which Organization is attached, the revision that orders source changes, and forwarding news only for the attached Organization. |
+| `apps/desktop/src/main/workspace-sync-relay-ipc.ts` | The relay's two invoke channels and their sender checks: publish from the main window only, read the source from the Settings window only. `main/index.ts` registers it and owns the one receiver and the release points. |
 | `packages/contracts/src/workspace-reach-watch.ts` | The listen-only workspace socket for hosts without one of their own (Sideline main, the lite browser), and the heartbeat and reconnect numbers every workspace-socket client shares. |
 | `apps/desktop/src/renderer/lib/conversation-admission.tsx` | Composes account and workspace-journey readiness independently of connection warming. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns one substream `0` feed per selected work stream above the route, retains recently viewed feeds for five minutes, and supports presence-free feed warming on deliberate hover. |
@@ -134,6 +142,113 @@ automation parent serves no metadata snapshot.
 
 Dictation sockets keep their existing transport and lifecycle. They are not
 brokered by this module and are not part of the proactive work-stream swarm.
+
+### One workspace socket per desktop: the Settings relay
+
+Every Rally window mounts `WorkspaceSocketProvider`, and the prewarmed Settings
+window used to dial through it like the main window: a second socket to the
+same WorkspaceDO for the whole session, a subscribe answer carrying a full
+sidebar it never draws, and a copy of every push. The relay replaces that
+second socket without a second protocol. This section is its one full
+description; [`settings-window.md`](settings-window.md) and
+[`security.md`](security.md) link here.
+
+The protocol is three messages from the main window to main, and two from main
+to the Settings window. Each names its Organization as `{ region, workspaceId }`,
+because a workspace UUID is unique only within a region, and every comparison —
+main's, the preload inbox's, the consumer's — compares both.
+
+| Message | Direction | Carries |
+| --- | --- | --- |
+| `state` | main window → main (`workspace-sync:publish`) | The provider's connection state. Attaches it as the source. |
+| `detach` | main window → main (`workspace-sync:publish`) | That provider unmounted with no successor. Ends the source if it is still the attached one. |
+| `topics` | main window → main → Settings (`workspace-sync:relayed`) | Topic names and the waterline they moved at. |
+| `source` | main → Settings (`workspace-sync:relayed`, and the `workspace-sync:source` reply) | `{ revision, source: { region, workspaceId, state } \| null }`. |
+
+- **Publish (main window, `relay="publish"`).** The provider publishes its
+  connection state on every change and the topics of every sync event that
+  passes its waterline guard (the `initial` and `history_unavailable` answers
+  included, which name every topic). A `workspace_feature_flags` push, which
+  moves no topic, is published as the `feature_flags` topic, and so is a
+  subscribe answer's flags when its topics do not already name it; the flag
+  values themselves never cross, and the consumer refetches its own. Nothing
+  else crosses: no sidebar, rows, presence or directory pages.
+- **Detach on unmount, unless replaced.** The provider's cleanup publishes
+  `detach` on a microtask, and only if no other publisher has mounted in the
+  renderer since. An Organization switch — and StrictMode — unmounts a
+  publisher and mounts its successor in one pass, so the successor's `state`
+  replaces the source directly and Settings never sees a gap to dial into. A
+  tree that falls into the top-level error boundary, or a session that leaves
+  every Organization, has no successor, so main hears `detach` and releases.
+- **Relay (main).** `WorkspaceSyncRelay` parses each publication against one
+  closed Zod shape (the untrusted edge), attaches the source on `state`,
+  forwards `topics` only for the attached Organization, and ignores a
+  `detach` for one that is no longer attached. It also releases the source when
+  the main window closes, its renderer crashes, or it starts a main-frame
+  navigation (a reload). Every source change carries a revision. It does not
+  react to the session changing Organization: the main window's own
+  publications say when its socket changes.
+- **Consume (Settings window, `relay="consume"`).** The provider asks main for
+  the current source and listens for changes, keeping the higher revision.
+  While the source is its own Organization it dials nothing, reports the
+  source's connection state as its own, keeps `topicWaterlines` from the
+  relayed topics (the connector OAuth reconcile re-runs on
+  `connector_oauth_attempts` there), and invalidates exactly what a socket's
+  topic would — except `workstream_directory`, which names a socket-owned list
+  this window does not hold. While the source is another Organization it
+  waits, dialling nothing and reporting `connecting`: both windows follow one
+  session but apply it at different moments (the window that asked for a
+  switch applies it only after fetching the new Organization), so the main
+  window is mid-switch and will attach or detach. Only no source at all makes
+  it run its own socket, exactly as before the relay. Until main answers it
+  dials nothing; the answer is one IPC round trip.
+
+**Why nothing is missed.** The consumer listens for as long as it is mounted,
+and the preload holds relayed topics that arrive before the listener exists
+(folded: each topic once with the newest waterline, for one Organization, and
+cleared only once a still-subscribed listener has taken them), so a read
+started above the provider — account onboarding — is still covered. A read the
+Settings window starts is answered by the server before any change made after
+it; that change reaches the main window's live socket afterwards, is relayed
+afterwards, and invalidates the read. If the main window's socket is not yet
+subscribed (a cold start), its first answer is `initial`, which is relayed and
+names every topic. Every hand-over starts the same way: when the main window's
+socket goes, Settings subscribes from waterline `0`; when one comes back, its
+own `initial` is relayed. The two overlap rather than leave a gap, because the
+consumer applies relayed news even while its own socket is still open.
+
+**The trust boundary.** Only the main window may publish and only the Settings
+window may read the source (`registerWorkspaceSyncRelayIpc`, behind the shared
+trusted-sender check), and main sends relayed events to the Settings window
+alone. Main is where parsing happens, because the main window's renderer is the
+untrusted edge ([`security.md`](security.md)): the shape is closed, so an
+unknown key is refused rather than dropped, and the refusal is a code naming
+the field. What main sends on is built from that parse, so the preload checks
+only the structure its inbox reads. Topic names, waterlines, an Organization
+identity and a connection state cross, between two windows of one session; no
+row, token, URL or flag value does.
+
+**The main window's own first connect still reads twice.** It reads its
+screens' REST queries and then invalidates them on the `initial` answer. That
+second read is kept on purpose: a REST read that the server answers before it
+processes the `subscribe` can miss a change made between the two, and nothing
+on the client can tell such a read from one answered after. The only exact fix
+is a sync waterline on each REST response to compare with the answer's, and
+most of these reads (D1-backed members, connections) have none. The Settings
+window no longer pays it, because while it relays it has no `initial` of its
+own.
+
+**When the source goes.** When the main window closes, crashes, reloads or
+falls into the error boundary while Settings is open, the Settings window dials
+its own socket, whose `initial` answer refetches its reads once; when a main
+window publishes again, Settings closes it, and the new main socket's relayed
+`initial` refetches them once more. Both are the price of missing nothing
+across the hand-over, and neither happens in a steady session or on an
+Organization switch. If main cannot answer the source read, the consumer
+treats it as nobody publishing and dials its own socket. If the main window
+stays attached for another Organization for good — a switch it never applied —
+Settings waits with no socket; its REST reads still work, but nothing
+invalidates them until the main window attaches, detaches or goes.
 
 ### Selecting the swarm
 
@@ -236,6 +351,91 @@ incoming application frames wake the object and recover connection identity
 from serialized attachments. Exact `ping` frames are answered by the runtime's
 auto-response facility without waking the object. The client therefore keeps
 useful sockets warm without requiring an always-running Durable Object instance.
+
+### Who the workspace socket tells, and how often
+
+Every workspace socket in an Organization lands in one `WorkspaceDO`, so each
+send that object makes is decided per socket. Two kinds of send carry most of
+the traffic, and neither goes to every socket by default.
+
+**A Channel's row** (`workspace_workstream_state`) goes to:
+
+- everybody who can see the Channel now, for a change to the Channel itself
+  (its common row, its facepile, its breakout total, its running agents); a
+  Channel is seen when it is not archived and is either Organization-wide or
+  the person is one of its participants at the Channel's authority generation;
+- the one person whose own row moved (unread, mention, breakout list), if they
+  can see it;
+- **the people the write may have taken the Channel from**, who are sent the
+  row if they still see it and the `workstream: null` tombstone if they do not.
+
+Nobody else is sent anything. A tombstone to someone who never saw the Channel
+would name a private Channel and say when it moved, and it has no job to do on
+the client: the desktop's receiver removes the row, and there is no row to
+remove. The people who may have lost a Channel are named inside the
+directory transaction, against the rows as they were before it, because once
+the batch commits "who could see it a moment ago" is no longer answerable, and
+a follow-up can run long after its write (the alarm retries one that failed).
+They are carried in the directory follow-up (`channelLosses`) as user ids,
+never as "everyone": expanded against whoever is connected when the follow-up
+runs, "everyone" would send a Channel's tombstone, and so its id, to a member
+who joined after the write and never had it.
+
+| What the write did | Who is owed the tombstone |
+| --- | --- |
+| A viewer row stopped being a participant, or was deleted for a person who is no longer an active member | That person. |
+| The Channel was archived | Everyone who could see it (`channelReadersBefore`): its participants, and for an Organization-wide Channel every member socket subscribed at the write. |
+| An Organization-wide Channel narrowed to its participants | As for an archive; the participants still see it and get the row. |
+| A new authority generation replaced the row | As for an archive; each participant's row reappears when their viewer row arrives at the new generation. |
+| A person left the Organization (`applyMemberStatus`) | That person, for each Channel they sat in; their socket stays open until the revocation walk closes it. |
+
+The subscribed sockets stand in for an Organization-wide Channel's readers
+because they are exactly the people holding it: a member with no socket is
+answered, when they connect, with a sidebar that already reflects the write,
+and `workspace_member_status` cannot list every member, since it learns one
+from before it existed only when something asks.
+
+Two older follow-up shapes are still read: one recorded before `channelLosses`
+existed, and one holding `"all"`, which an earlier build of this change wrote
+for an Organization-wide Channel. Neither is read as everyone. Each Channel's
+row goes to its current readers, and its tombstone to the people who still hold
+a viewer row for it at any generation (`legacyChannelLosers`): a removed
+participant keeps a non-participant row, so they are told, and somebody with
+no relationship to the Channel is not. A reader of an Organization-wide Channel
+who never had a row keeps it on screen until a reconnect reloads the sidebar;
+only a follow-up written before this change pays that.
+
+Each person's rows are **built once** for all of their sockets and all of the
+Channels they are owed, from one set of reads, and sent to each socket.
+Whether each person can see each Channel is decided from two reads for every
+planned Channel together, so a person who cannot see a Channel costs nothing.
+
+The rows are **coalesced per post-commit pass.** A batch of child effects
+applies each envelope in its own transaction and records a follow-up per
+envelope; the pass (`runDirectoryFollowUps`, reached through
+`afterParentWrite`) collects every Channel those follow-ups touched, and the
+hosted parent's own republish (a breakout roster or the running agents moving)
+joins the same plan, so a turn's burst of changes sends each Channel once per
+socket. The sync topics the pass's activity records moved are published once
+the same way. Nothing here waits on anything: the plan is sent synchronously
+after the last follow-up ran, with no `await` or round trip added to the
+request.
+
+**The rows are best effort, and never hold a follow-up back.**
+`publishChannelRows` does not throw: a person whose row cannot be built is
+logged (`channel_row_publish_failed`, with the reason's code) and skipped, and
+everybody else is still sent theirs. A follow-up that ran is deleted whatever
+the sends did, because re-running it would repeat its reconciliations,
+archival notices and presence broadcast to re-send a row, and a socket that
+missed one is answered with the current sidebar when it reconnects. The pass's
+sync topics are the durable part: if publishing them throws, they are recorded
+as a follow-up of their own (`directory_followup_sync_deferred`), and only
+they are retried.
+
+**A sync topic** (`workspace_sync`) goes to everybody unless its event names an
+audience, live and on replay; how an event names one, and each topic's
+audience, are in
+[`realtime-sockets.md`](realtime-sockets.md#electron-connection-topology).
 
 ### Reconnect and teardown
 
@@ -349,6 +549,20 @@ open transport as success.
   Channel's metadata, breakouts and running agents are its row on the workspace
   socket; a per-Channel metadata socket would bring back the second copy of
   that row this topology removed.
+- **A Channel's row reaches only the people who can see the Channel, and the
+  people a write just took it from.** A null row sent to anybody else names a
+  private Channel and when it moved; a tombstone withheld from somebody who
+  lost the Channel leaves it on their screen. A new way to take a Channel from
+  someone has to add them to the batch's `channelLosses`, by user id and read
+  inside the batch's transaction, or it has to be one of the transitions
+  `applyDirectoryEnvelope` already compares.
+- **A Channel row never holds a directory follow-up back.** A failed row send
+  is logged and skipped; making it defer the follow-up re-runs every
+  reconciliation and notice in the pass on each alarm retry, for a row the
+  next reconnect would send anyway.
+- **A per-person sync event is stored with its audience and replayed only to
+  it.** Replaying it to everyone after a reconnect would undo the live send's
+  narrowing for every client that was briefly away.
 - **Nothing sits on the click-to-feed path but the feed.** The Channel's row is
   already on the client when the feed is asked for, so opening waits for no
   metadata.
@@ -383,6 +597,15 @@ open transport as success.
   `validSocketPath`, which is what keeps the renderer from turning main into a
   general network client. A kind whose path check falls through to the
   work-stream branch would accept a URL its own protocol never uses.
+- **The Settings relay: one socket per desktop, no gap at a hand-over, names
+  and never state.** A consumer dials only while main reports no publisher;
+  it listens for its whole life and a fallback socket subscribes from `0`;
+  a publisher that goes without a successor detaches; identities compare
+  region and UUID together; and only topic names, waterlines and a connection
+  state cross. The reasons are in
+  [the Settings relay](#one-workspace-socket-per-desktop-the-settings-relay).
+  A window that needs a socket-owned list needs a socket of its own, which is
+  why Sidekicks still dials one.
 - **A conversation that is not pooled must not be given the pool's lifecycle.**
   An automation's feed follows its page. Retaining it for five minutes the way a
   work-stream feed is retained would hold a conversation open after its author
@@ -434,6 +657,9 @@ move the workspace synchronization socket or dictation transport into Node.
 - **A Durable Object hibernates:** the connection remains established. Its next
   application event may pay object wake, construction, and schema-initialization
   time, but it does not pay a new client TCP/TLS/WebSocket handshake.
+- **The main window's socket goes while Settings is open:** Settings dials its
+  own and refetches once each way; see
+  [the Settings relay](#one-workspace-socket-per-desktop-the-settings-relay).
 - **Browser development opens a large set:** it remains subject to Chromium's
   connection scheduling because only packaged Electron routes these three socket
   kinds through Node.
@@ -444,9 +670,12 @@ move the workspace synchronization socket or dictation transport into Node.
 | --- | --- | --- |
 | `apps/desktop/src/main/realtime-socket-broker.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/main/realtime-socket-broker.test.ts` | Destination confinement, ordered PAC fallback, shared payload limit, event relay, normal close cleanup, sends, and renderer-owner teardown. |
 | `apps/desktop/src/main/realtime-socket-ipc.test.ts`, `apps/desktop/src/common/realtime-socket-validation.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/main/realtime-socket-ipc.test.ts src/common/realtime-socket-validation.test.ts` | Shared channel wiring, main-window authorization, request confinement, broker relay, and strict dependency-free event validation. |
+| `apps/desktop/src/common/workspace-sync-relay.test.ts`, `apps/desktop/src/main/workspace-sync-relay.test.ts`, `apps/desktop/src/main/workspace-sync-relay-ipc.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/common/workspace-sync-relay.test.ts src/main/workspace-sync-relay.test.ts src/main/workspace-sync-relay-ipc.test.ts` | The preload inbox folding news that arrives before a listener and keeping it for the listener that replaces one unsubscribed before it could take it; main refusing a malformed or open publication with the field named, attaching, forwarding only the attached Organization (the same UUID in another region is another one), ignoring a stale detach, releasing once, and ordering by revision; each IPC channel refusing every window but its own. |
+| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` (`the organization-sync relay between windows`) | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/workspace-socket.test.tsx` | The main window publishing state and every topic (`initial` included, a flag push as `feature_flags`); detaching when unmounted with no successor and not across a switch or StrictMode; a consumer with a live publisher asking for no ticket, reading once, and refetching on relayed topics for its own region and UUID only; dialling only while nobody publishes, closing when somebody does, resubscribing from `0` after; and waiting, socketless, while the publisher serves another Organization. |
 | `apps/desktop/src/renderer/lib/realtime-socket.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/realtime-socket.test.ts` | Browser-shaped state/events, IPC calls, and one multiplexed preload listener for a socket swarm. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/workstream-socket-pool.test.tsx` | Feed ownership with no Channel control ticket ever requested, route retention, expiry, overlap, speculative feed warming, and navigation promotion. |
 | `apps/api/test-workers/channel-viewer-state.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/channel-viewer-state.test.ts` | A Channel's breakouts and running background agents on the real workspace socket: per viewer and per Channel, pushed on a roster or agent change, tombstoned without closing the socket, current after a resubscribe, and Main warmed on foreground. |
+| `apps/api/test-workers/workspace-socket-fanout.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-socket-fanout.test.ts` | Who the workspace socket tells, on real sockets: a private Channel's change reaches nobody outside it; the tombstone reaches a removed participant, the readers of a narrowed or archived Channel, every reader of an Organization-wide Channel re-generated for its participants, the participants of a re-generated personal one, and a member who left the Organization, and nobody who never saw the Channel, including a member who joined before a held follow-up ran; a follow-up in either older shape reaches the readers and whoever still has a viewer row, never everyone; one person's two sockets get the same row, built once (a counting wrapper on `channelRowPayloads`); a burst of five changes in one delivery, and two held follow-ups run in one pass, are one row per socket; a row that cannot be built for one person still reaches the others and the follow-up is deleted; a per-person topic and a personal connection's change reach their audience alone, live and on replay, and a replay answers at the log's waterline; an Organization connection's change reaches everyone; a route's `noteChangedConnection` reaches the middleware's publish. |
 | `apps/desktop/src/renderer/components/app-shell.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/app-shell.test.tsx` | Active/background selection, including all pins, five recent unpinned rows, and additional running rows. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/durable-object-runtime.test.ts` | Real-workerd upgrade, hibernation, attachment, snapshot, replay, read-only feed, and revocation behavior. |
 
@@ -491,6 +720,10 @@ connection opens; it never selects a protocol capability. The first protocol
 must be the public ticket sentinel;
 main supplies `app://rallywithai` as Origin and accepts no renderer-selected
 headers.
+
+The Organization-sync relay is a separate, narrower IPC path, described with
+its sender checks and what may cross in
+[the Settings relay](#one-workspace-socket-per-desktop-the-settings-relay).
 
 The signed ticket remains confined to the `Sec-WebSocket-Protocol` request
 header. It is not put in a URL, returned in an event, or logged. The Worker
@@ -537,6 +770,92 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-09-26 — The workspace socket tells each change to the people it is about, once, and Settings relays the main window's socket
+
+**What changed:** A Channel's row is sent to the people who can see the
+Channel now and to the people the write may have taken it from, who get the
+tombstone; nobody else hears of it. Those people are named by user id inside
+the write's transaction (for an Organization-wide Channel, every member socket
+subscribed then), so a follow-up the alarm runs late never reaches someone who
+joined in between. Each person's row is built once for all of
+their sockets, and one post-commit pass sends each Channel once per socket
+however many writes in it touched the Channel. The rows are best effort: one
+that cannot be built is logged and skipped, and never keeps a follow-up from
+being deleted. A sync event can name an
+audience (people, or a connection whose owner is the audience when it is
+personal), is stored with it, and replays only to it; the mutation map now says
+per write who it is for, and a connection write no longer names `automations`.
+On the desktop, the main window's socket publishes its connection state and
+the topics of every sync event (a flag push as the `feature_flags` topic) to
+main, which relays them to the Settings window; Settings applies them through
+the same invalidation code and dials its own socket only while main reports no
+publisher at all. An Organization is `{ region, workspaceId }` at every hop. A
+publisher that unmounts with no successor detaches; one replaced in the same
+pass does not, and main no longer releases on a session change, so neither an
+Organization switch nor StrictMode makes Settings dial.
+
+**Why:** Every Channel change looped over every subscribed socket in the
+Organization and, per socket, ran about six queries, parsed and serialized a
+row, and sent it. The directory row's `LEFT JOIN` gave every socket a row, so a
+viewer who could not see the Channel was sent `workstream: null`: every
+message in a private Channel told every non-member its id and when it was
+active. A person with several windows had the same row built per window, and a
+turn's burst of effects sent one full row per effect. Sync topics had no
+audience, so one person's digest edit or personal connector OAuth invalidated
+every socket in the Organization. And every desktop held two workspace sockets:
+the Settings window, prewarmed hidden, mounted the same provider, was sent the
+full sidebar it never draws and a second copy of every push, and read
+everything twice on open (its reads at mount, then again about 600 ms later
+when its socket's `initial` landed).
+
+**Considered and rejected:** Deciding tombstones at publish time with a
+"could have seen it" test: it misses the readers of an Organization-wide
+Channel who have no viewer row when it narrows, and sends tombstones for ever
+to people who once had a row. It survives only as the reading of a follow-up
+recorded before losses were named, where nothing better is known. Recording
+"everyone" for an Organization-wide Channel and expanding it when the
+follow-up runs: a member who joined in between is sent the tombstone, and with
+it the id, of a Channel they never had. Naming those readers from
+`workspace_member_status`: it lists a member from before it existed only once
+something has asked about them. Putting off every follow-up of a pass when its
+row send throws: each alarm retry re-ran the pass's unrelated reconciliations,
+archival notices and presence broadcasts, and one bad row also dropped the
+pass's sync topics. Per-Channel subscriptions on the workspace
+socket, for the reasons the 2026-09-25 entry gives. Publishing connection
+changes from each route handler, which would have added an awaited RPC to
+requests that now defer it. Connecting Settings's socket only while shown with
+a flag to omit the sidebar: it keeps the double read on every open, needs a
+contract and `WorkspaceDO` change, and gives up the prewarm. Trimming the main
+window's own first-connect double read: a REST read answered before the server
+processes the subscribe can miss a change made between them, and without a
+waterline on each REST response the client cannot tell which reads those are.
+Relaying flag values as data through a message kind of their own, with its own
+list of flag keys at every hop: the `feature_flags` topic already names the
+change, and a refetch keeps the relay to names. Releasing the source when the
+session changes Organization, or when the provider unmounts: the first ran
+before the windows heard of the change and the second before the successor
+attached, so Settings dialled a throwaway socket (a ticket and a full `initial`
+refetch) on every switch; holding the source until an unmount with no
+successor misses nothing and costs no socket. Parsing again in the preload
+what main had already parsed: main is the untrusted edge's one parser.
+
+**Consequences:** A change that can take a Channel away from someone has to
+name them in `channelLosses`, by user id and inside its transaction (or be a
+transition `applyDirectoryEnvelope` compares); `"all"` is still parsed, for
+rows already written, and must not be written again. Nothing that must happen
+may ride on a Channel row send, which can fail for one person without anyone
+retrying it. A new sync topic that is one person's has to be published with an
+audience; the table in [`realtime-sockets.md`](realtime-sockets.md) says which
+topics are. A connection change still invalidates `resources` and
+`digest_schedule` for its whole audience. A socket-less window is now a
+supported shape of `WorkspaceSocketProvider`; another secondary window can use
+the relay only once it carries what that window reads (Sidekicks reads the
+pushed automations list, so it still dials), and anything Settings starts
+reading from the socket beyond topics and connection state has to be
+published by the main window too. A Settings window whose main window stays on
+another Organization waits without a socket, so a switch the main window
+never applies leaves Settings unfreshened until it does.
 
 ### 2026-09-25 — A Channel's metadata rides the workspace socket; the control socket is retired
 

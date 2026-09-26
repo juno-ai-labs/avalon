@@ -374,6 +374,12 @@ export interface AppVariables {
    * `docs/performance-tracing.md`.
    */
   authDurationMs: number | undefined;
+  /**
+   * The connection a `/connections` write created, set by its route so the
+   * write's invalidation reaches that connection's audience
+   * (`noteChangedConnection`).
+   */
+  workspaceSyncConnectionId: string | undefined;
 }
 
 export type HonoAppEnv = {

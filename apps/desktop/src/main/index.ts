@@ -93,6 +93,7 @@ import {
 } from '../common/release-channels';
 import type { DesktopSettingsSection } from '../common/settings';
 import { parseDesktopSettingsSection } from '../common/settings';
+import { WORKSPACE_SYNC_RELAY_IPC_CHANNELS } from '../common/workspace-sync-relay';
 import type { SidekicksWindowTarget } from '../common/sidekicks';
 import { parseSidekicksWindowTarget } from '../common/sidekicks';
 import { fontScheme } from '../common/theme-assets';
@@ -228,6 +229,8 @@ import {
   writeStoredSessionFile,
 } from './session-file';
 import { SettingsWindowController } from './settings-window-controller';
+import { WorkspaceSyncRelay } from './workspace-sync-relay';
+import { registerWorkspaceSyncRelayIpc } from './workspace-sync-relay-ipc';
 import {
   activeStoredCredential,
   activeStoredWorkspaceCredential,
@@ -559,6 +562,13 @@ let developmentDockIconUsesAppearancePreview = false;
 const realtimeSocketBroker = new RealtimeSocketBroker(createNodeRealtimeSocketFactory(
   (url) => electronSession.defaultSession.resolveProxy(url),
 ));
+// The main window's Organization socket, relayed to the Settings window so
+// that window holds no socket of its own while there is one to relay. A hidden
+// prewarmed window receives it too: its reads are mounted and must stay fresh.
+const workspaceSyncRelay = new WorkspaceSyncRelay((event) => {
+  const target = settingsWindow;
+  if (target && !target.isDestroyed()) target.webContents.send(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.relayed, event);
+});
 let telemetryIdentity: TelemetryIdentity | null = null;
 let telemetryRoute: ResolvedTelemetryRoute = {
   route: 'global',
@@ -3311,10 +3321,11 @@ function assertBrowserImportIpcSender(event: IpcMainInvokeEvent): void {
   }
 }
 
-function assertMainWindowIpcSender(event: IpcMainInvokeEvent): void {
+/** `operation` names what was refused, in the words "Only the main Rally window can …". */
+function assertMainWindowIpcSender(event: IpcMainInvokeEvent, operation: string): void {
   assertTrustedIpcSender(event);
   if (!mainWindow || event.sender !== mainWindow.webContents) {
-    throw new Error('Only the main Rally window can open realtime sockets');
+    throw new Error(`Only the main Rally window can ${operation}`);
   }
 }
 
@@ -3334,6 +3345,13 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     return runtimeConfig();
   });
+  registerWorkspaceSyncRelayIpc({
+    assertTrustedSender: assertTrustedIpcSender,
+    ipc: ipcMain,
+    mainWindowContents: () => mainWindow?.webContents,
+    relay: workspaceSyncRelay,
+    settingsWindowContents: () => settingsWindow?.webContents,
+  });
   ipcMain.handle('embedded-browser:state', (event) => embeddedBrowserFor(embeddedBrowserHost(event)).state());
   ipcMain.handle('embedded-browser:command', async (event, raw: unknown) => {
     const host = embeddedBrowserHost(event);
@@ -3349,7 +3367,7 @@ function registerIpc(): void {
     embeddedBrowserFor(host).setVisible(raw);
   });
   ipcMain.handle('browser-import:open', async (event, raw: unknown) => {
-    assertMainWindowIpcSender(event);
+    assertMainWindowIpcSender(event, 'open the import window');
     await openBrowserImportWindow(parseBrowserIpc(BrowserImportContextSchema, raw, 'browser_import_context'));
   });
   ipcMain.handle('browser-import:context', (event) => {
@@ -3638,7 +3656,7 @@ function registerIpc(): void {
     });
   });
   ipcMain.handle('window:set-conversation-details', (event, rawInput: unknown) => {
-    assertMainWindowIpcSender(event);
+    assertMainWindowIpcSender(event, 'resize for conversation details');
     if (!rawInput || typeof rawInput !== 'object') throw new Error('Invalid conversation details window request');
     const input = rawInput as { open?: unknown; width?: unknown };
     if (typeof input.open !== 'boolean' || typeof input.width !== 'number' || !Number.isFinite(input.width) || input.width < 0) {
@@ -3842,11 +3860,11 @@ function registerIpc(): void {
     deepLinkErrorWindow?.close();
   });
   ipcMain.handle('transcription-audio:start-system-capture', (event) => {
-    assertMainWindowIpcSender(event);
+    assertMainWindowIpcSender(event, 'capture system audio');
     return nativeSystemAudioController.start(event.sender);
   });
   ipcMain.handle('transcription-audio:stop-system-capture', (event) => {
-    assertMainWindowIpcSender(event);
+    assertMainWindowIpcSender(event, 'capture system audio');
     return nativeSystemAudioController.stop(event.sender);
   });
 }
@@ -4704,6 +4722,7 @@ async function createMainWindow(): Promise<void> {
   installWindowDiagnostics(mainWindow, 'main');
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
+    workspaceSyncRelay.release();
     rendererReady = false;
     void rendererCrashRecovery.offer(details.reason);
   });
@@ -4733,11 +4752,15 @@ async function createMainWindow(): Promise<void> {
     // process queue because React never remounts to consume that queue.
     if (isMainFrame && !isInPlace) {
       realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
+      workspaceSyncRelay.release();
       rendererReady = false;
     }
   });
   mainWindow.on('closed', () => {
     realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
+    // The Settings window may outlive this one (macOS), and dials its own
+    // socket the moment it hears there is nothing left to relay.
+    workspaceSyncRelay.release();
     rendererReady = false;
     conversationDetailsExpansion = 0;
     mainWindow = null;

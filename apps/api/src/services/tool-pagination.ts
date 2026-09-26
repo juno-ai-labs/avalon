@@ -45,6 +45,21 @@ export interface PaginationHost {
   connectionId: string | null;
 }
 
+/**
+ * The tool names one authored definition becomes once {@link withToolPagination}
+ * expands it: itself alone when it is not paginated or is `sourceOnly`, a
+ * `_next` beside it otherwise, and `read_resource_previous` as well for
+ * `read_resource`. The expansion takes its names from here, so anything that
+ * counts what an activation offers — Settings' Tools column — cannot drift from
+ * what the activation builds.
+ */
+export function paginatedToolNames(definition: Pick<HarnessTool["definition"], "name" | "pagination">): string[] {
+  const operation = definition.name;
+  if (!definition.pagination || definition.pagination.sourceOnly === true) return [operation];
+  if (operation !== "read_resource") return [operation, `${operation}_next`];
+  return [operation, `${operation}_next`, "read_resource_previous"];
+}
+
 /** Expand only an explicitly authored tool. Private continuations never escape this wrapper. */
 export function withToolPagination(tool: HarnessTool, host: PaginationHost): HarnessTool[] {
   const pagination = tool.definition.pagination;
@@ -52,6 +67,7 @@ export function withToolPagination(tool: HarnessTool, host: PaginationHost): Har
   const sourceOnly = pagination.sourceOnly === true;
   const wirePrefix = host.wirePrefix ?? host.prefix;
   const operation = tool.definition.name;
+  const [, nextName, previousName] = paginatedToolNames(tool.definition);
   const schema = tool.definition.inputSchema;
   const properties = z.record(z.string(), z.unknown()).parse(schema.properties ?? {});
   const firstProperties = { ...properties };
@@ -132,10 +148,10 @@ export function withToolPagination(tool: HarnessTool, host: PaginationHost): Har
       return execute(input, context);
     },
   };
-  if (pagination.sourceOnly) return [first];
+  if (nextName === undefined) return [first];
   const nextInput = pageInput(host.prefix, wirePrefix, operation);
   const next: HarnessTool = {
-    definition: { ...tool.definition, name: `${operation}_next`,
+    definition: { ...tool.definition, name: nextName,
       description: `Read the next page of ${stableWireToolName(wirePrefix, operation)}. Copy nextPageId from its result. A null nextPageId means there are no more pages. Each page ID can be consumed once.`,
       inputSchema: z.toJSONSchema(nextInput.schema),
     },
@@ -146,12 +162,12 @@ export function withToolPagination(tool: HarnessTool, host: PaginationHost): Har
       return execute(JSON.parse(saved.inputJson), context);
     },
   };
-  if (operation !== "read_resource") return [first, next];
+  if (previousName === undefined) return [first, next];
   const previousInput = pageInput(host.prefix, wirePrefix, operation, true);
   return [first, next, {
     ...next,
     validateInput: previousInput.validateInput,
-    definition: { ...next.definition, name: "read_resource_previous",
+    definition: { ...next.definition, name: previousName,
       inputSchema: z.toJSONSchema(previousInput.schema),
       description: "Read the preceding resource page using its previousPageId. Each page ID can be consumed once.",
     },

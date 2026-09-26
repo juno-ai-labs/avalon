@@ -147,6 +147,8 @@ Mounting the screen starts `/workspace/members`, `/connections`,
 `/connections/catalog`, `/feature-flags`, `/workspace/invitations` for an admin,
 and `getApplicationSettings` over IPC. A section adds one more when it is
 selected: `/workspace/terminal`, GitHub repository access, or custom MCP tools.
+The Connections section adds none: each row's tool count arrives in
+`/connections` itself ([`connectors.md`](connectors.md#settings-tool-counts)).
 
 The roster the Workspace section draws is also where a member is made an
 administrator or handed back: each row an administrator may act on carries a
@@ -238,13 +240,19 @@ screen. It does not own:
 - **Which window a deep link is delivered to**, and what a refused one looks like
   — [`deep-link-failures.md`](deep-link-failures.md). This module supplies
   `revealedSettingsWindow()`, which that routing now asks.
-- **The workspace socket.** The settings surface opens one like every other
-  surface, and a prewarmed window opens it at prewarm time. That is deliberate:
-  WorkspaceDO accepts these sockets through the hibernation API and auto-responds
-  to their heartbeats, so an idle extra socket does not hold an object awake, and
-  the connector-authorization reconciliation the screen depends on is live the
-  moment the window is shown. [`websocket-architecture.md`](websocket-architecture.md)
-  owns the socket itself.
+- **The workspace socket.** The settings surface holds none while the main
+  window is publishing one: it consumes that socket through main
+  (`relay="consume"`), so its reads — flags included — are invalidated by the
+  same topics, and the connector authorization reconcile re-runs on the
+  relayed `connector_oauth_attempts` waterline and connection state, live from
+  the moment the window is built, prewarmed or not. It dials its own only while
+  nobody publishes, which on a Mac is the ordinary case of Settings left open
+  after the main window was closed. This replaces the 2026-09-10 reasoning below
+  that an idle prewarmed socket was nearly free: it was, idle, but it also took
+  the full sidebar, a second copy of every push, and a second read of
+  everything on each open.
+  [`websocket-architecture.md`](websocket-architecture.md#one-workspace-socket-per-desktop-the-settings-relay)
+  owns the relay, the socket, and the reasoning.
 - **The renderer bundle.** Opening any window still parses the whole application,
   because the renderer has no code splitting; prewarming moves that cost off the
   click but does not reduce it. See [Open questions](#open-questions).
@@ -282,6 +290,7 @@ meeting surfaces mount on the same placeholder.
 | `workspaceFromSession` field by field, and its refusals | `apps/desktop/src/renderer/lib/session-workspace.test.ts` |
 | The surface drawing on the session before the read lands, and the read replacing it | `apps/desktop/src/renderer/App.session-gate.test.tsx` |
 | The two reads not being issued twice, and still refreshing when they have gone stale | `apps/desktop/src/renderer/screens/workspace-settings.test.tsx` |
+| Holding no socket while the main window publishes, reading once, refetching on relayed news, and falling back to its own socket while nobody publishes | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` (`the organization-sync relay between windows`) |
 
 Two traps in the settings-screen tests, both already paid for once:
 
@@ -309,6 +318,8 @@ exists to survive and Electron does not guarantee it.
 - **Whether prewarming should be conditional.** It is unconditional today. A
   machine under memory pressure is the case that would argue otherwise, and the
   threshold for that is a number nobody here can currently derive.
+
+## Changelog
 
 ### 2026-09-10 — Settings opens a window that already exists, drawn on the session
 

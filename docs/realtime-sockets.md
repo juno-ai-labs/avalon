@@ -274,26 +274,61 @@ row has a UUIDv7 trace ID. Live receivers ignore an equal/older waterline. On
 reconnect the object unions every missed topic and sends one event at the newest
 available waterline; if the bounded 1,024-row window cannot cover the cursor,
 one `history_unavailable` event names every topic. The client needs current
-state, not each invalidation that led to it. Its
-complete topic catalog is:
+state, not each invalidation that led to it.
 
-| Topic | Refetched authoritative surfaces |
-| --- | --- |
-| `workspace_profile` | Workspace name, slug, immutable region, workspace timezone, current role, inference-log policy, creation metadata, and onboarding workspace view. |
-| `member_directory` | Active/invited/suspended members, user name/email/avatar/timezone/role/join time, and onboarding membership state. |
-| `invitation_directory` | Pending/accepted/expired/revoked invitations, role, inviter, expiry, acceptance, and delivery-visible state. |
-| `connector_connections` | Connection identity, type, scope/owner, account/display name, capabilities, health/reconnect/error state, catalog capabilities, GitHub repository access, and onboarding connector state. Credentials never enter this feed. |
-| `connector_oauth_attempts` | Signals that a pending OAuth attempt should be read once from its authenticated endpoint. The renderer does not poll while the provider window is open. |
-| `terminal_policy` | Workspace Terminal capability, Daytona configuration availability, network allow/deny policy, version, and validation/failure state. |
-| `digest_schedule` | Per-viewer digest enablement, cadence/timezone, destinations, and next run. |
-| `automations` | Automation detail and drafts. **Not** the sidebar list, which is pushed whole as `workspace_sidebar_list`. |
-| `notes` | Note detail. **Not** the sidebar list, which is pushed whole as `workspace_sidebar_list`. |
-| `resources` | Resource directory, hydration/watch/content availability, work-stream context links, and connector-derived resource changes. |
-| `activity` | Connector activity ingestion that can change opportunity generation or activity-derived UI. |
-| `work_opportunities` | Suggested work/actions, audience, version, accepted/dismissed state, and resulting work-stream directory changes. |
-| `workstream_directory` | Invalidates WorkspaceDO cursor-page membership/order and pin changes. Normal common/viewer state transitions instead push the current waterlined row directly. D1 is never a list fallback. |
-| `viewer_preferences` | Telemetry and other current-user workspace preference surfaces. |
-| `feature_flags` | Effective client feature gates when a workspace-scoped producer explicitly publishes a change. |
+**An event goes to the whole Organization unless it names an audience.**
+`publishSync` takes the people it is for (`audienceUserIds`) or the connection
+the write changed (`connectionId`), whose audience `WorkspaceDO` reads from its
+own `connector_connections` row: the owner for a personal connection, everyone
+for the Organization's, everyone for a connection it does not hold. The live
+send skips every other socket, and the event is stored with its audience
+(`workspace_sync_events.audience_json`, `NULL` for everyone) so that a
+reconnect's replay unions only the events sent to that person; a person who
+missed only other people's events is answered `resume`. `history_unavailable`
+names every topic to everyone, which is each person's own invalidation and
+carries no data. A waterline another person's event took is simply skipped by
+this client, whose guard only needs the numbers it does see to rise. A replay
+therefore answers at the log's newest waterline, not at the newest event it
+unioned: a cursor left at the person's own last event would trail every later
+event for somebody else, fall out of the pruning window, and cost a
+`history_unavailable` refetch of everything.
+
+Its complete topic catalog, and whose each one is:
+
+| Topic | Refetched authoritative surfaces | Audience |
+| --- | --- | --- |
+| `workspace_profile` | Workspace name, slug, immutable region, workspace timezone, current role, inference-log policy, creation metadata, and onboarding workspace view. | Organization; the person alone for their own onboarding journey (`PATCH /workspace/onboarding`). |
+| `member_directory` | Active/invited/suspended members, user name/email/avatar/timezone/role/join time, and onboarding membership state. | Organization. |
+| `invitation_directory` | Pending/accepted/expired/revoked invitations, role, inviter, expiry, acceptance, and delivery-visible state. | Organization. |
+| `connector_connections` | Connection identity, type, scope/owner, account/display name, capabilities, health/reconnect/error state, catalog capabilities, GitHub repository access, and onboarding connector state. Credentials never enter this feed. | The connection's: its owner for a personal connection, everyone for the Organization's. The person alone for their own Slack identity link. |
+| `connector_oauth_attempts` | Signals that a pending OAuth attempt should be read once from its authenticated endpoint. The renderer does not poll while the provider window is open. | The person who started the attempt. |
+| `terminal_policy` | Workspace Terminal capability, Daytona configuration availability, network allow/deny policy, version, and validation/failure state. | Organization. |
+| `digest_schedule` | Per-viewer digest enablement, cadence/timezone, destinations, and next run. | The person, for their own digest; the connection's audience when a connection a digest can deliver to changes. |
+| `automations` | Automation detail and drafts. **Not** the sidebar list, which is pushed whole as `workspace_sidebar_list`. | Organization. |
+| `notes` | Note detail. **Not** the sidebar list, which is pushed whole as `workspace_sidebar_list`. | Organization. |
+| `resources` | Resource directory, hydration/watch/content availability, work-stream context links, and connector-derived resource changes. | Organization; the connection's audience for a connection change, since a personal connection's resources are its owner's. |
+| `activity` | Connector activity ingestion that can change opportunity generation or activity-derived UI. | Organization. |
+| `work_opportunities` | Suggested work/actions, audience, version, accepted/dismissed state, and resulting work-stream directory changes. | Organization. |
+| `workstream_directory` | Invalidates WorkspaceDO cursor-page membership/order and pin changes. Normal common/viewer state transitions instead push the current waterlined row directly. D1 is never a list fallback. | Organization. |
+| `viewer_preferences` | Telemetry and other current-user workspace preference surfaces. | The person. |
+| `feature_flags` | Effective client feature gates when a workspace-scoped producer explicitly publishes a change. | Organization. |
+
+`workspaceSyncPublicationsForMutation` maps each authenticated write to its
+topics and one of three audiences: `organization`, `actor` (the person who
+wrote), or `connection` (the id in the path, or the one a creating route names
+with `noteChangedConnection`; none named is everyone). The map is the one
+publisher of a `/connections` request's own write, after its response; the
+connection service publishes only what no request carries — an OAuth
+completion, which a provider's redirect reaches without a session (and which
+the Canva loopback, `POST /connections/canva/complete`, runs, so that route
+maps to nothing), and background tool-count discovery. A connection write
+publishes `connector_connections`, `resources` and `digest_schedule`, and not
+`automations`: no Sidekick read consults a connection, which a Sidekick reads
+only when one is applied or its principal is claimed, both of them Sidekick
+writes that publish `automations` themselves. Starting an authorization
+(`…/start`, `…/reconnect`) writes only the person's attempt, so it publishes
+`connector_oauth_attempts` to that person; the completion publishes the
+connection's topics to the connection's audience.
 
 Electron sends `list_workstreams` with a stable request ID, bounded limit,
 optional opaque `(access_or_creation_time, workstream_id)` cursor, and the system-row preference. WorkspaceDO responds
@@ -804,6 +839,8 @@ receipt.
 | `apps/api/test-workers/workspace-socket-first-frame.test.ts`, `apps/api/test/socket-first-frame-watch.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts`; `pnpm --filter @rally/api test` | The first-frame watch, through the real accept and alarm paths: a silent socket on a silent object resets it, logs, and is dropped, also while the region is closed for maintenance and after its client has already closed it; each of the three "still hearing sockets" signals alone prevents a reset, including after a hibernation wake; the ledger forgets a socket once it speaks, lets go of a judged row, and does not reset a fresh instance after a reset or an eviction; accepting pulls the alarm in. |
 | `apps/api/test-workers/message-to-output-pipeline.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Fresh message admission and its private receipt on the authenticated SubstreamAgent socket, stable turn identity after hibernation/resend, and the message-to-provider pipeline on real workerd. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx`, `workstream-state-store.test.ts` | `pnpm --filter @rally/desktop test` | One persistent workspace connection, truthful terminal errors for access/session/protocol closes, correlated directory pages/pagination, immediate offline page rejection, waterline resume, stale/duplicate rejection across both sockets, independent common/viewer ordering, and idempotent command resend. |
+| `apps/api/test-workers/workspace-socket-fanout.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-socket-fanout.test.ts` | Sync topic audiences on real sockets, live and on replay, and the Channel row's; the full list is in [`websocket-architecture.md`](websocket-architecture.md#testing). |
+| `apps/api/test/workspace-realtime-service.test.ts` | `pnpm --filter @rally/api exec vitest run test/workspace-realtime-service.test.ts` | The mutation map: each write's topics and audience. |
 | `apps/api/test-workers/channel-viewer-state.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Each viewer's own breakouts on the connect sidebar, per Channel; a roster change pushed to that breakout's members only; running background agents pushed to every reader and counted only where each can look; a lost Channel tombstoned without closing the socket; the current list after a resubscribe; nothing said for a parent still waiting for its import; foregrounding a Channel warms its Main. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` (breakouts block) | `pnpm --filter @rally/desktop test` | The breakout list and running agents taken from sidebar and pushed rows and kept with no screen observing them, waterline order, silence on an absent field, eviction on a tombstone, receipt-backed appearance, and pruning the disk cache to the roster. |
 | `apps/desktop/src/main/realtime-socket-broker.test.ts`, `realtime-socket-ipc.test.ts`, `apps/desktop/src/common/realtime-socket-validation.test.ts` | `pnpm --filter @rally/desktop test` | Ordered PAC fallback, shared frame ceiling, normal-close removal, renderer-owner isolation, shared IPC channels, main-window authorization, and strict main-to-preload events. |
@@ -841,6 +878,48 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 Child archive admission uses the same `parent_archived` ticket field as parent archive. Already-open private-child sockets additionally check the versioned local archive mirror; there is no per-command parent RPC. See [work-stream durable objects](workstream-durable-object.md) for lifecycle delivery.
+
+## Changelog
+
+### 2026-09-26 — A sync event names who it is for
+
+**What changed:** `publishSync` takes an audience (people, or a connection
+whose audience is its owner when personal and everyone otherwise), sends only
+to it, and stores it in `workspace_sync_events.audience_json` (WorkspaceDO
+migration 74) so replay after a reconnect reaches the same people. The mutation
+map gives each write its audience: a digest, an onboarding journey, a telemetry
+preference and an OAuth attempt are the writer's; a connection write is the
+connection's, and no longer names `automations`. A `/connections` request's
+own write is published once, by the middleware: the connection service's
+duplicate publishes for request-path writes (disconnecting, installation
+changes, key replacement, custom MCP tool policy, the Canva loopback) are gone,
+and it publishes only OAuth completions and background discovery. A replay
+answers at the log's newest waterline rather than the newest event it
+unioned for that person.
+
+**Why:** Every topic went to every socket. One person's digest edit, or their
+personal connector's OAuth, tool policy or GitHub settings, made every window
+in the Organization refetch its connections, resources, Sidekicks and digest.
+
+**Considered and rejected:** Filtering only the live send: a client that was
+away replays the unfiltered log and the narrowing is undone. Having each
+connection route publish with the scope it had loaded, which adds an awaited
+RPC to requests whose middleware publish is deferred; `WorkspaceDO` reads the
+connection's scope from its own row instead. New per-person topics, which the
+closed topic enum would make every older desktop reject. Keeping both the
+middleware and the service publishing a request's connection write: each
+such write reached every socket in its audience twice.
+
+**Consequences:** A publisher of a per-person change has to pass its audience;
+without one the event still goes to everyone, which costs refetches but hides
+nothing, since an event names topics and never data. Connection-scoped events
+are decided by the row as it stands at publish time: a connection deleted
+before its publish is told to everyone. A new `/connections` route relies on
+the mutation map (naming a created connection with `noteChangedConnection`)
+and must not publish again from the service; a completion or background path
+no request reaches is the only place the service publishes. See
+[`websocket-architecture.md`](websocket-architecture.md) for the Channel-row
+half of this change.
 
 ### 2026-09-24 — Membership changes reach the people who show them
 
