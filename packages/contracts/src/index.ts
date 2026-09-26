@@ -851,6 +851,18 @@ export const ConnectionSchema = z.object({
     label: z.string().min(1).max(80),
     description: z.string().min(1).max(240),
   }).nullable().default(null),
+  /**
+   * How many agent tools this connection exposes, so Settings can draw the
+   * Tools column from this one response rather than one request per row.
+   *
+   * A connector with a fixed tool surface is counted from its catalog and
+   * grants. One whose tools come from live provider discovery reports the
+   * count its last discovery found. Null means there is no count to show — a
+   * disabled connection, or a discovered one that has never been discovered —
+   * and is never a stand-in for zero. Defaults to null so a region that does
+   * not send it yet still parses.
+   */
+  toolCount: z.number().int().nonnegative().nullable().default(null),
   lastSyncAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema
 });

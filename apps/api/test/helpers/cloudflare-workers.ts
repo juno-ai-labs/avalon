@@ -1,5 +1,6 @@
 /** Node-test stand-in for the runtime-only `cloudflare:workers` base class. */
 let nextWaitUntilError: Error | undefined;
+const pendingWaitUntil = new Set<Promise<unknown>>();
 
 export function waitUntil(promise: Promise<unknown>): void {
   if (nextWaitUntilError) {
@@ -10,7 +11,18 @@ export function waitUntil(promise: Promise<unknown>): void {
   // Production keeps the invocation alive. Node already remains alive for its
   // own pending I/O; attach a rejection handler so a best-effort background
   // task cannot become an unrelated unhandled-rejection failure.
-  void promise.catch(() => undefined);
+  const settled = promise.catch(() => undefined);
+  pendingWaitUntil.add(settled);
+  void settled.finally(() => pendingWaitUntil.delete(settled));
+}
+
+/**
+ * Wait for every task handed to `waitUntil` so far, and any those schedule,
+ * to settle — so a test can assert on what background work did (or that none
+ * ran) causally rather than by sleeping.
+ */
+export async function drainWaitUntil(): Promise<void> {
+  while (pendingWaitUntil.size > 0) await Promise.all([...pendingWaitUntil]);
 }
 
 /** Make the next Node-test waitUntil registration fail synchronously. */
