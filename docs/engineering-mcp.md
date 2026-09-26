@@ -157,14 +157,12 @@ keyed by `parent_id`
 ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)), so
 `run_workspace_sql` is the tool for it.
 
-**A Space's hidden main conversation is reached with the substream tools**, under the
-Space id as the parent and `0` as the substream, exactly as a work stream's Main
-is. That works because `SpaceService.create` provisions a Space through
-`bootstrapWorkstreamRuntimeEnvironment`, which writes the active
-`workstream_authority_routes` row those tools resolve a parent through — the
-same row a Channel's creation writes, keyed by parent id whatever the kind. It
-is the only way to inspect a Space's participants and resources, because those
-live on the conversation rather than on the Space's parent rows.
+**A Space's participants and resources are read with `run_workspace_sql`**,
+from `spaces`, `space_viewers` and `space_defaults`. A Space created before
+2026-09-26 also has an idle hidden conversation, still reachable with the
+substream tools under the Space id and substream `0` through the
+`workstream_authority_routes` row every Space's creation writes; nothing reads
+or writes it.
 
 A stateful artifact's facet database is outside this MCP for the reason above:
 its contents are reachable only through the product's admitted read path.

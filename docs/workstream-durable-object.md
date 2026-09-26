@@ -7,7 +7,8 @@ it; one non-agent `SidekickDO` (still exported as `AutomationDO`) per Sidekick;
 and one `SubstreamAgent` per independently addressable model context. A
 `SubstreamAgent` has a typed parent, `{kind: "workstream" | "automation" |
 "space", id}`; substream `0` is that parent's primary conversation (a work
-stream's main feed, an automation's own chat, a Space's hidden conversation),
+stream's main feed, an automation's own chat, or the idle conversation of a
+Space created before 2026-09-26),
 and every other substream is a child context under it (an automation's runs, a
 Channel's breakouts and background agents).
 
@@ -354,10 +355,10 @@ child nobody registered is one nobody can find or close.
 ### A Space is a hosted parent under a role
 
 A **Space** groups Channels inside an Organization. It carries a name, icon,
-colour, audience, participants, resources and Sidekick recommendations, and it
-has a hidden main conversation that holds the participants and resources —
-which is exactly a work stream, minus every product surface. Rally never opens
-its feed, never runs an agent in it, and never lists its grants.
+colour, audience, participants, resources and Sidekick recommendations, all held
+in `WorkspaceDO`'s Space tables ([`spaces.md`](spaces.md)). It has no
+conversation of its own; a Space created before 2026-09-26 still has an idle one
+that nothing reads.
 
 It is hosted exactly like a Channel, under `HOSTED_SPACE_ROLE` rather than
 `HOSTED_CHANNEL_ROLE` (`durable-objects/hosted-parent.ts`): no control socket,
@@ -1107,7 +1108,7 @@ tombstone, which every reader skips and which keeps the version fence, and
 deletes its viewer rows. Only a child projection the Channel accepted is
 forwarded; a stale one would otherwise leave under a newer parent version. The legacy `WorkstreamDO` migration 20 sent that retraction once for every
 such agent already stored, and the one-time import replayed it for any parent that missed it. A Space
-forwards none of this: its hidden main conversation is its only one.
+forwards none of this: it has no child that would publish it.
 The legacy `WorkstreamDO` migration 19 replayed, and the one-time import replayed again, every already-stored non-background breakout
 projection through those same per-child keys. Forwarding originally covered
 only projections that changed after deployment, so a quiet existing breakout

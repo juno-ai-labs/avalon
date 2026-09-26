@@ -79,6 +79,29 @@ describe("resource listing", () => {
     await expect(service.get(firstResourceId)).resolves.toMatchObject({ id: firstResourceId, title: 'Clock skew' });
   });
 
+  it("reads an upload draft to its uploader and refuses it as something to attach", async ({ onTestFinished }) => {
+    const regional = new DatabaseSync(':memory:');
+    const workspace = createTestWorkspaceDO({ workspaceId, regionalDatabase: regional });
+    seedMember(regional);
+    onTestFinished(() => { workspace.objectDatabase.close(); regional.close(); });
+    workspace.objectDatabase.prepare(`INSERT INTO resources
+      (id, workspace_id, resource_type, provider, title, metadata_json, attachment_status, uploaded_by_user_id,
+       created_at, updated_at)
+      VALUES (?, ?, 'file', 'avalon_upload', 'Unsent draft', '{}', 'draft', ?, ?, ?)`)
+      .run(firstResourceId, workspaceId, userId, '2026-09-21T12:00:00.000Z', '2026-09-21T12:00:00.000Z');
+    const service = new ResourceService(createTestEnv({
+      DB: sqliteD1(regional), APP_ENV: 'test', AVALON_REGION: 'global',
+      WORKSPACE_DOS: testWorkspaceObjectBinding(workspace.instance, ['executeRuntimeSql', 'authorizationResourceFacts']),
+    }), auth);
+
+    // A draft is its uploader's to see, and is reaped when it expires, so a
+    // Space default that named it would outlive the resource.
+    await expect(service.get(firstResourceId)).resolves.toMatchObject({ id: firstResourceId });
+    await expect(service.getAttachable(firstResourceId)).rejects.toMatchObject({
+      status: 409, code: 'attachment_draft_requires_message',
+    });
+  });
+
   it("uses keyset pagination and literal resource title search", async ({ onTestFinished }) => {
     const regional = new DatabaseSync(':memory:');
     const workspace = createTestWorkspaceDO({ workspaceId, regionalDatabase: regional });

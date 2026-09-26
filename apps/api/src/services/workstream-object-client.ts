@@ -178,8 +178,8 @@ export class WorkstreamObjectClient {
      * Sent on every product request and checked against the object's own
      * identity before it runs anything. A conversation is addressed by id, so
      * this is what keeps a Space id from reaching a Channel operation — see
-     * `productOperation` in `substream-agent.ts`. Every caller but
-     * {@link WorkstreamObjectClient.forSpace} means a Channel.
+     * `productOperation` in `substream-agent.ts`. The plain constructor means
+     * a Channel; {@link WorkstreamObjectClient.forParent} names another kind.
      */
     private readonly parentKind: ConversationParentKind = "workstream",
   ) {}
@@ -201,18 +201,6 @@ export class WorkstreamObjectClient {
     traced = false,
   ): WorkstreamObjectClient {
     return new WorkstreamObjectClient(env, auth, parentId, substreamId, traced, parentKind);
-  }
-
-  /**
-   * A Space's hidden main conversation, addressed as a Space.
-   *
-   * The Space authority reaches this object for the Space's participants,
-   * appearance and attachments, which is the only legitimate traffic it has;
-   * nothing in the product opens it. Saying so here is what makes every *other*
-   * caller's request refuse when the id turns out to name a Space.
-   */
-  static forSpace(env: Env, auth: AuthContext, spaceId: string): WorkstreamObjectClient {
-    return WorkstreamObjectClient.forParent(env, auth, "space", spaceId);
   }
 
   private async request(body: ProductOperationPayload): Promise<unknown> {

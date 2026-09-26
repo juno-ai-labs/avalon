@@ -309,7 +309,7 @@ describe("a Space's hosted parent", () => {
     });
   });
 
-  it("applies its directory effects to the Space directory and drops everything else", async () => {
+  it("acknowledges what its hidden conversation publishes and applies none of it", async () => {
     await seedParents();
     await parkActivityQueue();
 
@@ -322,24 +322,23 @@ describe("a Space's hosted parent", () => {
     });
 
     await runInDurableObject(workspace(), (_instance, state) => {
-      // The directory effect is what the Organization's Space directory is
-      // built from, and is applied locally straight after the parent write.
-      // The activity event has nowhere to go: no product surface opens a
-      // Space's conversation, so a feed row for it would be an entry nobody
-      // asked for that nothing can navigate to. It is dropped rather than
-      // queued because anything that reaches this outbox is delivered.
+      // WorkspaceDO writes every Space fact itself, so what a Space's legacy
+      // conversation still has in flight must not overwrite any of it: the
+      // directory effect lands nowhere, not even in the parent's aggregate.
+      // The activity event has nowhere to go either: no product surface opens
+      // a Space's conversation. Both are acknowledged, so neither is retried.
       expect(outboxKinds(state, SPACE_ID)).toEqual([]);
       expect(activityKeys(state)).toEqual([]);
-      expect(state.storage.sql.exec("SELECT space_id, title FROM spaces").toArray())
-        .toEqual([{ space_id: SPACE_ID, title: "Hiring" }]);
-      // Still recorded by the parent: it aggregates its child's state whether
-      // or not it republishes it.
+      expect(state.storage.sql.exec("SELECT space_id FROM spaces").toArray()).toEqual([]);
       expect(state.storage.sql.exec(
         "SELECT substream_id FROM parent_child_projections WHERE parent_id = ?", SPACE_ID,
-      ).toArray()).toEqual([{ substream_id: "0" }]);
+      ).toArray()).toEqual([]);
+      expect(state.storage.sql.exec(
+        "SELECT COUNT(*) AS count FROM parent_child_receipts WHERE parent_id = ?", SPACE_ID,
+      ).toArray()).toEqual([{ count: 2 }]);
     });
 
-    // A Channel forwards both, which is what makes the list above a decision:
+    // A Channel applies both, which is what makes the list above a decision:
     // its directory row and its feed row land in the parent write, and with
     // no mention to snapshot nothing is left in the outbox.
     await workspace().receiveChildEffects({
