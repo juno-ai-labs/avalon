@@ -138,14 +138,15 @@ freezes the workspace/user-owned draft descriptors and writes
 those rows. Product records the cross-object recovery obligation before the RPC,
 so an ambiguous response is replayed rather than guessed. A failed or genuinely
 discarded preparation releases the reservation idempotently. A delivered input
-deletes its local mailbox and recovery obligation in the same WorkstreamDO
+deletes its local mailbox and recovery obligation in the same SubstreamAgent
 transaction that queues canonical projection; a direct canonical message has no
 pending recovery row. Neither path releases the workspace hold early: its
 durable common effect names the exact
 input/resource reservation, and WorkspaceDO releases only that hold in the same
 transaction that marks the upload `attached`. The Queue consumer delivers this
 publication after parent admission for every conversation, including private
-children whose common directory projection stays in WorkstreamDO. Publication
+children, whose common projection the Channel's parent keeps in
+`parent_child_projections`. Publication
 checks the exact workspace, parent, input and resource reservation and its
 canonical link in the effect. Queue acknowledgement follows publication; a
 replay after response loss leaves the already published resource unchanged.

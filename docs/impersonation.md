@@ -143,7 +143,8 @@ non-macOS, and non-arm64 builds never contact the production feed.
 This module owns the relationship, the impersonation authorization branch,
 dual-principal audit correlation, and Sideline's host adapter. The represented
 participant's ordinary conversation authority remains in
-`ConversationService`, WorkspaceDO/WorkstreamDO, and SubstreamAgent. Message
+`ConversationService`, WorkspaceDO (including the Channel's hosted parent), and
+SubstreamAgent. Message
 addressing and harness execution remain owned by the standard durable
 conversation loop documented in [workstream-durable-object.md](workstream-durable-object.md).
 

@@ -4,7 +4,7 @@ import {
   SharedNavigationSpaceSchema,
   SharedNavigationSpacesRequestSchema,
 } from "@rally/contracts/scope-grants";
-import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
+import { EFFECT_QUEUE_MESSAGE_MAX_BYTES, isPersonNotificationEffect, ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
 import { ConversationEffectEnvelopeSchema, type ConversationEffectEnvelope } from "@rally/contracts/conversation-effects";
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
 
@@ -67,7 +67,11 @@ import {
   WorkspaceExternalEventDeliveryQueueMessageSchema,
   WorkspaceExternalEventMatchResultSchema,
   asAutomationId,
+  asSpaceId,
+  asSubstreamId,
+  asUserId,
   asWorkspaceId,
+  asWorkstreamId,
   automationTriggersAdmitResourceType,
   IdSchema,
   SpaceConversationSchema,
@@ -104,6 +108,7 @@ import {
   type WorkspaceSidebar,
   type PersonalOrder,
   type SpaceErrorCode,
+  type SpaceSummary,
   type SpaceSnapshot,
   type Workstream,
   type WorkspaceSocketSyncEvent,
@@ -151,17 +156,24 @@ import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { judgeUnheardSockets, nextFirstFrameDeadline, type UnheardSocket } from "./socket-first-frame-watch";
 import { parseRpcInput } from "../lib/rpc-input";
 import { uuidV7 } from "../lib/uuid-v7";
+import { observedAfterBirthSource, resolveSpaceWorkstreamStart, type ObservedBirthChannel } from "../lib/channel-audience";
 import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observability/logger";
 import {
+  descendantRevocation,
+  publishDescendantRevocations,
   revocationClosesSession,
   SocketAccessRevocationSchema,
   type SocketAccessRevocation,
 } from "../services/access-revocation";
 import { resolveClientFeatureFlagsForSubject } from "../services/client-feature-flags";
+import {
+  readWorkspaceRelationship,
+  WorkspaceRelationshipSchema,
+  type WorkspaceRelationship,
+} from "../services/workspace-relationship-service";
 import { evaluateExternalEventPredicate } from "../services/external-event-evaluator";
 import { SIDEBAR_LIST_LIMIT } from "../services/sidebar-reads";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
-import { conversationParentStub } from "../services/conversation-parent-client";
 import {
   recordWorkspaceScheduleFailure,
   runWorkspaceScheduleTarget,
@@ -178,7 +190,7 @@ import {
 import { boundParameterChunks } from "./bound-parameters";
 import { projectionSupersedes, type StoredProjection } from "./projection-fence";
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
-import { automationDOName, workspaceDOName } from "./names";
+import { automationDOName, conversationObjectName, spaceDOName, workspaceDOName, workstreamDOName } from "./names";
 import {
   OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
   applyRetirementGate,
@@ -589,7 +601,6 @@ import { WorkspaceProductStorage } from "./workspace-product-storage";
 import {
   publishSpaceBootstrapWork,
   publishSpaceDefaultTargets,
-  publishSpaceIntentResumes,
 } from "./workspace-space-default-publication";
 import {
   SpaceDefaultQueueMessageSchema,
@@ -609,18 +620,13 @@ import {
   WorkspaceSpaceBootstrapFinalizeResultSchema,
   WorkspaceSpaceBootstrapSettleRequestSchema,
   WorkspaceContainerOrderResultSchema,
-  WorkspaceSpaceGeneralResultSchema,
   WorkspaceSpaceListRequestSchema,
   WorkspaceSpaceMembersRequestSchema,
   WorkspaceSpaceMembersResultSchema,
-  WorkspaceSpaceMembershipMovePlanResultSchema,
+  WorkspaceSpaceGeneralOpenResultSchema,
+  WorkspaceSpaceGeneralRequestSchema,
+  WorkspaceSpaceMembershipMoveOutcomeSchema,
   WorkspaceSpaceMembershipMoveRequestSchema,
-  WorkspaceSpaceMembershipMoveResultSchema,
-  WorkspaceSpaceMembershipMoveSettleRequestSchema,
-  WorkspaceSpaceMembershipPlanResultSchema,
-  WorkspaceSpaceMembershipRemovalRequestSchema,
-  WorkspaceSpaceMembershipRequestSchema,
-  WorkspaceSpaceMembershipSettleRequestSchema,
   WorkspaceSpaceMutationResultSchema,
   WorkspaceSpaceReserveResultSchema,
   WorkspaceSpacePresentationRequestSchema,
@@ -629,6 +635,26 @@ import {
   WorkspaceSpaceIntentFailureRequestSchema,
   WorkspaceSpaceIntentReceiptRequestSchema,
   WorkspaceSpaceReserveRequestSchema,
+  WorkspaceChannelReservationRequestSchema,
+  WorkspaceChannelReservationResultSchema,
+  WorkspaceSpaceChannelChangeRequestSchema,
+  WorkspaceGeneralPlacementRequestSchema,
+  WorkspaceSpaceChannelChangeResultSchema,
+  WorkspaceSpaceIntentResumeRequestSchema,
+  WorkspaceSpaceIntentResumeResultSchema,
+  WorkspaceSpaceMemberWalkRequestSchema,
+  WorkspaceSpaceMemberWalkResultSchema,
+  type SpaceActorAuth,
+  type SpaceChannelRefusal,
+  type WorkspaceSpaceChannelChangeRequest,
+  type WorkspaceGeneralPlacementRequest,
+  type WorkspaceSpaceChannelChangeResult,
+  type WorkspaceSpaceIntentResumeRequest,
+  type WorkspaceSpaceIntentResumeResult,
+  type WorkspaceSpaceMemberWalkRequest,
+  type WorkspaceSpaceMemberWalkResult,
+  type WorkspaceChannelReservationRequest,
+  type WorkspaceChannelReservationResult,
   type SpaceDefaultQueueMessage,
   type SpaceDefaultTargetFailureRequest,
   type WorkspaceChannelSpacesRequest,
@@ -646,18 +672,13 @@ import {
   type WorkspaceSpaceBootstrapPage,
   type WorkspaceSpaceBootstrapSettleRequest,
   type WorkspaceContainerOrderResult,
-  type WorkspaceSpaceGeneralResult,
   type WorkspaceSpaceListRequest,
   type WorkspaceSpaceMembersRequest,
   type WorkspaceSpaceMembersResult,
-  type WorkspaceSpaceMembershipMovePlanResult,
+  type WorkspaceSpaceGeneralOpenResult,
+  type WorkspaceSpaceGeneralRequest,
+  type WorkspaceSpaceMembershipMoveOutcome,
   type WorkspaceSpaceMembershipMoveRequest,
-  type WorkspaceSpaceMembershipMoveResult,
-  type WorkspaceSpaceMembershipMoveSettleRequest,
-  type WorkspaceSpaceMembershipPlanResult,
-  type WorkspaceSpaceMembershipRemovalRequest,
-  type WorkspaceSpaceMembershipRequest,
-  type WorkspaceSpaceMembershipSettleRequest,
   type WorkspaceSpaceMutationResult,
   type WorkspaceSpaceReserveResult,
   type WorkspaceSpacePresentationRequest,
@@ -669,15 +690,49 @@ import {
 } from "./workspace-space-protocol";
 import {
   spaceVisibleToViewerSql,
+  SPACE_BOOTSTRAP_PAGE_SIZE,
   WORKSPACE_SPACE_SCHEMA_STATEMENTS,
   WorkspaceSpaceStorage,
+  type WorkspaceSpaceIntentClaim,
 } from "./workspace-space-storage";
+import { SpaceChannelAccess } from "./workspace-space-channel-access";
+import { ObservedChannelSchema } from "./workstream-access-protocol";
 import {
   SELECT_WORKSPACE_BREAKOUT,
   WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS,
   WorkspaceBreakoutStorage,
   type WorkspaceBreakoutRow,
 } from "./workspace-breakout-storage";
+import { HOSTED_PARENT_SCHEMA_STATEMENTS } from "./hosted-parent-schema";
+import {
+  HOSTED_CHANNEL_ROLE,
+  HOSTED_SPACE_ROLE,
+  HostedParent,
+  channelViewerStates,
+  parentControlSocketTag,
+  readControlSocketAttachment,
+  runningBackgroundAgents,
+  type ChannelViewerState,
+  type HostedParentHost,
+} from "./hosted-parent";
+import { planParentEffectBatches, ReceiveChildEffectsRequestSchema } from "./conversation-parent-object";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
+import {
+  dueParentImports,
+  importLegacyParent,
+  LegacyParentExportSchema,
+  nextParentImportDueAt,
+  notePendingParentImport,
+  ParentImportError,
+  parentImportState,
+  recordParentImportFailure,
+} from "./hosted-parent-import";
+import {
+  HostedParticipantProjectionAlarmSchema,
+  PARTICIPANT_MIGRATION_ALARM,
+  PARTICIPANT_PROJECTION_ALARM,
+} from "./scope-grant-storage";
+import { SCOPE_INVITATION_DELIVERY_ALARM } from "./scope-invitation-storage";
 import {
   applyWorkstreamRegionalEnvelope,
   insertWorkstreamEffectReceipt,
@@ -1153,7 +1208,7 @@ function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTa
  * How long a staged Space operation waits before the alarm republishes it.
  *
  * Bounds: how long an interrupted membership, audience change or archive can
- *   sit half-applied before the activity Queue is asked to finish it.
+ *   sit half-applied before the alarm finishes it.
  * Without it: a request that died between staging an intent in WorkspaceDO and
  *   applying it on the Channel leaves the Channel without the Space's audience
  *   and the Space without a settled membership, and nothing ever notices —
@@ -1161,8 +1216,9 @@ function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTa
  * Direction: a lower bound on the wait, so a healthy request that finishes in
  *   the ordinary way settles its intent before this fires and nothing is
  *   published at all.
- * Trips: one `space_intent_resume` message per unsettled intent, re-run by the
- *   consumer against the same fences, which converges rather than repeating.
+ * Trips: one in-place resume per unsettled intent (a `space_intent_resume`
+ *   message for a stored `move`), re-run against the same fences, which
+ *   converges rather than repeating.
  * Derive from: how long the slowest healthy operation takes end to end — a
  *   Space audience change walks every member Channel — against how long a
  *   half-applied audience may persist. Thirty seconds is comfortably past the
@@ -1171,6 +1227,31 @@ function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTa
  *   measured; it is the team's to set.
  */
 const SPACE_INTENT_RESUME_DELAY_MS = 30_000;
+
+/** Raised inside `cancelSpaceReservation`'s transaction when the Space's conversation has published. */
+class SpaceCreationInUse extends Error {
+  constructor() {
+    super("space_creation_in_use");
+  }
+}
+
+/**
+ * A hosted-parent transaction met somebody the member table has never heard
+ * of. It rolls the transaction back; the caller learns them with one D1 read
+ * each and runs the operation again (`withMembersLearned`).
+ */
+class UnknownMembersError extends Error {
+  constructor(readonly userIds: readonly string[]) {
+    super("workspace_member_unknown");
+  }
+}
+
+/** A refusal raised inside `reserveChannelInSpaces`'s transaction, so it rolls back. */
+class ChannelReservationRefused extends Error {
+  constructor(readonly code: SpaceErrorCode, readonly spaceId: string) {
+    super(code);
+  }
+}
 
 const PROJECT_CASCADE_DEPENDENTS = [
   "project_participants",
@@ -3710,6 +3791,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       accepted_at INTEGER NOT NULL CHECK (accepted_at >= 0)
     ) STRICT`,
   ],
+}, {
+  version: 72,
+  description: "host channel and space parents; name the directories channels, breakouts and spaces",
+  statements: [...HOSTED_PARENT_SCHEMA_STATEMENTS],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -3957,8 +4042,8 @@ function loadParticipantPreviews(
     const placeholders = chunk.map(() => "?").join(", ");
     rows.push(...sql.exec<{ workstream_id: string; user_id: string }>(
       `SELECT viewer.workstream_id, viewer.user_id
-         FROM workspace_workstream_viewers viewer
-         JOIN workspace_workstream_directory directory
+         FROM channel_viewers viewer
+         JOIN channels directory
            ON directory.workstream_id = viewer.workstream_id
           AND directory.authority_generation = viewer.authority_generation
         WHERE viewer.workstream_id IN (${placeholders})
@@ -4148,6 +4233,12 @@ function mapDirectoryWorkstreams(
   spaces: WorkspaceSpaceStorage,
   userId: string,
   accessClass: "member" | "guest" = "member",
+  /**
+   * Add each row's breakouts and background agents for this viewer. Only the
+   * workspace socket asks: it is the one reader that keeps a Channel's rail
+   * current, and a REST answer has no way to be told when the list moves.
+   */
+  withViewerState = false,
 ): Workstream[] {
   const personalIds = [...new Set(
     rows.filter((row) => row.scope === "personal").map((row) => row.workstream_id),
@@ -4162,10 +4253,16 @@ function mapDirectoryWorkstreams(
     rows.map((row) => row.workstream_id),
     accessClass,
   );
-  return rows.map((row) => directoryWorkstream(
-    row, workspaceId, previews.get(row.workstream_id), spaceIds.get(row.workstream_id) ?? [],
-    pins.get(row.workstream_id) ?? [], breakoutAttentionCounts.get(row.workstream_id) ?? 0,
-  ));
+  const viewerStates = withViewerState
+    ? channelViewerStates(sql, userId, rows.map((row) => row.workstream_id))
+    : new Map<string, ChannelViewerState>();
+  return rows.map((row) => ({
+    ...directoryWorkstream(
+      row, workspaceId, previews.get(row.workstream_id), spaceIds.get(row.workstream_id) ?? [],
+      pins.get(row.workstream_id) ?? [], breakoutAttentionCounts.get(row.workstream_id) ?? 0,
+    ),
+    ...viewerStates.get(row.workstream_id),
+  }));
 }
 
 function loadSpacePins(
@@ -4186,8 +4283,8 @@ function loadSpacePins(
            ON membership.space_id = pin.space_id
           AND membership.workstream_id = pin.workstream_id
           AND membership.state = 'active'
-         JOIN workspace_space_directory space ON space.space_id = pin.space_id
-         LEFT JOIN workspace_space_viewers viewer
+         JOIN spaces space ON space.space_id = pin.space_id
+         LEFT JOIN space_viewers viewer
            ON viewer.space_id = space.space_id
           AND viewer.user_id = ? AND viewer.is_participant = 1
         WHERE pin.user_id = ? AND space.archived_at IS NULL
@@ -4241,6 +4338,33 @@ function internalDirectoryItem(row: WorkspaceDirectoryRow) {
  * A Channel and one of its breakouts can both move for the same person inside
  * one Queue batch, and what that person is owed is one nudge rather than two.
  */
+/**
+ * What one committed directory batch still owes after its commit: the socket
+ * sends, reconciliations and schedule re-arms. Recorded as a row in the same
+ * transaction (`workspace_directory_followups`), so it survives a crash, and
+ * parsed when it is read back.
+ */
+const DirectoryFollowUpSchema = z.strictObject({
+  workspaceId: z.string().min(1),
+  publishSnapshotAll: z.boolean(),
+  snapshotUsers: z.array(z.string()),
+  reachChangedUsers: z.array(z.string()),
+  commonChanges: z.array(z.string()),
+  viewerChanges: z.array(z.tuple([z.string(), z.array(z.string())])),
+  breakoutChanges: z.array(z.string()),
+  breakoutViewerChanges: z.array(z.tuple([z.string(), z.array(z.string())])),
+  reopenBootstrap: z.boolean(),
+  watchReconciliations: z.array(z.string()),
+  archivalChanges: z.array(z.string()),
+  refreshTerminal: z.boolean(),
+  refreshWatchKinds: z.boolean(),
+  directoryChanged: z.boolean(),
+  /** Workspace sync topics an activity or notification record moved. */
+  syncTopics: z.array(WorkspaceSyncTopicSchema),
+  refreshProductAlarm: z.boolean(),
+});
+type DirectoryFollowUp = z.infer<typeof DirectoryFollowUpSchema>;
+
 function mergeViewerChanges(
   first: ReadonlyMap<string, ReadonlySet<string>>,
   second: ReadonlyMap<string, ReadonlySet<string>>,
@@ -4272,8 +4396,8 @@ const SELECT_WORKSPACE_DIRECTORY = `SELECT directory.workstream_id,
     viewer.source_event_id AS viewer_event_id,
     NULL AS pin_position,
     access.last_accessed_at
-  FROM workspace_workstream_directory directory
-  LEFT JOIN workspace_workstream_viewers viewer
+  FROM channels directory
+  LEFT JOIN channel_viewers viewer
     ON viewer.workstream_id = directory.workstream_id
    AND viewer.user_id = ?
    AND viewer.authority_generation = directory.authority_generation
@@ -4528,11 +4652,898 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { agentIds: new AgentTeamStorage(this.state.storage).ownedDescendants(request.agentId) };
   }
 
+  // ---------------------------------------------------------------------------
+  // Hosted conversation parents.
+  //
+  // Every Channel's and Space's parent authority lives in this object, keyed by
+  // parent id; `hosted-parent.ts` holds the logic and
+  // `docs/hosted-conversation-parents.md` owns the design. The methods below
+  // keep the names and shapes the parent objects answered to, so a caller
+  // changes which stub it holds and nothing else.
+  //
+  // A parent that still lives in a legacy object is imported before anything
+  // reads it. A write drains the parent outbox before it answers, which is
+  // where the directory step now runs: in this object, straight after the
+  // commit, rather than over a Queue and back.
+  // ---------------------------------------------------------------------------
+
+  private readonly parentImportsInFlight = new Map<string, Promise<void>>();
+
+  /**
+   * Start a Channel's Main conversation warming when someone opens the
+   * Channel, without waiting for it. The legacy parent did this on its own
+   * wake; the Organization object never sleeps for a Channel, so the socket
+   * open is the moment a person is about to read Main.
+   *
+   * Nothing here is awaited or retried. A conversation that fails to wake is
+   * woken by the request that needs it; this only removes latency and must
+   * never add a failure.
+   */
+  private wakeMainConversation(parentId: string): void {
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) return;
+    this.state.waitUntil((async () => {
+      try {
+        const stub = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, workspaceId,
+          conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), parentId));
+        await stub.wake();
+      } catch {
+        // Warming is best effort by construction.
+      }
+    })());
+  }
+
+  private hostedParentHost(): HostedParentHost {
+    return {
+      env: this.env,
+      storage: this.state.storage,
+      alarms: this.scheduledAlarms,
+      armNextAlarm: async () => { await this.armNextAlarm(); },
+      controlSockets: (parentId) => this.state.getWebSockets(parentControlSocketTag(parentId)),
+      acceptControlSocket: (server, parentId, userId) => {
+        this.state.acceptWebSocket(server, [parentControlSocketTag(parentId), userId]);
+      },
+      publishChannelRow: (parentId, userId) => this.publishWorkstreamState(parentId, userId),
+      applyLocalEffects: (envelopes) => this.applyLocalEffects(envelopes),
+      readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
+      noteRelationship: (relationship) => this.noteRelationship(relationship),
+    };
+  }
+
+  /**
+   * Follow-ups recorded by hosted-parent writes, run after their commit. Each
+   * carries the row's JSON: a follow-up rolled back with an outer transaction
+   * leaves an id a later row may reuse, and only the row it names is run.
+   */
+  private readonly pendingParentFollowUps: { id: number; json: string }[] = [];
+  /** Space intents a request, a Queue delivery or the alarm is running now, by operation id. */
+  private readonly spaceIntentRuns = new Map<string, Promise<void>>();
+
+  /**
+   * Apply what a hosted parent just published, inside the parent's own
+   * transaction: the directory rows, the grant directory, the activity row
+   * and the notification record all commit with the change that caused them,
+   * or none of them do. A failure throws; somebody the member table has never
+   * heard of throws `UnknownMembersError` for the caller to learn and retry.
+   * Returns the envelopes whose remaining work leaves the object: a
+   * notification to deliver, a mention to snapshot, a revoked Channel grant's
+   * Sidekick revocation.
+   */
+  private applyLocalEffects(envelopes: readonly ParentEffectEnvelope[]): { outbox: ParentEffectEnvelope[] } {
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) throw new Error("workspace_identity_unknown");
+    const outbox: ParentEffectEnvelope[] = [];
+    const directory = envelopes.filter((envelope) => (
+      envelope.effect.kind === "directory_common" || envelope.effect.kind === "directory_user"
+    ));
+    const followUp = directory.length > 0
+      ? this.applyDirectoryBatch({ workspaceId, envelopes: directory }).followUp
+      : WorkspaceDO.emptyDirectoryFollowUp(workspaceId);
+    for (const envelope of envelopes) {
+      const effect = envelope.effect;
+      if (effect.kind === "directory_common" || effect.kind === "directory_user") continue;
+      if (effect.kind === "scope_grant_directory") {
+        applyScopeGrantDirectory(this.state.storage, envelope);
+        // A revoked Channel grant also has to reach the Channel's Sidekick
+        // conversations, which is a Queue send; the drain does it.
+        if (!effect.grant.active && effect.grant.target.kind === "workstream") outbox.push(envelope);
+        continue;
+      }
+      const applied = applyWorkstreamRegionalEnvelope(
+        this.state.storage,
+        WorkspaceRegionalEffectApplyRequestSchema.parse({
+          workspaceId,
+          envelope,
+          actorUserId: effect.kind === "activity_event" ? effect.actorUserId ?? null : null,
+          targetUserIds: effect.kind === "activity_event" ? effect.targets.map((target) => target.userId) : [],
+          // Delivery checks membership again when it sends; a person this
+          // object has not heard of gets the record and is checked there.
+          recipientIsActiveMember: isPersonNotificationEffect(effect)
+            ? this.memberActiveOrUnknown(effect.recipientUserId) : false,
+        }),
+        Date.now(),
+      );
+      followUp.syncTopics.push(...(effect.kind === "activity_event"
+        ? ["activity", "work_opportunities"] as const : ["activity", "workstream_directory"] as const));
+      if (effect.kind === "activity_event" && !applied.replayed) followUp.refreshProductAlarm = true;
+      if (isPersonNotificationEffect(effect)) {
+        if (applied.notificationIntentId) outbox.push(envelope);
+      } else if (effect.kind === "activity_event" && effect.sourceKind === "workstream_message"
+        && effect.sourceId && effect.targets.length > 0) {
+        outbox.push(envelope);
+      }
+    }
+    followUp.syncTopics = [...new Set(followUp.syncTopics)];
+    const recorded = this.recordDirectoryFollowUp(followUp);
+    if (recorded !== null) this.pendingParentFollowUps.push(recorded);
+    return { outbox };
+  }
+
+  private static emptyDirectoryFollowUp(workspaceId: string): DirectoryFollowUp {
+    return {
+      workspaceId, publishSnapshotAll: false, snapshotUsers: [], reachChangedUsers: [], commonChanges: [],
+      viewerChanges: [], breakoutChanges: [], breakoutViewerChanges: [], reopenBootstrap: false,
+      watchReconciliations: [], archivalChanges: [], refreshTerminal: false, refreshWatchKinds: false,
+      directoryChanged: false, syncTopics: [], refreshProductAlarm: false,
+    };
+  }
+
+  private memberActiveOrUnknown(userId: string): boolean {
+    const row = this.state.storage.sql.exec<{ active: number }>(
+      `SELECT active FROM workspace_member_status WHERE user_id = ?`, userId,
+    ).toArray()[0];
+    return row === undefined || row.active === 1;
+  }
+
+  /**
+   * Which kind of parent an id names. The row says once it exists; before
+   * that the import ledger does; before that a Space is the id the Space
+   * directory reserved, and anything else is a Channel. Never a probe of
+   * another object: asking a namespace whether something is there creates it.
+   */
+  private hostedParentKind(parentId: string): "workstream" | "space" {
+    const known = this.state.storage.sql.exec<{ parent_kind: "workstream" | "space" }>(
+      `SELECT parent_kind FROM parent_metadata WHERE parent_id = ?
+       UNION ALL SELECT parent_kind FROM parent_imports WHERE parent_id = ?
+       LIMIT 1`,
+      parentId, parentId,
+    ).toArray()[0]?.parent_kind;
+    if (known) return known;
+    return this.state.storage.sql.exec("SELECT 1 FROM spaces WHERE space_id = ?", parentId).toArray().length > 0
+      ? "space" : "workstream";
+  }
+
+  private async hostedParent(parentId: string, workspaceId?: string): Promise<HostedParent> {
+    await this.initialized;
+    if (workspaceId !== undefined) await this.ensureParentWorkspace(workspaceId);
+    await this.ensureParentImported(parentId);
+    const kind = this.hostedParentKind(parentId);
+    return new HostedParent(this.hostedParentHost(), parentId, kind === "space" ? HOSTED_SPACE_ROLE : HOSTED_CHANNEL_ROLE);
+  }
+
+  /**
+   * A parent for a method only a Channel has: grants, invitations, sharing
+   * and conversation seats. A Space id reaches this facade through the same
+   * routes (the sharing routes take any parent id), and the Space role does
+   * not refuse those writes itself, so the facade does.
+   */
+  private async channelParent(parentId: string, workspaceId?: string): Promise<HostedParent> {
+    const parent = await this.hostedParent(parentId, workspaceId);
+    if (parent.role.kind !== "workstream") throw new Error("channel_parent_required");
+    return parent;
+  }
+
+  /**
+   * An Organization object that has never been initialized learns its own id
+   * from the first parent request, as it did from the first directory effect
+   * when the parents were other objects. An id that disagrees is refused.
+   */
+  private async ensureParentWorkspace(workspaceId: string): Promise<void> {
+    if (!this.workspaceId()) {
+      this.ensureIdentity(workspaceId, await workspacePlacementAffinity(this.env, workspaceId));
+    }
+    this.assertWorkspace(workspaceId);
+  }
+
+  /**
+   * Import a parent still held by its legacy object, once, before it is served.
+   *
+   * Single-flight per parent, and retried on every request that needs it: a
+   * request never waits out the alarm's backoff, because the person asking is
+   * the one the import is for. The alarm retries an unopened parent on
+   * `scheduledAlarmRetryDelay`'s schedule.
+   */
+  private async ensureParentImported(parentId: string): Promise<void> {
+    if (parentImportState(this.state.storage.sql, parentId) !== "pending") return;
+    let inFlight = this.parentImportsInFlight.get(parentId);
+    if (!inFlight) {
+      inFlight = this.importHostedParent(parentId).finally(() => this.parentImportsInFlight.delete(parentId));
+      this.parentImportsInFlight.set(parentId, inFlight);
+    }
+    await inFlight;
+  }
+
+  /**
+   * Operator repair: import one pending parent now and say what happened.
+   *
+   * The same single-flight import a request runs, answered with the ledger row
+   * instead of a thrown error, so an operator who has fixed what the last
+   * attempt's code named (`docs/runbook.md`, "A Channel or Space import is
+   * stuck") sees whether it took. A parent that is not pending is left alone.
+   */
+  async retryParentImport(input: { workspaceId: string; parentId: string }): Promise<{
+    state: "pending" | "imported" | null;
+    attempts: number;
+    lastErrorCode: string | null;
+  }> {
+    const request = parseRpcInput(
+      z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema }), input, "retry_parent_import",
+    );
+    await this.initialized;
+    this.assertWorkspace(request.workspaceId);
+    await this.ensureParentImported(request.parentId).catch(() => undefined);
+    const row = this.state.storage.sql.exec<{ state: "pending" | "imported"; attempts: number; last_error_code: string | null }>(
+      "SELECT state, attempts, last_error_code FROM parent_imports WHERE parent_id = ?", request.parentId,
+    ).toArray()[0];
+    return { state: row?.state ?? null, attempts: row?.attempts ?? 0, lastErrorCode: row?.last_error_code ?? null };
+  }
+
+  private async importHostedParent(parentId: string): Promise<void> {
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) throw new Error("parent_import_workspace_unknown");
+    const kind = this.hostedParentKind(parentId);
+    const namespace = kind === "space" ? this.env.SPACE_DOS : this.env.WORKSTREAM_DOS;
+    const name = kind === "space"
+      ? spaceDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), asSpaceId(parentId))
+      : workstreamDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(parentId));
+    // Every failure, before or after the export, is recorded with its code
+    // and thrown with that code in the message: `cause` does not survive the
+    // RPC hop back to the caller.
+    const fail = (code: string): Error => {
+      const now = Date.now();
+      recordParentImportFailure(this.state.storage.sql, parentId, code,
+        (attempt) => now + scheduledAlarmRetryDelay(attempt));
+      logWarn(this.env, "hosted_parent_import_deferred", {
+        workspace_id: workspaceId, parent_id: parentId, parent_kind: kind, code,
+      });
+      return new Error(`parent_import_unavailable:${code}`);
+    };
+    let exported;
+    try {
+      const legacy = await durableObjectStubForWorkspace(this.env, namespace, workspaceId, name);
+      exported = LegacyParentExportSchema.parse(await legacy.exportParentState({ workspaceId: asWorkspaceId(workspaceId), parentId }));
+    } catch (error) {
+      throw fail(diagnosticErrorCode(error, "parent_export_failed"));
+    }
+    const now = Date.now();
+    const parent = new HostedParent(this.hostedParentHost(), parentId, kind === "space" ? HOSTED_SPACE_ROLE : HOSTED_CHANNEL_ROLE);
+    let result;
+    try {
+      // The legacy migrations 19 and 20 replayed breakout projections once
+      // across the fleet; running them here makes an object that missed that
+      // pass converge, and costs nothing on one that did. They run in the
+      // import's transaction, so a parent is never `imported` without them;
+      // a replay that meets an unknown person rolls the import back and runs
+      // it again once that person is learned.
+      result = await this.withMembersLearned(() => importLegacyParent(
+        this.state.storage, this.scheduledAlarms, parentId, kind, exported, now, () => {
+          parent.replayStoredBreakoutProjections(now);
+          parent.republishDirectGrants(now);
+        },
+      ));
+    } catch (error) {
+      throw fail(error instanceof ParentImportError ? error.code : diagnosticErrorCode(error, "parent_import_failed"));
+    }
+    logInfo(this.env, "hosted_parent_imported", {
+      workspace_id: workspaceId, parent_id: parentId, parent_kind: kind, rows: result.rows, found: result.found,
+    });
+    await this.drainParentOutbox();
+    await this.armNextAlarm();
+    // Rows sent before the import left this Channel's breakouts out, because
+    // they were not here yet; this is the push that fills them in.
+    if (kind === "workstream") await this.publishWorkstreamState(parentId);
+  }
+
+  /**
+   * After a parent write: run the follow-ups it recorded, and arm what it
+   * scheduled. Outbox rows are work that leaves the object (a Queue send
+   * nobody who made the write is waiting on), due at once, and the alarm
+   * sends them; a failed send never fails the write that committed them.
+   */
+  private async afterParentWrite(): Promise<void> {
+    const followUps = this.pendingParentFollowUps.splice(0);
+    if (followUps.length > 0) await this.runDirectoryFollowUps(followUps);
+    else await this.armNextAlarm();
+  }
+
+  /**
+   * Run a hosted-parent write, learning anybody its transaction met that the
+   * member table had never heard of and running it once more. The first run
+   * rolled back whole, so the second starts from the same state.
+   */
+  private async withMembersLearned<T>(run: () => Promise<T> | T): Promise<T> {
+    try {
+      return await run();
+    } catch (error) {
+      if (!(error instanceof UnknownMembersError)) throw error;
+      await this.learnMembers(error.userIds);
+      return await run();
+    }
+  }
+
+  /** A hosted-parent write from a request: learn, retry once, then the post-commit work. */
+  private async parentWrite<T>(run: () => Promise<T> | T): Promise<T> {
+    const result = await this.withMembersLearned(run);
+    await this.afterParentWrite();
+    return result;
+  }
+
+  /**
+   * Deliver every due `parent_outbox` row: a notification or mention on the
+   * activity Queue, whose consumer delivers it in a Worker; a revoked Channel
+   * grant's Sidekick revocation; and a directory row the legacy object still
+   * had pending at import, applied here. A row is deleted only once its
+   * destination has it; a failure puts it off on the alarm's retry schedule,
+   * and a row that does not parse is kept as `failed` and never retried.
+   */
+  private parentOutboxDrain: Promise<void> | null = null;
+
+  /**
+   * Drains run one at a time. Rows are not claimed, so a drain started by a
+   * request's import while the alarm drains would send the same rows twice.
+   */
+  private async drainParentOutbox(): Promise<void> {
+    while (this.parentOutboxDrain) await this.parentOutboxDrain;
+    const drain = this.drainParentOutboxOnce();
+    this.parentOutboxDrain = drain.finally(() => { this.parentOutboxDrain = null; });
+    await this.parentOutboxDrain;
+  }
+
+  private async drainParentOutboxOnce(): Promise<void> {
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) return;
+    const rows = this.state.storage.sql.exec<{
+      parent_id: string; message_id: string; payload_json: string; attempts: number;
+    }>(
+      `SELECT parent_id, message_id, payload_json, attempts FROM parent_outbox
+        WHERE state IN ('pending', 'inflight') AND not_before <= ?
+        ORDER BY CASE effect_kind WHEN 'directory_common' THEN 0 WHEN 'directory_user' THEN 1 ELSE 2 END,
+                 created_at, message_id
+        LIMIT 100`,
+      Date.now(),
+    ).toArray();
+    if (rows.length === 0) return;
+    const envelopes: { envelope: ParentEffectEnvelope; attempts: number }[] = [];
+    for (const row of rows) {
+      const parsed = ParentEffectEnvelopeSchema.safeParse(JSON.parse(row.payload_json));
+      if (parsed.success) {
+        envelopes.push({ envelope: parsed.data, attempts: row.attempts });
+        continue;
+      }
+      // Reading it again cannot succeed, and leaving it due would make it the
+      // first row of every pass. Kept, with its code, for an operator.
+      this.failParentOutboxRow(workspaceId, row.parent_id, row.message_id,
+        zodDiagnosticCode(parsed.error, "parent_outbox_row") ?? "parent_outbox_row_invalid");
+    }
+    const deliver = async (batch: { envelope: ParentEffectEnvelope; attempts: number }[], send: () => Promise<void>) => {
+      if (batch.length === 0) return;
+      try {
+        await send();
+        this.deleteParentOutboxRows(batch.map((entry) => entry.envelope));
+      } catch (error) {
+        // A destination that refuses the row's shape (a legacy directory row
+        // whose message id is not a UUIDv7) refuses it on every attempt.
+        if (error instanceof z.ZodError) {
+          const code = zodDiagnosticCode(error, "parent_outbox_row") ?? "parent_outbox_row_invalid";
+          for (const { envelope } of batch) this.failParentOutboxRow(workspaceId, envelope.parentId, envelope.messageId, code);
+          return;
+        }
+        const code = diagnosticErrorCode(error, "parent_effect_delivery_failed");
+        this.deferParentOutboxRows(batch, code);
+        logWarn(this.env, "parent_effect_delivery_deferred", {
+          workspace_id: workspaceId,
+          message_ids: batch.map((entry) => entry.envelope.messageId),
+          effect_kinds: batch.map((entry) => entry.envelope.effect.kind),
+          code,
+        });
+      }
+    };
+    // Only the legacy object's own pending rows, carried over at import, are
+    // directory rows. Each is applied on its own, through the entry point a
+    // legacy Queue message takes, so one that cannot land yet waits alone.
+    for (const entry of envelopes) {
+      const { envelope } = entry;
+      if (envelope.effect.kind !== "directory_common" && envelope.effect.kind !== "directory_user") continue;
+      await deliver([entry], async () => {
+        await this.applyWorkstreamDirectoryEffects({ workspaceId, envelopes: [envelope] });
+      });
+    }
+    for (const entry of envelopes) {
+      if (entry.envelope.effect.kind !== "scope_grant_directory") continue;
+      await deliver([entry], () => this.deliverRevokedGrant(workspaceId, entry.envelope));
+    }
+    const queued = envelopes.filter(({ envelope }) => !WorkspaceDO.LOCAL_PARENT_EFFECT_KINDS.has(envelope.effect.kind));
+    const attempts = new Map(queued.map((entry) => [entry.envelope.messageId, entry.attempts]));
+    const plan = planParentEffectBatches(queued.map((entry) => entry.envelope));
+    if (plan.oversized.length > 0) {
+      this.deleteParentOutboxRows(plan.oversized.map((entry) => entry.effect));
+      for (const { effect, bytes } of plan.oversized) {
+        logWarn(this.env, "parent_effect_oversized", {
+          workspace_id: workspaceId,
+          workstream_id: effect.parentId,
+          message_id: effect.messageId,
+          effect_kind: effect.effect.kind,
+          bytes,
+          limit_bytes: EFFECT_QUEUE_MESSAGE_MAX_BYTES,
+          outcome: "dropped",
+        });
+      }
+    }
+    for (const batch of plan.batches) {
+      await deliver(batch.map((envelope) => ({ envelope, attempts: attempts.get(envelope.messageId) ?? 0 })), async () => {
+        await this.env.ACTIVITY_QUEUE.sendBatch(batch.map((envelope) => ({ body: envelope })));
+      });
+    }
+  }
+
+  private static readonly LOCAL_PARENT_EFFECT_KINDS = new Set(["directory_common", "directory_user", "scope_grant_directory"]);
+
+  /**
+   * A grant row in the outbox: applied (a replay of the parent's own
+   * transaction, answered by its receipt, or a legacy row carried over at
+   * import) and, for a revoked Channel grant, sent on to the Channel's
+   * Sidekick conversations, which sit outside its participant projection.
+   * The Sidekicks the Channel owns are this object's rows, so their
+   * `automation` hops are published directly.
+   */
+  private async deliverRevokedGrant(workspaceId: string, envelope: ParentEffectEnvelope): Promise<void> {
+    if (envelope.effect.kind !== "scope_grant_directory") return;
+    this.state.storage.transactionSync(() => applyScopeGrantDirectory(this.state.storage, envelope));
+    const { grant } = envelope.effect;
+    if (grant.active || grant.target.kind !== "workstream") return;
+    const automationIds = this.automationIdsOwnedBy(grant.target.parentId);
+    if (automationIds.length === 0) return;
+    const revocation: SocketAccessRevocation = {
+      reason: "workstream_participant_removed", workspaceId: asWorkspaceId(workspaceId),
+      userId: grant.userId, sessionId: null,
+      ...(grant.membershipIncarnation ? { membershipIncarnation: grant.membershipIncarnation } : {}),
+    };
+    try {
+      await publishDescendantRevocations(this.env, automationIds.map((automationId) =>
+        descendantRevocation(revocation, { scope: "automation", automationId })));
+    } catch (error) {
+      throw new Error("scope_grant_sidekick_revocation_publish_failed", { cause: error });
+    }
+  }
+
+  /** Keep a row no attempt can deliver as `failed`, never due again, and say why. */
+  private failParentOutboxRow(workspaceId: string, parentId: string, messageId: string, code: string): void {
+    this.state.storage.sql.exec(
+      `UPDATE parent_outbox SET state = 'failed', last_error_code = ? WHERE parent_id = ? AND message_id = ?`,
+      code, parentId, messageId,
+    );
+    logError(this.env, "parent_outbox_row_unreadable", {
+      workspace_id: workspaceId, workstream_id: parentId, message_id: messageId, code,
+    });
+  }
+
+  private deleteParentOutboxRows(envelopes: readonly ParentEffectEnvelope[]): void {
+    this.state.storage.transactionSync(() => {
+      for (const envelope of envelopes) {
+        this.state.storage.sql.exec(
+          `DELETE FROM parent_outbox WHERE parent_id = ? AND message_id = ? AND payload_hash = ?`,
+          envelope.parentId, envelope.messageId, envelope.payloadHash,
+        );
+      }
+    });
+  }
+
+  /** Put rows off on the alarm's retry schedule, each by its own attempt count. */
+  private deferParentOutboxRows(rows: readonly { envelope: ParentEffectEnvelope; attempts: number }[], code: string): void {
+    const now = Date.now();
+    this.state.storage.transactionSync(() => {
+      for (const { envelope, attempts } of rows) {
+        this.state.storage.sql.exec(
+          `UPDATE parent_outbox SET state = 'pending', attempts = attempts + 1, not_before = ?, last_error_code = ?
+            WHERE parent_id = ? AND message_id = ? AND payload_hash = ?`,
+          now + scheduledAlarmRetryDelay(attempts + 1), code, envelope.parentId, envelope.messageId, envelope.payloadHash,
+        );
+      }
+    });
+  }
+
+  /**
+   * Whether migration 72 has run. An Organization held below schema 58 by the
+   * meeting-notes cleanup has no `parent_*` tables, and its cold start and
+   * alarm must still work so the operator retirement RPCs can finish it.
+   */
+  private hostedParentSchemaPresent(): boolean {
+    return this.state.storage.sql.exec(
+      "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'parent_outbox'",
+    ).toArray().length > 0;
+  }
+
+  private nextParentOutboxDueAt(): number | null {
+    return this.state.storage.sql.exec<{ due_at: number | null }>(
+      `SELECT MIN(not_before) AS due_at FROM parent_outbox WHERE state IN ('pending', 'inflight')`,
+    ).toArray()[0]?.due_at ?? null;
+  }
+
+  /** Import pending parents in pages, so an Organization converges without anyone opening anything. */
+  private async importDueParents(now: number): Promise<void> {
+    // One page of a cross-object walk, for the reason `SPACE_BOOTSTRAP_PAGE_SIZE`
+    // gives: an alarm has to finish the page. An import is one RPC per parent.
+    for (const due of dueParentImports(this.state.storage.sql, now, SPACE_BOOTSTRAP_PAGE_SIZE)) {
+      try {
+        await this.ensureParentImported(due.parentId);
+      } catch {
+        // Deferred and logged by the import itself; the next page moves on.
+      }
+    }
+  }
+
+  private async drainDueParentBreakouts(now: number): Promise<void> {
+    for (const parentId of HostedParent.dueParentIds(this.state.storage.sql, now)) {
+      const parent = await this.hostedParent(parentId);
+      await this.withMembersLearned(() => parent.drainPrivateChildMembershipEffects()).catch(() => undefined);
+      await this.withMembersLearned(() => parent.drainPrivateChildLifecycleEffects());
+    }
+    await this.afterParentWrite();
+  }
+
+  private async runHostedParentAlarm(alarm: ScheduledAlarm): Promise<boolean> {
+    if (alarm.kind === PARTICIPANT_PROJECTION_ALARM) {
+      const payload = HostedParticipantProjectionAlarmSchema.parse(JSON.parse(alarm.payload ?? "null"));
+      const parent = await this.hostedParent(payload.parentId);
+      await parent.deliverParticipantProjection(payload.delivery.substreamId, payload.delivery.projection.userId,
+        payload.delivery.projection.revision);
+      return true;
+    }
+    if (alarm.kind === PARTICIPANT_MIGRATION_ALARM) {
+      const [parentId, substreamId] = alarm.key.split(":");
+      if (!parentId || !substreamId) throw new Error("parent_participant_migration_key_invalid");
+      await this.parentWrite(async () => (await this.hostedParent(parentId)).runParticipantMigration(asSubstreamId(substreamId)));
+      return true;
+    }
+    if (alarm.kind === SCOPE_INVITATION_DELIVERY_ALARM) {
+      const [parentId, invitationId] = alarm.key.split(":");
+      if (!parentId || !invitationId) throw new Error("parent_invitation_delivery_key_invalid");
+      await (await this.hostedParent(parentId)).deliverInvitation(invitationId);
+      return true;
+    }
+    return false;
+  }
+
+  // The conversation-parent contract.
+
+  /**
+   * Which kind of hosted parent an id names, with its authority, and, when a
+   * viewer is named, that viewer's decision too: opening a Channel
+   * conversation is then one call to this object rather than a resolve and a
+   * check in turn. `null` kind is an id this object hosts no parent for (a
+   * Sidekick, or nothing), which the caller then asks its own object about.
+   */
+  async resolveHostedParent(input: {
+    workspaceId: string;
+    parentId: string;
+    viewer?: Omit<Parameters<HostedParent["authorizeViewer"]>[0], "workspaceId" | "parentId">;
+  }): Promise<{
+    kind: "workstream" | "space" | null;
+    authority: Awaited<ReturnType<HostedParent["authority"]>>;
+    viewer?: Awaited<ReturnType<HostedParent["authorizeViewer"]>>;
+  }> {
+    const request = z.object({ workspaceId: WorkspaceIdSchema, parentId: IdSchema }).parse(input);
+    const parent = await this.hostedParent(request.parentId, request.workspaceId);
+    const authority = await parent.authority({ workspaceId: request.workspaceId, parentId: request.parentId });
+    const kind = authority.exists ? parent.role.kind : null;
+    if (!input.viewer || kind === null) return { kind, authority };
+    const viewer = await parent.authorizeViewer({
+      ...input.viewer, workspaceId: request.workspaceId, parentId: request.parentId,
+    });
+    return { kind, authority, viewer };
+  }
+
+  async authority(input: Parameters<HostedParent["authority"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).authority(input);
+  }
+
+  async authorizeViewer(input: Parameters<HostedParent["authorizeViewer"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).authorizeViewer(input);
+  }
+
+  async reserveChild(input: Parameters<HostedParent["reserveChild"]>[0]) {
+    return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).reserveChild(input));
+  }
+
+  async reserveAgentChild(input: Parameters<HostedParent["reserveAgentChild"]>[0]) {
+    return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).reserveAgentChild(input));
+  }
+
+  /**
+   * The provisional row is applied by `reserveChild` itself, in its
+   * transaction; nothing is left for this to finish. Kept for callers
+   * deployed before that.
+   */
+  async flushProvisionalDirectory(input: { workspaceId: string; parentId: string }): Promise<void> {
+    await this.hostedParent(input.parentId, input.workspaceId);
+  }
+
+  async listChildren(input: Parameters<HostedParent["listChildren"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).listChildren(input);
+  }
+
+  async childTerminalDeadlines(input: Parameters<HostedParent["childTerminalDeadlines"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).childTerminalDeadlines(input);
+  }
+
+  /** The children a hosted parent knows, for the retirement walk. */
+  async childrenForRetirement(input: { workspaceId: string; parentId: string }) {
+    const parent = await this.hostedParent(input.parentId, input.workspaceId);
+    if (!parent.metadataRow()) return { status: "missing" as const };
+    return { status: "ok" as const, children: parent.childrenForRetirement() };
+  }
+
+  /**
+   * The parent step of a conversation's effects, delivered by the activity
+   * Queue consumer. The directory step lands in the same transaction. The
+   * people the effects name are learned before it, so the transaction does
+   * not have to stop for D1.
+   */
+  async receiveChildEffects(input: Parameters<HostedParent["receiveChildEffects"]>[0]) {
+    // Parsed before anything is written: the first envelope decides which
+    // parent is imported and, on a new object, the object's own identity.
+    const request = parseRpcInput(ReceiveChildEffectsRequestSchema, input, "receive_child_effects");
+    const envelope = request.envelopes[0]!;
+    if (envelope.parentKind !== "workstream" && envelope.parentKind !== "space") {
+      throw new Error("conversation_effect_parent_kind_unhosted");
+    }
+    await this.initialized;
+    // Every parent created here has its row before its first child effect, so
+    // an effect for a parent with no row and no ledger entry names one a
+    // legacy object may still hold: a Channel whose provisional directory row
+    // never reached this object before the move. Creating an empty row would
+    // lose that object's creator, grants and reservations, so it is imported
+    // first; an id no legacy object holds imports empty, once.
+    const known = this.state.storage.sql.exec(
+      `SELECT 1 FROM parent_metadata WHERE parent_id = ?
+       UNION ALL SELECT 1 FROM parent_imports WHERE parent_id = ? LIMIT 1`,
+      envelope.parentId, envelope.parentId,
+    ).toArray().length > 0;
+    if (!known) notePendingParentImport(this.state.storage.sql, envelope.parentId, envelope.parentKind);
+    const parent = await this.hostedParent(envelope.parentId, envelope.workspaceId);
+    await this.learnMembers([...new Set(request.envelopes.flatMap(({ effect }) => (
+      effect.kind === "directory_user" ? [effect.userId]
+        : isPersonNotificationEffect(effect) ? [effect.recipientUserId] : []
+    )))]);
+    const accepted = await this.parentWrite(() => parent.receiveChildEffects(request));
+    await parent.afterChildEffects();
+    return { accepted };
+  }
+
+  async listAuthorizationChildren(input: Parameters<HostedParent["listAuthorizationChildren"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).listAuthorizationChildren(input);
+  }
+
+  async readAuthorizationFacts(input: Parameters<HostedParent["readAuthorizationFacts"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).readAuthorizationFacts(input);
+  }
+
+  // Sidekick recommendations.
+
+  async recommendedSidekickIds(input: Parameters<HostedParent["recommendedSidekickIds"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).recommendedSidekickIds(input);
+  }
+
+  async readManagementAccess(input: Parameters<HostedParent["readManagementAccess"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).readManagementAccess(input);
+  }
+
+  async setSidekickRecommendation(input: Parameters<HostedParent["setSidekickRecommendation"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).setSidekickRecommendation(input);
+  }
+
+  // Space access provenance.
+
+  async readAccessSources(input: Parameters<HostedParent["readAccessSources"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).readAccessSources(input);
+  }
+
+  async readPersistedSpaceAccessSources(input: Parameters<HostedParent["readPersistedSpaceAccessSources"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).readPersistedSpaceAccessSources(input);
+  }
+
+  async setDirectScope(input: Parameters<HostedParent["setDirectScope"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).setDirectScope(input);
+  }
+
+  async noteDirectReader(input: Parameters<HostedParent["noteDirectReader"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).noteDirectReader(input);
+  }
+
+  async applySpaceAccessSource(input: Parameters<HostedParent["applySpaceAccessSource"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).applySpaceAccessSource(input);
+  }
+
+  async confirmSpaceAccessSource(input: Parameters<HostedParent["confirmSpaceAccessSource"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).confirmSpaceAccessSource(input);
+  }
+
+  /** The same swap `moveSpaceMembership` makes inside its transaction, over RPC for its suite. */
+  async replaceEquivalentSpaceAccessSource(input: Parameters<HostedParent["replaceEquivalentSpaceAccessSource"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).replaceEquivalentSpaceAccessSource(input);
+  }
+
+  async retractSpaceAccessSource(input: Parameters<HostedParent["retractSpaceAccessSource"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).retractSpaceAccessSource(input);
+  }
+
+  // Grants, invitations and the participant handoff.
+
+  async scopeSharingOptions(input: Parameters<HostedParent["scopeSharingOptions"]>[0]) {
+    return (await this.channelParent(input.parentId, input.workspaceId)).scopeSharingOptions(input);
+  }
+
+  async listManagedScopeGrants(input: Parameters<HostedParent["listManagedScopeGrants"]>[0]) {
+    return (await this.channelParent(input.target.parentId, input.target.workspaceId)).listManagedScopeGrants(input);
+  }
+
+  async listScopeInvitations(input: Parameters<HostedParent["listScopeInvitations"]>[0]) {
+    return (await this.channelParent(input.target.parentId, input.target.workspaceId)).listScopeInvitations(input);
+  }
+
+  async createScopeInvitations(input: Parameters<HostedParent["createScopeInvitations"]>[0]) {
+    return this.parentWrite(async () => (await this.channelParent(input.parentId, input.workspaceId)).createScopeInvitations(input));
+  }
+
+  async acceptScopeInvitation(input: Parameters<HostedParent["acceptScopeInvitation"]>[0]) {
+    return this.parentWrite(async () => (await this.channelParent(input.parentId, input.workspaceId)).acceptScopeInvitation(input));
+  }
+
+  async describeScopeInvitation(input: Parameters<HostedParent["describeScopeInvitation"]>[0]) {
+    return (await this.channelParent(input.parentId, input.workspaceId)).describeScopeInvitation(input);
+  }
+
+  async revokeScopeInvitation(input: Parameters<HostedParent["revokeScopeInvitation"]>[0]) {
+    return (await this.channelParent(input.parentId, input.workspaceId)).revokeScopeInvitation(input);
+  }
+
+  async readScopeAccess(input: Parameters<HostedParent["readScopeAccess"]>[0]) {
+    return (await this.hostedParent(input.target.parentId, input.target.workspaceId)).readScopeAccess(input);
+  }
+
+  async readSharedWorkstream(input: Parameters<HostedParent["readSharedWorkstream"]>[0]) {
+    return (await this.channelParent(input.parentId, input.workspaceId)).readSharedWorkstream(input);
+  }
+
+  async mutateScopeGrant(input: Parameters<HostedParent["mutateScopeGrant"]>[0]) {
+    return this.parentWrite(async () => (await this.channelParent(input.target.parentId, input.target.workspaceId)).mutateScopeGrant(input));
+  }
+
+  async mutateParticipantGrant(input: Parameters<HostedParent["mutateParticipantGrant"]>[0]) {
+    return this.parentWrite(async () => (await this.channelParent(input.target.parentId, input.target.workspaceId))
+      .mutateParticipantGrant(input));
+  }
+
+  async admitConnectorParticipants(input: Parameters<HostedParent["admitConnectorParticipants"]>[0]) {
+    return this.parentWrite(async () => (await this.channelParent(input.parentId, input.workspaceId)).admitConnectorParticipants(input));
+  }
+
+  async joinConversation(input: Parameters<HostedParent["joinConversation"]>[0]) {
+    return this.parentWrite(async () => (await this.channelParent(input.target.parentId, input.target.workspaceId)).joinConversation(input));
+  }
+
+  async beginMainParticipantMigration(input: Parameters<HostedParent["beginMainParticipantMigration"]>[0]) {
+    return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).beginMainParticipantMigration(input));
+  }
+
+  async beginChildParticipantMigration(input: Parameters<HostedParent["beginChildParticipantMigration"]>[0]) {
+    return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).beginChildParticipantMigration(input));
+  }
+
+  // Private breakouts.
+
+  async beginPrivateChildPreparation(input: Parameters<HostedParent["beginPrivateChildPreparation"]>[0]) {
+    return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).beginPrivateChildPreparation(input));
+  }
+
+  async readPrivateChildPreparation(input: Parameters<HostedParent["readPrivateChildPreparation"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).readPrivateChildPreparation(input);
+  }
+
+  async claimPrivateChildConfirmation(input: Parameters<HostedParent["claimPrivateChildConfirmation"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).claimPrivateChildConfirmation(input);
+  }
+
+  async savePrivateChildCapture(input: Parameters<HostedParent["savePrivateChildCapture"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).savePrivateChildCapture(input);
+  }
+
+  async savePrivateChildPart(input: Parameters<HostedParent["savePrivateChildPart"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).savePrivateChildPart(input);
+  }
+
+  async savePreparedPrivateChildContext(input: Parameters<HostedParent["savePreparedPrivateChildContext"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).savePreparedPrivateChildContext(input);
+  }
+
+  async setPrivateChildTerminalStatus(input: Parameters<HostedParent["setPrivateChildTerminalStatus"]>[0]) {
+    return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).setPrivateChildTerminalStatus(input));
+  }
+
+  async listVisiblePrivateChildren(input: Parameters<HostedParent["listVisiblePrivateChildren"]>[0]) {
+    return (await this.hostedParent(input.parentId, input.workspaceId)).listVisiblePrivateChildren(input);
+  }
+
+  async addPrivateChildParticipant(input: Parameters<HostedParent["addPrivateChildParticipant"]>[0]) {
+    return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).addPrivateChildParticipant(input));
+  }
+
+  async removePrivateChildParticipant(input: Parameters<HostedParent["removePrivateChildParticipant"]>[0]) {
+    return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).removePrivateChildParticipant(input));
+  }
+
+  async setPrivateChildArchived(input: Parameters<HostedParent["setPrivateChildArchived"]>[0]) {
+    return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).setPrivateChildArchived(input));
+  }
+
+  // Socket revocation for a parent's Channel control sockets.
+
+  /**
+   * The `workstream_audience_narrowed` hop, parent step included.
+   *
+   * Closes the Channel's control sockets it can no longer admit, then, for each
+   * person whose socket that was, runs the per-user parent step here too: the
+   * conversations the revocation continues to, and the Sidekicks the Channel
+   * owns. Both lists are this object's rows, so the consumer publishes only
+   * the leaves instead of a `workstream` and a `workstream_automations` hop per
+   * person that each came straight back here.
+   *
+   * The per-user step carries `workstream_participant_removed`, the reason a
+   * narrowing is published with: losing the Channel keeps any breakout the
+   * person can still read. `closedUserIds` stays in the answer so a consumer
+   * from before this change still publishes its two hops per person.
+   */
+  async revokeNarrowedAudienceAccess(input: Parameters<HostedParent["revokeNarrowedAudienceAccess"]>[0]): Promise<{
+    closedUserIds: string[];
+    substreams: { userId: string; substreamIds: string[] }[];
+    automationIds: string[];
+  }> {
+    const parent = await this.hostedParent(input.parentId, input.workspaceId);
+    const { closedUserIds } = await parent.revokeNarrowedAudienceAccess(input);
+    const substreams: { userId: string; substreamIds: string[] }[] = [];
+    for (const userId of closedUserIds) {
+      const { substreamIds } = await parent.revokeSocketAccess({
+        reason: "workstream_participant_removed", workspaceId: asWorkspaceId(input.workspaceId), userId, sessionId: null,
+      });
+      substreams.push({ userId, substreamIds });
+    }
+    return {
+      closedUserIds,
+      substreams,
+      automationIds: closedUserIds.length ? this.automationIdsOwnedBy(input.parentId) : [],
+    };
+  }
+
+  /** The `workstream` revocation hop: close this Channel's control sockets and name its conversations. */
+  async revokeParentSocketAccess(input: { parentId: string; revocation: SocketAccessRevocation }) {
+    const parentId = IdSchema.parse(input.parentId);
+    return (await this.hostedParent(parentId)).revokeSocketAccess(input.revocation);
+  }
+
   override async fetch(request: Request): Promise<Response> {
     await this.initialized;
     const path = new URL(request.url).pathname;
     if (request.method === "GET" && (path === "/socket" || path === "/")) {
       return this.acceptSocket(request);
+    }
+    // The retired Channel control socket, for clients released before a
+    // Channel's state moved onto its workspace-socket row.
+    if (request.method === "GET" && path === "/parent-socket") {
+      const parentId = WorkstreamIdSchema.safeParse(readRallyHeader(request.headers, RALLY_HEADERS.WORKSTREAM_ID));
+      if (!parentId.success) return json({ error: "invalid_socket_identity" }, 400);
+      const response = await (await this.hostedParent(parentId.data)).acceptSocket(request);
+      if (response.status === 101) this.wakeMainConversation(parentId.data);
+      return response;
     }
     if (request.method === "GET" && path === "/health") {
       return json({
@@ -4625,6 +5636,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   override async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
+    // A Channel control socket belongs to its hosted parent. Its attachment is
+    // one the workspace reader refuses, so it is recognized first.
+    const control = readControlSocketAttachment(socket);
+    if (control) {
+      const parent = await this.hostedParent(control.workstreamId);
+      await parent.onSocketMessage(socket, control, message);
+      return;
+    }
     // Record callback ingress before initialization can stall; parse the
     // attachment only once because this callback also handles presence frames.
     this.lastSocketEventAt = Date.now();
@@ -4740,6 +5759,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         && parsed.data.foregroundWorkstreamId !== null) {
         const now = Date.now();
         const workstreamId = parsed.data.foregroundWorkstreamId;
+        // Opening a Channel is the moment its Main is about to be read. The
+        // Channel control socket used to start this wake; a desktop that no
+        // longer opens one says it here instead, ahead of its feed ticket.
+        this.wakeMainConversation(workstreamId);
         this.state.storage.transactionSync(() => {
           this.state.storage.sql.exec(
             `INSERT INTO workspace_workstream_access(user_id, workstream_id, last_accessed_at)
@@ -4759,7 +5782,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           workstream: mapDirectoryWorkstreams(
             this.state.storage.sql, [row], currentAttachment.workspaceId,
             this.spaceStorage(), currentAttachment.userId,
-            currentAttachment.accessClass,
+            currentAttachment.accessClass, true,
           ).map((item) => currentAttachment.accessClass === "guest"
             ? { ...item, spaceIds: [] }
             : item)[0],
@@ -4794,7 +5817,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         limit: parsed.data.limit,
         ...(parsed.data.before ? { before: parsed.data.before } : {}),
         includeSystem: parsed.data.includeSystem,
-      }, attachment.accessClass);
+      }, attachment.accessClass, true);
       socket.send(JSON.stringify(WorkspaceWorkstreamPageEventSchema.parse({
         type: "workspace_workstream_page",
         requestId: parsed.data.requestId,
@@ -4970,7 +5993,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const searchAuthorization = nextSearchAuthorizationPush(this.state.storage.sql);
     const authorization = this.state.storage.sql.exec<{ due: number | null }>('SELECT MIN(not_before) AS due FROM authorization_delivery').one().due;
     const firstFrame = nextFirstFrameDeadline(this.unheardSockets(), this.socketFirstFrameDeadlineMs);
+    const hosted = this.hostedParentSchemaPresent();
+    const parentOutbox = hosted ? this.nextParentOutboxDueAt() : null;
+    const parentBreakouts = hosted ? HostedParent.nextDueAt(this.state.storage.sql) : null;
+    const parentImport = hosted ? nextParentImportDueAt(this.state.storage.sql) : null;
+    const directoryFollowUp = hosted ? this.nextDirectoryFollowUpDueAt() : null;
     return [
+      ...(parentOutbox === null ? [] : [parentOutbox]),
+      ...(directoryFollowUp === null ? [] : [directoryFollowUp]),
+      ...(parentBreakouts === null ? [] : [parentBreakouts]),
+      ...(parentImport === null ? [] : [parentImport]),
       ...(oldest === null ? [] : [Number(oldest) + ACTIVITY_EVENT_RETENTION_MS]),
       ...(spacePublication === null ? [] : [spacePublication]),
       ...(spaceIntent === null ? [] : [spaceIntent]),
@@ -5056,7 +6088,30 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   protected override async runDueAlarmWork(now: number): Promise<void> {
     const workspaceId = this.workspaceId();
+    // A phase that throws is logged and the rest still run; the first throw is
+    // rethrown at the end, so the alarm fails and retries as it did before
+    // rather than re-arming at once for rows the failed phase left due.
+    const failures: unknown[] = [];
+    const isolated = async (phase: WorkspaceScheduledAlarmPhase, run: () => Promise<void>) => {
+      try {
+        await this.instrumentWorkspaceAlarmPhase(phase, undefined, run);
+      } catch (error) {
+        failures.push(error);
+        logWarn(this.env, "workspace_alarm_phase_failed", {
+          workspace_id: workspaceId, phase, code: diagnosticErrorCode(error, `${phase}_failed`),
+        });
+      }
+    };
     if (workspaceId) {
+      // Hosted parents first: an outbox row is a directory update somebody is
+      // waiting to see. Background imports run last instead: a page is up to
+      // one cold legacy RPC per parent, and a Channel someone opens imports on
+      // that request without waiting for the alarm.
+      if (this.hostedParentSchemaPresent()) {
+        await isolated("parent_outbox", () => this.drainParentOutbox());
+        await isolated("parent_breakouts", () => this.drainDueParentBreakouts(now));
+        await isolated("directory_followup", () => this.runDirectoryFollowUps(this.dueDirectoryFollowUps(now)));
+      }
       try { await flushSearchAuthorizationPush(this.state.storage.sql, this.env, workspaceId); }
       catch { logWarn(this.env, 'search_authorization_push_deferred', { region: this.env.AVALON_REGION }); }
       try { await flushAuthorizationDeliveries(this.state.storage.sql, this.env.ACTIVITY_QUEUE, now); }
@@ -5102,28 +6157,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           });
         }
       });
-      // An interrupted Space operation finishes here. Nothing else would: the
-      // request that staged the intent is gone, and the Channel it was about to
-      // reach was never told the operation existed.
-      await this.instrumentWorkspaceAlarmPhase("space_intent_resume", undefined, async () => {
-        try {
-          await publishSpaceIntentResumes({
-            storage: this.spaceStorage(),
-            queue: this.env.ACTIVITY_QUEUE,
-            workspaceId,
-            region: this.env.AVALON_REGION,
-            now,
-            retryAt: (attempt) => now + scheduledAlarmRetryDelay(attempt),
-          });
-        } catch (error) {
-          logWarn(this.env, "space_intent_resume_publication_failed", {
-            workspace_id: workspaceId,
-            reason: error instanceof Error ? error.message : "unknown",
-          });
-        }
-      });
     }
-    await this.instrumentWorkspaceAlarmPhase("activity_reap", undefined, async () => {
+    await isolated("activity_reap", async () => {
       this.reapExpiredActivityEvents(now);
     });
     // Re-derive the whole index before this alarm ends, exactly as the object
@@ -5136,10 +6171,29 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // the occurrence that replaced it: a recurring automation fires once and
     // then never again until an unrelated mutation happens to reconcile.
     if (workspaceId) {
-      await this.instrumentWorkspaceAlarmPhase("schedule_reconcile", undefined, async () => {
+      await isolated("schedule_reconcile", async () => {
         await this.refreshSchedule(workspaceId);
       });
+      if (this.hostedParentSchemaPresent()) {
+        await isolated("parent_import", () => this.importDueParents(now));
+      }
+      // An interrupted Space operation finishes here. Nothing else would: the
+      // request that staged the intent is gone, and the Channel it was about to
+      // reach was never told the operation existed. Last, because each step
+      // waits on a Channel's conversation and the phases above do not.
+      await this.instrumentWorkspaceAlarmPhase("space_intent_resume", undefined, async () => {
+        try {
+          const claimed = this.spaceStorage().claimIntentResumes(now, (attempt) => now + scheduledAlarmRetryDelay(attempt));
+          await this.resumeSpaceIntentsInPlace(workspaceId, claimed);
+        } catch (error) {
+          logWarn(this.env, "space_intent_resume_claim_failed", {
+            workspace_id: workspaceId,
+            reason: diagnosticErrorCode(error, "space_intent_resume_claim_failed"),
+          });
+        }
+      });
     }
+    if (failures.length > 0) throw failures[0];
   }
 
   protected override async runScheduledAlarm(alarm: ScheduledAlarm): Promise<ScheduledAlarmOutcome> {
@@ -5149,6 +6203,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       async () => {
         const workspaceId = this.workspaceId();
         if (!workspaceId) return;
+        if (await this.runHostedParentAlarm(alarm)) return;
         if (alarm.kind === PRODUCT_ALARM_KIND) {
           await this.runProductAlarm(workspaceId);
           return;
@@ -5305,16 +6360,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       workspaceId,
       directory: this,
       notificationIntents: this,
-      // The directory row is this object's; which conversation the deadline
-      // belongs to is the work stream's own knowledge, read from its parent
-      // object rather than copied here.
+      // The directory row carries one deadline per Channel; which
+      // conversation it belongs to is the Channel's hosted parent's knowledge,
+      // read from its rows in this object.
       dueTerminalSubstreams: async (workstreamId, through) => {
-        const parent = await conversationParentStub(this.env, {
-          workspaceId: asWorkspaceId(workspaceId),
-          parentKind: "workstream",
-          parentId: workstreamId,
-        });
-        const { items } = await parent.childTerminalDeadlines({
+        const parent = await this.hostedParent(workstreamId);
+        const { items } = parent.childTerminalDeadlines({
           workspaceId: asWorkspaceId(workspaceId),
           parentId: workstreamId,
         });
@@ -5609,17 +6660,55 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = z.strictObject({ workspaceId: WorkspaceIdSchema, workstreamId: IdSchema }).parse(input);
     this.assertWorkspace(request.workspaceId);
-    return {
-      automationIds: this.state.storage.sql.exec<{ automation_id: string }>(
-        `SELECT automation_id FROM automation_directory
-          WHERE owning_workstream_id = ? AND lifecycle <> 'deleted' ORDER BY automation_id`,
-        request.workstreamId,
-      ).toArray().map((row) => row.automation_id),
-    };
+    return { automationIds: this.automationIdsOwnedBy(request.workstreamId) };
+  }
+
+  /** The live Sidekicks a Channel owns, each an `automation` revocation hop. */
+  private automationIdsOwnedBy(workstreamId: string): string[] {
+    return this.state.storage.sql.exec<{ automation_id: string }>(
+      `SELECT automation_id FROM automation_directory
+        WHERE owning_workstream_id = ? AND lifecycle <> 'deleted' ORDER BY automation_id`,
+      workstreamId,
+    ).toArray().map((row) => row.automation_id);
+  }
+
+  /**
+   * The `workstream` hop for every hosted Channel a person could hold a socket
+   * on, run here in the same call as the workspace hop.
+   *
+   * A Channel's control sockets are this object's sockets and its children are
+   * this object's rows, so publishing a `workstream` message per Channel only
+   * for it to come back here was a Queue round trip per Channel before any
+   * conversation heard. A Channel whose legacy import is still pending is left
+   * to its own hop: importing it here would put one remote call per such
+   * Channel inside this walk.
+   */
+  private async revokeHostedChannelAccess(
+    workstreamIds: readonly string[],
+    revocation: SocketAccessRevocation,
+  ): Promise<{ workstreamId: string; substreamIds: string[] }[]> {
+    const channels: { workstreamId: string; substreamIds: string[] }[] = [];
+    for (const workstreamId of workstreamIds) {
+      const pendingImport = this.state.storage.sql.exec(
+        "SELECT 1 FROM parent_imports WHERE parent_id = ? AND state = 'pending'", workstreamId,
+      ).toArray().length > 0;
+      if (pendingImport) continue;
+      const { substreamIds } = await (await this.hostedParent(workstreamId)).revokeSocketAccess(revocation);
+      channels.push({ workstreamId, substreamIds });
+    }
+    return channels;
   }
 
   async revokeSocketAccess(revocation: SocketAccessRevocation): Promise<{
+    /**
+     * Every Channel the person could hold a socket on. A Channel also named in
+     * `channels` has had its hop run here; a consumer publishes a `workstream`
+     * hop only for the rest. Kept whole so a consumer from before `channels`
+     * still reaches every Channel.
+     */
     workstreamIds: string[];
+    /** The Channels whose `workstream` hop this call ran, with the conversations each names. */
+    channels: { workstreamId: string; substreamIds: string[] }[];
     automationIds: string[];
     artifactIds: string[];
   }> {
@@ -5660,8 +6749,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         sockets: closed,
       });
     }
+    const workstreamIds = this.revocableWorkstreamIds(request.userId);
     return {
-      workstreamIds: this.revocableWorkstreamIds(request.userId),
+      workstreamIds,
+      channels: await this.revokeHostedChannelAccess(workstreamIds, request),
       // Every automation, unfiltered by person, for the same reason the
       // artifact list is: an automation's conversation admits its author and
       // its run-as principal, any member when it is workspace-scoped, and any
@@ -5705,8 +6796,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private revocableWorkstreamIds(userId: string): string[] {
     return this.state.storage.sql.exec<{ workstream_id: string }>(
       `SELECT directory.workstream_id
-         FROM workspace_workstream_directory directory
-         LEFT JOIN workspace_workstream_viewers viewer
+         FROM channels directory
+         LEFT JOIN channel_viewers viewer
            ON viewer.workstream_id = directory.workstream_id AND viewer.user_id = ?
         WHERE viewer.user_id IS NOT NULL OR directory.scope = 'workspace'
         ORDER BY directory.workstream_id`,
@@ -5938,8 +7029,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   ): boolean {
     return this.state.storage.sql.exec<{ is_participant: number }>(
       `SELECT viewer.is_participant
-         FROM workspace_workstream_viewers viewer
-         JOIN workspace_workstream_directory directory
+         FROM channel_viewers viewer
+         JOIN channels directory
            ON directory.workstream_id = viewer.workstream_id
           AND directory.authority_generation = viewer.authority_generation
         WHERE viewer.workstream_id = ? AND viewer.user_id = ?
@@ -6255,11 +7346,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * their sidebar.
    */
   private async activeSpaceMember(workspaceId: string, userId: string): Promise<boolean> {
-    return Boolean(await this.env.DB.prepare(
-      `SELECT 1 FROM workspace_members
-        WHERE workspace_id = ? AND user_id = ? AND status = 'active'
-          AND access_class = 'member' LIMIT 1`,
-    ).bind(workspaceId, userId).first());
+    const relationship = await this.readRelationship(workspaceId, userId);
+    return relationship?.status === "active" && relationship.accessClass === "member";
   }
 
   /**
@@ -6313,12 +7401,29 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Allocate a Space and answer with it before its own object exists.
+   * Whether this person may create a Space, asked before anything is written.
    *
-   * The caller provisions `SpaceDO` next and calls `cancelSpaceReservation` if
-   * that fails. Nothing is published to a socket until the reservation is
-   * either provisioned or cancelled — the snapshot below is what a client
-   * applies, and a Space whose object never opened must not reach one.
+   * `SpaceService.create` writes the D1 anchor and bootstraps the Space's
+   * conversation environment before `reserveSpace`, so the gate has to be
+   * answered first: otherwise every refused attempt leaves an anchor and a
+   * bootstrapped object behind. The same gate `reserveSpace` applies again.
+   */
+  async admitSpaceCreation(input: WorkspaceSpaceListRequest): Promise<{ ok: true } | { ok: false; code: SpaceErrorCode }> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceListRequestSchema, input, "admit_space_creation");
+    this.assertWorkspace(request.workspaceId);
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    return refusal ? { ok: false, code: refusal } : { ok: true };
+  }
+
+  /**
+   * Allocate a Space and answer with it before its hidden conversation exists.
+   *
+   * The Space's row and its hosted parent (metadata, main child and
+   * provisional directory projection) are written in one transaction.
+   * `SpaceService.create` has already asked `admitSpaceCreation` and written
+   * the D1 anchor under this id. A replay of an existing, readable id reserves
+   * the parent again, which is idempotent.
    */
   async reserveSpace(input: WorkspaceSpaceReserveRequest): Promise<WorkspaceSpaceReserveResult> {
     await this.initialized;
@@ -6326,19 +7431,77 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
-    const reserved = this.spaceStorage().reserveForCreation(request, request.spaceId ?? uuidV7());
+    const spaceId = request.spaceId ?? uuidV7();
+    const parent = await this.spaceParentReservation(spaceId);
+    if (!parent.ok) return { ok: false, code: parent.code, unreachableUserIds: [], blockedWorkstreamIds: [] };
+    const reserved = await this.withMembersLearned(() => this.state.storage.transactionSync(() => {
+      const result = this.spaceStorage().reserveForCreation(request, spaceId);
+      if (result.space) parent.reserve(request.userId, result.space);
+      return result;
+    }));
     if (!reserved.space) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
+    await this.afterParentWrite();
     return WorkspaceSpaceReserveResultSchema.parse({ ok: true, ...reserved });
   }
 
   /**
-   * Undo a reservation whose Space object could not be opened.
+   * What reserving a Space's hosted parent needs from outside the transaction:
+   * a legacy parent imported, and the regional authority generation the parent
+   * is born at. An id this object already hosts as a Channel is refused as
+   * `space_not_found`, the answer an identity the caller cannot use as a Space
+   * always gets; a generation D1 cannot supply is `space_authority_unreachable`.
+   */
+  private async spaceParentReservation(spaceId: string): Promise<
+    | { ok: false; code: "space_not_found" | "space_authority_unreachable" }
+    | { ok: true; reserve: (userId: string, space: SpaceSummary) => void }
+  > {
+    await this.ensureParentImported(spaceId);
+    const known = this.state.storage.sql.exec<{ parent_kind: string }>(
+      `SELECT parent_kind FROM parent_metadata WHERE parent_id = ?
+       UNION ALL SELECT parent_kind FROM parent_imports WHERE parent_id = ?
+       LIMIT 1`,
+      spaceId, spaceId,
+    ).toArray()[0]?.parent_kind;
+    if (known !== undefined && known !== "space") return { ok: false, code: "space_not_found" };
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (authority.generation < 1) return { ok: false, code: "space_authority_unreachable" };
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) throw new Error("workspace_identity_unknown");
+    return {
+      ok: true,
+      reserve: (userId, space) => {
+        new HostedParent(this.hostedParentHost(), space.id, HOSTED_SPACE_ROLE).reserveChild({
+          workspaceId: asWorkspaceId(workspaceId),
+          parentId: space.id,
+          substreamId: asSubstreamId("0"),
+          kind: "main",
+          createdByUserId: asUserId(userId),
+          authorityGeneration: authority.generation,
+          directory: {
+            title: space.name,
+            description: "",
+            scope: space.scope,
+            systemKind: null,
+            emailAddress: null,
+            titleStatus: "settled",
+            createdAt: space.createdAt,
+          },
+        });
+      },
+    };
+  }
+
+  /**
+   * Take back a Space whose hidden conversation could not be provisioned.
    *
-   * Rechecked like every other Space write, and narrowed to the reservation
-   * this caller made. It carried a `userId` and ignored it, so any member could
-   * delete any Space still at source version zero — which for the seconds
-   * between `reserveSpace` and the first `directory_common` effect is every
-   * Space anybody is creating.
+   * `SpaceService` calls it when provisioning fails after `reserveSpace` (or
+   * `openGeneralSpace`) created the Space: the Space row, its viewers and
+   * order, and its hosted parent's reservation go in one transaction, and the
+   * snapshot is republished, so the Space is not left listed with a
+   * conversation nobody can open. Narrowed to the caller's own creation and
+   * refused (`cancelled: false`) once anything depends on the Space: a
+   * Channel placed in it, or a projection from its conversation, which means
+   * the conversation exists after all.
    */
   async cancelSpaceReservation(input: WorkspaceSpaceRequest): Promise<{ cancelled: boolean }> {
     await this.initialized;
@@ -6347,43 +7510,77 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId)) {
       return { cancelled: false };
     }
-    return { cancelled: this.spaceStorage().cancelReservation(request.spaceId, request.userId) };
+    const parent = await this.hostedParent(request.spaceId, request.workspaceId);
+    let cancelled: boolean;
+    try {
+      cancelled = await this.withMembersLearned(() => this.state.storage.transactionSync(() => {
+        if (!this.spaceStorage().discardCreation(request.spaceId, request.userId)) return false;
+        // Rolls the Space row back with it: a conversation that has published
+        // is one somebody's Channel or sidebar may already be reading.
+        if (!parent.discardUnopenedReservation()) throw new SpaceCreationInUse();
+        return true;
+      }));
+    } catch (error) {
+      if (!(error instanceof SpaceCreationInUse)) throw error;
+      cancelled = false;
+    }
+    if (cancelled) this.publishSpaceSnapshot();
+    return { cancelled };
   }
 
   /**
-   * The Organization's General Space, created once.
+   * The Organization's General Space with its hosted parent, created once.
    *
-   * Idempotent because three callers reach it — Organization creation, the
-   * cutover, and a retry of either — and the unique partial index on
-   * `system_role` is what makes a race between two of them produce one Space
-   * rather than two fallbacks. The caller still provisions the object; a
-   * `created: true` answer is what tells it to.
+   * Two forms, because `SpaceService` writes the D1 anchor under General's id
+   * before General exists and so has to learn first whether it does. Without
+   * a `spaceId` this only answers: General, or `absent`; that is the whole
+   * cost for every caller after the first. With one, General and its hosted
+   * parent are written in one transaction, or the General a concurrent caller
+   * made is the answer (`created: false`) and the unique partial index is
+   * still what decided it.
    */
-  async ensureGeneralSpace(input: WorkspaceSpaceListRequest): Promise<WorkspaceSpaceGeneralResult> {
+  async openGeneralSpace(input: WorkspaceSpaceGeneralRequest): Promise<WorkspaceSpaceGeneralOpenResult> {
     await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceListRequestSchema, input, "ensure_general_space");
+    const request = parseRpcInput(WorkspaceSpaceGeneralRequestSchema, input, "open_general_space");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
     if (refusal) return { ok: false, code: refusal };
     const storage = this.spaceStorage();
-    const general = storage.ensureGeneral({
-      workspaceId: request.workspaceId,
-      userId: request.userId,
-      space: { name: "General", iconKey: "building-2", colorKey: "blue", scope: "workspace" },
-    }, uuidV7());
-    // A General that already existed is still subject to this viewer's read —
-    // which for an Organization-wide Space is every active member, and is the
-    // answer rather than an assumption.
-    if (!general.created && storage.readable(request.userId, general.space.id) === false) {
-      return { ok: false, code: "space_not_found" };
+    const existing = storage.generalSpaceId();
+    let general: { space: SpaceSummary; created: boolean };
+    if (existing !== null) {
+      const space = storage.readable(request.userId, existing);
+      if (space === false) return { ok: false, code: "space_not_found" };
+      general = { space, created: false };
+    } else if (request.spaceId === undefined) {
+      return { ok: true, absent: true };
+    } else {
+      const spaceId = request.spaceId;
+      const parent = await this.spaceParentReservation(spaceId);
+      if (!parent.ok) return { ok: false, code: parent.code };
+      general = await this.withMembersLearned(() => this.state.storage.transactionSync(() => {
+        const ensured = storage.ensureGeneral(WorkspaceDO.generalReservation(request), spaceId);
+        if (ensured.created) parent.reserve(request.userId, ensured.space);
+        return ensured;
+      }));
+      if (!general.created && storage.readable(request.userId, general.space.id) === false) {
+        return { ok: false, code: "space_not_found" };
+      }
     }
     storage.noteGeneralSpace(general.space.id);
-    if (general.created) this.publishSpaceSnapshot();
-    return WorkspaceSpaceGeneralResultSchema.parse({
-      ok: true,
-      space: general.space,
-      created: general.created,
-    });
+    if (general.created) {
+      this.publishSpaceSnapshot();
+      await this.afterParentWrite();
+    }
+    return WorkspaceSpaceGeneralOpenResultSchema.parse({ ok: true, space: general.space, created: general.created });
+  }
+
+  private static generalReservation(request: { workspaceId: string; userId: string }): WorkspaceSpaceReserveRequest {
+    return {
+      workspaceId: asWorkspaceId(request.workspaceId),
+      userId: asUserId(request.userId),
+      space: { name: "General", iconKey: "building-2", colorKey: "blue", scope: "workspace" },
+    };
   }
 
   /**
@@ -6616,6 +7813,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       workstreamId: WorkstreamIdSchema,
     }).parse(input);
     this.assertWorkspace(request.workspaceId);
+    return this.channelDirectoryObservation(request.workstreamId);
+  }
+
+  private channelDirectoryObservation(workstreamId: string):
+    | { found: false }
+    | { found: true; archived: boolean; title: string; channel: {
+      readers: { scope: "workspace" } | { scope: "personal"; userIds: string[] };
+      participantUserIds: string[];
+    } } {
+    const request = { workstreamId };
     const row = this.state.storage.sql.exec<{
       title: string;
       scope: "personal" | "workspace";
@@ -6623,12 +7830,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       authority_generation: number;
     }>(
       `SELECT title, scope, archived_at, authority_generation
-         FROM workspace_workstream_directory WHERE workstream_id = ?`,
+         FROM channels WHERE workstream_id = ?`,
       request.workstreamId,
     ).toArray()[0];
     if (!row) return { found: false };
     const participantUserIds = this.state.storage.sql.exec<{ user_id: string }>(
-      `SELECT user_id FROM workspace_workstream_viewers
+      `SELECT user_id FROM channel_viewers
         WHERE workstream_id = ? AND authority_generation = ? AND is_participant = 1
         ORDER BY user_id`,
       request.workstreamId,
@@ -6759,247 +7966,437 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
 
-  async prepareSpaceMembership(input: WorkspaceSpaceMembershipRequest): Promise<WorkspaceSpaceMembershipPlanResult> {
-    await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceMembershipRequestSchema, input, "prepare_space_membership");
-    this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
-    const result = WorkspaceSpaceMembershipPlanResultSchema.parse(
-      this.spaceStorage().prepareMembership(request),
-    );
-    if (result.ok) {
-      this.spaceStorage().recordIntent({
-        operationId: `${request.spaceId}:${request.workstreamId}:${result.membershipGeneration}`,
-        kind: "add",
-        spaceId: request.spaceId,
-        workstreamId: request.workstreamId,
-        spaceRevision: result.space.revision,
-        membershipGeneration: result.membershipGeneration,
-        deliveryGeneration: null,
-        requestedByUserId: request.userId,
-        notBefore: Date.now() + SPACE_INTENT_RESUME_DELAY_MS,
+  /**
+   * Refresh every open Sidekick rail after a Space wrote Sidekick defaults
+   * onto member Channels in its own transaction, as the Queue path's
+   * `setSidekickRecommendation` does. The write has committed, so a failed
+   * refresh is logged rather than failing the request that made it.
+   */
+  private async afterSidekickDefaultsApplied(storage: WorkspaceSpaceStorage, workspaceId: string): Promise<void> {
+    if (storage.sidekickDefaultsApplied === 0) return;
+    try {
+      await this.publishSync(["automations"], workspaceId,
+        this.placementAffinity() ?? await workspacePlacementAffinity(this.env, workspaceId));
+    } catch (error) {
+      logWarn(this.env, "space_sidekick_default_refresh_failed", {
+        workspace_id: workspaceId,
+        reason: diagnosticErrorCode(error, "space_sidekick_default_refresh_failed"),
       });
-      await this.armNextAlarm();
     }
-    return result;
   }
 
-  async finalizeSpaceMembership(input: WorkspaceSpaceMembershipSettleRequest): Promise<WorkspaceSpaceMutationResult> {
+  /**
+   * A new Channel's Organization-side birth: its Space memberships, the
+   * defaults those Spaces hand a new member, its parent row with the
+   * provisional directory row, and the record of which Space supplied which
+   * reader, in one transaction.
+   *
+   * Every row a creation needs from this object is in this database, so there
+   * is no staged membership, intent or cancellation: adding a Channel that
+   * already exists is `addSpaceChannel`, where the Channel's canonical
+   * operations run between the plan and the commit.
+   *
+   * The sources are recorded in birth mode: the coordinator opens the
+   * conversation with the union of these Spaces' audiences already written,
+   * so there is no canonical operation to run between the plan and its commit.
+   *
+   * Idempotent for a retry of the same create: an active membership keeps its
+   * generation, the reservation finds its child registered, and the sources
+   * are recorded again at whatever revision the Spaces are at now.
+   */
+  async reserveChannelInSpaces(input: WorkspaceChannelReservationRequest): Promise<WorkspaceChannelReservationResult> {
     await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceMembershipSettleRequestSchema, input, "finalize_space_membership");
+    const request = parseRpcInput(WorkspaceChannelReservationRequestSchema, input, "reserve_channel_in_spaces");
     this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
+    const refused = (code: SpaceErrorCode, spaceId: string | null): WorkspaceChannelReservationResult =>
+      WorkspaceChannelReservationResultSchema.parse({ status: "refused", code, spaceId });
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    if (refusal) return refused(refusal, null);
     const storage = this.spaceStorage();
-    const space = storage.finalizeMembership(request);
-    if (space === "conflict") {
-      return { ok: false, code: "space_revision_conflict", unreachableUserIds: [], blockedWorkstreamIds: [] };
+    const generalSpaceId = request.spaceIds.length > 0 ? null : storage.generalSpaceId();
+    if (request.spaceIds.length === 0 && generalSpaceId === null) return { status: "general_missing" };
+    const spaceIds = request.spaceIds.length > 0 ? [...new Set<string>(request.spaceIds)] : [generalSpaceId ?? ""];
+    // The same per-Space gate every Space write takes: reaching a Space only
+    // through a Channel in it is not enough to put another Channel there.
+    const throughChannel = spaceIds.find((spaceId) => storage.reach(request.userId, spaceId) === "through_channel");
+    if (throughChannel) return refused("space_access_denied", throughChannel);
+    const parent = await this.hostedParent(request.workstreamId, request.workspaceId);
+    const workstreamId = request.workstreamId;
+    const followUpMark = this.pendingParentFollowUps.length;
+    let reserved: { authorityGeneration: number; spaces: SpaceSummary[] };
+    try {
+      reserved = await this.withMembersLearned(() => this.state.storage.transactionSync(() => {
+        const placed: { space: SpaceSummary; membershipGeneration: number }[] = [];
+        for (const spaceId of spaceIds) {
+          const entered = storage.enterMembershipAtBirth({
+            workspaceId: request.workspaceId, userId: request.userId, spaceId: asSpaceId(spaceId), workstreamId,
+          });
+          if (!entered.ok) throw new ChannelReservationRefused("space_not_found", spaceId);
+          storage.stageDefaultsForMember(spaceId, workstreamId, entered.membershipGeneration, request.userId);
+          placed.push(entered);
+        }
+        const spaces = placed.map((entry) => entry.space);
+        const start = resolveSpaceWorkstreamStart({
+          spaces, scope: request.requestedScope, requestedParticipantUserIds: request.requestedParticipantUserIds,
+        });
+        const child = parent.reserveChild({
+          workspaceId: request.workspaceId,
+          parentId: workstreamId,
+          substreamId: asSubstreamId("0"),
+          kind: "main",
+          createdByUserId: request.userId,
+          authorityGeneration: request.authorityGeneration,
+          directory: { ...request.directory, scope: start.scope, systemKind: null },
+        });
+        const participantUserIds = [...new Set(request.requestedParticipantUserIds)];
+        let born: ObservedBirthChannel = {
+          readers: request.requestedScope === "workspace"
+            ? { scope: "workspace" }
+            : { scope: "personal", userIds: participantUserIds },
+          participantUserIds,
+        };
+        for (const entry of placed) {
+          const participants = entry.space.participants.map((participant) => participant.userId);
+          const applied = parent.applySpaceAccessSource({
+            workspaceId: request.workspaceId,
+            parentId: workstreamId,
+            spaceId: entry.space.id,
+            scope: entry.space.scope,
+            participantUserIds: participants,
+            spaceRevision: entry.space.revision,
+            membershipGeneration: entry.membershipGeneration,
+            operationId: uuidV7(),
+            channel: born,
+            commitWithPlan: true,
+          });
+          if (!applied.ok) throw new ChannelReservationRefused(applied.code, entry.space.id);
+          born = observedAfterBirthSource(born, {
+            sourceId: entry.space.id, scope: entry.space.scope, participantUserIds: participants,
+          }, applied.plan.seatUserIds);
+        }
+        return { authorityGeneration: child.authorityGeneration, spaces };
+      }));
+    } catch (error) {
+      // The directory follow-ups the reservation recorded were rolled back
+      // with it; forget their ids so nothing runs a row that never committed.
+      this.pendingParentFollowUps.splice(followUpMark);
+      if (error instanceof ChannelReservationRefused) return refused(error.code, error.spaceId);
+      throw error;
     }
-    if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
-    // A Channel that has just joined inherits every current default. Staging
-    // here rather than in the service is what makes a Channel added while a
-    // default was being registered receive it exactly once.
-    storage.stageDefaultsForMember(
-      request.spaceId,
-      request.workstreamId,
-      request.membershipGeneration,
-      request.userId,
-    );
-    storage.settleIntent(
-      `${request.spaceId}:${request.workstreamId}:${request.membershipGeneration}`,
-      "membership_finalized",
-      true,
-    );
+    // After the commit, what the staged calls did after theirs: the Space
+    // snapshot, the dashboards the Channel entered, the directory follow-ups,
+    // and the alarm that delivers the staged defaults.
     this.publishSpaceSnapshot();
-    // A settled membership changes which conversations this Space's dashboard
-    // is about, so the readers of that page are nudged the same way a message
-    // in one of them nudges them. One mechanism, not a second for memberships.
-    // Through the Channel, because the people whose page changed are the people
-    // who can list it: to anybody else reaching this Space the nudge would say
-    // only that *something* entered it, which is the private membership of a
-    // participants-only Space told one event at a time.
-    this.publishSpaceConversationsChanged({
-      spaceIdsThroughChannel: new Map([[request.workstreamId, [request.spaceId]]]),
-    });
-    // The durable membership and its recovery receipt are already committed.
-    // Realtime convergence and deleting the now-stale recovery wake do not
-    // decide whether the move is authorized, so neither belongs on its response
-    // time. A failed re-derive leaves the existing wake in place; that wake is
-    // itself the recovery path and will safely find the settled intent.
-    this.deferSpaceMembershipConvergence(request.workspaceId, request.workstreamId, false);
-    return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
+    this.publishSpaceConversationsChanged({ spaceIdsThroughChannel: new Map([[workstreamId, spaceIds]]) });
+    await this.afterParentWrite();
+    this.deferSpaceMembershipConvergence(request.workspaceId, workstreamId, false);
+    return WorkspaceChannelReservationResultSchema.parse({ status: "reserved", ...reserved });
   }
 
-  async cancelSpaceMembership(input: WorkspaceSpaceMembershipSettleRequest): Promise<WorkspaceSpaceMutationResult> {
+  /**
+   * Move a Channel between two Spaces that grant the same audience, in one
+   * transaction of this object.
+   *
+   * The Space memberships, the Channel's recorded Space provenance (its hosted
+   * parent's `parent_access_sources`) and the source's retired defaults, pins
+   * and arrangement all live in this database, so the move is one
+   * `transactionSync` rather than a staged intent, a provenance RPC and a
+   * settlement. No audience changes: the two Spaces grant the same readers, so
+   * the Channel's canonical scope and participant operations have nothing to
+   * do. `moved: false` sends the caller down the add-then-remove path, which
+   * is also what happens when the Channel's record does not match the Spaces
+   * as they are now; nothing is written in that case.
+   */
+  async moveSpaceMembership(
+    input: WorkspaceSpaceMembershipMoveRequest,
+  ): Promise<WorkspaceSpaceMembershipMoveOutcome> {
     await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceMembershipSettleRequestSchema, input, "cancel_space_membership");
+    const request = parseRpcInput(WorkspaceSpaceMembershipMoveRequestSchema, input, "move_space_membership");
     this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
+    const refusal = await this.spaceMoveRefusal(request);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
-    const storage = this.spaceStorage();
-    const space = storage.cancelMembership(request);
-    storage.cancelIntent(`${request.spaceId}:${request.workstreamId}:${request.membershipGeneration}`);
-    if (space !== false) this.publishSpaceSnapshot();
-    return WorkspaceSpaceMutationResultSchema.parse(space === false
-      ? { ok: false, code: "space_not_found" }
-      : { ok: true, space });
-  }
-
-  async prepareSpaceMembershipRemoval(
-    input: WorkspaceSpaceMembershipRemovalRequest,
-  ): Promise<WorkspaceSpaceMembershipPlanResult> {
-    await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceMembershipRemovalRequestSchema, input, "prepare_space_membership_removal");
-    this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
-    const result = WorkspaceSpaceMembershipPlanResultSchema.parse(
-      this.spaceStorage().prepareMembershipRemoval(request),
+    const channel = await this.hostedParent(request.workstreamId, request.workspaceId);
+    const operationId = uuidV7();
+    const result = WorkspaceSpaceMembershipMoveOutcomeSchema.parse(
+      this.spaceStorage().moveEquivalentMembership(request, (fences) => channel.replaceEquivalentSpaceAccessSource({
+        workspaceId: request.workspaceId,
+        parentId: request.workstreamId,
+        sourceSpaceId: request.sourceSpaceId,
+        targetSpaceId: request.targetSpaceId,
+        ...fences,
+        operationId,
+      }).ok),
     );
-    if (result.ok) {
-      this.spaceStorage().recordIntent({
-        operationId: `${request.spaceId}:${request.workstreamId}:${result.membershipGeneration}`,
-        kind: "remove",
-        spaceId: request.spaceId,
-        workstreamId: request.workstreamId,
-        spaceRevision: result.space.revision,
-        membershipGeneration: result.membershipGeneration,
-        deliveryGeneration: null,
-        requestedByUserId: request.userId,
-        notBefore: Date.now() + SPACE_INTENT_RESUME_DELAY_MS,
-      });
+    if (result.ok && result.moved) {
       this.publishSpaceSnapshot();
-      await this.armNextAlarm();
+      this.publishSpaceConversationsChanged({
+        spaceIdsThroughChannel: new Map([[
+          request.workstreamId,
+          [request.sourceSpaceId, request.targetSpaceId],
+        ]]),
+      });
+      this.deferSpaceMembershipConvergence(request.workspaceId, request.workstreamId, true);
     }
     return result;
   }
 
-  async prepareSpaceMembershipMove(
-    input: WorkspaceSpaceMembershipMoveRequest,
-  ): Promise<WorkspaceSpaceMembershipMovePlanResult> {
-    await this.initialized;
-    const request = parseRpcInput(
-      WorkspaceSpaceMembershipMoveRequestSchema,
-      input,
-      "prepare_space_membership_move",
-    );
-    this.assertWorkspace(request.workspaceId);
-    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) {
-      return { ok: false, code: "space_access_denied", unreachableUserIds: [], blockedWorkstreamIds: [] };
-    }
+  /** Who may move a Channel between two Spaces; null to proceed. */
+  private async spaceMoveRefusal(request: WorkspaceSpaceMembershipMoveRequest): Promise<SpaceErrorCode | null> {
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) return "space_access_denied";
     const storage = this.spaceStorage();
-    if (!storage.ready()) {
-      return { ok: false, code: "space_bootstrap_pending", unreachableUserIds: [], blockedWorkstreamIds: [] };
-    }
+    if (!storage.ready()) return "space_bootstrap_pending";
     if (storage.reach(request.userId, request.sourceSpaceId) === "through_channel"
       || storage.reach(request.userId, request.targetSpaceId) === "through_channel") {
-      return { ok: false, code: "space_access_denied", unreachableUserIds: [], blockedWorkstreamIds: [] };
+      return "space_access_denied";
     }
-    if (!this.directoryVisible(request.userId, request.workstreamId)) {
-      return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
-    }
-    const result = WorkspaceSpaceMembershipMovePlanResultSchema.parse(
-      storage.prepareMembershipMove(
-        request,
-        uuidV7(),
-        Date.now() + SPACE_INTENT_RESUME_DELAY_MS,
-      ),
-    );
-    if (result.ok && result.equivalentAudience) await this.armNextAlarm();
-    return result;
+    if (!this.directoryVisible(request.userId, request.workstreamId)) return "space_not_found";
+    return null;
   }
 
-  async finalizeSpaceMembershipMove(
-    input: WorkspaceSpaceMembershipMoveSettleRequest,
-  ): Promise<WorkspaceSpaceMembershipMoveResult> {
+  /**
+   * Put an existing Channel in a Space: the whole operation, in one call.
+   *
+   * WorkspaceDO stages the membership and plans the Channel's source in one
+   * transaction, asks the Channel's conversation for the canonical audience
+   * operations as the caller (it is the audience authority: the
+   * retained-content fence and the roster live there), then confirms the
+   * source and activates the membership in a second transaction.
+   */
+  async addSpaceChannel(input: WorkspaceSpaceChannelChangeRequest): Promise<WorkspaceSpaceChannelChangeResult> {
     await this.initialized;
-    const request = parseRpcInput(
-      WorkspaceSpaceMembershipMoveSettleRequestSchema,
-      input,
-      "finalize_space_membership_move",
+    const request = parseRpcInput(WorkspaceSpaceChannelChangeRequestSchema, input, "add_space_channel");
+    this.assertWorkspace(request.auth.workspaceId);
+    const refusal = await this.spaceRefusalCode(
+      request.auth.workspaceId, request.auth.userId, "write", request.spaceId,
     );
-    this.assertWorkspace(request.workspaceId);
-    const storage = this.spaceStorage();
-    const moved = storage.finalizeMembershipMove(request);
-    if (moved === "conflict") {
-      return { ok: false, code: "space_revision_conflict", unreachableUserIds: [], blockedWorkstreamIds: [] };
+    if (refusal) return this.spaceChannelRefusal(refusal);
+    if (!this.directoryVisible(request.auth.userId, request.workstreamId)) {
+      return {
+        ok: false,
+        refusal: { about: "conversation", status: 404, code: "workstream_not_found", message: "Channel not found" },
+      };
     }
-    if (moved === false) {
-      return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
-    }
-    this.publishSpaceSnapshot();
-    this.publishSpaceConversationsChanged({
-      spaceIdsThroughChannel: new Map([[
-        request.workstreamId,
-        [request.sourceSpaceId, request.targetSpaceId],
-      ]]),
+    return WorkspaceSpaceChannelChangeResultSchema.parse(await this.spaceChannelAccess().addChannel(
+      request.auth, request.spaceId, request.workstreamId, null,
+    ));
+  }
+
+  /**
+   * Take a Channel out of a Space, in one call: stage the removal and plan the
+   * retraction, run the Channel's canonical operations, then settle.
+   */
+  async removeSpaceChannel(input: WorkspaceSpaceChannelChangeRequest): Promise<WorkspaceSpaceChannelChangeResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceChannelChangeRequestSchema, input, "remove_space_channel");
+    this.assertWorkspace(request.auth.workspaceId);
+    const refusal = await this.spaceRefusalCode(
+      request.auth.workspaceId, request.auth.userId, "write", request.spaceId,
+    );
+    if (refusal) return this.spaceChannelRefusal(refusal);
+    return WorkspaceSpaceChannelChangeResultSchema.parse(await this.spaceChannelAccess().removeChannel(
+      request.auth, request.spaceId, request.workstreamId, null,
+    ));
+  }
+
+  /**
+   * Place one Channel in General for the cutover, as one of the people who
+   * may act on it: `addSpaceChannel` without the sidebar-visibility gate, and
+   * able to place an archived Channel, which the cutover has to home too.
+   * The caller has already asked the Channel whether General's audience fits
+   * its retained content; the canonical operations ask again.
+   */
+  async placeChannelInGeneral(input: WorkspaceGeneralPlacementRequest): Promise<WorkspaceSpaceChannelChangeResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceGeneralPlacementRequestSchema, input, "place_channel_in_general");
+    this.assertWorkspace(request.auth.workspaceId);
+    const generalSpaceId = this.spaceStorage().generalSpaceId();
+    if (generalSpaceId === null) return this.spaceChannelRefusal("space_bootstrap_pending");
+    const refusal = await this.spaceRefusalCode(request.auth.workspaceId, request.auth.userId, "write", generalSpaceId);
+    if (refusal) return this.spaceChannelRefusal(refusal);
+    return WorkspaceSpaceChannelChangeResultSchema.parse(await this.spaceChannelAccess().addChannel(
+      request.auth, asSpaceId(generalSpaceId), request.workstreamId, null, { archived: true },
+    ));
+  }
+
+  /**
+   * One page of an audience change's, an archive's or a restore's member
+   * walk, run here: each member Channel's source is planned, changed through
+   * its conversation and confirmed without a round trip back to the Worker,
+   * and the page's cursor is written to the intent before the answer.
+   */
+  async walkSpaceMembers(input: WorkspaceSpaceMemberWalkRequest): Promise<WorkspaceSpaceMemberWalkResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceMemberWalkRequestSchema, input, "walk_space_members");
+    this.assertWorkspace(request.auth.workspaceId);
+    const refusal = await this.spaceRefusalCode(request.auth.workspaceId, request.auth.userId, "read");
+    if (refusal) return this.spaceChannelRefusal(refusal);
+    return this.exclusiveSpaceIntent(request.operationId, async () => {
+      // The alarm may have walked pages of this intent while the request was
+      // between calls, or finished it; the row says where it is now.
+      const storage = this.spaceStorage();
+      const intent = storage.unsettledIntent(request.operationId);
+      if (!intent) {
+        const space = storage.readable(request.auth.userId, request.spaceId);
+        return space === false
+          ? this.spaceChannelRefusal("space_not_found")
+          : { ok: true as const, outcome: "walked" as const, space };
+      }
+      return WorkspaceSpaceMemberWalkResultSchema.parse(await this.spaceChannelAccess().walkPage(request.auth, {
+        ...request, cursor: intent.cursor ?? request.cursor,
+      }));
     });
-    this.deferSpaceMembershipConvergence(request.workspaceId, request.workstreamId, true);
-    return WorkspaceSpaceMembershipMoveResultSchema.parse({ ok: true, ...moved });
   }
 
-  async replanSpaceMembershipMoveForAudience(
-    input: WorkspaceSpaceMembershipMoveSettleRequest,
-  ): Promise<WorkspaceSpaceMembershipMovePlanResult> {
+  /**
+   * Take one step of a staged intent as the caller, through the path the
+   * request takes: `progressed` while a walk has pages left. The alarm resumes
+   * intents in place itself; this is for a `space_intent_resume` message
+   * already on the Queue, which the consumer finishes by calling it until the
+   * intent settles.
+   */
+  async resumeSpaceIntent(input: WorkspaceSpaceIntentResumeRequest): Promise<WorkspaceSpaceIntentResumeResult> {
     await this.initialized;
-    const request = parseRpcInput(
-      WorkspaceSpaceMembershipMoveSettleRequestSchema,
-      input,
-      "replan_space_membership_move_for_audience",
-    );
-    this.assertWorkspace(request.workspaceId);
-    const result = WorkspaceSpaceMembershipMovePlanResultSchema.parse(
-      this.spaceStorage().replanMembershipMoveForAudience(request),
-    );
-    if (result.ok) await this.armNextAlarm();
-    return result;
+    const request = parseRpcInput(WorkspaceSpaceIntentResumeRequestSchema, input, "resume_space_intent");
+    this.assertWorkspace(request.auth.workspaceId);
+    return this.exclusiveSpaceIntent(request.operationId, async () => {
+      const intent = this.spaceStorage().unsettledIntent(request.operationId);
+      // Settled or cancelled already, by the request, the alarm or an earlier resume.
+      if (!intent) return { ok: true as const, outcome: "settled" as const };
+      return WorkspaceSpaceIntentResumeResultSchema.parse(await this.spaceChannelAccess().resume(request.auth, intent));
+    });
   }
 
-  async cancelSpaceMembershipMove(
-    input: WorkspaceSpaceMembershipMoveSettleRequest,
-  ): Promise<{ cancelled: boolean }> {
-    await this.initialized;
-    const request = parseRpcInput(
-      WorkspaceSpaceMembershipMoveSettleRequestSchema,
-      input,
-      "cancel_space_membership_move",
-    );
-    this.assertWorkspace(request.workspaceId);
-    const cancelled = this.spaceStorage().cancelMembershipMove(request);
-    if (cancelled) this.publishSpaceSnapshot();
+  /**
+   * Run `run` as the only work on this intent in this object: a request, a
+   * Queue delivery and the alarm each wait for one already running. The
+   * alarm skips a held intent instead (`spaceIntentHeld`); the request that
+   * holds it is finishing it.
+   */
+  private async exclusiveSpaceIntent<T>(operationId: string, run: () => Promise<T>): Promise<T> {
+    for (let running = this.spaceIntentRuns.get(operationId); running; running = this.spaceIntentRuns.get(operationId)) {
+      await running;
+    }
+    const release = this.holdSpaceIntent(operationId);
+    try {
+      return await run();
+    } finally {
+      release();
+    }
+  }
+
+  private holdSpaceIntent(operationId: string): () => void {
+    let settle!: () => void;
+    const running = new Promise<void>((resolve) => { settle = resolve; });
+    this.spaceIntentRuns.set(operationId, running);
+    return () => {
+      if (this.spaceIntentRuns.get(operationId) === running) this.spaceIntentRuns.delete(operationId);
+      settle();
+    };
+  }
+
+  /**
+   * Take one step of each staged intent the alarm claimed, as the person who
+   * staged it.
+   *
+   * One step: an add, a removal or a move is finished, and a walk advances one
+   * page, after which it is due again at once rather than after the claim's
+   * retry gate, so a large Space is walked a page per alarm with the other
+   * alarm work in between. An intent a request or a Queue delivery is running
+   * is skipped; that run finishes it.
+   *
+   * The requester is read from the local relationship table, which the
+   * relationship events keep current. Somebody who is no longer an active
+   * member gets the failure written on the row and nothing is run as them;
+   * every other failure is named on the row too, and the retry gate the claim
+   * advanced brings the intent back.
+   */
+  private async resumeSpaceIntentsInPlace(workspaceId: string, intents: readonly WorkspaceSpaceIntentClaim[]): Promise<void> {
+    const storage = this.spaceStorage();
+    for (const intent of intents) {
+      if (this.spaceIntentRuns.has(intent.operationId)) continue;
+      const release = this.holdSpaceIntent(intent.operationId);
+      try {
+        const relationship = await this.readRelationship(workspaceId, intent.requestedByUserId);
+        if (relationship?.status !== "active" || relationship.accessClass !== "member") {
+          storage.recordIntentFailure(intent.operationId, "space_intent_requester_inactive");
+          logWarn(this.env, "space_intent_resume_failed", {
+            workspace_id: workspaceId, space_id: intent.spaceId, operation_id: intent.operationId,
+            kind: intent.kind, reason: "space_intent_requester_inactive",
+          });
+          continue;
+        }
+        const actor: SpaceActorAuth = {
+          sessionId: `space-intent:${intent.operationId}`,
+          userId: asUserId(intent.requestedByUserId),
+          workspaceId: asWorkspaceId(workspaceId),
+          region: this.env.AVALON_REGION,
+          role: relationship.role,
+          principal: "connector",
+        };
+        const current = storage.unsettledIntent(intent.operationId);
+        if (!current) continue;
+        const resumed = await this.spaceChannelAccess().resume(actor, current);
+        if (!resumed.ok) {
+          storage.recordIntentFailure(intent.operationId, resumed.refusal.code);
+          logWarn(this.env, "space_intent_resume_failed", {
+            workspace_id: workspaceId, space_id: intent.spaceId, operation_id: intent.operationId,
+            kind: intent.kind, reason: resumed.refusal.code,
+          });
+        } else if (resumed.outcome === "progressed") {
+          storage.rescheduleIntent(intent.operationId, Date.now());
+        } else if (resumed.outcome === "abandoned") {
+          logWarn(this.env, "space_intent_resume_abandoned", {
+            workspace_id: workspaceId, space_id: intent.spaceId, operation_id: intent.operationId,
+            kind: intent.kind, reason: resumed.reason,
+          });
+        }
+      } catch (error) {
+        const reason = diagnosticErrorCode(error, "space_intent_resume_failed");
+        storage.recordIntentFailure(intent.operationId, reason);
+        logWarn(this.env, "space_intent_resume_failed", {
+          workspace_id: workspaceId, space_id: intent.spaceId, operation_id: intent.operationId,
+          kind: intent.kind, reason,
+        });
+      } finally {
+        release();
+      }
+    }
     await this.armNextAlarm();
-    return { cancelled };
   }
 
-  async finalizeSpaceMembershipRemoval(
-    input: WorkspaceSpaceMembershipSettleRequest,
-  ): Promise<WorkspaceSpaceMutationResult> {
-    await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceMembershipSettleRequestSchema, input, "finalize_space_membership_removal");
-    this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
-    const storage = this.spaceStorage();
-    const space = storage.finalizeMembershipRemoval(request);
-    if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
-    storage.settleIntent(
-      `${request.spaceId}:${request.workstreamId}:${request.membershipGeneration}`,
-      "membership_removed",
-      true,
-    );
-    this.publishSpaceSnapshot();
-    // A settled membership changes which conversations this Space's dashboard
-    // is about, so the readers of that page are nudged the same way a message
-    // in one of them nudges them. One mechanism, not a second for memberships.
-    // Through the Channel for the reason the finalize above is, and the Space
-    // has to be named alongside it: the membership is `removed` by now, so the
-    // Channel no longer resolves to the Space it just left.
-    this.publishSpaceConversationsChanged({
-      spaceIdsThroughChannel: new Map([[request.workstreamId, [request.spaceId]]]),
+  private spaceChannelRefusal(code: SpaceErrorCode): { ok: false; refusal: SpaceChannelRefusal } {
+    return { ok: false, refusal: { about: "space", code, subject: "", unreachableUserIds: [], blockedWorkstreamIds: [] } };
+  }
+
+  /** The Space source coordinator, over this object's storage and publications. */
+  private spaceChannelAccess(): SpaceChannelAccess {
+    return new SpaceChannelAccess({
+      env: this.env,
+      storage: this.state.storage,
+      transaction: (run) => this.withMembersLearned(() => this.state.storage.transactionSync(run)),
+      spaceStorage: () => this.spaceStorage(),
+      hostedParent: (parentId, workspaceId) => this.hostedParent(parentId, workspaceId),
+      archivedChannel: (workstreamId) => {
+        const projected = this.channelDirectoryObservation(workstreamId);
+        return projected.found && projected.archived
+          ? { channel: ObservedChannelSchema.parse(projected.channel), title: projected.title }
+          : null;
+      },
+      intentResumeAt: () => Date.now() + SPACE_INTENT_RESUME_DELAY_MS,
+      holdIntent: (operationId) => this.holdSpaceIntent(operationId),
+      armNextAlarm: async () => {
+        await this.armNextAlarm();
+      },
+      publishSpaceSnapshot: () => this.publishSpaceSnapshot(),
+      publishMembershipChanged: (workstreamId, spaceIds) => this.publishSpaceConversationsChanged({
+        spaceIdsThroughChannel: new Map([[workstreamId, [...spaceIds]]]),
+      }),
+      deferSpaceMembershipConvergence: (workspaceId, workstreamId, includeDirectory) =>
+        this.deferSpaceMembershipConvergence(workspaceId, workstreamId, includeDirectory),
+      afterSidekickDefaultsApplied: (storage, workspaceId) => this.afterSidekickDefaultsApplied(storage, workspaceId),
+      finalizeArchive: (workspaceId, userId, spaceId, operationId) =>
+        this.finalizeArchiveAs(workspaceId, userId, spaceId, operationId),
     });
-    this.deferSpaceMembershipConvergence(request.workspaceId, request.workstreamId, true);
-    return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
 
   /** Stage an archive, refusing one that would strand any member Channel. */
@@ -7034,6 +8431,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceStagedRequestSchema, input, "finalize_space_archive");
     this.assertWorkspace(request.workspaceId);
+    return this.finalizeArchiveAs(request.workspaceId, request.userId, request.spaceId, request.operationId);
+  }
+
+  /** Archive a Space whose member walk has finished, and settle its intent. */
+  private async finalizeArchiveAs(
+    workspaceId: string,
+    userId: string,
+    spaceId: string,
+    operationId: string,
+  ): Promise<WorkspaceSpaceMutationResult> {
+    const request = { workspaceId, userId, spaceId, operationId };
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const storage = this.spaceStorage();
@@ -7105,9 +8513,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
-    const result = WorkspaceSpaceDefaultResultSchema.parse(this.spaceStorage().addDefault(request));
+    const storage = this.spaceStorage();
+    const result = WorkspaceSpaceDefaultResultSchema.parse(storage.addDefault(request));
     if (result.ok) this.publishSpaceSnapshot();
     if (result.ok && result.targets.length > 0) await this.armNextAlarm();
+    await this.afterSidekickDefaultsApplied(storage, request.workspaceId);
     return result;
   }
 
@@ -7315,7 +8725,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   private directoryChannelsPresent(workstreamIds: readonly string[]): string[] {
     return this.state.storage.sql.exec<{ workstream_id: string }>(
-      `SELECT workstream_id FROM workspace_workstream_directory
+      `SELECT workstream_id FROM channels
         WHERE workstream_id IN (SELECT value FROM json_each(?))`,
       JSON.stringify([...workstreamIds]),
     ).toArray().map((row) => row.workstream_id);
@@ -7886,8 +9296,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             event.audience_kind = 'workspace'
             OR (event.audience_kind = 'user' AND event.audience_user_id = ?)
             OR (event.audience_kind = 'workstream' AND EXISTS (
-              SELECT 1 FROM workspace_workstream_directory directory
-              JOIN workspace_workstream_viewers viewer
+              SELECT 1 FROM channels directory
+              JOIN channel_viewers viewer
                 ON viewer.workstream_id = directory.workstream_id
                AND viewer.authority_generation = directory.authority_generation
                AND viewer.user_id = ?
@@ -8393,15 +9803,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
 
-  /** Commit WorkstreamDO-owned facts into the workspace's authoritative directory. */
+  /**
+   * Commit directory effects that arrive from outside a hosted parent's own
+   * transaction: a legacy parent's in-flight Queue message, or a legacy
+   * outbox row carried over at import. The same synchronous core runs inside
+   * a hosted parent's transaction (`applyLocalEffects`); this entry point
+   * learns anyone the member table has not heard of first, which is the one
+   * step that needs D1. An envelope that cannot be applied throws, and the
+   * Queue or the drain retries it.
+   */
   async applyWorkstreamDirectoryEffects(
     input: WorkspaceDirectoryApplyRequest,
   ): Promise<WorkspaceDirectoryApplyResult> {
     await this.initialized;
-    // A Space publishes the same `directory_common` and `directory_user`
-    // effects a Channel does, and both land here. They are kept apart from this
-    // line on: a Space in `workspace_workstream_directory` would be a Space in
-    // the Channel sidebar, and the two directories answer different questions.
     const request = WorkspaceDirectoryApplyRequestSchema.parse(input);
     if (!this.workspaceId()) {
       this.ensureIdentity(
@@ -8410,14 +9824,60 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       );
     }
     this.assertWorkspace(request.workspaceId);
-    const spaceEnvelopes = request.envelopes.filter((envelope) => envelope.parentKind === "space");
+    await this.learnMembers(this.unknownMembers(request.envelopes));
+    const batch = this.state.storage.transactionSync(() => {
+      const applied = this.applyDirectoryBatch(request);
+      return { ...applied, recorded: this.recordDirectoryFollowUp(applied.followUp) };
+    });
+    await this.runDirectoryFollowUps(batch.recorded === null ? [] : [batch.recorded]);
+    return WorkspaceDirectoryApplyResultSchema.parse({
+      accepted: batch.accepted,
+      directoryChanged: batch.followUp.directoryChanged,
+    });
+  }
+
+  /**
+   * The directory write itself: synchronous, so it can run inside a hosted
+   * parent's transaction and land with the parent change that caused it.
+   * Returns what it accepted and the post-commit work the batch owes. An
+   * envelope that cannot be applied (a viewer row whose Channel row is not
+   * here yet) throws and takes the caller's transaction with it, and a viewer
+   * the member table has never heard of throws `UnknownMembersError`.
+   */
+  private applyDirectoryBatch(request: WorkspaceDirectoryApplyRequest): {
+    accepted: WorkspaceDirectoryApplyResult["accepted"];
+    followUp: DirectoryFollowUp;
+  } {
+    // A Space publishes the same `directory_common` and `directory_user`
+    // effects a Channel does, and both land here. They are kept apart from this
+    // line on: a Space in `channels` would be a Space in
+    // the Channel sidebar, and the two directories answer different questions.
+    // A directory effect from a legacy parent object — one that was mid-way
+    // through delivering when this deploy landed — names a parent this object
+    // has to import before it can serve it. A hosted parent's own effects never
+    // reach this line with its metadata missing.
+    for (const envelope of request.envelopes) {
+      if (envelope.parentKind !== "workstream" && envelope.parentKind !== "space") continue;
+      if (this.state.storage.sql.exec("SELECT 1 FROM parent_metadata WHERE parent_id = ?", envelope.parentId)
+        .toArray().length > 0) continue;
+      notePendingParentImport(this.state.storage.sql, envelope.parentId, envelope.parentKind);
+    }
+    // Membership is answered from this object's member table. Somebody it
+    // has never heard of is learned from D1 before the transaction, so
+    // meeting one here rolls it back for the caller to learn and retry.
+    const members = this.memberStatuses(request.envelopes);
+    const unknown = this.unknownMembers(request.envelopes, members);
+    if (unknown.length > 0) throw new UnknownMembersError(unknown);
+    const envelopes = request.envelopes;
+    const activeUsers = new Set([...members].flatMap(([userId, active]) => (active ? [userId] : [])));
+    const spaceEnvelopes = envelopes.filter((envelope) => envelope.parentKind === "space");
     // A breakout's own projection is a third destination. It names itself on
     // the envelope; a Channel's aggregate names nothing, so the absence of the
     // id is what keeps every existing envelope on the Channel path unchanged.
-    const breakoutEnvelopes = request.envelopes.filter((envelope) => (
+    const breakoutEnvelopes = envelopes.filter((envelope) => (
       envelope.parentKind !== "space" && envelope.substreamId !== undefined
     ));
-    const channelEnvelopes = request.envelopes.filter((envelope) => (
+    const channelEnvelopes = envelopes.filter((envelope) => (
       envelope.parentKind !== "space" && envelope.substreamId === undefined
     ));
     // Read before the loop commits anything, because which of these Channels
@@ -8434,18 +9894,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       && this.spaceStorage().bootstrapStatus().ready
       ? this.directoryChannelsPresent(commonChannelIds)
       : [];
-    const userIds = [...new Set(request.envelopes.flatMap((envelope) => (
-      envelope.effect.kind === "directory_user" ? [envelope.effect.userId] : []
-    )))];
-    const activeUsers = new Set<string>();
-    if (userIds.length > 0) {
-      const placeholders = userIds.map(() => "?").join(",");
-      const members = await this.env.DB.prepare(
-        `SELECT user_id FROM workspace_members
-          WHERE workspace_id = ? AND status = 'active' AND user_id IN (${placeholders})`,
-      ).bind(request.workspaceId, ...userIds).all<{ user_id: string }>();
-      for (const member of members.results ?? []) activeUsers.add(member.user_id);
-    }
     let directoryChanged = false;
     const commonChanges = new Set<string>();
     const archivalChanges = new Set<string>();
@@ -8474,8 +9922,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const breakoutDirectoryReady = breakoutEnvelopes.length === 0
       || this.breakoutStorage().ready();
     for (const envelope of spaceEnvelopes) {
-      spaceDirectoryChanged = this.applySpaceDirectoryEnvelope(envelope, activeUsers)
-        || spaceDirectoryChanged;
+      const changed = this.applySpaceDirectoryEnvelope(envelope, activeUsers);
+      spaceDirectoryChanged = changed || spaceDirectoryChanged;
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
     }
     for (const envelope of breakoutEnvelopes) {
@@ -8536,7 +9984,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           waterline: number;
           payload_hash: string;
         }>(`SELECT authority_generation, waterline, payload_hash
-              FROM workspace_workstream_directory WHERE workstream_id = ?`,
+              FROM channels WHERE workstream_id = ?`,
         envelope.parentId).toArray()[0];
         // Reconcile on an exact replay as well as the first application. The
         // directory row and registration replacement are separate durable
@@ -8551,63 +9999,166 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
     }
-    // Before the first await below, and outside the `directoryChanged` gate at
-    // the foot of this method. Archiving a work stream is not a project
-    // mutation, so nothing else here touches project state — and without this
-    // the sidebar keeps counting a member it has just stopped being able to
-    // show until the next project write or reconnect. Publishing here means a
-    // rejection further down redelivers the envelope rather than losing the
-    // correction, and the gate below is the one that matters: the call
-    // advances the Space waterline only when one of these Channels is actually
-    // in a Space, which is both what makes the snapshot newer than the one its
-    // readers hold and what keeps this off the path every projection takes. A
-    // Space counts the members it can show, so a Channel arriving in or leaving
-    // the archive changes what its Spaces say about themselves — and a Space
-    // directory at a waterline a client already holds is dropped as a replay,
-    // so the count would stay wrong until the next Space write or reconnect.
-    // Sending to a socket cannot throw — it is caught per socket — so nothing
-    // here can fail the batch.
+    // Space snapshots and the unplaced-Channel check read and advance this
+    // object's own rows, so they are decided here, in the transaction; only
+    // the sends they lead to wait for the commit.
     //
+    // A Space counts the members it can show, so a Channel arriving in or
+    // leaving the archive changes what its Spaces say about themselves, and a
+    // Space directory at a waterline a client already holds is dropped as a
+    // replay. A person's reach into a Space moving (their participation in one
+    // of its Channels) republishes to exactly those people. Both advance the
+    // Space waterline only when one of these Channels is in a Space.
     const spaceStorage = this.spaceStorage();
+    let publishSnapshotAll = false;
+    let snapshotUsers: string[] = [];
     if (spaceDirectoryChanged
       || (archivalChanges.size > 0
         && spaceStorage.noteMemberDirectoryChange([...archivalChanges]))) {
-      this.publishSpaceSnapshot();
+      publishSnapshotAll = true;
     } else if (reachViewers.size > 0 && spaceStorage.noteMemberDirectoryChange([...reachChannels])) {
-      // A Space is visible to somebody who can see one Channel placed in it,
-      // so losing the last such Channel takes the Space out of their sidebar
-      // and gaining one puts it in — and this is the only event that says so.
-      // Without it the withdrawn Space kept its mark and name on their sidebar
-      // until they reconnected, and the desktop mirrors the snapshot into its
-      // local cache, so the name survived a restart. Nothing was *readable*:
-      // the server-side predicate is live on every read. The name is the
-      // disclosure, and it outlived the reach.
-      //
-      // To exactly these people, not to every socket: this is one person's
-      // relationship to one Channel changing, and a whole-Organization
-      // republication rebuilds both directories per socket for a snapshot
-      // identical to the one everybody else already holds. And only when one
-      // of the Channels is in a Space at all — a participant joining a Channel
-      // no Space holds moves nothing, and the same membership test keeps the
-      // archival arm above off the sockets.
-      for (const userId of reachViewers) this.publishSpaceSnapshot(userId);
+      snapshotUsers = [...reachViewers];
     }
-    this.publishReachChanged(reachChangedUsers);
+    // The backstop for the hierarchy invariant: a Channel the Organization
+    // was already holding that is still in no Space is a broken invariant
+    // rather than an unfinished creation, and nothing else will fix it.
+    const reopenBootstrap = settledChannelIds.length > 0
+      && spaceStorage.unplacedChannelExists(settledChannelIds);
+    const common = (envelope: ParentEffectEnvelope) => envelope.effect.kind === "directory_common";
+    return {
+      accepted,
+      followUp: {
+        workspaceId: request.workspaceId,
+        publishSnapshotAll,
+        snapshotUsers,
+        reachChangedUsers: [...reachChangedUsers],
+        commonChanges: [...commonChanges],
+        viewerChanges: [...viewerChanges].map(([id, users]) => [id, [...users]]),
+        breakoutChanges: [...breakoutChanges],
+        breakoutViewerChanges: [...breakoutViewerChanges].map(([id, users]) => [id, [...users]]),
+        reopenBootstrap,
+        watchReconciliations: [...watchReconciliations],
+        archivalChanges: [...archivalChanges],
+        // Replays repair an arm lost after the directory commit, so any common
+        // effect re-derives the Terminal schedule from current rows.
+        refreshTerminal: commonChanges.size > 0 || channelEnvelopes.some(common),
+        refreshWatchKinds: channelEnvelopes.some((envelope) => (
+          envelope.effect.kind === "directory_common" && (envelope.effect.resourceLinks?.length ?? 0) > 0
+        )),
+        directoryChanged,
+        syncTopics: [],
+        refreshProductAlarm: false,
+      },
+    };
+  }
+
+  /** True when a follow-up has nothing to send, reconcile or re-arm. */
+  private static directoryFollowUpEmpty(followUp: DirectoryFollowUp): boolean {
+    return !followUp.publishSnapshotAll && followUp.snapshotUsers.length === 0
+      && followUp.reachChangedUsers.length === 0 && followUp.commonChanges.length === 0
+      && followUp.viewerChanges.length === 0 && followUp.breakoutChanges.length === 0
+      && followUp.breakoutViewerChanges.length === 0 && !followUp.reopenBootstrap
+      && followUp.watchReconciliations.length === 0 && followUp.archivalChanges.length === 0
+      && !followUp.refreshTerminal && !followUp.refreshWatchKinds && !followUp.directoryChanged
+      && followUp.syncTopics.length === 0 && !followUp.refreshProductAlarm;
+  }
+
+  /**
+   * Record a batch's post-commit work in the transaction that committed the
+   * batch, so a crash between the commit and the sends leaves it for the
+   * alarm rather than losing it. The row is not due until one retry delay has
+   * passed: the write that recorded it runs it straight after the commit, and
+   * the alarm only takes what that run did not finish.
+   */
+  private recordDirectoryFollowUp(followUp: DirectoryFollowUp): { id: number; json: string } | null {
+    if (WorkspaceDO.directoryFollowUpEmpty(followUp)) return null;
+    const now = Date.now();
+    const json = JSON.stringify(followUp);
+    const { id } = this.state.storage.sql.exec<{ id: number }>(
+      `INSERT INTO workspace_directory_followups (followup_json, attempts, not_before, created_at)
+       VALUES (?, 0, ?, ?) RETURNING id`,
+      json, now + scheduledAlarmRetryDelay(1), now,
+    ).one();
+    return { id, json };
+  }
+
+  /**
+   * Run recorded follow-ups and delete each one that finished. One that throws
+   * is put off on the alarm's retry schedule and logged with its reason; one
+   * that does not parse is kept as `failed` and never run. A follow-up named
+   * with its JSON runs only if its row still holds that JSON.
+   */
+  private async runDirectoryFollowUps(entries: readonly (number | { id: number; json: string })[]): Promise<void> {
+    for (const entry of entries) {
+      const id = typeof entry === "number" ? entry : entry.id;
+      const row = this.state.storage.sql.exec<{ followup_json: string; attempts: number }>(
+        `SELECT followup_json, attempts FROM workspace_directory_followups WHERE id = ? AND state = 'pending'`, id,
+      ).toArray()[0];
+      if (!row || (typeof entry !== "number" && row.followup_json !== entry.json)) continue;
+      const parsed = DirectoryFollowUpSchema.safeParse(JSON.parse(row.followup_json));
+      if (!parsed.success) {
+        const code = zodDiagnosticCode(parsed.error, "directory_followup") ?? "directory_followup_invalid";
+        this.state.storage.sql.exec(
+          `UPDATE workspace_directory_followups SET state = 'failed', last_error_code = ? WHERE id = ?`, code, id,
+        );
+        logError(this.env, "directory_followup_unreadable", {
+          workspace_id: this.workspaceId(), followup_id: id, code,
+        });
+        continue;
+      }
+      const followUp = parsed.data;
+      try {
+        await this.runDirectoryFollowUp(followUp);
+        this.state.storage.sql.exec(`DELETE FROM workspace_directory_followups WHERE id = ?`, id);
+      } catch (error) {
+        this.state.storage.sql.exec(
+          `UPDATE workspace_directory_followups SET attempts = attempts + 1, not_before = ? WHERE id = ?`,
+          Date.now() + scheduledAlarmRetryDelay(row.attempts + 1), id,
+        );
+        logWarn(this.env, "directory_followup_deferred", {
+          workspace_id: followUp.workspaceId,
+          followup_id: id,
+          attempts: row.attempts + 1,
+          code: diagnosticErrorCode(error, "directory_followup_failed"),
+        });
+      }
+    }
+    await this.armNextAlarm();
+  }
+
+  private dueDirectoryFollowUps(now: number): number[] {
+    return this.state.storage.sql.exec<{ id: number }>(
+      `SELECT id FROM workspace_directory_followups WHERE state = 'pending' AND not_before <= ? ORDER BY id LIMIT ?`,
+      now, SPACE_BOOTSTRAP_PAGE_SIZE,
+    ).toArray().map((row) => row.id);
+  }
+
+  private nextDirectoryFollowUpDueAt(): number | null {
+    return this.state.storage.sql.exec<{ due_at: number | null }>(
+      `SELECT MIN(not_before) AS due_at FROM workspace_directory_followups WHERE state = 'pending'`,
+    ).one().due_at;
+  }
+
+  /** The sends, reconciliations and re-arms one committed directory batch owes. */
+  private async runDirectoryFollowUp(followUp: DirectoryFollowUp): Promise<void> {
+    const commonChanges = new Set(followUp.commonChanges);
+    const viewerChanges = new Map(followUp.viewerChanges.map(([id, users]) => [id, new Set(users)]));
+    const breakoutChanges = new Set(followUp.breakoutChanges);
+    const breakoutViewerChanges = new Map(followUp.breakoutViewerChanges.map(([id, users]) => [id, new Set(users)]));
+    if (followUp.publishSnapshotAll) this.publishSpaceSnapshot();
+    else for (const userId of followUp.snapshotUsers) this.publishSpaceSnapshot(userId);
+    this.publishReachChanged(new Set(followUp.reachChangedUsers));
     // The Space dashboard's list is ordered by activity and filtered by each
     // conversation's state for the reader, so a member conversation's row
-    // moving *is* that page moving — on every message in every member Channel
-    // and every breakout of one. That is far too frequent for the Space
-    // snapshot, which rebuilds both directories per socket; it goes out as a
-    // nudge of its own, carrying the Spaces to read again and their small
-    // aggregate counts for the sidebar.
+    // moving is that page moving. It goes out as a nudge of its own rather
+    // than as a Space snapshot, which rebuilds both directories per socket.
     this.publishSpaceConversationsChanged({
       channelIds: [...commonChanges, ...breakoutChanges],
       viewerChannelIds: mergeViewerChanges(viewerChanges, breakoutViewerChanges),
     });
     // A Channel row carries its live Breakout total. A child projection does
-    // not advance the parent's directory waterline, so explicitly republish
-    // the parent row; the receiver treats this aggregate like Space placements
-    // and may accept it from an otherwise duplicate parent version.
+    // not advance the parent's directory waterline, so republish the parent
+    // row; the receiver may accept this aggregate from a duplicate version.
     for (const workstreamId of breakoutChanges) {
       await this.publishWorkstreamState(workstreamId);
     }
@@ -8615,81 +10166,229 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (breakoutChanges.has(workstreamId)) continue;
       for (const userId of users) await this.publishWorkstreamState(workstreamId, userId);
     }
-    // The backstop for the hierarchy invariant, on the one event that can break
-    // it without anything noticing. Every non-deleted, non-system Channel
-    // belongs to at least one Space, and the creation paths and the cutover are
-    // what make that true — but a directory row is committed here, and a
-    // `complete` Organization is never walked again, so a Channel that reached
-    // this point unplaced would stay homeless while `spacesReady` went on
-    // saying the hierarchy is renderable. `reopenBootstrap` already names this
-    // event as one of its two reasons to exist; nothing called it on one.
-    //
-    // The question is the close's own predicate, which reads this object's
-    // SQLite and nothing else: no D1, no other object, so an ordinary
-    // projection pays two local queries and a guard that fires pays a reopen it
-    // was going to need anyway.
-    //
-    // **It is asked only of Channels this batch did not introduce**, which is
-    // not a softening. A Channel's *arrival* in the directory is a creation in
-    // flight rather than a Channel nobody is going to place: `reserveChild`
-    // enqueues the provisional row before either creation path is finished, and
-    // the Channel authority's own recovery alarm delivers it straight here when
-    // it wins the race with the coordinator's flush. On a connector path the
-    // reservation comes before the placement and the conversation is
-    // provisioned in between, so that alarm has the whole window and takes it:
-    // firing on an arrival reopened the cutover on every run of
-    // `space-creation.test.ts`'s Slack creation, which is the cost that made
-    // the Slack ordering a bug rather than a slow path. A row the
-    // Organization was already holding that is *still* in no Space is a claim
-    // about a broken invariant rather than an unfinished creation, and it is
-    // the state nothing else is going to fix.
-    if (settledChannelIds.length > 0
-      && this.spaceStorage().unplacedChannelExists(settledChannelIds)) {
-      await this.reopenSpaceBootstrapWalk();
-    }
-    await Promise.all([...watchReconciliations].map((workstreamId) => (
-      this.reconcileWorkstreamResourceRegistrations({
-        workspaceId: request.workspaceId,
-        workstreamId,
-      })
+    if (followUp.reopenBootstrap) await this.reopenSpaceBootstrapWalk();
+    await Promise.all(followUp.watchReconciliations.map((workstreamId) => (
+      this.reconcileWorkstreamResourceRegistrations({ workspaceId: followUp.workspaceId, workstreamId })
     )));
     // Archiving a room is a decision about the room, and the automations it
-    // owns follow it. Each is its own object and is told on its own: one that
-    // cannot be reached is the only one that falls behind, and its next
-    // occurrence finds the room archived through `authority` anyway.
-    if (archivalChanges.size > 0) await this.notifyOwningRoomArchival(request.workspaceId, [...archivalChanges]);
-    if (commonChanges.size > 0 || channelEnvelopes.some((envelope) => envelope.effect.kind === "directory_common")) {
-      // Replays repair an arm lost after the directory commit, even when no
-      // directory row changes this time. Always derive from current rows.
-      // A `directory_common` effect is the only writer of
-      // `next_terminal_action_at`, and it arrives outside any alarm — off the
-      // Queue — so a sandbox deadline created or moved here would otherwise
-      // wait for an unrelated target to reconcile before anything armed it.
-      await this.refreshTerminalSchedule();
+    // owns follow it. Each is its own object and is told on its own.
+    if (followUp.archivalChanges.length > 0) {
+      await this.notifyOwningRoomArchival(followUp.workspaceId, followUp.archivalChanges);
     }
-    if (channelEnvelopes.some((envelope) => (
-      envelope.effect.kind === "directory_common"
-      && (envelope.effect.resourceLinks?.length ?? 0) > 0
-    ))) {
-      await this.refreshScheduleKinds(request.workspaceId, ["maintenance", "watch"]);
+    // A `directory_common` effect is the only writer of
+    // `next_terminal_action_at`, so a deadline created or moved here would
+    // otherwise wait for an unrelated target to reconcile before anything
+    // armed it.
+    if (followUp.refreshTerminal) await this.refreshTerminalSchedule();
+    if (followUp.refreshWatchKinds) {
+      await this.refreshScheduleKinds(followUp.workspaceId, ["maintenance", "watch"]);
     }
-    if (directoryChanged) {
+    if (followUp.directoryChanged) {
       // Scope, participant, generation, and archival effects can invalidate a
       // foreground attachment without another client focus event. Rebuild now,
       // before the async state publications yield, so removed viewers neither
       // contribute to nor receive the next presence snapshot.
       this.broadcastPresence();
-      await Promise.all([
-        ...commonChanges,
-      ].map((workstreamId) => this.publishWorkstreamState(workstreamId)));
+      await Promise.all([...commonChanges].map((workstreamId) => this.publishWorkstreamState(workstreamId)));
       await Promise.all([...viewerChanges].flatMap(([workstreamId, users]) => (
         commonChanges.has(workstreamId)
           ? []
           : [...users].map((userId) => this.publishWorkstreamState(workstreamId, userId))
       )));
     }
-    await this.armNextAlarm();
-    return WorkspaceDirectoryApplyResultSchema.parse({ accepted, directoryChanged });
+    if (followUp.refreshProductAlarm) await this.refreshProductAlarm();
+    if (followUp.syncTopics.length > 0) {
+      await this.publishSync(followUp.syncTopics, followUp.workspaceId,
+        this.placementAffinity() ?? await workspacePlacementAffinity(this.env, followUp.workspaceId));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Workspace membership, as this object last heard it.
+  // ---------------------------------------------------------------------------
+
+  /** What the member table says about each viewer a batch names; absent means never heard of. */
+  private memberStatuses(envelopes: readonly ParentEffectEnvelope[]): Map<string, boolean> {
+    const userIds = [...new Set(envelopes.flatMap((envelope) => (
+      envelope.effect.kind === "directory_user" ? [envelope.effect.userId] : []
+    )))];
+    if (userIds.length === 0) return new Map();
+    return new Map(this.state.storage.sql.exec<{ user_id: string; active: number }>(
+      `SELECT user_id, active FROM workspace_member_status WHERE user_id IN (SELECT value FROM json_each(?))`,
+      JSON.stringify(userIds),
+    ).toArray().map((row) => [row.user_id, row.active === 1]));
+  }
+
+  /**
+   * A person's workspace relationship, answered from this object's table.
+   *
+   * The relationship change events keep the table current (the product
+   * accepts that an answer may trail D1 by the time one takes to arrive; the
+   * team set the tolerance at five minutes and chose to trust the events
+   * rather than re-read on a timer). D1 is read once, for someone the table
+   * has never heard of: a member from before the table existed.
+   */
+  private async readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null> {
+    const known = this.knownRelationship(userId);
+    if (known !== undefined) return known;
+    const relationship = await readWorkspaceRelationship(this.env.DB, workspaceId, userId);
+    if (relationship) {
+      this.noteRelationship(relationship);
+    } else {
+      // Somebody with no relationship. A row that arrived during the read came
+      // from an event or another read, and either is at least as new as this.
+      this.state.storage.sql.exec(
+        `INSERT INTO workspace_member_status (user_id, relationship_json, removed_incarnation, active, sequence, updated_at)
+         VALUES (?, NULL, NULL, 0, 0, ?) ON CONFLICT (user_id) DO NOTHING`,
+        userId, Date.now(),
+      );
+    }
+    return relationship;
+  }
+
+  /** The table's answer, with no D1 read; `undefined` for somebody it has never heard of. */
+  private knownRelationship(userId: string): WorkspaceRelationship | null | undefined {
+    const row = this.state.storage.sql.exec<{ relationship_json: string | null }>(
+      `SELECT relationship_json FROM workspace_member_status WHERE user_id = ?`, userId,
+    ).toArray()[0];
+    if (!row) return undefined;
+    return row.relationship_json === null ? null : WorkspaceRelationshipSchema.parse(JSON.parse(row.relationship_json));
+  }
+
+  /**
+   * A relationship this request just read from or wrote to D1. It replaces
+   * the stored row only when it is provably newer: the stored relationship
+   * was removed (or never existed) and this is a different incarnation, as
+   * for a guest removed and invited again, or it is the same incarnation at a
+   * higher revision. Anything else is left alone: an event may have landed
+   * while the request waited on D1, and it is at least as new as the read. A
+   * removed incarnation never comes back, and a live row of another
+   * incarnation cannot be ordered against this one. The sequence is kept, so
+   * every event after it still applies.
+   */
+  private noteRelationship(relationship: WorkspaceRelationship): void {
+    this.state.storage.sql.exec(
+      `INSERT INTO workspace_member_status (user_id, relationship_json, removed_incarnation, active, sequence, updated_at)
+       VALUES (?, ?, NULL, ?, 0, ?)
+       ON CONFLICT (user_id) DO UPDATE SET relationship_json = excluded.relationship_json,
+         removed_incarnation = NULL, active = excluded.active, updated_at = excluded.updated_at
+       WHERE (workspace_member_status.relationship_json IS NULL
+               AND workspace_member_status.removed_incarnation IS NOT ?)
+          OR (json_extract(workspace_member_status.relationship_json, '$.incarnation') = ?
+               AND json_extract(workspace_member_status.relationship_json, '$.revision') < ?)`,
+      relationship.userId,
+      JSON.stringify(relationship),
+      relationship.status === "active" ? 1 : 0,
+      Date.now(),
+      relationship.incarnation,
+      relationship.incarnation,
+      relationship.revision,
+    );
+  }
+
+  /** The viewers a directory batch names that the member table has never heard of. */
+  private unknownMembers(
+    envelopes: readonly ParentEffectEnvelope[],
+    known: ReadonlyMap<string, boolean> = this.memberStatuses(envelopes),
+  ): string[] {
+    return [...new Set(envelopes.flatMap((envelope) => (
+      envelope.effect.kind === "directory_user" && !known.has(envelope.effect.userId) ? [envelope.effect.userId] : []
+    )))];
+  }
+
+  /** Learn people the member table has never heard of: one D1 read each, recorded. */
+  private async learnMembers(userIds: readonly string[]): Promise<void> {
+    const workspaceId = this.workspaceId();
+    if (!workspaceId || userIds.length === 0) return;
+    const known = new Set(this.state.storage.sql.exec<{ user_id: string }>(
+      `SELECT user_id FROM workspace_member_status WHERE user_id IN (SELECT value FROM json_each(?))`,
+      JSON.stringify(userIds),
+    ).toArray().map((row) => row.user_id));
+    await Promise.all([...new Set(userIds)].filter((userId) => !known.has(userId))
+      .map((userId) => this.readRelationship(workspaceId, userId)));
+  }
+
+  /**
+   * A workspace relationship change event, applied in D1's order. Someone who
+   * stops being an active member leaves every viewer directory in the same
+   * transaction, so they drop out of other people's participant lists at once
+   * rather than when their next projection arrives.
+   */
+  async applyMemberStatus(input: {
+    workspaceId: string;
+    sequence: number;
+    removed: boolean;
+    relationship: WorkspaceRelationship;
+  }): Promise<{ applied: boolean }> {
+    await this.initialized;
+    const request = z.strictObject({
+      workspaceId: WorkspaceIdSchema,
+      sequence: z.number().int().positive(),
+      removed: z.boolean(),
+      relationship: WorkspaceRelationshipSchema,
+    }).parse(input);
+    // An object that has not learned its own identity yet still records the
+    // relationship; refusing would block the revocation that follows it.
+    if (this.workspaceId()) this.assertWorkspace(request.workspaceId);
+    const userId = request.relationship.userId;
+    const active = !request.removed && request.relationship.status === "active";
+    let followUpId: { id: number; json: string } | null = null;
+    const applied = this.state.storage.transactionSync(() => {
+      const current = this.state.storage.sql.exec<{ sequence: number; incarnation: string | null; revision: number | null }>(
+        `SELECT sequence, json_extract(relationship_json, '$.incarnation') AS incarnation,
+                json_extract(relationship_json, '$.revision') AS revision
+           FROM workspace_member_status WHERE user_id = ?`, userId,
+      ).toArray()[0];
+      if (current && current.sequence >= request.sequence) return false;
+      if (!request.removed && current?.incarnation === request.relationship.incarnation
+        && (current.revision ?? 0) > request.relationship.revision) {
+        // A request already recorded a later revision it read from D1; this
+        // event is an older step on the way there. Take its place in the order
+        // without moving the answer backwards.
+        this.state.storage.sql.exec(
+          `UPDATE workspace_member_status SET sequence = ? WHERE user_id = ?`, request.sequence, userId,
+        );
+        return true;
+      }
+      this.state.storage.sql.exec(
+        `INSERT INTO workspace_member_status (user_id, relationship_json, removed_incarnation, active, sequence, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (user_id) DO UPDATE SET relationship_json = excluded.relationship_json,
+           removed_incarnation = excluded.removed_incarnation, active = excluded.active,
+           sequence = excluded.sequence, updated_at = excluded.updated_at`,
+        userId, request.removed ? null : JSON.stringify(request.relationship),
+        request.removed ? request.relationship.incarnation : null, active ? 1 : 0,
+        request.sequence, Date.now(),
+      );
+      if (!active) {
+        // Leaving a Channel's participants changes its facepile for everyone,
+        // leaving any row changes this person's reach, and leaving a Space's
+        // viewers changes that Space's snapshot: the same sends a directory
+        // batch that dropped these rows would owe.
+        const channels = this.state.storage.sql.exec<{ workstream_id: string; is_participant: number }>(
+          `DELETE FROM channel_viewers WHERE user_id = ? RETURNING workstream_id, is_participant`, userId,
+        ).toArray();
+        const breakouts = this.state.storage.sql.exec<{ workstream_id: string }>(
+          `DELETE FROM breakout_viewers WHERE user_id = ? RETURNING workstream_id`, userId,
+        ).toArray();
+        const spaces = this.state.storage.sql.exec(
+          `DELETE FROM space_viewers WHERE user_id = ? RETURNING space_id`, userId,
+        ).toArray();
+        if (channels.length + breakouts.length + spaces.length > 0) {
+          const followUp = WorkspaceDO.emptyDirectoryFollowUp(request.workspaceId);
+          followUp.reachChangedUsers = [userId];
+          followUp.commonChanges = [...new Set(channels.flatMap((row) => (row.is_participant === 1 ? [row.workstream_id] : [])))];
+          followUp.breakoutChanges = [...new Set(breakouts.map((row) => row.workstream_id))];
+          followUp.publishSnapshotAll = spaces.length > 0
+            || this.spaceStorage().noteMemberDirectoryChange(channels.map((row) => row.workstream_id));
+          followUp.directoryChanged = true;
+          followUpId = this.recordDirectoryFollowUp(followUp);
+        }
+      }
+      return true;
+    });
+    if (followUpId !== null) await this.runDirectoryFollowUps([followUpId]);
+    return { applied };
   }
 
   /**
@@ -8711,7 +10410,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }>(
       `SELECT automation.automation_id, directory.workstream_id, directory.archived_at
          FROM automation_directory automation
-         JOIN workspace_workstream_directory directory
+         JOIN channels directory
            ON directory.workstream_id = automation.owning_workstream_id
         WHERE automation.lifecycle <> 'deleted'
           AND automation.owning_workstream_id IN (SELECT value FROM json_each(?))
@@ -9029,8 +10728,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
            ) OR (
              viewer.is_participant = 1 AND directory.exact_state = 'needs_input'
            ) THEN 1 ELSE 0 END), 0) AS unread_and_needs_input
-       FROM workspace_workstream_directory directory
-       LEFT JOIN workspace_workstream_viewers viewer
+       FROM channels directory
+       LEFT JOIN channel_viewers viewer
          ON viewer.workstream_id = directory.workstream_id
         AND viewer.user_id = ?
         AND viewer.authority_generation = directory.authority_generation
@@ -9097,8 +10796,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       : "directory.last_activity_at";
     return this.state.storage.sql.exec<{ workstream_id: string }>(
       `SELECT directory.workstream_id
-         FROM workspace_workstream_directory directory
-         LEFT JOIN workspace_workstream_viewers viewer
+         FROM channels directory
+         LEFT JOIN channel_viewers viewer
            ON viewer.workstream_id = directory.workstream_id
           AND viewer.user_id = ?
           AND viewer.authority_generation = directory.authority_generation
@@ -9112,8 +10811,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           AND (? IS NULL OR EXISTS (
             SELECT 1
               FROM space_channel_memberships membership
-              JOIN workspace_space_directory space ON space.space_id = membership.space_id
-              LEFT JOIN workspace_space_viewers space_viewer
+              JOIN spaces space ON space.space_id = membership.space_id
+              LEFT JOIN space_viewers space_viewer
                 ON space_viewer.space_id = space.space_id
                AND space_viewer.user_id = ?1 AND space_viewer.is_participant = 1
              WHERE membership.space_id = ?
@@ -10769,8 +12468,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = z.strictObject({ workspaceId: z.string().uuid(), userId: z.string().uuid() }).parse(input);
     this.assertWorkspace(request.workspaceId);
     const rows = this.state.storage.sql.exec<{ workstream_id: string }>(
-      `SELECT directory.workstream_id FROM workspace_workstream_directory directory
-       LEFT JOIN workspace_workstream_viewers viewer
+      `SELECT directory.workstream_id FROM channels directory
+       LEFT JOIN channel_viewers viewer
          ON viewer.workstream_id = directory.workstream_id AND viewer.user_id = ?
         AND viewer.authority_generation = directory.authority_generation
        WHERE directory.scope = 'workspace' OR viewer.is_participant = 1
@@ -10786,8 +12485,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceDirectoryReadableIdsRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     const rows = this.state.storage.sql.exec<{ workstream_id: string }>(
-      `SELECT directory.workstream_id FROM workspace_workstream_directory directory
-       LEFT JOIN workspace_workstream_viewers viewer
+      `SELECT directory.workstream_id FROM channels directory
+       LEFT JOIN channel_viewers viewer
          ON viewer.workstream_id = directory.workstream_id
         AND viewer.user_id = ?
         AND viewer.authority_generation = directory.authority_generation
@@ -10807,8 +12506,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceDirectoryVisibleIdsRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     const rows = this.state.storage.sql.exec<{ workstream_id: string }>(
-      `SELECT directory.workstream_id FROM workspace_workstream_directory directory
-       LEFT JOIN workspace_workstream_viewers viewer
+      `SELECT directory.workstream_id FROM channels directory
+       LEFT JOIN channel_viewers viewer
          ON viewer.workstream_id = directory.workstream_id
         AND viewer.user_id = ?
         AND viewer.authority_generation = directory.authority_generation
@@ -10950,8 +12649,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }>(
       `SELECT directory.authority_generation, viewer.waterline,
               viewer.listable, directory.title, directory.email_address
-         FROM workspace_workstream_directory directory
-         JOIN workspace_workstream_viewers viewer
+         FROM channels directory
+         JOIN channel_viewers viewer
            ON viewer.workstream_id = directory.workstream_id
           AND viewer.user_id = ?
           AND viewer.authority_generation = directory.authority_generation
@@ -10976,7 +12675,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const rows = this.state.storage.sql.exec<{ workstream_id: string }>(
       `SELECT link.workstream_id FROM workspace_workstream_resource_links link
-       JOIN workspace_workstream_directory directory
+       JOIN channels directory
          ON directory.workstream_id = link.workstream_id
        WHERE link.resource_id = ? AND directory.archived_at IS NULL
          AND (? = 0 OR link.watch_enabled = 1)
@@ -11044,7 +12743,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const column = request.kind === "terminal" ? "next_terminal_action_at" : "next_wakeup_due_at";
     return this.state.storage.sql.exec<{ workstream_id: string }>(
-      `SELECT workstream_id FROM workspace_workstream_directory
+      `SELECT workstream_id FROM channels
         WHERE archived_at IS NULL AND ${column} IS NOT NULL AND ${column} <= ?
         ORDER BY ${column}, workstream_id LIMIT ?`,
       epoch(request.through),
@@ -11064,7 +12763,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       due_at: number;
     }>(
       `SELECT 'terminal' AS kind, workstream_id, next_terminal_action_at AS due_at
-         FROM workspace_workstream_directory
+         FROM channels
         WHERE archived_at IS NULL AND next_terminal_action_at IS NOT NULL
        ORDER BY due_at, workstream_id`,
     ).toArray();
@@ -11092,9 +12791,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       `SELECT directory.workstream_id, directory.scope, directory.created_by_user_id,
               COALESCE(viewer.is_participant, 0) AS is_participant
          FROM workspace_workstream_resource_links link
-         JOIN workspace_workstream_directory directory
+         JOIN channels directory
            ON directory.workstream_id = link.workstream_id
-         LEFT JOIN workspace_workstream_viewers viewer
+         LEFT JOIN channel_viewers viewer
            ON viewer.workstream_id = directory.workstream_id
           AND viewer.user_id = ?
           AND viewer.authority_generation = directory.authority_generation
@@ -11300,7 +12999,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(WorkspaceIdSchema.parse(input.workspaceId));
     this.state.storage.transactionSync(() => {
       const parents = this.state.storage.sql.exec<{ parent_id: string; parent_kind: 'workstream' | 'automation' }>(
-        `SELECT workstream_id AS parent_id, 'workstream' AS parent_kind FROM workspace_workstream_directory
+        `SELECT workstream_id AS parent_id, 'workstream' AS parent_kind FROM channels
          UNION SELECT automation_id AS parent_id, 'automation' AS parent_kind FROM automation_directory`,
       ).toArray();
       const workspaceId = asWorkspaceId(input.workspaceId);
@@ -11350,7 +13049,42 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       JSON.stringify([parentId, substreamId])).toArray().length > 0;
   }
 
+  /**
+   * Discovery for one parent or one conversation.
+   *
+   * A parent job for a Channel hosted here is answered in place: its children
+   * are `parent_children` rows in this database, so registering them is a few
+   * statements in the caller's transaction rather than a Queue hop to a Worker
+   * that would call straight back into this object for the list and the
+   * registration. A conversation job, a Sidekick parent (its children are in
+   * AutomationDO) and a Channel whose legacy import has not run yet (reading
+   * it would need the import, which is async) still go through the Queue.
+   */
   private enqueueAuthorizationDiscovery(job: AuthorizationProjectionJob): void {
+    if (job.substreamId === undefined) {
+      const hostedChannel = this.state.storage.sql.exec(
+        `SELECT 1 FROM parent_metadata parent
+          WHERE parent.parent_id = ? AND parent.parent_kind = 'workstream'
+            AND NOT EXISTS (SELECT 1 FROM parent_imports ledger
+                             WHERE ledger.parent_id = parent.parent_id AND ledger.state = 'pending')`,
+        job.parentId,
+      ).toArray().length > 0;
+      if (hostedChannel) {
+        this.state.storage.sql.exec('DELETE FROM authorization_delivery WHERE job_key = ?',
+          JSON.stringify([job.parentId, null]));
+        this.registerAuthorizationChildrenInPlace({
+          workspaceId: job.workspaceId, parentId: job.parentId,
+          // The same rows `HostedParent.listAuthorizationChildren` answers.
+          substreamIds: this.state.storage.sql.exec<{ substream_id: string }>(
+            `SELECT substream_id FROM parent_children WHERE parent_id = ? AND (kind = 'main' OR status = 'ready')
+              ORDER BY substream_id`,
+            job.parentId,
+          ).toArray().map((row) => SubstreamIdSchema.parse(row.substream_id)),
+          ...(job.mutationAt === undefined ? {} : { mutationAt: job.mutationAt }),
+        });
+        return;
+      }
+    }
     this.state.storage.sql.exec(`INSERT INTO authorization_delivery(job_key, payload_json, not_before) VALUES (?, ?, 0)
       ON CONFLICT(job_key) DO UPDATE SET payload_json = CASE
         WHEN json_extract(authorization_delivery.payload_json, '$.mutationAt') IS NULL THEN excluded.payload_json
@@ -11364,35 +13098,42 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamIds: z.array(SubstreamIdSchema), refreshExisting: z.boolean().optional(), mutationAt: z.number().int().nonnegative().optional() }).parse(input);
     this.assertWorkspace(request.workspaceId);
-    this.state.storage.transactionSync(() => {
-      // Reconcile the exact registry: deleted/failed children must not leave immortal pending receipts.
-      const expected = new Set(request.substreamIds);
-      const old = this.state.storage.sql.exec<{ substream_id: string }>(
-        'SELECT substream_id FROM authorization_backfill_children WHERE parent_id = ? UNION SELECT substream_id FROM authorization_inventories WHERE parent_id = ?',
-        request.parentId, request.parentId,
-      ).toArray();
-      for (const child of old) if (!expected.has(SubstreamIdSchema.parse(child.substream_id))) {
-        for (const table of ['authorization_backfill_children', 'authorization_inventories', 'authorization_locations']) {
-          this.state.storage.sql.exec(`DELETE FROM ${table} WHERE parent_id = ? AND substream_id = ?`, request.parentId, child.substream_id);
-        }
-        this.state.storage.sql.exec('DELETE FROM authorization_delivery WHERE job_key = ?', JSON.stringify([request.parentId, child.substream_id]));
-      }
-      for (const substreamId of request.substreamIds) {
-        if (request.refreshExisting === false && this.state.storage.sql.exec(
-          'SELECT 1 FROM authorization_backfill_children WHERE parent_id = ? AND substream_id = ?', request.parentId, substreamId,
-        ).toArray().length) continue;
-        this.state.storage.sql.exec(`INSERT INTO authorization_backfill_children(parent_id, substream_id) VALUES (?, ?)
-          ON CONFLICT(parent_id, substream_id) DO UPDATE SET completed = 0`, request.parentId, substreamId);
-        this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
-          workspaceId: request.workspaceId, parentId: request.parentId, substreamId,
-          ...(request.mutationAt === undefined ? {} : { mutationAt: request.mutationAt }) });
-      }
-      this.state.storage.sql.exec('UPDATE authorization_backfill SET completed = 1 WHERE parent_id = ?', request.parentId);
-      if (request.mutationAt !== undefined) this.state.storage.sql.exec(
-        "UPDATE search_authorization_push SET timing_origin = CASE WHEN first_mutated_at IS NULL OR ? <= first_mutated_at THEN 'source_mutation' ELSE timing_origin END, first_mutated_at = COALESCE(MIN(first_mutated_at, ?), ?) WHERE kind = 'parent' AND target_id = ?",
-        request.mutationAt, request.mutationAt, request.mutationAt, request.parentId);
-    });
+    this.state.storage.transactionSync(() => this.registerAuthorizationChildrenInPlace(request));
     await this.armNextAlarm();
+  }
+
+  /** The registration itself, in the caller's transaction. */
+  private registerAuthorizationChildrenInPlace(request: {
+    workspaceId: AuthorizationProjectionJob["workspaceId"]; parentId: string;
+    substreamIds: NonNullable<AuthorizationProjectionJob["substreamId"]>[];
+    refreshExisting?: boolean | undefined; mutationAt?: number | undefined;
+  }): void {
+    // Reconcile the exact registry: deleted/failed children must not leave immortal pending receipts.
+    const expected = new Set(request.substreamIds);
+    const old = this.state.storage.sql.exec<{ substream_id: string }>(
+      'SELECT substream_id FROM authorization_backfill_children WHERE parent_id = ? UNION SELECT substream_id FROM authorization_inventories WHERE parent_id = ?',
+      request.parentId, request.parentId,
+    ).toArray();
+    for (const child of old) if (!expected.has(SubstreamIdSchema.parse(child.substream_id))) {
+      for (const table of ['authorization_backfill_children', 'authorization_inventories', 'authorization_locations']) {
+        this.state.storage.sql.exec(`DELETE FROM ${table} WHERE parent_id = ? AND substream_id = ?`, request.parentId, child.substream_id);
+      }
+      this.state.storage.sql.exec('DELETE FROM authorization_delivery WHERE job_key = ?', JSON.stringify([request.parentId, child.substream_id]));
+    }
+    for (const substreamId of request.substreamIds) {
+      if (request.refreshExisting === false && this.state.storage.sql.exec(
+        'SELECT 1 FROM authorization_backfill_children WHERE parent_id = ? AND substream_id = ?', request.parentId, substreamId,
+      ).toArray().length) continue;
+      this.state.storage.sql.exec(`INSERT INTO authorization_backfill_children(parent_id, substream_id) VALUES (?, ?)
+        ON CONFLICT(parent_id, substream_id) DO UPDATE SET completed = 0`, request.parentId, substreamId);
+      this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
+        workspaceId: request.workspaceId, parentId: request.parentId, substreamId,
+        ...(request.mutationAt === undefined ? {} : { mutationAt: request.mutationAt }) });
+    }
+    this.state.storage.sql.exec('UPDATE authorization_backfill SET completed = 1 WHERE parent_id = ?', request.parentId);
+    if (request.mutationAt !== undefined) this.state.storage.sql.exec(
+      "UPDATE search_authorization_push SET timing_origin = CASE WHEN first_mutated_at IS NULL OR ? <= first_mutated_at THEN 'source_mutation' ELSE timing_origin END, first_mutated_at = COALESCE(MIN(first_mutated_at, ?), ?) WHERE kind = 'parent' AND target_id = ?",
+      request.mutationAt, request.mutationAt, request.mutationAt, request.parentId);
   }
 
   async authorizationBackfillStatus(input: { workspaceId: string }) {
@@ -11405,7 +13146,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const parents = this.state.storage.sql.exec<{ pending: number }>('SELECT COUNT(*) AS pending FROM authorization_backfill WHERE completed = 0').one().pending;
     const children = this.state.storage.sql.exec<{ pending: number }>('SELECT COUNT(*) AS pending FROM authorization_backfill_children WHERE completed = 0').one().pending;
     const undiscovered = this.state.storage.sql.exec<{ pending: number }>(`SELECT COUNT(*) AS pending FROM (
-      SELECT workstream_id AS parent_id FROM workspace_workstream_directory
+      SELECT workstream_id AS parent_id FROM channels
       UNION SELECT automation_id AS parent_id FROM automation_directory
     ) directory LEFT JOIN authorization_backfill tracked USING(parent_id) WHERE tracked.parent_id IS NULL`).one().pending;
     return { pendingParents: parents + undiscovered, pendingChildren: children,
@@ -11708,7 +13449,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           archived_at: number | null;
         } & Record<string, SqlStorageValue>>(
           `SELECT authority_generation, waterline, payload_hash, archived_at
-             FROM workspace_workstream_directory WHERE workstream_id = ?`,
+             FROM channels WHERE workstream_id = ?`,
           envelope.parentId,
         ).toArray()[0];
         if (projectionSupersedes(
@@ -11716,7 +13457,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         )) {
           const effect = envelope.effect;
           this.state.storage.sql.exec(
-            `INSERT INTO workspace_workstream_directory
+            `INSERT INTO channels
                (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
                 title, description, preview, scope, exact_state, system_kind,
                 last_activity_at, completed_at, archived_at, email_address,
@@ -11783,7 +13524,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             epoch(effect.updatedAt ?? effect.lastActivityAt),
             now,
           );
-          this.state.storage.sql.exec(`UPDATE workspace_workstream_directory SET appearance_json = ? WHERE workstream_id = ?`, effect.appearance ? JSON.stringify(effect.appearance) : null, envelope.parentId);
+          this.state.storage.sql.exec(`UPDATE channels SET appearance_json = ? WHERE workstream_id = ?`, effect.appearance ? JSON.stringify(effect.appearance) : null, envelope.parentId);
           this.state.storage.sql.exec(
             `DELETE FROM workspace_workstream_resource_links WHERE workstream_id = ?`,
             envelope.parentId,
@@ -11848,13 +13589,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           is_participant: number;
         } & Record<string, SqlStorageValue>>(
           `SELECT authority_generation, waterline, payload_hash, is_participant
-             FROM workspace_workstream_viewers WHERE workstream_id = ? AND user_id = ?`,
+             FROM channel_viewers WHERE workstream_id = ? AND user_id = ?`,
           envelope.parentId,
           effect.userId,
         ).toArray()[0];
         if (!activeUsers.has(effect.userId)) {
           const deleted = this.state.storage.sql.exec<{ is_participant: number }>(
-            `DELETE FROM workspace_workstream_viewers
+            `DELETE FROM channel_viewers
               WHERE workstream_id = ? AND user_id = ? RETURNING is_participant`,
             envelope.parentId,
             effect.userId,
@@ -11867,7 +13608,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           )) {
             const wasParticipant = current?.is_participant === 1;
             this.state.storage.sql.exec(
-              `INSERT INTO workspace_workstream_viewers
+              `INSERT INTO channel_viewers
                  (workstream_id, user_id, authority_generation, waterline,
                   source_event_id, payload_hash, is_participant, participant_added_at,
                   unread_count, you_are_mentioned,
@@ -11885,7 +13626,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
                    WHEN excluded.is_participant = 0 THEN NULL
                    ELSE COALESCE(
                      excluded.participant_added_at,
-                     workspace_workstream_viewers.participant_added_at
+                     channel_viewers.participant_added_at
                    )
                  END,
                  unread_count = excluded.unread_count,
@@ -11936,6 +13677,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private listDirectory(
     request: WorkspaceDirectoryListRequest,
     accessClass: "member" | "guest" = "member",
+    withViewerState = false,
   ): WorkspaceDirectoryPage {
     let cursor = request.before ? directoryCursor(request.before) : null;
     if (cursor) {
@@ -11991,7 +13733,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return {
       items: mapDirectoryWorkstreams(
         this.state.storage.sql, rows, request.workspaceId, this.spaceStorage(), request.userId,
-        accessClass,
+        accessClass, withViewerState,
       ),
       stateVersions: rows.map(directoryStateVersion),
       nextCursor,
@@ -12064,8 +13806,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   private directoryVisible(userId: string, workstreamId: string): boolean {
     return this.state.storage.sql.exec<{ one: number }>(
-      `SELECT 1 AS one FROM workspace_workstream_directory directory
-       LEFT JOIN workspace_workstream_viewers viewer
+      `SELECT 1 AS one FROM channels directory
+       LEFT JOIN channel_viewers viewer
          ON viewer.workstream_id = directory.workstream_id
         AND viewer.user_id = ?
         AND viewer.authority_generation = directory.authority_generation
@@ -12122,6 +13864,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // *this* viewer may see, and a personal Space's id on somebody else's row
     // is the existence of a private Space leaking through a shared Channel.
     const spaces = this.spaceStorage();
+    // Viewer-independent too; each viewer's row keeps the conversations they can open.
+    const background = runningBackgroundAgents(this.state.storage.sql, [workstreamId]);
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
@@ -12149,18 +13893,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           viewerWaterline: stateVersion.viewerWaterline,
         },
         workstream: visible
-          ? directoryWorkstream(
-            row, attachment.workspaceId, preview,
-            attachment.accessClass === "guest"
-              ? []
-              : spaces.spaceIdsByChannel(attachment.userId, [workstreamId]).get(workstreamId) ?? [],
-            [],
-            spaces.breakoutAttentionCounts(
-              attachment.userId,
-              [workstreamId],
-              attachment.accessClass,
-            ).get(workstreamId) ?? 0,
-          )
+          ? {
+            ...directoryWorkstream(
+              row, attachment.workspaceId, preview,
+              attachment.accessClass === "guest"
+                ? []
+                : spaces.spaceIdsByChannel(attachment.userId, [workstreamId]).get(workstreamId) ?? [],
+              [],
+              spaces.breakoutAttentionCounts(
+                attachment.userId,
+                [workstreamId],
+                attachment.accessClass,
+              ).get(workstreamId) ?? 0,
+            ),
+            ...channelViewerStates(this.state.storage.sql, attachment.userId, [workstreamId], background).get(workstreamId),
+          }
           : null,
       }));
       try {
@@ -12187,7 +13934,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       userId: attachment.userId,
       limit: SIDEBAR_LIST_LIMIT,
       includeSystem: false,
-    }, attachment.accessClass);
+    }, attachment.accessClass, true);
     return WorkspaceSidebarSchema.parse({
       workstreams: attachment.accessClass === "guest"
         ? { ...workstreams, items: workstreams.items.map((item) => ({ ...item, spaceIds: [] })) }
@@ -12526,7 +14273,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   private spaceStorage(): WorkspaceSpaceStorage {
-    return new WorkspaceSpaceStorage(this.state.storage);
+    return new WorkspaceSpaceStorage(this.state.storage, (workstreamId, userId) => this.canManageChannelNow(workstreamId, userId));
+  }
+
+  /**
+   * Channel management, from this object's own tables: the relationship
+   * table and the Channel's grants. False for somebody the table has never
+   * heard of, since learning them takes a D1 read; the caller sends that
+   * case the long way round.
+   */
+  private canManageChannelNow(workstreamId: string, userId: string): boolean {
+    const workspaceId = this.workspaceId();
+    const relationship = this.knownRelationship(userId);
+    if (!workspaceId || relationship?.status !== "active" || relationship.accessClass !== "member") return false;
+    const access = new HostedParent(this.hostedParentHost(), workstreamId, HOSTED_CHANNEL_ROLE).managementAccess(
+      { workspaceId: asWorkspaceId(workspaceId), parentId: workstreamId, userId: asUserId(userId) }, relationship,
+    );
+    return access.allowed && access.writable;
   }
 
   private breakoutStorage(): WorkspaceBreakoutStorage {
@@ -12861,7 +14624,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.state.storage.transactionSync(() => {
       const now = Date.now();
       for (const row of sql.exec<{ workstream_id: string }>(
-        "SELECT workstream_id FROM workspace_workstream_directory",
+        "SELECT workstream_id FROM channels",
       ).toArray()) {
         sql.exec(
           `INSERT OR IGNORE INTO workspace_retirement_graph
@@ -13001,8 +14764,21 @@ applyRetirementGate(WorkspaceDO, {
     "beginWorkspaceRetirement",
     "recordRetiredNode",
     "workspaceRetirementProgress",
+    // The walk's read of a hosted Channel's or Space's children. The parent is
+    // closed with this object; its conversations are still separate objects
+    // the walk has to find and close.
+    "childrenForRetirement",
+    // The `workstream` revocation hop, permitted for the reason
+    // `revokeSocketAccess` is on every gated class: it closes a hosted
+    // Channel's control sockets and names the conversations whose sockets the
+    // consumer revokes next, which a retired workspace still has to reach.
+    "revokeParentSocketAccess",
   ],
   drop: {
+    // A conversation's effects for a hosted parent, handed to the Queue before
+    // the tombstone landed. Acknowledged as the legacy parents did, so the
+    // message stops redelivering an effect nothing will apply.
+    receiveChildEffects: ([input]) => ({ accepted: droppedEnvelopeReceipts(input) }),
     // Already handed to the Queue before the tombstone landed. The consumer
     // parses `accepted` to decide the message is done; anything else leaves it
     // redelivering an effect no object will ever apply.

@@ -1,7 +1,6 @@
 import {
   asArtifactId,
   asAutomationId,
-  asSpaceId,
   asWorkspaceId,
   asWorkstreamId,
   type SubstreamId,
@@ -11,9 +10,7 @@ import {
   artifactHostDOName,
   automationDOName,
   conversationObjectName,
-  spaceDOName,
   workspaceDOName,
-  workstreamDOName,
 } from "../durable-objects/names";
 import type { Env } from "../env";
 import {
@@ -65,17 +62,33 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
     // substreams and the automations the room owns. Nobody holding a socket
     // means nobody to publish for — the members who lost access and were not
     // connected have nothing open to close.
-    const workstream = await durableObjectStubForWorkspace(
+    // The room's parent is hosted by the Organization object, which holds its
+    // control sockets too.
+    const workspace = await durableObjectStubForWorkspace(
       env,
-      env.WORKSTREAM_DOS,
+      env.WORKSPACE_DOS,
       workspaceId,
-      workstreamDOName(env.AVALON_REGION, workspaceId, asWorkstreamId(target.workstreamId)),
+      workspaceDOName(env.AVALON_REGION, workspaceId),
       placementAffinity,
     );
-    const { closedUserIds = [] } = await workstream.revokeNarrowedAudienceAccess({
+    const { closedUserIds = [], substreams, automationIds } = await workspace.revokeNarrowedAudienceAccess({
       workspaceId,
       parentId: target.workstreamId,
     });
+    if (substreams && automationIds) {
+      // The object ran each person's Channel step in the same call, so only
+      // the leaves go out: each conversation, and each Sidekick the Channel owns.
+      await publishDescendantRevocations(env, [
+        ...substreams.flatMap(({ userId, substreamIds }) => substreamIds.map((substreamId) =>
+          descendantRevocation({ ...carried, userId }, {
+            scope: "substream", workstreamId: target.workstreamId, substreamId,
+          }))),
+        ...closedUserIds.flatMap((userId) => automationIds.map((automationId) =>
+          descendantRevocation({ ...carried, userId }, { scope: "automation", automationId }))),
+      ]);
+      return;
+    }
+    // An object from before the combined step answers with names only.
     await publishDescendantRevocations(env, closedUserIds.flatMap((userId) => [
       descendantRevocation({ ...carried, userId }, { scope: "workstream", workstreamId: target.workstreamId }),
       descendantRevocation({ ...carried, userId },
@@ -108,12 +121,20 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
     // retraction — where an empty list simply reaches nothing new.
     const {
       workstreamIds = [],
+      channels = [],
       automationIds = [],
       artifactIds = [],
     } = await workspace.revokeSocketAccess(revocation);
+    // A Channel in `channels` had its own hop run inside that call, so only
+    // its conversations go out. The rest (a Channel still waiting for its
+    // legacy import, or every Channel when an older object answered) get the
+    // `workstream` hop.
+    const handled = new Set(channels.map((channel) => channel.workstreamId));
     await publishDescendantRevocations(env, [
-      ...workstreamIds.map((workstreamId) =>
+      ...workstreamIds.filter((workstreamId) => !handled.has(workstreamId)).map((workstreamId) =>
         descendantRevocation(revocation, { scope: "workstream", workstreamId })),
+      ...channels.flatMap(({ workstreamId, substreamIds }) => substreamIds.map((substreamId) =>
+        descendantRevocation(revocation, { scope: "substream", workstreamId, substreamId }))),
       // An automation holds no socket of its own, but its conversation and
       // its runs do, and only the automation object can name them.
       ...automationIds.map((automationId) =>
@@ -171,14 +192,14 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
     // is nothing here to close and asking would be a subrequest whose answer is
     // always empty. Its children are addressed by the Space id exactly as a
     // work stream's substreams are addressed by its own.
-    const space = await durableObjectStubForWorkspace(
+    const workspace = await durableObjectStubForWorkspace(
       env,
-      env.SPACE_DOS,
+      env.WORKSPACE_DOS,
       workspaceId,
-      spaceDOName(env.AVALON_REGION, workspaceId, asSpaceId(target.spaceId)),
+      workspaceDOName(env.AVALON_REGION, workspaceId),
       placementAffinity,
     );
-    const { children } = await space.listChildren({
+    const { children } = await workspace.listChildren({
       workspaceId,
       parentId: target.spaceId,
     });
@@ -213,14 +234,16 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
   const workstreamId = asWorkstreamId(target.workstreamId);
 
   if (target.scope === "workstream") {
-    const workstream = await durableObjectStubForWorkspace(
+    // The Channel's parent — and its control sockets — live in the
+    // Organization object.
+    const workspace = await durableObjectStubForWorkspace(
       env,
-      env.WORKSTREAM_DOS,
+      env.WORKSPACE_DOS,
       workspaceId,
-      workstreamDOName(env.AVALON_REGION, workspaceId, workstreamId),
+      workspaceDOName(env.AVALON_REGION, workspaceId),
       placementAffinity,
     );
-    const { substreamIds } = await workstream.revokeSocketAccess(revocation);
+    const { substreamIds } = await workspace.revokeParentSocketAccess({ parentId: workstreamId, revocation });
     await publishDescendantRevocations(env, [
       ...substreamIds.map((substreamId) => descendantRevocation(revocation, {
         scope: "substream",
@@ -327,6 +350,18 @@ export async function consumeAccessRevocationQueue(
 export async function applyWorkspaceRelationshipChange(env: Env, message: WorkspaceRelationshipChangeMessage): Promise<void> {
   const { relationship, removed } = message;
   try {
+    // The Organization object answers access checks (grants, invitations,
+    // Space writes, breakout creation) from its own copy of each relationship,
+    // and this event is what keeps that copy current. First, so that a
+    // revocation hop that throws and retries, or dead-letters, has not left
+    // the copy saying active: every new check refuses the person at once,
+    // while the walk below closes what they already hold. Sequence-fenced, so
+    // a redelivery applies nothing twice.
+    const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, relationship.workspaceId,
+      workspaceDOName(env.AVALON_REGION, asWorkspaceId(relationship.workspaceId)));
+    await workspace.applyMemberStatus({
+      workspaceId: relationship.workspaceId, sequence: message.sequence, removed, relationship,
+    });
     if (removed || relationship.status !== "active") {
       await applyAccessRevocation(env, {
         kind: "access_revoked", reason: "workspace_membership_removed",

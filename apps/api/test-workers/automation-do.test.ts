@@ -45,7 +45,7 @@ import {
   AUTOMATION_RUN_ALARM_KIND,
   AUTOMATION_SCHEDULE_ALARM_KIND,
 } from "../src/durable-objects/automation-do-protocol";
-import { automationDOName, conversationObjectName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import { automationDOName, conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
 import { AgentCommunicationService } from "../src/services/agent-communication-service";
@@ -59,6 +59,7 @@ import {
   pendingParentEffects,
 } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
+import { hostedParentStub } from "./helpers/hosted-parent";
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
@@ -431,7 +432,7 @@ beforeEach(async () => {
 describe("AutomationDO", () => {
   it("lets a child recommend workspace knowledge without activating main or siblings, and loads only locally", async () => {
     const workstreamId = asWorkstreamId('00000000-0000-7000-8000-00000000ad99');
-    const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(workstreamDOName('global', WORKSPACE_ID, workstreamId)));
+    const parent = hostedParentStub(env, WORKSPACE_ID);
     const root = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName('global', WORKSPACE_ID, workstreamId)));
     await parent.reserveChild({ workspaceId: WORKSPACE_ID, parentId: workstreamId, substreamId: asSubstreamId('0'), kind: 'main', createdByUserId: AUTHOR_ID,
       authorityGeneration: 1, directory: { title: 'Knowledge', description: '', scope: 'workspace', systemKind: null, emailAddress: null, titleStatus: 'settled', createdAt: NOW } });
@@ -743,7 +744,7 @@ describe("AutomationDO", () => {
     await earlier.saveDefinition({ workspaceId: WORKSPACE_ID, automationId: earlierId, draft, evaluatorRules: null, submittedByRunId: null, actor: actor() });
     await deliverParentEffects(TEST_ENV, earlier);
     const workstreamId = asWorkstreamId("00000000-0000-7000-8000-00000000ad99");
-    await env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(workstreamDOName("global", WORKSPACE_ID, workstreamId))).reserveChild({
+    await hostedParentStub(env, WORKSPACE_ID).reserveChild({
       workspaceId: WORKSPACE_ID, parentId: workstreamId, substreamId: asSubstreamId("0"), kind: "main",
       createdByUserId: AUTHOR_ID, authorityGeneration: 1,
       directory: { title: "Use knowledge", description: "", scope: "personal", systemKind: null, emailAddress: null, titleStatus: "settled", createdAt: NOW },

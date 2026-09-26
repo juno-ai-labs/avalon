@@ -28,7 +28,7 @@ token and which state wins.
 | `packages/ui/src/styles/app.css` | `.status-<state> .status-dot` — one rule per state, each naming its token. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | The authority for the three personal states: `member_attention` for unread and mentions, `participants.first_opened_at` for unseen. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Migration v18: the column, its backfill, and the rebuilt `_runtime_workstream_participants` triggers that keep a re-add through the compatibility views unseen. |
-| `apps/api/src/durable-objects/workspace-do.ts` | `workspace_workstream_viewers`, the per-person projection the sidebar list is read from. |
+| `apps/api/src/durable-objects/workspace-do.ts` | `channel_viewers`, the per-person projection the sidebar list is read from. |
 
 ### The three personal states
 
@@ -66,7 +66,7 @@ the work stream:
   transition each already bumps the epoch for.
 
 Both halves ride the same `directory_user` regional effect into
-`workspace_workstream_viewers`, so the sidebar's list, the work-stream socket's
+`channel_viewers`, so the sidebar's list, the work-stream socket's
 boot frame, and `GET /workstreams/:id` cannot answer differently.
 
 ### The ranking
@@ -298,8 +298,8 @@ paths set it.
 
 | Table | Column | Meaning |
 | --- | --- | --- |
-| `participants` (WorkstreamDO object SQL) | `first_opened_at INTEGER` | When this person first opened the work stream. Null means unseen. |
-| `workspace_workstream_viewers` (WorkspaceDO) | `unseen INTEGER NOT NULL DEFAULT 0` | The projected flag the sidebar list reads. |
+| `participants` (Main conversation's SubstreamAgent SQL) | `first_opened_at INTEGER` | When this person first opened the work stream. Null means unseen. |
+| `channel_viewers` (WorkspaceDO) | `unseen INTEGER NOT NULL DEFAULT 0` | The projected flag the sidebar list reads. |
 
 Schema migrations: work-stream object v18, WorkspaceDO v10. Both backfill
 existing rows as seen.

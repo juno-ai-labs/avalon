@@ -6,10 +6,11 @@
  * What this suite is about is the *page*: which conversations a Space answers
  * with for one person, in what order, and how a breakout's own projection gets
  * there. Every part of that needs the runtime. The forwarding is a Channel
- * object's outbox drained through the real activity consumer into a real
- * WorkspaceDO; the idempotency is that WorkspaceDO's receipt table; the
- * visibility, the ordering and the cursor are SQL over storage a double could
- * only describe back to itself.
+ * parent, hosted in the real WorkspaceDO, applying its breakout projection to
+ * the Organization's own breakout tables; the idempotency is that parent's
+ * receipt table and the directory's waterline; the visibility, the ordering
+ * and the cursor are SQL over storage a double could only describe back to
+ * itself.
  *
  * The case that matters most is the last one. The page's filter and
  * `conversationNeedsViewer` in `@rally/contracts` are one decision written
@@ -19,7 +20,7 @@
  * and asserting the answers match.
  */
 import { env } from "cloudflare:workers";
-import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
+import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -47,7 +48,10 @@ import {
   type ParentEffect,
 } from "@rally/contracts/conversation-effects";
 
-import { workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import { notePendingParentImport } from "../src/durable-objects/hosted-parent-import";
+import { workstreamDOName } from "../src/durable-objects/names";
+import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
+import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-do-schema";
 import {
   SPACE_CHANNEL_PAGE_SIZE,
   WorkspaceSpaceStorage,
@@ -57,6 +61,8 @@ import {
   deliverParentEffects,
   pendingParentEffects,
 } from "./helpers/conversation-effects";
+import { hostedParentStub } from "./helpers/hosted-parent";
+import { placeMembership } from "./helpers/space-membership";
 
 /** Its own workspace id: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000d100");
@@ -69,8 +75,10 @@ const PRIVATE_CHANNEL = asWorkstreamId("00000000-0000-7000-8000-00000000d105");
 const BREAKOUT_ONE = asSubstreamId("00000000-0000-7000-8000-00000000d106");
 const BREAKOUT_TWO = asSubstreamId("00000000-0000-7000-8000-00000000d107");
 
-const workspace = () => env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID));
-const channelObject = (workstreamId: WorkstreamId) =>
+/** The Organization object, which also hosts every Channel parent in it. */
+const workspace = () => hostedParentStub(env, WORKSPACE_ID);
+/** A Channel's legacy parent object, which only exports its rows to the Organization object. */
+const legacyChannelObject = (workstreamId: WorkstreamId) =>
   env.WORKSTREAM_DOS.getByName(workstreamDOName("global", WORKSPACE_ID, workstreamId));
 
 let effectSequence = 0;
@@ -92,7 +100,7 @@ async function establishWorkspace(): Promise<void> {
       incarnation TEXT DEFAULT 'existing-member',
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
       role TEXT, access_class TEXT NOT NULL DEFAULT 'member',
-      last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
+      last_seen_at TEXT, revision INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (workspace_id, user_id)
     )`),
     // The dashboard nudge is a socket message and nothing else, so this suite
     // opens real workspace sockets — which authenticate against this table.
@@ -118,7 +126,7 @@ async function establishWorkspace(): Promise<void> {
       (workspace_id, user_id, status, role, access_class) VALUES (?, ?, 'active', 'member', 'member')`)
       .bind(WORKSPACE_ID, MEMBER),
     env.DB.prepare(`INSERT OR REPLACE INTO workspace_members
-      (workspace_id, user_id, status, role, access_class) VALUES (?, ?, 'active', 'guest', 'guest')`)
+      (workspace_id, user_id, status, role, access_class) VALUES (?, ?, 'active', NULL, 'guest')`)
       .bind(WORKSPACE_ID, GUEST),
     env.DB.prepare(`INSERT OR REPLACE INTO sessions
       (id, user_id, workspace_id, region, revoked_at, expires_at)
@@ -271,10 +279,12 @@ function childEnvelope(
  * One breakout's projection, forwarded by its Channel the way production
  * forwards one.
  *
- * Deliberately not written straight at WorkspaceDO: what is under test in the
- * first case is the *forward*, which is a decision the Channel object makes,
- * and a hand-written envelope would have proved the receiving half twice and
- * the sending half not at all.
+ * Deliberately not written straight at the directory: what is under test in
+ * the first case is the *forward*, which is a decision the Channel parent
+ * makes, and a hand-written envelope would have proved the receiving half
+ * twice and the sending half not at all. The directory half is applied inside
+ * the Organization object straight after the parent write; delivering the
+ * parent outbox afterwards only sends what still leaves on the Queue.
  */
 async function publishBreakout(
   workstreamId: WorkstreamId,
@@ -283,13 +293,13 @@ async function publishBreakout(
   sourceVersion = 1,
   generation = 1,
 ): Promise<void> {
-  await channelObject(workstreamId).receiveChildEffects({
+  await workspace().receiveChildEffects({
     substreamId,
     envelopes: effects.map((effect) => (
       childEnvelope(workstreamId, substreamId, effect, sourceVersion, generation)
     )),
   });
-  await deliverParentEffects(env, channelObject(workstreamId));
+  await deliverParentEffects(env, workspace());
 }
 
 /** Feed the page's WorkspaceDO authority without racing the parent's alarm. */
@@ -321,10 +331,10 @@ async function publishBreakoutProjection(
 }
 
 /**
- * Advance a Channel object's authority generation, the way an authority
+ * Advance a Channel parent's authority generation, the way an authority
  * transfer or an object restore does.
  *
- * Written straight into `workstream_metadata` because what is under test is
+ * Written straight into `parent_metadata` because what is under test is
  * what the *Organization* does with the projections that follow, and driving a
  * real transfer would be several objects' worth of setup for one number.
  */
@@ -332,32 +342,132 @@ async function advanceChannelGeneration(
   workstreamId: WorkstreamId,
   generation: number,
 ): Promise<void> {
-  await runInDurableObject(channelObject(workstreamId), (_instance, state) => {
+  await runInDurableObject(workspace(), (_instance, state) => {
     state.storage.sql.exec(
-      "UPDATE workstream_metadata SET authority_generation = ? WHERE id = 1",
+      "UPDATE parent_metadata SET authority_generation = ? WHERE parent_id = ?",
       generation,
+      workstreamId,
     );
   });
 }
 
-/** The identity row every effect path on a Channel object reads its address from. */
+/** The identity row every effect path on a Channel parent reads its address from. */
 async function openChannelObject(workstreamId: WorkstreamId): Promise<void> {
-  await runInDurableObject(channelObject(workstreamId), (_instance, state) => {
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec(
+      `INSERT INTO parent_metadata
+         (parent_id, parent_kind, workspace_id, region, authority_generation, title,
+          description, preview, scope, exact_state, last_activity_at,
+          created_at, updated_at)
+       VALUES (?, 'workstream', ?, 'global', 1, 'Member Channel', '', '', 'workspace', 'idle', 1, 1, 1)`,
+      workstreamId,
+      WORKSPACE_ID,
+    );
+    state.storage.sql.exec(
+      `INSERT INTO parent_children
+         (parent_id, substream_id, kind, created_by_user_id, created_at, status, updated_at)
+       VALUES (?, '0', 'main', ?, 1, 'ready', 1)`,
+      workstreamId,
+      OWNER,
+    );
+  });
+}
+
+/** A child's stored projection, as a deployed legacy Channel object holds it. */
+interface LegacyProjection {
+  substreamId: string;
+  common: ConversationEffect;
+  viewers: ConversationEffect[];
+  /** Whether the legacy object had already forwarded this child's common row. */
+  forwarded?: boolean;
+}
+
+/**
+ * A deployed legacy Channel object that stored its children's projections,
+ * with the Organization's import ledger saying the parent is still there.
+ *
+ * Seeded as rows because the legacy class no longer receives child effects:
+ * it only exports. The rows are the ones its ledger wrote before the move.
+ */
+async function seedLegacyChannel(workstreamId: WorkstreamId, projections: LegacyProjection[]): Promise<void> {
+  await runInDurableObject(legacyChannelObject(workstreamId), (instance, state) => {
+    applyDurableObjectSqliteMigrations({
+      storage: state.storage,
+      migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS,
+      component: "workstream_do",
+      workerVersionId: "test",
+    });
     state.storage.sql.exec(
       `INSERT INTO workstream_metadata
          (id, workspace_id, workstream_id, region, authority_generation, title,
           description, preview, scope, exact_state, last_activity_at,
           created_at, updated_at)
-       VALUES (1, ?, ?, 'global', 1, 'Member Channel', '', '', 'workspace', 'idle', 1, 1, 1)`,
+       VALUES (1, ?, ?, 'global', 1, 'Roadmap', '', '', 'workspace', 'idle', 1, 1, 1)`,
       WORKSPACE_ID,
       workstreamId,
     );
     state.storage.sql.exec(
-      `INSERT INTO conversation_children
-         (substream_id, kind, created_by_user_id, created_at, status, updated_at)
+      `INSERT INTO conversation_children (substream_id, kind, created_by_user_id, created_at, status, updated_at)
        VALUES ('0', 'main', ?, 1, 'ready', 1)`,
       OWNER,
     );
+    for (const projection of projections) {
+      state.storage.sql.exec(
+        `INSERT INTO conversation_children (substream_id, kind, created_by_user_id, created_at, status, updated_at)
+         VALUES (?, 'child', ?, 1, 'ready', 1)`,
+        projection.substreamId,
+        OWNER,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO substream_directory (substream_id, source_version, payload_hash, effect_json, updated_at)
+         VALUES (?, 1, ?, ?, 1)`,
+        projection.substreamId,
+        conversationEffectHash(projection.common),
+        JSON.stringify(projection.common),
+      );
+      for (const viewer of projection.viewers) {
+        if (viewer.kind !== "directory_user") throw new Error("legacy viewer projection must be directory_user");
+        state.storage.sql.exec(
+          `INSERT INTO substream_user_directory
+             (substream_id, user_id, source_version, payload_hash, effect_json, updated_at)
+           VALUES (?, ?, 1, ?, ?, 1)`,
+          projection.substreamId,
+          viewer.userId,
+          conversationEffectHash(viewer),
+          JSON.stringify(viewer),
+        );
+      }
+      if (projection.forwarded) {
+        state.storage.sql.exec(
+          `INSERT INTO projection_keys (projection_key, next_version, last_payload_hash, updated_at)
+           VALUES (?, 2, 'fnv1a64:0000000000000000', 1)`,
+          `substream:${projection.substreamId}:common`,
+        );
+      }
+    }
+    // The instance decided it was empty when it started, before the ledger
+    // above existed. A deployed object with this ledger starts not empty.
+    (instance as unknown as { empty: boolean }).empty = false;
+  });
+}
+
+/**
+ * Hand the parent back to its legacy object: the Organization holds no hosted
+ * rows for it, and its import ledger says it is still to be imported.
+ *
+ * A case opens the hosted parent first and removes it here, because a
+ * directory effect for a parent the Organization does not host notes it for
+ * import, and the alarm would then import it at a moment the case does not
+ * choose. One transaction, so the alarm sees either the open parent or the
+ * pending one.
+ */
+async function markParentPendingImport(workstreamId: WorkstreamId): Promise<void> {
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.transactionSync(() => {
+      state.storage.sql.exec("DELETE FROM parent_children WHERE parent_id = ?", workstreamId);
+      state.storage.sql.exec("DELETE FROM parent_metadata WHERE parent_id = ?", workstreamId);
+      notePendingParentImport(state.storage.sql, workstreamId, "workstream");
+    });
   });
 }
 
@@ -372,19 +482,7 @@ async function reserve(name: string, scope: "personal" | "workspace" = "workspac
 }
 
 async function place(spaceId: SpaceId, workstreamId: WorkstreamId): Promise<void> {
-  const plan = await workspace().prepareSpaceMembership({
-    workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, workstreamId,
-  });
-  if (!plan.ok) throw new Error(`prepareSpaceMembership refused: ${plan.code}`);
-  const settled = await workspace().finalizeSpaceMembership({
-    workspaceId: WORKSPACE_ID,
-    userId: OWNER,
-    spaceId,
-    workstreamId,
-    spaceRevision: plan.space.revision,
-    membershipGeneration: plan.membershipGeneration,
-  });
-  if (!settled.ok) throw new Error(`finalizeSpaceMembership refused: ${settled.code}`);
+  await placeMembership(workspace(), { workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, workstreamId });
 }
 
 async function page(spaceId: SpaceId, userId: UserId, cursor: string | null = null) {
@@ -474,7 +572,7 @@ function inspect(sql: string): Promise<{ rows: Record<string, unknown>[] }> {
 
 function breakoutRows(): Promise<{ rows: Record<string, unknown>[] }> {
   return inspect(`SELECT workstream_id, substream_id, title, exact_state
-                    FROM workspace_breakout_directory ORDER BY substream_id`);
+                    FROM breakouts ORDER BY substream_id`);
 }
 
 beforeEach(async () => {
@@ -488,53 +586,37 @@ describe("space dashboard conversation page", () => {
     await openChannelObject(CHANNEL_A);
     await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
 
-    await channelObject(CHANNEL_A).receiveChildEffects({
-      substreamId: BREAKOUT_ONE,
-      envelopes: [
-        childEnvelope(CHANNEL_A, BREAKOUT_ONE, breakoutCommonEffect("Pricing"), 1),
-        childEnvelope(CHANNEL_A, BREAKOUT_ONE, viewerEffect(OWNER) as ConversationEffect, 1),
-      ],
-    });
-    await channelObject(CHANNEL_A).receiveChildEffects({
-      substreamId: BREAKOUT_TWO,
-      envelopes: [
-        childEnvelope(CHANNEL_A, BREAKOUT_TWO, {
-          ...breakoutCommonEffect("Background worker"),
-          backgroundAgent: true,
-        }, 1),
-        childEnvelope(CHANNEL_A, BREAKOUT_TWO, viewerEffect(OWNER) as ConversationEffect, 1),
-      ],
-    });
+    // The deployed state before breakout forwarding: the legacy Channel object
+    // already held its children's current projections, but had never created
+    // parent projection keys or outbox rows for them. The legacy object's
+    // migration 19 replayed them once across the fleet; an object that missed
+    // that pass is made to converge by the import into the Organization.
+    await seedLegacyChannel(CHANNEL_A, [
+      {
+        substreamId: BREAKOUT_ONE,
+        common: breakoutCommonEffect("Pricing"),
+        viewers: [viewerEffect(OWNER) as ConversationEffect],
+      },
+      {
+        substreamId: BREAKOUT_TWO,
+        common: { ...breakoutCommonEffect("Background worker"), backgroundAgent: true },
+        viewers: [viewerEffect(OWNER) as ConversationEffect],
+      },
+    ]);
+    await markParentPendingImport(CHANNEL_A);
+    expect(await breakoutRows()).toMatchObject({ rows: [] });
 
-    // Reconstruct the deployed state before breakout forwarding: the Channel
-    // already held the child's current projections, but it had never created
-    // parent projection keys or outbox rows for them. Removing migration 19's
-    // receipt makes the next construction the production upgrade event.
-    await runInDurableObject(channelObject(CHANNEL_A), (_instance, state) => {
-      state.storage.sql.exec(
-        `DELETE FROM durable_outbox
-          WHERE partition_key LIKE 'substream:%'`,
-      );
-      state.storage.sql.exec(
-        `DELETE FROM workstream_state_changes
-          WHERE state_key LIKE 'substream:%'`,
-      );
-      state.storage.sql.exec(
-        `DELETE FROM projection_keys
-          WHERE projection_key LIKE 'substream:%'`,
-      );
-      state.storage.sql.exec("DELETE FROM _sql_schema_migrations WHERE version = 19");
-    });
-    await evictDurableObject(channelObject(CHANNEL_A));
+    // Any request for the parent imports it first.
+    await workspace().listChildren({ workspaceId: WORKSPACE_ID, parentId: CHANNEL_A });
 
-    const replayed = await pendingParentEffects(channelObject(CHANNEL_A));
-    expect(replayed.map((envelope) => envelope.effect.kind).sort())
-      .toEqual(["directory_common", "directory_user"]);
-    await deliverParentEffects(env, channelObject(CHANNEL_A));
-
+    // The replayed directory rows are applied inside the Organization object
+    // and never wait in its outbox for the Queue.
+    expect(await pendingParentEffects(workspace())).toEqual([]);
     expect(await breakoutRows()).toMatchObject({
       rows: [{ workstream_id: CHANNEL_A, substream_id: BREAKOUT_ONE, title: "Pricing" }],
     });
+    await expect(inspect("SELECT substream_id, user_id FROM breakout_viewers"))
+      .resolves.toMatchObject({ rows: [{ substream_id: BREAKOUT_ONE, user_id: OWNER }] });
     const owner = await connectViewer(OWNER);
     expect(owner.initialChannelCounts).toEqual([1]);
   });
@@ -550,14 +632,14 @@ describe("space dashboard conversation page", () => {
     // The row is the Organization's, written from the Channel's forward, and
     // it is in the breakout tables rather than the Channel directory: a
     // breakout listed as a Channel is what a `substream_id` column on
-    // `workspace_workstream_directory` would have produced the first time a
+    // `channels` would have produced the first time a
     // sidebar query forgot to filter it out.
     expect(await breakoutRows()).toMatchObject({
       rows: [{ workstream_id: CHANNEL_A, substream_id: BREAKOUT_ONE, title: "Pricing", exact_state: "needs_input" }],
     });
-    await expect(inspect("SELECT workstream_id FROM workspace_workstream_directory"))
+    await expect(inspect("SELECT workstream_id FROM channels"))
       .resolves.toMatchObject({ rows: [] });
-    await expect(inspect("SELECT user_id, listable FROM workspace_breakout_viewers"))
+    await expect(inspect("SELECT user_id, listable FROM breakout_viewers"))
       .resolves.toMatchObject({ rows: [{ user_id: OWNER, listable: 1 }] });
   });
 
@@ -567,22 +649,20 @@ describe("space dashboard conversation page", () => {
     await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
     await place(spaceId, CHANNEL_A);
 
-    await channelObject(CHANNEL_A).receiveChildEffects({
-      substreamId: BREAKOUT_ONE,
-      envelopes: [childEnvelope(CHANNEL_A, BREAKOUT_ONE, breakoutCommonEffect("Pricing"), 1)],
-    });
-    // The bytes the Queue carries, captured before the outbox is drained, so
-    // the second delivery below is the *same message* rather than a second
-    // projection that happens to look like it.
-    const queued = await pendingParentEffects(channelObject(CHANNEL_A));
-    expect(queued).toHaveLength(1);
+    // The breakout's projection as the Queue carries it to the Organization
+    // object that hosts its Channel. The directory half no longer crosses a
+    // Queue of its own, so this child effect is the one message whose
+    // redelivery reaches the breakout row; the same bytes are delivered twice,
+    // rather than a second projection that happens to look like it.
+    const queued = [childEnvelope(CHANNEL_A, BREAKOUT_ONE, breakoutCommonEffect("Pricing"), 1)];
     expect(await consumeEffectBodies(env, queued)).toEqual({ acked: 1, retried: 0 });
 
     const after = await breakoutRows();
+    expect(after).toMatchObject({ rows: [{ substream_id: BREAKOUT_ONE, title: "Pricing" }] });
 
     // At-least-once is the Queue's whole contract, so this is the ordinary
-    // case. It must be acknowledged — a message that fails here is retried
-    // until it reaches the dead-letter queue — and it must leave the row
+    // case. It must be acknowledged (a message that fails here is retried
+    // until it reaches the dead-letter queue) and it must leave the row
     // exactly as the first delivery did.
     expect(await consumeEffectBodies(env, queued)).toEqual({ acked: 1, retried: 0 });
     expect(await breakoutRows()).toEqual(after);
@@ -911,7 +991,7 @@ describe("space dashboard conversation page", () => {
     await runInDurableObject(workspace(), (_instance, state) => {
       for (let index = 0; index < channelCount; index += 1) {
         state.storage.sql.exec(
-          `INSERT INTO workspace_workstream_directory
+          `INSERT INTO channels
              (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
               title, description, preview, scope, exact_state, system_kind,
               last_activity_at, completed_at, archived_at, email_address,
@@ -935,7 +1015,7 @@ describe("space dashboard conversation page", () => {
       }
       for (const index of tieBreakouts) {
         state.storage.sql.exec(
-          `INSERT INTO workspace_breakout_directory
+          `INSERT INTO breakouts
              (workstream_id, substream_id, authority_generation, waterline, source_event_id,
               payload_hash, title, description, scope, exact_state, title_status,
               created_by_user_id, last_activity_at, completed_at, archived_at,
@@ -947,7 +1027,7 @@ describe("space dashboard conversation page", () => {
           `Breakout ${String(index).padStart(3, "0")}`, tieActivity,
         );
         state.storage.sql.exec(
-          `INSERT INTO workspace_breakout_viewers
+          `INSERT INTO breakout_viewers
              (workstream_id, substream_id, user_id, authority_generation, waterline,
               source_event_id, payload_hash, is_participant, unread_count,
               you_are_mentioned, unseen, listable, seen_attention_ordinal,
@@ -1278,7 +1358,7 @@ describe("space dashboard conversation page", () => {
 
   it("given a background-agent conversation, when it projects, then nothing is forwarded for it", async () => {
     await openChannelObject(CHANNEL_A);
-    await channelObject(CHANNEL_A).receiveChildEffects({
+    await workspace().receiveChildEffects({
       substreamId: BREAKOUT_TWO,
       envelopes: [ConversationEffectEnvelopeSchema.parse({
         kind: "conversation_effect",
@@ -1325,8 +1405,17 @@ describe("space dashboard conversation page", () => {
     // A background agent is a worker this Channel started, not a conversation
     // anybody opens. Forwarding one would put a Queue message and a workspace
     // row on every step it takes, and a row on a dashboard for something with
-    // no destination.
-    expect(await pendingParentEffects(channelObject(CHANNEL_A))).toEqual([]);
+    // no destination. A forward would now be a breakout row applied in place
+    // and a projection key behind it, so both are checked alongside the
+    // outbox.
+    expect(await pendingParentEffects(workspace())).toEqual([]);
+    await expect(inspect("SELECT substream_id FROM breakouts")).resolves.toMatchObject({ rows: [] });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      expect(state.storage.sql.exec(
+        "SELECT projection_key FROM parent_projection_keys WHERE parent_id = ? AND projection_key LIKE 'substream:%'",
+        CHANNEL_A,
+      ).toArray()).toEqual([]);
+    });
   });
 
   it("given a background agent forwarded as a breakout before it was marked, when it projects marked, then the Organization stops counting it", async () => {
@@ -1345,9 +1434,9 @@ describe("space dashboard conversation page", () => {
       viewerEffect(OWNER, { unseen: true }) as ConversationEffect,
     ], 2);
 
-    await expect(inspect(`SELECT substream_id FROM workspace_breakout_directory WHERE archived_at IS NULL`))
+    await expect(inspect(`SELECT substream_id FROM breakouts WHERE archived_at IS NULL`))
       .resolves.toMatchObject({ rows: [] });
-    await expect(inspect("SELECT user_id FROM workspace_breakout_viewers"))
+    await expect(inspect("SELECT user_id FROM breakout_viewers"))
       .resolves.toMatchObject({ rows: [] });
     expect((await connectViewer(OWNER)).initialChannelCounts).toEqual([0]);
   });
@@ -1358,9 +1447,10 @@ describe("space dashboard conversation page", () => {
     await publishBreakout(CHANNEL_A, BREAKOUT_TWO, [
       { ...breakoutCommonEffect("Worker", { state: "completed" }), backgroundAgent: true },
     ], 3);
-    const forwardedVersion = () => runInDurableObject(channelObject(CHANNEL_A), (_instance, state) => (
+    const forwardedVersion = () => runInDurableObject(workspace(), (_instance, state) => (
       state.storage.sql.exec<{ next_version: number }>(
-        "SELECT next_version FROM projection_keys WHERE projection_key = ?",
+        "SELECT next_version FROM parent_projection_keys WHERE parent_id = ? AND projection_key = ?",
+        CHANNEL_A,
         `substream:${BREAKOUT_TWO}:common`,
       ).one().next_version
     ));
@@ -1387,43 +1477,50 @@ describe("space dashboard conversation page", () => {
       viewerEffect(OWNER, { unseen: true }) as ConversationEffect,
     ], 1);
 
-    await expect(inspect(`SELECT substream_id FROM workspace_breakout_directory WHERE archived_at IS NULL`))
+    await expect(inspect(`SELECT substream_id FROM breakouts WHERE archived_at IS NULL`))
       .resolves.toMatchObject({ rows: [] });
     expect((await connectViewer(OWNER)).initialChannelCounts).toEqual([0]);
   });
 
-  it("retracts background agents a Channel already forwarded as breakouts when migration 20 runs", async () => {
+  it("retracts background agents a Channel already forwarded as breakouts when it is imported", async () => {
     await openChannelObject(CHANNEL_A);
     await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
-    await publishBreakout(CHANNEL_A, BREAKOUT_ONE, [
+    // What the Organization holds: both children as breakouts, the agent's
+    // first, unmarked projection among them.
+    await publishBreakoutProjection(CHANNEL_A, BREAKOUT_ONE, [
       breakoutCommonEffect("Pricing"),
       viewerEffect(OWNER) as ConversationEffect,
     ]);
-    await publishBreakout(CHANNEL_A, BREAKOUT_TWO, [
+    await publishBreakoutProjection(CHANNEL_A, BREAKOUT_TWO, [
       breakoutCommonEffect("Worker", { state: "idle" }),
       viewerEffect(OWNER, { unseen: true }) as ConversationEffect,
     ]);
 
-    // Reconstruct the deployed state: the agent's later, marked projection
-    // reached the Channel and stopped there, so the Channel knows it is an
-    // agent while the Organization still holds its first, unmarked row.
-    // Removing migration 20's receipt makes the next construction the
-    // production upgrade event.
-    await runInDurableObject(channelObject(CHANNEL_A), (_instance, state) => {
-      state.storage.sql.exec(
-        `UPDATE substream_directory
-            SET effect_json = json_set(effect_json, '$.backgroundAgent', json('true'))
-          WHERE substream_id = ?`,
-        BREAKOUT_TWO,
-      );
-      state.storage.sql.exec("DELETE FROM _sql_schema_migrations WHERE version = 20");
-    });
-    await evictDurableObject(channelObject(CHANNEL_A));
+    // The deployed state: the agent's later, marked projection reached the
+    // legacy Channel object and stopped there, so the Channel knows it is an
+    // agent while the Organization still holds its first, unmarked row. The
+    // legacy object's migration 20 retracted these once across the fleet; an
+    // object that missed that pass is made to converge by the import.
+    await seedLegacyChannel(CHANNEL_A, [
+      {
+        substreamId: BREAKOUT_ONE,
+        common: breakoutCommonEffect("Pricing"),
+        viewers: [viewerEffect(OWNER) as ConversationEffect],
+        forwarded: true,
+      },
+      {
+        substreamId: BREAKOUT_TWO,
+        common: { ...breakoutCommonEffect("Worker", { state: "idle" }), backgroundAgent: true },
+        viewers: [viewerEffect(OWNER, { unseen: true }) as ConversationEffect],
+        forwarded: true,
+      },
+    ]);
     expect((await connectViewer(OWNER)).initialChannelCounts).toEqual([2]);
 
-    await deliverParentEffects(env, channelObject(CHANNEL_A));
+    await markParentPendingImport(CHANNEL_A);
+    await workspace().listChildren({ workspaceId: WORKSPACE_ID, parentId: CHANNEL_A });
 
-    await expect(inspect(`SELECT substream_id FROM workspace_breakout_directory WHERE archived_at IS NULL`))
+    await expect(inspect(`SELECT substream_id FROM breakouts WHERE archived_at IS NULL`))
       .resolves.toMatchObject({ rows: [{ substream_id: BREAKOUT_ONE }] });
     expect((await connectViewer(OWNER)).initialChannelCounts).toEqual([1]);
   });

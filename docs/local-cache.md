@@ -29,7 +29,7 @@ socket hooks' first frame.
 | `apps/desktop/src/renderer/lib/workspace-directory-cache.ts` | The `directory` slice: one row per workspace holding the Channel list, the automation and note lists, and both Space directories; `hydrateWorkspaceDirectory`, `mirrorWorkspaceDirectory`. |
 | `apps/desktop/src/renderer/lib/transcript.ts` (`openingTranscriptSnapshot`) | The shape a transcript is persisted in: its opening ranges only. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Hydrates a conversation at effect start, mirrors it while mounted, and treats a seed as neither a completed opening nor a snapshot fence. |
-| `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Prunes cached children that left the parent's private-child roster. |
+| `apps/desktop/src/renderer/lib/channel-viewer-state.ts` | Prunes cached children that left the parent's private-child roster, from the breakout list each Channel row carries on the workspace socket. |
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Hydrates the directory before connecting, mirrors it after the first subscribe answer, and prunes conversations whose parent that answer no longer lists. |
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | `evictCachedWorkstream` and `evictCachedSubstream` forget the disk along with the memory. |
 | `apps/desktop/src/renderer/lib/app-session.tsx` | Wipes the whole cache when the account leaves the device and one workspace's rows when that membership ends or the workspace refuses the account, beside the draft cache's wipes. |
@@ -456,8 +456,8 @@ lifetimes.
 
 `retain-query-data.test.ts` exercises actual React Query collection with a fake
 clock: existing and future entries, multiple owners, no fetching, release,
-explicit removal, replacement and whole-cache clearing. The control-socket,
-conversation-socket and workspace-socket suites keep their real receivers and
+explicit removal, replacement and whole-cache clearing. The conversation-socket
+and workspace-socket suites keep their real receivers and
 cache, double transport and time, and verify ten minutes without a screen or
 new snapshot followed by release. The control case also checks that a stale
 roster cannot overwrite the retained one. Real Electron acceptance creates a
@@ -485,7 +485,7 @@ The suites are `lib/local-cache.test.ts`, `lib/local-cache-mirror.test.ts`,
 `components/connecting-card.test.tsx`, the `openingTranscriptSnapshot` cases in
 `lib/transcript.test.ts`, and the local-cache blocks appended to
 `lib/use-workstream-socket.test.tsx`, `lib/workspace-socket.test.tsx`,
-`lib/use-workstream-control-socket.test.tsx`, `screens/workstream-open.test.tsx`,
+`screens/workstream-open.test.tsx`,
 `screens/space-dashboard.test.tsx`, and
 `components/workstream-composer.test.tsx`. Run one with
 `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/conversation-cache.test.ts`.

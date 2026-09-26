@@ -231,7 +231,7 @@ per mount — take the read.
 
 Opening a work stream should deliver, without being asked:
 
-- **The complete metadata snapshot** — the WorkstreamDO common row and the
+- **The complete metadata snapshot** — the Channel parent's common row and the
   viewer overlay, as one snapshot rather than a patch.
 - **Canonical transcript coverage** — snapshot-fenced newest and unread
   half-open sequence ranges, including authoritative empty coverage. The client
@@ -324,20 +324,23 @@ race.** This is not an edge case to be designed out — it is the normal operati
 of any hierarchy where a child owns the truth and a parent owns the list, and it
 appears the moment a client subscribes to both levels at once.
 
-Rally's instance of it: a work stream's state change commits in
-`WorkstreamDO`. That object publishes the committed row on its own control
-socket immediately, and *also* projects it through the regional Queue to
-`WorkspaceDO`, which publishes it on the workspace socket. A desktop window
-viewing that work stream holds both sockets, so it receives both copies. The
-direct one is usually first, because it does not wait for a Queue hop — but
-Cloudflare Queues is at-least-once and unordered, so "usually" is not something
-a client may assume, and a redelivery can put the second copy *behind* a change
-that superseded it.
+Rally's instance of it used to be two sockets: a Channel's state change was
+published on the Channel control socket and, again, on the workspace socket.
+Once both were served by the same `WorkspaceDO`
+([`hosted-conversation-parents.md`](hosted-conversation-parents.md)), the
+second socket was only a second copy from the same object, and it was retired:
+a Channel's row, breakouts and running background agents now arrive on the
+workspace socket alone ([`websocket-architecture.md`](websocket-architecture.md)).
+The lesson still holds on one socket. The same row is republished by the
+directory apply, by a breakout roster change, and by a redelivered effect, and
+the conversation effects behind most changes arrive through Cloudflare Queues,
+which is at-least-once and unordered. So a copy can still arrive *behind* a
+change that superseded it.
 
-Neither copy can simply be dropped, either. The workspace copy is the only one
-an inactive sidebar row ever gets; the direct copy is the only one that arrives
-while the Queue is backed up. Suppressing a channel to avoid duplicates trades a
-visible bug for an invisible one.
+Do not answer that by suppressing a publisher. Each republish covers a case the
+others do not (a roster change moves no directory version; a deferred directory
+apply is retried by the alarm), so dropping one trades a visible bug for an
+invisible one.
 
 The generalization worth carrying to the next stream: **a client cannot
 de-duplicate by channel, by arrival order, or by timestamp.** Channels are not
@@ -383,8 +386,8 @@ paths carry, and it is worth reading as a design rather than a struct:
 | Field | What it decides |
 | --- | --- |
 | `authorityGeneration` | Which incarnation of the authority produced this — it advances when a work stream is imported into a new object. A payload from an older generation is rejected outright, and a newer one applies unconditionally, because its waterlines come from a different counter and are not comparable to the stored ones. |
-| `commonWaterline` | Monotonic within WorkstreamDO for the shared row — title, state, activity, preview. |
-| `viewerWaterline` | Monotonic within WorkstreamDO for *this* viewer's overlay — unread, mention, read-through, listability. Zero is a sentinel rather than a position: it means the viewer has no overlay row yet, and the schema requires `viewerEventId` to be null exactly then. A payload stamped zero therefore never applies its viewer half, because the receiver's test is strictly greater. |
+| `commonWaterline` | Monotonic within the Channel parent for the shared row — title, state, activity, preview. |
+| `viewerWaterline` | Monotonic within the Channel parent for *this* viewer's overlay — unread, mention, read-through, listability. Zero is a sentinel rather than a position: it means the viewer has no overlay row yet, and the schema requires `viewerEventId` to be null exactly then. A payload stamped zero therefore never applies its viewer half, because the receiver's test is strictly greater. |
 | `commonEventId` / `viewerEventId` | The UUIDv7 identity of the state row each half came from. Time-sortable trace identities for correlating the two paths — deliberately **not** a distributed clock, and never the thing a comparison is made on. |
 
 **The two waterlines are independent on purpose, and that is the load-bearing
@@ -413,10 +416,12 @@ the ledger stops being one ordering and becomes two, and the two diverge the
 moment one of the sockets reconnects.
 
 Rally's receiver is
-`apps/desktop/src/renderer/lib/workstream-state-store.ts`. The control-socket
-hook and the workspace-socket provider both call
-`applyVersionedWorkstreamState`; neither writes the work-stream caches directly
-for versioned state. The one class of direct write is a pushed or acknowledged
+`apps/desktop/src/renderer/lib/workstream-state-store.ts`. Every path that
+carries a Channel row (the connect sidebar, a page, a recency move, a
+`workspace_workstream_state` push) calls `applyVersionedWorkstreamState`; none
+writes the work-stream caches directly for versioned state. The breakout list a
+row carries has its own waterline and its own receiver,
+`channel-viewer-state.ts`, for the same reason. The one class of direct write is a pushed or acknowledged
 fact with no version of its own: a rename or scope event, a REST response the
 caller just received, the appearance receipt. Those go through
 `patchCachedWorkstream` in `workstreams-cache.ts`, which writes Main's list row and
@@ -707,8 +712,8 @@ Three signs the answer above was wrong:
   feature. Cache invalidation, poll intervals, and refetch cascades on a fetch
   mean the read wanted a push.
 - **Two places produce the same field and stamp it independently.** A relay is
-  fine and is how a work-stream row reaches both the control socket and the
-  workspace socket — it forwards the owner's version. Two producers that each
+  fine and is how a Channel's row reaches the workspace socket from its parent
+  — it forwards the owner's version. Two producers that each
   mint their own version is the problem: the next bug is the two of them
   disagreeing, reported as a value that changes when you navigate and changes
   back when you reload.
@@ -771,10 +776,10 @@ describes behaviour to replace, not a pattern to copy into something new.**
 | Surface | Channel today | Matches this document |
 | --- | --- | --- |
 | Work-stream directory pages (membership, order, pins) | First page carried on the `workspace_sync` answer to `subscribe`; later pages requested with `list_workstreams`; a `workstream_directory` sync event invalidates them and the client asks again | **Partly.** The first page is pushed and later ones are a scroll the reader asked for, but a pin or a reorder still arrives as news rather than as the changed row. |
-| Work-stream common/viewer state | Pushed on both the WorkstreamDO and WorkspaceDO sockets, waterlined | Yes. |
+| Work-stream common/viewer state, breakout list, running background agents | Pushed as the Channel's row on the workspace socket, per viewer, waterlined (the breakout list on its own waterline) | Yes. |
 | Transcript parts, tool blocks, token frames, presence | SubstreamAgent socket, snapshot on subscribe | Yes. |
 | Transcript range loading | Correlated, snapshot-fenced half-open range request on the SubstreamAgent socket | Yes — a pull the reader asked for, answered by the authority with explicit inspected coverage. |
-| Opening a conversation | Selecting it immediately subscribes the addressed SubstreamAgent feed; its first `snapshot` carries metadata, the unread-centered 5 + anchor + 5 range, the latest-five range, active turns, and reconnect timing baselines, while the WorkstreamDO control socket starts independently for work streams | Yes. Main and child conversations both recover by abandoning stale connection state and reconnecting from cursor zero; Retry restarts that same socket path. |
+| Opening a conversation | Selecting it immediately subscribes the addressed SubstreamAgent feed; its first `snapshot` carries metadata, the unread-centered 5 + anchor + 5 range, the latest-five range, active turns, and reconnect timing baselines; the Channel's own metadata is already on the client as its workspace-socket row | Yes. Main and child conversations both recover by abandoning stale connection state and reconnecting from cursor zero; Retry restarts that same socket path. |
 | The first paint of the sidebar, a Space, or a conversation after a launch | The renderer's local cache seeds the query-cache entries from what the socket last delivered, marked as a seed; the socket's first payload then applies over it through the ordinary receivers, and a seed moves no ledger | Yes, as a seed. Nothing is fetched: the seed is not a second channel for the data, it is the last thing the one channel said, and the connect payload still replaces it unasked. [`local-cache.md`](local-cache.md) owns it. |
 | Workspace profile, members, invitations, connectors, resources, digest, flags, viewer preferences | `workspace_sync` invalidation on the socket → REST refetch of whichever surface is mounted | **No.** The socket carries the news; the data comes over HTTP. |
 | The sidebar's automations and notes | Carried on the `workspace_sync` answer to `subscribe`, then pushed whole as `workspace_sidebar_list` on every write, each with its own waterline | Yes. |

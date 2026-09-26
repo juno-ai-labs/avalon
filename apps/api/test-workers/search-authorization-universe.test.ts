@@ -35,7 +35,7 @@ const sorted = (items: readonly unknown[]) => [...items].map((item) => JSON.stri
 beforeAll(async () => {
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspace_members (workspace_id TEXT NOT NULL, user_id TEXT NOT NULL,
-      status TEXT NOT NULL, role TEXT NOT NULL, access_class TEXT DEFAULT 'member', last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id))`),
+      status TEXT NOT NULL, role TEXT NOT NULL, access_class TEXT DEFAULT 'member', last_seen_at TEXT, revision INTEGER NOT NULL DEFAULT 1, incarnation TEXT NOT NULL DEFAULT 'existing-member', PRIMARY KEY (workspace_id, user_id))`),
     ...[[OWNER, 'active'], [MEMBER, 'active'], [OUTSIDER, 'removed']].map(([userId, status]) => env.DB.prepare(
       `INSERT INTO workspace_members (workspace_id, user_id, status, role) VALUES (?, ?, ?, 'member')
        ON CONFLICT(workspace_id, user_id) DO UPDATE SET status = excluded.status`).bind(WORKSPACE_ID, userId, status)),
@@ -51,11 +51,11 @@ async function seededWorkspace(name = workspaceDOName('global', WORKSPACE_ID)) {
   const stub = env.WORKSPACE_DOS.getByName(name);
   await stub.initializeWorkspace(WORKSPACE_ID, 'wnam');
   const seeded = await runInDurableObject(stub, (_instance, state) =>
-    state.storage.sql.exec('SELECT 1 FROM workspace_workstream_directory WHERE workstream_id = ?', OPEN_ROOM).toArray().length > 0);
+    state.storage.sql.exec('SELECT 1 FROM channels WHERE workstream_id = ?', OPEN_ROOM).toArray().length > 0);
   if (seeded) return stub;
   await runInDurableObject(stub, (_instance, state) => {
     const sql = state.storage.sql;
-    const room = (id: string, scope: string, archivedAt: number | null, n: number) => sql.exec(`INSERT INTO workspace_workstream_directory
+    const room = (id: string, scope: string, archivedAt: number | null, n: number) => sql.exec(`INSERT INTO channels
       (workstream_id, authority_generation, waterline, source_event_id, payload_hash, title, description, preview, scope, exact_state,
        system_kind, last_activity_at, completed_at, archived_at, email_address, origin_type, origin_label, created_by_user_id,
        automation_subscription_id, automation_run_id, planned_for, title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
@@ -65,7 +65,7 @@ async function seededWorkspace(name = workspaceDOName('global', WORKSPACE_ID)) {
     room(OPEN_ROOM, 'workspace', null, 1);
     room(PRIVATE_ROOM, 'personal', null, 2);
     room(ARCHIVED_ROOM, 'workspace', 5, 3);
-    const viewer = (roomId: string, userId: string, participant: number, n: number) => sql.exec(`INSERT INTO workspace_workstream_viewers
+    const viewer = (roomId: string, userId: string, participant: number, n: number) => sql.exec(`INSERT INTO channel_viewers
       (workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash, is_participant, participant_added_at,
        unread_count, you_are_mentioned, unseen, listable, seen_attention_ordinal, manual_unread_from_ordinal, manual_unread_generation,
        latest_mention_attention_ordinal, projected_at) VALUES (?, ?, 1, 1, ?, 'test', ?, 1, 0, 0, 0, 1, 0, NULL, 0, 0, 1)`,

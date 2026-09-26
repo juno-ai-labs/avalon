@@ -280,9 +280,16 @@ export const WorkspaceDirectoryResourceAccessResultSchema = deferredZodSchema(()
   })).max(10_000),
 }));
 
+/**
+ * The most directory envelopes one apply RPC accepts. Its callers (the Queue
+ * consumer and the outbox drain's legacy rows) send one at a time; a hosted
+ * parent's own effects never take this path.
+ */
+export const MAX_DIRECTORY_APPLY_ENVELOPES = 25;
+
 export const WorkspaceDirectoryApplyRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
-  envelopes: z.array(ParentEffectEnvelopeSchema).min(1).max(25),
+  envelopes: z.array(ParentEffectEnvelopeSchema).min(1).max(MAX_DIRECTORY_APPLY_ENVELOPES),
 }).superRefine((request, context) => {
   for (const [index, envelope] of request.envelopes.entries()) {
     if (envelope.workspaceId !== request.workspaceId) {

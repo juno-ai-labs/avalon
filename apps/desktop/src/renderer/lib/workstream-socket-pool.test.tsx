@@ -66,6 +66,7 @@ function createWrapper(
 
 function socketApi(): WorkstreamSocketApi & {
   getSocketTicket: ReturnType<typeof vi.fn>;
+  /** The retired Channel control socket's ticket: a held Channel must never ask for one. */
   getWorkstreamControlSocketTicket: ReturnType<typeof vi.fn>;
 } {
   return {
@@ -149,7 +150,7 @@ describe('retainedWorkstreamSocketIds', () => {
 });
 
 describe('useRetainedWorkstreamSocket for an automation parent', () => {
-  it('opens only the feed: an automation has no WorkstreamDO control socket to warm', async () => {
+  it('opens only the feed for an automation beside the active Channel of the pool', async () => {
     const api = socketApi();
     const automationId = '00000000-0000-7000-8000-00000000a001';
     const workstreamId = '00000000-0000-7000-8000-00000000b001';
@@ -167,13 +168,14 @@ describe('useRetainedWorkstreamSocket for an automation parent', () => {
     );
     await flushPromises();
 
-    // The pool's active work stream opened its pair; the automation opened a
-    // feed of its own and asked for no control ticket at all.
+    // The pool's active Channel opened its feed; the automation opened a feed
+    // of its own. Neither asked for a control ticket.
     expect(api.getSocketTicket).toHaveBeenCalledWith(
       automationId, '0', expect.anything(), 0, false, expect.anything(),
       WORKSTREAM_OPEN_TIMEOUT_BASE_MS,
     );
-    expect(api.getWorkstreamControlSocketTicket.mock.calls.map(([id]) => id)).toEqual([workstreamId]);
+    expect(api.getSocketTicket.mock.calls.map(([id]) => id).sort()).toEqual([automationId, workstreamId].sort());
+    expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
   });
 });
 
@@ -198,7 +200,7 @@ describe('standalone conversation subscriptions', () => {
 });
 
 describe('WorkstreamSocketPool', () => {
-  it('opens and retains the presence-free control/feed pair after a one-second hover', async () => {
+  it('opens and retains only the presence-free Main feed after a one-second hover', async () => {
     vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const api = socketApi();
@@ -232,12 +234,11 @@ describe('WorkstreamSocketPool', () => {
       expect.any(AbortSignal),
       WORKSTREAM_OPEN_TIMEOUT_BASE_MS,
     );
-    expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
+    expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
     const warmedSockets = FakeWebSocket.instances.filter(
       (socket) => String(socket.url).includes(workstreamId),
     );
     expect(warmedSockets.map((socket) => String(socket.url))).toEqual([
-      `wss://api.rally.test/workstreams/${workstreamId}/control`,
       `wss://api.rally.test/workstreams/${workstreamId}/feed`,
     ]);
 
@@ -318,7 +319,7 @@ describe('WorkstreamSocketPool', () => {
     ]);
   });
 
-  it('reuses both warmed sockets after navigation succeeds', async () => {
+  it('reuses the warmed feed after navigation succeeds', async () => {
     vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const api = socketApi();
@@ -340,8 +341,8 @@ describe('WorkstreamSocketPool', () => {
     act(() => vi.advanceTimersByTime(1_000));
     await flushPromises();
     const warmedSockets = [...FakeWebSocket.instances];
-    if (warmedSockets.length !== 2) throw new Error('The hovered channel did not open its pair.');
-    expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
+    if (warmedSockets.length !== 1) throw new Error('The hovered channel did not open exactly its feed.');
+    expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
     expect(api.getSocketTicket).toHaveBeenCalledTimes(1);
     expect(api.getSocketTicket).toHaveBeenCalledWith(
       workstreamId,
@@ -375,10 +376,9 @@ describe('WorkstreamSocketPool', () => {
     );
     await flushPromises();
 
-    expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
+    expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
     expect(api.getSocketTicket).toHaveBeenCalledTimes(1);
     expect(FakeWebSocket.instances.map((socket) => String(socket.url))).toEqual([
-      `wss://api.rally.test/workstreams/${workstreamId}/control`,
       `wss://api.rally.test/workstreams/${workstreamId}/feed`,
     ]);
     expect(FakeWebSocket.instances).toEqual(warmedSockets);
@@ -394,7 +394,7 @@ describe('WorkstreamSocketPool', () => {
     });
   });
 
-  it('keeps at most one unopened socket pair warm', async () => {
+  it('keeps at most one unopened feed warm', async () => {
     vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const api = socketApi();
@@ -415,17 +415,17 @@ describe('WorkstreamSocketPool', () => {
     fireEvent.pointerEnter(firstTarget);
     act(() => vi.advanceTimersByTime(1_000));
     await flushPromises();
-    const firstPair = FakeWebSocket.instances.slice(0, 2);
-    if (firstPair.length !== 2) throw new Error('The first hovered channel opened no socket pair.');
+    const firstPair = FakeWebSocket.instances.slice(0, 1);
+    if (firstPair.length !== 1) throw new Error('The first hovered channel opened no feed.');
 
     fireEvent.pointerEnter(secondTarget);
     act(() => vi.advanceTimersByTime(1_000));
     await flushPromises();
 
     expect(api.getSocketTicket).toHaveBeenCalledTimes(2);
-    expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(2);
+    expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
     expect(firstPair.every((socket) => socket.close.mock.calls.length === 1)).toBe(true);
-    expect(FakeWebSocket.instances.slice(2).every(
+    expect(FakeWebSocket.instances.slice(1).every(
       (socket) => socket.close.mock.calls.length === 0,
     )).toBe(true);
   });
@@ -492,7 +492,7 @@ describe('WorkstreamSocketPool', () => {
     expect(rendered).toHaveBeenCalledTimes(rendersBeforeBackgroundChange);
   });
 
-  it('does not add a hover warm-up beyond the active socket pair', async () => {
+  it('does not add a hover warm-up beyond the active feed', async () => {
     vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const api = socketApi();
@@ -509,7 +509,7 @@ describe('WorkstreamSocketPool', () => {
     await flushPromises();
 
     expect(api.getSocketTicket).toHaveBeenCalledTimes(1);
-    expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
+    expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
   });
 
   it('cancels a pending warm-up when the row unmounts', async () => {
@@ -536,7 +536,7 @@ describe('WorkstreamSocketPool', () => {
     expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
   });
 
-  it('replaces a pending warm-up with the active socket pair', async () => {
+  it('replaces a pending warm-up with the active feed', async () => {
     vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const api = socketApi();
@@ -559,7 +559,7 @@ describe('WorkstreamSocketPool', () => {
     await flushPromises();
 
     expect(api.getSocketTicket).toHaveBeenCalledTimes(1);
-    expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
+    expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
   });
 
   it('keeps the route subtree mounted while the active channel changes', () => {
@@ -610,16 +610,14 @@ describe('WorkstreamSocketPool', () => {
     act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS));
 
     expect(api.getSocketTicket).toHaveBeenCalledTimes(2);
-    expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(2);
+    expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
     expect(FakeWebSocket.instances.map((socket) => String(socket.url))).toEqual([
-      `wss://api.rally.test/workstreams/${firstWorkstreamId}/control`,
       `wss://api.rally.test/workstreams/${firstWorkstreamId}/feed`,
-      `wss://api.rally.test/workstreams/${secondWorkstreamId}/control`,
       `wss://api.rally.test/workstreams/${secondWorkstreamId}/feed`,
     ]);
   });
 
-  it('reuses the exact feed and control socket pair until retention expires', async () => {
+  it('reuses the exact feed until retention expires', async () => {
     vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const api = socketApi();
@@ -634,7 +632,6 @@ describe('WorkstreamSocketPool', () => {
     await flushPromises();
     const firstPair = FakeWebSocket.instances.filter((socket) => String(socket.url).includes(firstWorkstreamId));
     expect(firstPair.map((socket) => String(socket.url))).toEqual([
-      `wss://api.rally.test/workstreams/${firstWorkstreamId}/control`,
       `wss://api.rally.test/workstreams/${firstWorkstreamId}/feed`,
     ]);
 
@@ -645,7 +642,7 @@ describe('WorkstreamSocketPool', () => {
     );
     await flushPromises();
     expect(api.getSocketTicket).toHaveBeenCalledTimes(2);
-    expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(2);
+    expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
     expect(firstPair.every((socket) => socket.close.mock.calls.length === 0)).toBe(true);
 
     act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS - 1));
@@ -657,7 +654,7 @@ describe('WorkstreamSocketPool', () => {
     await flushPromises();
 
     expect(api.getSocketTicket).toHaveBeenCalledTimes(2);
-    expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(2);
+    expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
     expect(FakeWebSocket.instances.filter((socket) => String(socket.url).includes(firstWorkstreamId)))
       .toEqual(firstPair);
     expect(firstPair.every((socket) => socket.close.mock.calls.length === 0)).toBe(true);
@@ -671,7 +668,7 @@ describe('WorkstreamSocketPool', () => {
     expect(firstPair.every((socket) => socket.close.mock.calls.length === 1)).toBe(true);
   });
 
-  it('keeps a background-running socket pair past the recent-view deadline', async () => {
+  it('keeps a background-running feed past the recent-view deadline', async () => {
     vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const api = socketApi();

@@ -16,8 +16,9 @@ defines which ordered state machine owns the data, and its SQLite database is
 private to that object instance.
 
 - Choose an object key that matches the consistency domain. In Rally, a
-  WorkspaceDO owns workspace-wide product state, a WorkstreamDO owns one work
-  stream, and each agent object owns its own execution state.
+  WorkspaceDO owns workspace-wide product state, including every Channel and
+  Space parent keyed by `parent_id`, a SubstreamAgent owns one conversation, and
+  each agent object owns its own execution state.
 - Do not make cross-object SQL joins or foreign keys. Cross-authority
   relationships travel as IDs through typed RPC, Queue messages, projections,
   receipts, and version fences.
@@ -117,7 +118,7 @@ production lifecycle and because a forward migration must begin from the
 committed graph a deployed object actually contains.
 
 This behavior is shared by every Rally object with an implementation-hash
-receipt: `SubstreamAgent`, `WorkstreamDO` (including the `SpaceDO` binding),
+receipt: `SubstreamAgent`, the legacy `WorkstreamDO` (including the `SpaceDO` binding),
 `WorkspaceDO`, `SidekickDO`, `ArtifactHostDO`, and `SlackReactionTicker` all call
 this runner. The migration tracker's `MigrationRegistry` uses a separate
 version-only bootstrap, `MigrationProbeDO` is intentionally empty, and an

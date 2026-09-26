@@ -59,8 +59,9 @@ describe("Slack work stream creator attribution", () => {
     const env = createTestEnv({
       DB: sqliteD1(database),
       SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
-      // Real parent grant initialization is covered in workerd conversation-creation.
-      WORKSTREAM_DOS: testSubstreamAgentsBinding(database, { extra: {
+      // The Channel parent is hosted in WorkspaceDO. Real parent grant
+      // initialization is covered in workerd conversation-creation.
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, { extra: {
         reserveChild: async () => undefined,
         flushProvisionalDirectory: async () => undefined,
       } }),
@@ -135,8 +136,9 @@ describe("Slack work stream creator attribution", () => {
     const env = createTestEnv({
       DB: sqliteD1(database),
       SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
-      // Real parent grant initialization is covered in workerd conversation-creation.
-      WORKSTREAM_DOS: testSubstreamAgentsBinding(database, { extra: {
+      // The Channel parent is hosted in WorkspaceDO. Real parent grant
+      // initialization is covered in workerd conversation-creation.
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, { extra: {
         reserveChild: async () => undefined,
         flushProvisionalDirectory: async () => undefined,
       } }),
@@ -173,8 +175,9 @@ describe("Slack work stream creator attribution", () => {
     const env = createTestEnv({
       DB: sqliteD1(database),
       SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
-      // Real parent grant initialization is covered in workerd conversation-creation.
-      WORKSTREAM_DOS: testSubstreamAgentsBinding(database, { extra: {
+      // The Channel parent is hosted in WorkspaceDO. Real parent grant
+      // initialization is covered in workerd conversation-creation.
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, { extra: {
         reserveChild: async () => undefined,
         flushProvisionalDirectory: async () => undefined,
       } }),

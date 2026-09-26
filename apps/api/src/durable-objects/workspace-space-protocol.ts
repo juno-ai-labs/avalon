@@ -1,8 +1,10 @@
 import { RegionSchema } from "@rally/contracts/regions";
 import {
   ContainerOrderSchema,
+  ConversationParentReserveChildRequestSchema,
   CreateSpaceRequestSchema,
   IdSchema,
+  ScopeSchema,
   SpaceChannelPageSchema,
   SpaceErrorCodeSchema,
   SpaceIconKeySchema,
@@ -46,9 +48,23 @@ const SpaceFailureSchema = z.strictObject({
 export const WorkspaceSpaceListRequestSchema = SpaceActorSchema;
 export type WorkspaceSpaceListRequest = z.infer<typeof WorkspaceSpaceListRequestSchema>;
 
+/**
+ * `openGeneralSpace`. With a `spaceId` (whose D1 anchor the caller has already
+ * written) General is created under it together with its hosted parent in one
+ * transaction; without one the call only answers whether General exists.
+ */
+export const WorkspaceSpaceGeneralRequestSchema = SpaceActorSchema.extend({
+  spaceId: SpaceIdSchema.optional(),
+}).strict();
+export type WorkspaceSpaceGeneralRequest = z.infer<typeof WorkspaceSpaceGeneralRequestSchema>;
+
 export const WorkspaceSpaceReserveRequestSchema = SpaceActorSchema.extend({
   space: CreateSpaceRequestSchema,
-  /** Internal creation identity for resumable setup; absent for ordinary creates. */
+  /**
+   * The creation identity. `SpaceService` always names one, because the D1
+   * anchor is written under it before this call; absent only for a caller
+   * that lets the Organization allocate it.
+   */
   spaceId: SpaceIdSchema.optional(),
 }).strict();
 export type WorkspaceSpaceReserveRequest = z.infer<typeof WorkspaceSpaceReserveRequestSchema>;
@@ -160,16 +176,6 @@ export const WorkspaceSpaceMembershipMoveRequestSchema = SpaceActorSchema.extend
 }).strict();
 export type WorkspaceSpaceMembershipMoveRequest = z.infer<typeof WorkspaceSpaceMembershipMoveRequestSchema>;
 
-export const WorkspaceSpaceMembershipMoveSettleRequestSchema = WorkspaceSpaceMembershipMoveRequestSchema.extend({
-  operationId: IdSchema,
-  sourceSpaceRevision: z.number().int().positive(),
-  sourceMembershipGeneration: z.number().int().positive(),
-  targetSpaceRevision: z.number().int().positive(),
-  targetMembershipGeneration: z.number().int().positive(),
-}).strict();
-export type WorkspaceSpaceMembershipMoveSettleRequest =
-  z.infer<typeof WorkspaceSpaceMembershipMoveSettleRequestSchema>;
-
 /**
  * A refusal with legacy reader details and actionable Channel ids.
  *
@@ -199,30 +205,72 @@ export const WorkspaceSpaceMembershipPlanResultSchema = z.union([
 ]);
 export type WorkspaceSpaceMembershipPlanResult = z.infer<typeof WorkspaceSpaceMembershipPlanResultSchema>;
 
-export const WorkspaceSpaceMembershipMovePlanResultSchema = z.union([
-  z.strictObject({
-    ok: z.literal(true),
-    equivalentAudience: z.literal(false),
+/**
+ * A new Channel's whole Organization-side birth, in one call.
+ *
+ * Every row a creation needs from this object is in this object's database:
+ * the memberships, the Space defaults a new member inherits, the Channel's
+ * parent row and provisional directory row, and the record of which Space
+ * supplied which reader. They commit in one transaction, so a Channel is never
+ * listed outside a Space and a refused Space leaves nothing behind.
+ *
+ * Empty `spaceIds` means General. `requestedScope` and
+ * `requestedParticipantUserIds` are what the caller asked for; the scope the
+ * directory row carries is derived from them and the Spaces, by the same pure
+ * function the coordinator opens the conversation with.
+ */
+export const WorkspaceChannelReservationRequestSchema = SpaceActorSchema.extend({
+  workstreamId: WorkstreamIdSchema,
+  spaceIds: z.array(SpaceIdSchema),
+  requestedScope: ScopeSchema,
+  requestedParticipantUserIds: z.array(UserIdSchema),
+  authorityGeneration: z.number().int().positive(),
+  directory: ConversationParentReserveChildRequestSchema.shape.directory.unwrap().omit({
+    scope: true,
+    systemKind: true,
   }),
+}).strict();
+export type WorkspaceChannelReservationRequest = z.infer<typeof WorkspaceChannelReservationRequestSchema>;
+
+export const WorkspaceChannelReservationResultSchema = z.discriminatedUnion("status", [
+  z.strictObject({
+    status: z.literal("reserved"),
+    authorityGeneration: z.number().int().positive(),
+    /** Each Space the Channel is now in, as the transaction read it. */
+    spaces: z.array(SpaceSummarySchema).min(1),
+  }),
+  /**
+   * The request named no Space and this Organization has no General yet.
+   * Making one provisions its own conversation, which is not a write this
+   * object can take in a transaction, so the caller makes it and asks again.
+   */
+  z.strictObject({ status: z.literal("general_missing") }),
+  z.strictObject({
+    status: z.literal("refused"),
+    code: SpaceErrorCodeSchema,
+    /** The Space refused, or null when the refusal is the caller's own membership. */
+    spaceId: SpaceIdSchema.nullable(),
+  }),
+]);
+export type WorkspaceChannelReservationResult = z.infer<typeof WorkspaceChannelReservationResultSchema>;
+
+/**
+ * `moveSpaceMembership`: an equal-audience move committed in one WorkspaceDO
+ * transaction, or `moved: false` when the caller has to take the add-then-remove
+ * path because the audiences differ or the Channel's recorded provenance does
+ * not match the Spaces as they are now. Nothing is written in that case.
+ */
+export const WorkspaceSpaceMembershipMoveOutcomeSchema = z.union([
+  z.strictObject({ ok: z.literal(true), moved: z.literal(false) }),
   z.strictObject({
     ok: z.literal(true),
-    equivalentAudience: z.literal(true),
-    operationId: IdSchema,
+    moved: z.literal(true),
     source: SpaceSummarySchema,
     target: SpaceSummarySchema,
-    sourceMembershipGeneration: z.number().int().positive(),
-    targetMembershipGeneration: z.number().int().positive(),
   }),
   WorkspaceSpaceAudienceFailureSchema,
 ]);
-export type WorkspaceSpaceMembershipMovePlanResult =
-  z.infer<typeof WorkspaceSpaceMembershipMovePlanResultSchema>;
-
-export const WorkspaceSpaceMembershipMoveResultSchema = z.union([
-  z.strictObject({ ok: z.literal(true), source: SpaceSummarySchema, target: SpaceSummarySchema }),
-  WorkspaceSpaceAudienceFailureSchema,
-]);
-export type WorkspaceSpaceMembershipMoveResult = z.infer<typeof WorkspaceSpaceMembershipMoveResultSchema>;
+export type WorkspaceSpaceMembershipMoveOutcome = z.infer<typeof WorkspaceSpaceMembershipMoveOutcomeSchema>;
 
 export const WorkspaceSpaceMutationResultSchema = z.union([
   z.strictObject({ ok: z.literal(true), space: SpaceSummarySchema }),
@@ -405,12 +453,12 @@ export const SpaceIntentKindSchema = z.enum(["add", "remove", "move", "audience"
 export type SpaceIntentKind = z.infer<typeof SpaceIntentKindSchema>;
 
 /**
- * One unsettled Space intent, republished so an interrupted operation finishes.
+ * One unsettled Space intent on the activity Queue.
  *
- * The alarm publishes these; the activity consumer re-runs the service step the
- * intent names. Everything the consumer needs to address the work is on the
- * message, because by the time it runs the request that created the intent is
- * long gone.
+ * Nothing publishes these: the alarm resumes every intent in WorkspaceDO. The
+ * consumer accepts every kind so a message already queued finishes, by asking
+ * WorkspaceDO to resume the intent from its row (`resumeSpaceIntent`); it
+ * reads only the address and the requester.
  */
 export const SpaceIntentResumeQueueMessageSchema = z.strictObject({
   type: z.literal("space_intent_resume"),
@@ -438,11 +486,13 @@ export const SpaceIntentResumeQueueMessageSchema = z.strictObject({
 }).strict();
 export type SpaceIntentResumeQueueMessage = z.infer<typeof SpaceIntentResumeQueueMessageSchema>;
 
-export const WorkspaceSpaceGeneralResultSchema = z.union([
+export const WorkspaceSpaceGeneralOpenResultSchema = z.union([
   z.strictObject({ ok: z.literal(true), space: SpaceSummarySchema, created: z.boolean() }),
+  /** General does not exist yet; answered only to a call that named no `spaceId`. */
+  z.strictObject({ ok: z.literal(true), absent: z.literal(true) }),
   SpaceFailureSchema,
 ]);
-export type WorkspaceSpaceGeneralResult = z.infer<typeof WorkspaceSpaceGeneralResultSchema>;
+export type WorkspaceSpaceGeneralOpenResult = z.infer<typeof WorkspaceSpaceGeneralOpenResultSchema>;
 
 /**
  * Where the Organization is in its one-time Space cutover.
@@ -587,3 +637,130 @@ export const WorkspaceSpaceIntentFailureRequestSchema = SpaceActorSchema.extend(
   errorCode: z.string().min(1).max(200),
 }).strict();
 export type WorkspaceSpaceIntentFailureRequest = z.infer<typeof WorkspaceSpaceIntentFailureRequestSchema>;
+
+/**
+ * The person a Space operation acts as when WorkspaceDO drives a Channel's
+ * canonical audience operations itself.
+ *
+ * The same fields `WorkstreamObjectClient` sends on every product request, and
+ * nothing more: the conversation re-verifies them (a login session against its
+ * `sessions` row, any other principal against current membership), so passing
+ * them through WorkspaceDO adds no authority the Worker did not already have.
+ */
+export const SpaceActorAuthSchema = z.strictObject({
+  sessionId: z.string().min(1).max(200),
+  userId: UserIdSchema,
+  workspaceId: WorkspaceIdSchema,
+  region: RegionSchema,
+  role: z.enum(["owner", "admin", "member"]).nullable(),
+  principal: z.enum(["connector", "demo_seed", "impersonation", "resource_authorization"]).optional(),
+});
+export type SpaceActorAuth = z.infer<typeof SpaceActorAuthSchema>;
+
+/** `addSpaceChannel` and `removeSpaceChannel`: one existing Channel, one Space. */
+export const WorkspaceSpaceChannelChangeRequestSchema = z.strictObject({
+  auth: SpaceActorAuthSchema,
+  spaceId: SpaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
+});
+export type WorkspaceSpaceChannelChangeRequest = z.infer<typeof WorkspaceSpaceChannelChangeRequestSchema>;
+
+/** `placeChannelInGeneral`: the cutover homing one Channel, as one of its people. */
+export const WorkspaceGeneralPlacementRequestSchema = z.strictObject({
+  auth: SpaceActorAuthSchema,
+  workstreamId: WorkstreamIdSchema,
+});
+export type WorkspaceGeneralPlacementRequest = z.infer<typeof WorkspaceGeneralPlacementRequestSchema>;
+
+/**
+ * Why a Space operation that reached a Channel did not finish, with what the
+ * caller needs to say so.
+ *
+ * `space` is a refusal about the Space (rendered by `spaceRefusal`), `channel`
+ * one about the Channel it reached (rendered by `spaceAccessError`, with the
+ * Channel's title as `subject`), and `conversation` a refusal the Channel's
+ * own conversation answered, passed on as it was given. That last one is the
+ * product refusal that reached the route when the Worker made these calls; a
+ * Durable Object RPC would otherwise reduce it to a bare `Error` with no code.
+ */
+export const SpaceChannelRefusalSchema = z.discriminatedUnion("about", [
+  z.strictObject({
+    about: z.literal("space"),
+    code: SpaceErrorCodeSchema,
+    subject: z.string(),
+    unreachableUserIds: z.array(UserIdSchema).default([]),
+    blockedWorkstreamIds: z.array(WorkstreamIdSchema).default([]),
+  }),
+  z.strictObject({ about: z.literal("channel"), code: SpaceErrorCodeSchema, subject: z.string() }),
+  z.strictObject({
+    about: z.literal("conversation"),
+    status: z.number().int().min(400).max(599),
+    code: z.string().min(1).max(200),
+    message: z.string(),
+    details: z.record(z.string(), z.unknown()).optional(),
+  }),
+]);
+export type SpaceChannelRefusal = z.input<typeof SpaceChannelRefusalSchema>;
+export type ParsedSpaceChannelRefusal = z.infer<typeof SpaceChannelRefusalSchema>;
+
+export const WorkspaceSpaceChannelChangeResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), space: SpaceSummarySchema }),
+  z.strictObject({ ok: z.literal(false), refusal: SpaceChannelRefusalSchema }),
+]);
+export type WorkspaceSpaceChannelChangeResult = z.input<typeof WorkspaceSpaceChannelChangeResultSchema>;
+
+/** The walks an audience change, an archive and a restore take over their member Channels. */
+export const SpaceMemberWalkKindSchema = z.enum(["audience", "archive", "restore"]);
+export type SpaceMemberWalkKind = z.infer<typeof SpaceMemberWalkKindSchema>;
+
+/**
+ * `walkSpaceMembers`: one page of a staged walk, run by WorkspaceDO.
+ *
+ * `expectedSpaceRevision` is the request path's fence: an audience change
+ * abandons its walk when the Space moves under it, because the change that
+ * overtook it walks every member itself. `null` converges on the Space as it
+ * is now, which is what a resume does.
+ */
+export const WorkspaceSpaceMemberWalkRequestSchema = z.strictObject({
+  auth: SpaceActorAuthSchema,
+  spaceId: SpaceIdSchema,
+  operationId: IdSchema,
+  kind: SpaceMemberWalkKindSchema,
+  cursor: z.string().min(1).nullable(),
+  expectedSpaceRevision: z.number().int().positive().nullable(),
+});
+export type WorkspaceSpaceMemberWalkRequest = z.infer<typeof WorkspaceSpaceMemberWalkRequestSchema>;
+
+/**
+ * `page` names where the next page starts, already written to the intent.
+ * `walked` and `abandoned` mean the intent is settled (an archive also
+ * finalized) and carry the Space as the actor now sees it.
+ */
+export const WorkspaceSpaceMemberWalkResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), outcome: z.literal("page"), cursor: z.string().min(1) }),
+  z.strictObject({ ok: z.literal(true), outcome: z.enum(["walked", "abandoned"]), space: SpaceSummarySchema }),
+  z.strictObject({ ok: z.literal(false), refusal: SpaceChannelRefusalSchema }),
+]);
+export type WorkspaceSpaceMemberWalkResult = z.input<typeof WorkspaceSpaceMemberWalkResultSchema>;
+
+/**
+ * `resumeSpaceIntent`: one step of one staged intent in WorkspaceDO, as the
+ * actor the caller authenticated. The intent row, not the message that named it, is
+ * what is resumed, because its cursor and fences are the current ones.
+ */
+export const WorkspaceSpaceIntentResumeRequestSchema = z.strictObject({
+  auth: SpaceActorAuthSchema,
+  operationId: IdSchema,
+});
+export type WorkspaceSpaceIntentResumeRequest = z.infer<typeof WorkspaceSpaceIntentResumeRequestSchema>;
+
+/**
+ * `progressed`: a walk finished one page and has more; the intent is still
+ * unsettled with its cursor advanced.
+ */
+export const WorkspaceSpaceIntentResumeResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), outcome: z.enum(["settled", "progressed"]) }),
+  z.strictObject({ ok: z.literal(true), outcome: z.literal("abandoned"), reason: z.string().min(1).max(200) }),
+  z.strictObject({ ok: z.literal(false), refusal: SpaceChannelRefusalSchema }),
+]);
+export type WorkspaceSpaceIntentResumeResult = z.input<typeof WorkspaceSpaceIntentResumeResultSchema>;

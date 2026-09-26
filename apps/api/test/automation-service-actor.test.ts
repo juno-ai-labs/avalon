@@ -38,13 +38,10 @@ describe("resolving the actor for a room's automation", () => {
       APP_ENV: "test",
       WORKSPACE_DOS: createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
         idFromName: (name: string) => createTestDurableObjectId(name),
+        // The directory that locates the owner and the owning room's parent
+        // are both the Organization object.
         get: () => ({
           automationOwner: async () => ({ owningWorkstreamId: ROOM_ID }),
-        }),
-      }),
-      WORKSTREAM_DOS: createCloudflareTestBinding<Env["WORKSTREAM_DOS"]>({
-        idFromName: (name: string) => createTestDurableObjectId(name),
-        get: () => ({
           readManagementAccess: async (request: Record<string, unknown>) => {
             participantReads.push(request);
             return { allowed: true, writable: false, grantIds: [], workspaceMemberAccess: false };

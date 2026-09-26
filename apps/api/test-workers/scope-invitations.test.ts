@@ -6,15 +6,16 @@ import { env } from "cloudflare:workers";
 import { reset, runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
 import { beforeEach, expect, it, vi } from "vitest";
 import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
-import type { ScopeGrantTarget } from "@rally/contracts/scope-grants";
+import { WorkspaceRelationshipSchema, type ScopeGrantTarget } from "@rally/contracts/scope-grants";
 import { ScopeInvitationStorage } from "../src/durable-objects/scope-invitation-storage";
 import { decryptString } from "../src/lib/crypto";
 import { openScopeInvitationCredential } from "../src/services/scope-invitation-link";
 import { BrowserSessionService } from "../src/services/browser-session-service";
 import { openEmailLoginSecret } from "../src/services/email-login-service";
 import { promoteWorkspaceGuest } from "../src/services/workspace-relationship-service";
-import { workstreamDOName } from "../src/durable-objects/names";
 import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
+import { changeRelationships } from "./helpers/workspace-relationship-events";
+import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
 import { conversationObjectName } from "../src/durable-objects/names";
 import { boot, seedParticipantMessage, seedOpenWorkstreamAuthority, seedWorkstreamRoot } from "./helpers/substream-fixture";
 
@@ -25,14 +26,15 @@ const recipientId = asUserId("00000000-0000-4000-8000-000000000094");
 const childId = asSubstreamId("00000000-0000-4000-8000-000000000095");
 const child: ScopeGrantTarget = { kind: "conversation", workspaceId, parentId, substreamId: childId };
 const main: ScopeGrantTarget = { ...child, substreamId: asSubstreamId("0") };
-const room = (id = parentId) => env.WORKSTREAM_DOS.getByName(workstreamDOName("global", workspaceId, id));
+/** The Organization object, which hosts every Channel parent in the workspace. */
+const room = () => hostedParentStub(env, workspaceId);
 const invitation = (targets: ScopeGrantTarget[] = [child]) => ({ operationId: crypto.randomUUID(), workspaceId, parentId,
   actorUserId: actorId, emails: ["guest@example.test"], targets, expiresAt: null });
 
 /** The URL the recipient receives, read out of the durable encrypted body the sender delivers. */
 async function deliveredLink(id: string, parent = parentId): Promise<URL> {
-  const encrypted = await runInDurableObject(room(parent), (_instance, state) =>
-    new ScopeInvitationStorage(state.storage).read(id)!.deliveryEncrypted);
+  const encrypted = await runInDurableObject(room(), (_instance, state) =>
+    new ScopeInvitationStorage(state.storage, parent).read(id)!.deliveryEncrypted);
   const sealed = JSON.parse(encrypted) as { ciphertext: string; iv: string };
   const delivery = JSON.parse(await decryptString(sealed.ciphertext, sealed.iv,
     env.OAUTH_STATE_ENCRYPTION_KEY, `scope-invitation:${id}`)) as { text: string };
@@ -44,8 +46,8 @@ async function deliveredLink(id: string, parent = parentId): Promise<URL> {
 const credentialFor = async (id: string, parent = parentId) => ({ link: (await deliveredLink(id, parent)).hash.slice(1) });
 
 async function deliveredParts(id: string, parent = parentId): Promise<{ text: string; html?: string }> {
-  const encrypted = await runInDurableObject(room(parent), (_instance, state) =>
-    new ScopeInvitationStorage(state.storage).read(id)!.deliveryEncrypted);
+  const encrypted = await runInDurableObject(room(), (_instance, state) =>
+    new ScopeInvitationStorage(state.storage, parent).read(id)!.deliveryEncrypted);
   const sealed = JSON.parse(encrypted) as { ciphertext: string; iv: string };
   return JSON.parse(await decryptString(sealed.ciphertext, sealed.iv,
     env.OAUTH_STATE_ENCRYPTION_KEY, `scope-invitation:${id}`)) as { text: string; html?: string };
@@ -84,19 +86,27 @@ beforeEach(async () => {
     env.DB.prepare(LINK_PAYLOADS_TABLE),
     env.DB.prepare("INSERT INTO user_verified_emails VALUES ('guest@example.test',?)").bind(recipientId),
   ]);
-  await room().authority({ workspaceId, parentId });
-  await runInDurableObject(room(), (_instance, state) => {
-    state.storage.sql.exec(`INSERT INTO workstream_metadata
-      (id,workspace_id,workstream_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
-      VALUES (1,?,?,'global',1,'Private parent','','','personal','idle',0,0,0)`,workspaceId,parentId);
-    state.storage.sql.exec("INSERT INTO conversation_children (substream_id,kind,created_at) VALUES ('0','main',0), (?,'child',0)", childId);
-    state.storage.sql.exec("INSERT INTO main_participant_migration VALUES (1, ?, '{}', 'complete')", crypto.randomUUID());
-    state.storage.sql.exec("INSERT INTO child_participant_migrations VALUES (?, ?, 'complete')", childId, crypto.randomUUID());
-    const grants = _instance['scopeGrants']({ workspaceId, parentId });
-    for (const target of [main, child]) grants.mutate({ operationId: crypto.randomUUID(), actorUserId: actorId,
+  await seedParent(parentId, "Private parent", [main, child]);
+});
+
+/**
+ * A Channel parent with a Main and one child, both past the participant
+ * handoff, where the actor holds a grant on each of `actorTargets`.
+ */
+async function seedParent(id: string, title: string, actorTargets: ScopeGrantTarget[]) {
+  await room().authority({ workspaceId, parentId: id });
+  await withHostedParent(room(), id, (parent, state) => {
+    state.storage.sql.exec(`INSERT INTO parent_metadata
+      (parent_id,parent_kind,workspace_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
+      VALUES (?,'workstream',?,'global',1,?,'','','personal','idle',0,0,0)`, id, workspaceId, title);
+    state.storage.sql.exec("INSERT INTO parent_children (parent_id,substream_id,kind,created_at) VALUES (?,'0','main',0), (?,?,'child',0)", id, id, childId);
+    state.storage.sql.exec("INSERT INTO parent_participant_migrations VALUES (?, '0', ?, '{}', 'complete')", id, crypto.randomUUID());
+    state.storage.sql.exec("INSERT INTO parent_participant_migrations VALUES (?, ?, ?, NULL, 'complete')", id, childId, crypto.randomUUID());
+    const grants = parent['scopeGrants']({ workspaceId, parentId: id });
+    for (const target of actorTargets) grants.mutate({ operationId: crypto.randomUUID(), actorUserId: actorId,
       userId: actorId, target, active: true, expectedRevision: 0 }, "actor-membership");
   });
-});
+}
 
 it("retries one email batch without replacing invitation credentials or its durable delivery", async () => {
   const request = invitation();
@@ -107,8 +117,8 @@ it("retries one email batch without replacing invitation credentials or its dura
     .toMatchObject({ status: "denied", reason: "operation_conflict" });
   await runDurableObjectAlarm(room());
   await runInDurableObject(room(), (_instance, state) => {
-    expect(state.storage.sql.exec("SELECT * FROM scope_invitations").toArray()).toHaveLength(1);
-    expect(state.storage.sql.exec<{ delivered_at: number }>("SELECT delivered_at FROM scope_invitations").one().delivered_at).toBeGreaterThan(0);
+    expect(state.storage.sql.exec("SELECT * FROM parent_invitations WHERE parent_id = ?", parentId).toArray()).toHaveLength(1);
+    expect(state.storage.sql.exec<{ delivered_at: number }>("SELECT delivered_at FROM parent_invitations WHERE parent_id = ?", parentId).one().delivered_at).toBeGreaterThan(0);
   });
 });
 
@@ -127,14 +137,14 @@ it("accepts only a verified recipient and grants a child without Main", async ()
 it("never restores a revoked grant or a removed membership when acceptance is replayed", async () => {
   const request = await create();
   const accepted = await room().acceptScopeInvitation(request);
-  await runInDurableObject(room(), (_instance) => {
-    const grants = _instance['scopeGrants'](child);
+  await withHostedParent(room(), parentId, (parent) => {
+    const grants = parent['scopeGrants'](child);
     grants.mutateCurrent({ operationId: crypto.randomUUID(), actorUserId: actorId, userId: recipientId, target: child, active: false },
       grants.forUser(recipientId)[0]!.membershipIncarnation);
   });
   expect(await room().acceptScopeInvitation(request)).toEqual(accepted);
   expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: false });
-  await env.DB.prepare("DELETE FROM workspace_members WHERE user_id=?").bind(recipientId).run();
+  await changeRelationships(env, workspaceId, [recipientId], env.DB.prepare("DELETE FROM workspace_members WHERE user_id=?").bind(recipientId));
   expect(await room().acceptScopeInvitation(request)).toMatchObject({ status: "denied", reason: "relationship_required" });
   expect(await env.DB.prepare("SELECT 1 FROM workspace_members WHERE user_id=?").bind(recipientId).first()).toBeNull();
 });
@@ -150,7 +160,7 @@ it("a revoked invitation cannot be accepted, even with its original proof", asyn
 it("commits all target grants with acceptance, or retries after rolling every grant back", async () => {
   const request = await create([main, child]);
   await runInDurableObject(room(), (_instance, state) => {
-    state.storage.sql.exec(`CREATE TRIGGER reject_child_grant BEFORE INSERT ON scope_grants
+    state.storage.sql.exec(`CREATE TRIGGER reject_child_grant BEFORE INSERT ON parent_grants
       WHEN NEW.user_id='${recipientId}' AND NEW.substream_id='${childId}'
       BEGIN SELECT RAISE(ABORT,'simulated child write failure'); END`);
   });
@@ -158,9 +168,9 @@ it("commits all target grants with acceptance, or retries after rolling every gr
   // bridge otherwise reports the same expected rejection as unhandled as well.
   await expect(runInDurableObject(room(), (instance) => instance.acceptScopeInvitation(request)))
     .rejects.toThrow("simulated child write failure");
-  await runInDurableObject(room(), (_instance, state) => {
-    expect(_instance['scopeGrants'](child).forUser(recipientId)).toEqual([]);
-    expect(new ScopeInvitationStorage(state.storage).read(request.invitationId)?.summary.status).toBe("pending");
+  await withHostedParent(room(), parentId, (parent, state) => {
+    expect(parent['scopeGrants'](child).forUser(recipientId)).toEqual([]);
+    expect(new ScopeInvitationStorage(state.storage, parentId).read(request.invitationId)?.summary.status).toBe("pending");
     state.storage.sql.exec("DROP TRIGGER reject_child_grant");
   });
   expect(await room().acceptScopeInvitation(request)).toMatchObject({ status: "accepted" });
@@ -172,7 +182,7 @@ it("does not use an invitation after the sharer's membership is replaced", async
   const request = await create();
   expect(await room().describeScopeInvitation({ workspaceId, parentId, invitationId: request.invitationId, token: request.token }))
     .toMatchObject({ status: "ready" });
-  await env.DB.prepare("UPDATE workspace_members SET incarnation='replacement' WHERE user_id=?").bind(actorId).run();
+  await changeRelationships(env, workspaceId, [actorId], env.DB.prepare("UPDATE workspace_members SET incarnation='replacement' WHERE user_id=?").bind(actorId));
   expect(await room().acceptScopeInvitation(request)).toMatchObject({ status: "denied", reason: "sharing_required" });
   // The preview goes with it. It answers what acceptance would answer, or it is
   // a mailbox oracle: a name for an invitation nobody can accept any more, and
@@ -187,6 +197,22 @@ async function bearer(userId: typeof actorId, sessionId: string, workspace: type
     .setIssuer("avalon-api").setAudience("avalon-desktop").setIssuedAt().setExpirationTime("15m")
     .sign(new TextEncoder().encode(env.SESSION_SIGNING_KEY));
 }
+
+it("answers a sharing request for a Space id as a scope that does not exist", async () => {
+  // Grants, invitations and sharing are Channel-only. The Organization object
+  // refuses a Space id, and the route turns that into a 404 rather than a 500.
+  const spaceId = "00000000-0000-7000-8000-0000000005a1";
+  await runInDurableObject(hostedParentStub(env, workspaceId), (_instance, state) => {
+    state.storage.sql.exec(
+      "INSERT INTO parent_imports (parent_id, parent_kind, state) VALUES (?, 'space', 'imported')", spaceId,
+    );
+  });
+  const app = createApp();
+  const actorHeaders = { authorization: `Bearer ${await bearer(actorId, "actor-session", workspaceId)}` };
+  const response = await app.request(`/sharing/${spaceId}/options`, { headers: actorHeaders }, env);
+  expect(response.status).toBe(404);
+  expect(await response.json()).toMatchObject({ error: { code: "scope_not_found" } });
+});
 
 it("routes sharing from the authenticated actor and accepts from an identity-only session", async () => {
   const app = createApp();
@@ -204,6 +230,36 @@ it("routes sharing from the authenticated actor and accepts from an identity-onl
   expect(accepted.status).toBe(200);
   expect(await accepted.json()).toMatchObject({ status: "accepted", invitation: { acceptedByUserId: recipientId } });
   expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: true });
+});
+
+it("publishes the guest relationship an acceptance created without waiting for the cron", async () => {
+  // The slice of D1's durable relationship publication this route reads: the
+  // intent row the membership trigger writes, as migration 0109 does.
+  await env.DB.batch([
+    env.DB.prepare(`CREATE TABLE workspace_relationship_deliveries (sequence INTEGER PRIMARY KEY,
+      workspace_id TEXT, user_id TEXT, incarnation TEXT, revision INTEGER, change_kind TEXT, access_class TEXT,
+      role TEXT, status TEXT, dispatched_at TEXT, processed_at TEXT)`),
+    env.DB.prepare(`CREATE TRIGGER workspace_member_delivery_insert AFTER INSERT ON workspace_members BEGIN
+      INSERT INTO workspace_relationship_deliveries
+        (workspace_id, user_id, incarnation, revision, change_kind, access_class, role, status)
+      VALUES (NEW.workspace_id, NEW.user_id, NEW.incarnation, NEW.revision, 'upsert', NEW.access_class, NEW.role, NEW.status);
+    END`),
+  ]);
+  const send = vi.spyOn(env.ACCESS_REVOCATION_QUEUE, "send");
+  const app = createApp();
+  const request = await create();
+  const headers = { authorization: `Bearer ${await bearer(recipientId, "recipient-session", null)}`, "content-type": "application/json" };
+  const accepted = await app.request("/sharing/accept", { method: "POST", headers,
+    body: JSON.stringify({ workspaceId, parentId, invitationId: request.invitationId, token: request.token }) }, env);
+  expect(accepted.status).toBe(200);
+  await vi.waitFor(async () => {
+    expect(await env.DB.prepare("SELECT dispatched_at FROM workspace_relationship_deliveries WHERE user_id = ?")
+      .bind(recipientId).first()).toEqual({ dispatched_at: expect.any(String) as unknown });
+  }, { timeout: 5_000, interval: 25 });
+  expect(send).toHaveBeenCalledWith(expect.objectContaining({
+    kind: "workspace_relationship_changed", removed: false,
+    relationship: expect.objectContaining({ userId: recipientId, accessClass: "guest" }) as unknown,
+  }));
 });
 
 it("names the field when an invitation is asked to expire past the end of time", async () => {
@@ -437,9 +493,10 @@ it("stops describing an invitation past its deadline, accepted or not", async ()
   // deadline either way.
   await runInDurableObject(room(), (_instance, state) => {
     // The deadline lives in the stored summary, so age it there.
-    const stored = state.storage.sql.exec<{ summary_json: string }>("SELECT summary_json FROM scope_invitations WHERE id = ?", invitationId).one();
-    state.storage.sql.exec("UPDATE scope_invitations SET summary_json = ? WHERE id = ?",
-      JSON.stringify({ ...JSON.parse(stored.summary_json), expiresAt: Date.now() - 1_000 }), invitationId);
+    const stored = state.storage.sql.exec<{ summary_json: string }>(
+      "SELECT summary_json FROM parent_invitations WHERE parent_id = ? AND id = ?", parentId, invitationId).one();
+    state.storage.sql.exec("UPDATE parent_invitations SET summary_json = ? WHERE parent_id = ? AND id = ?",
+      JSON.stringify({ ...JSON.parse(stored.summary_json), expiresAt: Date.now() - 1_000 }), parentId, invitationId);
   });
   expect(await room().acceptScopeInvitation(request)).toMatchObject({ status: "accepted" });
   expect(await room().describeScopeInvitation({ workspaceId, parentId, invitationId, token }))
@@ -538,18 +595,8 @@ it("preserves browser sessions and independent shares across a second workstream
   const before = await env.DB.prepare("SELECT incarnation FROM workspace_members WHERE user_id=?").bind(recipientId).first();
   const secondParent = asWorkstreamId("00000000-0000-4000-8000-000000000096");
   const secondChild: ScopeGrantTarget = { ...child, parentId: secondParent };
-  await room(secondParent).authority({ workspaceId, parentId: secondParent });
-  await runInDurableObject(room(secondParent), (_instance, state) => {
-    state.storage.sql.exec(`INSERT INTO workstream_metadata
-      (id,workspace_id,workstream_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
-      VALUES (1,?,?,'global',1,'Second parent','','','personal','idle',0,0,0)`,workspaceId,secondParent);
-    state.storage.sql.exec("INSERT INTO conversation_children (substream_id,kind,created_at) VALUES ('0','main',0), (?,'child',0)", childId);
-    state.storage.sql.exec("INSERT INTO main_participant_migration VALUES (1, ?, '{}', 'complete')", crypto.randomUUID());
-    state.storage.sql.exec("INSERT INTO child_participant_migrations VALUES (?, ?, 'complete')", childId, crypto.randomUUID());
-    _instance['scopeGrants'](secondChild).mutate({ operationId: crypto.randomUUID(), actorUserId: actorId,
-      userId: actorId, target: secondChild, active: true, expectedRevision: 0 }, "actor-membership");
-  });
-  const result = await room(secondParent).createScopeInvitations({ ...invitation([secondChild]), parentId: secondParent });
+  await seedParent(secondParent, "Second parent", [secondChild]);
+  const result = await room().createScopeInvitations({ ...invitation([secondChild]), parentId: secondParent });
   if (result.status !== "created") throw new Error(JSON.stringify(result));
   const invitationId = result.invitations[0]!.id;
   const acceptance = await app.request("/browser/api/_/sharing/accept", { method:"POST",headers:browserHeaders,
@@ -560,8 +607,8 @@ it("preserves browser sessions and independent shares across a second workstream
   expect(await browser.read(credential,workspaceId)).toEqual(browserBefore);
   expect(await env.DB.prepare("SELECT incarnation FROM workspace_members WHERE user_id=?").bind(recipientId).first()).toEqual(before);
   expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: true });
-  expect(await room(secondParent).readScopeAccess({ userId: recipientId, target: secondChild })).toMatchObject({ allowed: true });
-  expect(await room(secondParent).readScopeAccess({ userId: recipientId, target: { ...main, parentId: secondParent } })).toMatchObject({ allowed: false });
+  expect(await room().readScopeAccess({ userId: recipientId, target: secondChild })).toMatchObject({ allowed: true });
+  expect(await room().readScopeAccess({ userId: recipientId, target: { ...main, parentId: secondParent } })).toMatchObject({ allowed: false });
   const relationship = await env.DB.prepare("SELECT incarnation,revision FROM workspace_members WHERE workspace_id=? AND user_id=?")
     .bind(workspaceId,recipientId).first<{ incarnation:string;revision:number }>();
   expect(await promoteWorkspaceGuest(env.DB,{ workspaceId,userId:recipientId,actorUserId:actorId,
@@ -573,8 +620,8 @@ it("preserves browser sessions and independent shares across a second workstream
   expect(selected.status,await selected.clone().text()).toBe(200);
   expect(await selected.json()).toMatchObject({ user:{ id:recipientId },workspace:{ id:workspaceId,role:"member" } });
   for (const target of [child,secondChild]) {
-    expect(await room(asWorkstreamId(target.parentId)).readScopeAccess({ userId:recipientId,target })).toMatchObject({ allowed:true,writable:true });
-    expect(await room(asWorkstreamId(target.parentId)).readScopeAccess({ userId:recipientId,target:{ ...target,substreamId:asSubstreamId("0") } }))
+    expect(await room().readScopeAccess({ userId:recipientId,target })).toMatchObject({ allowed:true,writable:true });
+    expect(await room().readScopeAccess({ userId:recipientId,target:{ ...target,substreamId:asSubstreamId("0") } }))
       .toMatchObject({ allowed:false });
   }
   expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM workspace_members WHERE workspace_id=? AND user_id=?")
@@ -583,11 +630,11 @@ it("preserves browser sessions and independent shares across a second workstream
 
 it("reports missing legacy sharing authority without pretending migration is pending", async () => {
   await runInDurableObject(room(), (_instance, state) => {
-    state.storage.sql.exec("DELETE FROM child_participant_migrations WHERE substream_id=?", childId);
+    state.storage.sql.exec("DELETE FROM parent_participant_migrations WHERE parent_id=? AND substream_id=?", parentId, childId);
   });
   expect(await room().createScopeInvitations(invitation())).toMatchObject({ status: "denied", reason: "sharing_required" });
   await runInDurableObject(room(), (_instance, state) => {
-    expect(state.storage.sql.exec("SELECT 1 FROM scope_invitations").toArray()).toEqual([]);
+    expect(state.storage.sql.exec("SELECT 1 FROM parent_invitations WHERE parent_id=?", parentId).toArray()).toEqual([]);
   });
 });
 
@@ -601,15 +648,15 @@ it("lists invitation summaries only when the actor can share every target", asyn
   if (before.status !== "ready") throw new Error("expected sharing authority");
   expect(before.invitations.map((item) => item.email).sort()).toEqual(["both@example.test", "guest@example.test"]);
   expect(JSON.stringify(before)).not.toMatch(/token|Encrypted|grantOperationIds/);
-  await runInDurableObject(room(), (_instance) => {
-    const grants = _instance['scopeGrants'](main);
+  await withHostedParent(room(), parentId, (parent) => {
+    const grants = parent['scopeGrants'](main);
     grants.mutateCurrent({ operationId: crypto.randomUUID(), actorUserId: actorId, userId: actorId,
       target: main, active: false }, "actor-membership");
   });
   if (childOnly.status !== "created") throw new Error("expected invitation");
   expect(await room().listScopeInvitations(request)).toEqual({ status: "ready", invitations: childOnly.invitations });
   expect(await room().listScopeInvitations({ actorUserId: actorId, target: main })).toEqual({ status: "denied", reason: "sharing_required" });
-  await env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(actorId).run();
+  await changeRelationships(env, workspaceId, [actorId], env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(actorId));
   expect(await room().listScopeInvitations(request)).toEqual({ status: "denied", reason: "sharing_required" });
 });
 
@@ -630,8 +677,8 @@ it("offers independent share scopes and refuses incomplete workstream coverage",
   const address = { workspaceId, parentId, actorUserId: actorId };
   const parent: ScopeGrantTarget = { kind: "workstream", workspaceId, parentId };
   expect(await room().scopeSharingOptions(address)).toMatchObject({ completeWorkstreamTargets: null });
-  await runInDurableObject(room(), (_instance) => {
-    _instance['scopeGrants'](parent).mutate({ operationId: crypto.randomUUID(),
+  await withHostedParent(room(), parentId, (hosted) => {
+    hosted['scopeGrants'](parent).mutate({ operationId: crypto.randomUUID(),
       actorUserId: actorId, userId: actorId, target: parent, active: true, expectedRevision: 0 }, "actor-membership");
   });
   const options = await room().scopeSharingOptions(address);
@@ -645,7 +692,7 @@ it("offers independent share scopes and refuses incomplete workstream coverage",
   // A later restricted child does not rewrite an already committed invitation.
   const laterChild = "00000000-0000-4000-8000-000000000097";
   await runInDurableObject(room(), (_instance, state) => {
-    state.storage.sql.exec("INSERT INTO conversation_children(substream_id,kind,status,created_at) VALUES (?,'child','ready',0)", laterChild);
+    state.storage.sql.exec("INSERT INTO parent_children(parent_id,substream_id,kind,status,created_at) VALUES (?,?,'child','ready',0)", parentId, laterChild);
   });
   expect((await room().scopeSharingOptions(address)).completeWorkstreamTargets).toBeNull();
   expect(await room().createScopeInvitations(request)).toEqual(created);
@@ -684,7 +731,7 @@ it("manages accepted grants by exact scope and preserves later shares on retry",
   expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: true });
   expect(await room().mutateScopeGrant({ ...request, operationId: crypto.randomUUID(), actorUserId: actorId, active: false }))
     .toMatchObject({ status: "conflict" });
-  await env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(actorId).run();
+  await changeRelationships(env, workspaceId, [actorId], env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(actorId));
   expect(await room().listManagedScopeGrants({ actorUserId: actorId, target: child }))
     .toEqual({ status: "denied", reason: "sharing_required" });
 });
@@ -710,7 +757,9 @@ it("rechecks management authority after profile reads interleave with suspension
     });
     const database = new Proxy(original, {
       get(current, property) {
-        if (property === "prepare") return (sql: string) => sql === "SELECT name,email FROM users WHERE id=?"
+        // Matched without whitespace, so a reformatted query cannot leave this
+        // gate unarmed and the test waiting on a read that never comes.
+        if (property === "prepare") return (sql: string) => sql.replace(/\s+/gu, "") === "SELECTname,emailFROMusersWHEREid=?"
           ? wrap(current.prepare(sql)) : current.prepare(sql);
         const value = Reflect.get(current, property);
         return typeof value === "function" ? value.bind(current) : value;
@@ -722,6 +771,13 @@ it("rechecks management authority after profile reads interleave with suspension
       try {
         await reading;
         await original.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(actorId).run();
+        // The suspension's relationship event reaches the object while the
+        // listing is still waiting on its profile read.
+        const suspended = await original.prepare(`SELECT workspace_id AS workspaceId, user_id AS userId,
+          access_class AS accessClass, role, status, incarnation, revision FROM workspace_members WHERE user_id = ?`)
+          .bind(actorId).first();
+        expect(await instance.applyMemberStatus({ workspaceId, sequence: 1, removed: false,
+          relationship: WorkspaceRelationshipSchema.parse(suspended) })).toEqual({ applied: true });
       } finally { release(); }
       expect(await listing).toEqual({ status: "denied", reason: "sharing_required" });
     } finally { target.env = originalEnv; }
@@ -731,14 +787,14 @@ it("rechecks management authority after profile reads interleave with suspension
 
 it("refuses unconfigured sharing before a legacy authority handoff", async () => {
   await runInDurableObject(room(), async (instance, state) => {
-    state.storage.sql.exec("DELETE FROM child_participant_migrations WHERE substream_id=?", childId);
+    state.storage.sql.exec("DELETE FROM parent_participant_migrations WHERE parent_id=? AND substream_id=?", parentId, childId);
     const original = instance['env'];
     instance['env'] = new Proxy(original, { get: (target, key, receiver) =>
       key === 'BROWSER_APP_ORIGIN' ? undefined : Reflect.get(target, key, receiver) });
     try {
       expect(await instance.createScopeInvitations(invitation())).toEqual({ status: "denied", reason: "configuration_required" });
-      expect(state.storage.sql.exec("SELECT 1 FROM child_participant_migrations WHERE substream_id=?", childId).toArray()).toEqual([]);
-      expect(state.storage.sql.exec("SELECT 1 FROM scope_invitations").toArray()).toEqual([]);
+      expect(state.storage.sql.exec("SELECT 1 FROM parent_participant_migrations WHERE parent_id=? AND substream_id=?", parentId, childId).toArray()).toEqual([]);
+      expect(state.storage.sql.exec("SELECT 1 FROM parent_invitations WHERE parent_id=?", parentId).toArray()).toEqual([]);
     } finally { instance['env'] = original; }
   });
 });

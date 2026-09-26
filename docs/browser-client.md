@@ -132,7 +132,8 @@ Channel sidebar, header, resource rows, Sidekick controls and account trigger as
 desktop, from `@rally/ui`. The browser's versioned navigation directory contains
 only authorized containment plus the associative presentation metadata above it:
 name, icon, colour and public/private scope for Space, Channel and Breakout.
-Canonical WorkstreamDO independently re-authorizes every Channel and Breakout;
+The Channel's canonical parent in WorkspaceDO independently re-authorizes every
+Channel and Breakout;
 the metadata grants no parent transcript, roster, defaults or write capability.
 A child-only share names and styles its Channel so the Breakout can be placed
 correctly, but still omits Main and every unshared Breakout. Selecting a Space

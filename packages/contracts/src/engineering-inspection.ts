@@ -5,6 +5,7 @@ import { RegionSchema } from "./index";
 import { AutomationIdSchema } from "./automation-agent";
 import {
   ArtifactIdSchema,
+  IdSchema,
   SubstreamIdSchema,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
@@ -363,6 +364,27 @@ export const EngineeringSqlLookupSchema = deferredZodSchema(() => lookupResultSc
 })));
 export type EngineeringSqlLookup = z.infer<typeof EngineeringSqlLookupSchema>;
 
+/**
+ * Retry one Channel's or Space's legacy import now. `parentId` is either kind:
+ * the Organization object's import ledger already knows which it is.
+ */
+export const ParentImportRetryInputSchema = deferredZodSchema(() => WorkspaceInspectionInputSchema.unwrap().extend({
+  authorityGeneration: AuthorityGenerationSchema,
+  parentId: IdSchema,
+}).strict());
+export type ParentImportRetryInput = z.infer<typeof ParentImportRetryInputSchema>;
+
+/** The ledger row after the retry: `imported`, or still `pending` with the code that stopped it. */
+export const ParentImportRetryLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
+  region: RegionSchema,
+  workspaceId: WorkspaceIdSchema,
+  parentId: IdSchema,
+  state: z.enum(["pending", "imported"]).nullable(),
+  attempts: z.number().int().nonnegative(),
+  lastErrorCode: z.string().max(200).nullable(),
+})));
+export type ParentImportRetryLookup = z.infer<typeof ParentImportRetryLookupSchema>;
+
 /** The named regional WorkerEntrypoint surface bound only to the engineering MCP Worker. */
 export interface EngineeringInspectionRpcBinding {
   listWorkspaces(input: ListEngineeringWorkspacesInput): Promise<ListEngineeringWorkspacesResult>;
@@ -383,4 +405,5 @@ export interface EngineeringInspectionRpcBinding {
   runSidekickSql(input: SidekickSqlInspectionInput): Promise<EngineeringSqlLookup>;
   runSpaceSql(input: SpaceSqlInspectionInput): Promise<EngineeringSqlLookup>;
   runArtifactSql(input: ArtifactSqlInspectionInput): Promise<EngineeringSqlLookup>;
+  retryParentImport(input: ParentImportRetryInput): Promise<ParentImportRetryLookup>;
 }

@@ -102,10 +102,10 @@ function seededDatabase(): DatabaseSync {
  *
  * `initialize` carries the audience the Channel *opens* with, which is the
  * union of the caller's request and every Space it lands in. `directScopes`
- * carries the caller's own half of that union, read off the observation the
- * creation hands to `applySpaceAccessSource` — the thing a Space source is a
- * delta against, and the only place the requested scope is still visible once
- * an Organization-wide Space has widened it.
+ * carries the caller's own half of that union, read off what the creation
+ * hands to `reserveChannelInSpaces`: the audience the Space sources are
+ * recorded as deltas against, and the only place the requested scope is still
+ * visible once an Organization-wide Space has widened it.
  */
 function environment(database: DatabaseSync): {
   env: Env;
@@ -113,7 +113,7 @@ function environment(database: DatabaseSync): {
   directScopes: () => string[];
 } {
   const initializeInputs: Array<Record<string, unknown>> = [];
-  const room = spaceCreationRoomRpcs();
+  const organization = spaceCreationWorkspaceRpcs();
   /** The contract row each initialized work stream would answer `get` with. */
   const initialized = new Map<string, Record<string, unknown>>();
   const env = createTestEnv({
@@ -162,40 +162,23 @@ function environment(database: DatabaseSync): {
         },
       },
     }),
-    WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
-      extra: { ...parentCreationRpcs(), ...room },
-    }),
+    // The Organization object hosts the Channel's parent, so the create's one
+    // placement-and-reservation call answers on the same stub as the Space's.
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
       extra: {
         opportunityOriginEvents: vi.fn(async () => []),
-        ...spaceCreationWorkspaceRpcs(),
+        ...organization,
+        // A replayed create re-places the Channel through `addChannel`, which
+        // plans and confirms the source on the Channel's own authority.
+        ...spaceCreationRoomRpcs(),
       },
     }),
   });
   return {
     env,
     initializeInputs,
-    directScopes: () => room.applySpaceAccessSource.mock.calls
-      .map(([input]) => String(input.channel.readers.scope)),
-  };
-}
-
-/**
- * The parent's half of a create.
- *
- * `WorkstreamObjectCreationService` reserves the main conversation on the
- * parent object before the child is initialized, then flushes its provisional
- * directory effects alongside initialization. Nothing in this file asserts on
- * those parent operations, but a create that cannot make them never reaches
- * `initialize`, which is what these tests read.
- */
-function parentCreationRpcs() {
-  return {
-    reserveChild: vi.fn(async (input: { authorityGeneration: number }) => ({
-      reserved: true as const,
-      authorityGeneration: input.authorityGeneration,
-    })),
-    flushProvisionalDirectory: vi.fn(async () => undefined),
+    directScopes: () => organization.reserveChannelInSpaces.mock.calls
+      .map(([input]) => String(input.requestedScope)),
   };
 }
 

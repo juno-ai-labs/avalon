@@ -7,11 +7,12 @@ least one. A Channel may belong to several at once; each is a *placement* of the
 same Channel rather than a copy, so opening any of them opens the same
 transcript.
 
-A Space is not a second container implementation. It is Rally's work-stream
-primitive under a role: `SpaceDO` is `WorkstreamDO` with the differences
-enumerated as fields (`docs/workstream-durable-object.md` owns that), and its
-hidden main conversation holds its participants and resources exactly as a
-Channel's does. What makes it a Space is that nothing in the product opens that
+A Space is not a second container implementation. It is Rally's conversation
+parent under a role: its parent state is hosted in `WorkspaceDO` beside every
+Channel's, keyed by parent id, with the differences enumerated as fields of its
+role ([`hosted-conversation-parents.md`](hosted-conversation-parents.md) owns
+that), and its hidden main conversation holds its participants and resources
+exactly as a Channel's does. What makes it a Space is that nothing in the product opens that
 conversation — no feed, no transcript, no agent loop, no search result.
 
 Spaces replace [Projects](projects.md), which WorkspaceDO migration 64 has
@@ -31,9 +32,11 @@ them; the product design is in
 | `apps/api/src/durable-objects/workspace-space-protocol.ts` | Strict RPC requests and results, the Queue message shapes, and the `kind` that makes a resource and a Sidekick default one mechanism. |
 | `apps/api/src/durable-objects/workspace-do.ts` | The authenticated Space RPCs, the three server-to-server cutover RPCs, the Space branch of `applyWorkstreamDirectoryEffects`, `publishSpaceSnapshot`, the sidebar payload, the three alarm phases, and migration 64, which retires Projects. |
 | `apps/api/src/durable-objects/fenced-target-publication.ts` | The claim/send/accept publisher every Space publisher calls. |
-| `apps/api/src/durable-objects/workspace-space-default-publication.ts` | The Space's three arguments to it: default targets, unsettled intent resumes, and the cutover's next page of work. |
+| `apps/api/src/durable-objects/workspace-space-default-publication.ts` | The Space's two arguments to it: default targets, and the cutover's next page of work. |
 | `apps/api/src/services/space-service.ts` | Creation, presentation, audience, membership, archive, restore, defaults, and the resume of an interrupted operation. |
-| `apps/api/src/services/channel-access-service.ts` | The one seam a Space reaches a Channel's audience through. `docs/spaces.md` never writes an audience itself. |
+| `apps/api/src/durable-objects/workspace-space-channel-access.ts` | `SpaceChannelAccess`: a Space's source on an existing Channel, driven from WorkspaceDO. One plan transaction, the Channel's canonical operations, one confirm transaction; used by an add, a removal, a member walk's page, the cutover's placement and every resume, a stored `move` included. |
+| `apps/api/src/services/space-source-operations.ts` | The canonical-operation sequence `SpaceChannelAccess` applies and withdraws a Space's source with (seat, narrow, remove, announce), and the narrowing announcement a Channel's own scope change shares. |
+| `apps/api/src/services/channel-access-service.ts` | A Channel's own scope and readers against the Space sources that reach it: reading who supplies whom, narrowing its own scope, and removing a direct reader without revoking a Space's. Nothing here writes a Space's source. |
 | `apps/api/src/services/space-bootstrap-service.ts` | The one-time cutover, the new-Organization General, and the placement the two creation paths outside the coordinator take for themselves. |
 | `apps/api/src/services/workstream-object-creation-service.ts` | Where a Channel is born into its Spaces. [`workstream-creation.md`](workstream-creation.md) owns it. |
 | `apps/api/src/routes/spaces.ts` | `/spaces` mutations and the two paginated reads. |
@@ -52,8 +55,10 @@ them; the product design is in
 
 ### Three authorities, in one order
 
-A Space is the agreement of three objects, and `SpaceService` is where that
-agreement is ordered.
+A Space is the agreement of three authorities, and `SpaceService` is where that
+agreement is ordered. The relationship, the Space's parent rows and each
+Channel's parent rows all live in `WorkspaceDO`, but each is still reached by
+its own RPC and keeps its own rows.
 
 **WorkspaceDO owns the relationship.** It holds the Space directory projection,
 each person's Space order, the many-to-many Channel memberships with their
@@ -62,18 +67,20 @@ operation intents, and the General identity. Neither endpoint of a membership
 can answer whether a Channel has *another* Space, so the invariant that every
 Channel has a home lives here and nowhere else.
 
-**The Space's own object owns what the Space is.** Its name, appearance, scope,
-participants and attachments are written on `SpaceDO` and its hidden main
-conversation, and reach WorkspaceDO as the same `directory_common` and
+**The Space's parent owns what the Space is.** Its name, appearance, scope,
+participants and attachments are written on the Space's hosted parent rows in
+`WorkspaceDO` and its hidden main conversation, and reach WorkspaceDO as the same `directory_common` and
 `directory_user` effects a Channel publishes — routed by parent kind in
 `applyWorkstreamDirectoryEffects`.
 
-**Each Channel owns its own audience.** A Space never writes one. Every
-membership, audience change, archive and restore goes through
-`ChannelAccessService`, which asks the Channel's own authority for the delta its
-provenance implies and applies it through the Channel's canonical scope and
-participant operations — where the retained-content containment preflight and
-its SQL triggers already run.
+**Each Channel's parent owns its own audience.** A Space never writes one. Every
+membership, audience change, archive and restore asks the Channel's own
+authority for the delta its provenance implies and applies it through the
+Channel's canonical scope and participant operations, where the
+retained-content containment preflight and its SQL triggers already run.
+WorkspaceDO drives that sequence itself for every one of them, the cutover's
+placements included (`SpaceChannelAccess`, over the canonical-operation
+sequence in `space-source-operations.ts`).
 
 ### Opening a Channel deep link
 
@@ -89,22 +96,42 @@ therefore never inherits a delayed reveal.
 
 ### Creating a Space
 
-`SpaceService.create` reserves the Space in WorkspaceDO first, so the id is the
-Organization's and a failure has something to undo. The reservation writes a
-directory row at **source version zero**; every real projection is version one
-or higher, so the Space's own first `directory_common` effect supersedes it
-under the ordinary generation-then-version fence instead of colliding with it at
-the same version under a different payload hash.
+`SpaceService.create` asks `admitSpaceCreation` first, the gate `reserveSpace`
+applies (an active non-guest member, Space tables present), so a refused caller
+writes nothing outside WorkspaceDO. Then three steps, the middle one a single
+WorkspaceDO transaction:
 
-It then provisions the object: the same D1 anchor and `workstream_authority_routes`
-row a Channel's creation writes, under `parentKind: "space"`; `reserveChild("0",
-kind: "main")` on the `SpaceDO`, which enqueues and synchronously delivers the
-provisional directory projection; `provisionWorkstreamObject` for the
-conversation's title, scope and creator — **with no opening message and no run
-admitted**; and finally the appearance, through the same writer a Channel's icon
-and colour go through. A failed first creation cancels only the reservation it
-made; a failed replay preserves the earlier reservation and any Channels in it,
-even before its first projection arrives.
+1. **The D1 anchor**, under an id the service mints (or the caller's stable
+   creation id): the same `workstream_authority_routes` row and anchor a
+   Channel's creation writes, under `parentKind: "space"`, and the hidden
+   conversation's runtime bootstrap. It comes first so that a failure here
+   leaves nothing any member can see.
+2. **`reserveSpace`.** WorkspaceDO reads the regional
+   authority generation, then in one `transactionSync` writes the Space's
+   directory row, its creator's viewer row and order entry, and its hosted
+   parent: `parent_metadata`, the main child `0`, and the provisional
+   `directory_common` and `directory_user` projections, which the parent applies
+   to the Space directory in the same transaction. The Space row is written at
+   **source version zero** and the parent's projection supersedes it at version
+   one under the ordinary generation-then-version fence, so version zero never
+   commits. An id WorkspaceDO already
+   hosts as a Channel is refused `space_not_found`; an authority generation D1
+   cannot supply is `space_authority_unreachable`.
+3. **The hidden conversation**: `provisionWorkstreamObject` for its title, scope
+   and creator (**with no opening message and no run admitted**), and then the
+   appearance, through the same writer a Channel's icon and colour go through.
+
+A failure in step 3 takes the Space back when this call created it:
+`cancelSpaceReservation` deletes the Space row, its viewers and orders, and the
+hosted parent's reservation in one transaction and republishes the snapshot, so
+nobody is left looking at a Space whose conversation never opened, and the
+caller's retry is an ordinary creation. It is refused once anything depends on
+the Space: a Channel placed in it, or a projection from its conversation (which
+means the conversation opened after all). A conversation that initialized before
+the failure but had not published yet is not seen, and its first projection,
+when it lands, recreates the Space with a working conversation; the take-back
+cannot tell that case from one that never initialized. A replay under a stable
+id did not create the Space and resumes provisioning instead.
 
 Internal setup callers may pass a stable creation id to `SpaceService.create`.
 The reservation reuses that identity, and child reservation and provisioning
@@ -126,7 +153,7 @@ has:
 
 | Operation | Reached from | What it writes |
 | --- | --- | --- |
-| `provision` and `setAppearance` at creation | `SpaceService.provisionSpaceObject` | the title, scope, creator and appearance that make the object a Space |
+| `provision` and `setAppearance` at creation | `SpaceService.provisionSpaceConversation` | the title, scope, creator and appearance that make the object a Space |
 | `update({ title })` and `setAppearance` | `PATCH /spaces/:id` | the name, icon and colour |
 | `update({ scope })` | `PATCH /spaces/:id/audience` | who the Space is for |
 | `addParticipant` / `removeParticipant` | `PATCH /spaces/:id/audience` | the Space's participants |
@@ -168,13 +195,54 @@ same mistake in the other direction.
 
 ### Membership
 
-Adding a Channel is staged. `prepareSpaceMembership` writes a `joining` row and
-returns the Space and the membership generation; `ChannelAccessService.applySpaceSource`
-applies the audience that membership implies; `finalizeSpaceMembership` activates
-it, re-reading both the Space revision and the membership generation, and stages
-every current default for the new member. A membership is invisible until it is
-finalized — no summary counts it and no page lists it — because a placement whose
-readers have not been granted anything must not reach a client.
+Adding a Channel that already exists is staged; a Channel being created is not
+(see [A Channel's first Space](#a-channels-first-space)). The Worker makes one
+call, `addSpaceChannel`, and WorkspaceDO does the rest:
+
+1. **Observe.** It asks the Channel's conversation (`SubstreamAgent`) for the
+   Channel's readers, as the person asking.
+2. **Plan, in one transaction.** It writes the `joining` row and its `add`
+   intent, plans the Space's source against those readers (the Channel's
+   hosted parent is in the same SQLite), and commits the source with the
+   readers the plan seats recorded as this Space's.
+3. **Apply.** It asks the conversation for the canonical operations the plan
+   names (widen the scope, or seat each reader the Space supplies). The
+   conversation stays the audience authority: its retained-content fence and
+   its roster are where an audience is written, and a seat still reaches the
+   grant authority through `mutateParticipantGrant`.
+4. **Confirm and settle, in one transaction.** It confirms the source with the
+   readers actually seated, activates the membership (re-reading both the Space
+   revision and the membership generation), stages every current default for
+   the new member, and settles the intent.
+
+A membership is invisible until it is settled (no summary counts it and no page
+lists it) because a placement whose readers have not been granted anything must
+not reach a client. A refusal part way cancels the `joining` row and its intent,
+withdraws whatever was seated, and comes back to the Worker as a structured
+refusal: about the Space, about the Channel, or the conversation's own code and
+sentence (`invalid_workspace_member`, for somebody who left the Organization
+between the Space naming them and the seat), rather than as a bare `Error`
+across the RPC. `SpaceChannelAccess` in `workspace-space-channel-access.ts` is
+this one sequence for every change to a Space's source on an existing Channel:
+an add applies, a removal retracts, an audience walk retracts and re-applies,
+and the confirming transaction is where each settles.
+
+**The plan is recorded under ids derived from the intent, so a resume replays
+it.** The retraction and the application are access operations whose receipt is
+their answer (`parent_access_operations`), and their ids are derived from the
+intent's operation id and the Channel (and, for an application, the Space
+revision it applies). A resume after a crash between the plan and the
+conversation therefore gets the plan the first attempt committed: a removal's
+departing readers are the ones read before its source was deleted, where
+planning again would find no source and withdraw nobody; an add's seats are the
+ones it recorded before any were made, where planning again would observe them
+as already seated and attribute them to nobody. A re-application's retraction
+carries the revision too, so a walk resumed after the Space moved retracts the
+source as it stands. Because an add commits its source with its planned seats,
+an add abandoned on resume (its Space moved: `add_superseded`) withdraws that
+source, and the readers a dead attempt seated, before it takes the membership
+back. The cost is that until an add settles, its source names readers who may
+not be seated yet.
 
 Adding a Channel a Space already holds is the same path and succeeds. The
 preflight answers an already-active row with the generation it already has
@@ -182,8 +250,17 @@ rather than staging a new one, and the settlement accepts that row at *that*
 generation: a retry, and two people dragging the same Channel onto the same
 Space, are ordinary rather than a 404.
 
-Removing one is the same shape in reverse, with one refusal in front of it:
-`space_membership_final` preserves the invariant that every Channel has a home.
+Removing one is the same shape in reverse (`removeSpaceChannel`), with one
+refusal in front of it: `space_membership_final` preserves the invariant that
+every Channel has a home. The plan transaction flips the membership to
+`removing`, stages the `remove` intent, withdraws the source from the Channel's
+record and attributes every surviving reader to the remaining Space that
+supplies them, before anybody is seated. Attributing first means an
+interruption between the two leaves an attribution the resume re-seats, rather
+than a seated reader nobody accounts for. The conversation then seats the
+survivors, narrows, and removes the readers only this Space supplied, and the
+second transaction settles the removal. A narrowing whose announcement could not
+be published is not settled (see [Resuming](#resuming-an-interrupted-operation)).
 A person who may read a Channel or one of its Breakouts may always discover the
 presentation metadata of every ancestor above it, so a remaining Space does not
 need that person on its own roster. This associative reach exposes only name,
@@ -253,31 +330,31 @@ fence on, so an older audience change interleaved behind a newer one would
 otherwise find nothing to lose to and install its stale roster unfenced. A
 removal and an archive withdraw a source rather than replace it and pass no
 revision: there is no newer application for them to race. The walk also re-reads
-the Space between Channels and abandons when the revision moves, because the
+the Space's revision between Channels and abandons when it moves, because the
 change that overtook it walks every member itself.
 
-**The walk is paged, and the page is recorded on the intent.** An audience
-change, an archive and a restore all walk every member Channel, and every
-Channel on that walk costs several cross-object awaits — so a Space large
-enough puts the walk past one invocation's subrequest budget. `SpaceService`
-therefore reads `SPACE_BOOTSTRAP_PAGE_SIZE` members at a time and writes the
-cursor the page ended at onto the `space_intents` row before it asks for the
-next one. A Space under that ceiling still settles inside the request exactly as
-it did; past it the invocation fails, the intent stays unsettled carrying its
-cursor, and the alarm's resume continues from that page rather than starting
-over. One walk function serves the request and the resume, because a request and
-its resume that walked differently would be two implementations of the same
+**The walk runs in WorkspaceDO, a page per call, and the page is recorded on
+the intent.** An audience change, an archive and a restore all walk every member
+Channel. `SpaceService` calls `walkSpaceMembers` once per page of
+`SPACE_BOOTSTRAP_PAGE_SIZE` members; WorkspaceDO reads the page, runs each
+member Channel's step through `SpaceChannelAccess` (a retract-then-apply for an
+audience change is one plan transaction, the conversation's operations, and one
+confirm), and writes the cursor the page ended at onto the `space_intents` row
+before it answers. The last page settles the intent (an archive is finalized
+there) and answers with the Space. Each member still costs the conversation's
+own operations, so a Space large enough puts a page past one invocation's
+subrequest budget: the call fails, the intent stays unsettled carrying its
+cursor, and the resume continues from that page rather than starting over. The
+request and the resume take the same page function, because a request and its
+resume that walked differently would be two implementations of the same
 convergence and the resume is the one nobody watches.
 
 An archive overlaps up to six independent Channel retractions inside each page,
 matching Cloudflare's simultaneous outgoing-connection limit. It awaits every
-started retraction — including the siblings of one that fails — before it moves
-the cursor or finalizes the Space. The archive therefore preserves synchronous
-source convergence and the same authorization checks while making the common
-one-to-six-Channel path cost the slowest Channel round trip rather than their
-sum. Audience changes and restores remain sequential because their per-member
-steps carry mutable audience revisions and applications rather than independent
-withdrawals.
+started retraction (including the siblings of one that fails) before it moves
+the cursor or finalizes the Space. Audience changes and restores remain
+sequential because their per-member steps carry mutable audience revisions and
+applications rather than independent withdrawals.
 
 ### Per-person ordering
 
@@ -337,9 +414,8 @@ answer is one this object already holds:
   decide what it may name — answers the Channel's. A membership cannot answer
   the second: a placement is the Organization's fact about a Channel, and
   visibility is the reader's.
-- `channel` **is stored as given.** A Channel's Breakouts are its own object's
-  children and WorkspaceDO has never seen one, so there is nothing here to
-  validate against. The client drops the ids it is not drawing. Storing an id
+- `channel` **is stored as given.** Nothing checks the ids against the
+  Channel's Breakouts. The client drops the ids it is not drawing. Storing an id
   that names nothing costs this person one row and nobody else anything: the
   rows are theirs, and the only reader is their own sidebar.
 
@@ -407,7 +483,7 @@ one of them:
   position describes nothing. A later write to the container would filter it out
   anyway — `spaceIdsByChannel` answers only active memberships — but only for
   the next person who happens to arrange that Space.
-- A **cancelled Space reservation** deletes both directions: the Space leaves
+- A **cancelled Space reservation** (the version-zero form only) deletes both directions: the Space leaves
   everybody's `organization` list, and the `space` container it was is deleted
   whole.
 - **Archiving a Space or a Channel takes nothing.** `directory()` filters
@@ -419,7 +495,7 @@ one of them:
 
 **Nothing prunes a `channel` container, because nothing deletes a Channel.** A
 Channel is archived, never removed: there is no delete path on
-`workspace_workstream_directory` outside migration 64's one-time automation
+`channels` outside migration 64's one-time automation
 sweep, and there is no foreign key to cascade from if there were. So a person's
 Breakout arrangements accumulate one container per Channel they have ever
 arranged Breakouts in, and are read whole onto every socket payload. That is a
@@ -455,11 +531,32 @@ A resource and a Sidekick recommendation are one mechanism with two consumers,
 keyed by `kind` through every row and every message. `addDefault` attaches the
 thing to the Space's own authority — the attachment a person sees — after
 checking that every effective reader can reach it, then registers it in
-WorkspaceDO, which is what stages, fences and settles delivery. Targets are
-published through the outbox onto the activity Queue; the consumer rechecks the
-default generation, the membership generation and the Space's lifecycle before
+WorkspaceDO, which is what stages, fences and settles delivery.
+
+A Sidekick target is written in the same transaction that stages it, by
+`addDefault`, `stageDefaultsForMember` (a Channel joining) or a membership move:
+the member Channel's `parent_sidekicks` row is in WorkspaceDO's own SQLite, so
+the target is marked `applied` and nothing is published. That needs the
+Channel's parent hosted here (a `parent_metadata` row and no pending import),
+not archived, and the Sidekick live and workspace-scoped in
+`automation_directory`, and the requester able to manage the Channel;
+otherwise the target takes the Queue as before. Management is asked in place
+the way `setSidekickRecommendation` asks it (a grant on the Channel, or the
+participant rule before the grant handoff), from the Organization's relationship
+table and the Channel's rows, so it is SQL in the same transaction. It has to
+be asked: an Organization-wide Space admits any active member, and a default's
+instructions become a skill in every agent in the Channel, including personal
+and restricted Channels that member cannot manage. A requester the relationship
+table has not heard of, or a refusal, takes the Queue, whose canonical path
+asks again and records the reason on the target. Open rails are refreshed with
+the `automations` sync topic after commit.
+
+Resource targets, and Sidekick targets that did not qualify, are published
+through the outbox onto the activity Queue; the consumer rechecks the default
+generation, the membership generation and the Space's lifecycle before
 attaching through `WorkstreamService.attachResource` or
-`setSidekickRecommendation`.
+`setSidekickRecommendation`. A resource keeps the Queue because attaching one
+writes the Channel's main conversation, a `SubstreamAgent`.
 
 Removing a default advances its generation, which makes every queued target
 stale. It does **not** detach it from Channels that already have it: a Channel's
@@ -476,25 +573,29 @@ an incidental consequence of removing its landing-page controls.
 
 ### General
 
-`ensureGeneralSpace` reserves the Organization's one General Space — named
-General, Organization-wide, `system_role = 'general'` — or answers with the
-existing one. It is idempotent, and the unique partial index on `system_role` is
-what decides a race between two callers rather than a check-then-write: there is
-no read in front of the insert at all. Every caller reserves, the index refuses
-all but one, and the loser is answered with the Space the winner made, re-read
-outside the transaction its own statement aborted. Three callers reach this RPC
-and each is a retry of another, so the second one through is the ordinary path
-rather than the exception.
+`openGeneralSpace` with an id reserves the Organization's one General Space
+(named General, Organization-wide, `system_role = 'general'`) with its hosted
+parent, or answers with the existing one. It is idempotent, and the unique
+partial index on `system_role` is what decides a race between two callers rather
+than a check-then-write: there is no read in front of the insert at all. Every
+caller reserves, the index refuses all but one, and the loser is answered with
+the Space the winner made, re-read outside the transaction its own statement
+aborted. Every caller is a retry of another, so the second one through is the
+ordinary path rather than the exception.
 
-**It reserves; it does not provision.** Opening the object is the caller's, the
-way it is for any other reservation — a caller that reserves General without then
-provisioning it leaves a Space in every member's sidebar that answers nothing,
-exactly as a cancelled `create` would. `SpaceService.ensureGeneral` is the one
-caller that does both: it reserves, provisions **only** when the reservation
-says `created`, and cancels the reservation if provisioning fails. Everything
-that needs General — the cutover, a Channel created without a Space, a new
-Organization, the connector path — goes through it, so the two steps are never
-half-done by somebody re-deriving them.
+**`SpaceService.ensureGeneral` is the one caller, and it takes `create`'s steps
+in `create`'s order.** It first asks `openGeneralSpace` with no id, which only
+answers: General, or `absent`. That one RPC is the whole cost for every caller
+after the Organization's first. On `absent` it writes the D1 anchor under a
+fresh id and asks again with that id, and WorkspaceDO creates General and its
+hosted parent in one transaction; the unique partial index still decides a
+race, the loser is answered with the winner's General and its anchor names an id
+nothing else will. Only the caller whose id won provisions the hidden
+conversation, and takes General back if that fails, as `create` does, so the
+next caller makes it again (the take-back also clears the cutover's record of
+General). Everything that needs General (the cutover, a Channel created without
+a Space, a new Organization, the connector path) goes through it, so the steps
+are never half-done by somebody re-deriving them.
 
 ### The cutover
 
@@ -600,8 +701,9 @@ participants the connector's record may not — and the Organization is not
 holding a Channel in no Space.
 
 **Both of those paths have to make the Channel's own authority exist before they
-place it**, which the coordinator gets for free. A placement addresses the
-Channel's `WorkstreamDO` directly, and that object learns the Channel exists
+place it**, which the coordinator gets for free by reserving and placing in one
+transaction. A placement addresses the
+Channel's hosted parent in `WorkspaceDO`, which learns the Channel exists
 either from `reserveChild` — which writes its identity row synchronously — or
 from an effect that drifts up the conversation's outbox some time later.
 Provisioning the conversation alone and placing immediately is refused
@@ -609,7 +711,7 @@ Provisioning the conversation alone and placing immediately is refused
 cutover, that is not a lost placement but every member's sidebar behind the
 opening card until the walk catches up.
 
-The Slack path calls `reserveChild` first, exactly as the coordinator does
+The Slack path calls `reserveChild` first, as the coordinator's one call does
 before `initialize`, and defers the provisional directory delivery until after
 the placement so the Channel is never listed while it is in no Space. Nothing
 polls: a production ingest path must not wait for a projection to appear. The
@@ -644,8 +746,8 @@ directory is a creation in flight. `reserveChild` enqueues the provisional
 the placement — but the Channel authority's own recovery alarm delivers that
 row directly if it wins the race with the coordinator's flush, which is exactly
 what `drainParentOutboxWithCreationFence` is for. On the coordinator path the
-memberships are already settled by the time `reserveChild` runs, so the row can
-only arrive placed; on a connector path the reservation comes *before*
+memberships and the row commit in one transaction, so the row can only arrive
+placed; on a connector path the reservation comes *before*
 `placeConnectorChannelInGeneral` and the conversation is provisioned in
 between, so that alarm has a wide window in which to deliver a row for a
 Channel whose placement has not started — and it takes it: a guard that fired
@@ -663,27 +765,73 @@ creates is caught on its next common projection rather than its first.
 Creation is the other half of "every Channel belongs to at least one Space", and
 it is the half that has to hold for every Channel made after the cutover.
 `WorkstreamCreationFields` carries `spaceIds`, defaulted to empty, and empty
-means General: the creation coordinator resolves it, stages a membership per
-Space, and **settles them before the Channel's main conversation is reserved**.
-Reserving one arms the parent's recovery alarm, which delivers the deferred
-provisional directory row itself if it wins the race with the coordinator, so a
-settlement any later could publish a Channel that is Organization-wide and in no
-Space at all. [`workstream-creation.md`](workstream-creation.md) owns the
-ordering and the audience the named Spaces imply.
+means General. **The whole Organization-side birth is one WorkspaceDO call,
+`reserveChannelInSpaces`, in one transaction**: it resolves General, writes each
+membership straight to `active` (`WorkspaceSpaceStorage.enterMembershipAtBirth`),
+stages every current default for the new member, reserves the Channel's parent
+with its provisional directory row, and records which Space supplied which
+reader (`applySpaceAccessSource` with `commitWithPlan`). The Space summaries it
+read come back, so the coordinator opens the conversation with the audience
+they imply.
+
+There is no `joining` row, no `add` intent and no cancellation on this path,
+because nothing runs between the stages any more: every row the staged calls
+wrote lives in this one database, so a Channel is never listed outside a Space
+and a refused Space leaves nothing behind. Adding a Channel that already exists
+is `addSpaceChannel` instead, where the Channel's canonical operations widen its
+audience between the plan and the commit. The one case the call cannot finish
+alone is an Organization with no General yet: making one
+provisions General's own conversation, so the call answers `general_missing`,
+the coordinator runs `SpaceService.ensureGeneral`, and asks again.
+[`workstream-creation.md`](workstream-creation.md) owns the ordering and the
+audience the named Spaces imply.
 
 ### Resuming an interrupted operation
 
-Every cross-object Space operation — an add, a removal, an audience change, an
-archive and a restore — stages an intent in WorkspaceDO before it touches
-another object. A request that dies between the two leaves that intent
-`pending`, and nothing else would notice — the caller is gone and the Channel was
-never asked. The WorkspaceDO alarm claims unsettled intents, advancing their
-retry gate before the send, and republishes them as `space_intent_resume`
-messages; the consumer re-runs the same steps as the requester, against the
-fences the intent recorded and from the cursor its member walk reached — the
-same paged walk, continued rather than restarted. A redelivery is safe because those steps are
-idempotent deltas and the settlement refuses a generation or revision that has
-moved.
+Every cross-object Space operation (an add, a removal, an audience change, an
+archive and a restore) stages an intent in WorkspaceDO before it touches
+another object. A Channel's birth stages none: it touches no other object before
+it commits (see [A Channel's first Space](#a-channels-first-space)). The intent
+row is the durable record between WorkspaceDO's plan transaction and its settle
+transaction, with the Channel's conversation called in between; a request that
+dies there leaves the intent `pending`, and nothing else would notice.
+
+**The alarm finishes it in place, one step per intent per alarm, after its
+other work.** It claims unsettled intents, advancing their retry gate first, and
+runs each through the same `SpaceChannelAccess` path the request takes, as the
+requester, against the fences the intent recorded. An add, a removal or a move
+is finished in that step; a walk advances one page from the cursor on its row
+and is made due again at once with a fresh retry gate, so a large Space is
+walked a page per alarm with the schedule reconcile and imports in between
+rather than behind it. The phase runs last in the alarm for the same reason.
+An intent a request or a Queue delivery is running is skipped (an in-memory
+single-flight keyed by operation id, `spaceIntentRuns`), and a request that
+reaches an intent the alarm is running waits for it and continues from the row. The requester is read from `workspace_member_status`, the local
+relationship table the relationship events keep current; somebody who is no
+longer an active member gets `space_intent_requester_inactive` on the row
+instead. The Channel's conversation re-verifies that requester against current
+membership under the `connector` principal, exactly as it did for the Queue
+consumer. A repeat is safe because the steps are idempotent deltas and the
+settlement refuses a generation or revision that has moved. A resume that fails
+records its code on the row and logs `space_intent_resume_failed`, and the
+advanced retry gate brings it back.
+
+Nothing publishes `space_intent_resume` any more. The consumer still accepts
+every kind, so messages already on the Queue finish: it calls
+`resumeSpaceIntent` until the intent stops progressing, which is the same
+in-place path.
+
+An equal-audience move stages nothing: it is one WorkspaceDO transaction (see
+[the desktop surfaces](#the-desktop-surfaces)), so there is no request that can
+die half way. A `move` intent at rest is finished in place too
+(`SpaceChannelAccess.resumeMove`): when the two Spaces still grant the same
+readers, one transaction swaps the Channel's provenance (a swap already made
+counts) and switches both memberships; when they do not, the Channel's record is
+put back on the source if the swap had moved it, the move is cancelled, and the
+Channel is added to the target and removed from the source, each with its own
+intent. Memberships no longer at the intent's fences (a competing move won)
+cancel it as `move_superseded`. The stored intent is the authorization, so a
+move skips the requester reach check below.
 
 The operation id is the caller's, minted once and carried to both halves. An
 archive used to derive it at settlement from the Space revision minus one, which
@@ -707,21 +855,22 @@ out of a Space between staging an operation and its resume still reaches it
 through a Channel placed in it, so the read that used to refuse them now
 answers `through_channel`, whose participant list is empty by design: the walk
 would withdraw every reader the Space supplies, seat nobody, and settle itself
-as a success. `resumeIntent` therefore refuses a reach that is not editable
+as a success. The resume therefore refuses a reach that is not editable
 before any branch runs, settling the intent `requester_reach_lost` with that
-code on the row and a `space_intent_resume_abandoned` line from the consumer.
+code on the row and a `space_intent_resume_abandoned` log line.
 It is terminal for the reason `requester_inactive` is: no later delivery gives
 the requester their reach back. The roster read is fenced a second time at the
-point of use, so a future consumer that hands a summary's `participants` to
-`applySpaceSource` fails by name instead of revoking access quietly. The `add`
+point of use (`SpaceChannelAccess` refuses a `through_channel` view before it
+plans an application), so a future caller that hands such a roster to a Channel
+fails by name instead of revoking access quietly. The `add`
 branch's revision guard is not that fence — a viewer projection flips
 `is_participant` without touching `revision`.
 
-Two settlements end an intent without doing its work, and both are named:
-`requester_inactive`, written by the consumer when the requester has left the
-Organization, and `requester_reach_lost`. Every other way a resume gives up —
-missing fences, a superseded add — is named to the consumer as well, which is
-what writes the log line.
+Two outcomes stop an intent doing its work, and both are named on the row:
+`space_intent_requester_inactive`, when the requester has left the Organization,
+and `requester_reach_lost`. Every other way a resume gives up (missing fences, a
+superseded add) is settled with its reason as the receipt and logged as
+`space_intent_resume_abandoned`.
 
 ### Reads
 
@@ -1018,13 +1167,12 @@ builds — not to reshape the row.
 
 ### Breakouts reach the Organization
 
-`WorkstreamDO.aggregatesChildProjection` folds only the main conversation into
-the Channel's own row, and until migration 65 a breakout's `directory_common`
-and `directory_user` projections were stored in the Channel object's
-`substream_directory` and stopped there. A Channel now **forwards** them as
-well, through the hook `forwardsChildProjection` beside that one: the child's
-own payload, under its own projection key (`substream:<id>:common` and
-`substream:<id>:user:<userId>`), over the same outbox → `parent_effect` →
+A Channel's hosted parent folds only the main conversation into the Channel's
+own row; a breakout's `directory_common` and `directory_user` projections are
+stored in `parent_child_projections`. Until migration 65 they stopped there. A
+Channel now **forwards** them as well, through `HostedParent.forwardsChildProjection`:
+the child's own payload, under its own projection key (`substream:<id>:common`
+and `substream:<id>:user:<userId>`), through the same `parent_outbox` →
 `applyWorkstreamDirectoryEffects` path every Channel projection takes, with the
 substream id on the envelope. The two hooks are separate questions and a parent
 answers them independently — a breakout must not move its Channel's title or
@@ -1050,10 +1198,10 @@ flagged `backgroundAgent` arrives, so it never counts toward the Channel's
 badge.
 [`workstream-durable-object.md`](workstream-durable-object.md) has the detail.
 
-WorkspaceDO stores them in **two new tables beside the Channel ones**,
-`workspace_breakout_directory` and `workspace_breakout_viewers`, keyed by
+WorkspaceDO stores them in **two tables beside the Channel ones**,
+`breakouts` and `breakout_viewers`, keyed by
 `(workstream_id, substream_id[, user_id])`. Not a `substream_id` column on
-`workspace_workstream_directory`: every sidebar page, pin, watch registration,
+`channels`: every sidebar page, pin, watch registration,
 retirement enumeration and cutover query reads that table as "one row per
 Channel", and the first one that forgot the new filter would have listed a
 breakout as a Channel. Redelivery stays idempotent through the receipt the
@@ -1164,14 +1312,18 @@ the sections below already render, filtered by the Channel's own `spaceIds`, and
 they go through the same row — so a Channel in two Spaces is one record shown
 twice, with one unread state, one running state and one destination. Dropping a
 Channel from the selected Channel rail onto another Space is one server-side
-move request. When both Spaces grant the same scope and participant roster,
-WorkspaceDO stages one durable move, WorkstreamDO replaces the source Space id
-while preserving the exact supplied-reader attribution, and WorkspaceDO
-switches both memberships in one transaction. The Channel's effective audience
+move request. When both Spaces grant the same scope and participant roster, it
+is one `moveSpaceMembership` RPC: in one WorkspaceDO transaction the Channel's
+hosted parent replaces the source Space id while preserving the exact
+supplied-reader attribution, the target placement becomes active (inheriting
+the target's defaults if it is new), and the source placement is retired with
+its undelivered defaults, pins and arrangement. The Channel's effective audience
 never changes, so the path neither reads its conversation nor runs the
-plan/apply/confirm audience protocol. If the audiences differ or a stored
-source has moved underneath the plan, the server falls back to the
-destination-first add/remove composition: establish the destination before
+plan/apply/confirm audience protocol. If the audiences differ, the target
+already has an add of its own staged, or the Channel's recorded source is not at
+the Spaces' current revision and generation, the transaction is rolled back,
+the RPC answers `moved: false`, and the server takes the destination-first
+add/remove composition: establish the destination before
 withdrawing the source, preserving the invariant that every Channel has a home
 if the second operation is interrupted. Realtime republication, directory
 nudges, default delivery and recovery-alarm cleanup converge asynchronously.
@@ -1380,7 +1532,7 @@ Space to move its placement or into the pinned section to pin it.
 - **One person's order for one container is stored under that container, and
   delivered to nobody else.** The rows are per viewer and reach only that
   viewer's own sockets. Compatibility Channel-container order is accepted
-  unchecked because this object cannot see a Channel's children; current React
+  unchecked; current React
   rails ignore it, and any future consumer must continue to treat ids absent
   from its own authorized directory as nonexistent.
 - **A membership is invisible until it is finalized.** A `joining` row is not
@@ -1392,10 +1544,12 @@ Space to move its placement or into the pinned section to pin it.
   external await can interleave; a finalize whose Space moved is refused with
   `space_revision_conflict` rather than publishing a placement granted from an
   audience that no longer exists.
-- **No Channel audience is written outside `ChannelAccessService`.** That seam
-  applies every delta through the Channel's canonical operations, which is where
-  the retained-content containment preflight and its SQL triggers run. A second
-  writer would be a second place an audience could widen without the fence.
+- **No Channel audience is written except through the Channel's canonical
+  operations.** `SpaceChannelAccess` in WorkspaceDO applies every delta through
+  them (one sequence, in `space-source-operations.ts`), and a Channel's own
+  scope change goes through them from the Worker, which is where the retained-content
+  containment preflight and its SQL triggers run. A writer that skipped them
+  would be a second place an audience could widen without the fence.
 - **A source only ever widens.** The effective audience is the union of the
   Channel's direct source and every active Space source, so one Space cannot
   revoke what another supplies. Narrowing is expressed as a *retraction* of one
@@ -1429,8 +1583,8 @@ Space to move its placement or into the pinned section to pin it.
   `space-conversation-page.test.ts`. A change to either without the other is a
   list whose rows disagree with the rows it contains.
 - **A breakout is never a row in the Channel directory.** Its projection lands
-  in `workspace_breakout_directory`, and every query that reads
-  `workspace_workstream_directory` may go on assuming one row per Channel. A
+  in `breakouts`, and every query that reads
+  `channels` may go on assuming one row per Channel. A
   `substream_id` column there would make that assumption a filter every
   existing query has to learn.
 - **A viewer sees a breakout only if they see its parent Channel.** The
@@ -1449,11 +1603,12 @@ directory projection, per-person order, membership, the default registry and its
 delivery, and the staged intents that make a cross-object operation resumable.
 
 It does **not** own what a Space *is* — the name, appearance, scope,
-participants and attachments belong to `SpaceDO` and its hidden main
-conversation, documented in
+participants and attachments belong to the Space's hosted parent and its
+hidden main conversation, documented in
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md) and
 [`workstream-durable-object.md`](workstream-durable-object.md). It does not own
-a Channel's audience; that is the Channel's own authority, reached through
-`ChannelAccessService` and documented in
+a Channel's audience; that is the Channel's own authority, reached through its
+canonical operations and documented in
 [`authorization.md`](authorization.md) and
 [`scope-grant-directory.md`](scope-grant-directory.md). It does not own
 resources, which stay with the regional resource authority.
@@ -1480,14 +1635,14 @@ watching at the time.
 A transaction is local to one WorkspaceDO, so a failed write leaves no partial
 Space, membership or ordering row. A cross-object operation is not a
 transaction, and that is what the intents are for: an interruption leaves a
-`pending` intent that the alarm republishes.
+`pending` intent that the alarm finishes.
 
 ### Numbers handed to the team
 
 | Number | Value | What it bounds | What deciding it needs |
 | --- | --- | --- | --- |
 | `SPACE_CHANNEL_PAGE_SIZE` | 250 | Rows in one `GET /spaces/:id/channels` answer, and therefore one RPC result and one HTTP body. | Round trips against bytes per answer, weighed against the Organization sizes nobody here has. |
-| `SPACE_INTENT_RESUME_DELAY_MS` | 30 seconds | How long a staged cross-object operation may sit half-applied before the alarm republishes it. | How long the slowest healthy operation takes end to end against how long a half-applied audience may persist. |
+| `SPACE_INTENT_RESUME_DELAY_MS` | 30 seconds | How long a staged cross-object operation may sit half-applied before the alarm finishes it. | How long the slowest healthy operation takes end to end against how long a half-applied audience may persist. |
 | `SPACE_BOOTSTRAP_PAGE_SIZE` | 50 | Channels in one page of a cross-object walk: the cutover's Queue message, and one page of an audience change, archive or restore fan-out. | Fewer alarm wakes against a longer invocation, given per-Channel timings and Organization sizes nobody here has. |
 | *(none)* — attempts before an unsettleable intent stops being republished | no ceiling | How long a staged operation that can never succeed keeps costing an alarm wake and a dead-letter message. | What an operator is expected to do about a `last_error_code` that never changes, weighed against a ceiling abandoning work nobody agreed to abandon. |
 | *(none)* — items in one person's order for one container | no bound | How many rows one `PUT /workspace/order` writes, and how much of the `ordering` field one container can take up on every socket payload this person receives. | What the largest list somebody would actually arrange looks like — an Organization's Spaces, a Space's Channels, a Channel's Breakouts — against what a payload can carry. |
@@ -1552,8 +1707,7 @@ changes, against what abandoning one costs.
 Nothing caps the `itemIds` a person may store for one container. In practice the
 list is what one person dragged — the `organization` and `space` lists are
 filtered to what that person can see, so they cannot exceed the Spaces or the
-Channels they can read, and only `channel` is stored unchecked, because
-WorkspaceDO cannot see a Channel's Breakouts. What a cap would cost is a person
+Channels they can read, and only `channel` is stored unchecked. What a cap would cost is a person
 whose real list is longer than it silently losing its tail, which is worse than
 the row it would prevent; what deciding one needs is the largest list somebody
 would actually arrange, against what one socket payload can carry. The guard is
@@ -1620,18 +1774,19 @@ belongs in the route suite as well as wherever its authority is proved.
 
 | Suite | What it proves |
 | --- | --- |
-| `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them against real objects: creation, audience, rename, archive, and an equal-audience one-request Channel move whose returned summaries match the settled memberships and whose durable row is one settled `move` intent. Also that a narrowing which leaves its caller out is refused before anything moves, and an unreachable Space authority is named rather than reduced to `internal_error`. |
+| `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them against real objects: creation, audience, rename, archive, and an equal-audience one-request Channel move whose returned summaries match the settled memberships and which stages no intent and takes no add/remove fallback. Also that a move whose Channel provenance is behind the source Space writes nothing in WorkspaceDO and the route still completes it through add/remove, that a Space whose parent reservation fails commits no Space row, and that `openGeneralSpace` answers `absent`, then writes General with its parent at version one, then reuses it. Also that a narrowing which leaves its caller out is refused before anything moves, and an unreachable Space authority is named rather than reduced to `internal_error`. And the WorkspaceDO-driven membership calls: an add seats and attributes the Space's readers and settles its intent; a seat the Channel's conversation refuses reaches the route with the conversation's own code and leaves the membership and intent cancelled; a removal withdraws the readers only that Space supplied and settles; and a removal whose narrowing could not be announced stays unsettled until the alarm finishes it in place, with no `space_intent_resume` message sent. The resumes that depend on the plan the first attempt recorded: a removal that died before the Channel was asked withdraws the departing Space's readers on the alarm; an add that died after seating settles with that reader attributed, and when its Space moved on first is abandoned with that reader withdrawn; and a removal still in flight is left to its request by the alarm. Creation: a Space whose conversation cannot be provisioned is taken back and a retry succeeds; a Space whose conversation has published is not; and a caller WorkspaceDO refuses writes no D1 anchor. |
 | `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. Reach: a participants-only Space named to somebody who can read a Channel in it and not to somebody who cannot, the summary that viewer is handed carrying the mark and neither participants nor defaults nor a count of what they cannot see, the reach on each row of the socket snapshot, every write refused `space_access_denied` with the Space left as its participant had it, the membership page refused with the same word while the Space's own participant still gets every row of it, a Channel that viewer cannot see moving into and out of the Space nudging them not at all while the Space's participant is nudged by every move, the Space leaving and returning to that viewer's snapshot as their participation in the one Channel reaching them into it moves — and staying put across an unread change — an audience that leaves its own caller out refused before anything is written, the single-Space read refusing a Space this viewer has no reach into rather than labelling it one, the ordering write that is not refused, and an archive taking the Space off that viewer's active list without putting it on their inactive one. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, a write reaching a second session of the same person without it asking and no session of anybody else, and a Channel removed from a Space taking its place in that Space's list with it for everybody, a cancelled reservation taking both directions, and archive taking neither — the arrangement is still there when the Space is restored. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
 | `apps/api/test-workers/space-conversation-page.test.ts` | The dashboard list on real workerd: a breakout projection forwarded by its Channel landing in the breakout tables and nowhere else, a redelivery acked and leaving the row as it was, a breakout invisible to somebody who cannot see its parent Channel and to somebody whose own viewer row is not listable, Channel badge totals respecting that parent boundary and requiring an explicit guest grant, one activity-ordered list across both kinds, an Organization-wide breakout surviving a viewer row a generation behind while a personal one does not, a keyset walk whose page boundary falls inside a four-way tie of two breakouts and two Channels, the combination walk that keeps the page's SQL and `conversationNeedsViewer` equal — run against both renderings of the predicate, with unread produced by an attention ordinal and by a manual mark — and the dashboard nudge on real sockets — Channel activity, breakout activity, one person's read state, a membership settling, and the two cases where it must not arrive. |
 | `packages/contracts/src/conversation-attention.test.ts` | The predicate itself over all 56 combinations, and that the three reader fields default to false rather than to unknown. |
 | `apps/api/test-workers/space-object.test.ts` | The role's differences, that a Space's directory effect lands in the Space directory rather than the Channel one, and that a Channel product request aimed at its hidden conversation is refused by name. |
 | `apps/api/test-workers/channel-access-sources.test.ts` | The Channel end of a Space source: the union every plan is computed against, the revision fence a retract-then-apply convergence carries, and an equivalent-audience provenance replacement transferring source plus supplied-reader attribution atomically and idempotently. |
 | `apps/api/test/workspace-space-schema.test.ts` | Migration 61 against the real ledger: the CHECK vocabularies — including the three containers a person can arrange — the order row's compound key, General's unique partial index, the default-target foreign key, and the retirement-graph rebuild carrying its `retired_at` receipts. |
-| `apps/api/test/space-service.test.ts` | The service's *ordering* against capability doubles: what is not written when an earlier step refuses, and that the equal-audience move is prepare → provenance replacement → finalize without reading or rewriting the Channel audience. |
+| `apps/api/test/space-service.test.ts` | The service's *ordering* against capability doubles: what is not written when an earlier step refuses (a D1 anchor failure reserves nothing), that the equal-audience move, an add and a removal are each one WorkspaceDO call without the Worker reading or rewriting the Channel audience, that an archive and a restore walk their members one WorkspaceDO call per page, that each kind of structured refusal is rendered with its own code, that a queued resume calls WorkspaceDO until the intent stops progressing, and that a refused creation anchors, bootstraps and reserves nothing. `apps/api/test/settled-batches.test.ts` holds the archive walk's bounded overlap: a batch overlaps, and a failed step's started sibling is awaited. |
 | `apps/api/test/workspace-space-move-migration.test.ts` | Migration 68 preserving existing intents while adding the move kind and requiring all three source-side fences on every move row. |
 | `apps/api/test/space-default-publication.test.ts` | Claim, send, accept — for default targets and for the cutover's page claim — and that a rejected send leaves its rows pending. |
-| `apps/api/test-workers/space-member-walk.test.ts` | A fan-out over more member Channels than one page holds: that the walk crosses the page bound, that the intent's cursor names the page it reached, and that a resume continues from it — read off each Channel's own access-operation receipts rather than off the cursor under test. And the `restore` resume, which re-applies the source from the cursor on and leaves the page behind it alone; and that a resume the activity consumer catches leaves its reason on the intent row. And the resume whose requester has been taken out of the Space since staging it: refused `requester_reach_lost`, with every member Channel still seating the readers the Space supplied and nothing left to retry. |
-| `apps/api/test-workers/space-bootstrap.test.ts` | The cutover on real workerd: one General for every Channel including archived ones; a fenced personal Channel found by the preflight with *no* Channel widened or placed, and the Organization closing once that Channel has a home the fence admits; a connector placement's refusal reopening a finished cutover; an interrupted pass making no second General and no second membership; the refusal to close while a Channel is outside every Space; the directory handoff's guard reopening a finished cutover for a Channel whose row is committed while it is in no Space, and leaving it closed for a placed Channel, for a Channel arriving in the directory for the first time, and for a system one; that the development seed route places the Channels it restores; and that an Organization short of `complete` arms its own alarm on construction, due now, which is what "the fleet migration finishes without relying on user access" rests on. |
+| `apps/api/test-workers/helpers/space-membership.ts` | Not a suite: the fixture that puts a Channel in a Space's membership through WorkspaceDO's own storage calls and publications, for the suites above whose Channels have no conversation. `space-routes.test.ts` proves the product path. |
+| `apps/api/test-workers/space-member-walk.test.ts` | A fan-out over more member Channels than one page holds: that the walk crosses the page bound, that the intent's cursor names the page it reached, and that the alarm's resume continues from it — read off each Channel's own access-operation receipts rather than off the cursor under test; and that each resume step walks exactly one page from the cursor on the row. The alarm's in-place resume of a `restore` that never walked and of an audience change overtaken by a newer one; that a requester who is no longer an active member has nothing run as them and `space_intent_requester_inactive` on the row; and the three stored `move` cases (a swap already made, audiences no longer equal, two moves racing for one placement). And that a resume the activity consumer catches leaves its reason on the intent row. And the resume whose requester has been taken out of the Space since staging it: refused `requester_reach_lost`, with every member Channel still seating the readers the Space supplied and nothing left to retry. The overtaken audience change converges each member on the Space as it is now and settles `audience_superseded`. |
+| `apps/api/test-workers/space-bootstrap.test.ts` | The cutover on real workerd: one General for every Channel including archived ones, one of them archived in its own conversation so only the directory can say who reads it; a fenced personal Channel found by the preflight with *no* Channel widened or placed, and the Organization closing once that Channel has a home the fence admits; a connector placement's refusal reopening a finished cutover; an interrupted pass making no second General and no second membership; the refusal to close while a Channel is outside every Space; the directory handoff's guard reopening a finished cutover for a Channel whose row is committed while it is in no Space, and leaving it closed for a placed Channel, for a Channel arriving in the directory for the first time, and for a system one; that the development seed route places the Channels it restores; and that an Organization short of `complete` arms its own alarm on construction, due now, which is what "the fleet migration finishes without relying on user access" rests on. |
 | `apps/api/test-workers/space-creation.test.ts` | A Channel born in General with an active membership, a recorded source and the audience that implies; one General across creations; a Channel born in a named Space; and that a creation whose membership cannot settle publishes no directory row by either path. |
 | `apps/api/test/workspace-space-retirement-migration.test.ts` | Migration 62 against the real ledger: a queued Project default settled before the drops rather than dropped under, an applied default leaving the Channel's own attachment alone, and the consumer's tombstone acknowledging a redelivered Project message by name. |
 | `apps/api/test/client-contract.test.ts` | Which builds the cutover still answers: a browser build that declares nothing or declares an older contract is told to update; a native client that declares nothing is admitted. |
@@ -1715,11 +1870,13 @@ when one of them refuses.
 
 Ten tables in WorkspaceDO's migration 63, and two more in migration 65.
 
-`workspace_space_directory` is one row per Space: the name, appearance and scope
+`spaces` (created as `workspace_space_directory` and renamed by migration 72;
+see [`hosted-conversation-parents.md`](hosted-conversation-parents.md#table-map))
+is one row per Space: the name, appearance and scope
 a projection wrote, the archive timestamp, the protected `system_role`, the
 generation/source-version/payload-hash triple every projection is fenced on, and
 one `revision` that advances on every accepted change. A unique partial index on
-`system_role` makes General singular. `workspace_space_viewers` is the
+`system_role` makes General singular. `space_viewers` is the
 per-person half of the same projection and is where a Space's participants live.
 `workspace_container_order` is `(user_id, container_kind, container_id,
 item_id) → position` — every list a person arranges by hand, keyed by the
@@ -1763,11 +1920,11 @@ CHECK admits `'space'`, carrying its rows — and their `retired_at` receipts �
 through a scratch table. Migration 42 is released and is not edited.
 
 **Migration 63 adds the two tables the dashboard list needs.**
-`workspace_breakout_directory` is one row per `(workstream_id, substream_id)`
+`breakouts` is one row per `(workstream_id, substream_id)`
 carrying what the forwarded effect carries — title, description, scope, state,
 `last_activity_at`, `completed_at`, `archived_at`, the attention ordinals, the
 created and updated instants — under the same generation/waterline/payload-hash
-fence the Channel directory applies. `workspace_breakout_viewers` is the
+fence the Channel directory applies. `breakout_viewers` is the
 per-person half, keyed by that pair plus `user_id`, holding `is_participant`,
 `unread_count`, `you_are_mentioned`, `unseen`, `listable`,
 `seen_attention_ordinal`, the manual-unread pair and the mention ordinal. The
@@ -1780,9 +1937,9 @@ is the decision rather than an omission: the dashboard is told to re-read
 itself, and nothing about that is worth a row.
 
 Neither breakout table is a node in `workspace_retirement_graph`. That graph
-enumerates *objects* to close — a Channel's `WorkstreamDO`, a Sidekick's
-`AutomationDO`, a Space's `SpaceDO` — and a breakout is a conversation inside a
-Channel's object, already walked as one of its children. These are projections
+enumerates parents whose conversations must be closed (a Channel, a Sidekick,
+a Space), and a breakout is a conversation under a Channel, already walked as
+one of its children. These are projections
 in WorkspaceDO's own database, closed by WorkspaceDO's own tombstone like every
 other row in it. What a new WorkspaceDO table does owe is a routing decision in
 `apps/api/test/workspace-runtime-database.test.ts`, and both are declared there
@@ -1799,17 +1956,17 @@ it.
 A Space lives in the same configured deployment as its Organization and its
 Channels. Its id, membership, projections, grants, resources and Sidekicks do
 not cross the regional boundary, and the Global identity service routes an
-Organization before any `SpaceDO` is addressed. No global Space index and no
+Organization before its `WorkspaceDO`, which hosts every Space, is addressed. No global Space index and no
 cross-region Space exists. Every external hop a Space path makes is to the same
 region's D1:
 
 - **The membership and access-class check**, on every Space write RPC — the one
   read every Space path makes, and on most of them the only one.
 - **Two `workstream_authority_control` reads and one `workstream_authority_routes`
-  write**, when `ensureGeneral` finds no General and provisions the Space's own
-  object: `bootstrapWorkstreamRuntimeEnvironment` reads the authority control row
-  and writes the route anchor batch, and `provisionSpaceObject` reads the control
-  row again for the generation it fences `reserveChild` with. This is the
+  write**, when a Space is created or `ensureGeneral` finds no General:
+  `bootstrapWorkstreamRuntimeEnvironment` reads the authority control row and
+  writes the route anchor batch, and WorkspaceDO reads the control row again for
+  the generation the Space's parent is born at. This is the
   fallback path — `openGeneralSpaceForNewWorkspace` is meant to have run when the
   Organization opened — so it is not on an ordinary creation.
 - **A second `workspace_members` read** in the cutover driver, which has no
@@ -1835,7 +1992,7 @@ conversation_parent_kind_mismatch` when the object's own identity disagrees,
 before authentication, because the answer is about the address rather than about
 the caller.
 
-A reservation is cancellable only by the person who made it. `source_version = 0`
+A version-zero reservation is cancellable only by the person who made it. `source_version = 0`
 is a window every Space passes through between being reserved and its first
 projection, so a cancel that named only the id could delete whatever anybody
 else was in the middle of creating.
@@ -1853,8 +2010,8 @@ Channels' readers will see.
 
 WorkspaceDO's directory and membership projections are discovery and
 coordination state. **They never authorize Channel content by themselves**: a
-Space source becomes access only by travelling through `ChannelAccessService` to
-the Channel's own grant authority, membership-incarnation fencing, participant
+Space source becomes access only by travelling through the Channel's canonical
+operations to its own grant authority, membership-incarnation fencing, participant
 projection and owner admission. A grant written for a Space source carries that
 provenance and is never published to the shared scope-grant directory — a
 Space-derived reader discovers the Channel through the Space.
@@ -1904,8 +2061,9 @@ asks for it.
 
 The three alarm phases are `space_default_publish`, `space_bootstrap` and
 `space_intent_resume`; their failures log `space_default_publication_failed`,
-`space_bootstrap_publication_failed` and `space_intent_resume_publication_failed`
-with the Organization id. The cutover's own progress logs
+`space_bootstrap_publication_failed` and `space_intent_resume_claim_failed`
+with the Organization id, and each intent a resume could not finish logs
+`space_intent_resume_failed` with its reason, which is also written on the row. The cutover's own progress logs
 `space_bootstrap_general_ready`, `space_bootstrap_channels_blocked`,
 `space_bootstrap_not_ready` and `space_bootstrap_complete`; an Organization that
 stops moving has its reason on the `space_bootstrap` row rather than only in a
@@ -1956,20 +2114,56 @@ render, because it declares a contract and can read the answer; the PRD's
 is satisfied by refusing rather than by what the old build draws.
 
 The engineering MCP reaches a Space through `list_spaces` and `run_space_sql`,
-both fenced on `workspace_space_directory` rather than on naming the object — see
+both fenced on `spaces` rather than on naming the object — see
 [`engineering-mcp.md`](engineering-mcp.md). A Space's hidden main conversation
 is reachable through the substream tools because
 `bootstrapWorkstreamRuntimeEnvironment` writes its `workstream_authority_routes`
 row under the Space id.
 
 A non-empty regional activity dead-letter queue remains the terminal failure
-signal for default delivery and intent resumption, and is no longer the only
-one: `space_default_delivery_failed` and `space_intent_resume_failed` carry the
-Space id and `diagnosticErrorCode`, and `last_error_code` on the default target
-or on the `space_intents` row holds the same word for whoever reads it
-afterwards.
+signal for default delivery and for a `move` intent's resumption. Every other
+intent is resumed in WorkspaceDO and never reaches a queue, so its signal is
+`space_intent_resume_failed`, which carries the Space id and the refusal's code,
+and `last_error_code` on the `space_intents` row, which holds the same word for
+whoever reads it afterwards; `space_default_delivery_failed` does the same for a
+default target.
 
 ## Changelog
+
+### 2026-09-25 — Space operations run in WorkspaceDO, and the Worker's Space-source saga is deleted
+
+**What changed:** Creating a Space, an equal-audience move and a Channel's birth
+each commit in one WorkspaceDO transaction (`reserveSpace`, `openGeneralSpace`,
+`moveSpaceMembership`, `reserveChannelInSpaces`; the birth is recorded in
+[`workstream-creation.md`](workstream-creation.md#changelog)). Adding, removing
+and walking Channels, and the cutover's placements, are one call each (a walk
+one per page) driven by `SpaceChannelAccess`, whose plan is recorded under ids
+derived from the intent and commits an application with its planned seats. The
+alarm resumes every intent kind in place, stored `move`s included, one step per
+intent per alarm, single-flight per operation id. Creation asks
+`admitSpaceCreation` before it anchors, and takes a Space back when its
+conversation cannot be provisioned. A Sidekick default on a hosted Channel is
+written in the staging transaction. Deleted: the staged membership, removal and
+move RPCs, `ensureGeneralSpace`, the version-zero `reserveSpace`, the Worker's
+`applySpaceSource`/`retractSpaceSource` and the alarm's resume publication.
+
+**Why:** The Space rows, the memberships and every Channel's provenance are one
+SQLite database since [hosted conversation parents](hosted-conversation-parents.md),
+and each saga step had become a hop back into the same object. An add went from
+five Worker calls to one, a removal from three or more to one, a walk to one per
+page, and a resume from a Queue round trip to none. A resume that planned again
+found the departing source already deleted, so it withdrew nobody.
+
+**Considered and rejected:** Keeping the Worker as the relay for the
+conversation calls; keeping the old RPCs through a rollout (the deploy promotes
+at 100%, so only data at rest needs them: queued messages and stored intents);
+anchoring after reserving, which turns a D1 failure into a listed Space.
+
+**Consequences:** Never ship this as a percentage split. Until an add settles,
+its source names readers who may not be seated yet. A take-back is refused once
+a Channel is in the Space or its conversation has published; a conversation that
+initialized before the failure and publishes after the take-back recreates the
+Space. The in-place Sidekick default trusts `automation_directory`.
 
 ### 2026-09-23 — Resume internal Space creation under a stable identity
 

@@ -5,7 +5,8 @@
  *
  * A retired demo workspace has to go quiet permanently, and "quiet" is not one
  * check at the edge: the spike that motivated this refused a write inside
- * `SubstreamAgent`, and the outbox it stranded belonged to a `WorkstreamDO`.
+ * `SubstreamAgent`, and the outbox it stranded belonged to a Channel's parent,
+ * which is now hosted by the Organization's `WorkspaceDO`.
  * Anything that reaches a conversation object directly — a native RPC, an
  * `alarm` the platform recovers, a hibernated socket callback — never passes
  * through WorkspaceDO at all, so the gate lives on the shared base every one of
@@ -36,7 +37,6 @@ import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId 
 
 import { ConversationParentDurableObject } from "../src/durable-objects/conversation-parent-object";
 import { SidekickDO } from "../src/durable-objects/sidekick-do";
-import { SpaceDO } from "../src/durable-objects/space-do";
 import {
   RETIREMENT_REFUSAL_CODE,
   gatedSurface,
@@ -47,14 +47,13 @@ import {
 } from "../src/durable-objects/object-retirement";
 import { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import { WorkspaceDO } from "../src/durable-objects/workspace-do";
-import { WorkstreamDO } from "../src/durable-objects/workstream-do";
 import {
   automationDOName,
   conversationObjectName,
   workspaceDOName,
-  workstreamDOName,
 } from "../src/durable-objects/names";
 import type { Env } from "../src/env";
+import { hostedParentStub } from "./helpers/hosted-parent";
 
 const TEST_ENV: Env = env;
 
@@ -79,9 +78,16 @@ function freshWorkstreamId() {
 const ACTOR_ID = asUserId("00000000-0000-7000-8000-00000000de02");
 const OPERATION_ID = "00000000-0000-7000-8000-00000000de03";
 
-function workstreamStub(workstreamId: string): DurableObjectStub<WorkstreamDO> {
-  const name = workstreamDOName(TEST_ENV.AVALON_REGION, WORKSPACE_ID, asWorkstreamId(workstreamId));
-  return TEST_ENV.WORKSTREAM_DOS.get(TEST_ENV.WORKSTREAM_DOS.idFromName(name)) as DurableObjectStub<WorkstreamDO>;
+/**
+ * A Channel's parent, and the object that closes it. The parent is hosted by
+ * its Organization's `WorkspaceDO`, so retiring the parent is retiring that
+ * object, and each test takes a workspace of its own for the reason above.
+ */
+function freshParent() {
+  const workstreamId = freshWorkstreamId();
+  const suffix = (0xfe10 + objectSequence).toString(16).padStart(4, "0");
+  const workspaceId = asWorkspaceId(`00000000-0000-7000-8000-00000000${suffix}`);
+  return { workstreamId, workspaceId, stub: hostedParentStub(TEST_ENV, workspaceId, TEST_ENV.AVALON_REGION) };
 }
 
 
@@ -101,11 +107,10 @@ async function refusalOf(call: () => Promise<unknown>): Promise<unknown> {
 
 describe("object retirement", () => {
   it("refuses a product write on a retired conversation parent", async () => {
-    const workstreamId = freshWorkstreamId();
-    const stub = workstreamStub(workstreamId);
+    const { workstreamId, workspaceId, stub } = freshParent();
     await stub.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
 
-    const refusal = await refusalOf(() => stub.listChildren({ workspaceId: WORKSPACE_ID, parentId: workstreamId }));
+    const refusal = await refusalOf(() => stub.listChildren({ workspaceId, parentId: workstreamId }));
     expect((refusal as { code?: string } | undefined)?.code).toBe(RETIREMENT_REFUSAL_CODE);
     // What the predicate every background caller reads sees on the far side of
     // the RPC boundary, where `instanceof` is gone.
@@ -148,20 +153,20 @@ describe("object retirement", () => {
     // answer when the call throws, so a refusal served a retired work stream's
     // artifacts until the viewer's session expired. `false` is an answer that
     // caller acts on.
-    const workstreamId = freshWorkstreamId();
-    const stub = workstreamStub(workstreamId);
+    const { workstreamId, workspaceId, stub } = freshParent();
     await stub.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
-    await expect(stub.canReadWorkstream(ACTOR_ID)).resolves.toBe(false);
+    await expect(stub.canReadWorkstream({ workspaceId, userId: ACTOR_ID, workstreamId })).resolves.toBe(false);
   });
 
   it("closes every socket the object holds, with the close the desktop does not reconnect from", async () => {
-    const workstreamId = freshWorkstreamId();
-    const stub = workstreamStub(workstreamId);
+    // A Channel's control socket is held by the Organization object that hosts
+    // its parent, so that is the object whose sockets retirement has to close.
+    const { stub } = freshParent();
     // A socket the object accepted and would ordinarily serve. After the
     // tombstone the hibernated callbacks are dropped, so a socket left open
     // would sit "connected" — the runtime answers its keepalive without waking
     // the object — while every frame it sent was discarded.
-    const closeCode = await runInDurableObject(stub, async (instance: WorkstreamDO, state) => {
+    const closeCode = await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
       const pair = new WebSocketPair();
       const [client, server] = [pair[0], pair[1]];
       state.acceptWebSocket(server);
@@ -179,7 +184,7 @@ describe("object retirement", () => {
   });
 
   it("permits retirement and inspection after the object is retired", async () => {
-    const stub = workstreamStub(freshWorkstreamId());
+    const { stub } = freshParent();
     const retiredAt = Date.now();
     await stub.retireObject({ retiredAt, operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
 
@@ -199,8 +204,7 @@ describe("object retirement", () => {
   });
 
   it("drops and acknowledges an effect already handed to the Queue", async () => {
-    const workstreamId = freshWorkstreamId();
-    const stub = workstreamStub(workstreamId);
+    const { workstreamId, workspaceId, stub } = freshParent();
     await stub.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
 
     // The envelope is well-formed and would ordinarily be applied. A throw here
@@ -210,7 +214,7 @@ describe("object retirement", () => {
       substreamId: SUBSTREAM_ID,
       envelopes: [{
         region: TEST_ENV.AVALON_REGION,
-        workspaceId: WORKSPACE_ID,
+        workspaceId,
         parentKind: "workstream",
         parentId: workstreamId,
         substreamId: SUBSTREAM_ID,
@@ -228,16 +232,18 @@ describe("object retirement", () => {
     ]);
 
     // Dropped means dropped: nothing about the parent's projection moved.
-    await runInDurableObject(stub, (instance: WorkstreamDO, state) => {
-      const rows = state.storage.sql.exec("SELECT COUNT(*) AS n FROM substream_directory").toArray();
+    await runInDurableObject(stub, (instance: WorkspaceDO, state) => {
+      const rows = state.storage.sql.exec(
+        "SELECT COUNT(*) AS n FROM parent_child_projections WHERE parent_id = ?",
+        workstreamId,
+      ).toArray();
       expect(rows[0]?.n).toBe(0);
       void instance;
     });
   });
 
   it("gates from the stored tombstone, not from having just written it", async () => {
-    const workstreamId = freshWorkstreamId();
-    const stub = workstreamStub(workstreamId);
+    const { workstreamId, workspaceId, stub } = freshParent();
     const retiredAt = Date.now();
 
     // Deliberately *not* through `retireObject`. That path also marks the live
@@ -245,7 +251,7 @@ describe("object retirement", () => {
     // assertion in this file while a reconstructed object stayed wide open —
     // which is the object an evicted demo workspace actually gets. Writing the
     // row underneath leaves the storage read as the only way to know.
-    await runInDurableObject(stub, (instance: WorkstreamDO, state) => {
+    await runInDurableObject(stub, (instance: WorkspaceDO, state) => {
       state.storage.sql.exec(
         `INSERT INTO object_retirement (id, retired_at, operation_id, actor_user_id, reason)
          VALUES (1, ?, ?, ?, ?)`,
@@ -260,7 +266,7 @@ describe("object retirement", () => {
 
     let refusal: unknown;
     try {
-      await stub.listChildren({ workspaceId: WORKSPACE_ID, parentId: workstreamId });
+      await stub.listChildren({ workspaceId, parentId: workstreamId });
     } catch (error) {
       refusal = error;
     }
@@ -272,15 +278,15 @@ describe("object retirement", () => {
   });
 
   it("leaves a retired object with no alarm and counts what it still holds", async () => {
-    const workstreamId = freshWorkstreamId();
-    const stub = workstreamStub(workstreamId);
+    const { workstreamId, stub } = freshParent();
 
     // An object with work still pending: something armed to wake it, and an
     // effect it accepted but never handed to the Queue. This is the shape the
     // spike found after retiring a parent, and both halves matter — the alarm
     // is what could wake a dead workspace, and the outbox is what it would try
-    // to publish if it did.
-    await runInDurableObject(stub, async (instance: WorkstreamDO, state) => {
+    // to publish if it did. The outbox row is a hosted parent's: an activity
+    // effect, the kind that waits in `parent_outbox` for the alarm.
+    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
       state.storage.sql.exec(
         `INSERT INTO _internal_durable_alarms
            (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json, created_at, updated_at)
@@ -290,11 +296,12 @@ describe("object retirement", () => {
         Date.now(),
       );
       state.storage.sql.exec(
-        `INSERT INTO durable_outbox
-           (message_id, partition_key, source_version, source_epoch, effect_kind,
+        `INSERT INTO parent_outbox
+           (message_id, parent_id, partition_key, source_version, source_epoch, effect_kind,
             payload_json, payload_hash, state, attempts, not_before, created_at)
-         VALUES (?, ?, 1, 1, 'directory_common', '{}', 'fnv1a64:0000000000000000', 'pending', 0, 0, ?)`,
+         VALUES (?, ?, ?, 1, 1, 'activity_event', '{}', 'fnv1a64:0000000000000000', 'pending', 0, 0, ?)`,
         "00000000-0000-7000-8000-00000000df01",
+        workstreamId,
         workstreamId,
         Date.now(),
       );
@@ -314,7 +321,7 @@ describe("object retirement", () => {
     // effects in a dead object rather than preparation still in flight.
     expect(receipt.retainedOutbox).toBe(1);
 
-    await runInDurableObject(stub, async (instance: WorkstreamDO, state) => {
+    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
       expect(await state.storage.getAlarm()).toBeNull();
       const alarms = state.storage.sql
         .exec("SELECT COUNT(*) AS n FROM _internal_durable_alarms").toArray();
@@ -322,15 +329,14 @@ describe("object retirement", () => {
       // The rows themselves stay. Retirement is not deletion, and the tombstone
       // is what stops anything draining them later.
       const outbox = state.storage.sql
-        .exec("SELECT COUNT(*) AS n FROM durable_outbox").toArray();
+        .exec("SELECT COUNT(*) AS n FROM parent_outbox WHERE parent_id = ?", workstreamId).toArray();
       expect(outbox[0]?.n).toBe(1);
       void instance;
     });
   });
 
   it("still answers after eviction, which is the state a retired workspace is in", async () => {
-    const workstreamId = freshWorkstreamId();
-    const stub = workstreamStub(workstreamId);
+    const { workstreamId, workspaceId, stub } = freshParent();
     const retiredAt = Date.now();
     await stub.retireObject({ retiredAt, operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
 
@@ -362,7 +368,7 @@ describe("object retirement", () => {
       substreamId: SUBSTREAM_ID,
       envelopes: [{
         region: TEST_ENV.AVALON_REGION,
-        workspaceId: WORKSPACE_ID,
+        workspaceId,
         parentKind: "workstream",
         parentId: workstreamId,
         substreamId: SUBSTREAM_ID,
@@ -439,14 +445,16 @@ describe("object retirement", () => {
   });
 
   it("rebuilds every gated class after eviction, and revokes access on it", async () => {
-    // One test across all four object classes on purpose. The two failures this
+    // One test across all three object classes on purpose. The two failures this
     // covers were both *category* failures — a method on the construction path
     // that nobody classified, and a permitted entry point reaching a private
     // helper nobody listed — and both were found one class at a time. Neither
     // is visible from a single class, because each class reaches its own
-    // helpers: `WorkstreamDO` wakes its main substream from its constructor,
-    // and `SubstreamAgent` recovers its runtime *after* the construction window
-    // closes, which is the case a construction-only fix does not reach.
+    // helpers: `WorkspaceDO` reaches a hosted Channel parent through its own
+    // lookup, and `SubstreamAgent` recovers its runtime *after* the
+    // construction window closes, which is the case a construction-only fix
+    // does not reach. A Channel's parent is hosted by `WorkspaceDO`, so its
+    // revocation hop is asserted on that object.
     const retiredAt = Date.now();
     const workstreamId = freshWorkstreamId();
     const automationId = asAutomationId("00000000-0000-7000-8000-00000000dea1");
@@ -459,9 +467,6 @@ describe("object retirement", () => {
     const workspaceStub = TEST_ENV.WORKSPACE_DOS.get(
       TEST_ENV.WORKSPACE_DOS.idFromName(workspaceDOName(TEST_ENV.AVALON_REGION, EVICTION_WORKSPACE_ID)),
     ) as DurableObjectStub<WorkspaceDO>;
-    const parentStub = TEST_ENV.WORKSTREAM_DOS.get(TEST_ENV.WORKSTREAM_DOS.idFromName(
-      workstreamDOName(TEST_ENV.AVALON_REGION, EVICTION_WORKSPACE_ID, workstreamId),
-    )) as DurableObjectStub<WorkstreamDO>;
     const automationStub = TEST_ENV.AUTOMATION_DOS.get(
       TEST_ENV.AUTOMATION_DOS.idFromName(
         automationDOName(TEST_ENV.AVALON_REGION, EVICTION_WORKSPACE_ID, automationId),
@@ -474,8 +479,14 @@ describe("object retirement", () => {
     ) as DurableObjectStub<SubstreamAgent>;
     // A Sidekick holds no sockets of its own, so it has nothing to revoke.
     const targets = [
-      { name: "WorkspaceDO", stub: workspaceStub, revoke: () => workspaceStub.revokeSocketAccess(revocation) },
-      { name: "WorkstreamDO", stub: parentStub, revoke: () => parentStub.revokeSocketAccess(revocation) },
+      {
+        name: "WorkspaceDO",
+        stub: workspaceStub,
+        revoke: async () => {
+          await workspaceStub.revokeSocketAccess(revocation);
+          await workspaceStub.revokeParentSocketAccess({ parentId: workstreamId, revocation });
+        },
+      },
       { name: "SidekickDO", stub: automationStub, revoke: null },
       { name: "SubstreamAgent", stub: agentStub, revoke: () => agentStub.revokeSocketAccess(revocation) },
     ] as const;
@@ -514,8 +525,6 @@ describe("object retirement", () => {
     const gated = [
       { name: "WorkspaceDO", target: WorkspaceDO },
       { name: "ConversationParentDurableObject", target: ConversationParentDurableObject },
-      { name: "WorkstreamDO", target: WorkstreamDO },
-      { name: "SpaceDO", target: SpaceDO },
       { name: "SidekickDO", target: SidekickDO },
       { name: "SubstreamAgent", target: SubstreamAgent },
     ] as const;
@@ -543,26 +552,22 @@ describe("object retirement", () => {
 
     // The dispositions the design depends on, pinned by name. Each is a
     // decision a future edit could undo without any test above noticing.
-    for (const target of [ConversationParentDurableObject, WorkstreamDO, SpaceDO, SidekickDO]) {
+    // `WorkspaceDO` is on this list because it hosts every Channel and Space
+    // parent; its conversation-parent contract methods are the same doors.
+    for (const target of [ConversationParentDurableObject, SidekickDO, WorkspaceDO]) {
       // The walk's own read, on a parent that may already hold a tombstone.
       expect(retirementDisposition(target, "childrenForRetirement")).toBe("permit");
       // A product enumeration stays refused; the revocation consumer acks it.
       expect(retirementDisposition(target, "listChildren")).toBe("refuse");
     }
-    for (const target of [WorkstreamDO, SpaceDO, WorkspaceDO]) {
-      expect(retirementDisposition(target, "canReadWorkstream")).toBe("drop");
+    // The doors a hosted Channel or Space answers on now belong to the
+    // Organization object: its HTTP door, its alarm, its control socket, and
+    // the visibility question. A door dropped from this list is a retired
+    // Channel throwing where the caller expected an answer.
+    for (const method of ["fetch", "alarm", "webSocketMessage", "canReadWorkstream", "receiveChildEffects"]) {
+      expect(retirementDisposition(WorkspaceDO, method)).toBe("drop");
     }
-    // `SpaceDO` is `WorkstreamDO` under a role and overrides nothing, so every
-    // door it answers on is one of these. A disposition resolves up the
-    // prototype chain, which is what makes that true whether the policy is
-    // registered on this class or inherited — the assertion is about the door
-    // list, and a door dropped from it is a retired Space throwing where the
-    // caller expected an answer.
-    for (const method of ["fetch", "alarm", "webSocketMessage", "canReadWorkstream"]) {
-      expect(retirementDisposition(SpaceDO, method))
-        .toBe(retirementDisposition(WorkstreamDO, method));
-      expect(retirementDisposition(SpaceDO, method)).toBe("drop");
-    }
+    expect(retirementDisposition(WorkspaceDO, "revokeParentSocketAccess")).toBe("permit");
     expect(retirementDisposition(SubstreamAgent, "startRuntimeRecovery")).toBe("permit");
     for (const method of ["beginWorkspaceRetirement", "recordRetiredNode", "workspaceRetirementProgress"]) {
       expect(retirementDisposition(WorkspaceDO, method)).toBe("permit");

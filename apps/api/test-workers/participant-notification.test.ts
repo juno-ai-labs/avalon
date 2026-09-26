@@ -14,7 +14,7 @@
  * stream their sidebar cannot show them.
  *
  * This drives the real SubstreamAgent product boundary against real Durable
- * Object SQLite, so `projection_keys`, the payload hashes, and the outbox rows
+ * Object SQLite, so `parent_projection_keys`, the payload hashes, and the outbox rows
  * are the production ones rather than a description of them. Existing-room
  * cases use its system-provision port; create-only cases stop before run activation.
  */
@@ -32,12 +32,13 @@ import {
 } from "@rally/contracts";
 
 import type { AuthContext, Env } from "../src/env";
-import { conversationObjectName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { processWorkstreamNotificationIntent } from "../src/services/conversation-effect-service";
 import { deliverChildEffects, pendingParentEffects } from "./helpers/conversation-effects";
+import { hostedParentStub } from "./helpers/hosted-parent";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000006a1");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a2");
@@ -110,7 +111,7 @@ beforeEach(async () => {
     env.DB.prepare(`INSERT OR REPLACE INTO workspaces(id, name, region) VALUES (?, 'Notification test', 'global')`).bind(WORKSPACE_ID),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspace_members (access_class TEXT NOT NULL DEFAULT 'member', incarnation TEXT DEFAULT 'existing-member',
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
-      role TEXT NOT NULL, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
+      role TEXT NOT NULL, last_seen_at TEXT, revision INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (workspace_id, user_id)
     )`),
     env.DB.prepare(`INSERT OR REPLACE INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'owner', '2026-08-22T20:00:00.000Z')`).bind(WORKSPACE_ID, CREATOR_ID),
@@ -155,10 +156,9 @@ function agentStub(workstreamId = WORKSTREAM_ID): DurableObjectStub<SubstreamAge
   ));
 }
 
-function parentStub(workstreamId = WORKSTREAM_ID): DurableObjectStub {
-  return env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-    workstreamDOName("global", WORKSPACE_ID, workstreamId),
-  ));
+/** The Organization object that hosts every Channel parent in the workspace. */
+function parentStub(): DurableObjectStub {
+  return hostedParentStub(env, WORKSPACE_ID);
 }
 
 /**
@@ -329,7 +329,7 @@ async function seedCompletedRun(
  *
  * The outbox is transport, not projection authority: creation recovery can
  * successfully deliver and delete a directory row before this helper parks the
- * parent. Directory assertions therefore read `workstream_state_changes`
+ * parent. Directory assertions therefore read `parent_state_changes`
  * through `viewerProjectionEffect`; this helper is for immutable activity and
  * notification effects that the test deliberately leaves queued.
  */
@@ -365,15 +365,49 @@ async function deliveredEffects(
   stub: DurableObjectStub,
   workstreamId = WORKSTREAM_ID,
 ): Promise<ParentEffectEnvelope[]> {
-  const parent = parentStub(workstreamId);
+  const parent = parentStub();
   await parkEffectQueue(parent);
   await deliverChildEffects(env, stub);
-  return pendingParentEffects(parent);
+  return (await pendingParentEffects(parent)).filter((envelope) => envelope.parentId === workstreamId);
+}
+
+interface FeedActivity {
+  body: string;
+  actorUserId: string | null;
+  digestible: number;
+  dedupeKey: string;
+  targets: { userId: string; relation: string }[];
+}
+
+/**
+ * The participant-added rows in the Organization's activity feed.
+ *
+ * Read from `workspace_activity_events` rather than the outbox: a hosted
+ * parent writes the feed row in the same transaction as the add, so an
+ * activity event with no mention to snapshot never waits in the outbox.
+ */
+async function participantAddedActivity(workstreamId = WORKSTREAM_ID): Promise<FeedActivity[]> {
+  return runInDurableObject(parentStub(), (_instance, state) => state.storage.sql.exec<{
+    event_id: string; body: string; actor_user_id: string | null; digestible: number; dedupe_key: string;
+  }>(
+    `SELECT event_id, body, actor_user_id, digestible, dedupe_key FROM workspace_activity_events
+      WHERE audience_workstream_id = ? AND event_type = 'workstream_participant_added' ORDER BY body`,
+    workstreamId,
+  ).toArray().map((row) => ({
+    body: row.body,
+    actorUserId: row.actor_user_id,
+    digestible: row.digestible,
+    dedupeKey: row.dedupe_key,
+    targets: state.storage.sql.exec<{ user_id: string; relation: string }>(
+      `SELECT user_id, relation FROM workspace_activity_event_targets WHERE event_id = ? ORDER BY user_id`,
+      row.event_id,
+    ).toArray().map((target) => ({ userId: target.user_id, relation: target.relation })),
+  })));
 }
 
 /**
  * The version a recipient's directory row was written at, read from the parent's
- * own `projection_keys` rather than from an outbox row.
+ * own `parent_projection_keys` rather than from an outbox row.
  *
  * That table is the one the delivery gate compares against and it is never
  * drained, so this is the same number `requiredProjectionVersion` has to match
@@ -383,9 +417,10 @@ async function viewerProjectionVersion(
   userId: string,
   workstreamId = WORKSTREAM_ID,
 ): Promise<number> {
-  return runInDurableObject(parentStub(workstreamId), (_instance, state) =>
+  return runInDurableObject(parentStub(), (_instance, state) =>
     Number(state.storage.sql.exec<{ next_version: number }>(
-      `SELECT next_version FROM projection_keys WHERE projection_key = ?`,
+      `SELECT next_version FROM parent_projection_keys WHERE parent_id = ? AND projection_key = ?`,
+      workstreamId,
       `user:${userId}`,
     ).toArray()[0]?.next_version ?? 0) - 1);
 }
@@ -395,10 +430,11 @@ async function viewerProjectionEffect(
   userId: string,
   workstreamId = WORKSTREAM_ID,
 ): Promise<Extract<ParentEffectEnvelope["effect"], { kind: "directory_user" }> | null> {
-  return runInDurableObject(parentStub(workstreamId), (_instance, state) => {
+  return runInDurableObject(parentStub(), (_instance, state) => {
     const row = state.storage.sql.exec<{ state_json: string }>(
-      `SELECT state_json FROM workstream_state_changes
-        WHERE state_key = ? ORDER BY waterline DESC LIMIT 1`,
+      `SELECT state_json FROM parent_state_changes
+        WHERE parent_id = ? AND state_key = ? ORDER BY waterline DESC LIMIT 1`,
+      workstreamId,
       `user:${userId}`,
     ).toArray()[0];
     if (!row) return null;
@@ -419,10 +455,11 @@ async function notificationReceipts(
   workstreamId = WORKSTREAM_ID,
 ): Promise<string[]> {
   await deliverChildEffects(env, stub);
-  return runInDurableObject(parentStub(workstreamId), (_instance, state) =>
+  return runInDurableObject(parentStub(), (_instance, state) =>
     state.storage.sql.exec<{ message_id: string }>(
-      `SELECT message_id FROM child_effect_receipts
-        WHERE message_id LIKE 'effect:participant_added:%' ORDER BY message_id`,
+      `SELECT message_id FROM parent_child_receipts
+        WHERE parent_id = ? AND message_id LIKE 'effect:participant_added:%' ORDER BY message_id`,
+      workstreamId,
     ).toArray().map((row) => row.message_id));
 }
 
@@ -515,19 +552,18 @@ describe("adding somebody to a work stream", () => {
 
     const envelopes = await deliveredEffects(stub);
     const viewer = await viewerProjectionEffect(INVITEE_ID);
-    const activity = envelopes.filter((envelope) => (
-      envelope.effect.kind === "activity_event"
-      && envelope.effect.eventType === "workstream_participant_added"
-    ));
+    // The activity row is in the feed already, written with the add; only
+    // the notification waits in the outbox, for the Queue that delivers it.
+    const activity = await participantAddedActivity();
     const notification = envelopes.filter((envelope) => envelope.effect.kind === "participant_notification");
     expect(viewer).toMatchObject({ kind: "directory_user", userId: INVITEE_ID });
+    expect(envelopes.filter((envelope) => envelope.effect.kind === "activity_event")).toEqual([]);
     expect([activity.length, notification.length]).toEqual([1, 1]);
 
-    const activityEffect = activity[0]!.effect;
-    if (activityEffect.kind !== "activity_event") throw new Error("expected an activity event");
+    const activityEffect = activity[0]!;
     expect(activityEffect.targets).toEqual([{ userId: INVITEE_ID, relation: "added" }]);
     expect(activityEffect.actorUserId).toBe(CREATOR_ID);
-    expect(activityEffect.digestible).toBe(true);
+    expect(activityEffect.digestible).toBe(1);
     expect(activityEffect.body).toBe("Creator added Invitee to this work stream.");
 
     const notificationEffect = notification[0]!.effect;
@@ -618,10 +654,7 @@ describe("adding somebody to a work stream", () => {
 
     const envelopes = await deliveredEffects(stub);
     expect(envelopes.filter((envelope) => envelope.effect.kind === "participant_notification")).toHaveLength(0);
-    expect(envelopes.filter((envelope) => (
-      envelope.effect.kind === "activity_event"
-      && envelope.effect.eventType === "workstream_participant_added"
-    ))).toHaveLength(0);
+    expect(await participantAddedActivity()).toHaveLength(0);
   });
 });
 
@@ -783,10 +816,7 @@ describe("naming somebody when the work stream is created", () => {
 
     const envelopes = await deliveredEffects(stub);
     const viewer = await viewerProjectionEffect(INVITEE_ID);
-    const activity = envelopes.filter((envelope) => (
-      envelope.effect.kind === "activity_event"
-      && envelope.effect.eventType === "workstream_participant_added"
-    ));
+    const activity = await participantAddedActivity();
     const notification = envelopes.filter((envelope) => envelope.effect.kind === "participant_notification");
     expect(viewer).toMatchObject({ kind: "directory_user", userId: INVITEE_ID });
     expect([activity.length, notification.length]).toEqual([1, 1]);
@@ -805,15 +835,14 @@ describe("naming somebody when the work stream is created", () => {
     expect(notificationEffect.workstreamTitleSnapshot).toBe("Quarterly planning");
     expect(notificationEffect.workstreamObjectiveSnapshot).toBe("Draft the quarterly plan");
 
-    const activityEffect = activity[0]!.effect;
-    if (activityEffect.kind !== "activity_event") throw new Error("expected an activity event");
+    const activityEffect = activity[0]!;
     expect(activityEffect.targets).toEqual([{ userId: INVITEE_ID, relation: "added" }]);
     expect(activityEffect.body).toBe("Creator added Invitee to this work stream.");
 
     // Armed by this recipient's own directory row: the delivery gate refuses to
     // send until the workspace has reached that version, so nobody is told
     // about a work stream their sidebar cannot yet show them. Read from the
-    // parent's `projection_keys` — the table the gate itself compares against.
+    // parent's `parent_projection_keys` — the table the gate itself compares against.
     expect(notification[0]!.requiredProjectionVersion)
       .toBe(await viewerProjectionVersion(INVITEE_ID));
     expect(notification[0]!.requiredProjectionVersion).toBeGreaterThan(0);
@@ -825,10 +854,7 @@ describe("naming somebody when the work stream is created", () => {
 
     const envelopes = await deliveredEffects(stub);
     expect(envelopes.filter((envelope) => envelope.effect.kind === "participant_notification")).toHaveLength(0);
-    expect(envelopes.filter((envelope) => (
-      envelope.effect.kind === "activity_event"
-      && envelope.effect.eventType === "workstream_participant_added"
-    ))).toHaveLength(0);
+    expect(await participantAddedActivity()).toHaveLength(0);
   });
 
   it("does not tell somebody twice when they are also added afterwards", async () => {
@@ -1111,10 +1137,7 @@ describe("who a create is allowed to tell", () => {
     const envelopes = await deliveredEffects(stub, CREATE_WITHOUT_NOTIFY_ID);
     expect(envelopes.filter((envelope) => envelope.effect.kind === "participant_notification"))
       .toHaveLength(0);
-    expect(envelopes.filter((envelope) => (
-      envelope.effect.kind === "activity_event"
-      && envelope.effect.eventType === "workstream_participant_added"
-    ))).toHaveLength(0);
+    expect(await participantAddedActivity(CREATE_WITHOUT_NOTIFY_ID)).toHaveLength(0);
     // Seated all the same: not telling somebody is not leaving them out.
     await expect(Promise.all([
       viewerProjectionEffect(INVITEE_ID, CREATE_WITHOUT_NOTIFY_ID),
@@ -1152,11 +1175,7 @@ describe("who a create is allowed to tell", () => {
         await viewerProjectionVersion(entry.effect.recipientUserId, CREATE_WITH_NOTIFY_ID),
       );
     }
-    expect(envelopes.flatMap((envelope) => (
-      envelope.effect.kind === "activity_event"
-      && envelope.effect.eventType === "workstream_participant_added"
-        ? [envelope.effect.body] : []
-    )).sort()).toEqual([
+    expect((await participantAddedActivity(CREATE_WITH_NOTIFY_ID)).map((row) => row.body)).toEqual([
       "Creator added Invitee to this work stream.",
       "Creator added Second Invitee to this work stream.",
     ]);

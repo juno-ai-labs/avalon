@@ -50,7 +50,7 @@ beforeEach(async () => {
   await runInDurableObject(workspace(), (_instance, state) => {
     state.storage.sql.exec("DELETE FROM pending_attachment_reservations");
     state.storage.sql.exec("DELETE FROM workspace_workstream_resource_links");
-    state.storage.sql.exec("DELETE FROM workspace_workstream_directory");
+    state.storage.sql.exec("DELETE FROM channels");
     state.storage.sql.exec("DELETE FROM resources");
     state.storage.sql.exec(
       `INSERT INTO resources

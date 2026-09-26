@@ -209,11 +209,17 @@ function queued(body: unknown, attempts = 1) {
   return { batch, ack, retry };
 }
 
-/** A work stream parent that answers only the contract method the consumer calls. */
-function workstreamParent(receiveChildEffects: (input: unknown) => Promise<void>): Env["WORKSTREAM_DOS"] {
-  return createCloudflareTestBinding<Env["WORKSTREAM_DOS"]>({
-    idFromName: () => createTestDurableObjectId("workstream"),
-    get: () => ({ receiveChildEffects }),
+/**
+ * The Organization object hosting a work stream parent: the workspace double,
+ * plus the one contract method the consumer calls on the parent it hosts.
+ */
+function hostingWorkstreamParent(
+  workspace: DurableObjectNamespace,
+  receiveChildEffects: (input: unknown) => Promise<void>,
+): Env["WORKSPACE_DOS"] {
+  return createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+    idFromName: (name: string) => workspace.idFromName(name),
+    get: (id: DurableObjectId) => ({ ...workspace.get(id), receiveChildEffects }),
   });
 }
 
@@ -338,15 +344,21 @@ function workspaceSyncNamespace(listable = true) {
 function regionalEnv(
   database: DatabaseSync,
   workspace: ReturnType<typeof workspaceSyncNamespace>,
-  extra: Partial<Pick<Env, "WORKSTREAM_DOS" | "AUTOMATION_DOS">> = {},
+  extra: Partial<Pick<Env, "AUTOMATION_DOS">> & {
+    /** The hosted work stream parent's `receiveChildEffects`, answered by WorkspaceDO. */
+    workstreamReceive?: (input: unknown) => Promise<void>;
+  } = {},
 ): Env {
+  const { workstreamReceive, ...bindings } = extra;
   return createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
-    WORKSPACE_DOS: workspace.namespace,
+    WORKSPACE_DOS: workstreamReceive
+      ? hostingWorkstreamParent(workspace.namespace, workstreamReceive)
+      : workspace.namespace,
     APP_ENV: "test",
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
-    ...extra,
+    ...bindings,
   });
 }
 
@@ -833,7 +845,7 @@ describe("the activity Queue consumer's effect legs", () => {
     const workspace = workspaceSyncNamespace();
     const receiveChildEffects = vi.fn(async () => undefined);
     const env = regionalEnv(database, workspace, {
-      WORKSTREAM_DOS: workstreamParent(receiveChildEffects),
+      workstreamReceive: receiveChildEffects,
     });
     const envelope = childMessage(directoryCommon(), {
       messageId: MESSAGE_ID,
@@ -872,7 +884,7 @@ describe("the activity Queue consumer's effect legs", () => {
     const workstreamReceive = vi.fn(async () => undefined);
     const automationReceive = vi.fn(async () => undefined);
     const env = regionalEnv(database, workspace, {
-      WORKSTREAM_DOS: workstreamParent(workstreamReceive),
+      workstreamReceive,
       AUTOMATION_DOS: automationParent(automationReceive),
     });
     const envelope = childMessage(directoryCommon("Run 1"), {
@@ -899,7 +911,7 @@ describe("the activity Queue consumer's effect legs", () => {
     const workspace = workspaceSyncNamespace();
     const receiveChildEffects = vi.fn(async () => { throw new Error("parent_unavailable"); });
     const env = regionalEnv(database, workspace, {
-      WORKSTREAM_DOS: workstreamParent(receiveChildEffects),
+      workstreamReceive: receiveChildEffects,
     });
     const { batch, ack, retry } = queued(childMessage(directoryCommon(), {
       messageId: MESSAGE_ID,
@@ -1066,7 +1078,7 @@ describe("the activity Queue consumer's effect legs", () => {
     const workspace = workspaceSyncNamespace();
     const receiveChildEffects = vi.fn(async () => undefined);
     const env = regionalEnv(database, workspace, {
-      WORKSTREAM_DOS: workstreamParent(receiveChildEffects),
+      workstreamReceive: receiveChildEffects,
     });
     const envelope = childMessage(directoryCommon(), {
       messageId: MESSAGE_ID,

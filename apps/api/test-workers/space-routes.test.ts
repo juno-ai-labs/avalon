@@ -17,11 +17,12 @@ import {
   createExecutionContext,
   evictDurableObject,
   reset,
+  runDurableObjectAlarm,
   runInDurableObject,
   waitOnExecutionContext,
 } from "cloudflare:test";
 import { SignJWT } from "jose";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   asSpaceId,
@@ -39,10 +40,13 @@ import {
 import { createApp } from "../src/app";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
+import { SpaceService } from "../src/services/space-service";
+import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
 import { deliverEffectsToWorkspaceInOrder } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
+import { changeRelationships } from "./helpers/workspace-relationship-events";
 
 /** Its own workspace id: object storage is reset per case, object names are not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000d200");
@@ -202,7 +206,7 @@ async function createChannel(clientMessageId: string, spaceIds: SpaceId[] = []):
 async function spaceDirectoryRow(spaceId: string): Promise<Record<string, unknown>> {
   const read = await workspace().runInspectionSql({
     sql: `SELECT title, scope, source_version, archived_at
-            FROM workspace_space_directory WHERE space_id = ?`,
+            FROM spaces WHERE space_id = ?`,
     bindings: [spaceId],
   });
   return read.rows[0] as Record<string, unknown>;
@@ -307,8 +311,8 @@ describe("POST /spaces", () => {
     await settleSpaceEffects(created.id);
 
     // The row the Organization holds, at the version the Space's own object
-    // wrote rather than the one its reservation did. `reserveSpace` writes
-    // source version 0 and `reserveChild` delivers 1; anything above them is
+    // wrote rather than the one its reservation did. `reserveSpace` commits
+    // the parent's provisional version 1; anything above it is
     // the conversation's own aggregate, and a Space stuck below it is one the
     // Organization can never be told anything new about — not its scope, not
     // its name, not its appearance.
@@ -327,6 +331,61 @@ describe("POST /spaces", () => {
     const workstreamId = await createChannel("in-company", [asSpaceId(created.id)]);
     expect(await channelSpaceSources(workstreamId))
       .toEqual([expect.objectContaining({ spaceId: created.id, scope: "workspace" })]);
+  });
+
+  it("given a conversation that cannot be provisioned, when a Space is created, then the Space is taken back rather than left listed", async () => {
+    // The conversation initializes and then its appearance write fails, the
+    // last step of provisioning: a Space listed at this point has a
+    // conversation nobody can finish, and the next attempt mints a new id.
+    const appearance = vi.spyOn(WorkstreamObjectClient.prototype, "setAppearance")
+      .mockRejectedValueOnce(new Error("conversation_unreachable"));
+
+    const failed = await request("/spaces", OWNER_AUTH, {
+      name: "Company", iconKey: "briefcase", colorKey: "blue", scope: "workspace",
+    });
+    appearance.mockRestore();
+
+    expect(failed).toMatchObject({ status: 503, body: { error: { code: "space_authority_unreachable" } } });
+    expect((await spaceDirectories(OWNER)).active.items.map((item) => item.name)).not.toContain("Company");
+    expect(await workspace().runInspectionSql({
+      sql: `SELECT (SELECT COUNT(*) FROM spaces) AS spaces,
+                   (SELECT COUNT(*) FROM parent_metadata WHERE parent_kind = 'space') AS parents`,
+      bindings: [],
+    })).toMatchObject({ rows: [{ spaces: 0, parents: 0 }] });
+
+    // And a retry succeeds as an ordinary creation.
+    const retried = await createSpace("workspace", "Company");
+    expect((await spaceDirectories(OWNER)).active.items.map((item) => item.id)).toContain(retried.id);
+  });
+
+  it("given a Space whose conversation has published, when its creator asks for it back, then it stays", async () => {
+    const created = await createSpace("workspace", "Company");
+    await settleSpaceEffects(created.id);
+
+    await expect(workspace().cancelSpaceReservation({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: asSpaceId(created.id),
+    })).resolves.toEqual({ cancelled: false });
+    expect((await spaceDirectories(OWNER)).active.items.map((item) => item.id)).toContain(created.id);
+  });
+
+  it("given a caller WorkspaceDO refuses, when they create a Space, then no anchor is written for it", async () => {
+    // A guest: an active Organization relationship, and no Space writes.
+    await changeRelationships(routeEnv(), WORKSPACE_ID, [MEMBER],
+      env.DB.prepare("UPDATE workspace_members SET access_class = 'guest', role = NULL WHERE workspace_id = ? AND user_id = ?")
+        .bind(WORKSPACE_ID, MEMBER));
+    const anchors = async () => (await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM workstream_authority_routes WHERE workspace_id = ?",
+    ).bind(WORKSPACE_ID).first<{ count: number }>())?.count;
+    const before = await anchors();
+
+    // Past the route's own session check, which answers a guest before any
+    // Space code runs: this is about the order inside the service.
+    const refused = await new SpaceService(routeEnv(), MEMBER_AUTH).create({
+      name: "Theirs", iconKey: "briefcase", colorKey: "blue", scope: "workspace",
+    }).then(() => null, (error: unknown) => error);
+
+    expect(refused).toMatchObject({ status: 403, code: "space_access_denied" });
+    expect(await anchors()).toBe(before);
   });
 
   it("keeps a personal Space personal, and out of a second member's sidebar", async () => {
@@ -442,18 +501,122 @@ describe("POST /spaces/:id/channels/:workstreamId/move", () => {
       expect.objectContaining({ spaceId: target.id }),
     ]));
     expect((await channelSpaceSources(workstreamId)).map((item) => item.spaceId)).not.toContain(source.id);
+    // One WorkspaceDO transaction: no `move` intent was staged for a resume,
+    // and the add-then-remove path (which stages an `add` into the target and a
+    // `remove` out of the source) was not taken.
     expect(await workspace().runInspectionSql({
-      sql: `SELECT kind, state, source_space_id, space_id
-              FROM space_intents WHERE workstream_id = ? ORDER BY created_at DESC LIMIT 1`,
-      bindings: [workstreamId],
-    })).toMatchObject({
-      rows: [{
-        kind: "move",
-        state: "settled",
-        source_space_id: source.id,
-        space_id: target.id,
-      }],
+      sql: `SELECT kind, space_id FROM space_intents
+             WHERE workstream_id = ? AND (kind IN ('move', 'remove') OR space_id = ?)`,
+      bindings: [workstreamId, target.id],
+    })).toMatchObject({ rows: [] });
+  });
+
+  it("given a Channel whose provenance is behind the source Space, when the one-transaction move is asked, then it writes nothing", async () => {
+    const source = await createSpace("personal", "Source");
+    const target = await createSpace("personal", "Target");
+    const workstreamId = await createChannel("stale-provenance-move");
+    expect((await request(`/spaces/${source.id}/channels`, OWNER_AUTH, { workstreamId })).status).toBe(200);
+    // The source Space moves past the revision the Channel recorded for it,
+    // which is what an audience change still walking its Channels looks like.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE spaces SET revision = revision + 1 WHERE space_id = ?", source.id);
     });
+    const snapshot = async () => ({
+      memberships: (await workspace().runInspectionSql({
+        sql: `SELECT space_id, state, generation FROM space_channel_memberships
+               WHERE workstream_id = ? ORDER BY space_id`,
+        bindings: [workstreamId],
+      })).rows,
+      sources: (await workspace().runInspectionSql({
+        sql: `SELECT space_id, space_revision, membership_generation FROM parent_space_sources
+               WHERE parent_id = ? ORDER BY space_id`,
+        bindings: [workstreamId],
+      })).rows,
+      operations: (await workspace().runInspectionSql({
+        sql: "SELECT COUNT(*) AS count FROM parent_access_operations WHERE parent_id = ?",
+        bindings: [workstreamId],
+      })).rows,
+    });
+    const before = await snapshot();
+
+    const declined = await workspace().moveSpaceMembership({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      sourceSpaceId: source.id,
+      targetSpaceId: target.id,
+      workstreamId,
+    });
+
+    expect(declined).toEqual({ ok: true, moved: false });
+    expect(await snapshot()).toEqual(before);
+
+    // The route takes the add-then-remove path instead, and still moves it.
+    const moved = await request(
+      `/spaces/${target.id}/channels/${workstreamId}/move`,
+      OWNER_AUTH,
+      { sourceSpaceId: source.id },
+    );
+    expect(moved).toMatchObject({
+      status: 200,
+      body: { source: { id: source.id, channelCount: 0 }, target: { id: target.id, channelCount: 1 } },
+    });
+    expect((await channelSpaceSources(workstreamId)).map((item) => item.spaceId))
+      .toEqual(expect.arrayContaining([target.id]));
+  });
+});
+
+describe("a Space and its hosted parent", () => {
+  it("given a parent reservation that fails, when a Space is reserved, then no Space row commits", async () => {
+    const spaceId = asSpaceId("00000000-0000-7000-8000-00000000d2a1");
+    // A parent row for this id under another Organization: `reserveChild`
+    // finds it and refuses the identity, inside the reservation's transaction.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO parent_metadata
+           (parent_id, parent_kind, workspace_id, region, authority_generation, title, description,
+            preview, scope, exact_state, system_kind, last_activity_at, completed_at,
+            archived_at, email_address, created_by_user_id, title_status,
+            source_created_at, source_updated_at, created_at, updated_at)
+         VALUES (?, 'space', '00000000-0000-7000-8000-00000000d2ff', 'global', 1, 'Elsewhere', '',
+                 '', 'workspace', 'idle', NULL, 0, NULL, NULL, NULL, NULL, 'settled', 0, 0, 0, 0)`,
+        spaceId,
+      );
+    });
+
+    const failure = await workspace().reserveSpace({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      space: { name: "Company", iconKey: "briefcase", colorKey: "blue", scope: "workspace" },
+      spaceId,
+    }).then(() => null, (error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT COUNT(*) AS count FROM spaces WHERE space_id = ?",
+      bindings: [spaceId],
+    })).toMatchObject({ rows: [{ count: 0 }] });
+  });
+
+  it("given no General, when it is opened, then it is written with its parent and later callers reuse it", async () => {
+    const actor = { workspaceId: WORKSPACE_ID, userId: OWNER };
+    expect(await workspace().openGeneralSpace(actor)).toEqual({ ok: true, absent: true });
+    const spaceId = asSpaceId("00000000-0000-7000-8000-00000000d2a2");
+
+    const opened = await workspace().openGeneralSpace({ ...actor, spaceId });
+
+    expect(opened).toMatchObject({ ok: true, created: true, space: { id: spaceId, systemRole: "general" } });
+    // The parent's provisional projection superseded the reservation in the
+    // same transaction, so the committed row is already at version one.
+    expect(await workspace().runInspectionSql({
+      sql: `SELECT directory.source_version, parent.parent_kind
+              FROM spaces directory JOIN parent_metadata parent ON parent.parent_id = directory.space_id
+             WHERE directory.space_id = ?`,
+      bindings: [spaceId],
+    })).toMatchObject({ rows: [{ source_version: 1, parent_kind: "space" }] });
+    expect(await workspace().openGeneralSpace({
+      ...actor, spaceId: asSpaceId("00000000-0000-7000-8000-00000000d2a3"),
+    })).toMatchObject({ ok: true, created: false, space: { id: spaceId } });
+    expect(await workspace().openGeneralSpace(actor)).toMatchObject({ ok: true, created: false, space: { id: spaceId } });
   });
 });
 
@@ -603,3 +766,276 @@ describe("the other Space operations that reach the hidden conversation", () => 
       .toEqual([general.id, created.id].sort());
   });
 });
+
+/** A personal Space whose participants are exactly these people. */
+async function personalSpace(name: string, participantUserIds: readonly string[]): Promise<SpaceSummary> {
+  const created = await createSpace("personal", name);
+  if (participantUserIds.length === 1 && participantUserIds[0] === OWNER) return created;
+  const changed = await request(`/spaces/${created.id}/audience`, OWNER_AUTH, {
+    scope: "personal", participantUserIds,
+  }, "PATCH");
+  if (changed.status !== 200) {
+    throw new Error(`PATCH audience answered ${changed.status}: ${JSON.stringify(changed.body)}`);
+  }
+  return changed.body as SpaceSummary;
+}
+
+async function membershipState(workstreamId: WorkstreamId, spaceId: string): Promise<unknown> {
+  const read = await workspace().runInspectionSql({
+    sql: "SELECT state FROM space_channel_memberships WHERE workstream_id = ? AND space_id = ?",
+    bindings: [workstreamId, spaceId],
+  });
+  return (read.rows[0] as { state?: unknown } | undefined)?.state;
+}
+
+async function intentStates(workstreamId: WorkstreamId, kind: string): Promise<unknown[]> {
+  const read = await workspace().runInspectionSql({
+    sql: "SELECT state FROM space_intents WHERE workstream_id = ? AND kind = ? ORDER BY created_at",
+    bindings: [workstreamId, kind],
+  });
+  return read.rows.map((row) => (row as { state: unknown }).state);
+}
+
+/** The readers the Channel's record says this Space supplied. */
+async function spaceReaders(workstreamId: WorkstreamId, spaceId: string): Promise<unknown[]> {
+  const read = await workspace().runInspectionSql({
+    sql: "SELECT user_id FROM parent_space_readers WHERE parent_id = ? AND space_id = ? ORDER BY user_id",
+    bindings: [workstreamId, spaceId],
+  });
+  return read.rows.map((row) => (row as { user_id: unknown }).user_id);
+}
+
+/** Whether the Channel's own conversation seats this person. */
+async function seated(workstreamId: WorkstreamId, userId: string): Promise<boolean> {
+  return runInDurableObject(spaceConversation(workstreamId), (_instance, state) => (
+    state.storage.sql.exec<{ status: string }>(
+      "SELECT status FROM participants WHERE user_id = ?", userId,
+    ).toArray()[0]?.status === "active"
+  ));
+}
+
+describe("a Channel's Space membership, driven from WorkspaceDO", () => {
+  it("given an existing Channel, when it is added to a Space, then the Space's readers are seated and attributed and the membership settles", async () => {
+    const mine = await personalSpace("Mine", [OWNER]);
+    const hiring = await personalSpace("Hiring", [OWNER, MEMBER]);
+    const workstreamId = await createChannel("add-existing", [asSpaceId(mine.id)]);
+    expect(await seated(workstreamId, MEMBER)).toBe(false);
+
+    const added = await request(`/spaces/${hiring.id}/channels`, OWNER_AUTH, { workstreamId });
+
+    expect(added).toMatchObject({ status: 200, body: { id: hiring.id, channelCount: 1 } });
+    expect(await seated(workstreamId, MEMBER)).toBe(true);
+    // Attributed to the Space that supplied them, in the transaction that
+    // activated the membership, so that Space's departure takes them with it.
+    expect(await spaceReaders(workstreamId, hiring.id)).toEqual([MEMBER]);
+    expect(await membershipState(workstreamId, hiring.id)).toBe("active");
+    expect(await intentStates(workstreamId, "add")).toEqual(["settled"]);
+  });
+
+  it("given a reader the Channel's conversation refuses, when the Channel is added, then its reason reaches the caller and nothing stays staged", async () => {
+    const mine = await personalSpace("Mine", [OWNER]);
+    const hiring = await personalSpace("Hiring", [OWNER, MEMBER]);
+    const workstreamId = await createChannel("add-refused", [asSpaceId(mine.id)]);
+    // The member leaves between the Space naming them and the Channel seating
+    // them. The conversation reads membership from D1 itself, which is what
+    // refuses the seat.
+    await env.DB.prepare("UPDATE workspace_members SET status = 'suspended' WHERE workspace_id = ? AND user_id = ?")
+      .bind(WORKSPACE_ID, MEMBER).run();
+
+    const refused = await request(`/spaces/${hiring.id}/channels`, OWNER_AUTH, { workstreamId });
+
+    expect(refused).toMatchObject({ status: 422, body: { error: { code: "invalid_workspace_member" } } });
+    expect(await membershipState(workstreamId, hiring.id)).toBe("removed");
+    expect(await intentStates(workstreamId, "add")).toEqual(["cancelled"]);
+    expect((await channelSpaceSources(workstreamId)).map((source) => source.spaceId)).toEqual([mine.id]);
+  });
+
+  it("given a Channel in two Spaces, when it leaves one, then the readers only that Space supplied are withdrawn and the removal settles", async () => {
+    const mine = await personalSpace("Mine", [OWNER]);
+    const hiring = await personalSpace("Hiring", [OWNER, MEMBER]);
+    const workstreamId = await createChannel("leave-one", [asSpaceId(mine.id), asSpaceId(hiring.id)]);
+    expect(await seated(workstreamId, MEMBER)).toBe(true);
+
+    const removed = await request(`/spaces/${hiring.id}/channels/${workstreamId}`, OWNER_AUTH, undefined, "DELETE");
+
+    expect(removed).toMatchObject({ status: 200, body: { id: hiring.id, channelCount: 0 } });
+    expect(await seated(workstreamId, MEMBER)).toBe(false);
+    expect(await seated(workstreamId, OWNER)).toBe(true);
+    expect((await channelSpaceSources(workstreamId)).map((source) => source.spaceId)).toEqual([mine.id]);
+    expect(await membershipState(workstreamId, hiring.id)).toBe("removed");
+    expect(await intentStates(workstreamId, "remove")).toEqual(["settled"]);
+  });
+
+  it("given a removal whose narrowing is not announced, when the alarm resumes it, then WorkspaceDO finishes it without the Queue", async () => {
+    const company = await createSpace("workspace", "Company");
+    const mine = await personalSpace("Mine", [OWNER]);
+    const workstreamId = await createChannel("narrowed", [asSpaceId(company.id), asSpaceId(mine.id)]);
+    // A revocation Queue outage, which nothing in this runtime can produce on
+    // the real binding: every send through it is refused for this request.
+    const revocations = Object.getPrototypeOf(env.ACCESS_REVOCATION_QUEUE) as { send: (body: unknown) => Promise<void> };
+    const refuse = vi.spyOn(revocations, "send").mockImplementation(async () => {
+      throw new Error("revocation_queue_unavailable");
+    });
+
+    const refused = await request(`/spaces/${company.id}/channels/${workstreamId}`, OWNER_AUTH, undefined, "DELETE");
+
+    // Not settled: every non-participant reader's socket is still open, so the
+    // intent is left for the alarm rather than recorded as delivered.
+    expect(refused).toMatchObject({ status: 503, body: { error: { code: "channel_narrowing_publish_failed" } } });
+    expect(await membershipState(workstreamId, company.id)).toBe("removing");
+    expect(await intentStates(workstreamId, "remove")).toEqual(["pending"]);
+    refuse.mockRestore();
+
+    const activity = vi.mocked((Object.getPrototypeOf(env.ACTIVITY_QUEUE) as {
+      sendBatch: (messages: Iterable<MessageSendRequest<unknown>>) => Promise<void>;
+    }).sendBatch);
+    activity.mockClear();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE space_intents SET not_before = 0 WHERE kind = 'remove'");
+    });
+    await runDurableObjectAlarm(workspace());
+
+    expect(await membershipState(workstreamId, company.id)).toBe("removed");
+    expect(await intentStates(workstreamId, "remove")).toEqual(["settled"]);
+    expect((await channelSpaceSources(workstreamId)).map((source) => source.spaceId)).toEqual([mine.id]);
+    // Finished in place: nothing was handed to a Worker to resume.
+    const sent = activity.mock.calls.flatMap(([messages]) => [...messages])
+      .map((message) => (message.body as { type?: unknown }).type);
+    expect(sent).not.toContain("space_intent_resume");
+  });
+
+  it("given a removal that dies before the Channel is asked, when the alarm resumes it, then the readers only that Space supplied are withdrawn", async () => {
+    const mine = await personalSpace("Mine", [OWNER]);
+    const hiring = await personalSpace("Hiring", [OWNER, MEMBER]);
+    const workstreamId = await createChannel("remove-replayed", [asSpaceId(mine.id), asSpaceId(hiring.id)]);
+    expect(await seated(workstreamId, MEMBER)).toBe(true);
+    // The first canonical operation fails: the plan transaction has already
+    // withdrawn the source from the Channel's record, and nobody was removed.
+    const unreachable = vi.spyOn(WorkstreamObjectClient.prototype, "removeParticipant")
+      .mockRejectedValueOnce(new Error("conversation_unreachable"));
+
+    const failed = await request(`/spaces/${hiring.id}/channels/${workstreamId}`, OWNER_AUTH, undefined, "DELETE");
+    unreachable.mockRestore();
+
+    expect(failed.status).toBe(503);
+    expect(await seated(workstreamId, MEMBER)).toBe(true);
+    expect(await intentStates(workstreamId, "remove")).toEqual(["pending"]);
+
+    await resumeOnAlarm();
+
+    // The resume replays the retraction the plan recorded, so the reader the
+    // departing Space supplied is withdrawn, not left as a direct reader.
+    expect(await seated(workstreamId, MEMBER)).toBe(false);
+    expect(await seated(workstreamId, OWNER)).toBe(true);
+    expect(await membershipState(workstreamId, hiring.id)).toBe("removed");
+    expect(await intentStates(workstreamId, "remove")).toEqual(["settled"]);
+  });
+
+  it("given an add that dies after seating a reader, when the alarm resumes it, then the membership settles with that reader attributed", async () => {
+    const mine = await personalSpace("Mine", [OWNER]);
+    const hiring = await personalSpace("Hiring", [OWNER, MEMBER]);
+    const workstreamId = await createChannel("add-replayed", [asSpaceId(mine.id)]);
+
+    await addDyingAfterSeating(workstreamId, hiring.id);
+    expect(await membershipState(workstreamId, hiring.id)).toBe("joining");
+
+    await resumeOnAlarm();
+
+    expect(await membershipState(workstreamId, hiring.id)).toBe("active");
+    expect(await intentStates(workstreamId, "add")).toEqual(["settled"]);
+    expect(await seated(workstreamId, MEMBER)).toBe(true);
+    expect(await spaceReaders(workstreamId, hiring.id)).toEqual([MEMBER]);
+  });
+
+  it("given an add that dies after seating a reader, when the Space moves on before the resume, then that reader is withdrawn with the add", async () => {
+    const mine = await personalSpace("Mine", [OWNER]);
+    const hiring = await personalSpace("Hiring", [OWNER, MEMBER]);
+    const workstreamId = await createChannel("add-superseded", [asSpaceId(mine.id)]);
+
+    await addDyingAfterSeating(workstreamId, hiring.id);
+    // The Space's audience moves after the add was staged: applying the Space
+    // as it is now would be an add nobody asked for.
+    const moved = await workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: asSpaceId(hiring.id),
+      operationId: crypto.randomUUID(),
+      audience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
+    });
+    if (!moved.ok) throw new Error(moved.code);
+
+    await resumeOnAlarm();
+
+    expect(await intentStates(workstreamId, "add")).toEqual(["cancelled"]);
+    expect(await membershipState(workstreamId, hiring.id)).toBe("removed");
+    // The reader the dead attempt seated was recorded as this Space's when it
+    // was planned, so abandoning the add takes them out again.
+    expect(await seated(workstreamId, MEMBER)).toBe(false);
+    expect((await channelSpaceSources(workstreamId)).map((source) => source.spaceId)).toEqual([mine.id]);
+  });
+
+  it("given a removal still in flight, when the alarm reaches its intent, then the alarm leaves it to the request", async () => {
+    const mine = await personalSpace("Mine", [OWNER]);
+    const hiring = await personalSpace("Hiring", [OWNER, MEMBER]);
+    const workstreamId = await createChannel("remove-in-flight", [asSpaceId(mine.id), asSpaceId(hiring.id)]);
+    const original = WorkstreamObjectClient.prototype.removeParticipant;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let removals = 0;
+    const slow = vi.spyOn(WorkstreamObjectClient.prototype, "removeParticipant")
+      .mockImplementation(async function (this: WorkstreamObjectClient, ...args) {
+        removals += 1;
+        // Only the request's own call waits; a second run of the intent would not.
+        if (removals === 1) await held;
+        return original.apply(this, args);
+      });
+
+    const pending = request(`/spaces/${hiring.id}/channels/${workstreamId}`, OWNER_AUTH, undefined, "DELETE");
+    for (let attempt = 0; attempt < 200 && removals === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(removals).toBe(1);
+
+    await resumeOnAlarm();
+    // The alarm claimed the intent and left it: the request holding it is
+    // the one finishing it.
+    expect(removals).toBe(1);
+
+    release();
+    expect(await pending).toMatchObject({ status: 200 });
+    slow.mockRestore();
+    expect(removals).toBe(1);
+    expect(await seated(workstreamId, MEMBER)).toBe(false);
+    expect(await intentStates(workstreamId, "remove")).toEqual(["settled"]);
+  });
+});
+
+/**
+ * An add whose Worker dies after the Channel seated the Space's reader: the
+ * seat goes through and the request then never comes back, so the object is
+ * evicted with the intent staged and the membership `joining`.
+ */
+async function addDyingAfterSeating(workstreamId: WorkstreamId, spaceId: string): Promise<void> {
+  const original = WorkstreamObjectClient.prototype.addParticipant;
+  const hang = vi.spyOn(WorkstreamObjectClient.prototype, "addParticipant")
+    .mockImplementation(async function (this: WorkstreamObjectClient, ...args) {
+      await original.apply(this, args);
+      return new Promise(() => undefined);
+    });
+  const pending = request(`/spaces/${spaceId}/channels`, OWNER_AUTH, { workstreamId })
+    .then(() => null, (error: unknown) => error);
+  for (let attempt = 0; attempt < 400 && !await seated(workstreamId, MEMBER); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  expect(await seated(workstreamId, MEMBER)).toBe(true);
+  await runInDurableObject(workspace(), (_instance, state) => state.abort("add_died_after_seating"))
+    .then(() => null, (error: unknown) => error);
+  await pending;
+  hang.mockRestore();
+}
+
+/** One alarm with every unsettled intent due: the alarm resumes each in place. */
+async function resumeOnAlarm(): Promise<void> {
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec("UPDATE space_intents SET not_before = 0 WHERE state IN ('pending', 'applied')");
+  });
+  await runDurableObjectAlarm(workspace());
+}

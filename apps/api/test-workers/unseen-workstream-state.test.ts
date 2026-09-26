@@ -25,10 +25,11 @@ import {
   type ConversationEffect,
 } from "@rally/contracts";
 
-import { conversationObjectName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { Env } from "../src/env";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import { deliverChildEffects } from "./helpers/conversation-effects";
+import { hostedParentStub } from "./helpers/hosted-parent";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000007b1");
 // An earlier object may still finish an alarm while reset is in flight. Each
@@ -80,7 +81,7 @@ beforeEach(async () => {
     env.DB.prepare(`INSERT INTO workspaces(id, region) VALUES (?, 'global')`).bind(WORKSPACE_ID),
     env.DB.prepare(`CREATE TABLE workspace_members (access_class TEXT NOT NULL DEFAULT 'member', incarnation TEXT DEFAULT 'existing-member',
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
-      role TEXT NOT NULL, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
+      role TEXT NOT NULL, last_seen_at TEXT, revision INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (workspace_id, user_id)
     )`),
     env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'owner', '2026-08-22T20:00:00.000Z')`).bind(WORKSPACE_ID, CREATOR_ID),
@@ -234,7 +235,7 @@ function nextEvent(socket: WebSocket, type: string): Promise<Record<string, unkn
 /**
  * What the sidebar is currently being told about one person.
  *
- * Read from the parent object's projection of the child's effects rather than
+ * Read from the hosted parent's projection of the child's effects rather than
  * from the child's outbox: the outbox holds every effect ever enqueued until
  * it is delivered, while the parent's row is the current answer. Delivery is
  * driven by hand through the real Queue consumer, which makes the read
@@ -244,12 +245,11 @@ async function viewerState(stub: DurableObjectStub, userId: string): Promise<
   Extract<ConversationEffect, { kind: "directory_user" }> | null
 > {
   await deliverChildEffects(env, stub);
-  const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
-    workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
-  ));
-  const rows = await runInDurableObject(parent, (_instance, state) =>
+  const rows = await runInDurableObject(hostedParentStub(env, WORKSPACE_ID), (_instance, state) =>
     state.storage.sql.exec<{ effect_json: string }>(
-      `SELECT effect_json FROM substream_user_directory WHERE user_id = ? ORDER BY substream_id`,
+      `SELECT effect_json FROM parent_child_viewer_projections
+        WHERE parent_id = ? AND user_id = ? ORDER BY substream_id`,
+      WORKSTREAM_ID,
       userId,
     ).toArray());
   const effects = rows

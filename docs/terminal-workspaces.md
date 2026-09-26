@@ -324,9 +324,10 @@ nothing between two of its calls. Daytona's
 object-local claim that outlives the provider request limit and reconcile
 observed provider state after ambiguous calls. The workspace directory carries
 one Terminal deadline per work stream: the earliest across every conversation
-under it, which `WorkstreamDO` folds into the main conversation's projection
-(see [`workstream-durable-object.md`](workstream-durable-object.md)). When that
-entry comes due the sweep asks the work stream's parent object which
+under it, which the Channel's parent in `WorkspaceDO` folds into the main
+conversation's projection (see
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md)). When that
+entry comes due the sweep asks the work stream's parent which
 conversations are due (`childTerminalDeadlines`) and reconciles each one's
 sandbox on its own row; a work stream that lists none is treated as the main
 conversation's, as every work stream was before conversations reported their
@@ -765,7 +766,7 @@ its owner's lease from another conversation until it yields, are in
 `test-workers/terminal-authority.test.ts` proves the lease SQL for a holder
 that ran elsewhere and that a factory bound to the owner's conversation leaves
 the agent's object, and `test-workers/durable-object-runtime.test.ts` proves
-`WorkstreamDO` forwards the earliest conversation deadline and lists the
+a Channel's parent forwards the earliest conversation deadline and lists the
 conversations that own one. The per-call lease is `terminal-runtime.test.ts`:
 one run's writes release between calls and re-run readiness when the row moved,
 and a read proceeds while another run's write holds the lease where a write

@@ -393,7 +393,7 @@ solved. See [`workstream-pinning.md`](workstream-pinning.md), which owns
 workspace-directory paging.
 
 What the accumulation does change is the index. The ordinary WorkspaceDO query
-uses `workspace_workstream_directory_list_idx` over archive, system kind,
+uses `workspace_workstream_directory_list_idx` on `channels` over archive, system kind,
 recency, and work-stream ID, so hidden digest rows do not require a fan-out or a
 scan of child databases. A listing that asks for machinery uses the same bounded
 local SQLite authority and simply widens its predicate.

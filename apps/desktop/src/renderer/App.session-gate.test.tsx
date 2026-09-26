@@ -139,7 +139,7 @@ describe('SessionGate identity-first ordering', () => {
     expect(sessionState.getOnboardingState).not.toHaveBeenCalled();
   });
 
-  it('starts organization admission and the landing pair while organization details are pending', async () => {
+  it('starts organization admission and the landing feeds while organization details are pending', async () => {
     sessionState.session = { ...identitySession, workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'global', role: 'owner' } };
     const profile = { id: 'workspace-1', name: 'Rally Studio', region: 'global', currentUser: { id: 'user-1', email: 'adam@example.com', name: 'Adam', role: 'owner' } };
     let finishProfile!: (value: typeof profile) => void;
@@ -167,14 +167,14 @@ describe('SessionGate identity-first ordering', () => {
     act(() => setCachedWorkstreams(client, [first, ...recent]));
     await waitFor(() => expect(sessionState.api.getSocketTicket).toHaveBeenCalledTimes(6));
     expect(sessionState.api.getSocketTicket.mock.calls.some(([target]) => target === id)).toBe(true);
-    expect(sessionState.api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(6);
+    expect(sessionState.api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
     expect(screen.getByText('Opening organization…')).toBeVisible();
     await act(async () => { finishProfile(profile); });
     expect(await screen.findByText('workstream')).toBeVisible();
     expect(window.location.hash).toBe(`#/workstreams/${id}`);
     expect(sessionState.api.getWorkspaceSocketTicket).toHaveBeenCalledTimes(1);
     expect(sessionState.api.getSocketTicket).toHaveBeenCalledTimes(6);
-    expect(sessionState.api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(6);
+    expect(sessionState.api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
   });
 
   it('draws the settings surface on the session while the organization read is still in flight', async () => {

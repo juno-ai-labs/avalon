@@ -33,12 +33,16 @@ const auth: AuthContext = {
 /**
  * The parent's two answers the ticket path depends on: that this id names a
  * work stream, and whether this person may read its conversations. Both are
- * the real `WorkstreamDO`'s in `test-workers/conversation-parent-contract`;
- * here they are the seam, so the Worker-side sequence is what is under test.
+ * the real parent's, hosted in `WorkspaceDO`, in
+ * `test-workers/conversation-parent-contract`; here they are the seam, so
+ * the Worker-side sequence is what is under test.
  */
 function parentDecisions(authorized = true, archived = false, membershipVersion = 0) {
   return {
-    authority: vi.fn(async () => ({ exists: true, authorityGeneration: 7, archived })),
+    resolveHostedParent: vi.fn(async () => ({
+      kind: "workstream" as const,
+      authority: { exists: true, authorityGeneration: 7, archived },
+    })),
     authorizeViewer: vi.fn(async () => ({ authorized, archived, membershipVersion })),
   };
 }
@@ -65,8 +69,8 @@ function environment(
         }),
       }),
     }),
-    WORKSTREAM_DOS: createCloudflareTestBinding<Env["WORKSTREAM_DOS"]>({
-      idFromName: () => createTestDurableObjectId("workstream"),
+    WORKSPACE_DOS: createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+      idFromName: () => createTestDurableObjectId("workspace"),
       get: () => parent,
     }),
     SUBSTREAM_AGENTS: createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>({
