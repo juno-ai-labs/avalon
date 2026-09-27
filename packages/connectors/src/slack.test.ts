@@ -113,6 +113,9 @@ describe("Slack connector", () => {
         userId: "UADA",
         threadTs: "1786031900.000100",
         isThread: true,
+        // The binding key the host resolves the reply under, spelled here.
+        externalConversationPath: ["CENG", "1786031900.000100"],
+        externalConversationInstallationId: "slack:TACME",
       },
       externalPeople: expect.arrayContaining([
         expect.objectContaining({ providerUserId: "UADA", role: "actor" }),

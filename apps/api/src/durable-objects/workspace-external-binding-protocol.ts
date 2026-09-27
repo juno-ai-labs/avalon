@@ -27,6 +27,12 @@ export type ExternalPath = z.infer<typeof ExternalPathSchema>;
 /** `<connector type>:<provider installation>`, e.g. `slack:T123`. */
 export const ExternalInstallationIdSchema = z.string().regex(/^[a-z][a-z0-9_]*:.+$/u);
 
+/** The key a connector writes beside an activity's metadata for its binding. */
+export const ExternalConversationKeySchema = z.object({
+  installationId: ExternalInstallationIdSchema,
+  path: ExternalPathSchema,
+});
+
 export const ExternalBindingConversationTargetSchema = z.strictObject({
   kind: z.literal("conversation"),
   parentKind: z.enum(["workstream", "automation"]),
