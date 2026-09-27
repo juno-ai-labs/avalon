@@ -6473,9 +6473,12 @@ async function readAutomationRunDefinition(
     workspaceId: asWorkspaceId(input.workspaceId),
     automationId: run.automationId,
     runId: run.runId,
-    // The reference's revision, not the run row's: a continued run carries
-    // the revision accepted when it continued.
-    definitionRevision: run.definitionRevision,
+    // A continued run reads the revision accepted when it continued, not the
+    // run row's own. Only a continuation names it: every other read keeps the
+    // request shape an older SidekickDO's strict schema accepts, so a
+    // mixed-version rollout refuses continuations at worst, never scheduled
+    // runs.
+    ...(input.automationContinuation ? { definitionRevision: run.definitionRevision } : {}),
   }));
 }
 
