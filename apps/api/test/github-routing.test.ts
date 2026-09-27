@@ -337,6 +337,42 @@ describe("shared GitHub App routing", () => {
     expect(failSetupInRegion).toHaveBeenCalledWith("enterprise", state, "github_setup_failed");
   });
 
+  it("discards check runs and unfinished workflow runs before routing, and routes a finished run", async () => {
+    const database = new FakeDatabase();
+    database.routes.push(
+      { installationId: "42", region: "global", workspaceId: "workspace-global", status: "active" },
+    );
+    const regions: Region[] = [];
+    const service = new GitHubRoutingService(environment(database, new FakeBucket()), {
+      now: () => NOW,
+      ingestInRegion: async (region) => {
+        regions.push(region);
+        return { accepted: true, duplicate: false, activityCount: 1 };
+      },
+    });
+    const deliveries = [
+      await signedDelivery("check-created", "check_run", { action: "created", installation: { id: 42 } }),
+      await signedDelivery("check-completed", "check_run", { action: "completed", installation: { id: 42 } }),
+      await signedDelivery("run-requested", "workflow_run", { action: "requested", installation: { id: 42 } }),
+      await signedDelivery("run-in-progress", "workflow_run", { action: "in_progress", installation: { id: 42 } }),
+    ];
+    for (const delivery of deliveries) {
+      await expect(service.ingestGitHub(delivery.bytes, delivery.headers)).resolves.toEqual({
+        accepted: true,
+        duplicate: false,
+        activityCount: 0,
+      });
+    }
+    expect(regions).toEqual([]);
+
+    const completed = await signedDelivery("run-completed", "workflow_run", {
+      action: "completed",
+      installation: { id: 42 },
+    });
+    await service.ingestGitHub(completed.bytes, completed.headers);
+    expect(regions).toEqual(["global"]);
+  });
+
   it("fans out installation deliveries and disables every route after deletion", async () => {
     const database = new FakeDatabase();
     database.routes.push(

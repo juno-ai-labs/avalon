@@ -221,11 +221,11 @@ describe("routing connector activity before Suggested Work", () => {
     // `opportunity_enqueued` derived from "unclaimed" alone would report every
     // one of these as admission load, which is the traffic anyone checking the
     // gate will query.
-    const { env, opportunitySources, recorded } = processingEnv(false, "github.check_run.completed");
+    const { env, opportunitySources, recorded } = processingEnv(false, "github.workflow_run.completed");
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
 
     const event = connectorEvent();
-    event.activity.eventType = "github.check_run.completed";
+    event.activity.eventType = "github.workflow_run.completed";
     await processConnectorEvent(env, event);
 
     expect(opportunitySources).toEqual([]);
