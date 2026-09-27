@@ -2764,14 +2764,23 @@ describe("Slack replies routed by external conversation bindings", () => {
     };
   }
 
-  function slackStub(): { posted: Array<Record<string, unknown>>; fetcher: ReturnType<typeof vi.fn> } {
+  function slackStub(): {
+    posted: Array<Record<string, unknown>>;
+    reactions: Array<Record<string, unknown>>;
+    fetcher: ReturnType<typeof vi.fn>;
+  } {
     const posted: Array<Record<string, unknown>> = [];
+    const reactions: Array<Record<string, unknown>> = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
       const json = (body: unknown) => new Response(JSON.stringify(body), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
+      if (url.pathname.endsWith("reactions.add")) {
+        reactions.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return json({ ok: true });
+      }
       if (url.pathname.endsWith("users.info")) {
         return json({
           ok: true,
@@ -2788,7 +2797,7 @@ describe("Slack replies routed by external conversation bindings", () => {
       throw new Error(`Unexpected Slack request ${url}`);
     });
     vi.stubGlobal("fetch", fetcher);
-    return { posted, fetcher };
+    return { posted, reactions, fetcher };
   }
 
   it("delivers a reply in a run's bound thread to that run, as the sender's external message", async () => {
@@ -2799,9 +2808,10 @@ describe("Slack replies routed by external conversation bindings", () => {
     insertSlackEventJob(objectDatabase, "event:reply", dmMessage("EvReply", {
       ts: "1727.100", threadTs: "1727.002", text: "Nothing from me",
     }));
-    const { posted } = slackStub();
+    const { posted, reactions } = slackStub();
     const admitted: Array<Record<string, unknown>> = [];
     await new SlackAgentService(slackMembershipEnvironment(database, instance, credentialsKey, vi.fn(async () => undefined), undefined, {
+      ...sidekickRuns("needs_input"),
       SUBSTREAM_AGENTS: createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>(testSubstreamAgentsBinding(database, {
         extra: {
           admitExternalMessage: vi.fn(async (input: Record<string, unknown>) => {
@@ -2831,9 +2841,35 @@ describe("Slack replies routed by external conversation bindings", () => {
         permalink: expect.stringContaining("/archives/D1/p1727100"),
       },
     });
-    // No Agent Channel, no session, and nothing said in Slack.
+    // No Agent Channel, no session, and nothing said in Slack beyond the
+    // acknowledgement on the reply itself.
     expect(objectDatabase.prepare("SELECT COUNT(*) AS count FROM slack_agent_sessions").get()).toEqual({ count: 0 });
     expect(posted).toEqual([]);
+    expect(reactions).toEqual([{ channel: "D1", timestamp: "1727.100", name: "eyes" }]);
+  });
+
+  it("marks a bound reply to a paused Sidekick as held rather than acknowledged", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    seedBinding(objectDatabase, ["D1", "1727.002"]);
+    insertSlackEventJob(objectDatabase, "event:paused-reply", dmMessage("EvPausedReply", {
+      ts: "1727.110", threadTs: "1727.002", text: "Here you go",
+    }));
+    const { reactions } = slackStub();
+    await new SlackAgentService(slackMembershipEnvironment(database, instance, credentialsKey, vi.fn(async () => undefined), undefined, {
+      ...sidekickRuns("needs_input", [], "paused"),
+      SUBSTREAM_AGENTS: createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>(testSubstreamAgentsBinding(database, {
+        extra: {
+          admitExternalMessage: vi.fn(async (input: Record<string, unknown>) => ({ status: 200, bodyJson: JSON.stringify({
+            turn: { turnId: "turn-1", clientMessageId: input.clientMessageId, createdAt: "2026-09-01T00:00:00.000Z" },
+            deliveryState: "pending",
+          }) })),
+        },
+      })),
+    })).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:paused-reply");
+
+    expect(reactions).toEqual([{ channel: "D1", timestamp: "1727.110", name: "octagonal_sign" }]);
   });
 
   it("lifts a disconnect's suspension when the installation delivers a reply, and delivers it", async () => {
@@ -2876,14 +2912,14 @@ describe("Slack replies routed by external conversation bindings", () => {
   });
 
   /** The Sidekick object's answer about the run the DM's latest request belongs to. */
-  function sidekickRuns(state: string, reads: Array<Record<string, unknown>> = []): Partial<Env> {
+  function sidekickRuns(state: string, reads: Array<Record<string, unknown>> = [], lifecycle = "active"): Partial<Env> {
     return {
       AUTOMATION_DOS: createCloudflareTestBinding<Env["AUTOMATION_DOS"]>({
         idFromName: (name: string) => createTestDurableObjectId(name),
         get: () => ({
           readRunState: async (request: Record<string, unknown>) => {
             reads.push(request);
-            return { state, lifecycle: "active", completedAt: null };
+            return { state, lifecycle, completedAt: null };
           },
         }),
       }),
@@ -3063,6 +3099,8 @@ describe("Slack replies routed by external conversation bindings", () => {
     };
   }
 
+  const roomPosts: Array<Record<string, unknown>> = [];
+
   /** Slack's answers for a room and its members; U456 is the linked member. */
   function roomStub(room: Record<string, unknown>, members: string[]): void {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -3073,6 +3111,10 @@ describe("Slack replies routed by external conversation bindings", () => {
       });
       if (url.pathname.endsWith("conversations.info")) return json({ ok: true, channel: room });
       if (url.pathname.endsWith("conversations.members")) return json({ ok: true, members, response_metadata: {} });
+      if (url.pathname.endsWith("chat.postMessage")) {
+        roomPosts.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return json({ ok: true, channel: String(room.id), ts: "9.0" });
+      }
       if (url.pathname.endsWith("users.info")) {
         const user = String((JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>).user ?? "");
         return json({
@@ -3154,6 +3196,7 @@ describe("Slack replies routed by external conversation bindings", () => {
       type: "member_joined_channel", user: "UBOT", inviter: "U456", channel: "CPUB", channel_type: "C",
     }));
     roomStub({ id: "CPUB", name: "launch", is_private: false, is_im: false, is_mpim: false }, []);
+    roomPosts.length = 0;
     const links = captureRoomLinks(instance);
 
     await new SlackAgentService(slackMembershipEnvironment(
@@ -3164,6 +3207,9 @@ describe("Slack replies routed by external conversation bindings", () => {
     expect(links[0]).toMatchObject({
       path: ["CPUB"], userId: LINKED_USER, space: { name: "launch", scope: "workspace" }, participantUserIds: [],
     });
+    // One line in the room saying what inviting Rally did.
+    expect(roomPosts).toEqual([expect.objectContaining({ channel: "CPUB", text: expect.stringContaining("Rally is here") })]);
+    expect(roomPosts[0]).not.toHaveProperty("thread_ts");
   });
 
   it("suspends a room when the bot leaves or it is archived, moves it when renumbered, and ignores a person leaving", async () => {

@@ -1807,6 +1807,14 @@ export class SlackAgentService {
         outcome: linked.outcome,
         ...(linked.outcome === "blocked" || linked.outcome === "ignored" ? { reason: linked.reason } : {}),
       });
+      if (linked.outcome === "linked" && linked.created) {
+        // One line, once per room: what inviting Rally did, and how to use it.
+        await slackApi(token, "chat.postMessage", {
+          channel: channelId,
+          client_msg_id: await stableUuid(`room-linked:${installationId}:${channelId}`),
+          text: "Rally is here. Mention @Rally in a thread to start work on it; each thread becomes a Channel in this conversation's Rally Space.",
+        }, AbortSignal.timeout(5_000));
+      }
       return true;
     }
     const reason: ExternalBindingSuspensionReason = type === "channel_archive" || type === "group_archive"
@@ -1876,7 +1884,7 @@ export class SlackAgentService {
      */
     unverifiable: "throw" | "fall_through" = "throw",
   ): Promise<
-    | { outcome: "linked"; spaceId: string }
+    | { outcome: "linked"; spaceId: string; created?: boolean }
     | { outcome: "ignored"; reason: string; channel?: SlackChannelResolution }
     | { outcome: "unresolved"; channel?: SlackChannelResolution }
     | { outcome: "blocked"; reason: string }
@@ -2002,7 +2010,7 @@ export class SlackAgentService {
         ? { outcome: "unresolved", channel }
         : { outcome: "blocked", reason: codeShaped(linked.code) };
     }
-    return { outcome: "linked", spaceId: linked.spaceId };
+    return { outcome: "linked", spaceId: linked.spaceId, created: linked.outcome === "linked" };
   }
 
   /** The active Rally member a Slack user is, when Rally knows; never a guest. */
@@ -2072,16 +2080,7 @@ export class SlackAgentService {
     ).latest;
     const requestTs = latest?.path[1];
     if (!latest || !requestTs) return false;
-    const run = await (await durableObjectStubForWorkspace(
-      this.env,
-      this.env.AUTOMATION_DOS,
-      asWorkspaceId(connection.workspace_id),
-      automationDOName(this.env.AVALON_REGION, asWorkspaceId(connection.workspace_id), asAutomationId(latest.sidekickId)),
-    )).readRunState({
-      workspaceId: asWorkspaceId(connection.workspace_id),
-      automationId: latest.sidekickId,
-      runId: latest.runId,
-    });
+    const run = await this.sidekickRunState(connection, latest.sidekickId, latest.runId);
     if (!run || run.state === "completed" || run.state === "failed" || run.state === "stopped") return false;
     await slackApi(token, "chat.postMessage", {
       channel: channelId,
@@ -2133,6 +2132,44 @@ export class SlackAgentService {
       parent_kind: target.parentKind,
       parent_id: target.parentId,
       substream_id: target.substreamId,
+    });
+    // The reply reached the run; the person who wrote it sees that on their
+    // message. A paused Sidekick holds it rather than acting on it, and the
+    // reaction says so instead.
+    const reactions = resolveSlackReactions(slackConnectionReactionOverride(connection));
+    try {
+      const run = target.parentKind === "automation"
+        ? await this.sidekickRunState(connection, target.parentId, target.substreamId)
+        : null;
+      const paused = run !== null && run.lifecycle !== "active";
+      await this.executeSlackReaction(connection, token, {
+        kind: "reaction",
+        channelId: message.channelId,
+        timestamp: message.messageTs,
+        add: paused ? reactions.outcomes.stopped : reactions.acknowledgement,
+        remove: null,
+        fallback: paused ? SLACK_DEFAULT_REACTIONS.outcomes.stopped : SLACK_DEFAULT_REACTIONS.acknowledgement,
+      });
+    } catch (error) {
+      // The reply is admitted; a reaction that cannot be placed does not undo that.
+      logWarn(this.env, "external_binding_acknowledgement_failed", {
+        workspace_id: connection.workspace_id,
+        reason: diagnosticErrorCode(error, "external_binding_acknowledgement_failed"),
+      });
+    }
+  }
+
+  /** A Sidekick run's state and its Sidekick's lifecycle, from the Sidekick object. */
+  private async sidekickRunState(connection: SlackConnectionRow, sidekickId: string, runId: string) {
+    return (await durableObjectStubForWorkspace(
+      this.env,
+      this.env.AUTOMATION_DOS,
+      asWorkspaceId(connection.workspace_id),
+      automationDOName(this.env.AVALON_REGION, asWorkspaceId(connection.workspace_id), asAutomationId(sidekickId)),
+    )).readRunState({
+      workspaceId: asWorkspaceId(connection.workspace_id),
+      automationId: sidekickId,
+      runId,
     });
   }
 
