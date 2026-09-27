@@ -90,9 +90,8 @@ beforeEach(async () => {
   await runInDurableObject(organization(), (_instance, state) => {
     for (const [parentId, title, breakout] of [[channelA, "Channel A", breakoutA], [channelB, "Channel B", breakoutB]] as const) {
       state.storage.sql.exec(`INSERT INTO parent_metadata
-        (parent_id, parent_kind, workspace_id, region, authority_generation, title, description, preview, scope,
-         exact_state, last_activity_at, created_at, updated_at)
-        VALUES (?, 'workstream', ?, 'global', 1, ?, '', '', 'personal', 'idle', 0, 0, 0)`, parentId, workspaceId, title);
+        (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
+        VALUES (?, 'workstream', ?, 'global', 1, 0, 0)`, parentId, workspaceId);
       insertChannelRow(state, parentId, title);
       state.storage.sql.exec(`INSERT INTO parent_children (parent_id, substream_id, kind, created_at, title)
         VALUES (?, '0', 'main', 0, 'Main'), (?, ?, 'child', 0, 'Breakout')`, parentId, parentId, breakout);
@@ -198,6 +197,25 @@ describe("hosted parent isolation", () => {
     }
     expect(await closedB).toEqual({ code: 1008, reason: "Work-stream control events must be JSON" });
     await finishSockets([channelA, channelB], [socketA, socketB]);
+  });
+});
+
+describe("a parent nothing has described yet", () => {
+  it("admits only its participants until its directory row says otherwise", async () => {
+    // Identity only, as a child's effect ahead of Main leaves it: no
+    // `channels` row, so nothing yet says who the parent is for.
+    const undescribed = "00000000-0000-4000-8000-0000000e00f1";
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO parent_metadata
+        (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
+        VALUES (?, 'workstream', ?, 'global', 1, 0, 0)`, undescribed, workspaceId);
+    });
+    expect(await withHostedParent(organization(), undescribed, (hosted) => hosted.canRead(shared))).toBe(false);
+
+    await runInDurableObject(organization(), (_instance, state) => {
+      insertChannelRow(state, undescribed, "Now described", "workspace");
+    });
+    expect(await withHostedParent(organization(), undescribed, (hosted) => hosted.canRead(shared))).toBe(true);
   });
 });
 

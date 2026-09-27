@@ -95,18 +95,14 @@ function seedIdentity(
   state: DurableObjectState,
   parentId: string,
   parentKind: "space" | "workstream",
-  title: string,
 ): void {
   state.storage.sql.exec(
     `INSERT INTO parent_metadata
-       (parent_id, parent_kind, workspace_id, region, authority_generation, title,
-        description, preview, scope, exact_state, last_activity_at,
-        created_at, updated_at)
-     VALUES (?, ?, ?, 'global', 1, ?, '', '', 'workspace', 'idle', 1, 1, 1)`,
+       (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
+     VALUES (?, ?, ?, 'global', 1, 1, 1)`,
     parentId,
     parentKind,
     WORKSPACE_ID,
-    title,
   );
   state.storage.sql.exec(
     `INSERT INTO parent_children
@@ -139,8 +135,8 @@ async function parkActivityQueue(): Promise<void> {
 /** Both parents, seeded into the one Organization object that hosts them. */
 async function seedParents(): Promise<void> {
   await runInDurableObject(workspace(), (_instance, state) => {
-    seedIdentity(state, SPACE_ID, "space", "Hiring");
-    seedIdentity(state, CHANNEL_ID, "workstream", "Hiring");
+    seedIdentity(state, SPACE_ID, "space");
+    seedIdentity(state, CHANNEL_ID, "workstream");
   });
 }
 

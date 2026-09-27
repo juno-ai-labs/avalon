@@ -1559,16 +1559,18 @@ describe("post_result", () => {
     expect(actual).toEqual(principal);
   });
 
-  it("follows the Channel's directory row, not its parent_metadata copy, when that row says archived", async () => {
+  it("follows the Channel's directory row when that row says archived", async () => {
     const childId = asSubstreamId(crypto.randomUUID());
     // Only the directory row: every sidebar and search reader trusts it, so
-    // the parent's own gate has to agree with it rather than with a copy.
+    // the parent's own gate has to agree with it.
     await runInDurableObject(roomParent(), (_instance, state) => {
       state.storage.sql.exec("UPDATE channels SET archived_at = ? WHERE workstream_id = ?", Date.now(), ROOM_ID);
-      // The parent's own copy still says active: that is the stale case.
+      // The parent's identity row is untouched and still there, so nothing
+      // but the directory row can be what refuses the reservation below.
+      expect(state.storage.sql.exec("SELECT 1 FROM parent_metadata WHERE parent_id = ?", ROOM_ID).toArray()).toHaveLength(1);
       expect(state.storage.sql.exec<{ archived_at: number | null }>(
-        "SELECT archived_at FROM parent_metadata WHERE parent_id = ?", ROOM_ID,
-      ).one().archived_at).toBeNull();
+        "SELECT archived_at FROM channels WHERE workstream_id = ?", ROOM_ID,
+      ).one().archived_at).not.toBeNull();
     });
     await expect(Promise.resolve(roomParent().reserveChild({
       workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: childId, createdByUserId: AUTHOR_ID,

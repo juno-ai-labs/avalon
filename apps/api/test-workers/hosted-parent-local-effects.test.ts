@@ -463,7 +463,7 @@ describe("the Organization's member table", () => {
       expect(reads).toHaveLength(1);
       expect(rows(state)).toMatchObject({ channels: 1, viewers: [{ user_id: OTHER_USER_ID, unread_count: 0 }], outbox: [] });
       expect(state.storage.sql.exec(
-        "SELECT created_by_user_id FROM parent_metadata WHERE parent_id = ?", CHANNEL_ID,
+        "SELECT created_by_user_id FROM channels WHERE workstream_id = ?", CHANNEL_ID,
       ).toArray()).toEqual([{ created_by_user_id: OTHER_USER_ID }]);
     });
   });
