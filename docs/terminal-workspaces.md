@@ -438,7 +438,11 @@ attempting a toolbox command. Daytona SDK `archive()` only accepts the operation
 Rally retains the due archive deadline on its last stable `stopped` intent
 and uses the existing scheduled retry until metadata confirms completion, even
 when an accepted archive request still reads back as stopped. Expiry recovers
-a recoverable failed sandbox before attempting final-diff preservation. SDK
+a recoverable failed sandbox before attempting final-diff preservation. A
+sandbox Daytona reports unrecoverable is deleted and settled by whichever
+transition was due: expiry clears it, and a warm stop or archive retires the
+generation so the next Terminal call starts fresh, as acquisition does. No
+stop, archive or final diff can reach it, so retrying one only fails again. SDK
 `start()` and `recover()` wait for provider lifecycle state, which is insufficient
 proof of toolbox availability. Restore and recovery run a no-op command and
 download `/etc/hostname` before admitting work. Both read-only probes must
@@ -761,13 +765,16 @@ a run's sandbox belongs to is `terminal-run-scope.test.ts` over a table of
 delegations; a side thread's own Daytona name, and a background agent holding
 its owner's lease from another conversation until it yields, are in
 `terminal-coordinator.test.ts`; the sweep holding such a sandbox is in
-`terminal-lifecycle.test.ts`; the port resolution rule is in
+`terminal-lifecycle.test.ts`, as are an unrecoverable sandbox deleted and
+settled rather than retried and a live claim waited out without a provider
+call; the port resolution rule is in
 `workstream-tool-receipt-locality.test.ts`. On real workerd,
 `test-workers/terminal-authority.test.ts` proves the lease SQL for a holder
 that ran elsewhere and that a factory bound to the owner's conversation leaves
 the agent's object, and `test-workers/durable-object-runtime.test.ts` proves
 a Channel's parent forwards the earliest conversation deadline and lists the
-conversations that own one. The per-call lease is `terminal-runtime.test.ts`:
+conversations that own one; `terminal-authority.test.ts` also proves a claim
+and its failure leave the published deadline where it was. The per-call lease is `terminal-runtime.test.ts`:
 one run's writes release between calls and re-run readiness when the row moved,
 and a read proceeds while another run's write holds the lease where a write
 waits; every recovery case there drives the successor through a write, since
@@ -903,8 +910,16 @@ entries derived from `next_terminal_action_at` in the workspace directory
 ([`durable-object-alarms.md`](durable-object-alarms.md)). When the pass finds
 the sandbox held by a live run it is re-checked a minute later; after a
 transition it is re-checked thirty seconds later, which is how long the
-directory effect takes to land off the Queue. Neither counts toward the stall
-report; a deadline the pass finds nothing to do for does.
+directory effect takes to land off the Queue. A pass that finds another pass's
+lifecycle claim still live waits a minute the same way. None of these counts
+toward the stall report; a deadline the pass finds nothing to do for does.
+
+A lifecycle claim does not move the directory deadline it claimed: `stopping`
+still projects the warm stop and `archiving` the archive, beside the claim's
+own expiry. A pass that throws is held behind its alarm entry's backoff, and
+that backoff resets whenever the published instant moves, so a claim that
+swapped the deadline out and a failure that restored it would retry a broken
+transition at its first step forever.
 
 See [`runbook.md`](runbook.md#terminal-provider-activation-and-recovery) for
 activation and recovery. Structured events are
@@ -1142,6 +1157,36 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-09-27 — An unrecoverable sandbox is retired, and a failing pass backs off
+
+**What changed:** The scheduled lifecycle deletes a sandbox Daytona reports as
+`error` with `recoverable: false` and settles the due transition: expiry clears
+it, and a warm stop or archive retires the generation. A lifecycle claim no
+longer moves `next_terminal_action_at`: `stopping` and `archiving` keep
+projecting the deadline they claimed. A pass that finds another pass's claim
+still live now waits (`deferred`) instead of returning `none`.
+
+**Why:** One work stream's sandbox had sat in Daytona's unrecoverable `error`
+state since 2026-09-18. Its warm stop threw
+`terminal_lifecycle_provider_transition_pending` on every pass, about 260 times
+an hour, and would have kept on until its expiry in October, which would also
+have failed trying to preserve a diff from it. Acquisition already deleted and
+replaced a lost sandbox; the sweep never had the same check. The rate came from
+a second fault: the claim swapped the published deadline for its own expiry and
+the failure restored it, and each move reset the alarm entry's backoff, so 796
+of 860 failures in one 90-minute window were "attempt 1".
+
+**Rejected:** Making the alarm store keep an entry's attempt count when its due
+time moves. A move is how a caller says something changed, and the store cannot
+tell a real reschedule from a claim's churn; the fix belongs where the churn is.
+Leaving the warm stop to Daytona's backstop was rejected because the backstop
+does not delete, and the row would still claim a sandbox that cannot serve.
+
+**Respect:** Anything that writes an intermediate lifecycle state has to keep
+the deadline it is acting on in the projection. Since the claimed deadline is
+already past, a live claim no longer surfaces its own expiry as the next
+instant; the pass that meets one defers rather than counting a stall.
 
 ### 2026-09-19 — A provider request reports to the tool call that issued it
 

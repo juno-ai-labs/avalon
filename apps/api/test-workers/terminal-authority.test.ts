@@ -1751,6 +1751,54 @@ describe("Terminal authority on real workerd", () => {
       expect(published.at(-1)).toBe(new Date(0).toISOString());
     });
 
+    it("keeps publishing the claimed deadline while a failing pass claims and releases it", async () => {
+      const stub = agent();
+      await boot(stub);
+      await runInDurableObject(stub, (_instance, state) => {
+        seedWorkstreamRoot(state);
+        seedRunRow(state, RUN_A, "running");
+      });
+      await reserve(stub, RUN_A);
+      await terminal(stub, "attachProviderSandbox", {
+        generation: 1,
+        sandboxId: "daytona-1",
+        lifecycleState: "running",
+        idleExpiresAt: 2_000_000,
+        archiveDueAt: 3_000_000,
+        expireDueAt: 4_000_000,
+        now: 1_500,
+      });
+      await terminal(stub, "beginProviderObservation", { sandboxId: "daytona-1", generation: 1 });
+      const before = (await terminal(stub, "sandbox")).value as { version: number };
+      const clearOutbox = () => runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(`DELETE FROM durable_outbox`);
+      });
+
+      // The alarm entry for this work stream resets its retry gate whenever
+      // the published instant moves. A pass that claims the warm stop and
+      // then fails must leave it where it was, or every failure retries at
+      // its first backoff step.
+      const warmStop = new Date(2_000_000).toISOString();
+      await clearOutbox();
+      const claimed = await terminalCommonEffects(stub, "claimLifecycleTransition", {
+        lifecycleState: "stopping",
+        claimId: "claim-stop",
+        claimExpiresAt: Date.now() + 16 * 60_000,
+        generation: 1,
+        version: before.version,
+        now: 2_500_000,
+      });
+      await clearOutbox();
+      const released = await terminalCommonEffects(stub, "failLifecycleClaim", {
+        lifecycleState: "running",
+        failureCode: "stopped_provider_failed",
+        claimId: "claim-stop",
+        now: 2_600_000,
+      });
+
+      expect([...claimed, ...released].filter((deadline) => deadline !== warmStop)).toEqual([]);
+    });
+
     it("clears the published deadline when the sandbox expires", async () => {
       const stub = agent();
       await boot(stub);
