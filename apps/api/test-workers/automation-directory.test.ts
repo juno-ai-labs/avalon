@@ -178,7 +178,7 @@ describe("automation directory", () => {
       { id: automationId, status: "draft" },
     ]);
     expect(await workspaceStub().automationOwner({ workspaceId: WORKSPACE_ID, automationId }))
-      .toEqual({ owningWorkstreamId: ROOM_ID });
+      .toEqual({ owningWorkstreamId: ROOM_ID, owningSubstreamId: "0" });
     // A member who is not in the room does not get the room's rail at all.
     // Asked inside the object: a rejection over the stub is reported a second
     // time as unhandled, which fails the run even when the assertion held.
