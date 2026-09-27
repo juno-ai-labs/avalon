@@ -1674,6 +1674,22 @@ export class SlackAgentService {
       : activityChannelResolution
         ?? roomChannel
         ?? await resolveSlackChannelType(this.env, token, channelId, event.channel_type);
+    // A room linked while it was public holds an Organization-wide Space. If
+    // it has since become private, a new Channel there would publish a
+    // private conversation to the whole Organization: refuse, and say why.
+    if (route?.kind === "spawn" && route.spaceScope === "workspace"
+      && channelResolution.failure === null && channelResolution.channelType !== "public") {
+      logWarn(this.env, "external_binding_placement_refused", {
+        workspace_id: connection.workspace_id,
+        connection_id: connection.id,
+        space_id: route.spaceId,
+        code: "room_narrower_than_space",
+      });
+      await this.postRoutingFailure(
+        token, channelId, channelResolution.threadable === false ? undefined : rootTs, "room_narrower_than_space",
+      );
+      return;
+    }
     await this.startFromPrompt(
       teamId,
       slackUserId,
@@ -1988,6 +2004,8 @@ export class SlackAgentService {
       ...(threadTs ? { thread_ts: threadTs } : {}),
       text: reason === "space_archived"
         ? "This conversation's Rally Space is archived, so Rally did not start work here. A Rally admin can restore the Space in Rally."
+        : reason === "room_narrower_than_space"
+        ? "This conversation is private now, but its Rally Space is open to the whole organization, so Rally did not start work here. A Rally admin can make the Space private in Rally."
         : "Rally couldn't open a Channel for this conversation in its linked Rally Space, because nobody here can open that Space in Rally yet. Connect your Rally account in App Home, or ask a member of the Space to add you, then mention Rally again.",
     }, AbortSignal.timeout(5_000));
   }

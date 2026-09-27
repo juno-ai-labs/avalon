@@ -1961,6 +1961,53 @@ describe("Slack public channel membership", () => {
     expect(threadTitles).toEqual(["investigate this"]);
   });
 
+  it("refuses to open a Channel in an Organization-wide Space for a room that has become private", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    // Linked while public: the room's Space is Organization-wide.
+    objectDatabase.exec(`
+      INSERT INTO spaces
+        (space_id, title, scope, authority_generation, source_version, payload_hash,
+         revision, created_at, updated_at, created_by_user_id)
+      VALUES ('00000000-0000-7000-8000-0000000000b1', 'launch', 'workspace', 1, 1,
+              'fixture', 1, 0, 0, '019fc4e0-4444-7000-8000-000000000044');
+      INSERT INTO external_conversation_bindings
+        (installation_id, path_json, target_kind, space_id, state, created_at, updated_at)
+      VALUES ('slack:T123', '["C123"]', 'space', '00000000-0000-7000-8000-0000000000b1', 'active',
+              '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z');
+    `);
+    insertSlackEventJob(objectDatabase, "event:now-private", appMention("EvNowPrivate"));
+    const posted: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      const json = (body: unknown) => new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+      if (url.pathname.endsWith("conversations.info")) {
+        return json({ ok: true, channel: { id: "C123", name: "launch", is_private: true, is_im: false, is_mpim: false } });
+      }
+      if (url.pathname.endsWith("chat.postMessage")) {
+        posted.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return json({ ok: true, channel: "C123", ts: "1.1" });
+      }
+      throw new Error(`Unexpected Slack request ${url}`);
+    }));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await new SlackAgentService(slackMembershipEnvironment(
+      database, instance, credentialsKey, vi.fn(async () => undefined),
+    )).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:now-private");
+
+    expect(posted).toHaveLength(1);
+    expect(String(posted[0]!.text)).toContain("private now");
+    expect(objectDatabase.prepare("SELECT COUNT(*) AS count FROM slack_agent_sessions").get()).toEqual({ count: 0 });
+    expect(objectDatabase.prepare(
+      "SELECT COUNT(*) AS count FROM external_conversation_bindings WHERE path_json <> '[\"C123\"]'",
+    ).get()).toEqual({ count: 0 });
+  });
+
   it("starts work in a room Slack does not thread without calling a thread API", async () => {
     // Slack refuses a thread there: an Agent status or a `thread_ts` post
     // would fail the request after the reaction said it was accepted.
