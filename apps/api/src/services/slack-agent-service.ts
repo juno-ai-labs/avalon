@@ -1618,7 +1618,7 @@ export class SlackAgentService {
       if (linked.outcome === "linked") {
         resolution = await this.resolveBinding(connection, installationId, path, true, claimKey);
       } else if (linked.outcome === "blocked") {
-        await this.postRoutingFailure(token, channelId, rootTs, linked.reason);
+        await this.postRoutingFailure(token, channelId, rootTs, linked.reason, claimKey);
         return;
       } else {
         roomChannel = linked.channel ?? null;
@@ -1643,7 +1643,7 @@ export class SlackAgentService {
     if (resolution.outcome === "spawn" && resolution.space?.archived) {
       // An archived Space is not restored by a provider message; that needs a
       // decision in Rally.
-      await this.postRoutingFailure(token, channelId, rootTs, "space_archived");
+      await this.postRoutingFailure(token, channelId, rootTs, "space_archived", claimKey);
       return;
     }
     const pendingPrompt = !directMessage && !route
@@ -1699,7 +1699,7 @@ export class SlackAgentService {
         code: "room_narrower_than_space",
       });
       await this.postRoutingFailure(
-        token, channelId, channelResolution.threadable === false ? undefined : rootTs, "room_narrower_than_space",
+        token, channelId, channelResolution.threadable === false ? undefined : rootTs, "room_narrower_than_space", claimKey,
       );
       return;
     }
@@ -2024,21 +2024,23 @@ export class SlackAgentService {
     }
   }
 
-  /** A reply that could not be placed says so in its thread, rather than vanishing. */
+  /**
+   * A message that could not be placed says so in its thread, rather than
+   * vanishing. The message identity is the event's, so a retried job posts
+   * it once.
+   */
   private async postRoutingFailure(
     token: string,
     channelId: string,
     threadTs: string | undefined,
     reason: string,
+    eventKey: string,
   ): Promise<void> {
     await slackApi(token, "chat.postMessage", {
       channel: channelId,
       ...(threadTs ? { thread_ts: threadTs } : {}),
-      text: reason === "space_archived"
-        ? "This conversation's Rally Space is archived, so Rally did not start work here. A Rally admin can restore the Space in Rally."
-        : reason === "room_narrower_than_space"
-        ? "This conversation is private now, but its Rally Space is open to the whole organization, so Rally did not start work here. A Rally admin can make the Space private in Rally."
-        : "Rally couldn't open a Channel for this conversation in its linked Rally Space, because nobody here can open that Space in Rally yet. Connect your Rally account in App Home, or ask a member of the Space to add you, then mention Rally again.",
+      client_msg_id: await stableUuid(`routing-failure:${eventKey}`),
+      text: slackRoutingFailureText(reason),
     }, AbortSignal.timeout(5_000));
   }
 
@@ -2340,7 +2342,7 @@ export class SlackAgentService {
                 space_id: route.spaceId,
                 code: error.code,
               });
-              await this.postRoutingFailure(token, channel, threaded ? thread : undefined, error.code);
+              await this.postRoutingFailure(token, channel, threaded ? thread : undefined, error.code, clientMessageId);
               return;
             }
             // A bound thread whose session row was lost gets its delivery state
@@ -4133,6 +4135,23 @@ function slackBindingLifecycleApplies(event: Record<string, unknown>, botUserId:
  * Channel. `spawn`: an addressed message under a linked room creates a
  * Channel in the room's Space, claiming the thread's binding with its birth.
  */
+/** What a thread is told when Rally could not place its message, by reason. */
+function slackRoutingFailureText(reason: string): string {
+  switch (reason) {
+    case "space_archived":
+      return "This conversation's Rally Space is archived, so Rally did not start work here. A Rally admin can restore the Space in Rally.";
+    case "room_narrower_than_space":
+      return "This conversation is private now, but its Rally Space is open to the whole organization, so Rally did not start work here. A Rally admin can make the Space private in Rally.";
+    case "no_rally_member_in_private_room":
+      return "Rally didn't start work here because nobody in this private conversation has a Rally account it can recognize yet. Connect your Rally account in App Home, then mention Rally again.";
+    case "space_access_denied":
+    case "space_not_found":
+      return "Rally couldn't open a Channel for this conversation in its Rally Space, because you can't open that Space in Rally yet. Connect your Rally account in App Home, or ask a member of the Space to add you, then mention Rally again.";
+    default:
+      return `Rally couldn't start work here (${reason}). Mention Rally again to retry, or ask a Rally admin if it keeps happening.`;
+  }
+}
+
 type SlackChannelResolution = {
   channelType: SlackPromptSource["channelType"];
   channelName: string | null;
