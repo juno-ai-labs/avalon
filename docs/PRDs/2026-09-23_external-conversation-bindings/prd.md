@@ -283,6 +283,25 @@ Two behaviors move:
 
 ## Decision log
 
+### 2026-09-27: A bot DM asks for the thread only while the latest request's run is open
+
+**Decided:** A message in a DM with the workspace bot that has no binding of its
+own is asked to use the request's thread only while the run behind the DM's most
+recent outbound binding is still open: pending, running, or waiting for input.
+Once that run has completed, failed or been stopped, such a message is ordinary
+Agent work again. A reply inside a request's thread still reaches its run
+whatever the run's state. A reply under the bot's own "please reply in the
+thread" prompt has no binding either, so it is asked again in that prompt's
+thread rather than starting Agent work.
+
+**Why:** Asking for the thread forever after a Sidekick has once posted in a DM
+would turn every later message to the bot into a redirect to a request nobody
+is waiting on. A finished run has nothing left to collect, so the DM goes back
+to what it was.
+
+**Changes:** Narrows the 2026-09-26 decision on top-level DM replies, which
+applied whenever the DM held any active outbound binding.
+
 ### 2026-09-26: A top-level reply in a bot DM with an open request is asked to use the thread
 
 **Decided:** When someone writes at the top level of a DM with the workspace

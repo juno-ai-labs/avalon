@@ -177,8 +177,13 @@ export const ExternalBindingLatestOutboundRequestSchema = deferredZodSchema(() =
   prefix: ExternalPathSchema,
 }));
 export type ExternalBindingLatestOutboundRequest = z.infer<typeof ExternalBindingLatestOutboundRequestSchema>;
+/** The most recent Sidekick run request under a room, and the run it belongs to. */
 export const ExternalBindingLatestOutboundResultSchema = deferredZodSchema(() => z.strictObject({
-  path: ExternalPathSchema.nullable(),
+  latest: z.strictObject({
+    path: ExternalPathSchema,
+    sidekickId: IdSchema,
+    runId: IdSchema,
+  }).nullable(),
 }));
 
 export const ExternalBindingSuspendRequestSchema = deferredZodSchema(() => z.strictObject({

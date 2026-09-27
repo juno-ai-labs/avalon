@@ -622,25 +622,28 @@ describe("outbound bindings", () => {
   });
 
   it("finds a bot DM's most recent open request, and nothing in a DM without one", async () => {
-    const record = async (path: string[]) => {
+    const EARLIER_RUN = "00000000-0000-7000-8000-000000000ec9";
+    const record = async (path: string[], runId: string) => {
       await workspace().recordOutboundExternalConversationBinding({
         workspaceId: WORKSPACE_ID, installationId: INSTALLATION, path,
-        target: { kind: "conversation", parentKind: "automation", parentId: SIDEKICK, substreamId: RUN }, at: at(),
+        target: { kind: "conversation", parentKind: "automation", parentId: SIDEKICK, substreamId: runId }, at: at(),
       });
       await scheduler.wait(5);
     };
-    await record(["D1", "1.0"]);
-    await record(["D1", "2.0"]);
+    // Recorded out of timestamp order, so the most recent is not the one
+    // that sorts last by path.
+    await record(["D1", "2.0"], EARLIER_RUN);
+    await record(["D1", "1.0"], RUN);
     const latest = (prefix: string) => workspace().latestOutboundExternalConversation({
       workspaceId: WORKSPACE_ID, installationId: INSTALLATION, prefix: [prefix],
     });
-    expect(await latest("D1")).toEqual({ path: ["D1", "2.0"] });
-    expect(await latest("D2")).toEqual({ path: null });
+    expect(await latest("D1")).toEqual({ latest: { path: ["D1", "1.0"], sidekickId: SIDEKICK, runId: RUN } });
+    expect(await latest("D2")).toEqual({ latest: null });
     // A closed request is no longer one to point at.
     await workspace().closeExternalConversationBindings({
       workspaceId: WORKSPACE_ID, parentKind: "automation", parentId: SIDEKICK, reason: "closed", at: at(),
     });
-    expect(await latest("D1")).toEqual({ path: null });
+    expect(await latest("D1")).toEqual({ latest: null });
   });
 });
 
