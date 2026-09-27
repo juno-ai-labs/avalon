@@ -428,11 +428,27 @@ describe("Sidekick run continuation", () => {
     const runId = await completedRun();
 
     const first = await sendToRun(runId, "Concurrent reply one.", "concurrent-1");
-    await sendToRun(runId, "Concurrent reply two.", "concurrent-2");
+    const second = await sendToRun(runId, "Concurrent reply two.", "concurrent-2");
+    // Settled means both inputs were delivered to the loop and the loop has
+    // let go of its last execution. Counting `pending_loop_inputs` alone is
+    // not enough: an admitted message waits in the preparation mailbox before
+    // it becomes a pending input, so a drain that is between the first reply's
+    // execution and the second reply's activation looks idle to that count.
     await expect.poll(async () => {
+      const state = await runInDurableObject(childStub(runId), async (_instance, storage) => ({
+        delivered: storage.storage.sql.exec<{ delivered_turn_id: string }>(
+          `SELECT delivered_turn_id FROM delivered_loop_inputs`,
+        ).toArray().map((row) => row.delivered_turn_id),
+        loop: storage.storage.sql.exec<{ status: string }>(`SELECT status FROM substream_loops`).one().status,
+        pending: storage.storage.sql.exec(`SELECT input_id, mode, starts_run FROM pending_loop_inputs`).toArray(),
+        mailbox: storage.storage.sql.exec(`SELECT input_id, state FROM pending_loop_input_mailbox`).toArray(),
+        alarm: await storage.storage.getAlarm(),
+        now: Date.now(),
+      }));
       const all = await receipts(runId);
-      return all.every((receipt) => receipt.terminalized_at != null) && await pendingInputs(runId) === 0
-        ? "settled" : "working";
+      return state.delivered.includes(first) && state.delivered.includes(second)
+        && state.loop === "idle" && all.every((receipt) => receipt.terminalized_at != null)
+        ? "settled" : `working: ${JSON.stringify(state)}`;
     }, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 }).toBe("settled");
 
     // Both reached the model, and every activation after the Sidekick's own
