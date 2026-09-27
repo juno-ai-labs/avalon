@@ -258,6 +258,8 @@ interface RunRow extends Record<string, SqlStorageValue> {
   opening_json: string | null;
   /** A demo seed's script for this run's model bytes; null for every other run. */
   seed_json: string | null;
+  /** Who the run runs as, recorded when it is provisioned; null while pending. */
+  run_as_user_id: string | null;
   created_at: number;
   started_at: number | null;
   completed_at: number | null;
@@ -445,6 +447,18 @@ export const AUTOMATION_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     // continuation moves it, however close together the two land. Zero on
     // every existing Sidekick; only its movement is compared, never its value.
     `ALTER TABLE automation ADD COLUMN stop_generation INTEGER NOT NULL DEFAULT 0 CHECK (stop_generation >= 0)`,
+  ],
+}, {
+  version: 12,
+  description: "who each run runs as",
+  statements: [
+    // A run's transcript is its run-as user's: their connectors read it and
+    // wrote it. `continueRun` refuses a continuation whose Sidekick now runs
+    // as somebody else rather than handing that history to them. Existing
+    // runs take the Sidekick's current run-as user, which is who they ran as
+    // unless a claim moved it since; no earlier value was recorded anywhere.
+    `ALTER TABLE runs ADD COLUMN run_as_user_id TEXT`,
+    `UPDATE runs SET run_as_user_id = (SELECT run_as_user_id FROM automation WHERE id = 1)`,
   ],
 }];
 
@@ -1324,6 +1338,13 @@ export class SidekickDO extends ConversationParentDurableObject {
     if (!run || row.lifecycle !== "active" || row.accepted_definition_revision === null) {
       return { outcome: "refused", code: "run_not_found" };
     }
+    // The transcript the continuation would read is the run-as user's it was
+    // provisioned for. A claim since then moves who the Sidekick runs as, and
+    // continuing would put that history in front of the new principal's
+    // connectors, so it refuses instead.
+    if (run.run_as_user_id !== null && run.run_as_user_id !== row.run_as_user_id) {
+      return { outcome: "refused", code: "run_principal_changed" };
+    }
     return SidekickRunContinuationSchema.parse({
       outcome: "continue",
       automationRun: {
@@ -1826,6 +1847,14 @@ export class SidekickDO extends ConversationParentDurableObject {
       runId,
     });
     const now = Date.now();
+    // Whose transcript this run will hold, recorded before anything is seated
+    // or run as them and kept across a retried provision, so a continuation
+    // can refuse to hand this history to somebody else (`continueRun`).
+    const runAs = this.state.storage.sql.exec<{ run_as_user_id: string }>(
+      `UPDATE runs SET run_as_user_id = COALESCE(run_as_user_id, ?) WHERE run_id = ? RETURNING run_as_user_id`,
+      row.run_as_user_id,
+      runId,
+    ).one().run_as_user_id;
     this.registerChild(runId, "child", null, now);
     await bootstrapConversationChildRuntime(this.env, row.workspace_id, "automation", row.automation_id, runId);
     await provisionWorkstreamObject(this.env, {
@@ -1837,8 +1866,8 @@ export class SidekickDO extends ConversationParentDurableObject {
       // A run is nested implementation detail, not a room: it admits only the
       // person it runs as.
       scope: "personal",
-      createdByUserId: row.run_as_user_id,
-      participantUserIds: [row.run_as_user_id],
+      createdByUserId: runAs,
+      participantUserIds: [runAs],
       harnessStatus: "scheduled",
       emailAddress: null,
       emailRouteStatus: null,
@@ -1883,7 +1912,7 @@ export class SidekickDO extends ConversationParentDurableObject {
       workstreamId: row.automation_id,
     });
     const runs = createHarnessRunObjectPort(this.env, row.workspace_id, row.automation_id, undefined, runId);
-    const executionPrincipal = { type: "user" as const, userId: asUserId(row.run_as_user_id) };
+    const executionPrincipal = { type: "user" as const, userId: asUserId(runAs) };
     if (!await runs.run({ runId: run.harness_run_id })) {
       await runs.admitRun({
         runId: run.harness_run_id,

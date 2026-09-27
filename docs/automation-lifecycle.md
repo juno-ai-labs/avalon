@@ -608,9 +608,12 @@ one identity and one history, and can complete more than once.
    start builds, with `definitionRevision` the Sidekick's **currently
    accepted** revision and the run's original trigger, plus `stopGeneration`, its
    stop counter. Continuing a run acts on today's consent, so a run started under
-   revision 1 continues under revision 3, and as whoever the Sidekick runs as
-   now. It does not ask who sent the input: anyone who can reach a run may
-   continue it.
+   revision 1 continues under revision 3. It does not continue as somebody
+   else: a run records its run-as user when it is provisioned
+   (`runs.run_as_user_id`, migration 12), and a Sidekick claimed by someone
+   else since refuses with `run_principal_changed` rather than put the old
+   principal's transcript in front of the new one's connectors. It does not
+   ask who sent the input: anyone who can reach a run may continue it.
 3. The loop input carries `automationRun`, the run-as principal, and
    `automationContinuation: {stopGeneration, senderName, source}`; the sender stays
    the author of their own message. `readRunDefinition` reads the revision the
@@ -629,8 +632,9 @@ one identity and one history, and can complete more than once.
    turn, so a recovered execution does not add a second one.
 
 **Refusals.** `continueRun` answers `sidekick_deleted` for an archived
-Sidekick, `sidekick_paused` for one a person or a room archive paused, and
-`run_not_found` when the Sidekick object holds no row or no such run. The
+Sidekick, `sidekick_paused` for one a person or a room archive paused, `run_not_found`
+when the Sidekick object holds no row or no such run, and `run_principal_changed`
+when the Sidekick runs as somebody other than the run did. The
 child then lands the input as a delivered turn and appends a `system` row after
 it (`clientMessageId` `sidekick-run-refused:<inputId>`, structured content
 `{kind: "sidekick_run_refused", code, turnId}`) in one transaction
@@ -934,7 +938,7 @@ or the memory store the automation scope lives in.
   `substream_loop_drain_failed`, and the child's alarm claims the input again;
   the input stays at the head of the queue until the Sidekick answers.
 - **Input the Sidekick refuses** (`sidekick_paused`, `sidekick_deleted`,
-  `run_not_found`) lands as a delivered turn with a `sidekick_run_refused`
+  `run_not_found`, `run_principal_changed`) lands as a delivered turn with a `sidekick_run_refused`
   system row naming the code, and logs `sidekick_run_continuation_refused`.
   What a sender outside Rally sees is the bound thread's to decide. A refused
   answer to a question the run asked lands the same way, as a turn with no
