@@ -10,6 +10,7 @@ import {
   canPersonalLinearConnectionAccessWebhook,
   ConnectorError,
   discoverGitHubWebhookResources,
+  isDiscardedGitHubDelivery,
   LinearNativeAgentProtocolDescriptor,
   normalizeGitHubWebhook,
   normalizeLinearWebhook,
@@ -165,6 +166,9 @@ export class ProviderWebhookService {
         bodyHash: delivery.rawContentHash,
         event: delivery,
       };
+      if (isDiscardedGitHubDelivery(delivery)) {
+        return { accepted: true, duplicate: false, activityCount: 0 };
+      }
       const lifecycle = githubLifecycle(delivery);
       const resourceDiscovery = discoverGitHubWebhookResources(delivery);
       const routingUserId = delivery.event === "github_app_authorization"

@@ -13,6 +13,7 @@ import {
   GitHubCapabilities,
   GitHubWebhookResourceLimits,
   mintGitHubInstallationToken,
+  isDiscardedGitHubDelivery,
   normalizeGitHubWebhook,
   verifyGitHubWebhook,
   verifyGitHubWebhookSignature,
@@ -757,6 +758,23 @@ describe("GitHub connector", () => {
       .rejects.toMatchObject({ code: "invalid_signature" });
 
     expect(normalizeGitHubWebhook(connection, { ...delivery, event: "installation" })).toBeNull();
+    // Continuous integration is kept once per workflow run, when it finishes.
+    for (const discarded of [
+      { event: "check_run", action: "created" },
+      { event: "check_run", action: "completed" },
+      { event: "workflow_run", action: "requested" },
+      { event: "workflow_run", action: "in_progress" },
+    ]) {
+      expect(isDiscardedGitHubDelivery(discarded), `${discarded.event}.${discarded.action}`).toBe(true);
+    }
+    expect(isDiscardedGitHubDelivery({ event: "workflow_run", action: "completed" })).toBe(false);
+    expect(isDiscardedGitHubDelivery({ event: "pull_request", action: "opened" })).toBe(false);
+    expect(normalizeGitHubWebhook(connection, {
+      ...delivery,
+      event: "workflow_run",
+      action: "completed",
+      payload: { ...delivery.payload, workflow_run: { id: 9, head_sha: "a".repeat(40) } },
+    })?.eventType).toBe("github.workflow_run.completed");
   });
 
   it("treats issue comments on pull requests as pull-request activity and resources", () => {

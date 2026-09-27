@@ -533,9 +533,10 @@ devRoutes.post("/connector-events", zValidator("json", SyntheticConnectorEventBo
   // The same provider event id is the same event: a replay must carry the
   // identity the first delivery had, or the ledger refuses it as a reuse.
   // Callers replaying an event pass the same occurredAt too.
-  const activityId = syntheticActivityId(await sha256Hex(
+  const deliveryHash = await sha256Hex(
     `${body.workspaceId}:${body.connectorType}:${body.activity.connectionId}:${body.activity.providerEventId}`,
-  ));
+  );
+  const activityId = syntheticActivityId(deliveryHash);
   await enqueueWorkspaceConnectorEvent(c.env, {
     connectorType: body.connectorType,
     activity: {
@@ -562,7 +563,10 @@ devRoutes.post("/connector-events", zValidator("json", SyntheticConnectorEventBo
       targetUserIds: body.activity.targetUserIds,
       entityKeys: [],
       dedupeKey: `${body.connectorType}:${body.activity.providerEventId}`,
-      rawContentHash: null,
+      // A webhook delivery's body hash differs per delivery, and ingest drops
+      // a new event whose content repeats its resource's last one. Standing in
+      // for that hash keeps two synthetic events two events.
+      rawContentHash: `sha256:${deliveryHash}`,
       metadata: body.activity.metadata,
       externalPeople: [],
     },

@@ -1023,7 +1023,7 @@ catalog, in
 ```ts
 activityTriggers: defineConnectorActivityTriggers("GitHub", {
   digestible: ["github.pull_request.merged", "github.pull_request_review.submitted", …],
-  operational: ["github.check_run.completed", "github.workflow_run.in_progress", …],
+  operational: ["github.workflow_run.completed", "github.push", …],
 })
 ```
 
@@ -1035,13 +1035,25 @@ and written to the activity log exactly like a digestible one — every surface
 except the one that interrupts somebody on a schedule. Answer the digest
 question when classifying an event type, and nothing else. Most of what a
 provider emits belongs here, and that is the normal case rather than a failure:
-the GitHub manifest declares ninety-one activity types and thirty of them are
+the GitHub manifest declares eighty-seven activity types and thirty of them are
 digestible. Every current connector's classification, one row per activity type
 with the reason, is in [`connector-digestibility.md`](connector-digestibility.md).
 
 A **polling activity stream** declares `digestible` too, and it is required for the same reason: a stream is the granularity a connector author actually thinks in — Gmail is somebody's day, Drive's change feed is a file watcher — and a stream added later has to state which it is. **A stream can only ever withhold.** An activity is digestible when its event type says so *and* the stream that produced it agrees, so the two declarations cannot contradict each other into somebody's inbox, and a stream saying yes grants nothing on its own. `pollCheckpointedActivityStreams` stamps the withholding onto every activity a non-digestible stream returns, at the one place all polled activity passes through, so an adapter can neither forget to mark its output nor grant itself a digest it was not given.
 
 The manifest is read when the activity log is written, in `activityIsDigestible`, keyed on the event type — the one thing an activity carries all the way from the provider to the log. **Everything unknown is withheld**: a connector this region does not register, an event type a manifest has dropped, an activity older than the declaration. None of those are somebody confirming that a person wants this in their inbox, and being wrong costs one way only. What happens to the answer afterwards — the `activity_events.digestible` column, the cursor that steps over what was withheld — belongs to [`digests.md`](digests.md#digestible-what-a-person-should-be-told).
+
+#### Dropping events that say nothing new
+
+Two filters run before an event costs anything, and both drop rather than withhold: a dropped event is not stored, routed, matched against automations or watches, or offered to Suggested Work.
+
+**GitHub continuous integration is discarded at ingress.** `isDiscardedGitHubDelivery` drops every `check_run` delivery and every `workflow_run` action except `completed`, at the Global receiver (`GitHubRoutingService.ingestGitHub`, beside `ping`) and again on the regional path, before any payload is written to R2 or any resource is inventoried. The manifest no longer declares those types, so a Sidekick cannot be drafted against a trigger that never fires. Suggested Work keeps its `github.check_run.` exclusion as a named retired prefix, because check runs stored before this change can still drain. A check run's result is still readable on demand through the Actions tools.
+
+**A new identity that repeats its resource's latest content is that event again.** `ingestConnectorEvent` fingerprints the whole event except the fields that name or time a delivery (`id`, `receivedAt`, `occurredAt`, `providerEventId`, `dedupeKey`, `payloadRef`) and keeps the latest fingerprint per connection, event type and provider resource in `workspace_connector_event_latest_content`. A new event whose fingerprint equals that one is receipted against the earlier event and answered as a `duplicate` carrying `unchangedContent: true`. The Queue consumer then enqueues nothing, whatever state the earlier event is in: a pending or failed event's processing belongs to its own admission, and waking or retrying it on every re-stamp would turn the flood into work. A Queue redelivery of the repeat is answered from its receipt the same way, recognised because a content match is the only receipt whose event shares neither the delivery's provider identity nor its dedupe key. A latest event that has `failed` is never matched: its content was never delivered, so a repeat of it is stored as a new event with a retry budget of its own and becomes the latest. Only the latest is compared: a change and its reversal are both news.
+
+**Order is `occurredAt`, not arrival.** A Queue batch admits events concurrently, so a change and its reversal can reach WorkspaceDO in either order. The latest-content row keeps the newest `occurredAt` it stands for, and a repeat is dropped only when it is no older than that. When one is dropped, its identity (event id, payload hash, provider identity, dedupe key, times, payload reference) is kept on the row in `dropped_json`. An event older than the row is always stored and never becomes the latest. If it differs from the latest content and a repeat was dropped after it, that repeat was the state it changed back from, so it is restored: stored as its own event, copied from the event whose content it repeated, under its dropped identity, and it becomes the latest. The late event's ingress receipt records it in `restored_event_id`, and the ingest answer carries `restoredEventId`, so the consumer enqueues its processing on the first delivery and again on any redelivery while it is still pending; once claimed, its own processing owns any retry. Nothing else would wake it, because its own delivery was dropped. An event with no provider resource is never compared. The ingest log carries `unchanged_content: true` for a dropped repeat.
+
+This puts a duty on adapters: **the content must carry the change.** An adapter whose only change marker is a timestamp or an identity must also put that marker in its metadata, or its genuine repeats are dropped. Drive does so with `modifiedTime` and `md5Checksum`, because a Google-native file has no checksum and two edits would otherwise read the same; a change that moves neither, such as sharing, is dropped. Every verified webhook path is unaffected, because each carries a hash of its raw body, which differs per delivery. Calendar deliberately carries no `updated` or `etag` in its content: Google re-stamps events with nothing visible changed, and that is the flood this filter exists for. A Calendar edit to a field the adapter does not fetch (description, conference link) is therefore dropped too; it was invisible to every reader before.
 
 Manifests and facets are cross-validated at registry construction: a connector that declares provider activity cannot claim webhook or polling support without the corresponding implementation. Slack keeps its dedicated signature-verified Agent ingress, but that ingress may normalize a bounded event into the shared activity pipeline when an exact active automation source is listening; it does not create a general Slack feed. X remains an on-demand read connector because a connection does not yet select a monitored user, list, or stream rule from which a safe feed could be constructed.
 
@@ -1419,6 +1431,16 @@ active workspace guest is insufficient after the addressed share is revoked.
 Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
+
+### 2026-09-27: Ingest drops CI noise and events that repeat themselves
+
+**What changed:** GitHub `check_run` deliveries, and every `workflow_run` action but `completed`, are discarded at ingress and no longer declared. WorkspaceDO ingest drops a new event whose content matches its resource's latest event (migration 80). A repeat of a pending event wakes nothing, one of a failed event is stored with a fresh retry budget, and a repeat dropped before an older, different event arrives is restored. Drive metadata now carries `modifiedTime` and `md5Checksum`, and the dev synthetic route a per-delivery `rawContentHash`, so their genuine repeats still count.
+
+**Why:** A production read on 2026-09-27 found Juno Labs holding 255,000 connector events, 32,000 stuck `pending` and 2,400 `failed` with "Durable Object is overloaded". 136,000 were CI: about fifteen check runs a commit, each reported twice, plus three events per workflow run. 77,000 were `calendar.event_changed`, about 14 per meeting: Google re-stamped an ended recurring series twice a day for each attendee with nothing changed, and the series identity is its `updated` stamp, so each touch was a new event. Forward Search had 45,000 of the same. No Sidekick in any workspace triggered on a CI or Calendar change event, so nothing depended on the noise.
+
+**Rejected:** Keying Calendar identity on content inside the adapter would fix one connector; the ingest filter covers any adapter that re-stamps unchanged content. Comparing against all history instead of the latest event would drop a reversal, which is news. Ordering the comparison by `occurredAt` alone was not enough: by the time an older event arrives, the newer repeat it makes news has already been dropped, so the drop keeps its identity and is restored instead. A column and index on `workspace_connector_events` would have built an index over 255,000 rows in the migration, where the new table starts empty.
+
+**What a future change must respect:** An adapter's content must change when the thing it reports changes; a change marker carried only in `occurredAt` or the identity is dropped as a repeat. A dropped repeat must never wake or retry the earlier event's processing. Arrival order is not event order: anything that compares against the latest content has to go by `occurredAt`, and a drop has to stay recoverable until an older event can no longer arrive. Keeping a CI type again means removing it from `isDiscardedGitHubDelivery` and declaring it in the manifest together.
 
 ### 2026-09-26 — Tool counts ride the connection list
 

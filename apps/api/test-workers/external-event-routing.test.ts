@@ -293,7 +293,8 @@ async function ingestSlackEvent(
         targetUserIds: [],
         entityKeys: [],
         dedupeKey: `slack:${providerEventId}`,
-        rawContentHash: null,
+        // Production stamps the verified body's hash, which differs per delivery.
+        rawContentHash: `slack-body:${providerEventId}`,
         metadata: overrides.metadata ?? { messageText: "foobar" },
         ...(overrides.occurrenceKey ? { occurrenceKey: overrides.occurrenceKey } : {}),
         externalPeople: [],

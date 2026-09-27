@@ -1151,11 +1151,11 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
       oauthRequired: true,
       // GitHub is the loudest connector Avalon has, and the split matters most
       // here: continuous integration reports two events per check and three per
-      // workflow run, so a repository under active development emits an order
-      // of magnitude more machinery than news. Digestible is the work — a pull
-      // request opened or merged, a review, a comment, a release. Everything a
-      // person learns by looking at the pull request once they open it is
-      // operational.
+      // workflow run. Ingress keeps only the run's completion (see
+      // `isDiscardedGitHubDelivery`), and that is still machinery, not news.
+      // Digestible is the work — a pull request opened or merged, a review, a
+      // comment, a release. Everything a person learns by looking at the pull
+      // request once they open it is operational.
       activityTriggers: defineConnectorActivityTriggers("GitHub", {
         digestible: [
           "github.release.created", "github.release.published", "github.release.released",
@@ -1176,9 +1176,10 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
           "github.repository.publicized", "github.repository.privatized",
         ],
         operational: [
-          // Continuous integration. Its own history, in its own tab.
-          "github.workflow_run.requested", "github.workflow_run.in_progress", "github.workflow_run.completed",
-          "github.check_run.created", "github.check_run.completed",
+          // Continuous integration, once per workflow run when it finishes.
+          // Check runs and a run starting are discarded at ingress; see
+          // `isDiscardedGitHubDelivery`.
+          "github.workflow_run.completed",
           // Edits and housekeeping on something whose arrival was already
           // digestible: the reader is told once, when it happens.
           "github.release.edited",
@@ -2789,6 +2790,18 @@ export function discoverGitHubWebhookResources(
   return { resources, truncated };
 }
 
+/**
+ * Deliveries Rally discards at ingress, before anything is stored,
+ * inventoried, or queued. Continuous integration reports every check twice and
+ * every workflow run three times; a workflow run is kept once, when it
+ * completes, because that event carries the result. See
+ * docs/connectors.md#dropping-events-that-say-nothing-new.
+ */
+export function isDiscardedGitHubDelivery(delivery: Pick<GitHubWebhookDelivery, "event" | "action">): boolean {
+  if (delivery.event === "check_run") return true;
+  return delivery.event === "workflow_run" && delivery.action !== "completed";
+}
+
 export function normalizeGitHubWebhook(
   connection: ConnectorConnectionContext,
   delivery: GitHubWebhookDelivery,
@@ -3466,18 +3479,6 @@ function webhookSubject(
       subject,
       titleVerb: `workflow run ${action}`,
       summaryVerb: `${action} a workflow run`,
-    };
-  }
-  if (event === "check_run") {
-    const subject = recordValue(payload, "check_run") ?? {};
-    const sha = stringValue(subject, "head_sha");
-    return {
-      eventType: `github.check_run.${action}`,
-      resourceType: sha ? "github_commit" : null,
-      providerResourceId: sha ? `${repositoryName}@${sha}` : null,
-      subject,
-      titleVerb: `check run ${action}`,
-      summaryVerb: `${action} a check run`,
     };
   }
   if (event === "release") {
