@@ -194,15 +194,32 @@ export function ConversationOpeningSkeleton({
   label,
   parentKind,
   sidebar = false,
+  rail,
 }: {
   label: string;
   parentKind: ConversationParentKind;
   sidebar?: boolean;
+  /**
+   * The host's real rail, drawn from what the workspace socket already holds.
+   * It stands in for the placeholder rail, and it is interactive, so the
+   * status role moves off the layout onto the feed: a live region around
+   * navigation would read the rail out as the opening's status.
+   */
+  rail?: React.ReactNode;
 }): React.JSX.Element {
+  const hasRail = rail !== undefined && rail !== null;
   return (
-    <div aria-label={label} className="conversation-layout conversation-opening-skeleton" role="status">
-      {sidebar && <ConversationOpeningSidebar />}
-      <div aria-hidden="true" className={clsx(
+    <div
+      aria-label={hasRail ? undefined : label}
+      className="conversation-layout conversation-opening-skeleton"
+      role={hasRail ? undefined : 'status'}
+    >
+      {hasRail ? rail : sidebar && <ConversationOpeningSidebar />}
+      <div
+        aria-hidden={hasRail ? undefined : 'true'}
+        aria-label={hasRail ? label : undefined}
+        role={hasRail ? 'status' : undefined}
+        className={clsx(
         'workstream-screen conversation-opening-feed',
         parentKind === 'automation' && 'automation-screen',
       )}>
@@ -265,8 +282,9 @@ export function ConversationOpeningSkeleton({
         <div className="composer-dock conversation-opening-composer-dock">
           <div className="skeleton-bar conversation-opening-composer" />
         </div>
+        {hasRail && <span className="sr-only">{label}</span>}
       </div>
-      <span className="sr-only">{label}</span>
+      {!hasRail && <span className="sr-only">{label}</span>}
     </div>
   );
 }
@@ -988,6 +1006,13 @@ export interface ConversationSurfaceProps {
    */
   substreamLaunch?: ConversationSubstreamLaunch | null;
   renderHeader?: (context: ConversationHeaderContext) => React.ReactNode;
+  /**
+   * The rail to draw while this conversation's first snapshot is in flight,
+   * from state the workspace socket already holds, or null when the host has
+   * nothing to draw it from yet and the placeholder rail should stand in.
+   * Called only while `renderSidebar`'s context does not exist.
+   */
+  renderOpeningSidebar?: () => React.ReactNode;
   renderSidebar?: (context: ConversationHeaderContext & {
     /** This room's Sidekicks; `undefined` until both lists behind it answer. */
     sidekicks: SidekickRow[] | undefined;
@@ -1014,6 +1039,7 @@ export function ConversationSurface({
   workstreamContext,
   sidebarScope = "workstream",
   renderHeader,
+  renderOpeningSidebar,
   renderSidebar,
   onStartSubstream,
   substreamLaunch,
@@ -2408,6 +2434,7 @@ export function ConversationSurface({
       <ConversationOpeningSkeleton
         label={`Opening ${parentKind === 'automation' ? 'Sidekick' : parentNoun}…`}
         parentKind={parentKind}
+        rail={renderSidebar ? renderOpeningSidebar?.() : undefined}
         sidebar={renderSidebar !== undefined}
       />
     );

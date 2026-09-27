@@ -86,7 +86,7 @@ import { ConversationOpeningSkeleton, ConversationSurface } from './conversation
 import { workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
 import { WorkstreamScreen } from './workstream';
-import type { HarnessRunMetadata, HarnessStatus, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { HarnessRunMetadata, HarnessStatus, WorkstreamBoot, WorkstreamDetail, WorkstreamResource, WorkstreamSummary } from '../lib/types';
 
 const workstreamId = '00000000-0000-7000-8000-000000000650';
 
@@ -1018,6 +1018,35 @@ describe('socket-first channel open', () => {
     const sidebar = document.querySelector<HTMLElement>('.conversation-opening-sidebar');
     expect(sidebar).toHaveClass('is-compact');
     expect(sidebar).toHaveStyle({ flexBasis: '88px' });
+  });
+
+  it('draws the channel rail from the directory while the snapshot is pending', async () => {
+    const childId = '00000000-0000-7000-8000-00000000067a';
+    const directoryRow = { id: workstreamId, title: 'Launch plan', scope: 'workspace' };
+    renderScreen((cache) => {
+      setCachedWorkstreams(cache, [directoryRow as WorkstreamSummary]);
+      cache.setQueryData(['workstream-children', workstreamId], { privateChildren: [
+        { substreamId: childId, title: 'Pricing', createdByUserId: null, createdAt: '2026-08-17T19:00:00.000Z', updatedAt: '2026-08-17T19:00:00.000Z' },
+      ] });
+    });
+
+    // The feed still waits and says so; the rail does not.
+    expect(screen.getByRole('status', { name: 'Opening channel…' })).toBeVisible();
+    expect(document.querySelector('.conversation-opening-sidebar')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Go to conversation: Launch plan' })).toBeVisible();
+    // Only the snapshot knows who is in the Channel.
+    expect(screen.getByRole('button', { name: 'Manage channel participants' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Go to breakout: Pricing' }));
+    await waitFor(() => expect(locationInTest.search).toBe(`?substream=${childId}`));
+  });
+
+  it('keeps the placeholder rail while the directory has no breakout list for the channel', () => {
+    renderScreen((cache) => {
+      setCachedWorkstreams(cache, [{ id: workstreamId, title: 'Launch plan', scope: 'workspace' } as WorkstreamSummary]);
+    });
+
+    expect(document.querySelector('.conversation-opening-sidebar')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Go to conversation: Launch plan' })).toBeNull();
   });
 
   it('uses the Sidekick header geometry for a Sidekick conversation wait', () => {

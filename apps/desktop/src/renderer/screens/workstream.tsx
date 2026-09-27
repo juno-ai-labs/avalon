@@ -24,7 +24,7 @@ import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
 import { Button, IconButton, InlineError, Modal } from '../components/primitives';
 import { SessionImportUpdateDialog, importedSourceUpdatable } from '../components/session-import-update-dialog';
 
-import { useCachedWorkstreamAppearance } from '../lib/use-workstreams-query';
+import { useCachedWorkstreamAppearance, useCachedWorkstreamSummary } from '../lib/use-workstreams-query';
 import { launchedSubstreamDetail, optimisticOpeningTranscript } from '../lib/launched-conversation';
 import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
 import { holdCachedWorkstreamArchive, patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
@@ -180,6 +180,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   // now and this rail when the projection lands. The header keeps the detail:
   // that entry is what retires the picker's own preview.
   const rowAppearance = useCachedWorkstreamAppearance(id);
+  const row = useCachedWorkstreamSummary(id);
   const children = useQuery<WorkstreamChildDirectory | undefined>({
     queryKey: ['workstream-children', id], queryFn: async () => undefined, enabled: false,
   });
@@ -240,6 +241,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         }
       : child);
   const railChildren = railChildrenWithAttention(namedChildren, selectedSubstreamId, openChild.data);
+  const railScrollKey = layoutKey(session?.workspace?.id ?? 'unbound', session?.user.id ?? 'unbound', `channel-context-scroll:${id}`);
   // One target per dialog rather than one shared "menu target": both can be
   // open in sequence on different rows, and a single slot would make cancelling
   // one clear the other's subject out from under it.
@@ -582,9 +584,44 @@ export function WorkstreamScreen(): React.JSX.Element {
         onCancel: resetCreation,
         onCreate: createSubstream,
       } : null}
+      renderOpeningSidebar={() => {
+        // The rail is the directory's, not the conversation's: its name, its
+        // mark and its breakouts all arrive on the workspace socket, so it
+        // need not wait for this conversation's snapshot. Only the people and
+        // the Sidekicks do, and they hold their places until it lands. With no
+        // breakout list yet, the placeholder rail stands in instead, because
+        // Main alone would read as a Channel with no breakouts.
+        const title = parent.data?.title ?? row?.title ?? sharedParent?.title;
+        if (title === undefined || title === null || railChildren === undefined) return null;
+        return (
+          <WorkstreamSidebar
+            scrollStateKey={railScrollKey}
+            mainVisible={!conversationScoped || selectedSubstreamId === '0'}
+            sidekicks={undefined}
+            participantsPending
+            presentUserIds={[]}
+            workstream={{
+              id,
+              title,
+              appearance: rowAppearance ?? parent.data?.appearance ?? sharedParent?.appearance,
+              scope: parent.data?.scope ?? row?.scope ?? sharedParent?.scope,
+              needsAttention: selectedSubstreamId === '0' ? undefined : parent.data ? conversationNeedsViewer(parent.data) : sharedParent?.conversations.find((child) => child.substreamId === '0')?.needsAttention,
+              participants: [],
+              resources: [],
+              privateChildren: railChildren,
+            }}
+            selectedSubstreamId={creation?.parentId === id ? PENDING_SUBSTREAM_DRAFT_ID : selectedSubstreamId}
+            onSelectSubstream={selectSubstream}
+            onNewSubstream={() => startCreation(null)}
+            onOpenArtifact={() => undefined}
+            onFocusTranscript={() => undefined}
+            onParticipants={() => undefined}
+          />
+        );
+      }}
       renderSidebar={(context) => (
         <WorkstreamSidebar
-          scrollStateKey={layoutKey(session?.workspace?.id ?? 'unbound', session?.user.id ?? 'unbound', `channel-context-scroll:${id}`)}
+          scrollStateKey={railScrollKey}
           mainVisible={!conversationScoped || selectedSubstreamId === '0'}
           onSidekickMenuOpen={context.loadSidekickOptions}
           onRefreshSidekicks={context.refreshSidekicks}
