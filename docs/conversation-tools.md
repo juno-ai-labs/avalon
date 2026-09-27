@@ -111,8 +111,8 @@ attaching is the consent to publish there.
 - **Only a Sidekick's configuration conversation attaches.** A run is offered
   no attach, so it cannot reach anything its configuration did not grant.
 - **A post never wakes the target's agent.** It is something people read, not a
-  request to the agent there. Reusing `appendAutomationActivation` would start
-  that agent on every forwarded reply, and it refuses any substream but Main.
+  request to the agent there. Admitting it as loop input, as `post_result` did,
+  would start that agent on every forwarded reply.
 - **A post is keyed on the receipt, not the run.** A retried receipt posts once;
   a new call in a later wake of the same run is a new post. Keying on the run
   alone, as `post_result` did, would swallow every reply after the first.
