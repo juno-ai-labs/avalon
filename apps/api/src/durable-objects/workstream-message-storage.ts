@@ -202,6 +202,24 @@ export class WorkstreamMessageStorage {
     ).toArray().reverse();
   }
 
+  /**
+   * What another agent may read of this conversation, newest first: every
+   * message before a sequence number except tool cards and suggestions, which
+   * are one run's working state rather than something said here. The
+   * conversation tools' `conversation_read` pages through this.
+   */
+  readableMessagesBefore(input: { beforeSequence: number; limit: number }): MessageRow[] {
+    return this.sql.exec<MessageRow>(
+      `SELECT ${MESSAGE_COLUMNS}
+         FROM canonical_conversation_turn_details part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
+        WHERE part.substream_id = '0' AND part.sequence_number < ?
+          AND part.message_type NOT IN ('tool', 'suggestion')
+        ORDER BY part.sequence_number DESC LIMIT ?`,
+      input.beforeSequence,
+      input.limit,
+    ).toArray();
+  }
+
   /** A page of transcript after a sequence number, oldest first. */
   messagesAfter(input: { afterSequence: number; limit: number }): MessageRow[] {
     return this.sql.exec<MessageRow>(

@@ -6,10 +6,12 @@ import {
   DemoSeedSchema,
   IdSchema,
   PickedAppearanceSchema,
+  SubstreamIdSchema,
   UserIdSchema,
   WorkspaceExternalEventSchema,
   WorkspaceIdSchema,
   WorkstreamAppearancePatchSchema,
+  type SubstreamId,
 } from "@rally/contracts";
 import { z } from "zod";
 
@@ -40,6 +42,11 @@ export const AutomationCreateRequestSchema = z.strictObject({
   authorUserId: UserIdSchema,
   scope: AutomationScopeSchema,
   owningWorkstreamId: IdSchema.nullable(),
+  /**
+   * The home conversation under `owningWorkstreamId`: `"0"` for its Main
+   * conversation, a Breakout id when the Sidekick was set up from a Breakout.
+   */
+  owningSubstreamId: SubstreamIdSchema.default("0" as SubstreamId),
   authorityGeneration: z.number().int().positive(),
 }).superRefine((value, context) => {
   if ((value.scope === "workstream") !== (value.owningWorkstreamId !== null)) {
@@ -49,8 +56,15 @@ export const AutomationCreateRequestSchema = z.strictObject({
       message: "A room-scoped automation names its room, and no other scope may.",
     });
   }
+  if (value.owningWorkstreamId === null && value.owningSubstreamId !== "0") {
+    context.addIssue({
+      code: "custom",
+      path: ["owningSubstreamId"],
+      message: "Only a room-scoped automation has a home Breakout.",
+    });
+  }
 });
-export type AutomationCreateRequest = z.infer<typeof AutomationCreateRequestSchema>;
+export type AutomationCreateRequest = z.input<typeof AutomationCreateRequestSchema>;
 
 export const AutomationSubmitDefinitionRequestSchema = z.strictObject({
   ...Addressed,

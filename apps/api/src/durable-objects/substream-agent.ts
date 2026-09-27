@@ -2218,6 +2218,73 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
   }
 
+  /**
+   * A Sidekick's `conversation_post`, appended to this conversation as a
+   * message from the Sidekick, and nothing else.
+   *
+   * Unlike {@link appendAutomationActivation} it accepts any conversation, a
+   * Breakout as well as Main, and it does not wake this conversation's agent:
+   * a post is something people here read, not a request to the agent here.
+   * The row is keyed by the caller's host-derived client message id, so a
+   * retried receipt lands once and answers with the message it already wrote.
+   * Who may post here was decided by the caller against WorkspaceDO's
+   * admission and the Sidekick's attachments; this object decides only that
+   * it is the addressed conversation and that it is not archived.
+   */
+  async appendConversationPost(input: unknown): Promise<{
+    outcome: "appended" | "replayed" | "refused";
+    code: string;
+    messageId: string | null;
+  }> {
+    await this.initialized;
+    const request = parseRpcInput(z.strictObject({
+      schemaVersion: z.literal(1),
+      workspaceId: z.string().min(1),
+      workstreamId: z.string().min(1),
+      substreamId: z.union([z.literal("0"), z.string().min(1)]),
+      clientMessageId: z.string().min(1).max(300),
+      text: z.string().min(1).max(MESSAGE_MAX_CHARACTERS),
+      post: AutomationActivationV1Schema,
+    }), input, "append_conversation_post");
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== request.workspaceId
+      || identity.parentKind !== "workstream"
+      || identity.parentId !== request.workstreamId
+      || this.externalSubstreamId() !== request.substreamId) {
+      return { outcome: "refused", code: "workstream_destination_mismatch", messageId: null };
+    }
+    const existing = this.messages.messageByClientId({ clientMessageId: request.clientMessageId });
+    if (existing) return { outcome: "replayed", code: "conversation_post_replayed", messageId: existing.id };
+    const prepared = await this.messages.prepareMessage({
+      messageId: uuidV7(request.post.occurredAt),
+      clientMessageId: request.clientMessageId,
+      authorType: "system",
+      authorUserId: null,
+      externalActorJson: null,
+      // The activation vocabulary is what renders a row under the Sidekick's
+      // own name, in the client and in a later model's transcript.
+      messageType: "automation_activation",
+      text: request.text,
+      structuredContentJson: JSON.stringify(request.post),
+      producedByRunId: null,
+      now: request.post.occurredAt,
+    });
+    const result = await this.product.commitRuntimeMutation(() => {
+      const authority = this.ctx.storage.sql.exec<{ archived_at: number | null }>(
+        `SELECT archived_at FROM workstream WHERE id = 1`,
+      ).toArray()[0];
+      if (!authority) return { outcome: "refused" as const, code: "workstream_not_found", messageId: null };
+      if (authority.archived_at !== null) return { outcome: "refused" as const, code: "workstream_archived", messageId: null };
+      const appended = this.messages.appendPreparedMessage(prepared);
+      return appended.outcome === "replayed"
+        ? { outcome: "replayed" as const, code: "conversation_post_replayed", messageId: appended.messageId }
+        : { outcome: "appended" as const, code: "conversation_post_appended", messageId: appended.messageId };
+    }, true);
+    if (result.outcome === "appended") await this.flushSemanticRealtimeOutboxBestEffort();
+    return result;
+  }
+
   /** Internal runtime metadata, never a transcript or a participant-facing inspection API. */
   async agentRuntimeInfo() {
     await this.initialized;
