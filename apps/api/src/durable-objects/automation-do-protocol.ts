@@ -223,8 +223,9 @@ export type SidekickRunContinuationRefusalCode = z.infer<typeof SidekickRunConti
  * `approvedAt` is the Sidekick object's clock when it approved the
  * continuation. The run row still reads finished until the child's own
  * `running` projection reaches the parent through the Queue, so the run
- * authority check accepts a finished row only when it finished no later than
- * this: a stop or a completion that lands after the approval still refuses.
+ * authority check lets a continuation act through a finished row; a `stopped`
+ * row only when it stopped no later than this, so a pause that lands after
+ * the approval still refuses.
  */
 export const SidekickRunContinuationSchema = z.discriminatedUnion("outcome", [
   z.strictObject({

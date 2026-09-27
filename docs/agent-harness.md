@@ -2349,7 +2349,9 @@ preloaded in the automation's own chat, which is otherwise an ordinary
 `SubstreamAgent` with the ordinary catalog),
 and `automation_submit_draft` writes a definition revision to the automation.
 A run's loop input carries `automationRun: {automationId, runId,
-definitionRevision, trigger}` and nothing else about the automation; the prompt
+definitionRevision, trigger}` and nothing else about the automation, beside
+`automationContinuation` when input continued the run
+([continuing a run](automation-lifecycle.md#continuing-a-run)); the prompt
 context, the bound plugins, and the tables description come from
 `AutomationDO.readRunDefinition` at start, and `assertRunAuthorityStillValid`
 reads `readRunState` before each provider write. The result reaches an owning

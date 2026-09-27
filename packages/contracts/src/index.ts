@@ -3349,7 +3349,7 @@ export const WorkstreamWorkflowInputSchema = z.object({
    * `docs/automation-lifecycle.md` owns it.
    *
    * `approvedAt` is the Sidekick object's clock when `continueRun` approved
-   * the continuation, which the run authority check fences a finished run row
+   * the continuation, which the run authority check fences a `stopped` run row
    * against. `senderName` and `source` are what the host-rendered continuation
    * note tells the model: who replied, and whether in a bound provider thread
    * or in the run itself.
