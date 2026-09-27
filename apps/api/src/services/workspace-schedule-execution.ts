@@ -273,7 +273,7 @@ const MAINTENANCE_TASKS: Record<string, (ctx: WorkspaceScheduleContext) => Promi
  * among them — and a Node test that runs them needs the object's ledger, not
  * a regional snapshot.
  */
-const SCHEDULE_TARGET_QUERIES: readonly { kind: WorkspaceScheduleTargetKind; sql: string; scoped: boolean }[] = [
+export const SCHEDULE_TARGET_QUERIES: readonly { kind: WorkspaceScheduleTargetKind; sql: string; scoped: boolean }[] = [
   {
     kind: "schedule",
     scoped: true,
@@ -294,19 +294,14 @@ const SCHEDULE_TARGET_QUERIES: readonly { kind: WorkspaceScheduleTargetKind; sql
     sql: `SELECT 'resource_objects' AS id, MIN(created_at) AS due_at
             FROM resource_object_deletion_outbox pending
            WHERE pending.workspace_id = ?1
+             -- One lookup per column, each on its partial index (migration
+             -- 78). Every row here is this workspace's, and naming workspace_id
+             -- in these lookups lets the planner scan every version instead.
              AND (pending.cleanup_eligible = 1
-               OR EXISTS (
-                 SELECT 1 FROM resources current_resource
-                  WHERE current_resource.workspace_id = pending.workspace_id
-                    AND (current_resource.content_ref = pending.object_ref
-                      OR current_resource.model_content_ref = pending.object_ref)
-               )
-               OR EXISTS (
-                 SELECT 1 FROM resource_versions historical_version
-                  WHERE historical_version.workspace_id = pending.workspace_id
-                    AND (historical_version.content_ref = pending.object_ref
-                      OR historical_version.model_content_ref = pending.object_ref)
-               ))
+               OR EXISTS (SELECT 1 FROM resources WHERE content_ref = pending.object_ref)
+               OR EXISTS (SELECT 1 FROM resources WHERE model_content_ref = pending.object_ref)
+               OR EXISTS (SELECT 1 FROM resource_versions WHERE content_ref = pending.object_ref)
+               OR EXISTS (SELECT 1 FROM resource_versions WHERE model_content_ref = pending.object_ref))
           HAVING COUNT(*) > 0`,
   },
   {

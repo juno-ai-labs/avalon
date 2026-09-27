@@ -116,9 +116,12 @@ private conversations before claiming the percentile targets are met.
 
 ### One Queue pipeline
 
-Source deliveries discover canonical document IDs without loading bodies and
-publish document-phase jobs. Resource IDs are derived directly; turn discovery
-reconciles link metadata and selects only IDs, including retained deletions. Each document delivery captures only its selected page (when needed), writes
+A resource's source delivery indexes it in place: one `prepareResourceSearch`
+call returns its three category documents (at most one live, the others
+tombstones), and one more call confirms nothing changed. A turn's source
+delivery discovers canonical document IDs without loading bodies and publishes
+document-phase jobs; turn discovery reconciles link metadata and selects only
+IDs, including retained deletions. Each document delivery captures only its selected page (when needed), writes
 its lexical record, plans its recursive/sliding chunks, and publishes embedding
 batches. Turns with many links therefore do not accumulate all page-planning CPU
 in one invocation. Document and embedding children load only their selected
@@ -646,6 +649,28 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-26 — A resource is indexed in its source delivery
+
+**What changed:** A `resource_search_projection_v1` delivery no longer fans out
+one document job per category. It reads all three category documents from the
+WorkspaceDO in one `prepareResourceSearch` call, writes or withdraws each, and
+confirms with a second read. Embedding batches are unchanged.
+
+**Why:** Each document job read the WorkspaceDO twice, so a resource cost six
+calls into that object, two thirds of them only to learn the resource was not
+in that category, and each batch of 100 resources arrived as 300 concurrent
+jobs. At Juno Labs that burst queued behind 700 ms child-effect calls and
+overloaded the object even when paced to 200 resources a minute. It is now two
+calls per resource and 100 concurrent jobs per batch.
+
+**Considered and rejected:** Keeping the fan-out and skipping the object read
+for non-category documents; a category can change between reads, and the
+tombstone must be written at the current revision, which only the object knows.
+
+**What a future change has to respect:** turns still fan out, because a turn's
+links each need their own capture. A resource source that grows a document
+needing independent retries must fan out again.
 
 ### 2026-09-26 — A workspace's resource backlog is dispatched 100 every 30 seconds
 
