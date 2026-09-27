@@ -3342,6 +3342,26 @@ export const WorkstreamWorkflowInputSchema = z.object({
    * its definition from the automation by revision when it starts.
    */
   automationRun: AutomationRunReferenceV1Schema.optional(),
+  /**
+   * Set beside `automationRun` when input to a Sidekick run child continued
+   * that run, rather than the Sidekick's schedule or trigger starting it.
+   * Optional so every existing producer keeps parsing unchanged;
+   * `docs/automation-lifecycle.md` owns it.
+   *
+   * `approvedAt` is the Sidekick object's clock when `continueRun` approved
+   * the continuation, which the run authority check fences a finished run row
+   * against. `senderName` and `source` are what the host-rendered continuation
+   * note tells the model: who replied, and whether in a bound provider thread
+   * or in the run itself.
+   */
+  automationContinuation: z.strictObject({
+    approvedAt: z.number().int().nonnegative(),
+    senderName: z.string().min(1).max(200),
+    source: z.discriminatedUnion("kind", [
+      z.strictObject({ kind: z.literal("run") }),
+      z.strictObject({ kind: z.literal("provider_thread"), provider: z.string().min(1).max(100) }),
+    ]),
+  }).optional(),
   /** The received agent exchange supplies discovery scope and the ordinary reply reference. */
   agentExchange: AgentExchangeSchema.optional(),
   /** Host-derived conversation kind; not a model-selectable execution option. */
