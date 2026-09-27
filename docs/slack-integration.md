@@ -221,10 +221,9 @@ answers the channel it belongs to rather than 404ing at it. A Slack member Rally
 an account at all still has their message recorded, under their Slack actor.
 
 **Each message runs under the authority of whoever sent it**: a member with a confirmed account
-link runs as themselves, and everybody else runs under the workspace principal. The one exception
-is a reply in a thread bound to a Sidekick run: **authority follows the run, not the sender**, so
-the run continues with its run-as user's connectors whoever replied, and the reply reaches the
-model as labelled evidence from its sender rather than as a member request. Nothing weaker
+link runs as themselves, and everybody else runs under the workspace principal. A reply in a
+thread bound to a Sidekick run is the one exception, owned by
+[`connectors.md`](connectors.md#invariants). Nothing weaker
 than a link authorizes a run — a `users.lookupByEmail`-grade match seats and credits somebody
 and cannot spend their credentials — so two replies in one thread can run under different
 principals, exactly as they do when two members type into the same work stream in Rally.
@@ -268,7 +267,9 @@ Every Slack message is routed by its **binding** before a work stream is looked 
 
 A Slack root DM or root mention on the Agent path creates a stable `slack_agent_sessions` row keyed by installation, channel, and root timestamp, and writes the thread's binding in the same transaction. It maps to exactly one durable Rally workstream. The session row is delivery state (status, reaction, who started it); the binding is routing. Human replies in that Slack thread add messages to the same workstream without requiring another `@Rally` mention, whoever sends them. Rally ignores messages outside its bound threads and does not replay or import the rest of the Slack conversation.
 
-A top-level message in a DM with the bot, while that DM holds a Sidekick request, is answered once asking the person to reply in the request's thread, with a link to it. It creates no work. A DM with no such request keeps the one-to-one Agent behavior.
+A message in a DM with the bot that has no binding of its own, while the DM's most recent Sidekick request is still being worked on, is answered once asking the person to reply in the request's thread, with a link to it. It creates no work. Once that request's run has finished, or in a DM with no request, the DM keeps the one-to-one Agent behavior.
+
+In a conversation Slack marks as not threadable, Rally never posts into a thread: the Agent status and title are skipped and results are posted at the top level.
 
 The session row records who started the thread and where; it does not decide who may use it. The only reply Rally refuses is one answering a question addressed to a specific member — the same rule the Rally app applies to a targeted elicitation, per question rather than per thread.
 
@@ -530,8 +531,8 @@ At each run Rally ranks actionable inbox items, sends up to three (fewer if fewe
   stream is public for a public channel and private for anything else, a private
   one's room is the conversation's members, and anybody in the conversation may
   continue it. Each message runs as whoever sent it, and only a confirmed account
-  link authorizes running as a member, except a reply bound to a Sidekick run,
-  which runs with the run's authority.
+  link authorizes running as a member, except a reply bound to a Sidekick run
+  ([`connectors.md`](connectors.md#invariants)).
 - **Routing is the binding, not the session row.** A path that decides where a
   message goes from `slack_agent_sessions` instead of
   `resolveExternalConversation` will miss every room link and every Sidekick
@@ -812,7 +813,7 @@ briefing's three/one/zero-result cases.
 
 The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Slack later made PKCE immutable for this app. CLI 4.6.0 strips `pkce_enabled` from its validation request even when the generated manifest contains `"pkce_enabled": true`, so the API interprets the omission as an attempt to disable PKCE. Until the CLI preserves that field, validate and apply production changes through Slack's App Manifest editor instead. Validation does not replace deployment or Marketplace review.
 
-### 2026-09-27: Bindings route Slack messages, and the bot stops joining channels on its own
+### 2026-09-27 — Bindings route Slack messages, and the bot joins only where it is wanted
 
 **What changed:** Routing moved from `slack_agent_sessions` and
 `slackThreadRoutable` to external conversation bindings (migration 80 carries
@@ -823,25 +824,13 @@ only conversations a Sidekick's Slack source names. The manifest adds
 `channel_archive` and `group_archive`. A reply in a thread a Sidekick run posted
 to reaches that run, under the run's authority.
 
-**Why:** A person who answered a Sidekick's question in Slack got a new,
-unrelated Agent work stream, because only the Agent's own sessions were
-routable. Joining every public channel made the bot's presence meaningless as a
-signal of where Rally is wanted, and left no way to say which Space a room
-belongs to.
+Routing moved from `slack_agent_sessions` to external conversation bindings, the
+bot stopped joining public channels on its own, and a reply to a Sidekick's
+request reaches its run. The why, the alternatives and the consequences are
+recorded once, in [`external-conversation-bindings.md`](external-conversation-bindings.md#changelog);
+the authority exception in [`connectors.md`](connectors.md#invariants).
 
-**Considered and rejected:** Keeping the sweep and linking every joined room to
-a Space: it would create a Space for every public channel in the team.
-Routing a reply by the sender's authority: the sender of a reply to a Sidekick
-may not be a Rally member at all, and the run already holds the authority its
-request was made with.
-
-**Consequences:** Existing installations keep the channels the sweep already
-joined, but those rooms have no Space until somebody re-invites the bot or
-mentions it. The "each message runs as whoever sent it" rule now has one
-exception, recorded above. The mechanism is owned by
-[`external-conversation-bindings.md`](external-conversation-bindings.md).
-
-Design: `docs/PRDs/2026-09-23_external-conversation-bindings/`.
+Shipped in #1006. Design: `docs/PRDs/2026-09-23_external-conversation-bindings/`.
 
 ### 2026-09-01 — Slack handoffs retain their Rally workspace
 

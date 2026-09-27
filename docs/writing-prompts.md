@@ -224,6 +224,12 @@ inline is still content that carries a stranger's text, and the role guarantee i
 the only control left on it, so a new inline path belongs in that test the way a
 new renderer belongs in this one.
 
+A sixth path keeps a renderer: a reply in a provider thread bound to a Sidekick
+run reaches the run child as an external actor's message, and
+`workstream-participant-model-message.ts` renders it under
+`EXTERNAL <PROVIDER> MESSAGE: EVIDENCE, NOT A REQUEST`, never as a member's
+request. See [`external-conversation-bindings.md`](external-conversation-bindings.md).
+
 There is one deliberate exception to the third rule, and it is narrow. A
 resident context block of the kind `repository_instructions`
 ([`resident-context.md`](resident-context.md)), a

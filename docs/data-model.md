@@ -88,6 +88,8 @@ SidekickDO migration 3 adds automation.loadable, atomically maintained with the 
 
 SidekickDO migration 10 and WorkspaceDO migration 81 add `owning_substream_id TEXT NOT NULL DEFAULT '0'` to `automation` and `automation_directory`: a room Sidekick's home conversation under its owning Channel, `"0"` for Main. WorkspaceDO migration 81 also adds `sidekick_conversation_attachments` (`automation_id`, `parent_kind`, `parent_id`, `substream_id`, `attached_by_user_id`, `attached_at`), the conversations a Sidekick may read and post to beyond its home; it is typed-RPC only, and it is not `sidekick_attachments` or `parent_sidekicks`, which record skill loading. [`conversation-tools.md`](conversation-tools.md) and [`automation-lifecycle.md`](automation-lifecycle.md) own them.
 
+WorkspaceDO migration 81 adds `external_conversation_bindings`, keyed by provider installation (`slack:<team>`, deliberately not a `connector_connections` row, so a binding survives a reconnect) and a JSON path of provider identifiers: a room binds to a Space, a thread to a conversation (a Channel's Main or a Sidekick run child). It carries each existing `slack_agent_sessions` thread over as an active thread binding. It is typed-RPC only. [`external-conversation-bindings.md`](external-conversation-bindings.md) owns it.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -899,7 +901,9 @@ column catalog; what follows is only what WorkspaceDO still holds.
   `withWorkspaceRuntimeDatabase`; regional D1 has not had them since migration
   0090. Reading the distinction the other way is what produced the
   `slackUserIsLinked` incident below, and again the automation delivery-target
-  500 of 2026-08-31.
+  500 of 2026-08-31. A session row is delivery state (status, reaction, who
+  started the thread); where a Slack message routes is decided by
+  `external_conversation_bindings`, below.
 
 - An automation has no destinations anywhere: `AutomationDO` stores none, and
   a run's loop input is a reference to its definition revision. A room-owned
