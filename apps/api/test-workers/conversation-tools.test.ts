@@ -1,0 +1,399 @@
+/// <reference types="@cloudflare/vitest-pool-workers/types" />
+
+/**
+ * A Sidekick's home and attached conversations, and the object methods the
+ * `rally:conversations` tools stand on, through the real Durable Objects.
+ *
+ * SidekickDO projects its home into WorkspaceDO's directory; WorkspaceDO
+ * decides a conversation tool's scope from its own directories and admits the
+ * acting person through the hosted parent's `authorizeViewer`; a Channel's or
+ * Breakout's own SubstreamAgent appends a post. The model-driven path (a real
+ * run calling `conversation_post`) is in `automation-post-result.test.ts`; the
+ * tools' argument and failure shapes are in `test/conversation-tools.test.ts`.
+ */
+
+import { env } from "cloudflare:workers";
+import { reset, runInDurableObject } from "cloudflare:test";
+import { beforeEach, describe, expect, it } from "vitest";
+
+import {
+  asAutomationId,
+  asSubstreamId,
+  asUserId,
+  asWorkspaceId,
+  asWorkstreamId,
+  type AutomationDraft,
+  type SubstreamId,
+} from "@rally/contracts";
+
+import type { AutomationDO } from "../src/durable-objects/automation-do";
+import { automationDOName, conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
+import type { AuthContext, Env } from "../src/env";
+import { createAutomation } from "../src/services/automation-service";
+import {
+  bootstrapConversationChildRuntime,
+  bootstrapWorkstreamRuntimeEnvironment,
+  provisionWorkstreamObject,
+} from "../src/services/workstream-runtime-database";
+import { deliverChildEffects, deliverEffectsToWorkspace, deliverParentEffects } from "./helpers/conversation-effects";
+import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
+import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
+
+/** Its own workspace: object names are shared across files, storage is not. */
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000c0a10");
+const AUTHOR_ID = asUserId("00000000-0000-7000-8000-0000000c0a11");
+const COLLEAGUE_ID = asUserId("00000000-0000-7000-8000-0000000c0a12");
+const SESSION_ID = "00000000-0000-7000-8000-0000000c0a13";
+const NOW = "2026-09-27T10:00:00.000Z";
+const TEST_ENV: Env = env;
+
+const AUTH: AuthContext = {
+  sessionId: SESSION_ID, userId: AUTHOR_ID, workspaceId: WORKSPACE_ID, region: "global", role: "member",
+};
+
+/** Reassigned per test so a finished test's still-draining objects are not the next test's. */
+let ordinal = 0;
+let ROOM_ID = asWorkstreamId("00000000-0000-7000-8000-00000c0a0001");
+let OTHER_ROOM_ID = asWorkstreamId("00000000-0000-7000-8000-00000c0a0002");
+let AUTOMATION_ID = asAutomationId("00000000-0000-7000-8000-00000c0a0003");
+
+const DEFINITION: AutomationDraft = {
+  name: "Weekly call prep",
+  description: "Collects updates for the weekly call",
+  overview: "Collects the founders' updates and writes the agenda.",
+  instructions: "Collect updates and post the agenda to the home conversation.",
+  triggers: [{ type: "manual" }],
+  requiredCapabilities: [],
+  expectedOutputs: [],
+  defaultBehavior: {},
+  recommendedPlugins: [],
+  memoryTables: [],
+  suggestedScope: "workstream",
+  followUpQuestion: null,
+  elicitation: null,
+  ready: true,
+};
+
+useHeldEffectQueue();
+
+function workspace() {
+  return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
+}
+
+function automation(): DurableObjectStub<AutomationDO> {
+  return env.AUTOMATION_DOS.get(env.AUTOMATION_DOS.idFromName(automationDOName("global", WORKSPACE_ID, AUTOMATION_ID)));
+}
+
+function conversation(parentId: string, substreamId: SubstreamId | "0" = "0") {
+  return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+    conversationObjectName("global", WORKSPACE_ID, parentId, substreamId)));
+}
+
+async function seedRegionalDatabase(): Promise<void> {
+  await seedWorkspaceControlPlane(env.DB, { workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, sessionId: SESSION_ID });
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+      VALUES (?, ?, 'active', 'member', ?)`).bind(WORKSPACE_ID, COLLEAGUE_ID, NOW),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstreams (
+      id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, do_identity_anchor INTEGER NOT NULL DEFAULT 0
+    )`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_create_receipts (
+      workspace_id TEXT NOT NULL, creator_user_id TEXT NOT NULL, client_message_id TEXT NOT NULL,
+      workstream_id TEXT NOT NULL, generation INTEGER NOT NULL, request_hash TEXT NOT NULL,
+      state TEXT NOT NULL, message_id TEXT, harness_run_id TEXT, error_code TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      PRIMARY KEY (workspace_id, creator_user_id, client_message_id), UNIQUE (workstream_id)
+    )`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_routes (
+      workspace_id TEXT NOT NULL, workstream_id TEXT PRIMARY KEY, generation INTEGER NOT NULL,
+      object_name TEXT NOT NULL, state TEXT NOT NULL, stage_index INTEGER NOT NULL DEFAULT 0,
+      source_cursor INTEGER NOT NULL DEFAULT 0, source_fence_sequence INTEGER NOT NULL,
+      source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT,
+      verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL
+    )`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_email_routes (
+      local_part TEXT PRIMARY KEY COLLATE NOCASE, region TEXT NOT NULL,
+      workspace_id TEXT NOT NULL, workstream_id TEXT, automation_subscription_id TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )`),
+    env.DB.prepare(`INSERT OR REPLACE INTO workstream_email_routes
+        (local_part, region, workspace_id, workstream_id, automation_subscription_id, created_at, updated_at)
+      VALUES (?, 'global', ?, NULL, ?, ?, ?)`)
+      .bind(`prep-${ordinal}`, WORKSPACE_ID, AUTOMATION_ID, NOW, NOW),
+  ]);
+}
+
+/** A personal room with only the author in it, made the way creation makes one. */
+async function seedRoom(roomId: string, title: string, participantUserIds: string[] = [AUTHOR_ID]): Promise<void> {
+  await workspace().reserveChild({
+    workspaceId: WORKSPACE_ID, parentId: roomId, substreamId: asSubstreamId("0"), kind: "main",
+    createdByUserId: AUTHOR_ID, authorityGeneration: 1,
+    directory: { title, description: "", scope: "personal", systemKind: null, emailAddress: null,
+      titleStatus: "settled", createdAt: NOW },
+  });
+  await bootstrapWorkstreamRuntimeEnvironment(TEST_ENV, WORKSPACE_ID, roomId, "workstream");
+  await provisionWorkstreamObject(TEST_ENV, {
+    workspaceId: WORKSPACE_ID, workstreamId: roomId, title, objective: "", scope: "personal",
+    createdByUserId: AUTHOR_ID, participantUserIds, harnessStatus: "idle", titleStatus: "settled",
+    emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride: null, now: Date.now(),
+  });
+  await deliverEffectsToWorkspace(TEST_ENV, conversation(roomId));
+}
+
+/** A ready private Breakout of the room with only the author in it, as creation makes one. */
+async function seedBreakout(title: string): Promise<SubstreamId> {
+  const parent = workspace();
+  const operationId = crypto.randomUUID();
+  const recipe = {
+    policy: { revision: "test-empty-v1", strategy: { id: "empty", version: 1 }, config: {} },
+    capture: "none" as const,
+    parts: [],
+  };
+  const reserved = await parent.beginPrivateChildPreparation({
+    workspaceId: WORKSPACE_ID, parentId: ROOM_ID, operationId, creatorUserId: AUTHOR_ID, title,
+    sourceSubstreamId: "0" as const, sourceThroughTurnId: null, recipe,
+    membershipInitializer: { plugin: { id: "creator-only", version: 1 }, config: {}, memberUserIds: [AUTHOR_ID] },
+  });
+  const hash = "0".repeat(64);
+  await parent.savePreparedPrivateChildContext({
+    workspaceId: WORKSPACE_ID, parentId: ROOM_ID, operationId,
+    preparedContext: { schemaVersion: 1, recipe, recipeHash: hash, capture: null, captureHash: null, parts: [], contentHash: hash },
+  });
+  await parent.claimPrivateChildConfirmation({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID, operationId, actorUserId: AUTHOR_ID });
+  await bootstrapConversationChildRuntime(TEST_ENV, WORKSPACE_ID, "workstream", ROOM_ID, reserved.substreamId);
+  await provisionWorkstreamObject(TEST_ENV, {
+    workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, substreamId: reserved.substreamId,
+    title, objective: "", scope: "personal", createdByUserId: AUTHOR_ID,
+    participantUserIds: [AUTHOR_ID], harnessStatus: "idle", titleStatus: "settled", emailAddress: null,
+    emailRouteStatus: null, systemKind: null, modelOverride: null, now: Date.now(),
+  });
+  await conversation(ROOM_ID, reserved.substreamId).installPreparedSubstreamContext({
+    workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, substreamId: reserved.substreamId, operationId,
+  });
+  await parent.setPrivateChildTerminalStatus({
+    workspaceId: WORKSPACE_ID, parentId: ROOM_ID, operationId, status: "ready", errorCode: null,
+  });
+  await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID, reserved.substreamId));
+  return reserved.substreamId;
+}
+
+/** A room Sidekick whose home is `home`, created the way authoring creates one, applied and projected. */
+async function seedSidekick(home: SubstreamId | "0"): Promise<void> {
+  await createAutomation(TEST_ENV, {
+    workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "workstream",
+    owningWorkstreamId: ROOM_ID, owningSubstreamId: home, automationId: AUTOMATION_ID,
+  });
+  const addressed = { workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID };
+  await automation().submitDefinition({ ...addressed, draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });
+  await runInDurableObject(automation(), (instance: AutomationDO) => instance.apply({
+    ...addressed, actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: true },
+  }));
+  await deliverParentEffects(TEST_ENV, automation());
+}
+
+const sidekickScope = () => ({ kind: "sidekick" as const, automationId: AUTOMATION_ID });
+
+beforeEach(async () => {
+  ordinal += 1;
+  const suffix = String(ordinal).padStart(4, "0");
+  ROOM_ID = asWorkstreamId(`00000000-0000-7000-8000-${suffix}000c0a01`);
+  OTHER_ROOM_ID = asWorkstreamId(`00000000-0000-7000-8000-${suffix}000c0a02`);
+  AUTOMATION_ID = asAutomationId(`00000000-0000-7000-8000-${suffix}000c0a03`);
+  await reset();
+  await seedRegionalDatabase();
+  await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
+  // The second member, known to the Organization the way a membership event
+  // makes one known, so a Breakout can seat them.
+  await workspace().applyMemberStatus({ workspaceId: WORKSPACE_ID, sequence: 1, removed: false, relationship: {
+    workspaceId: WORKSPACE_ID, userId: COLLEAGUE_ID, accessClass: "member", role: "member", status: "active",
+    incarnation: "existing-member", revision: 1,
+  } });
+  await seedRoom(ROOM_ID, "Investors", [AUTHOR_ID, COLLEAGUE_ID]);
+});
+
+describe("a Sidekick's home conversation", () => {
+  it("carries a Breakout home from the Sidekick to the Organization and lists it first", async () => {
+    const breakout = await seedBreakout("Weekly call");
+    await seedSidekick(breakout);
+
+    expect(await workspace().automationOwner({ workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID }))
+      .toEqual({ owningWorkstreamId: ROOM_ID, owningSubstreamId: breakout });
+    const listed = await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
+      scope: sidekickScope() });
+    expect(listed.conversations).toEqual([{
+      conversationId: `${ROOM_ID}/${breakout}`, parentId: ROOM_ID, substreamId: breakout,
+      kind: "breakout", title: "Weekly call", isHome: true, isOwn: false,
+    }]);
+    // Leaving the conversation out of a post means the home.
+    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
+      scope: sidekickScope(), reference: null })).toMatchObject({
+      ok: true, sidekickName: "Weekly call prep", conversation: { conversationId: `${ROOM_ID}/${breakout}` },
+    });
+  });
+
+  it("pauses the Sidekick when its home Breakout is archived", async () => {
+    const breakout = await seedBreakout("Weekly call");
+    await seedSidekick(breakout);
+
+    await workspace().setPrivateChildArchived({
+      workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: breakout, actorUserId: AUTHOR_ID, archived: true,
+    });
+    await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID, breakout));
+
+    const row = await runInDurableObject(automation(), (_instance, state) =>
+      state.storage.sql.exec<{ lifecycle: string; paused_by: string | null; owning_room_archived_at: number | null }>(
+        `SELECT lifecycle, paused_by, owning_room_archived_at FROM automation WHERE id = 1`,
+      ).one());
+    expect(row).toMatchObject({ lifecycle: "paused", paused_by: "room_archive" });
+    expect(row.owning_room_archived_at).not.toBeNull();
+  });
+});
+
+describe("attaching a conversation to a Sidekick", () => {
+  it("refuses a person who cannot post there, and records one row however often it is asked", async () => {
+    await seedRoom(OTHER_ROOM_ID, "Founders");
+    await seedSidekick("0");
+
+    const refused = await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID,
+      userId: COLLEAGUE_ID, automationId: AUTOMATION_ID, reference: OTHER_ROOM_ID });
+    expect(refused).toEqual({ ok: false, code: "conversation_access_denied", available: [], resourceId: OTHER_ROOM_ID });
+
+    const attached = await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID,
+      userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: "founders" });
+    expect(attached).toMatchObject({ ok: true, alreadyAttached: false,
+      conversation: { conversationId: OTHER_ROOM_ID, kind: "channel", title: "Founders" } });
+    expect(await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID,
+      userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: OTHER_ROOM_ID }))
+      .toMatchObject({ ok: true, alreadyAttached: true });
+    expect(await runInDurableObject(workspace(), (_instance, state) =>
+      state.storage.sql.exec<{ parent_id: string }>(
+        `SELECT parent_id FROM sidekick_conversation_attachments WHERE automation_id = ?`, AUTOMATION_ID,
+      ).toArray())).toEqual([{ parent_id: OTHER_ROOM_ID }]);
+  });
+
+  it("reads and posts only where the Sidekick is attached", async () => {
+    await seedRoom(OTHER_ROOM_ID, "Founders");
+    await seedSidekick("0");
+    const resolve = (reference: string) => workspace().resolveConversationToolTarget({
+      workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, scope: sidekickScope(), reference,
+    });
+
+    // The author can open Founders, but the Sidekick is not attached to it.
+    expect(await resolve(OTHER_ROOM_ID))
+      .toEqual({ ok: false, code: "conversation_not_in_scope", available: [ROOM_ID], resourceId: null });
+    await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID,
+      userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: OTHER_ROOM_ID });
+    expect(await resolve("Founders")).toMatchObject({ ok: true, conversation: { conversationId: OTHER_ROOM_ID } });
+  });
+});
+
+describe("a conversation tool's scope", () => {
+  it("re-admits on every list, omitting a Breakout the person has left", async () => {
+    const breakout = await seedBreakout("Weekly call");
+    await seedSidekick("0");
+    await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID,
+      userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: `${ROOM_ID}/${breakout}` });
+    const listed = async () => (await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID,
+      userId: AUTHOR_ID, scope: sidekickScope() })).conversations.map((entry) => entry.conversationId);
+    expect(await listed()).toEqual([ROOM_ID, `${ROOM_ID}/${breakout}`]);
+
+    // The author adds someone, then leaves; the Breakout goes on without them.
+    await workspace().addPrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
+      substreamId: breakout, actorUserId: AUTHOR_ID, userId: COLLEAGUE_ID, operationId: "add-colleague" });
+    await workspace().removePrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
+      substreamId: breakout, actorUserId: AUTHOR_ID, userId: AUTHOR_ID, operationId: "author-leaves" });
+    // The Breakout reports its roster to its parent, which the Organization
+    // hosts; the parent applies the Breakout's viewer rows in the same object.
+    await deliverChildEffects(TEST_ENV, conversation(ROOM_ID, breakout));
+
+    expect(await listed()).toEqual([ROOM_ID]);
+    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
+      scope: sidekickScope(), reference: `${ROOM_ID}/${breakout}` }))
+      .toEqual({ ok: false, code: "conversation_access_denied", available: [], resourceId: breakout });
+  });
+
+  it("refuses an archived conversation by name, and lists it no longer", async () => {
+    await seedRoom(OTHER_ROOM_ID, "Founders");
+    await seedSidekick("0");
+    await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID,
+      userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: OTHER_ROOM_ID });
+
+    const archived = await post(conversation(OTHER_ROOM_ID), "/internal/product", {
+      operation: "update", auth: AUTH, input: { archived: true },
+    });
+    expect(archived.status).toBe(200);
+    await deliverEffectsToWorkspace(TEST_ENV, conversation(OTHER_ROOM_ID));
+
+    expect((await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
+      scope: sidekickScope() })).conversations.map((entry) => entry.conversationId)).toEqual([ROOM_ID]);
+    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
+      scope: sidekickScope(), reference: OTHER_ROOM_ID }))
+      .toEqual({ ok: false, code: "conversation_archived", available: [], resourceId: OTHER_ROOM_ID });
+  });
+
+  it("gives a Breakout loop its own Breakout and its Channel's Main, and nothing else", async () => {
+    const breakout = await seedBreakout("Weekly call");
+    await seedRoom(OTHER_ROOM_ID, "Founders");
+    const scope = { kind: "conversation" as const, parentId: ROOM_ID, substreamId: breakout };
+
+    expect((await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, scope }))
+      .conversations.map((entry) => [entry.conversationId, entry.isOwn]))
+      .toEqual([[`${ROOM_ID}/${breakout}`, true], [ROOM_ID, false]]);
+    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
+      scope, reference: OTHER_ROOM_ID })).toMatchObject({ ok: false, code: "conversation_not_in_scope" });
+  });
+});
+
+describe("a conversation post", () => {
+  function postRequest(substreamId: SubstreamId, clientMessageId: string) {
+    return {
+      schemaVersion: 1 as const, workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, substreamId, clientMessageId,
+      text: "Adam: nothing from me this week.",
+      post: {
+        type: "automation_activation" as const, schemaVersion: 1 as const, automationId: AUTOMATION_ID,
+        automationName: "Weekly call prep", runId: crypto.randomUUID(), deliveryId: clientMessageId,
+        trigger: { kind: "manual" as const }, occurredAt: Date.now(),
+        externalSource: { provider: "slack", displayName: "Adam" },
+      },
+    };
+  }
+
+  it("lands once in a Breakout, as the Sidekick, without waking its agent", async () => {
+    const breakout = await seedBreakout("Weekly call");
+    const target = conversation(ROOM_ID, breakout);
+
+    const first = await target.appendConversationPost(postRequest(breakout, "conversation-post:run:receipt"));
+    expect(first).toMatchObject({ outcome: "appended", code: "conversation_post_appended" });
+    const again = await target.appendConversationPost(postRequest(breakout, "conversation-post:run:receipt"));
+    expect(again).toEqual({ outcome: "replayed", code: "conversation_post_replayed", messageId: first.messageId });
+
+    const stored = await runInDurableObject(target, (_instance, state) => ({
+      posts: state.storage.sql.exec<{ id: string; message_type: string; structured_content_json: string }>(
+        `SELECT id, message_type, structured_content_json FROM canonical_conversation_turn_details
+          WHERE client_message_id LIKE 'conversation-post:%'`,
+      ).toArray(),
+      pending: state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM pending_loop_inputs`).one().count,
+      runs: state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM runs`).one().count,
+    }));
+    expect(stored.posts).toHaveLength(1);
+    expect(stored.posts[0]).toMatchObject({ id: first.messageId, message_type: "automation_activation" });
+    expect(JSON.parse(stored.posts[0]!.structured_content_json)).toMatchObject({
+      automationName: "Weekly call prep", externalSource: { provider: "slack", displayName: "Adam" },
+    });
+    expect({ pending: stored.pending, runs: stored.runs }).toEqual({ pending: 0, runs: 0 });
+    await deliverChildEffects(TEST_ENV, target);
+  });
+
+  it("refuses an archived conversation and one it is not addressed to", async () => {
+    const breakout = await seedBreakout("Weekly call");
+    const target = conversation(ROOM_ID, breakout);
+    expect(await target.appendConversationPost(postRequest(asSubstreamId("0"), "conversation-post:run:wrong")))
+      .toEqual({ outcome: "refused", code: "workstream_destination_mismatch", messageId: null });
+
+    await workspace().setPrivateChildArchived({
+      workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: breakout, actorUserId: AUTHOR_ID, archived: true,
+    });
+    expect(await target.appendConversationPost(postRequest(breakout, "conversation-post:run:late")))
+      .toEqual({ outcome: "refused", code: "workstream_archived", messageId: null });
+  });
+});
