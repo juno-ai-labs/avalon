@@ -261,7 +261,7 @@ describe("Terminal scheduled lifecycle", () => {
     vi.mocked(provider.getSandbox).mockResolvedValue({ id: "provider-1", name: "sandbox-lifecycle", state: "failed", recoverable: false, domainAllowList: [] });
     const preserve = vi.fn(async () => undefined);
     await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW, preserve))
-      .resolves.toEqual({ transition: "deferred" });
+      .resolves.toEqual({ transition: "deferred", lostSandbox: true });
     expect(provider.deleteSandbox).toHaveBeenCalledWith("provider-1");
     expect(provider.stopSandbox).not.toHaveBeenCalled();
     expect(preserve).not.toHaveBeenCalled();
@@ -290,7 +290,7 @@ describe("Terminal scheduled lifecycle", () => {
     vi.mocked(provider.getSandbox).mockResolvedValue({ id: "provider-1", name: "sandbox-lifecycle", state: "failed", recoverable: false, domainAllowList: [] });
     vi.mocked(provider.stopSandbox).mockRejectedValue(new Error("sandbox is in an error state"));
     await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW))
-      .resolves.toEqual({ transition: "deferred" });
+      .resolves.toEqual({ transition: "deferred", lostSandbox: true });
     expect(provider.deleteSandbox).toHaveBeenCalledWith("provider-1");
     expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace WHERE id = 1"))
       .toEqual({ generation: 2, sandbox_id: null });
@@ -305,12 +305,36 @@ describe("Terminal scheduled lifecycle", () => {
     vi.mocked(provider.getSandbox).mockResolvedValue({ id: "provider-1", name: "sandbox-lifecycle", state: "failed", recoverable: false, domainAllowList: [] });
     const preserve = vi.fn(async () => undefined);
     await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW, preserve))
-      .resolves.toEqual({ transition: "expired" });
+      .resolves.toEqual({ transition: "expired", lostSandbox: true });
     expect(provider.deleteSandbox).toHaveBeenCalledWith("provider-1");
     expect(provider.recoverSandbox).not.toHaveBeenCalled();
     expect(preserve).not.toHaveBeenCalled();
     expect(workstreamObjectGet(objectStore, "SELECT lifecycle_state, sandbox_id FROM terminal_workspace WHERE id = 1"))
       .toEqual({ lifecycle_state: "expired", sandbox_id: null });
+  });
+
+  it("keeps the sandbox and its generation when deleting an unrecoverable sandbox fails", async () => {
+    const { objectStore, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
+    });
+    vi.mocked(provider.getSandbox).mockResolvedValue({ id: "provider-1", name: "sandbox-lifecycle", state: "failed", recoverable: false, domainAllowList: [] });
+    vi.mocked(provider.deleteSandbox).mockRejectedValue(new Error("delete refused"));
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW))
+      .rejects.toThrow("delete refused");
+    expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id, lifecycle_state, failure_code FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ generation: 1, sandbox_id: "provider-1", lifecycle_state: "running", failure_code: "stopped_provider_failed" });
+  });
+
+  it("never deletes a failed sandbox whose recoverability Daytona has not reported", async () => {
+    const { objectStore, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
+    });
+    vi.mocked(provider.getSandbox).mockResolvedValue({ id: "provider-1", name: "sandbox-lifecycle", state: "failed", domainAllowList: [] });
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW))
+      .rejects.toThrow("terminal_lifecycle_provider_transition_pending");
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ generation: 1, sandbox_id: "provider-1" });
   });
 
   it("waits out another pass's live claim without touching the provider", async () => {

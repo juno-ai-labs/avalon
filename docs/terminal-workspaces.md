@@ -442,8 +442,8 @@ a recoverable failed sandbox before attempting final-diff preservation. A
 sandbox Daytona reports unrecoverable is deleted and settled by whichever
 transition was due: expiry clears it, and a warm stop or archive retires the
 generation so the next Terminal call starts fresh, as acquisition does. A
-leftover command whose stop fails on such a sandbox retires it the same way. No
-stop, archive or final diff can reach it, so retrying one only fails again. SDK
+leftover command whose stop fails on such a sandbox retires it the same way.
+Each such deletion logs `terminal_sandbox_retired_after_loss` at warn. SDK
 `start()` and `recover()` wait for provider lifecycle state, which is insufficient
 proof of toolbox availability. Restore and recovery run a no-op command and
 download `/etc/hostname` before admitting work. Both read-only probes must
@@ -518,6 +518,11 @@ personless; it is not duplicated into these product events.
 
 ## Invariants
 
+- **An intermediate lifecycle state keeps projecting the deadline it claimed.**
+  `stopping` publishes the warm stop and `archiving` the archive. Moving the
+  published instant resets the alarm entry's backoff, so a claim that swapped
+  it out, and a failure that put it back, would retry a broken transition at
+  its first step forever.
 - **A provider measurement is reported per call, bound to the caller's tool
   trace, and awaited at every hop.** Reported out of band — through a
   session-scoped callback, or fired and not awaited — it is not measured at
@@ -768,15 +773,16 @@ its owner's lease from another conversation until it yields, are in
 `terminal-coordinator.test.ts`; the sweep holding such a sandbox is in
 `terminal-lifecycle.test.ts`, as are an unrecoverable sandbox deleted and
 settled rather than retried, including one whose leftover command could not
-be stopped, and a live claim waited out without a provider
-call; the port resolution rule is in
+be stopped, a failed delete that keeps the sandbox, a failure with no
+recoverability verdict that deletes nothing, and a live claim waited out
+without a provider call; the port resolution rule is in
 `workstream-tool-receipt-locality.test.ts`. On real workerd,
 `test-workers/terminal-authority.test.ts` proves the lease SQL for a holder
-that ran elsewhere and that a factory bound to the owner's conversation leaves
-the agent's object, and `test-workers/durable-object-runtime.test.ts` proves
-a Channel's parent forwards the earliest conversation deadline and lists the
-conversations that own one; `terminal-authority.test.ts` also proves a claim
-and its failure leave the published deadline where it was. The per-call lease is `terminal-runtime.test.ts`:
+that ran elsewhere, that a factory bound to the owner's conversation leaves
+the agent's object, and that a stop or archive claim and its failure leave the
+published deadline where it was; `test-workers/durable-object-runtime.test.ts`
+proves a Channel's parent forwards the earliest conversation deadline and lists
+the conversations that own one. The per-call lease is `terminal-runtime.test.ts`:
 one run's writes release between calls and re-run readiness when the row moved,
 and a read proceeds while another run's write holds the lease where a write
 waits; every recovery case there drives the successor through a write, since
@@ -916,12 +922,6 @@ directory effect takes to land off the Queue. A pass that finds another pass's
 lifecycle claim still live waits a minute the same way. None of these counts
 toward the stall report; a deadline the pass finds nothing to do for does.
 
-A lifecycle claim does not move the directory deadline it claimed: `stopping`
-still projects the warm stop and `archiving` the archive, beside the claim's
-own expiry. A pass that throws is held behind its alarm entry's backoff, and
-that backoff resets whenever the published instant moves, so a claim that
-swapped the deadline out and a failure that restored it would retry a broken
-transition at its first step forever.
 
 See [`runbook.md`](runbook.md#terminal-provider-activation-and-recovery) for
 activation and recovery. Structured events are
@@ -1163,32 +1163,42 @@ update lag before changing the default.
 ### 2026-09-27 — An unrecoverable sandbox is retired, and a failing pass backs off
 
 **What changed:** The scheduled lifecycle deletes a sandbox Daytona reports as
-`error` with `recoverable: false` and settles the due transition: expiry clears
-it, and a warm stop or archive retires the generation. A lifecycle claim no
-longer moves `next_terminal_action_at`: `stopping` and `archiving` keep
-projecting the deadline they claimed. A pass that finds another pass's claim
-still live now waits (`deferred`) instead of returning `none`.
+`error` with `recoverable: false`, including when a leftover command's stop
+fails on it, and settles the due transition: expiry clears it, and a warm stop
+or archive retires the generation. It logs `terminal_sandbox_retired_after_loss`.
+A lifecycle claim no longer moves `next_terminal_action_at`: `stopping` and
+`archiving` keep projecting the deadline they claimed. A refused claim now
+defers instead of returning `none`.
 
 **Why:** One Channel's sandbox had sat in Daytona's unrecoverable `error`
 state since 2026-09-18. Its warm stop threw
-`terminal_lifecycle_provider_transition_pending` on every pass, about 260 times
-an hour, and would have kept on until its expiry in October, which would also
-have failed trying to preserve a diff from it. Acquisition already deleted and
-replaced a lost sandbox; the sweep never had the same check. The rate came from
-a second fault: the claim swapped the published deadline for its own expiry and
-the failure restored it, and each move reset the alarm entry's backoff, so 796
-of 860 failures in one 90-minute window were "attempt 1".
+`terminal_lifecycle_provider_transition_pending` on every pass: 2,047 times in
+the six hours to 01:30 UTC on 2026-09-27, 860 of them in the last 90 minutes.
+It would have
+kept on until its expiry in October, which would also have failed trying to
+preserve a diff from it. Acquisition already deleted and replaced a lost
+sandbox; the sweep never had the same check. The rate came from a second fault:
+the claim swapped the published deadline for its own expiry and the failure
+restored it, and each move reset the alarm entry's backoff, so 796 of those 860
+failures were "attempt 1".
 
-**Rejected:** Making the alarm store keep an entry's attempt count when its due
-time moves. A move is how a caller says something changed, and the store cannot
-tell a real reschedule from a claim's churn; the fix belongs where the churn is.
-Leaving the warm stop to Daytona's backstop was rejected because the backstop
-does not delete, and the row would still claim a sandbox that cannot serve.
+**Considered and rejected:** Making the alarm store keep an entry's attempt
+count when its due time moves. A move is how a caller says something changed,
+and the store cannot tell a real reschedule from a claim's churn; the fix
+belongs where the churn is. Leaving the warm stop to Daytona's backstop was
+rejected because the backstop does not delete, and the row would still claim a
+sandbox that cannot serve.
 
-**Respect:** Anything that writes an intermediate lifecycle state has to keep
-the deadline it is acting on in the projection. Since the claimed deadline is
-already past, a live claim no longer surfaces its own expiry as the next
-instant; the pass that meets one defers rather than counting a stall.
+**Consequences:** Anything that writes an intermediate lifecycle state has to
+keep the deadline it is acting on in the projection. Because the claimed
+deadline is already past, a claim held by a crashed pass is now re-checked
+every minute until it lapses, where the directory used to wait for the claim's
+own expiry; that polling is bounded by the 16-minute lease and costs one row
+read a minute. A pass that dies between deleting a lost sandbox and settling
+the row leaves one that later reads as missing metadata, the same window
+acquisition and task cleanup already have.
+
+Shipped in #1003.
 
 ### 2026-09-19 — A provider request reports to the tool call that issued it
 
