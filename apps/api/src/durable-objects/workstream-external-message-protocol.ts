@@ -65,6 +65,10 @@ export const AnswerExternalElicitationInputSchema = ExternalMessageBaseSchema.ex
  * requires about that actor — the provider, the account, the Slack origin it
  * came from — is absent here rather than filled with a placeholder that later
  * readers would have to recognize as one.
+ *
+ * Nothing admits a new one: `post_result`, its only caller, is gone. The schema
+ * stays so preparation recovery can still replay an activation stored before
+ * that deploy; it can go once none can remain in any mailbox.
  */
 export const AdmitAutomationActivationInputSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
@@ -105,6 +109,5 @@ export type AdmitAgentMessageInput = z.infer<typeof AdmitAgentMessageInputSchema
 export type AdmitSystemActivationInput = z.infer<typeof AdmitSystemActivationInputSchema>;
 
 export type AdmitExternalMessageInput = z.infer<typeof AdmitExternalMessageInputSchema>;
-export type AdmitAutomationActivationInput = z.infer<typeof AdmitAutomationActivationInputSchema>;
 export type AnswerExternalElicitationInput = z.infer<typeof AnswerExternalElicitationInputSchema>;
 export type ExternalMessageAdmissionResult = z.infer<typeof ExternalMessageAdmissionResultSchema>;

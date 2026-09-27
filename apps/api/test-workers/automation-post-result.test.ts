@@ -12,10 +12,6 @@ import { AgentCommunicationService } from "../src/services/agent-communication-s
  * whole path: a real run child of a real `AutomationDO`, the provider double
  * calling the tool, WorkspaceDO resolving the home and admitting the run-as
  * person, the room's conversation object appending the post.
- *
- * `appendAutomationActivation`, which `post_result` used and which wakes the
- * room, keeps its own refusal tests at the end; nothing in production calls it
- * any more.
  */
 
 import { env } from "cloudflare:workers";
@@ -68,7 +64,6 @@ import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000ad10");
 const AUTHOR_ID = asUserId("00000000-0000-7000-8000-00000000ad11");
 const SESSION_ID = "00000000-0000-7000-8000-00000000ad12";
-const STAGED_RUN_ID = "00000000-0000-7000-8000-00000000ad13";
 const NOW = "2026-08-29T10:00:00.000Z";
 const RESULT_TEXT = "Three pull requests are open and two of them are waiting on review.";
 const TEST_ENV: Env = env;
@@ -1682,7 +1677,7 @@ describe("a room Sidekick's run and the room's agents", () => {
     expect(await postTurns()).toHaveLength(1);
   });
 
-  it("refuses the activation once the owning room is archived, and the archive pauses the automation", async () => {
+  it("pauses the automation when its owning room is archived", async () => {
     // Archived through the room's own surface; the archive reaches the room's
     // parent, hosted by the workspace, on the queue leg, and the workspace's
     // directory step tells the automation its room is gone.
@@ -1696,21 +1691,6 @@ describe("a room Sidekick's run and the room's agents", () => {
 
     expect(await roomParent().authority({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID }))
       .toEqual({ exists: true, authorityGeneration: 1, archived: true });
-    const refused = await roomConversation().appendAutomationActivation({
-      schemaVersion: 1,
-      workspaceId: WORKSPACE_ID,
-      workstreamId: ROOM_ID,
-      authorityGeneration: 1,
-      deliveryId: STAGED_RUN_ID,
-      text: RESULT_TEXT,
-      executionPrincipal: { type: "user", userId: AUTHOR_ID },
-      activation: activation(STAGED_RUN_ID),
-    });
-    expect(refused).toEqual({ outcome: "refused", code: "workstream_archived" });
-    expect(await activationTurns()).toEqual([]);
-    const pending = await runInDurableObject(roomConversation(), (_instance, state) =>
-      state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM pending_loop_inputs`).one().count);
-    expect(pending).toBe(0);
 
     const automation = await runInDurableObject(automationStub(), (_instance, state) =>
       state.storage.sql.exec<{ lifecycle: string; paused_by: string | null; owning_room_archived_at: number | null }>(
@@ -1720,37 +1700,5 @@ describe("a room Sidekick's run and the room's agents", () => {
     expect(automation.owning_room_archived_at).not.toBeNull();
     expect(await automationStub().authority({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID }))
       .toEqual({ exists: true, authorityGeneration: 1, archived: true });
-  });
-
-  it("refuses a stale authority generation and appends under the current one", async () => {
-    const stale = await roomConversation().appendAutomationActivation({
-      schemaVersion: 1,
-      workspaceId: WORKSPACE_ID,
-      workstreamId: ROOM_ID,
-      authorityGeneration: 2,
-      deliveryId: STAGED_RUN_ID,
-      text: RESULT_TEXT,
-      executionPrincipal: { type: "user", userId: AUTHOR_ID },
-      activation: activation(STAGED_RUN_ID),
-    });
-    expect(stale).toEqual({ outcome: "refused", code: "workstream_authority_generation_stale" });
-    expect(await activationTurns()).toEqual([]);
-
-    const appended = await roomConversation().appendAutomationActivation({
-      schemaVersion: 1,
-      workspaceId: WORKSPACE_ID,
-      workstreamId: ROOM_ID,
-      authorityGeneration: 1,
-      deliveryId: STAGED_RUN_ID,
-      text: RESULT_TEXT,
-      executionPrincipal: { type: "user", userId: AUTHOR_ID },
-      activation: activation(STAGED_RUN_ID),
-    });
-    expect(appended).toEqual({ outcome: "appended", code: "sidekick_activation_appended" });
-    // The wake is real: the room runs on it before this test lets go of it.
-    const [roomRun] = await settledRun(roomConversation());
-    expect(roomRun).toMatchObject({ status: "completed", error_json: null });
-    expect(await activationTurns()).toEqual([{ client_message_id: `automation-activation:${STAGED_RUN_ID}` }]);
-    await deliverChildEffects(TEST_ENV, roomConversation());
   });
 });
