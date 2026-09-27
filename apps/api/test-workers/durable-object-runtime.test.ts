@@ -4072,7 +4072,7 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
-  it("wakes no processing for a repeat of an event still waiting to be processed", async () => {
+  it("wakes no processing for a repeat of a pending event, and retries one of a failed event afresh", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
       workspaceDOName("global", WORKSPACE_ID),
@@ -4093,19 +4093,31 @@ describe("Durable Objects in the Workers runtime", () => {
     const processWakes = () => send.mock.calls
       .filter(([body]) => (body as { kind?: string }).kind === "connector_event_process").length;
     try {
-      const first = await delivery("00000000-0000-7000-8000-000000000511", "1");
+      const firstId = "00000000-0000-7000-8000-000000000511";
+      const first = await delivery(firstId, "1");
       const touch = await delivery("00000000-0000-7000-8000-000000000512", "2");
+      const afterFailureId = "00000000-0000-7000-8000-000000000513";
+      const afterFailure = await delivery(afterFailureId, "3");
       await consumeEffectBodies(env, [first]);
       expect(processWakes()).toBe(1);
-      // The first event is still pending, and a failed one would be retried:
-      // either way its own admission owns that, not the repeat's.
-      await runInDurableObject(stub, (_instance, state) => {
-        state.storage.sql.exec(
-          "UPDATE workspace_connector_events SET processing_status = 'failed', processing_attempt = 1",
-        );
-      });
+      // The first event is still pending: its own admission woke it, and the
+      // repeat, redelivered too, wakes nothing more.
       await consumeEffectBodies(env, [touch, touch]);
       expect(processWakes()).toBe(1);
+      // Once it has failed for good, a repeat is stored as a new event with a
+      // retry budget of its own, rather than folded into one that never ran.
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(
+          "UPDATE workspace_connector_events SET processing_status = 'failed', processing_attempt = 5",
+        );
+      });
+      await consumeEffectBodies(env, [afterFailure]);
+      expect(processWakes()).toBe(2);
+      await runInDurableObject(stub, (_instance, state) => {
+        expect(state.storage.sql.exec<{ event_id: string }>(
+          "SELECT event_id FROM workspace_connector_events ORDER BY event_sequence",
+        ).toArray().map((row) => row.event_id)).toEqual([firstId, afterFailureId]);
+      });
     } finally {
       send.mockRestore();
     }
