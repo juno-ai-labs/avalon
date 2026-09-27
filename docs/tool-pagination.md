@@ -69,7 +69,8 @@ for pre-cutover receipts. Table queries retain their data-revision validation.
 ## Boundary
 
 This covers Google, native Slack, Linear, workspace Notion, workspace Granola,
-X, resource list/read/search/summary, and table query. Dynamic hosted MCP routes
+X, resource list/read/search/summary, table query, and the conversation tools'
+list and read (prefix `conversation`, [`conversation-tools.md`](conversation-tools.md)). Dynamic hosted MCP routes
 are excluded even when they share a connector name with a native adapter.
 Numeric offsets and bounded non-pageable reads are unchanged. Linear's bounded
 embedded comments/teams retain `hasNextPage` without advertising an unusable token.

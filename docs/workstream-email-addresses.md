@@ -203,8 +203,8 @@ the request field, the frozen targets, the `PATCH` route, the desktop editor,
 the result email and its template and preview script, and the child's delivery
 loop. The one destination that was never chosen, the room that owns a
 `workstream`-scoped automation, is reached by the run itself through its
-`post_result` tool; there are no delivery receipts and no
-classifier.
+`conversation_post` tool, which defaults to that Sidekick's home
+conversation; there are no delivery receipts and no classifier.
 
 What replaced it is the run itself. An automation's instructions say where a
 result should reach, the run holds the connector tools it was bound, and sending
@@ -361,9 +361,9 @@ sunbird, terrapin, waxbill
   match against active membership is the control; an inbound-email run holds the
   same tools as any other automation run, so ingress screening carries the weight.
 - **A run posts its own result into the owning room, once, and Rally posts
-  nothing after it.** The room that owns a `workstream`-scoped automation
-  travels in the task context's `sidekick.resultDelivery` as its one entry,
-  and the run's `post_result` tool is the one way a result reaches
+  nothing after it.** The home conversation of a `workstream`-scoped
+  automation travels in the task context as `sidekick.homeConversationId`,
+  and the run's `conversation_post` tool is the one way a result reaches
   it. There is no result email, no receipt, and no second path.
 - **Every run lands in its own Rally work stream**, and that cannot be turned
   off; a room-owned automation's result is additionally posted to the owning

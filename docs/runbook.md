@@ -1108,10 +1108,12 @@ where to look when one misbehaves.
   `deleted` is a pause or delete after admission, and the run's provider writes
   were refused with "This automation run is no longer running". A run that
   never left `pending` has an `automation_run` alarm entry behind its gate.
-- **A result never reached the room.** Only a run of a room's Sidekick holds
-  `post_result`, and only the run posts; look for
-  `sidekick_post_result_refused:<code>` or `sidekick_owning_room_archived`
-  in the run's tool results. Nothing posts after the run.
+- **A result never reached the room.** Only the run posts, with
+  `conversation_post`; look for `conversation_archived`,
+  `conversation_access_denied`, `conversation_not_in_scope` or
+  `conversation_post_refused:<code>` in the run's tool results, and check the
+  Sidekick's home (`automation_directory.owning_substream_id`). Nothing posts
+  after the run.
 
 Inspect the object through the engineering MCP's raw SQL per
 [`engineering-mcp.md`](engineering-mcp.md); the automation's tables are listed
