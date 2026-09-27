@@ -37,6 +37,7 @@ import {
 } from "../src/services/workstream-runtime-database";
 import { deliverChildEffects, deliverEffectsToWorkspace, deliverParentEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
+import { withHostedParent } from "./helpers/hosted-parent";
 import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 /** Its own workspace: object names are shared across files, storage is not. */
@@ -44,6 +45,7 @@ const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000c0a10");
 const AUTHOR_ID = asUserId("00000000-0000-7000-8000-0000000c0a11");
 const COLLEAGUE_ID = asUserId("00000000-0000-7000-8000-0000000c0a12");
 const SESSION_ID = "00000000-0000-7000-8000-0000000c0a13";
+const GUEST_ID = asUserId("00000000-0000-7000-8000-0000000c0a14");
 const NOW = "2026-09-27T10:00:00.000Z";
 const TEST_ENV: Env = env;
 
@@ -415,5 +417,62 @@ describe("a conversation post", () => {
     });
     expect(await target.appendConversationPost(postRequest(breakout, "conversation-post:run:late")))
       .toEqual({ outcome: "refused", code: "workstream_archived", messageId: null });
+  });
+});
+
+describe("a guest", () => {
+  type GrantTarget =
+    | { kind: "workstream"; workspaceId: typeof WORKSPACE_ID; parentId: string }
+    | { kind: "conversation"; workspaceId: typeof WORKSPACE_ID; parentId: string; substreamId: SubstreamId };
+
+  /**
+   * A guest of the Organization, with the room's conversations under grant
+   * authority: a guest reaches only what a grant gives them.
+   */
+  async function seedGuest(substreamIds: SubstreamId[]): Promise<void> {
+    await workspace().applyMemberStatus({ workspaceId: WORKSPACE_ID, sequence: 2, removed: false, relationship: {
+      workspaceId: WORKSPACE_ID, userId: GUEST_ID, accessClass: "guest", role: null, status: "active",
+      incarnation: "guest", revision: 1,
+    } });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      for (const substreamId of substreamIds) {
+        state.storage.sql.exec(`INSERT INTO parent_participant_migrations VALUES (?, ?, ?, NULL, 'complete')`,
+          ROOM_ID, substreamId, crypto.randomUUID());
+      }
+    });
+  }
+
+  async function grant(target: GrantTarget): Promise<void> {
+    await withHostedParent(workspace(), ROOM_ID, (hosted) => {
+      hosted["scopeGrants"]({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID }).mutate({
+        operationId: crypto.randomUUID(), actorUserId: AUTHOR_ID, userId: GUEST_ID, target, active: true,
+        expectedRevision: 0,
+      }, "guest");
+    });
+  }
+
+  it("opens a Breakout-homed Sidekick through the Breakout's grant, not the Channel's", async () => {
+    const breakout = await seedBreakout("Weekly call");
+    await seedSidekick(breakout);
+    await seedGuest([asSubstreamId("0"), breakout]);
+    const opens = async () => (await automation().authorizeViewer({ workspaceId: WORKSPACE_ID,
+      parentId: AUTOMATION_ID, userId: GUEST_ID, requireGrantAuthority: true })).authorized;
+
+    await grant({ kind: "workstream", workspaceId: WORKSPACE_ID, parentId: ROOM_ID });
+    expect(await opens()).toBe(false);
+    await grant({ kind: "conversation", workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: breakout });
+    expect(await opens()).toBe(true);
+  });
+
+  it("lists a conversation a grant gives them, as it resolves it", async () => {
+    await seedSidekick("0");
+    await seedGuest([asSubstreamId("0")]);
+    await grant({ kind: "conversation", workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: asSubstreamId("0") });
+    const scope = { kind: "conversation" as const, parentId: ROOM_ID, substreamId: asSubstreamId("0") };
+
+    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: GUEST_ID,
+      scope, reference: ROOM_ID })).toMatchObject({ ok: true, conversation: { conversationId: ROOM_ID } });
+    expect((await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: GUEST_ID, scope }))
+      .conversations.map((entry) => entry.conversationId)).toEqual([ROOM_ID]);
   });
 });
