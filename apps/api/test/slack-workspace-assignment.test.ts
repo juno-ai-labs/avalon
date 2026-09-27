@@ -1770,10 +1770,25 @@ describe("Slack public channel membership", () => {
     expect(objectDatabase.prepare("SELECT COUNT(*) AS count FROM external_conversation_bindings").get())
       .toEqual({ count: 0 });
     expect(posted).toEqual([expect.objectContaining({ channel: "C123", thread_ts: "1.0" })]);
-    expect(String(posted[0]!.text)).toContain("linked Rally Space");
+    // The room has no Space yet, and nobody in it is a Rally member: the
+    // notice says that, not that a linked Space refused somebody.
+    expect(String(posted[0]!.text)).toContain("nobody in this private conversation");
+    expect(String(posted[0]!.text)).not.toContain("linked");
     expect(objectDatabase.prepare(
       "SELECT status FROM slack_ingress_jobs WHERE id = 'event:wide-latitude'",
     ).get()).toEqual({ status: "completed" });
+
+    // A retry of the same event (its settlement was lost) posts the notice
+    // under the same message identity, which Slack deduplicates.
+    objectDatabase.prepare(
+      "UPDATE slack_ingress_jobs SET status = 'queued', payload_json = ? WHERE id = 'event:wide-latitude'",
+    ).run(JSON.stringify(payload));
+    await new SlackAgentService(slackMembershipEnvironment(
+      database, instance, credentialsKey, vi.fn(async () => undefined), objectStores,
+    )).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:wide-latitude");
+    expect(posted).toHaveLength(2);
+    expect(posted[0]!.client_msg_id).toEqual(expect.any(String));
+    expect(posted[1]!.client_msg_id).toBe(posted[0]!.client_msg_id);
   });
 
   it("marks a missing channel-lookup scope for reconnect before unlinked dispatch", async () => {
