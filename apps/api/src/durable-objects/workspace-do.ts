@@ -7320,11 +7320,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const relationship = await this.readRelationship(request.workspaceId, request.userId);
     if (relationship?.status !== "active") return { conversations: [] };
+    const guest = relationship.accessClass === "guest";
+    // A guest reads only what a grant gives them, which the directory's viewer
+    // rows do not record, so their `readable` flag says nothing: each unarchived
+    // candidate is admitted the way a read would be.
     const listed = scopeConversations(this.state.storage.sql, request.scope as ConversationScope, request.userId)
-      .filter((conversation) => conversation.readable && !conversation.archived);
-    // A guest reads only what a grant gives them, which the directory rows do
-    // not record, so each of theirs is admitted the way a read would be.
-    const admitted = relationship.accessClass === "guest"
+      .filter((conversation) => (guest || conversation.readable) && !conversation.archived);
+    const admitted = guest
       ? (await Promise.all(listed.map(async (conversation) => (await this.conversationToolAdmission(
         request.workspaceId, conversation, request.userId)).authorized ? conversation : null)))
         .filter((conversation) => conversation !== null)
