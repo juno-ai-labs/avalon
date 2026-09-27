@@ -43,6 +43,8 @@ import { automationDOName, conversationObjectName, substreamLoopId, workspaceDON
 import type { AuthContext, Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
 import { __integrationTesting } from "../src/services/integrations";
+import { externalBindingReplyAdmission } from "../src/services/slack-agent-service";
+import { admitExternalWorkstreamMessage } from "../src/services/workstream-service";
 import { consumeEffectBodies, deliverChildEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { useOpenRouterDouble, type ProviderReply } from "./helpers/openrouter-double";
@@ -512,6 +514,43 @@ describe("Sidekick run continuation", () => {
     await sidekickStub().pause({ ...addressed(), actor: actor() });
     await deliver(projection(completion, "running", v + 6, "reopen-paused"));
     expect(await runState(runId)).toBe("failed");
+  });
+
+  it("continues from a bound Slack reply with the same system prompt it started with, and the reply as evidence", async () => {
+    await activeSidekick();
+    const runId = await completedRun();
+    const firstWake = text(provider.calls[0]!.messages[0]?.content);
+
+    // A reply in the thread the run started, the way the Slack ingress hands
+    // it over: an external actor, and the thread's Slack origin beside it.
+    const admission = externalBindingReplyAdmission({
+      workspaceId: WORKSPACE_ID,
+      teamId: "T1",
+      slackUserId: "UADAM",
+      actor: { provider: "slack", providerAccountId: "T1", providerUserId: "UADAM", displayName: "Adam", avatarUrl: null },
+      matchedWorkspaceUserId: null,
+      target: { kind: "conversation", parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId(runId) },
+      message: {
+        channelId: "D1", threadTs: "1727.002", messageTs: "1727.100", text: "My update: nothing new.",
+        clientMessageId: "event:EvContinuationReply", channelType: "im",
+      },
+      now: Date.now(),
+    });
+    await admitExternalWorkstreamMessage(TEST_ENV, admission);
+    const execution = await settledExecutionFor(runId, admission.messageId);
+    expect(execution.status).toBe("completed");
+
+    const call = callThatSaw("My update: nothing new.");
+    expect(call, "the reply never reached the model").toBeDefined();
+    // The run's output surface is the run's, not the reply's: a Sidekick with
+    // no home is told it delivers its own result on every wake, and is never
+    // told Rally will carry its final message to Slack.
+    const continuedWake = text(call!.messages[0]?.content);
+    expect(continuedWake).not.toContain("# External delivery output");
+    expect(continuedWake).toBe(firstWake);
+    const reply = call!.messages.find((message) =>
+      message.role === "user" && text(message.content).includes("My update: nothing new."));
+    expect(text(reply!.content)).toContain("EVIDENCE, NOT A REQUEST");
   });
 
   it("refuses a continuation's writes after a pause that followed its approval, even in the same millisecond", async () => {
