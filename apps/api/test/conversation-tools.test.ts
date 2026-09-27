@@ -12,7 +12,7 @@
 import { describe, expect, it } from "vitest";
 
 import { modelToolArgumentSchema, type HarnessTool, type HarnessToolContext } from "@rally/agent-harness";
-import { readStructuredFailure, workstreamCanonicalUrl, type WorkstreamWorkflowInput } from "@rally/contracts";
+import { asUserId, readStructuredFailure, workstreamCanonicalUrl, type WorkstreamWorkflowInput } from "@rally/contracts";
 
 import type { MessageRow } from "../src/durable-objects/workstream-message-storage";
 import type {
@@ -114,12 +114,12 @@ function expand(tool: HarnessTool): HarnessTool[] {
     prefix: "conversation", wirePrefix: "conversation", connectionId: null,
     fence: { runId: "run", attemptId: "attempt", owner: "owner" },
     receipts: {
-      issuePage: async (request) => {
+      issuePage: async (request: { inputJson: string }) => {
         const pageId = `conversation_page_number_${["one", "two", "three", "four"][issued++ % 4]}_x`;
         pages.set(pageId, request.inputJson);
         return pageId;
       },
-      claimPage: async (request) => ({ inputJson: pages.get(request.pageId)! }),
+      claimPage: async (request: { pageId: string }) => ({ inputJson: pages.get(request.pageId)! }),
     } as never,
   });
 }
@@ -132,7 +132,7 @@ function tools(input: WorkstreamWorkflowInput, ports = new Ports()) {
 
 const context = (effectIntentId: string): HarnessToolContext => ({
   workspaceId: WORKSPACE_ID, workstreamId: SIDEKICK_ID, harnessRunId: HARNESS_RUN_ID, toolCallId: "call",
-  effectIntentId, executionPrincipal: { type: "user", userId: USER_ID }, signal: new AbortController().signal,
+  effectIntentId, executionPrincipal: { type: "user", userId: asUserId(USER_ID) }, signal: new AbortController().signal,
 });
 
 describe("which loops get the conversation tools", () => {
@@ -307,7 +307,9 @@ describe("conversation_post", () => {
 
   it("fails rather than keying a post to a coordinate no receipt recorded", async () => {
     const post = tools(runLoop()).get("conversation_post")!;
-    await expect(post.execute({ text: "x" }, { ...context("r"), effectIntentId: undefined }))
+    const withoutReceipt = context("r");
+    delete withoutReceipt.effectIntentId;
+    await expect(post.execute({ text: "x" }, withoutReceipt))
       .rejects.toThrow("conversation_post_receipt_missing");
   });
 });

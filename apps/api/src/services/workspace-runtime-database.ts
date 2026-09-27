@@ -92,6 +92,8 @@ export const WORKSPACE_LOCAL_TABLES = [
   // statement reaches the object, and `WORKSPACE_TYPED_RPC_ONLY_TABLES`
   // there refuses it by name rather than executing it.
   "automation_directory",
+  // Typed only, like the directory beside it: the conversation tools' scope.
+  "sidekick_conversation_attachments",
   "automation_subscriptions",
   "automation_runs",
   "automation_delivery_targets",
