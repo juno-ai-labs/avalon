@@ -1156,6 +1156,18 @@ interface WorkspaceConnectorEventRow extends Record<string, SqlStorageValue> {
 }
 
 const CONNECTOR_EVENT_INGRESS_RECEIPT_RETENTION_MS = 30 * 24 * 60 * 60_000;
+
+/** The identity of a repeat ingest dropped, kept so it can be restored. */
+interface DroppedConnectorEventIdentity {
+  eventId: string;
+  payloadHash: string;
+  providerEventId: string;
+  dedupeKey: string;
+  occurredAt: number;
+  receivedAt: number;
+  payloadRef: string | null;
+}
+
 // Queue consumers have a 15-minute platform wall-time limit. This expiry is
 // only for Queue claims. A retiring Workflow can retry multiple 15-minute
 // processing attempts, so its claim remains exclusive until it settles.
@@ -3908,11 +3920,19 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
         substr(content_fingerprint, 1, 7) = 'sha256:' AND length(content_fingerprint) = 71
       ),
       event_id TEXT NOT NULL REFERENCES workspace_connector_events(event_id) ON DELETE CASCADE,
+      -- The newest occurrence this content stands for, stored or dropped.
+      occurred_at INTEGER NOT NULL CHECK (occurred_at >= 0),
+      -- The newest repeat dropped against this row, kept so a different
+      -- event arriving late can restore it as the state that followed.
+      dropped_json TEXT CHECK (dropped_json IS NULL OR json_valid(dropped_json)),
       PRIMARY KEY (connection_id, event_type, provider_resource_id)
     ) STRICT`,
     // The retention reaper deletes events; the cascade looks them up here.
     `CREATE INDEX workspace_connector_event_latest_content_event_idx
       ON workspace_connector_event_latest_content(event_id)`,
+    // A late delivery that restored a dropped repeat, so its redelivery can
+    // still wake the restored event's processing.
+    "ALTER TABLE workspace_connector_event_ingress_receipts ADD COLUMN restored_event_id TEXT",
   ],
 }];
 
@@ -8885,11 +8905,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           processing_attempt: number;
           provider_event_id: string;
           dedupe_key: string;
+          restored_event_id: string | null;
         }>(
           `SELECT receipt.payload_hash, receipt.connector_event_id, event.processing_status,
-                  event.processing_attempt, event.provider_event_id, event.dedupe_key
+                  event.processing_attempt, event.provider_event_id, event.dedupe_key,
+                  restored.event_id AS restored_event_id
              FROM workspace_connector_event_ingress_receipts receipt
              JOIN workspace_connector_events event ON event.event_id = receipt.connector_event_id
+             LEFT JOIN workspace_connector_events restored
+               ON restored.event_id = receipt.restored_event_id
+              AND restored.processing_status = 'pending'
             WHERE receipt.ingress_event_id = ?`,
           request.ingressEventId,
         ).toArray()[0];
@@ -8908,6 +8933,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             processingStatus: receipt.processing_status,
             processingAttempt: receipt.processing_attempt,
             ...(unchangedContent ? { unchangedContent: true as const } : {}),
+            ...(receipt.restored_event_id ? { restoredEventId: receipt.restored_event_id } : {}),
           };
         }
 
@@ -8933,30 +8959,66 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         }
 
         const now = Date.now();
-        // A new identity that says what this resource's latest event already
-        // said is that event again: the delivery is receipted against it and
-        // nothing new is stored or processed. Never a failed one: its content
-        // was never delivered, and folding repeats into it would leave it
-        // undelivered for good, so a repeat of it is stored with a fresh retry
-        // budget instead. See
-        // docs/connectors.md#dropping-events-that-say-nothing-new.
-        const unchanged = !canonical && contentFingerprint
-          ? this.state.storage.sql.exec<WorkspaceConnectorEventRow>(
-            `SELECT event.* FROM workspace_connector_event_latest_content latest
+        const occurredAt = Date.parse(activity.occurredAt);
+        // What this resource's latest content is, and the newest occurrence it
+        // stands for. See docs/connectors.md#dropping-events-that-say-nothing-new.
+        const latest = !canonical && contentFingerprint
+          ? this.state.storage.sql.exec<{
+            content_fingerprint: string;
+            occurred_at: number;
+            dropped_json: string | null;
+            event_id: string;
+            processing_status: WorkspaceConnectorEventRow["processing_status"];
+            processing_attempt: number;
+          }>(
+            `SELECT latest.content_fingerprint, latest.occurred_at, latest.dropped_json,
+                    event.event_id, event.processing_status, event.processing_attempt
+               FROM workspace_connector_event_latest_content latest
                JOIN workspace_connector_events event ON event.event_id = latest.event_id
               WHERE latest.connection_id = ? AND latest.event_type = ?
-                AND latest.provider_resource_id = ? AND latest.content_fingerprint = ?
-                AND event.processing_status <> 'failed'`,
+                AND latest.provider_resource_id = ?`,
             activity.connectionId,
             activity.eventType,
             activity.providerResourceId,
-            contentFingerprint,
           ).toArray()[0]
+          : undefined;
+        // Arriving no earlier than the latest occurrence, a repeat of its
+        // content is that event again: receipted against it, and nothing new
+        // is stored or processed. Its identity is kept on the row in case an
+        // older, different event arrives after it. Never a failed event: its
+        // content was never delivered, so a repeat of it is stored with a
+        // fresh retry budget instead.
+        const inOrder = !latest || occurredAt >= latest.occurred_at;
+        const unchanged = latest && inOrder
+          && latest.content_fingerprint === contentFingerprint
+          && latest.processing_status !== "failed"
+          ? latest
           : undefined;
         unchangedContent = Boolean(unchanged);
         const existing = canonical ?? unchanged;
         let eventId = existing?.event_id ?? activity.id;
         let processingStatus = existing?.processing_status ?? "pending";
+        let restoredEventId: string | null = null;
+        if (unchanged) {
+          this.state.storage.sql.exec(
+            `UPDATE workspace_connector_event_latest_content
+                SET occurred_at = ?, dropped_json = ?
+              WHERE connection_id = ? AND event_type = ? AND provider_resource_id = ?`,
+            occurredAt,
+            JSON.stringify({
+              eventId: activity.id,
+              payloadHash: request.payloadHash,
+              providerEventId: activity.providerEventId,
+              dedupeKey: activity.dedupeKey,
+              occurredAt,
+              receivedAt: Date.parse(activity.receivedAt),
+              payloadRef: activity.payloadRef,
+            } satisfies DroppedConnectorEventIdentity),
+            activity.connectionId,
+            activity.eventType,
+            activity.providerResourceId,
+          );
+        }
         if (!existing) {
           this.state.storage.sql.exec(
             `INSERT INTO workspace_connector_events (
@@ -8985,7 +9047,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             activity.providerResourceId,
             JSON.stringify(activity.actor),
             JSON.stringify(activity.subject),
-            Date.parse(activity.occurredAt),
+            occurredAt,
             Date.parse(activity.receivedAt),
             activity.title,
             activity.summary,
@@ -9003,30 +9065,80 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           );
           eventId = activity.id;
           processingStatus = "pending";
-          if (contentFingerprint) {
+          if (contentFingerprint && inOrder) {
             this.state.storage.sql.exec(
               `INSERT INTO workspace_connector_event_latest_content
-                 (connection_id, event_type, provider_resource_id, content_fingerprint, event_id)
-               VALUES (?, ?, ?, ?, ?)
+                 (connection_id, event_type, provider_resource_id, content_fingerprint, event_id,
+                  occurred_at, dropped_json)
+               VALUES (?, ?, ?, ?, ?, ?, NULL)
                ON CONFLICT (connection_id, event_type, provider_resource_id) DO UPDATE SET
                  content_fingerprint = excluded.content_fingerprint,
-                 event_id = excluded.event_id`,
+                 event_id = excluded.event_id,
+                 occurred_at = excluded.occurred_at,
+                 dropped_json = NULL`,
               activity.connectionId,
               activity.eventType,
               activity.providerResourceId,
               contentFingerprint,
               activity.id,
+              occurredAt,
             );
+          } else if (latest?.dropped_json && latest.content_fingerprint !== contentFingerprint) {
+            // A different event older than a dropped repeat: that repeat was
+            // news after all, the state this one changed back from. Restore it
+            // from the event whose content it repeated, under its own identity.
+            const dropped = JSON.parse(latest.dropped_json) as DroppedConnectorEventIdentity;
+            this.state.storage.sql.exec(
+              `INSERT INTO workspace_connector_events (
+                event_id, payload_hash, connection_id, connection_scope,
+                connection_owner_user_id, connector_type, provider,
+                provider_event_id, event_type, resource_type, provider_resource_id,
+                actor_json, subject_json, occurred_at, received_at, title, summary,
+                text_snippet, payload_ref, visibility_json, target_user_ids_json,
+                entity_keys_json, dedupe_key, raw_content_hash, metadata_json,
+                external_people_json, processing_status, workflow_instance_id,
+                processing_attempt, claimed_at, processed_at, processing_error, created_at, updated_at
+              )
+              SELECT ?, ?, connection_id, connection_scope,
+                     connection_owner_user_id, connector_type, provider,
+                     ?, event_type, resource_type, provider_resource_id,
+                     actor_json, subject_json, ?, ?, title, summary,
+                     text_snippet, ?, visibility_json, target_user_ids_json,
+                     entity_keys_json, ?, raw_content_hash, metadata_json,
+                     external_people_json, 'pending', NULL, -1, NULL, NULL, NULL, ?, ?
+                FROM workspace_connector_events WHERE event_id = ?`,
+              dropped.eventId,
+              dropped.payloadHash,
+              dropped.providerEventId,
+              dropped.occurredAt,
+              dropped.receivedAt,
+              dropped.payloadRef,
+              dropped.dedupeKey,
+              now,
+              now,
+              latest.event_id,
+            );
+            this.state.storage.sql.exec(
+              `UPDATE workspace_connector_event_latest_content
+                  SET event_id = ?, dropped_json = NULL
+                WHERE connection_id = ? AND event_type = ? AND provider_resource_id = ?`,
+              dropped.eventId,
+              activity.connectionId,
+              activity.eventType,
+              activity.providerResourceId,
+            );
+            restoredEventId = dropped.eventId;
           }
         }
         this.state.storage.sql.exec(
           `INSERT INTO workspace_connector_event_ingress_receipts
-             (ingress_event_id, payload_hash, connector_event_id, received_at)
-           VALUES (?, ?, ?, ?)`,
+             (ingress_event_id, payload_hash, connector_event_id, received_at, restored_event_id)
+           VALUES (?, ?, ?, ?, ?)`,
           request.ingressEventId,
           request.payloadHash,
           eventId,
           now,
+          restoredEventId,
         );
         this.state.storage.sql.exec(
           `DELETE FROM workspace_connector_event_ingress_receipts
@@ -9043,6 +9155,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           processingStatus,
           processingAttempt: existing?.processing_attempt ?? -1,
           ...(unchangedContent ? { unchangedContent: true as const } : {}),
+          ...(restoredEventId ? { restoredEventId } : {}),
         };
       }),
     );
@@ -9055,6 +9168,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       connector_event_id: result.eventId,
       duplicate: result.duplicate,
       unchanged_content: unchangedContent,
+      restored_event_id: result.restoredEventId ?? null,
       processing_status: result.processingStatus,
       processing_attempt: result.processingAttempt,
       outcome: "committed",

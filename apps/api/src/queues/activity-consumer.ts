@@ -944,6 +944,7 @@ async function consumeOne(message: Message<unknown>, env: Env,
         processing_attempt: admission.processingAttempt,
         processing_owner_id: admission.processingOwnerId,
         processing_outcome: admission.processingOutcome,
+        restored_event_id: admission.accepted.restoredEventId ?? null,
         outcome: "admitted",
         reason: "workspace_event_committed",
         queue_attempts: message.attempts,
@@ -1139,6 +1140,16 @@ async function admitConnectorEvent(
     processingOutcome = accepted.processingStatus === "processed"
       ? "already_processed"
       : "attempts_exhausted";
+  }
+  if (accepted.restoredEventId) {
+    // Nothing else wakes a restored repeat: its own delivery was dropped.
+    await enqueueWorkspaceConnectorEventProcess(env, {
+      region: env.AVALON_REGION,
+      workspaceId: request.workspaceId,
+      eventId: accepted.restoredEventId,
+      processingOwnerId: uuidV7(),
+      processingAttempt: 0,
+    });
   }
   return { accepted, processingAttempt, recordedAttempt, processingOwnerId, processingOutcome };
 }

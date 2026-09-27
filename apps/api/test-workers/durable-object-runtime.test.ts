@@ -4123,6 +4123,77 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
+  it("restores a dropped repeat when an older, different event for its resource arrives after it", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    // A changed to B and back to A, the change back delivered first.
+    const delivery = async (id: string, day: number, summary: string) => {
+      const { activity, connectorType } = connectorEvent(id);
+      return workspaceConnectorEventQueueMessage({
+        connectorType,
+        activity: {
+          ...activity,
+          providerEventId: `delivery-${day}`,
+          dedupeKey: `github:delivery-${day}:pull-request-edited`,
+          occurredAt: `2026-08-1${day}T20:00:00.000Z`,
+          summary,
+        },
+      });
+    };
+    const ids = {
+      first: "00000000-0000-7000-8000-000000000521",
+      change: "00000000-0000-7000-8000-000000000522",
+      changeBack: "00000000-0000-7000-8000-000000000523",
+      repeat: "00000000-0000-7000-8000-000000000524",
+    };
+    const first = await delivery(ids.first, 1, "A");
+    const change = await delivery(ids.change, 2, "B");
+    const changeBack = await delivery(ids.changeBack, 3, "A");
+    const repeat = await delivery(ids.repeat, 4, "A");
+    const send = vi.spyOn(env.ACTIVITY_QUEUE, "send");
+    const woken = () => send.mock.calls
+      .map(([body]) => body as { kind?: string; eventId?: string })
+      .filter((body) => body.kind === "connector_event_process")
+      .map((body) => body.eventId);
+    const stored = () => runInDurableObject(stub, (_instance, state) => state.storage.sql.exec<{
+      event_id: string;
+      occurred_at: number;
+    }>("SELECT event_id, occurred_at FROM workspace_connector_events ORDER BY event_sequence").toArray());
+    try {
+      await consumeEffectBodies(env, [first]);
+      await consumeEffectBodies(env, [changeBack]);
+      // In order, the change back repeats the latest content and is dropped.
+      expect((await stored()).map((row) => row.event_id)).toEqual([ids.first]);
+      expect(woken()).toEqual([ids.first]);
+
+      // The change arrives late: stored, and the dropped change back is
+      // restored after it under its own identity and time, and woken.
+      await consumeEffectBodies(env, [change]);
+      expect(await stored()).toEqual([
+        { event_id: ids.first, occurred_at: Date.parse("2026-08-11T20:00:00.000Z") },
+        { event_id: ids.change, occurred_at: Date.parse("2026-08-12T20:00:00.000Z") },
+        { event_id: ids.changeBack, occurred_at: Date.parse("2026-08-13T20:00:00.000Z") },
+      ]);
+      expect(woken()).toEqual([ids.first, ids.change, ids.changeBack]);
+
+      // A redelivery of the late change still wakes the restored event, which
+      // nothing else would.
+      await consumeEffectBodies(env, [change]);
+      expect(woken().slice(3)).toEqual([ids.change, ids.changeBack]);
+
+      // The restored event is now the latest, and a repeat of it is dropped.
+      await consumeEffectBodies(env, [repeat]);
+      expect((await stored()).map((row) => row.event_id))
+        .toEqual([ids.first, ids.change, ids.changeBack]);
+      expect(woken()).toHaveLength(5);
+    } finally {
+      send.mockRestore();
+    }
+  });
+
   it("owns connector events, deduplicates Queue replays, and fences processing settlement", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
