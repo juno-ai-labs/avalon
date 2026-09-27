@@ -561,9 +561,9 @@ Those are expected and harmless; count them against the
 `search_link_capture_failed` logs, and treat any other dead letter as real.
 
 A WorkspaceDO dispatches resource references 100 at a time. While more are due
-after a batch, the next waits `RESOURCE_SEARCH_BACKLOG_INTERVAL_MS` (30
-seconds), so a backlog drains at 200 resources a minute (Juno Labs' 152,000 in
-about 13 hours); an edit arriving with no backlog goes at once. Batches go out
+after a batch, the next waits `RESOURCE_SEARCH_BACKLOG_INTERVAL_MS` (60
+seconds), so a backlog drains at 100 resources a minute (Juno Labs' 152,000 in
+about 25 hours); an edit arriving with no backlog goes at once. Batches go out
 lowest `not_before` first, so a re-projection written at `not_before = 1` lets
 edits (written at `0`) through ahead of it. To pause a workspace's backlog,
 move its pending rows' `not_before` far ahead
@@ -649,6 +649,27 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-27 — The resource backlog interval is 60 seconds
+
+**What changed:** `RESOURCE_SEARCH_BACKLOG_INTERVAL_MS` is 60 seconds, so a
+backlog drains at 100 resources a minute instead of 200.
+
+**Why:** At 30 seconds, after the child-effect scan was fixed, Juno Labs'
+WorkspaceDO ran the audience backfill for five hours with no failures at first,
+then turned away a rising number of calls (360, 1,031, then 1,381 an hour) as
+the old search-authorization store's pushes grew beside it, and one connector
+event failed for good. The backfill was paused with 50,574 resources left.
+Adam chose to halve the pace rather than accept rare lost connector events or
+wait for phase 3 to retire the store.
+
+**Considered and rejected:** Resuming at 30 seconds; the lost event is the
+failure this pacing exists to prevent.
+
+**What a future change has to respect:** a whole-workspace re-projection now
+takes the workspace's resource count divided by 100 a minute. Revisit the
+number once the search-authorization store is deleted (the audience-filtering
+PRD's phase 4), since it was chosen with that store's load still present.
 
 ### 2026-09-26 — A resource is indexed in its source delivery
 
