@@ -148,8 +148,15 @@ function ConversationRowMenu({ actions, children, icon, target }: {
 }
 
 /** Work-stream navigation only: no second resource query or substream model. */
-export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSidekickMenuOpen, onRefreshSidekicks, onOpenResource, workstream, creatingSubstream = null, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekickFailure, addSidekick, substreamActions, mainActions, scrollRef, footerLeading }: {
+export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSidekickMenuOpen, onRefreshSidekicks, onOpenResource, workstream, creatingSubstream = null, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekickFailure, addSidekick, substreamActions, mainActions, scrollRef, footerLeading, participantsPending = false }: {
   workstream: SidebarPresentation;
+  /**
+   * The rail is drawn from the directory while the Channel's own snapshot is
+   * on its way, and only that snapshot knows who is in it. The row keeps its
+   * place and shows the shape of a facepile rather than the empty state, which
+   * would say the Channel has nobody in it.
+   */
+  participantsPending?: boolean;
   onOpenResource?: (id: string, returnFocus: HTMLElement) => void;
   mainVisible?: boolean; onOpenSidekick?: (id: string) => void; onSidekickMenuOpen?: () => void;
   /**
@@ -356,8 +363,8 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
           <SidebarHorizontalLine />
           <h2>Channel participants</h2>
           <Tip describesTrigger={false} label="Channel participants" side="right">
-            <SidebarRow className="workstream-context-row" aria-label="Manage channel participants" aria-description={workstream.participants.map((person) => person.name).join(', ')} type="button" onClick={onParticipants}>
-              {workstream.participants.length ? <AvatarStack members={workstream.participants} limit={compact ? 2 : 4} presentUserIds={presentUserIds} showTooltip={false} /> : <UserPlus aria-hidden="true" size={18} />}
+            <SidebarRow className="workstream-context-row" aria-label="Manage channel participants" aria-description={workstream.participants.map((person) => person.name).join(', ')} type="button" disabled={participantsPending} onClick={onParticipants}>
+              {participantsPending ? <span aria-hidden="true" className="skeleton-avatar-stack"><span className="skeleton-bar" /><span className="skeleton-bar" /><span className="skeleton-bar" /></span> : workstream.participants.length ? <AvatarStack members={workstream.participants} limit={compact ? 2 : 4} presentUserIds={presentUserIds} showTooltip={false} /> : <UserPlus aria-hidden="true" size={18} />}
             </SidebarRow>
           </Tip>
         </section>
