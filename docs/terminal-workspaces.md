@@ -1169,7 +1169,7 @@ longer moves `next_terminal_action_at`: `stopping` and `archiving` keep
 projecting the deadline they claimed. A pass that finds another pass's claim
 still live now waits (`deferred`) instead of returning `none`.
 
-**Why:** One work stream's sandbox had sat in Daytona's unrecoverable `error`
+**Why:** One Channel's sandbox had sat in Daytona's unrecoverable `error`
 state since 2026-09-18. Its warm stop threw
 `terminal_lifecycle_provider_transition_pending` on every pass, about 260 times
 an hour, and would have kept on until its expiry in October, which would also
