@@ -233,7 +233,8 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | The parent half it inherits: child registry, projections, receipts, aggregation, the outbox and its drain. See [`workstream-durable-object.md`](workstream-durable-object.md). |
 | `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by a room's first draft; and `AutomationService`, the Worker-side access every route goes through, which resolves whether the caller is in the owning room before asking the object. |
 | `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /workstream/:workstreamId`, `GET /:id`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/pause`, `POST /:id/resume`, `POST /:id/archive`, legacy `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
-| `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; `createAutomationPostResultPlugin`, the `post_result` tool; and the run prompt context built from the definition. |
+| `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; the run prompt context built from the definition, which names the home conversation; and the loading of `rally:conversations` ([`conversation-tools.md`](conversation-tools.md)), the one way a run reaches a room. |
+| `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | The home read, `sidekick_conversation_attachments` (WorkspaceDO migration 81), and the conversation scope a Sidekick or a Channel or Breakout loop reaches. |
 | `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:sidekicks` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
 | `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), and `AutomationDraftProposedV1` (the card). |
 | `packages/contracts/src/index.ts` | `AutomationDraftSchema`, `AutomationRunDefinitionV1Schema` (the `readRunDefinition` answer), `AutomationSummarySchema`, `WorkstreamAutomationSummarySchema`, `AutomationRunSchema`, `AutomationDetailSchema`. |
@@ -673,20 +674,36 @@ activations. A Sidekick run child forwards no effects (`forwardsChildEffect`
 is false), so a second completion sends no notification, and the Slack
 `notify_automation_completed` preference has no sender today.
 
-### Posting a result
+### Home conversation and attachments
 
-A run of a room's automation holds one extra plugin, `rally:sidekick-result`
-(`rally_sidekick_result` to the model), preloaded, with the tool
-`post_result`. It is offered only when
-`readRunDefinition().owningWorkstreamId` is not null, so a personal or
-workspace automation cannot post into a room at all. The tool asks
-`WorkspaceDO.authority` (the room's hosted parent) for its generation and archive state, refuses an
-archived or missing room as the tool's error, and calls the room's substream
-`0` `appendAutomationActivation` with `deliveryId = runId`, which appends one
-`automation_activation` message authored by "Automation" (or answers
-`replayed` for a second call). The run's `# Result delivery` prompt section
-names that room as the one destination; every other destination the
-instructions name is the run's own work with its connector tools.
+A room's Sidekick has a **home conversation**: `owning_workstream_id` names the
+Channel and `owning_substream_id` the conversation in it, `"0"` for its Main
+conversation or a Breakout id. Both are on SidekickDO's `automation` row and
+projected onto WorkspaceDO's `automation_directory` through the
+`directory_automation` effect. A Sidekick created in a Breakout (a room agent's
+first `submit_draft`, or `create_sidekick`) takes that Breakout as its home; one
+created by a background agent takes Main, because a background agent's
+conversation is not one anybody reads. The creator must be able to open the
+home: a participant of the Channel for Main, a member of the Breakout
+otherwise. Personal and workspace Sidekicks have no home and keep `"0"`.
+
+The home narrows who counts as the room. `authorizeViewer`, the resource
+authorization owner (`<channel>/<home>` in `authorization-service.ts`) and search
+discovery all read the Breakout's members for a Breakout home and the Channel's
+participants for a Main one. Archiving the home Breakout, or the Channel that
+holds it, pauses the Sidekick through `setOwningRoomArchived`; see Lifecycle.
+
+A Sidekick reads and posts through the `rally:conversations` plugin
+([`conversation-tools.md`](conversation-tools.md)), whose scope for a Sidekick is
+its home plus the conversations attached to it in WorkspaceDO's
+`sidekick_conversation_attachments`. The home is always attached and never a
+row. Only the Sidekick's configuration conversation attaches (the
+`conversation_attach` tool), and only a conversation the attaching person can
+post in, since attaching is the consent to publish there. A run posts with
+`conversation_post`, which defaults to the home; nothing posts a run's result
+for it. That table is not `parent_sidekicks` or a conversation's
+`sidekick_attachments`: those record that a conversation may load the Sidekick
+as a skill, and loading writes them automatically.
 
 ### Lifecycle
 
@@ -825,10 +842,20 @@ Sidekick's id.
 - **`AutomationDO` forwards nothing its children say.** The workspace hears the
   automation's row and nothing else; forwarding a run's aggregate would put
   every run in the work-stream directory, which is the design this replaced.
-- **The one way a result reaches a room is `post_result`.** Rally
-  posts nothing after a run; the run posts, once, when its instructions say the
-  room should hear it. A second delivery path is a duplicate the room reads
-  twice.
+- **The one way a result reaches a room is `conversation_post`.** Rally
+  posts nothing after a run; the run posts, once per result, when its
+  instructions say the room should hear it, and a retried receipt lands once. A
+  second delivery path is a duplicate the room reads twice.
+- **The home is always `owning_workstream_id` plus `owning_substream_id`.**
+  Every place that asks who the room is (viewer admission, the authorization
+  owner, search discovery, the archive fan-out) reads both. One that read the
+  Channel alone would hand a Breakout-homed Sidekick, and every post it made,
+  to Channel members outside the Breakout.
+- **A conversation attachment is not a skill attachment.** Only
+  `sidekick_conversation_attachments` widens what a Sidekick may read and post
+  to, and only an attach from its configuration conversation writes it. Reading
+  `parent_sidekicks` as reach would grant every conversation that ever loaded
+  the Sidekick.
 - **Bindings are derived from the definition, never taken from a request.**
   `apply` carries an id and nothing else; a request field restating what the
   draft settled is a second source of truth for it.
@@ -846,7 +873,9 @@ Sidekick's id.
 
 This module owns the automation: creation, drafting, revisions, apply,
 lifecycle, schedules, occurrence admission, run provisioning, run state, the
-result tool, and the sidebar row.
+home conversation and its attachments, and the sidebar row. The conversation
+tools that read and post through that scope are
+[`conversation-tools.md`](conversation-tools.md)'s.
 
 It depends on the conversation hierarchy for its conversations and its runs
 (`SubstreamAgent`, the shared parent base, the effect legs;
@@ -890,11 +919,10 @@ or the memory store the automation scope lives in.
   when its alarm fires.
 - **The Queue redelivers a matched event.** `admitExternalEvent` answers
   `sidekick_occurrence_replayed`; the consumer logs it and acks.
-- **A result cannot be posted.** `post_result` throws
-  `sidekick_owning_room_archived`, `sidekick_owning_room_missing`, or
-  `sidekick_post_result_refused:<code>` (a stale generation or an archived
-  room decided inside the room's object); the run sees the tool error and says
-  so in its result.
+- **A result cannot be posted.** `conversation_post` refuses with
+  `conversation_archived` or `conversation_access_denied`, or
+  `invalid_arguments` when a Sidekick with no home leaves the conversation out;
+  the run sees the tool error and says so in its result.
 - **A run's parent is unreachable** when `readRunDefinition` or `readRunState`
   is asked. The loop fails that turn and the harness's own retry applies; a run
   never proceeds on a definition it could not read.
@@ -976,7 +1004,9 @@ above. `run_id` is the child substream id, and `harness_run_id` is unique per
 run. Migration 6 adds `runs.seed_json`, null on every run but one a demo
 seeded; migration 7 adds `automation.appearance_json`, null until somebody
 picks an icon or a colour. Migration 9 adds `automation.chat_appearance_json`, the
-appearance the setup chat last submitted, null until it first does.
+appearance the setup chat last submitted, null until it first does. Migration 10
+adds `automation.owning_substream_id`, `NOT NULL DEFAULT '0'`: the home
+conversation under the owning Channel.
 
 `WorkspaceDO` migration 32 rebuilt `automation_directory` (automation id,
 workspace, author, `source_version`, hash, lifecycle, scope, owning work stream,
@@ -991,7 +1021,11 @@ automation run had made. [`data-model.md`](data-model.md) is the map of both
 authorities. Workspace migration 35 projects stored `loadable`; migration 36
 adds `external_registration_generations`, retaining the latest generation and
 activation cutoff even for an empty replacement; migration 49 adds
-`automation_directory.appearance_json`, nullable and never backfilled. Owner migration 4 stores the
+`automation_directory.appearance_json`, nullable and never backfilled; migration 81
+adds `automation_directory.owning_substream_id` (`NOT NULL DEFAULT '0'`) and
+`sidekick_conversation_attachments`, keyed by `(automation_id, parent_kind,
+parent_id, substream_id)` with who attached it and when. Migration 80 is the
+external conversation bindings table's. Owner migration 4 stores the
 source counter. Versioned registration IDs equal immutable evaluator IDs, so a
 late delivery from a superseded predicate is refused by the owner.
 
@@ -1099,6 +1133,8 @@ and in the rail triggers' column lists, or the rail will not notice it moved.
 
 ### 2026-09-27 — Input to a Sidekick run continues the run
 
+### 2026-09-27: Sidekick runs continue from input, and post to a home conversation with the conversation tools
+
 **What changed:** A run child's `claimPersistentLoopExecution` asks the new
 `SidekickDO.continueRun` before a pending input activates the loop, and the
 loop input carries the run's `automationRun` at the Sidekick's currently
@@ -1114,6 +1150,19 @@ authority check lets a continuation act through the finished row it was
 approved against. A continued run reads a host-rendered continuation note, and
 outside text in a run child is framed as evidence rather than a request.
 
+A room's Sidekick's home is `owning_workstream_id` plus a new
+`owning_substream_id` (SidekickDO migration 10, WorkspaceDO migration 81), so
+it can be a Breakout; a Sidekick set up in a Breakout takes it as home. Viewer
+admission, the authorization owner, search discovery and the archive fan-out
+all read both columns, and archiving a home Breakout pauses the Sidekick.
+Conversations can be attached to a Sidekick from its configuration
+conversation, in a new WorkspaceDO table. `post_result` and its
+`rally:sidekick-result` plugin are gone: a run posts with `conversation_post`
+from the general `rally:conversations` plugin, defaulting to the home. The
+prompt's `# Result delivery` section and the never-populated Slack
+`authoringOrigin` are gone with it; the task context names the home as
+`homeConversationId`.
+
 **Why:** The external conversation bindings PRD
 (`docs/PRDs/2026-09-23_external-conversation-bindings/`) needs a reply in a
 thread a run started, and an answer to a question a run asked, to reach that
@@ -1122,6 +1171,13 @@ finished run child started a generic loop as the sender, with no Sidekick
 definition, and the run row stayed completed because the parent ignored every
 state after a finish. An answered elicitation lost the run's context the same
 way.
+
+The Northstar weekly call prep flow needs a Sidekick whose runs leave
+work for each other in the Breakout where it was set up, and `post_result`
+could reach only the owning Channel's Main conversation and was deduplicated
+on the run id alone, so a continued run could not post a second reply. A
+model offered both `post_result` and a general post tool would not know which
+to use, so the old one was removed rather than kept beside it.
 
 **Considered and rejected:** Reopening the row inside `continueRun`. The
 design keeps it a read with no side effects, so a failure between it and the
@@ -1138,6 +1194,14 @@ started with was rejected by the design: a continuation acts on today's
 consent. Keeping the forward-only mapping on `onChildCommonAggregate` was
 rejected because that hook runs for stale envelopes too.
 
+Replacing `owning_workstream_id` with a
+conversation address, which would rebuild two tables whose `CHECK`
+constraints name the column; the added column needs no backfill. Reusing
+`parent_sidekicks` or a conversation's `sidekick_attachments` for
+attachments: those are written automatically whenever a conversation loads the
+Sidekick as a skill, and would have given it read and post access to every
+conversation that ever used it.
+
 **Consequences:** One run's activations can read different definition
 revisions and run as different people; each activation's reference says
 which. `completed_at` is the latest finish, and run-outcome telemetry counts
@@ -1146,6 +1210,15 @@ or `failed` to a run row from the parent side breaks the authority fence's
 assumption and must fence it on `approvedAt` as `stopped` is. A bound-thread
 adapter delivers into a run child through ordinary external admission and gets
 the evidence framing from the conversation, not from the message.
+
+Anything new that asks "who is this Sidekick's room" must
+read the substream too. `appendAutomationActivation`, which wakes the room
+and accepts only Main, has no production caller left; the post is
+`appendConversationPost`, which accepts any conversation and wakes nothing.
+There is no detach yet (the PRD's open question). Tool-activity prose for
+`post_result` stays for rows already written.
+
+Design: [`docs/PRDs/2026-09-23_external-conversation-bindings/design.md`](PRDs/2026-09-23_external-conversation-bindings/design.md).
 
 ### 2026-09-25 — The setup chat chooses a Sidekick's icon and color
 
