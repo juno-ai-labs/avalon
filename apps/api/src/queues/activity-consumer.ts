@@ -1113,8 +1113,14 @@ async function admitConnectorEvent(
       : Math.max(0, requestedAttempt);
   const recordedAttempt = Math.min(processingAttempt, 5);
   let processingOwnerId: string | null = null;
-  let processingOutcome: "enqueued" | "active_processing" | "already_processed" | "attempts_exhausted";
-  if (
+  let processingOutcome:
+    | "enqueued" | "active_processing" | "already_processed" | "attempts_exhausted" | "unchanged_content";
+  if (accepted.unchangedContent) {
+    // A repeat of an earlier event's content. That event's own admission
+    // enqueued its processing; waking or retrying it again here would turn
+    // every re-stamp into more work.
+    processingOutcome = "unchanged_content";
+  } else if (
     (accepted.processingStatus === "pending" || accepted.processingStatus === "failed")
     && processingAttempt <= 5
   ) {

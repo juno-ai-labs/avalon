@@ -65,20 +65,26 @@ Some activity is never a candidate, decided by event type in
 `github.check_run.*` and `github.workflow_run.*`. A check run is the status of
 a commit and a workflow run is the same status a level up. They were 24,000 of
 the 50,000 events one workspace admitted on 2026-09-02, at a frontier-model
-call each, and the answer was `ignore`. The list is an exclusion rather than an
+call each, and the answer was `ignore`. GitHub ingress now discards check runs
+and unfinished workflow runs before they are stored
+([`connectors.md`](connectors.md#dropping-events-that-say-nothing-new)), so the
+only declared type left here is `github.workflow_run.completed`. The
+`github.check_run.` prefix stays, named in
+`SUGGESTED_WORK_RETIRED_EVENT_TYPE_PREFIXES`, because check runs stored before
+that change can still drain through processing. The list is an exclusion rather than an
 inclusion so that a new connector's activity is offered until somebody finds a
 reason not to, and it withholds only this surface: excluded activity is still
 logged, still routes to watches and automations, and still reaches the feed.
 
 **This is not the digest's partition, and must not become it.** Every connector
 manifest already sorts its event types into `digestible` and `operational`
-([`connector-digestibility.md`](connector-digestibility.md)), and 142 of the 205
-declared types are operational. Admission withholds five. The two questions are
+([`connector-digestibility.md`](connector-digestibility.md)), and 136 of the 197
+declared types are operational. Admission withholds one. The two questions are
 different, and the gap between them is where a suggestion lives: "would a person
 want this read back to them on a schedule" is No for `drive.file_changed` and
 `linear.comment.update`, while "is there work here" may well be Yes.
 `activity-consumer.ts` records that boundary, and inheriting the partition
-would withhold all 142.
+would withhold all 136.
 
 What admission does borrow is the **floor**. A type this gate withholds must be
 one its own connector already declined to call news, so this can never be the
