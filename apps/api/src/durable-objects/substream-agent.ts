@@ -34,7 +34,6 @@ import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
   AnswerElicitationRequestSchema,
-  AutomationActivationV1Schema,
   AutomationDraftProposedV1Schema,
   ExecutionPrincipalSchema,
   ClientSocketEventSchema,
@@ -2135,97 +2134,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * An automation's result, delivered into the work stream that owns it.
-   *
-   * Delivery here means a run, not a row. The result is admitted as loop input
-   * exactly as an external message is — the mailbox is what turns an arrival
-   * into an `activate_substream_loop` request — because a room that receives
-   * something nobody acts on has received nothing. A canonical append would
-   * have landed text that sits unread until something unrelated happens to
-   * start a run, which for a room nobody is watching is never.
-   *
-   * The idempotent client message ID derived from the delivery, the
-   * authority-generation fence every provider write respects, and the archive
-   * check are unchanged from `appendWatchedResourceEvent`: a retry after a
-   * crash wakes the room once, and a run that outlived its automation's pause
-   * or its room's archive wakes it not at all.
-   */
-  async appendAutomationActivation(input: unknown): Promise<{
-    outcome: "appended" | "replayed" | "refused";
-    code: string;
-  }> {
-    await this.initialized;
-    const request = z.strictObject({
-      schemaVersion: z.literal(1),
-      workspaceId: z.string().min(1),
-      workstreamId: z.string().min(1),
-      authorityGeneration: z.number().int().positive(),
-      deliveryId: z.string().min(1),
-      text: z.string().min(1),
-      executionPrincipal: ExecutionPrincipalSchema,
-      activation: AutomationActivationV1Schema,
-    }).parse(input);
-    const identity = this.objectStore.identity();
-    if (!identity
-      || identity.workspaceId !== request.workspaceId
-      || identity.parentId !== request.workstreamId
-      || this.externalSubstreamId() !== "0") {
-      return { outcome: "refused", code: "workstream_destination_mismatch" };
-    }
-    // Checked here rather than inside the admission: an automation whose room
-    // was archived or re-authorized between the decision to deliver and the
-    // delivery itself must not wake it, and the mailbox has no opinion about
-    // either fact.
-    const authority = this.ctx.storage.sql.exec<{
-      authority_generation: number;
-      archived_at: number | null;
-    }>(`SELECT authority_generation, archived_at FROM workstream WHERE id = 1`).toArray()[0];
-    if (!authority || authority.authority_generation !== request.authorityGeneration) {
-      return { outcome: "refused", code: "workstream_authority_generation_stale" };
-    }
-    if (authority.archived_at !== null) {
-      return { outcome: "refused", code: "workstream_archived" };
-    }
-    try {
-      const result = await this.product.admitAutomationActivation({
-        workspaceId: asWorkspaceId(request.workspaceId),
-        workstreamId: asWorkstreamId(request.workstreamId),
-        messageId: uuidV7(request.activation.occurredAt),
-        clientMessageId: `automation-activation:${request.deliveryId}`,
-        text: request.text,
-        activation: request.activation,
-        executionPrincipal: request.executionPrincipal,
-        origin: "automation_activation",
-        now: request.activation.occurredAt,
-      });
-      // The activation request is the wake: without it the row sits in the
-      // mailbox until something else happens to start a run, which for a room
-      // nobody is looking at is never.
-      if (result.activationRequest) {
-        await this.requestPersistentLoopActivation(result.activationRequest);
-      }
-      if (result.inserted) await this.flushSemanticRealtimeOutboxBestEffort();
-      return {
-        outcome: result.inserted ? "appended" : "replayed",
-        code: result.inserted
-          ? "sidekick_activation_appended"
-          : "sidekick_activation_replayed",
-      };
-    } catch (error) {
-      return {
-        outcome: "refused",
-        code: error instanceof Error ? error.message : "sidekick_activation_failed",
-      };
-    }
-  }
-
-  /**
    * A Sidekick's `conversation_post`, appended to this conversation as a
    * message from the Sidekick, and nothing else.
    *
-   * Unlike {@link appendAutomationActivation} it accepts any conversation, a
-   * Breakout as well as Main, and it does not wake this conversation's agent:
-   * a post is something people here read, not a request to the agent here.
+   * It accepts any conversation, a Breakout as well as Main, and it does not
+   * wake this conversation's agent: a post is something people here read, not
+   * a request to the agent here.
    * The row is keyed by the caller's host-derived client message id, so a
    * retried receipt lands once and answers with the message it already wrote.
    * Who may post here was decided by the caller against WorkspaceDO's
