@@ -1073,6 +1073,58 @@ describe("Slack connector principal delivery", () => {
     expect(clearLegacyStream).toHaveBeenCalledTimes(1);
   });
 
+  it("posts a non-threadable room's outcome at the top level, every chunk of it", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance, objectDatabase } = await linkedSlackMemberFixture(database, credentialsKey);
+    objectDatabase.exec(`
+      INSERT INTO slack_agent_sessions
+        (id, workspace_id, connection_id, linked_user_id, execution_scope,
+         slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
+         opening_client_message_id, workstream_id, invocation_kind, channel_type,
+         context_json, created_at, updated_at)
+      VALUES ('session-top-level', '22222222-2222-4222-8222-222222222222',
+              '11111111-1111-4111-8111-111111111111', NULL, 'workspace',
+              'T123', 'U456', 'C123', '1.0', 'event:top-level',
+              '7a000000-0000-4000-8000-0000000000ad', 'app_mention', 'public',
+              '{"source":{"threadable":false}}', '2026-01-01', '2026-01-01');
+    `);
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+    let ts = 3;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      const method = url.pathname.split("/").at(-1)!;
+      calls.push({ method, body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown> });
+      if (method === "chat.postMessage") {
+        ts += 1;
+        return new Response(JSON.stringify({ ok: true, channel: "C123", ts: `${ts}.0` }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected Slack request ${url}`);
+    }));
+
+    await new SlackAgentService(slackMembershipEnvironment(
+      database, instance, credentialsKey, vi.fn(async () => undefined), undefined,
+      { PUBLIC_WEB_BASE_URL: "https://rallywith.ai" },
+    )).deliverWorkstreamOutcome(
+      "22222222-2222-4222-8222-222222222222",
+      "7a000000-0000-4000-8000-0000000000ad",
+      // Past Slack's 12,000-character message limit, so it is sent in chunks.
+      `${"word ".repeat(2_600)}end`,
+      "run-top-level:completed",
+      "completed",
+    );
+
+    // Two result chunks and the controls, none of them threaded.
+    expect(calls.map((call) => call.method)).toEqual(["chat.postMessage", "chat.postMessage", "chat.postMessage"]);
+    expect(calls.filter((call) => "thread_ts" in call.body)).toEqual([]);
+    expect(objectDatabase.prepare(
+      "SELECT last_delivery_key FROM slack_agent_sessions WHERE id = 'session-top-level'",
+    ).get()).toEqual({ last_delivery_key: "run-top-level:completed" });
+  });
+
   it("presents the connector principal to the work-stream object, not a login session", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
@@ -1907,6 +1959,55 @@ describe("Slack public channel membership", () => {
     expect(objectDatabase.prepare("SELECT COUNT(*) AS count FROM slack_agent_pending_prompts").get())
       .toEqual({ count: 0 });
     expect(threadTitles).toEqual(["investigate this"]);
+  });
+
+  it("starts work in a room Slack does not thread without calling a thread API", async () => {
+    // Slack refuses a thread there: an Agent status or a `thread_ts` post
+    // would fail the request after the reaction said it was accepted.
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    insertSlackEventJob(objectDatabase, "event:non-threadable", appMention("EvNonThreadable"));
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      const method = url.pathname.split("/").at(-1)!;
+      calls.push({ method, body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown> });
+      const json = (body: unknown) => new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+      if (method === "conversations.info") {
+        return json({
+          ok: true,
+          channel: { id: "C123", is_private: false, is_im: false, is_mpim: false, is_non_threadable: true },
+        });
+      }
+      if (method === "users.info") {
+        return json({
+          ok: true,
+          user: {
+            id: "U456", team_id: "T123", deleted: false, is_bot: false, name: "adam",
+            profile: { display_name: "Adam", real_name: "Adam" },
+          },
+        });
+      }
+      if (method.startsWith("assistant.threads.")) return json({ ok: false, error: "thread_not_supported" });
+      if (method === "chat.postMessage") return json({ ok: true, channel: "C123", ts: "1.1" });
+      throw new Error(`Unexpected Slack request ${url}`);
+    }));
+
+    const objectStores = new Map<string, DatabaseSync>();
+    await new SlackAgentService(slackMembershipEnvironment(
+      database, instance, credentialsKey, vi.fn(async () => undefined), objectStores,
+    )).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:non-threadable");
+
+    expect(calls.filter((call) => call.method.startsWith("assistant.threads."))).toEqual([]);
+    expect(calls.filter((call) => call.method === "chat.postMessage" && "thread_ts" in call.body)).toEqual([]);
+    const session = objectDatabase.prepare(
+      "SELECT slack_thread_ts, json_extract(context_json, '$.source.threadable') AS threadable FROM slack_agent_sessions",
+    ).get();
+    expect(session).toEqual({ slack_thread_ts: "1.0", threadable: 0 });
   });
 });
 

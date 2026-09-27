@@ -316,6 +316,11 @@ export const WorkspaceSlackSessionSchema = deferredZodSchema(() => z.strictObjec
   /** Only what Rally placed itself, so a transition never takes a member's. */
   reaction_current: z.string().nullable(),
   reaction_cursor: z.number().int().nonnegative(),
+  /**
+   * False for a room Slack marks `is_non_threadable`, read from the source the
+   * session was opened with: delivery posts top-level there.
+   */
+  threadable: z.union([z.boolean(), z.number().int()]).transform((value) => value !== false && value !== 0),
 }));
 
 export const WorkspaceSlackSessionResultSchema = deferredZodSchema(() => z.strictObject({
