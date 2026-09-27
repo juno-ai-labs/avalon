@@ -141,13 +141,16 @@ export {
 } from "./observability";
 export {
   createSlackConnector,
-  joinAllSlackPublicChannels,
   joinSlackPublicChannel,
   normalizeSlackActivity,
   parseSlackAgentInvocation,
   parseSlackEventEnvelope,
   slackApi,
   slackActivityEventType,
+  slackExternalRoom,
+  slackInstallationId,
+  slackMessagePath,
+  type SlackExternalRoom,
   slackAgentActivationAcknowledgement,
   slackAgentReactionSource,
   verifySlackRequest,
@@ -169,7 +172,6 @@ export {
   type SlackConnectorConfig,
   type SlackIngressEnvelope,
   type SlackPublicChannelJoinResult,
-  type SlackPublicChannelSyncResult,
   type SlackWebApiMethod,
 } from "./slack";
 export {

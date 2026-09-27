@@ -4,7 +4,7 @@ import { ashbyIngressUrl } from "../lib/ashby-ingress";
 import { registerAshbyRoute } from "./ashby-routing-service";
 import { ConnectorInstallationProviders, ConnectorInstallationSchema, type ConnectorInstallation, type ConnectorInstallationProviderSchema } from "@rally/contracts";
 import { TELEMETRY_CONNECTOR_TYPES, type TelemetryConnectorType } from "@rally/contracts/telemetry";
-import { AshbyEventSelectionSchema } from "@rally/connectors";
+import { AshbyEventSelectionSchema, slackInstallationId } from "@rally/connectors";
 import { enqueueConnectorInstallation, runConnectorInstallation } from "./connector-installation-service";
 import { withDeadline } from "../lib/deadline";
 import { dynamicConnectorCapability, stableConnectionWireName, validateDynamicConnectorTools } from "./connector-tool-inventory";
@@ -1958,11 +1958,13 @@ export class ConnectionService {
         throw error;
       }
       try {
-        await new SlackAgentService(this.env).schedulePublicChannelSync(connectionId);
+        // Rally no longer joins public channels on installation. What a
+        // reconnect owes is the bindings its disconnect suspended.
+        await new SlackAgentService(this.env).reactivateInstallationBindings(connectionId);
       } catch (error) {
-        // Auto-join is recoverable and must not invalidate otherwise healthy
-        // Slack credentials or routing after the OAuth state is consumed.
-        logWarn(this.env, "slack_public_channel_sync_schedule_failed", {
+        // Recoverable, and must not invalidate otherwise healthy Slack
+        // credentials or routing after the OAuth state is consumed.
+        logWarn(this.env, "external_bindings_reactivation_failed", {
           connection_id: connectionId,
           reason: error instanceof Error ? error.message : "unknown",
         });
@@ -2439,6 +2441,22 @@ export class ConnectionService {
       await this.env.DB.prepare("UPDATE schedules SET enabled = 0, updated_at = ? WHERE connector_connection_id = ?")
         .bind(nowIso(), id).run();
       await this.syncConnectorIngressRoute(id);
+      if (connection.connector_type === "slack" && connection.scope === "workspace" && connection.provider_account_id) {
+        // A disconnected installation stops provider routing but keeps every
+        // binding's identity, so reconnecting brings the same Spaces and
+        // threads back. See docs/external-conversation-bindings.md.
+        await (await this.workspaceObject(connection.workspace_id)).suspendExternalConversationBindings({
+          workspaceId: connection.workspace_id,
+          installationId: slackInstallationId(String(connection.provider_account_id)),
+          reason: "connection_disconnected",
+          at: disabledAt,
+        }).catch((error: unknown) => {
+          logWarn(this.env, "external_bindings_suspension_failed", {
+            connection_id: id,
+            reason: error instanceof Error ? error.message : "unknown",
+          });
+        });
+      }
       await this.refreshScheduler(connection.workspace_id);
       if (connection.connector_type === "github" && connection.provider_account_id) {
         const sibling = await this.env.DB.prepare(

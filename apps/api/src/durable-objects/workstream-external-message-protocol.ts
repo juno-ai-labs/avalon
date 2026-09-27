@@ -17,6 +17,12 @@ import { z } from "zod";
 const ExternalMessageBaseSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
+  /**
+   * Which of the parent's conversations receives the message: the main one
+   * when absent. A reply routed through an external conversation binding to a
+   * Sidekick run names the run child (the run id) under the Sidekick parent.
+   */
+  substreamId: z.string().min(1).max(180).optional(),
   messageId: IdSchema,
   clientMessageId: z.string().min(1).max(120),
   actor: ExternalActorSchema,

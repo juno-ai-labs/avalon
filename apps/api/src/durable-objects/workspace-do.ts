@@ -25,10 +25,12 @@ interface RetirementGraphNode {
   parentId: string;
 }
 import {
+  SlackIngressQueueMessageSchema,
   WorkspaceSocketClientEventTypeSchema,
   isUnknownSocketEvent,
   safeParseSocketEvent,
 } from "@rally/contracts";
+import { sha256Hex } from "../lib/crypto";
 import {
   InstallationCreateSchema,
   InstallationReadSchema,
@@ -882,6 +884,7 @@ import {
   type WorkspaceSlackThreadReleaseRequest,
   type WorkspaceSlackThreadRoutableRequest,
   type WorkspaceSlackThreadRoutableResult,
+  SLACK_SIDEKICK_SOURCE_JOIN_EVENT,
   WorkspaceSlackContextRequestSchema,
   WorkspaceSlackContextStoreRequestSchema,
   WorkspaceSlackFeedbackRequestSchema,
@@ -942,6 +945,32 @@ import {
   workspaceSlackSessionByWorkstream,
   workspaceSlackSessionExists,
 } from "./workspace-slack-storage";
+import {
+  ExternalBindingActivateResultSchema,
+  ExternalBindingCloseRequestSchema,
+  ExternalBindingLatestOutboundRequestSchema,
+  ExternalBindingLatestOutboundResultSchema,
+  ExternalBindingMoveRequestSchema,
+  ExternalBindingMoveResultSchema,
+  ExternalBindingOutboundRequestSchema,
+  ExternalBindingOutboundResultSchema,
+  ExternalBindingReactivateRequestSchema,
+  ExternalBindingReadRequestSchema,
+  ExternalBindingReadResultSchema,
+  ExternalBindingReleaseResultSchema,
+  ExternalBindingResolutionSchema,
+  ExternalBindingResolveRequestSchema,
+  ExternalBindingSettleRequestSchema,
+  ExternalBindingSuspendRequestSchema,
+  ExternalBindingSuspendResultSchema,
+  ExternalRoomLinkRequestSchema,
+  type ExternalBindingResolution,
+  type ExternalRoomLinkResult,
+} from "./workspace-external-binding-protocol";
+import {
+  EXTERNAL_CONVERSATION_BINDINGS_MIGRATION,
+  ExternalConversationBindingStorage,
+} from "./workspace-external-binding-storage";
 import {
   WorkspaceTerminalNetworkSettingsRequestSchema,
   WorkspaceTerminalPolicyClaimRequestSchema,
@@ -1031,6 +1060,8 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "slack_agent_sessions",
   "slack_agent_contexts",
   "slack_agent_feedback",
+  // Bindings are typed methods from their first version.
+  "external_conversation_bindings",
 ] as const;
 
 function typedRpcOnlyWorkspaceTable(sql: string): string | null {
@@ -1298,6 +1329,13 @@ class UnknownMembersError extends Error {
 class ChannelReservationRefused extends Error {
   constructor(readonly code: SpaceErrorCode, readonly spaceId: string) {
     super(code);
+  }
+}
+
+/** The external thread a reservation named could not be claimed; it rolls back too. */
+class ChannelBindingRefused extends Error {
+  constructor(readonly outcome: "held" | "bound") {
+    super(`external_binding_${outcome}`);
   }
 }
 
@@ -3974,7 +4012,33 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // The socket's `channel_rails` answer and the waterline on each Channel row
   // that says when to ask again. See docs/hosted-conversation-parents.md.
   statements: CHANNEL_RAIL_MIGRATION,
+}, {
+  version: 83,
+  description: "bind external conversations to Rally addresses",
+  // One record for provider rooms and threads, keyed by installation and path;
+  // every Slack Agent session's thread key becomes an active thread binding.
+  // See docs/external-conversation-bindings.md.
+  statements: EXTERNAL_CONVERSATION_BINDINGS_MIGRATION,
 }];
+
+/**
+ * The Slack conversations a Sidekick source's rule names: every `channelId`
+ * leaf compared by equality or set membership. A rule that excludes channels
+ * or names none leaves nothing to join.
+ */
+function slackSourceChannelIds(when: unknown): string[] {
+  const predicate = when as { kind?: unknown; allOf?: unknown };
+  if (predicate.kind !== "all" || !Array.isArray(predicate.allOf)) return [];
+  return predicate.allOf.flatMap((leaf: unknown) => {
+    const candidate = leaf as { kind?: unknown; attribute?: unknown; operator?: unknown; value?: unknown };
+    if (candidate.kind !== "string" || candidate.attribute !== "channelId") return [];
+    if (candidate.operator === "equals" && typeof candidate.value === "string") return [candidate.value];
+    if (candidate.operator === "in" && Array.isArray(candidate.value)) {
+      return candidate.value.filter((value): value is string => typeof value === "string");
+    }
+    return [];
+  });
+}
 
 function externalEventContext(
   metadata: Record<string, unknown>,
@@ -7141,6 +7205,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             SET waterline = waterline + 1
           WHERE list = 'automations'`,
       );
+      if (effect.lifecycle === "deleted") {
+        // A deleted Sidekick's runs take no more input, so the threads its
+        // sends opened stop routing to them. The rows stay, suspended, so a
+        // reply is logged as `binding_suspended` rather than read as a new
+        // conversation.
+        this.externalBindings().suspendTarget({
+          parentKind: "automation",
+          parentId: effect.automationId,
+          reason: "sidekick_deleted",
+          at: new Date().toISOString(),
+        });
+      }
       return { applied: true };
     });
     if (result.applied) this.publishSidebarList("automations");
@@ -7410,7 +7486,80 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return { effectiveAfterEventSequence: cutoff };
     });
     await this.refreshScheduleKinds(request.workspaceId, ["schedule"]);
+    if (request.destination.kind === "automation") {
+      await this.joinSlackSourceConversations(request.workspaceId, request.destination.automationId, request.evaluators);
+    }
     return result;
+  }
+
+  /**
+   * A Sidekick saved with a Slack source that names conversations keeps the
+   * bot in them: the Sidekick hears their messages only from conversations
+   * the bot has joined. The join is queued as a Slack ingress job, which the
+   * ingress runs with the installation's token; it is not an invitation and
+   * links no Space. Best effort: the registration has committed, and a join
+   * that failed to queue is logged and made again by the next save.
+   */
+  private async joinSlackSourceConversations(
+    workspaceId: string,
+    automationId: string,
+    evaluators: readonly { source: { connectorType: string; connectionId: string }; when: unknown }[],
+  ): Promise<void> {
+    const byConnection = new Map<string, Set<string>>();
+    for (const evaluator of evaluators) {
+      if (evaluator.source.connectorType !== "slack") continue;
+      const channelIds = slackSourceChannelIds(evaluator.when);
+      if (channelIds.length === 0) continue;
+      const set = byConnection.get(evaluator.source.connectionId) ?? new Set<string>();
+      for (const channelId of channelIds) set.add(channelId);
+      byConnection.set(evaluator.source.connectionId, set);
+    }
+    for (const [connectionId, channelIds] of byConnection) {
+      try {
+        const connection = this.state.storage.sql.exec<{ provider_account_id: string | null }>(
+          `SELECT provider_account_id FROM connector_connections
+            WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status <> 'disabled'`,
+          connectionId,
+        ).toArray()[0];
+        if (!connection?.provider_account_id) continue;
+        const channels = [...channelIds].sort();
+        const eventId = `rally-sidekick-source-join:${automationId}:${channels.join(",")}`;
+        const envelope = {
+          type: "event_callback",
+          team_id: connection.provider_account_id,
+          ...(this.env.SLACK_APP_ID ? { api_app_id: this.env.SLACK_APP_ID } : {}),
+          event_id: eventId,
+          event: { type: SLACK_SIDEKICK_SOURCE_JOIN_EVENT, channel_ids: channels },
+        };
+        const payloadJson = JSON.stringify(envelope);
+        const jobId = `event:${eventId}`;
+        const admitted = enqueueWorkspaceSlackIngressJob(this.state.storage, {
+          workspaceId,
+          jobId,
+          connectionId,
+          teamId: connection.provider_account_id,
+          bodyHash: await sha256Hex(payloadJson),
+          kind: "event",
+          payloadJson,
+          at: new Date().toISOString(),
+        });
+        if (admitted.outcome === "replayed" && admitted.status === "completed") continue;
+        this.refreshScheduleAfterSlackWrite(workspaceId);
+        await this.env.ACTIVITY_QUEUE.send(SlackIngressQueueMessageSchema.parse({
+          kind: "slack_ingress",
+          region: this.env.AVALON_REGION,
+          workspaceId,
+          jobId,
+        }));
+      } catch (error) {
+        logWarn(this.env, "slack_sidekick_source_join_enqueue_failed", {
+          workspace_id: workspaceId,
+          automation_id: automationId,
+          connection_id: connectionId,
+          reason: diagnosticErrorCode(error, "slack_sidekick_source_join_enqueue_failed"),
+        });
+      }
+    }
   }
 
   /** Cheap connector-ingress admission check; matching still happens after normalization. */
@@ -7560,8 +7709,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       delivery_count: deliveries.length,
       destinations: deliveries.map((delivery) => `${delivery.destination.kind}:${delivery.registrationId}`).slice(0, 20),
     });
+    // A message in a bound external conversation is claimed by its binding,
+    // as a matched watch claims one, so a bound reply never also becomes
+    // Suggested Work. The adapter wrote the path beside the provider metadata.
+    const boundPath = Array.isArray(metadata.externalConversationPath)
+      && metadata.externalConversationPath.length > 0
+      && metadata.externalConversationPath.every((segment) => typeof segment === "string" && segment.length > 0)
+      && typeof metadata.teamId === "string" && event.connector_type === "slack"
+      ? metadata.externalConversationPath as string[]
+      : null;
+    const bound = boundPath !== null && this.externalBindings().resolve({
+      installationId: `slack:${metadata.teamId as string}`,
+      path: boundPath,
+      addressed: false,
+      claimKey: null,
+      pendingStaleBefore: new Date(0).toISOString(),
+    }).outcome === "deliver";
     return WorkspaceExternalEventMatchResultSchema.parse({
-      matched: deliveries.length > 0,
+      matched: deliveries.length > 0 || bound,
       deliveries,
     });
   }
@@ -8238,7 +8403,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           parentId: workstreamId,
           substreamId: asSubstreamId("0"),
           kind: "main",
-          createdByUserId: request.userId,
+          createdByUserId: request.createdByUserId === undefined ? request.userId : request.createdByUserId,
           authorityGeneration: request.authorityGeneration,
           directory: { ...request.directory, scope: start.scope, systemKind: null },
         });
@@ -8268,6 +8433,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             sourceId: entry.space.id, scope: entry.space.scope, participantUserIds: participants,
           }, applied.plan.seatUserIds);
         }
+        if (request.externalBinding) {
+          const claimed = this.externalBindings().claim(request.externalBinding, {
+            kind: "conversation", parentKind: "workstream", parentId: workstreamId, substreamId: "0",
+          }, new Date().toISOString());
+          if (claimed.outcome !== "claimed") throw new ChannelBindingRefused(claimed.outcome);
+        }
         return { authorityGeneration: child.authorityGeneration, spaces };
       }));
     } catch (error) {
@@ -8275,6 +8446,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // with it; forget their ids so nothing runs a row that never committed.
       this.pendingParentFollowUps.splice(followUpMark);
       if (error instanceof ChannelReservationRefused) return refused(error.code, error.spaceId);
+      if (error instanceof ChannelBindingRefused) return { status: "binding_refused", outcome: error.outcome };
       throw error;
     }
     // After the commit, what the staged calls did after theirs: the Space
@@ -12328,6 +12500,220 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceSlackFeedbackRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     return recordWorkspaceSlackFeedback(this.state.storage, request);
+  }
+
+  private externalBindings(): ExternalConversationBindingStorage {
+    return new ExternalConversationBindingStorage(this.state.storage);
+  }
+
+  /**
+   * Resolve one verified external message's path, in one read: deliver to a
+   * bound conversation, hold behind a creation in flight, spawn a Channel in
+   * the room's Space, stop at a suspended binding, or do nothing. See
+   * `docs/external-conversation-bindings.md`.
+   */
+  async resolveExternalConversation(input: unknown): Promise<ExternalBindingResolution> {
+    await this.initialized;
+    const request = parseRpcInput(ExternalBindingResolveRequestSchema, input, "resolve_external_conversation");
+    this.assertWorkspace(request.workspaceId);
+    const resolution = this.externalBindings().resolve(request);
+    if (resolution.outcome !== "spawn") return ExternalBindingResolutionSchema.parse(resolution);
+    // Only a spawn reads further, and only this object's own Space row.
+    const space = this.state.storage.sql.exec<{
+      scope: "personal" | "workspace"; created_by_user_id: string | null; archived_at: number | null;
+    }>(
+      "SELECT scope, created_by_user_id, archived_at FROM spaces WHERE space_id = ?",
+      resolution.spaceId,
+    ).toArray()[0];
+    return ExternalBindingResolutionSchema.parse({
+      ...resolution,
+      ...(space ? {
+        space: {
+          scope: space.scope,
+          createdByUserId: space.created_by_user_id,
+          archived: space.archived_at !== null,
+        },
+      } : {}),
+    });
+  }
+
+  /** One binding by its key, whatever its state. */
+  async externalConversationBinding(input: unknown) {
+    await this.initialized;
+    const request = parseRpcInput(ExternalBindingReadRequestSchema, input, "external_conversation_binding");
+    this.assertWorkspace(request.workspaceId);
+    return ExternalBindingReadResultSchema.parse({
+      binding: this.externalBindings().read(request.installationId, request.path),
+    });
+  }
+
+  /** A creation finished: its pending thread binding becomes the thread's route. */
+  async activateExternalConversationBinding(input: unknown) {
+    await this.initialized;
+    const request = parseRpcInput(ExternalBindingSettleRequestSchema, input, "activate_external_conversation_binding");
+    this.assertWorkspace(request.workspaceId);
+    return ExternalBindingActivateResultSchema.parse({
+      outcome: this.externalBindings().activate(request.installationId, request.path, request.target, request.at),
+    });
+  }
+
+  /** A creation failed: its pending claim goes, and nothing names the absent Channel. */
+  async releaseExternalConversationBinding(input: unknown) {
+    await this.initialized;
+    const request = parseRpcInput(ExternalBindingSettleRequestSchema, input, "release_external_conversation_binding");
+    this.assertWorkspace(request.workspaceId);
+    return ExternalBindingReleaseResultSchema.parse({
+      outcome: this.externalBindings().release(request.installationId, request.path, request.target)
+        ? "released"
+        : "absent",
+    });
+  }
+
+  /**
+   * Bind the reply thread of a message a Sidekick run sent to that run's child.
+   * Delivered from the child's outbox, where it was committed with the tool
+   * receipt; a redelivery is `already_bound`.
+   */
+  async recordOutboundExternalConversationBinding(input: unknown) {
+    await this.initialized;
+    const request = parseRpcInput(ExternalBindingOutboundRequestSchema, input, "record_outbound_external_conversation_binding");
+    this.assertWorkspace(request.workspaceId);
+    const outcome = this.externalBindings().recordOutbound(
+      request.installationId, request.path, request.target, request.at,
+    );
+    if (outcome === "conflict") {
+      logWarn(this.env, "external_binding_outbound_conflict", {
+        workspace_id: request.workspaceId,
+        installation_id: request.installationId,
+        parent_kind: request.target.parentKind,
+        parent_id: request.target.parentId,
+        substream_id: request.target.substreamId,
+      });
+    }
+    return ExternalBindingOutboundResultSchema.parse({ outcome });
+  }
+
+  /** The most recent active outbound binding under a room, for the one-to-one DM policy. */
+  async latestOutboundExternalConversation(input: unknown) {
+    await this.initialized;
+    const request = parseRpcInput(ExternalBindingLatestOutboundRequestSchema, input, "latest_outbound_external_conversation");
+    this.assertWorkspace(request.workspaceId);
+    return ExternalBindingLatestOutboundResultSchema.parse({
+      path: this.externalBindings().latestOutboundUnder(request.installationId, request.prefix),
+    });
+  }
+
+  /**
+   * Suspend one binding (the bot left the room, the room was archived), or
+   * every active binding of an installation (it disconnected). Rows and
+   * targets stay, so a re-invitation or a reconnect brings them back.
+   */
+  async suspendExternalConversationBindings(input: unknown) {
+    await this.initialized;
+    const request = parseRpcInput(ExternalBindingSuspendRequestSchema, input, "suspend_external_conversation_bindings");
+    this.assertWorkspace(request.workspaceId);
+    return ExternalBindingSuspendResultSchema.parse({ suspended: this.externalBindings().suspend(request) });
+  }
+
+  /** Bring back the bindings a disconnect suspended, and only those. */
+  async reactivateExternalConversationBindings(input: unknown) {
+    await this.initialized;
+    const request = parseRpcInput(ExternalBindingReactivateRequestSchema, input, "reactivate_external_conversation_bindings");
+    this.assertWorkspace(request.workspaceId);
+    return ExternalBindingSuspendResultSchema.parse({
+      suspended: this.externalBindings().reactivate(request.installationId, request.reason, request.at),
+    });
+  }
+
+  /**
+   * Close the bindings that route to one conversation, or to every child of a
+   * parent. A person closing a run's binding, and a Sidekick's deletion, both
+   * land here.
+   */
+  async closeExternalConversationBindings(input: unknown) {
+    await this.initialized;
+    const request = parseRpcInput(ExternalBindingCloseRequestSchema, input, "close_external_conversation_bindings");
+    this.assertWorkspace(request.workspaceId);
+    return ExternalBindingSuspendResultSchema.parse({ suspended: this.externalBindings().suspendTarget(request) });
+  }
+
+  /** A provider room changed its identifier: move it and every path beneath it. */
+  async moveExternalConversationBindings(input: unknown) {
+    await this.initialized;
+    const request = parseRpcInput(ExternalBindingMoveRequestSchema, input, "move_external_conversation_bindings");
+    this.assertWorkspace(request.workspaceId);
+    return ExternalBindingMoveResultSchema.parse(
+      this.externalBindings().move(request.installationId, request.from, request.to, request.at),
+    );
+  }
+
+  /**
+   * Link a shared provider room: its Space and its room binding in one
+   * transaction, or the Space an existing binding already names.
+   *
+   * `reserveSpace`'s steps, with the binding decided inside the transaction
+   * that would write the Space, so an invitation and a first mention racing
+   * each other cannot make two Spaces: the second finds the first's binding.
+   * A suspended room binding is reactivated with its Space, which is what a
+   * re-invitation after the bot was removed means. A private room's Space is
+   * `personal` and seats the room's known Rally members; nothing here widens
+   * it by member count.
+   *
+   * There is no pending state for a room: a Space has no conversation to
+   * provision since Spaces stopped opening one, so the reservation is the
+   * whole Space and the binding is written active beside it.
+   */
+  async linkExternalRoom(input: unknown): Promise<ExternalRoomLinkResult> {
+    await this.initialized;
+    const request = parseRpcInput(ExternalRoomLinkRequestSchema, input, "link_external_room");
+    this.assertWorkspace(request.workspaceId);
+    const bindings = this.externalBindings();
+    const known = bindings.read(request.installationId, request.path);
+    if (known && known.target.kind !== "space") {
+      return { ok: false, code: "external_room_path_bound_to_conversation" };
+    }
+    if (known) {
+      const existing = bindings.linkRoom(request.installationId, request.path, request.at, () => null);
+      return existing
+        ? { ok: true, outcome: existing.outcome, spaceId: existing.spaceId }
+        : { ok: false, code: "external_room_link_failed" };
+    }
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    if (refusal) return { ok: false, code: refusal };
+    const parent = await this.spaceParentReservation(request.spaceId);
+    if (!parent.ok) return { ok: false, code: parent.code };
+    const storage = this.spaceStorage();
+    const reservation: WorkspaceSpaceReserveRequest = {
+      workspaceId: asWorkspaceId(request.workspaceId),
+      userId: asUserId(request.userId),
+      spaceId: asSpaceId(request.spaceId),
+      space: { name: request.space.name, iconKey: "users", colorKey: "blue", scope: request.space.scope },
+    };
+    const participants = [...new Set([request.userId, ...request.participantUserIds])];
+    const linked = await this.withMembersLearned(() => this.state.storage.transactionSync(() => (
+      bindings.linkRoom(request.installationId, request.path, request.at, () => {
+        const reserved = storage.reserveForCreation(reservation, request.spaceId);
+        if (!reserved.space) return null;
+        if (reserved.created) parent.reserve(request.userId, reserved.space);
+        if (request.space.scope === "personal" && participants.length > 1) {
+          const seated = storage.applyAudience({
+            workspaceId: asWorkspaceId(request.workspaceId),
+            userId: asUserId(request.userId),
+            spaceId: asSpaceId(request.spaceId),
+            operationId: uuidV7(),
+            audience: { scope: "personal", participantUserIds: participants.map(asUserId) },
+          });
+          if (seated === false || seated === "self_excluded") throw new Error("external_room_audience_refused");
+        }
+        return request.spaceId;
+      })
+    )));
+    if (!linked) return { ok: false, code: "space_not_found" };
+    if (linked.outcome === "linked") {
+      this.publishSpaceSnapshot();
+      await this.afterParentWrite();
+    }
+    return { ok: true, outcome: linked.outcome, spaceId: linked.spaceId };
   }
 
   /**
