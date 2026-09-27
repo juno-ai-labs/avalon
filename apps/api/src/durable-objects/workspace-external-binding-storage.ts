@@ -68,6 +68,14 @@ export const EXTERNAL_CONVERSATION_BINDINGS_MIGRATION: readonly string[] = [
      FROM slack_agent_sessions`,
 ];
 
+/**
+ * What a lasting suspension (a person closing, a deletion, the bot leaving or
+ * the room being archived) may overwrite: an active row, or one only a
+ * disconnect suspended, which a reconnect would otherwise reactivate.
+ */
+const REPLACEABLE_BY_LASTING_SUSPENSION =
+  "(state = 'active' OR (state = 'suspended' AND suspended_reason = 'connection_disconnected'))";
+
 interface BindingRow extends Record<string, SqlStorageValue> {
   installation_id: string;
   path_json: string;
@@ -393,11 +401,17 @@ export class ExternalConversationBindingStorage {
     reason: ExternalBindingSuspensionReason;
     at: string;
   }): ExternalPath[] {
+    // A disconnect only suspends what is active. Any other reason is lasting,
+    // so it also replaces a disconnect's suspension: left in place, the
+    // reconnect would bring back a room the bot has since left.
+    const replaceable = input.reason === "connection_disconnected"
+      ? "state = 'active'"
+      : REPLACEABLE_BY_LASTING_SUSPENSION;
     const rows = input.path
       ? this.sql.exec<{ path_json: string }>(
         `UPDATE external_conversation_bindings
             SET state = 'suspended', suspended_reason = ?, claim_key = NULL, updated_at = ?
-          WHERE installation_id = ? AND path_json = ? AND state = 'active'
+          WHERE installation_id = ? AND path_json = ? AND ${replaceable}
           RETURNING path_json`,
         input.reason,
         input.at,
@@ -407,7 +421,7 @@ export class ExternalConversationBindingStorage {
       : this.sql.exec<{ path_json: string }>(
         `UPDATE external_conversation_bindings
             SET state = 'suspended', suspended_reason = ?, claim_key = NULL, updated_at = ?
-          WHERE installation_id = ? AND state = 'active'
+          WHERE installation_id = ? AND ${replaceable}
           RETURNING path_json`,
         input.reason,
         input.at,
@@ -442,7 +456,7 @@ export class ExternalConversationBindingStorage {
       `UPDATE external_conversation_bindings
           SET state = 'suspended', suspended_reason = ?, claim_key = NULL, updated_at = ?
         WHERE target_kind = 'conversation' AND parent_kind = ? AND parent_id = ? ${substreamClause}
-          AND state <> 'suspended'
+          AND (state = 'pending' OR ${REPLACEABLE_BY_LASTING_SUSPENSION})
         RETURNING path_json`,
       input.reason,
       input.at,
