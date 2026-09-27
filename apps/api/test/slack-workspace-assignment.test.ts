@@ -3122,6 +3122,30 @@ describe("Slack replies routed by external conversation bindings", () => {
     });
   });
 
+  it("names a room's Space by the room, so a repeated invitation claims the same anchor", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance, objectDatabase } = await linkedSlackMemberFixture(database, credentialsKey);
+    for (const id of ["EvInviteOne", "EvInviteTwo"]) {
+      insertSlackEventJob(objectDatabase, `event:${id}`, invitation(id, {
+        type: "member_joined_channel", user: "UBOT", inviter: "U456", channel: "CPUB", channel_type: "C",
+      }));
+    }
+    roomStub({ id: "CPUB", name: "launch", is_private: false, is_im: false, is_mpim: false }, []);
+    // The capture writes no binding, as for two invitations that race.
+    const links = captureRoomLinks(instance);
+    const service = new SlackAgentService(slackMembershipEnvironment(
+      database, instance, credentialsKey, vi.fn(async () => undefined),
+    ));
+    await service.processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:EvInviteOne");
+    await service.processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:EvInviteTwo");
+
+    expect(links).toHaveLength(2);
+    expect(links[1]!.spaceId).toBe(links[0]!.spaceId);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams WHERE id = ?").get(String(links[0]!.spaceId)))
+      .toEqual({ count: 1 });
+  });
+
   it("links a public room to an Organization-wide Space as the inviter, seating nobody", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
