@@ -107,7 +107,6 @@ import {
   ConnectorConnectionCardInputSchema,
   ConnectorConnectionStateResultSchema,
   connectorConnectionCardSummary,
-  MESSAGE_MAX_CHARACTERS,
   type AutomationRunDefinitionV1,
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
