@@ -1135,6 +1135,8 @@ and in the rail triggers' column lists, or the rail will not notice it moved.
 
 ### 2026-09-27: Sidekick runs continue from input, and post to a home conversation with the conversation tools
 
+### 2026-09-27 — Sidekick runs continue from input, and post to a home conversation with the conversation tools
+
 **What changed:** A run child's `claimPersistentLoopExecution` asks the new
 `SidekickDO.continueRun` before a pending input activates the loop, and the
 loop input carries the run's `automationRun` at the Sidekick's currently
@@ -1150,18 +1152,12 @@ authority check lets a continuation act through the finished row it was
 approved against. A continued run reads a host-rendered continuation note, and
 outside text in a run child is framed as evidence rather than a request.
 
-A room's Sidekick's home is `owning_workstream_id` plus a new
-`owning_substream_id` (SidekickDO migration 10, WorkspaceDO migration 81), so
-it can be a Breakout; a Sidekick set up in a Breakout takes it as home. Viewer
-admission, the authorization owner, search discovery and the archive fan-out
-all read both columns, and archiving a home Breakout pauses the Sidekick.
-Conversations can be attached to a Sidekick from its configuration
-conversation, in a new WorkspaceDO table. `post_result` and its
-`rally:sidekick-result` plugin are gone: a run posts with `conversation_post`
-from the general `rally:conversations` plugin, defaulting to the home. The
-prompt's `# Result delivery` section and the never-populated Slack
-`authoringOrigin` are gone with it; the task context names the home as
-`homeConversationId`.
+A room Sidekick's home is `owning_workstream_id` plus a new
+`owning_substream_id`, so it can be the Breakout it was set up in; every reader
+of the owner reads both, and archiving a home Breakout pauses the Sidekick.
+Conversations can be attached from the configuration conversation. `post_result`
+is gone: a run posts with `conversation_post`
+([why](conversation-tools.md#changelog)).
 
 **Why:** The external conversation bindings PRD
 (`docs/PRDs/2026-09-23_external-conversation-bindings/`) needs a reply in a
@@ -1172,12 +1168,8 @@ definition, and the run row stayed completed because the parent ignored every
 state after a finish. An answered elicitation lost the run's context the same
 way.
 
-The Northstar weekly call prep flow needs a Sidekick whose runs leave
-work for each other in the Breakout where it was set up, and `post_result`
-could reach only the owning Channel's Main conversation and was deduplicated
-on the run id alone, so a continued run could not post a second reply. A
-model offered both `post_result` and a general post tool would not know which
-to use, so the old one was removed rather than kept beside it.
+The Northstar weekly call prep flow needs a Sidekick whose runs leave work for
+each other in the Breakout where it was set up.
 
 **Considered and rejected:** Reopening the row inside `continueRun`. The
 design keeps it a read with no side effects, so a failure between it and the
@@ -1194,13 +1186,11 @@ started with was rejected by the design: a continuation acts on today's
 consent. Keeping the forward-only mapping on `onChildCommonAggregate` was
 rejected because that hook runs for stale envelopes too.
 
-Replacing `owning_workstream_id` with a
-conversation address, which would rebuild two tables whose `CHECK`
-constraints name the column; the added column needs no backfill. Reusing
-`parent_sidekicks` or a conversation's `sidekick_attachments` for
-attachments: those are written automatically whenever a conversation loads the
-Sidekick as a skill, and would have given it read and post access to every
-conversation that ever used it.
+Replacing `owning_workstream_id` with a conversation address, which would
+rebuild two tables whose `CHECK` constraints name it. Reusing
+`parent_sidekicks` or `sidekick_attachments` for attachments: loading a
+Sidekick as a skill writes those, which would grant it every conversation that
+ever used it.
 
 **Consequences:** One run's activations can read different definition
 revisions and run as different people; each activation's reference says
@@ -1211,14 +1201,9 @@ assumption and must fence it on `approvedAt` as `stopped` is. A bound-thread
 adapter delivers into a run child through ordinary external admission and gets
 the evidence framing from the conversation, not from the message.
 
-Anything new that asks "who is this Sidekick's room" must
-read the substream too. `appendAutomationActivation`, which wakes the room
-and accepts only Main, has no production caller left; the post is
-`appendConversationPost`, which accepts any conversation and wakes nothing.
-There is no detach yet (the PRD's open question). Tool-activity prose for
-`post_result` stays for rows already written.
+Anything that asks "who is this Sidekick's room" must read the substream too.
 
-Design: [`docs/PRDs/2026-09-23_external-conversation-bindings/design.md`](PRDs/2026-09-23_external-conversation-bindings/design.md).
+Shipped in #1006. Design: [`docs/PRDs/2026-09-23_external-conversation-bindings/design.md`](PRDs/2026-09-23_external-conversation-bindings/design.md).
 
 ### 2026-09-25 — The setup chat chooses a Sidekick's icon and color
 
