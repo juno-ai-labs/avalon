@@ -37,10 +37,46 @@ const CONNECTOR_CONNECTION_CARD_PROSE: ToolProse = {
   failed: "Could not prepare a connector",
 };
 
+// `rally:sidekick-result` is gone; `conversation_post` replaced it. Its rows
+// already in transcripts keep their wording until those rows are removed.
 const SIDEKICK_POST_RESULT_PROSE: ToolProse = {
   started: "Posting the result to the work stream",
   settled: "Posted the result to the work stream",
   failed: "Could not post the result to the work stream",
+};
+
+/** `rally:conversations`, whose wire names carry the `conversation_` prefix. */
+const CONVERSATION_PROSE: Record<string, ToolProse> = {
+  conversation_list: {
+    started: "Looking for conversations",
+    settled: "Looked for conversations",
+    failed: "Could not look for conversations",
+  },
+  conversation_list_next: {
+    started: "Looking for more conversations",
+    settled: "Looked for more conversations",
+    failed: "Could not look for more conversations",
+  },
+  conversation_read: {
+    started: "Reading a conversation",
+    settled: "Read a conversation",
+    failed: "Could not read a conversation",
+  },
+  conversation_read_next: {
+    started: "Reading earlier messages",
+    settled: "Read earlier messages",
+    failed: "Could not read earlier messages",
+  },
+  conversation_post: {
+    started: "Posting to a conversation",
+    settled: "Posted to a conversation",
+    failed: "Could not post to a conversation",
+  },
+  conversation_attach: {
+    started: "Attaching a conversation",
+    settled: "Attached a conversation",
+    failed: "Could not attach a conversation",
+  },
 };
 
 const AGENT_PROSE: Record<string, ToolProse> = {
@@ -355,6 +391,7 @@ const AVALON_TOOL_PROSE: Record<string, ToolProse> = {
   agents_reply: AGENT_PROSE.reply_to_message!,
   post_result: SIDEKICK_POST_RESULT_PROSE,
   sidekick_post_result: SIDEKICK_POST_RESULT_PROSE,
+  ...CONVERSATION_PROSE,
 };
 
 /**

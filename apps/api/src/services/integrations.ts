@@ -283,6 +283,12 @@ import { automationScopeMemoryTables, createMemoryTableTools } from "./memory-ta
 import type { MaterializedMemoryTable } from "./memory-table-service";
 import { workstreamRunLimits } from "./workstream-run-policy";
 import { TERMINAL_PLUGIN_ID } from "./terminal/contract";
+import {
+  CONVERSATIONS_WIRE_PREFIX,
+  conversationToolPorts,
+  createConversationsPlugin,
+} from "./conversation-tools";
+import { conversationIdOf } from "../durable-objects/workspace-sidekick-conversation-storage";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
 import type { WorkstreamRuntimeResourceAttacher } from "./workstream-object-client";
 
@@ -2075,6 +2081,9 @@ function createAvalonAutomationsPlugin(
             authorUserId,
             scope: "workstream",
             owningWorkstreamId: input.parentId,
+            // Home is the Breakout this was drafted in, or Main. A background
+            // agent is not a Breakout anyone reads, so its drafts live in Main.
+            owningSubstreamId: input.backgroundAgent ? "0" : input.substreamId ?? "0",
             automationId: authoredAutomationId,
           });
         }
@@ -4704,11 +4713,9 @@ async function loadRunPromptContext(
   memoryContextMs: number;
   memoryRecallRequired: boolean;
 }> {
-  // An automation the room does not own sends its own result outward, so its
-  // result is read wherever it sent it, not in Rally, and nothing sends its
-  // final message for it. Decided from the owning room directly rather than
-  // from the shape of `resultDelivery`, which now names only that room and so
-  // would answer this exactly backwards.
+  // An automation no room owns has no home conversation, so its result is read
+  // wherever it sent it, not in Rally, and nothing sends its final message for
+  // it. One with a home posts there with `conversation_post`.
   let automationSendsOutward = false;
   let automationContext:
     | {
@@ -4716,10 +4723,7 @@ async function loadRunPromptContext(
         versionNumber: number;
         instructions: string;
         expectedOutputs: string[];
-        resultDelivery: Array<{
-          channel: "workstream";
-          destination: string;
-        }>;
+        homeConversationId: string | null;
         defaultBehavior: Record<string, unknown>;
         overrides: Record<string, unknown>;
         durableTables: MaterializedMemoryTable[];
@@ -4730,20 +4734,17 @@ async function loadRunPromptContext(
     // immutable, so nothing is frozen into the loop input beyond the reference.
     const definition = await runDefinitionPreparation.get();
     if (!definition) throw new Error("sidekick_run_reference_missing");
-    // What Rally delivers on the run's behalf, which is only the room a
-    // work-stream automation belongs to, through the tool the run holds.
-    // Naming the room tells the run its result has one place to go; naming
-    // nothing tells it nobody will send this for it.
-    const resultDelivery: Array<{ channel: "workstream"; destination: string }> = definition.owningWorkstreamId !== null
-      ? [{ channel: "workstream", destination: definition.owningWorkstreamId }]
-      : [];
+    // The home, as the conversation tools name it: the Channel's Main
+    // conversation or a Breakout. Null tells the run nobody reads it in Rally.
+    const homeConversationId = definition.owningWorkstreamId === null ? null
+      : conversationIdOf({ parentId: definition.owningWorkstreamId, substreamId: definition.owningSubstreamId });
     automationSendsOutward = definition.owningWorkstreamId === null;
     automationContext = {
       name: definition.definition.name,
       versionNumber: definition.definitionRevision,
       instructions: definition.definition.instructions,
       expectedOutputs: definition.definition.expectedOutputs,
-      resultDelivery,
+      homeConversationId,
       defaultBehavior: definition.definition.defaultBehavior,
       overrides: {},
       // What lives in the automation's memory scope: the tables its
@@ -4789,7 +4790,7 @@ async function loadRunPromptContext(
     // Everything but the delivery destination: an address is control-plane
     // configuration, and embedding it shifts recall for every automation that
     // has a target while retrieving nothing anybody wants back.
-    const recallable = { ...automationContext, resultDelivery: undefined };
+    const recallable = { ...automationContext, homeConversationId: undefined };
     memoryQueryParts.push(JSON.stringify(recallable));
   }
   if (input.triggerMessageId && recallsMemoryAtAdmission) {
@@ -5388,12 +5389,12 @@ async function loadHarnessTools(
       tools: sidekickPlugin.tools.filter((tool) => ["sidekicks_list", "attach", "detach"].includes(tool.definition.name)),
     }
     : sidekickPlugin;
-  // The one way a run reaches the room that owns its automation. Offered only
-  // to a run of a room's automation, so a personal or workspace automation
-  // cannot post into a room at all.
-  const postResultPlugin = runDefinition?.owningWorkstreamId
-    ? createAutomationPostResultPlugin(env, input, runDefinition)
-    : null;
+  // List, read and post to Rally conversations, scoped by the loop: a Channel
+  // or Breakout loop reaches its own conversation and its Channel's Main; a
+  // Sidekick's configuration conversation and runs reach its home and
+  // attachments. The only way a Sidekick run reaches a room.
+  const conversationsPlugin = createConversationsPlugin(input, conversationToolPorts(env, input),
+    (tool) => expandPages(tool, CONVERSATIONS_WIRE_PREFIX, null));
   // `tools` retains the historical flattened view for API diagnostics and
   // tests. Bind receives stable always-active core plugins plus loadable
   // built-in and credential-scoped plugins.
@@ -5405,7 +5406,7 @@ async function loadHarnessTools(
     terminalPlugin,
     multimodalGenerationPlugin,
     automationsPlugin,
-    postResultPlugin,
+    conversationsPlugin,
   ].filter(
     (plugin): plugin is HarnessPlugin => plugin !== null,
   );
@@ -6476,105 +6477,6 @@ async function readAutomationRunDefinition(
   }));
 }
 
-const SIDEKICK_RESULT_PLUGIN_ID = "rally:sidekick-result";
-
-/**
- * The one tool through which a run reaches the room that owns its automation.
- *
- * Deliberately a tool the model calls with the text it wants the room to see,
- * not a classifier deciding after the fact whether a result was worth posting:
- * the instructions say what the room should hear, and the run follows them.
- * Refused for an archived room, which the run reports as the tool's error.
- */
-function createAutomationPostResultPlugin(
-  env: Env,
-  input: WorkstreamWorkflowInput,
-  definition: AutomationRunDefinitionV1,
-): HarnessPlugin {
-  const owningWorkstreamId = definition.owningWorkstreamId;
-  if (!owningWorkstreamId || !input.automationRun) throw new Error("sidekick_post_result_requires_owning_room");
-  const run = input.automationRun;
-  const tool: HarnessTool = {
-    definition: {
-      name: "post_result",
-      description: [
-        "Post this run's result into the work stream that owns this Sidekick.",
-        "Call it once, with the complete result the people in that work stream should read.",
-        "Nothing else delivers a result there: a run that does not call this leaves the work stream unchanged.",
-      ].join(" "),
-      capability: "rally.sidekick.result.post",
-      mode: "write",
-      idempotency: "safe",
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          text: { type: "string", minLength: 1, maxLength: MESSAGE_MAX_CHARACTERS, description: "The result, as the work stream should read it." },
-        },
-        required: ["text"],
-      },
-    },
-    execute: async (raw) => {
-      const args = z.object({ text: z.string().min(1).max(MESSAGE_MAX_CHARACTERS) }).parse(raw);
-      const workspaceId = asWorkspaceId(input.workspaceId);
-      const room = await durableObjectStubForWorkspace(
-        env,
-        env.WORKSPACE_DOS,
-        workspaceId,
-        workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
-      );
-      const authority = await room.authority({ workspaceId, parentId: owningWorkstreamId });
-      if (!authority.exists) throw new Error("sidekick_owning_room_missing");
-      if (authority.archived) throw new Error("sidekick_owning_room_archived");
-      const main = await durableObjectStubForWorkspace(
-        env,
-        env.SUBSTREAM_AGENTS,
-        workspaceId,
-        conversationObjectName(env.AVALON_REGION, workspaceId, owningWorkstreamId),
-      );
-      const result = await main.appendAutomationActivation({
-        schemaVersion: 1,
-        workspaceId: input.workspaceId,
-        workstreamId: owningWorkstreamId,
-        authorityGeneration: authority.authorityGeneration,
-        deliveryId: run.runId,
-        text: args.text,
-        executionPrincipal: input.executionPrincipal,
-        activation: {
-          type: "automation_activation",
-          schemaVersion: 1,
-          automationId: run.automationId,
-          automationName: definition.definition.name,
-          runId: run.runId,
-          deliveryId: run.runId,
-          trigger: { kind: run.trigger.kind },
-          occurredAt: Date.now(),
-        },
-      });
-      if (result.outcome === "refused") throw new Error(`sidekick_post_result_refused:${result.code}`);
-      const summary = result.outcome === "replayed"
-        ? "The result was already posted to the work stream."
-        : "Posted the result to the work stream.";
-      return { output: summary, summary };
-    },
-  };
-  return {
-    canonicalId: SIDEKICK_RESULT_PLUGIN_ID,
-    modelId: "rally_sidekick_result",
-    // No wire prefix: this plugin is preloaded only on a run of a room's
-    // Sidekick, where there is exactly one result to post and nothing to
-    // namespace it against.
-    shortWireName: "",
-    displayName: "Sidekick result",
-    searchAliases: [],
-    description: "Post this run's result into the work stream that owns the Sidekick.",
-    systemMessage: "When the instructions say the work stream should hear the result, post it with post_result, once, in full.",
-    tools: [tool],
-    preload: true,
-    explicit: false,
-  };
-}
-
 async function raceWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) throw signal.reason;
   return new Promise<T>((resolve, reject) => {
@@ -6601,7 +6503,6 @@ async function raceWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Prom
  */
 const LEGACY_PLUGIN_IDS: ReadonlyMap<string, string> = new Map([
   ["rally:automations", AUTOMATIONS_PLUGIN_ID],
-  ["rally:automation-result", SIDEKICK_RESULT_PLUGIN_ID],
 ]);
 
 async function loadAuthorizedActivationHints(
@@ -8738,7 +8639,6 @@ export const __integrationTesting = {
   transcriptPluginPresentation,
   installDynamicPluginTools,
   createWorkstreamCorePlugins,
-  createAutomationPostResultPlugin,
   loadHarnessTools,
   validateDynamicConnectorTools,
   loadToolInvocation,
