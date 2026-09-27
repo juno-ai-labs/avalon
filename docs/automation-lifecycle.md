@@ -1144,20 +1144,11 @@ and in the rail triggers' column lists, or the rail will not notice it moved.
 
 ### 2026-09-27 — Sidekick runs continue from input, and post to a home conversation with the conversation tools
 
-**What changed:** A run child's `claimPersistentLoopExecution` asks the new
-`SidekickDO.continueRun` before a pending input activates the loop, and the
-loop input carries the run's `automationRun` at the Sidekick's currently
-accepted revision, the run-as principal, and `automationContinuation`. A
-paused, archived or unknown run refuses with `sidekick_paused`,
-`sidekick_deleted` or `run_not_found`: the input lands with a system row naming
-the code instead of holding the queue. `readRunDefinition` reads the revision
-the reference names. The run row now follows the child through
-`onChildCommonProjection`, which runs only for an accepted projection, and a
-live state reopens a finished row while the Sidekick is active, so a run can
-complete more than once. `readRunState` answers `completedAt`, and the run
-authority check lets a continuation act through the finished row it was
-approved against. A continued run reads a host-rendered continuation note, and
-outside text in a run child is framed as evidence rather than a request.
+**What changed:** Input to a run child continues the run: `continueRun` hands
+the loop the run's context at the accepted revision, or refuses with a code
+that lands the input instead of holding the queue. Only an accepted, newer
+child projection moves the run row, so a run reopens and completes more than
+once.
 
 A room Sidekick's home is `owning_workstream_id` plus a new
 `owning_substream_id`, so it can be the Breakout it was set up in; every reader
@@ -1166,32 +1157,18 @@ Conversations can be attached from the configuration conversation. `post_result`
 is gone: a run posts with `conversation_post`
 ([why](conversation-tools.md#changelog)).
 
-**Why:** The external conversation bindings PRD
-(`docs/PRDs/2026-09-23_external-conversation-bindings/`) needs a reply in a
-thread a run started, and an answer to a question a run asked, to reach that
-run with its instructions, tools and run-as authority. Before this, input to a
-finished run child started a generic loop as the sender, with no Sidekick
-definition, and the run row stayed completed because the parent ignored every
-state after a finish. An answered elicitation lost the run's context the same
-way.
+**Why:** A reply in a thread a run started, or an answer to its question,
+started a generic loop as the sender with no Sidekick definition, and the
+parent ignored every state after a finish.
 
 The Mucker weekly call prep flow needs a Sidekick whose runs leave work for
 each other in the Breakout where it was set up.
 
-**Considered and rejected:** Reopening the row inside `continueRun`. The
-design keeps it a read with no side effects, so a failure between it and the
-activation leaves nothing to undo, and the child's own projection is already
-the one writer of the run's state. The design also said the authority check
-passes "because the run is running"; it cannot, because that projection
-travels the Queue and lands after the continued execution reads its authority
-at start. A timestamp fence on every finished state was the first cut and was
-rejected: a completion from the activation ahead of the continuation, landing
-after the approval, would have refused the continuation's writes. `completed`
-and `failed` are only ever the child's own report, so only `stopped`, which a
-pause writes, is fenced on `approvedAt`. Continuing on the revision the run
-started with was rejected by the design: a continuation acts on today's
-consent. Keeping the forward-only mapping on `onChildCommonAggregate` was
-rejected because that hook runs for stale envelopes too.
+**Considered and rejected:** Reopening the row in `continueRun`; it stays a
+read, and the child's projection stays the row's one writer. That projection
+lands after the continued run checks its authority, so the check accepts the
+finished row, fencing a pause on a stop counter; a wall-clock fence was
+rejected in review because a pause on the approval's millisecond passed it.
 
 Replacing `owning_workstream_id` with a conversation address, which would
 rebuild two tables whose `CHECK` constraints name it. Reusing
@@ -1199,14 +1176,9 @@ rebuild two tables whose `CHECK` constraints name it. Reusing
 Sidekick as a skill writes those, which would grant it every conversation that
 ever used it.
 
-**Consequences:** One run's activations can read different definition
-revisions and run as different people; each activation's reference says
-which. `completed_at` is the latest finish, and run-outcome telemetry counts
-activations, each now carrying the run's id. A change that writes `completed`
-or `failed` to a run row from the parent side breaks the authority fence's
-assumption and must fence it on `approvedAt` as `stopped` is. A bound-thread
-adapter delivers into a run child through ordinary external admission and gets
-the evidence framing from the conversation, not from the message.
+**Consequences:** A run's activations may read different revisions but never
+run as a different person (`run_principal_changed`). A parent-side write of
+`completed` or `failed` to a run row must be fenced as `stopped` is.
 
 Anything that asks "who is this Sidekick's room" must read the substream too.
 
