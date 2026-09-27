@@ -277,7 +277,7 @@ receipt ledger, `parent_child_receipts`, with the legacy 180-day retention; see
   title, scope, archive state and every other presentation column come from
   `channels`; a Space's title, scope and archive state from `spaces`
   (`HostedParent.metadataRow()`). `parent_metadata` holds only identity,
-  generation and revision (migration 78). Before the directory row exists a
+  generation and revision (migration 79). Before the directory row exists a
   parent reads constants: `personal`, untitled, not archived, so a parent
   nobody has described admits its participants and nobody else. A fixture or
   tool that changes a parent's scope or archive state writes the directory row.
@@ -335,8 +335,8 @@ directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
 Fixtures seed a Channel's `channels` row beside its identity row in
 `parent_metadata` (`insertChannelRow` in `test-workers/helpers/hosted-parent.ts`)
 and change scope or archive state on the directory row.
-`hosted-parent-migration.test.ts` upgrades a populated v77 object and proves
-migration 78 keeps every parent's identity row and leaves only the identity
+`hosted-parent-migration.test.ts` upgrades a populated v78 object and proves
+migration 79 keeps every parent's identity row and leaves only the identity
 columns. `hosted-parent-isolation.test.ts` proves a parent with no directory row
 refuses a non-participant and admits them once its row says `workspace`. `automation-post-result.test.ts` proves a Channel archived only on
 `channels` refuses a child; `space-authority.test.ts` proves the same for a Space
@@ -422,7 +422,7 @@ Space in an Organization now shares one SQLite database and one socket set.
 
 ### 2026-09-26 — `parent_metadata` holds identity only
 
-**What changed:** `WorkspaceDO` migration 78 rebuilds `parent_metadata` down to
+**What changed:** `WorkspaceDO` migration 79 rebuilds `parent_metadata` down to
 `parent_id`, `parent_kind`, `workspace_id`, `region`, `authority_generation`,
 `revision`, `created_at` and `updated_at`, dropping the 19 presentation columns
 `channels` holds. A Main common effect now only advances the identity row's

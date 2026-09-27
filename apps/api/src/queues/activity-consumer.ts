@@ -5,7 +5,7 @@ import { ConnectorInstallationQueueSchema, runConnectorInstallation } from "../s
 import { SearchAuthorizationPushJobSchema, pushSearchAuthorization } from '../services/search-authorization';
 import { SearchDocumentJobSchema, publishSearchIndexingJobs, SearchEmbeddingBatchSchema, type SearchSourceReference } from '../services/search-indexing-jobs';
 import { embedSearchDocuments } from '../services/search-embedding';
-import { workspaceSearchIndex, searchChunkIdentity, searchDocumentId } from '../services/text-search';
+import { workspaceSearchIndex, searchChunkIdentity } from '../services/text-search';
 import { ResourceSearchProjectionSchema } from '../durable-objects/resource-search-projection';
 import { SearchConversationProjectionMessageSchema, SearchProjectionMessageSchema } from '../durable-objects/search-projection-outbox';
 import { AuthorizationProjectionJobSchema } from '../durable-objects/authorization-projection';
@@ -219,12 +219,7 @@ export async function recoverPendingActivityQueue(env: Env, limit = 100): Promis
   return pending.results.length;
 }
 
-async function discoverSearchDocuments(env: Env, reference: SearchSourceReference): Promise<string[]> {
-  if (reference.type === 'resource_search_projection_v1') {
-    // Category identities are deterministic, including deletion watermarks.
-    return Promise.all(['files', 'artifacts', 'links'].map((source) =>
-      searchDocumentId(source, reference.workspaceId, reference.resourceId)));
-  }
+async function discoverSearchDocuments(env: Env, reference: z.infer<typeof SearchProjectionMessageSchema>): Promise<string[]> {
   const stub = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, reference.workspaceId,
     conversationObjectName(reference.region, reference.workspaceId, reference.parentId, reference.substreamId));
   return z.array(z.string().min(1)).parse(await stub.searchTurnDocumentIds(reference));
@@ -305,7 +300,20 @@ async function consumeOne(message: Message<unknown>, env: Env,
     return;
   }
   const reference = ResourceSearchProjectionSchema.safeParse(message.body);
-  const source = reference.success ? reference : SearchProjectionMessageSchema.safeParse(message.body);
+  if (reference.success) {
+    const resource = reference.data;
+    if (resource.region !== env.AVALON_REGION) throw new Error('search_projection_region_mismatch');
+    // A resource has three documents and at most one is live, so it is indexed
+    // in this delivery from one read of all three rather than fanned out to a
+    // job per document: each document job read the WorkspaceDO twice, and at a
+    // workspace's size those reads were what overloaded it (docs/text-search.md).
+    const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, resource.workspaceId,
+      workspaceDOName(resource.region, resource.workspaceId));
+    await indexSearch(resource, () => stub.prepareResourceSearch(resource));
+    message.ack();
+    return;
+  }
+  const source = SearchProjectionMessageSchema.safeParse(message.body);
   if (source.success) {
     if (source.data.region !== env.AVALON_REGION) throw new Error('search_projection_region_mismatch');
     // Source deliveries discover documents only. Capturing, tokenizing and
