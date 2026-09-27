@@ -624,11 +624,8 @@ describe("a Sidekick run's send", () => {
     await seedRunChild(stub);
 
     expect(await sentMessage(stub, binding)).toMatchObject({ ok: true, value: "persisted" });
-    expect(await outboxRows(stub)).toHaveLength(1);
-    // Committed but not yet drained: a reply now finds no binding and takes
-    // the one-to-one DM policy, never a guess by timing.
-    expect(await resolveRun(["D9", "1727.002"])).toEqual({ outcome: "none", roomBound: false });
-
+    // No check of the undrained state: the receipt schedules the outbox alarm
+    // for now, and workerd can fire it before the next call here.
     await runDurableObjectAlarm(stub);
     expect(await resolveRun(["D9", "1727.002"])).toEqual({
       outcome: "deliver",
