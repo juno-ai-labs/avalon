@@ -3505,11 +3505,9 @@ export class WorkstreamObjectProductService {
           AND w.sandbox_id = o.sandbox_id AND w.generation = o.generation
         WHERE o.id = 1`,
     ));
-    // A lifecycle claim keeps the deadline it claimed: `stopping` still
-    // projects the warm stop and `archiving` the archive. Were the claim to
-    // swap in its own expiry, a pass that fails and restores the stable state
-    // would move the directory away and back, and each move resets the alarm
-    // entry's retry gate, so a failing transition retried every minute.
+    // A claim keeps projecting the deadline it claimed (see "Invariants" in
+    // docs/terminal-workspaces.md); its own expiry stays as a floor in case a
+    // claimed deadline is pushed out mid-claim.
     const terminalCandidates = terminal?.sandbox_id
       ? [
           observation?.next_observe_at ?? 0,
