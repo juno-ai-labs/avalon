@@ -1424,6 +1424,15 @@ export class SidekickDO extends ConversationParentDurableObject {
       }
       const owner = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, row.workspace_id,
         workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(row.workspace_id)));
+      // A Breakout home is reached through the Breakout's own grants, as a
+      // guest opening that Breakout is: a Channel grant does not reach it.
+      if (row.owning_substream_id !== "0") {
+        const home = await owner.authorizeViewer({ workspaceId: asWorkspaceId(row.workspace_id),
+          parentId: row.owning_workstream_id, substreamId: asSubstreamId(row.owning_substream_id),
+          userId: request.userId, requireGrantAuthority: true });
+        return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: home.authorized,
+          archived: row.owning_room_archived_at !== null || home.archived });
+      }
       const access = await owner.readManagementAccess({ workspaceId: row.workspace_id,
         parentId: row.owning_workstream_id, userId: request.userId });
       return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: access.allowed,
