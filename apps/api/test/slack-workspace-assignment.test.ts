@@ -2974,6 +2974,138 @@ describe("Slack replies routed by external conversation bindings", () => {
       .toEqual({ count: 0 });
   });
 
+  const LINKED_USER = "019fc4e0-4444-7000-8000-000000000044";
+
+  function invitation(eventId: string, event: Record<string, unknown>): Record<string, unknown> {
+    return {
+      type: "event_callback",
+      team_id: "T123",
+      api_app_id: "A1",
+      event_id: eventId,
+      authorizations: [{ team_id: "T123", user_id: "UBOT", is_bot: true }],
+      event,
+    };
+  }
+
+  /** Slack's answers for a room and its members; U456 is the linked member. */
+  function roomStub(room: Record<string, unknown>, members: string[]): void {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      const json = (body: unknown) => new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+      if (url.pathname.endsWith("conversations.info")) return json({ ok: true, channel: room });
+      if (url.pathname.endsWith("conversations.members")) return json({ ok: true, members, response_metadata: {} });
+      if (url.pathname.endsWith("users.info")) {
+        const user = String((JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>).user ?? "");
+        return json({
+          ok: true,
+          user: {
+            id: user, team_id: "T123", deleted: false, is_bot: false, name: user.toLowerCase(),
+            profile: { display_name: user, real_name: user, email: `${user.toLowerCase()}@elsewhere.example` },
+          },
+        });
+      }
+      throw new Error(`Unexpected Slack request ${url}`);
+    }));
+  }
+
+  function captureRoomLinks(instance: WorkspaceDO): Array<Record<string, unknown>> {
+    const links: Array<Record<string, unknown>> = [];
+    vi.spyOn(instance, "admitSpaceCreation").mockResolvedValue({ ok: true } as never);
+    vi.spyOn(instance, "linkExternalRoom").mockImplementation(async (request: unknown) => {
+      links.push(request as Record<string, unknown>);
+      return { ok: true, outcome: "linked", spaceId: (request as { spaceId: string }).spaceId } as never;
+    });
+    return links;
+  }
+
+  it("links a private room to a private Space seated with its Rally members, acting as the member who is there when the inviter is not one", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance, objectDatabase } = await linkedSlackMemberFixture(database, credentialsKey);
+    // Invited by somebody Rally does not know; the linked member is in the room.
+    insertSlackEventJob(objectDatabase, "event:invited-private", invitation("EvInvitedPrivate", {
+      type: "member_joined_channel", user: "UBOT", inviter: "U999", channel: "GPRIV", channel_type: "G",
+    }));
+    roomStub({ id: "GPRIV", name: "launch-private", is_private: true, is_im: false, is_mpim: false }, ["U999", "U456", "UBOT"]);
+    const links = captureRoomLinks(instance);
+
+    await new SlackAgentService(slackMembershipEnvironment(
+      database, instance, credentialsKey, vi.fn(async () => undefined),
+    )).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:invited-private");
+
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({
+      installationId: "slack:T123",
+      path: ["GPRIV"],
+      userId: LINKED_USER,
+      space: { name: "launch-private", scope: "personal" },
+      participantUserIds: [LINKED_USER],
+    });
+  });
+
+  it("links a public room to an Organization-wide Space as the inviter, seating nobody", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance, objectDatabase } = await linkedSlackMemberFixture(database, credentialsKey);
+    insertSlackEventJob(objectDatabase, "event:invited-public", invitation("EvInvitedPublic", {
+      type: "member_joined_channel", user: "UBOT", inviter: "U456", channel: "CPUB", channel_type: "C",
+    }));
+    roomStub({ id: "CPUB", name: "launch", is_private: false, is_im: false, is_mpim: false }, []);
+    const links = captureRoomLinks(instance);
+
+    await new SlackAgentService(slackMembershipEnvironment(
+      database, instance, credentialsKey, vi.fn(async () => undefined),
+    )).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:invited-public");
+
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({
+      path: ["CPUB"], userId: LINKED_USER, space: { name: "launch", scope: "workspace" }, participantUserIds: [],
+    });
+  });
+
+  it("suspends a room when the bot leaves or it is archived, moves it when renumbered, and ignores a person leaving", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    for (const channel of ["CLEAVE", "CARCH", "CPERSON", "COLD"]) {
+      objectDatabase.prepare(
+        `INSERT INTO external_conversation_bindings
+           (installation_id, path_json, target_kind, space_id, state, created_at, updated_at)
+         VALUES ('slack:T123', ?, 'space', '00000000-0000-7000-8000-0000000000c1', 'active',
+                 '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z')`,
+      ).run(JSON.stringify([channel]));
+    }
+    const events: Array<[string, Record<string, unknown>]> = [
+      ["event:bot-left", { type: "member_left_channel", user: "UBOT", channel: "CLEAVE" }],
+      ["event:archived", { type: "channel_archive", channel: "CARCH", user: "U456" }],
+      ["event:person-left", { type: "member_left_channel", user: "U456", channel: "CPERSON" }],
+      ["event:renumbered", { type: "channel_id_changed", old_channel_id: "COLD", new_channel_id: "CNEW2" }],
+    ];
+    for (const [id, event] of events) insertSlackEventJob(objectDatabase, id, invitation(id.replace("event:", "Ev"), event));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      throw new Error(`Unexpected Slack request ${String(input)}`);
+    }));
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const service = new SlackAgentService(slackMembershipEnvironment(
+      database, instance, credentialsKey, vi.fn(async () => undefined),
+    ));
+    for (const [id] of events) await service.processQueuedIngress("22222222-2222-4222-8222-222222222222", id);
+
+    expect(objectDatabase.prepare(
+      "SELECT path_json, state, suspended_reason FROM external_conversation_bindings ORDER BY path_json",
+    ).all()).toEqual([
+      { path_json: '["CARCH"]', state: "suspended", suspended_reason: "provider_room_archived" },
+      { path_json: '["CLEAVE"]', state: "suspended", suspended_reason: "provider_membership_ended" },
+      { path_json: '["CNEW2"]', state: "active", suspended_reason: null },
+      { path_json: '["CPERSON"]', state: "active", suspended_reason: null },
+    ]);
+  });
+
   it("creates no work for a reply to a suspended binding", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
