@@ -217,18 +217,6 @@ export const ExternalBindingReactivateRequestSchema = deferredZodSchema(() => z.
 }));
 export type ExternalBindingReactivateRequest = z.infer<typeof ExternalBindingReactivateRequestSchema>;
 
-/** Suspend every binding to one target conversation, or to any child of one parent. */
-export const ExternalBindingCloseRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  parentKind: z.enum(["workstream", "automation"]),
-  parentId: IdSchema,
-  /** Omitted: every child of the parent, as a Sidekick deletion needs. */
-  substreamId: z.string().min(1).max(180).optional(),
-  reason: z.enum(["closed", "sidekick_deleted"]),
-  at: TimestampSchema,
-}));
-export type ExternalBindingCloseRequest = z.infer<typeof ExternalBindingCloseRequestSchema>;
-
 export const ExternalBindingSuspendResultSchema = deferredZodSchema(() => z.strictObject({
   suspended: z.array(ExternalPathSchema),
 }));

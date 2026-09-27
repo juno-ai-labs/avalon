@@ -4,7 +4,6 @@ import { z } from "zod";
 import { diagnosticErrorCode } from "../observability/logger";
 
 import {
-  ExternalBindingConversationTargetSchema,
   ExternalInstallationIdSchema,
   ExternalPathSchema,
 } from "./workspace-external-binding-protocol";
@@ -26,15 +25,18 @@ import { externalPathKey } from "./workspace-external-binding-storage";
  */
 export const EXTERNAL_BINDING_OUTBOX_CHANNEL = "external_conversation_binding_v1";
 
+/**
+ * What a send reports: where its replies will arrive. The target is not
+ * carried: it is the run child whose receipt commits the row, which the
+ * child reads from its own identity when it delivers.
+ */
 export const OutboundExternalBindingSchema = z.strictObject({
   installationId: ExternalInstallationIdSchema,
   path: ExternalPathSchema,
-  target: ExternalBindingConversationTargetSchema,
 });
 export type OutboundExternalBinding = z.infer<typeof OutboundExternalBindingSchema>;
 
 const OutboxPayloadSchema = OutboundExternalBindingSchema.extend({
-  workspaceId: z.string().min(1),
   at: z.string().datetime({ offset: true }),
 }).strict();
 type OutboxPayload = z.infer<typeof OutboxPayloadSchema>;
@@ -56,7 +58,7 @@ export function enqueueExternalBindingInTransaction(
      ON CONFLICT(message_id) DO NOTHING`,
     messageId,
     EXTERNAL_BINDING_OUTBOX_CHANNEL,
-    payload.workspaceId,
+    payload.installationId,
     payload.installationId,
     JSON.stringify(payload),
     messageId,

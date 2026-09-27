@@ -946,7 +946,6 @@ import {
 } from "./workspace-slack-storage";
 import {
   ExternalBindingActivateResultSchema,
-  ExternalBindingCloseRequestSchema,
   ExternalConversationKeySchema,
   ExternalBindingLatestOutboundRequestSchema,
   ExternalBindingLatestOutboundResultSchema,
@@ -7261,12 +7260,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // sends opened stop routing to them. The rows stay, suspended, so a
         // reply is logged as `binding_suspended` rather than read as a new
         // conversation.
-        this.externalBindings().suspendTarget({
-          parentKind: "automation",
-          parentId: effect.automationId,
-          reason: "sidekick_deleted",
-          at: new Date().toISOString(),
-        });
+        this.externalBindings().suspendDeletedSidekick(effect.automationId, new Date().toISOString());
       }
       return { applied: true };
     });
@@ -12831,18 +12825,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return ExternalBindingSuspendResultSchema.parse({
       suspended: this.externalBindings().reactivate(request.installationId, request.at, request.path),
     });
-  }
-
-  /**
-   * Close the bindings that route to one conversation, or to every child of a
-   * parent. A person closing a run's binding, and a Sidekick's deletion, both
-   * land here.
-   */
-  async closeExternalConversationBindings(input: unknown) {
-    await this.initialized;
-    const request = parseRpcInput(ExternalBindingCloseRequestSchema, input, "close_external_conversation_bindings");
-    this.assertWorkspace(request.workspaceId);
-    return ExternalBindingSuspendResultSchema.parse({ suspended: this.externalBindings().suspendTarget(request) });
   }
 
   /** A provider room changed its identifier: move it and every path beneath it. */

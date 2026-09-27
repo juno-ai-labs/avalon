@@ -464,26 +464,16 @@ export class ExternalConversationBindingStorage {
     return rows.map((row) => JSON.parse(row.path_json) as ExternalPath);
   }
 
-  /** Suspend every binding to one conversation, or to every child of a parent. */
-  suspendTarget(input: {
-    parentKind: "workstream" | "automation";
-    parentId: string;
-    substreamId?: string | undefined;
-    reason: "closed" | "sidekick_deleted";
-    at: string;
-  }): ExternalPath[] {
-    const substreamClause = input.substreamId === undefined ? "" : "AND substream_id = ?";
+  /** Suspend every binding to a deleted Sidekick's runs. */
+  suspendDeletedSidekick(sidekickId: string, at: string): ExternalPath[] {
     return this.sql.exec<{ path_json: string }>(
       `UPDATE external_conversation_bindings
-          SET state = 'suspended', suspended_reason = ?, claim_key = NULL, updated_at = ?
-        WHERE target_kind = 'conversation' AND parent_kind = ? AND parent_id = ? ${substreamClause}
+          SET state = 'suspended', suspended_reason = 'sidekick_deleted', claim_key = NULL, updated_at = ?
+        WHERE target_kind = 'conversation' AND parent_kind = 'automation' AND parent_id = ?
           AND (state = 'pending' OR ${REPLACEABLE_BY_LASTING_SUSPENSION})
         RETURNING path_json`,
-      input.reason,
-      input.at,
-      input.parentKind,
-      input.parentId,
-      ...(input.substreamId === undefined ? [] : [input.substreamId]),
+      at,
+      sidekickId,
     ).toArray().map((row) => JSON.parse(row.path_json) as ExternalPath);
   }
 
