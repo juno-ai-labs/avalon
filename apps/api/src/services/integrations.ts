@@ -4925,14 +4925,21 @@ async function loadRunPromptContext(
       title: workstream.title,
       objective: workstream.objective,
       executionAuthority: input.executionPrincipal.type,
-      outputSurface: input.reason === "inbound_email"
+      // A Sidekick run's surface is the run's: its definition and how the run
+      // started decide it, never what woke this activation. A reply through a
+      // bound Slack thread carries a Slack origin, and a continued run must not
+      // be told its final message goes to Slack when nothing sends it there,
+      // nor read a different system prefix than the one it started with.
+      outputSurface: input.automationRun
+        ? input.automationRun.trigger.kind === "inbound_email"
+          ? "external_delivery"
+          : automationSendsOutward ? "self_delivery" : "workstream"
+        : input.reason === "inbound_email"
           || Boolean(input.digestDeliveryId)
           || Boolean(input.slackOrigin)
           ? "external_delivery"
-          : automationSendsOutward
-            ? "self_delivery"
-            : "workstream",
-      ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
+          : "workstream",
+      ...(input.slackOrigin && !input.automationRun ? { slackOrigin: input.slackOrigin } : {}),
       ...(automationContext ? { sidekick: automationContext } : {}),
     }) + (input.backgroundAgent || input.parentKind === "automation"
       ? "\nFor requests from another agent, send results and questions back to that agent. Ask that agent for missing information instead of asking participants. Your final response stays here; it is not forwarded."
