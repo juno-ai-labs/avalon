@@ -527,12 +527,8 @@ describe("a Space and its hosted parent", () => {
     await runInDurableObject(workspace(), (_instance, state) => {
       state.storage.sql.exec(
         `INSERT INTO parent_metadata
-           (parent_id, parent_kind, workspace_id, region, authority_generation, title, description,
-            preview, scope, exact_state, system_kind, last_activity_at, completed_at,
-            archived_at, email_address, created_by_user_id, title_status,
-            source_created_at, source_updated_at, created_at, updated_at)
-         VALUES (?, 'space', '00000000-0000-7000-8000-00000000d2ff', 'global', 1, 'Elsewhere', '',
-                 '', 'workspace', 'idle', NULL, 0, NULL, NULL, NULL, NULL, 'settled', 0, 0, 0, 0)`,
+           (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
+         VALUES (?, 'space', '00000000-0000-7000-8000-00000000d2ff', 'global', 1, 0, 0)`,
         spaceId,
       );
     });

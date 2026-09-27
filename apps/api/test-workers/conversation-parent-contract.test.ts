@@ -121,11 +121,11 @@ function latestStateWaterline(parentId: string, stateKey: string): Promise<numbe
     ).one().waterline);
 }
 
-/** A hosted parent's own title, which its children's renames must not touch. */
+/** A Channel parent's own title, on its directory row, which its children's renames must not touch. */
 function parentTitle(parentId: string): Promise<string> {
   return runInDurableObject(roomParent(), (_instance, state) =>
     state.storage.sql.exec<{ title: string }>(
-      `SELECT title FROM parent_metadata WHERE parent_id = ?`, parentId,
+      `SELECT title FROM channels WHERE workstream_id = ?`, parentId,
     ).one().title);
 }
 

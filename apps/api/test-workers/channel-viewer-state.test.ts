@@ -219,9 +219,8 @@ beforeEach(async () => {
   await runInDurableObject(organization(), (_instance, state) => {
     for (const [parentId, breakout] of [[channelA, breakoutA], [channelB, breakoutB]] as const) {
       state.storage.sql.exec(`INSERT INTO parent_metadata
-        (parent_id, parent_kind, workspace_id, region, authority_generation, title, description, preview, scope,
-         exact_state, last_activity_at, created_at, updated_at)
-        VALUES (?, 'workstream', ?, 'global', 1, 'Channel', '', '', 'workspace', 'idle', 0, 0, 0)`,
+        (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
+        VALUES (?, 'workstream', ?, 'global', 1, 0, 0)`,
       parentId, workspaceId);
       state.storage.sql.exec(`INSERT INTO parent_children (parent_id, substream_id, kind, created_by_user_id, created_at, title)
         VALUES (?, '0', 'main', ?, 0, 'Main'), (?, ?, 'child', ?, 1, 'Breakout')`,

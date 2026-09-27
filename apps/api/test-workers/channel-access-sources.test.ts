@@ -135,9 +135,8 @@ beforeEach(async () => {
     // Channel comes to exist.
     state.storage.sql.exec(
       `INSERT INTO parent_metadata
-         (parent_id, parent_kind, workspace_id, region, authority_generation, title, description,
-          preview, scope, exact_state, last_activity_at, created_at, updated_at)
-       VALUES (?, 'workstream', ?, 'global', 1, 'Hiring', '', '', 'personal', 'idle', 1, 1, 1)`,
+         (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
+       VALUES (?, 'workstream', ?, 'global', 1, 1, 1)`,
       CHANNEL_ID,
       WORKSPACE_ID,
     );

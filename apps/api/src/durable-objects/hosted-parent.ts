@@ -416,13 +416,6 @@ function iso(timestamp: number | null): string | null {
   return timestamp === null ? null : new Date(timestamp).toISOString();
 }
 
-function epoch(timestamp: string | null | undefined): number | null {
-  if (timestamp == null) return null;
-  const parsed = Date.parse(timestamp);
-  if (!Number.isFinite(parsed) || parsed < 0) throw new Error("invalid_workstream_timestamp");
-  return parsed;
-}
-
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status });
 }
@@ -567,20 +560,39 @@ interface StoredStateRow extends Record<string, SqlStorageValue> {
 
 /**
  * A parent's identity from `parent_metadata`, and its presentation from its
- * directory row: every column from `channels` for a Channel; for a Space its
- * title, scope and archive state from `spaces` and the rest, which only a
- * Channel's surfaces show, from its own row.
+ * directory row, the only copy there is: `channels` for a Channel; for a Space,
+ * its title, scope, archive state, creator and timestamps from `spaces`, and
+ * for the columns only a Channel's surfaces show, the values a Space has.
  */
 const CHANNEL_PARENT_ROW_SQL = `SELECT m.parent_kind, m.revision, m.authority_generation, m.workspace_id, m.parent_id, m.region,
-  c.title, c.description, c.preview, c.scope, c.exact_state, c.system_kind, c.last_activity_at, c.completed_at, c.archived_at, c.email_address, c.created_by_user_id, c.title_status, c.latest_attention_ordinal, c.unread_tracking_start_ordinal, c.next_wakeup_due_at, c.next_wakeup_prompt, c.next_terminal_action_at, c.source_created_at, c.source_updated_at
+  c.title, c.description, c.preview, c.scope, c.exact_state, c.system_kind, c.last_activity_at,
+  c.completed_at, c.archived_at, c.email_address, c.created_by_user_id, c.title_status,
+  c.latest_attention_ordinal, c.unread_tracking_start_ordinal, c.next_wakeup_due_at, c.next_wakeup_prompt,
+  c.next_terminal_action_at, c.source_created_at, c.source_updated_at
   FROM parent_metadata m JOIN channels c ON c.workstream_id = m.parent_id
  WHERE m.parent_id = ?`;
 const SPACE_PARENT_ROW_SQL = `SELECT m.parent_kind, m.revision, m.authority_generation, m.workspace_id, m.parent_id, m.region,
-  s.title, m.description, m.preview, s.scope, m.exact_state, m.system_kind, m.last_activity_at, m.completed_at, s.archived_at, m.email_address, m.created_by_user_id, m.title_status, m.latest_attention_ordinal, m.unread_tracking_start_ordinal, m.next_wakeup_due_at, m.next_wakeup_prompt, m.next_terminal_action_at, m.source_created_at, m.source_updated_at
+  s.title, '' AS description, '' AS preview, s.scope, 'idle' AS exact_state, NULL AS system_kind,
+  s.source_updated_at AS last_activity_at, NULL AS completed_at, s.archived_at, NULL AS email_address,
+  s.created_by_user_id, 'settled' AS title_status, 0 AS latest_attention_ordinal,
+  0 AS unread_tracking_start_ordinal, NULL AS next_wakeup_due_at, NULL AS next_wakeup_prompt,
+  NULL AS next_terminal_action_at, s.source_created_at, s.source_updated_at
   FROM parent_metadata m JOIN spaces s ON s.space_id = m.parent_id
  WHERE m.parent_id = ?`;
-/** Before the directory row exists: a reservation inside its own transaction, or a child's placeholder. */
-const OWN_PARENT_ROW_SQL = "SELECT * FROM parent_metadata WHERE parent_id = ?";
+/**
+ * Before the directory row exists: a reservation inside its own transaction,
+ * which reads only identity and `archived_at`, or a placeholder a child's
+ * effect wrote ahead of Main. `personal`, so a parent nobody has described
+ * admits its participants and nobody else.
+ */
+const OWN_PARENT_ROW_SQL = `SELECT m.parent_kind, m.revision, m.authority_generation, m.workspace_id, m.parent_id, m.region,
+  '' AS title, '' AS description, '' AS preview, 'personal' AS scope, 'idle' AS exact_state,
+  NULL AS system_kind, m.created_at AS last_activity_at, NULL AS completed_at, NULL AS archived_at,
+  NULL AS email_address, NULL AS created_by_user_id, 'settled' AS title_status,
+  0 AS latest_attention_ordinal, 0 AS unread_tracking_start_ordinal, NULL AS next_wakeup_due_at,
+  NULL AS next_wakeup_prompt, NULL AS next_terminal_action_at, m.created_at AS source_created_at,
+  m.updated_at AS source_updated_at
+  FROM parent_metadata m WHERE m.parent_id = ?`;
 
 export class HostedParent {
   constructor(
@@ -781,7 +793,7 @@ export class HostedParent {
         if (accepted) this.onChildCommonProjection(substreamId, envelope.effect, now);
         if (substreamId === "0") {
           const aggregate = this.aggregateCommon();
-          this.upsertMetadata(envelope, aggregate, now);
+          this.upsertMetadata(envelope, now);
           if (forwards) this.enqueueProjection("common", aggregate, now);
         } else if (accepted && this.forwardsChildProjection(substreamId, "directory_common")) {
           this.enqueueProjection(`substream:${substreamId}:common`, envelope.effect, now, substreamId);
@@ -843,11 +855,9 @@ export class HostedParent {
     if (!metadata) {
       this.sql.exec(
         `INSERT INTO parent_metadata
-           (parent_id, parent_kind, workspace_id, region, authority_generation, title, description,
-            preview, scope, exact_state, system_kind, last_activity_at, completed_at,
-            archived_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, '', '', '', 'workspace', 'idle', NULL, ?, NULL, NULL, ?, ?)`,
-        this.parentId, this.role.kind, envelope.workspaceId, envelope.region, envelope.generation, now, now, now,
+           (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        this.parentId, this.role.kind, envelope.workspaceId, envelope.region, envelope.generation, now, now,
       );
     }
   }
@@ -978,19 +988,13 @@ export class HostedParent {
   private forwardChildTerminalDeadline(now: number): void {
     if (!this.mainCommonProjection()) return;
     const aggregate = this.aggregateCommon();
-    const dueAt = epoch(aggregate.nextTerminalActionAt);
-    // Change detection against the parent's own bookkeeping column, which
-    // survives the column drop: this decides whether to publish at all.
-    const current = first(this.sql.exec<{ next_terminal_action_at: number | null }>(
-      "SELECT next_terminal_action_at FROM parent_metadata WHERE parent_id = ?", this.parentId,
-    ));
-    if (!current || current.next_terminal_action_at === dueAt) return;
+    // `enqueueProjection` publishes only a payload whose hash moved, so an
+    // unchanged deadline publishes nothing and bumps nothing.
+    if (!this.enqueueProjection("common", aggregate, now)) return;
     this.sql.exec(
-      `UPDATE parent_metadata SET next_terminal_action_at = ?, revision = revision + 1, updated_at = ?
-        WHERE parent_id = ?`,
-      dueAt, now, this.parentId,
+      `UPDATE parent_metadata SET revision = revision + 1, updated_at = ? WHERE parent_id = ?`,
+      now, this.parentId,
     );
-    this.enqueueProjection("common", aggregate, now);
   }
 
   /** Main participation only: membership in a private child never implies it. */
@@ -1052,38 +1056,18 @@ export class HostedParent {
     this.advancePrivateChildrenVersionsFor(substreamId, now);
   }
 
-  private upsertMetadata(envelope: ConversationEffectEnvelope, effect: DirectoryCommonEffect, now: number): void {
+  /**
+   * The parent's identity row, advanced on every Main common effect. What Main
+   * says about the parent lands in its directory row through the projection.
+   */
+  private upsertMetadata(envelope: ConversationEffectEnvelope, now: number): void {
     this.sql.exec(
       `INSERT INTO parent_metadata
-         (parent_id, parent_kind, workspace_id, region, authority_generation, title, description,
-          preview, scope, exact_state, system_kind, last_activity_at, completed_at,
-          archived_at, created_at, updated_at, revision, email_address,
-          created_by_user_id, title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
-          next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
-          source_created_at, source_updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(parent_id) DO UPDATE SET title = excluded.title, description = excluded.description,
-         preview = excluded.preview, scope = excluded.scope, exact_state = excluded.exact_state,
-         system_kind = excluded.system_kind, last_activity_at = excluded.last_activity_at,
-         completed_at = excluded.completed_at, archived_at = excluded.archived_at,
-         updated_at = excluded.updated_at, revision = parent_metadata.revision + 1,
-         email_address = excluded.email_address,
-         created_by_user_id = excluded.created_by_user_id,
-         title_status = excluded.title_status,
-         latest_attention_ordinal = excluded.latest_attention_ordinal,
-         unread_tracking_start_ordinal = excluded.unread_tracking_start_ordinal,
-         next_wakeup_due_at = excluded.next_wakeup_due_at,
-         next_wakeup_prompt = excluded.next_wakeup_prompt,
-         next_terminal_action_at = excluded.next_terminal_action_at,
-         source_created_at = excluded.source_created_at,
-         source_updated_at = excluded.source_updated_at`,
-      this.parentId, this.role.kind, envelope.workspaceId, envelope.region, envelope.generation,
-      effect.title, effect.description, effect.preview, effect.scope, effect.state, effect.systemKind,
-      epoch(effect.lastActivityAt), epoch(effect.completedAt), epoch(effect.archivedAt), now, now,
-      effect.emailAddress ?? null, effect.createdByUserId ?? null, effect.titleStatus ?? "settled",
-      effect.latestAttentionOrdinal ?? 0, effect.unreadTrackingStartOrdinal ?? 0,
-      epoch(effect.nextWakeupDueAt), effect.nextWakeupPrompt ?? null, epoch(effect.nextTerminalActionAt),
-      epoch(effect.createdAt ?? effect.lastActivityAt), epoch(effect.updatedAt ?? effect.lastActivityAt),
+         (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at, revision)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+       ON CONFLICT(parent_id) DO UPDATE SET
+         updated_at = excluded.updated_at, revision = parent_metadata.revision + 1`,
+      this.parentId, this.role.kind, envelope.workspaceId, envelope.region, envelope.generation, now, now,
     );
   }
 
@@ -1373,7 +1357,7 @@ export class HostedParent {
       let metadata = this.metadataRow();
       if (!metadata) {
         if (request.substreamId !== "0" || !request.directory) throw new Error("workstream_parent_missing");
-        this.insertProvisionalMetadata(request, request.directory, now);
+        this.insertProvisionalMetadata(request, now);
         metadata = this.metadataRow();
         if (!metadata) throw new Error("workstream_metadata_missing");
       } else {
@@ -1418,22 +1402,12 @@ export class HostedParent {
     return ConversationParentReserveChildResultSchema.parse({ reserved: true, authorityGeneration });
   }
 
-  private insertProvisionalMetadata(
-    request: ConversationParentReserveChildRequest,
-    directory: NonNullable<ConversationParentReserveChildRequest["directory"]>,
-    now: number,
-  ): void {
-    const createdAt = epoch(directory.createdAt) ?? now;
+  private insertProvisionalMetadata(request: ConversationParentReserveChildRequest, now: number): void {
     this.sql.exec(
       `INSERT INTO parent_metadata
-         (parent_id, parent_kind, workspace_id, region, authority_generation, title, description,
-          preview, scope, exact_state, system_kind, last_activity_at, completed_at,
-          archived_at, email_address, created_by_user_id, title_status,
-          source_created_at, source_updated_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, 'idle', ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`,
-      this.parentId, this.role.kind, request.workspaceId, this.env.AVALON_REGION, request.authorityGeneration,
-      directory.title, directory.description, directory.scope, directory.systemKind, createdAt,
-      directory.emailAddress, request.createdByUserId, directory.titleStatus, createdAt, createdAt, now, now,
+         (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      this.parentId, this.role.kind, request.workspaceId, this.env.AVALON_REGION, request.authorityGeneration, now, now,
     );
   }
 

@@ -137,9 +137,8 @@ describe('authorization SQLite state', () => {
     const reservedSubstreamId = '00000000-0000-7000-8000-000000000b08';
     await runInDurableObject(stub, async (instance, state) => state.blockConcurrencyWhile(async () => {
       state.storage.sql.exec(`INSERT INTO parent_metadata
-        (parent_id, parent_kind, workspace_id, region, authority_generation, title, description, preview, scope,
-         exact_state, last_activity_at, created_at, updated_at)
-        VALUES (?, 'workstream', ?, 'global', 1, 'Hosted', '', '', 'workspace', 'idle', 0, 0, 0)`, parentId, workspaceId);
+        (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
+        VALUES (?, 'workstream', ?, 'global', 1, 0, 0)`, parentId, workspaceId);
       state.storage.sql.exec(`INSERT INTO parent_children (parent_id, substream_id, kind, created_at, status)
         VALUES (?, '0', 'main', 0, 'ready'), (?, ?, 'child', 0, 'ready'), (?, ?, 'child', 0, 'reserved')`,
       parentId, parentId, siblingSubstreamId, parentId, reservedSubstreamId);

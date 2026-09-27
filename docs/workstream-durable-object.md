@@ -1600,7 +1600,7 @@ document's mechanisms read:
 
 | Table | Key and relationship |
 | --- | --- |
-| `parent_metadata` | One row per parent: its kind, identity/generation and revisioned complete common metadata (title/description/preview/email/creator/state/attention/activity/completion/archive/schedule timestamps). Created provisionally with the Channel, or by the import, or by the first child effect for a parent with neither. |
+| `parent_metadata` | One row per parent: its kind, identity, generation and revision. What Main says about the parent (title, scope, state, archive and the rest) lives on its `channels` or `spaces` row. Created provisionally with the Channel, or by the first child effect for a parent with neither. |
 | `parent_children` | The child registry: one row per substream the parent has reserved, with `kind` (`main` or `child`), who created it, when, and its lifecycle delivery versions. `listChildren` reads it and always includes `"0"`. |
 | `parent_child_projections`, `parent_child_viewer_projections` | Latest common envelope per child, and latest viewer envelope per child and user. |
 | `parent_child_receipts` | Child/message/hash inbox proving idempotent acceptance of a Queue delivery; a replay whose hash differs is refused. Receipts older than 180 days are reaped a hundred at a time on each apply; past that a redelivery converges on the per-key waterlines. |
@@ -1609,7 +1609,7 @@ document's mechanisms read:
 | `parent_outbox` | Only what could not land in the parent's own transaction or has to leave the object: a notification to deliver, a revoked grant's Sidekick fan-out, a directory row that has to wait. |
 | `parent_direct_audience`, `parent_space_sources`, `parent_space_readers`, `parent_access_operations` | The Channel's audience on its own account, each Space that reaches it with the fences it was applied on, which readers each Space seated, and the receipt of every access operation. [`spaces.md`](spaces.md) owns what they mean. |
 
-The child tables are inputs to `parent_metadata` and the aggregate projection.
+The child tables are inputs to the aggregate projection, which lands on the parent's `channels` row.
 A child's envelope arrives by Queue, and the parent commits receipt, child
 value, aggregate, state change and the Organization's directory row inside one
 `WorkspaceDO` transaction.

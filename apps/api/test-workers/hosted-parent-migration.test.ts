@@ -250,3 +250,49 @@ it("keeps every v70 index on the renamed tables, on the same columns", async () 
     }
   });
 });
+
+it("narrows parent_metadata to identity at v79 and keeps every parent's row", async () => {
+  // Populated at v78 with the full old row, committed in its own event, then
+  // upgraded as a deployed object is: a fresh schema has no rows to lose.
+  const stub = env.MIGRATION_PROBE_DO!.getByName("hosted-parent-v78-metadata");
+  await stub.ping();
+  await runInDurableObject(stub, (_instance, state) => {
+    const before = WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 78);
+    expect(before.at(-1)?.version).toBe(78);
+    applyDurableObjectSqliteMigrations({
+      storage: state.storage, migrations: before, component: "workspace_do",
+      workerVersionId: "before-narrow-metadata", now: 1,
+    });
+    const insert = (id: string, kind: string, generation: number, revision: number, archivedAt: number | null) =>
+      state.storage.sql.exec(`INSERT INTO parent_metadata
+        (parent_id, parent_kind, workspace_id, region, authority_generation, revision, title, description,
+         preview, scope, exact_state, system_kind, last_activity_at, completed_at, archived_at, email_address,
+         created_by_user_id, title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
+         next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at, source_created_at, source_updated_at,
+         created_at, updated_at)
+        VALUES (?, ?, 'workspace-1', 'global', ?, ?, 'Title', 'Description', 'Preview', 'workspace', 'idle',
+          NULL, 100, NULL, ?, NULL, 'user-a', 'settled', 3, 1, NULL, NULL, 400, 100, 200, 10, 20)`,
+        id, kind, generation, revision, archivedAt);
+    insert("channel-1", "workstream", 2, 7, null);
+    insert("space-1", "space", 1, 3, 60);
+  });
+
+  await runInDurableObject(stub, (_instance, state) => {
+    applyDurableObjectSqliteMigrations({
+      storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+      component: "workspace_do", workerVersionId: "with-narrow-metadata", now: 2,
+    });
+    const sql = state.storage.sql;
+    expect(rows(sql, "SELECT name FROM pragma_table_info('parent_metadata') ORDER BY cid").map((row) => row.name))
+      .toEqual(["parent_id", "parent_kind", "workspace_id", "region", "authority_generation", "revision",
+        "created_at", "updated_at"]);
+    expect(rows(sql, "SELECT * FROM parent_metadata ORDER BY parent_id")).toEqual([
+      { parent_id: "channel-1", parent_kind: "workstream", workspace_id: "workspace-1", region: "global",
+        authority_generation: 2, revision: 7, created_at: 10, updated_at: 20 },
+      { parent_id: "space-1", parent_kind: "space", workspace_id: "workspace-1", region: "global",
+        authority_generation: 1, revision: 3, created_at: 10, updated_at: 20 },
+    ]);
+    expect(rows(sql, "SELECT name FROM sqlite_master WHERE name LIKE 'parent_metadata_%'")).toEqual([]);
+    expect(rows(sql, "PRAGMA foreign_key_check")).toEqual([]);
+  });
+});

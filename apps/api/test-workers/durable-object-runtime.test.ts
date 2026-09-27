@@ -1306,7 +1306,7 @@ describe("Durable Objects in the Workers runtime", () => {
     const forwarded = await withHostedParent(stub, WORKSTREAM_ID, (parent, state) => {
       const testable = parent as unknown as TestableHostedParent;
       const deadline = () => state.storage.sql.exec<{ next_terminal_action_at: number | null }>(
-        `SELECT next_terminal_action_at FROM parent_metadata WHERE parent_id = ?`, WORKSTREAM_ID,
+        `SELECT next_terminal_action_at FROM channels WHERE workstream_id = ?`, WORKSTREAM_ID,
       ).one().next_terminal_action_at;
       testable.applyChildEnvelope("0", childEffectEnvelope(common("Main", mainDue), "main-terminal-1"));
       expect(deadline()).toBe(Date.parse(mainDue));
@@ -1395,7 +1395,7 @@ describe("Durable Objects in the Workers runtime", () => {
         exact_state: string;
         last_activity_at: number;
         completed_at: number | null;
-      }>(`SELECT exact_state, last_activity_at, completed_at FROM parent_metadata WHERE parent_id = ?`, WORKSTREAM_ID).one())
+      }>(`SELECT exact_state, last_activity_at, completed_at FROM channels WHERE workstream_id = ?`, WORKSTREAM_ID).one())
         .toEqual({ exact_state: "completed", last_activity_at: Date.parse(at), completed_at: Date.parse(at) });
       const effects = state.storage.sql.exec<{ effect_json: string }>(
         `SELECT effect_json FROM parent_child_viewer_projections WHERE parent_id = ? AND user_id = ? ORDER BY substream_id`,

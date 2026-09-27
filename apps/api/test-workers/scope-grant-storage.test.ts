@@ -19,10 +19,10 @@ function command(overrides: Partial<ScopeGrantMutation> = {}): ScopeGrantMutatio
     active: true, expectedRevision: 0, ...overrides };
 }
 
-function insertParentMetadata(state: DurableObjectState, title: string): void {
+function insertParentMetadata(state: DurableObjectState): void {
   state.storage.sql.exec(`INSERT OR IGNORE INTO parent_metadata
-    (parent_id,parent_kind,workspace_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
-    VALUES (?,'workstream',?,'global',1,?,'','','personal','idle',0,0,0)`, parentId, workspaceId, title);
+    (parent_id,parent_kind,workspace_id,region,authority_generation,created_at,updated_at)
+    VALUES (?,'workstream',?,'global',1,0,0)`, parentId, workspaceId);
 }
 
 /** The Organization object learns its own id, as a parent's first request teaches it. */
@@ -39,7 +39,7 @@ async function withStorage(name: string, run: (store: ScopeGrantStorage, state: 
   const stub = env.WORKSPACE_DOS.getByName(name);
   await runInDurableObject(stub, (instance) => learnIdentity(instance));
   await withHostedParent(stub, parentId, (parent, state) => {
-    insertParentMetadata(state, "Parent");
+    insertParentMetadata(state);
     run(parent['scopeGrants'](address), state, parent);
   });
 }
@@ -158,7 +158,7 @@ describe("workstream scope grants in real workerd", () => {
     const stub = hostedParentStub(env, workspaceId);
     await runInDurableObject(stub, (instance) => learnIdentity(instance));
     await withHostedParent(stub, parentId, (parent, state) => {
-      insertParentMetadata(state, "Hiring");
+      insertParentMetadata(state);
       state.storage.sql.exec("INSERT INTO parent_children (parent_id,substream_id,kind,created_at,status) VALUES (?,'0','main',0,'ready')", parentId);
       // The actor's own grant is what gives them sharing authority here, and
       // it is direct: it is published, which is what the reader's row is
