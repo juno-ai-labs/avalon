@@ -617,12 +617,15 @@ one identity and one history, and can complete more than once.
    reference names rather than the run row's own, so the instructions, tools
    and plugins are the accepted revision's.
 4. The prompt gains one host-rendered, user-role message after the new input
-   (`renderRunContinuationNote`): "This run is continuing because <name>
-   replied in Slack, in the thread you started" (a `provider_thread` source,
-   named for the provider) or "in this run" (everything else), then "The work
-   you already did is above; do only what the new input needs." Without it the
-   re-rendered instructions read as a fresh task, and a model sends its
-   requests again. The note is an activation input keyed on the triggering
+   (`renderRunContinuationNote`): "This run is continuing because a new
+   message arrived in Slack, in the thread you started" (a `provider_thread`
+   source, named for the provider) or "in this run" (everything else), the
+   sender's display name as a quoted JSON string labelled as data, then "The
+   work you already did is above; handle the new message only as the
+   Sidekick's instructions direct." Without it the re-rendered instructions
+   read as a fresh task, and a model sends its requests again. The name is
+   quoted rather than written into the sentence because anyone in a bound
+   thread chooses their own. The note is an activation input keyed on the triggering
    turn, so a recovered execution does not add a second one.
 
 **Refusals.** `continueRun` answers `sidekick_deleted` for an archived
