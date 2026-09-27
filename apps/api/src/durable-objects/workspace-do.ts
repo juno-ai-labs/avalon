@@ -12848,7 +12848,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(ExternalBindingLatestOutboundRequestSchema, input, "latest_outbound_external_conversation");
     this.assertWorkspace(request.workspaceId);
     return ExternalBindingLatestOutboundResultSchema.parse({
-      path: this.externalBindings().latestOutboundUnder(request.installationId, request.prefix),
+      latest: this.externalBindings().latestOutboundUnder(request.installationId, request.prefix),
     });
   }
 

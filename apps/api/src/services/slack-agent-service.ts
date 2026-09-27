@@ -32,6 +32,7 @@ import {
   LEGACY_WORKSTREAM_LINK_ORIGINS,
   SlackOriginContextSchema,
   SlackSearchAuthorizationSchema,
+  asAutomationId,
   asSpaceId,
   asUserId,
   asWorkspaceId,
@@ -59,7 +60,7 @@ import {
 } from "./slack-workstream-card";
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
-import { workspaceDOName } from "../durable-objects/names";
+import { automationDOName, workspaceDOName } from "../durable-objects/names";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { diagnosticErrorCode, logError, logInfo, logWarn, type LogEnv } from "../observability/logger";
@@ -1584,11 +1585,14 @@ export class SlackAgentService {
       });
       return;
     }
-    // A top-level message in a DM with the bot. When that DM holds an open
-    // request a Sidekick run sent, the answer belongs in that request's
-    // thread: ask for it there, once per event, and create no work.
-    if (directMessage && !threadTs && resolution.outcome === "none"
-      && await this.promptForBoundDmThread(connection, token, teamId, installationId, channelId, String(event.ts), claimKey)) {
+    // An unbound message in a DM with the bot: a top-level one, or a reply
+    // under the prompt below (every other DM thread is bound to its Agent
+    // Channel or its run). While a Sidekick run that sent a request here is
+    // still open, the answer belongs in that request's thread: ask for it
+    // there, once per event, and create no work. Once it has finished, the
+    // DM is ordinary Agent work again.
+    if (directMessage && resolution.outcome === "none"
+      && await this.promptForBoundDmThread(connection, token, teamId, installationId, channelId, rootTs, claimKey)) {
       return;
     }
     // A mention in a shared room nobody has linked yet: the same ensure an
@@ -2011,10 +2015,20 @@ export class SlackAgentService {
         installationId,
         prefix: [channelId],
       }),
-    ).path;
-    if (!latest) return false;
-    const requestTs = latest[1];
-    if (!requestTs) return false;
+    ).latest;
+    const requestTs = latest?.path[1];
+    if (!latest || !requestTs) return false;
+    const run = await (await durableObjectStubForWorkspace(
+      this.env,
+      this.env.AUTOMATION_DOS,
+      asWorkspaceId(connection.workspace_id),
+      automationDOName(this.env.AVALON_REGION, asWorkspaceId(connection.workspace_id), asAutomationId(latest.sidekickId)),
+    )).readRunState({
+      workspaceId: asWorkspaceId(connection.workspace_id),
+      automationId: latest.sidekickId,
+      runId: latest.runId,
+    });
+    if (!run || run.state === "completed" || run.state === "failed" || run.state === "stopped") return false;
     await slackApi(token, "chat.postMessage", {
       channel: channelId,
       thread_ts: messageTs,

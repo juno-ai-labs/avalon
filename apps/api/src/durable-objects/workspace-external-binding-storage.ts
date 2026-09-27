@@ -374,10 +374,13 @@ export class ExternalConversationBindingStorage {
   }
 
   /** The most recent active outbound (run-child) binding under a room. */
-  latestOutboundUnder(installationId: string, prefix: ExternalPath): ExternalPath | null {
+  latestOutboundUnder(
+    installationId: string,
+    prefix: ExternalPath,
+  ): { path: ExternalPath; sidekickId: string; runId: string } | null {
     const range = descendantRange(prefix);
-    const row = this.sql.exec<{ path_json: string }>(
-      `SELECT path_json FROM external_conversation_bindings
+    const row = this.sql.exec<{ path_json: string; parent_id: string; substream_id: string }>(
+      `SELECT path_json, parent_id, substream_id FROM external_conversation_bindings
         WHERE installation_id = ? AND path_json >= ? AND path_json < ?
           AND state = 'active' AND target_kind = 'conversation' AND parent_kind = 'automation'
         ORDER BY created_at DESC, path_json DESC LIMIT 1`,
@@ -385,7 +388,9 @@ export class ExternalConversationBindingStorage {
       range.lower,
       range.upper,
     ).toArray()[0];
-    return row ? JSON.parse(row.path_json) as ExternalPath : null;
+    return row
+      ? { path: JSON.parse(row.path_json) as ExternalPath, sidekickId: row.parent_id, runId: row.substream_id }
+      : null;
   }
 
   /**
