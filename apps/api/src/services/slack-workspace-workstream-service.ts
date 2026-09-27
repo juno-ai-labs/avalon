@@ -18,6 +18,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { sha256Hex } from "../lib/crypto";
+import { stableUuid } from "../lib/stable-uuid";
 import { runtimeDeferral } from "../lib/defer";
 import { recordWorkstreamCreatedTelemetry } from "../telemetry/workstream-creation";
 import { publishWorkstreamEvent } from "./integrations";
@@ -112,7 +113,18 @@ export class SlackWorkspaceWorkstreamService {
   }) {
     const actor = ExternalActorSchema.parse(input.actor);
     const title = input.title ?? provisionalWorkstreamTitle(input.objective, "Slack task");
-    const workstreamId = newId();
+    // A Channel born with a thread claim is named by that claim, so a retry of
+    // the same event after a failure re-enters the Channel the first attempt
+    // reserved instead of placing a second one in the Space beside it. The
+    // pending claim hands itself only to its own attempt, which is this id.
+    const workstreamId = input.space
+      ? await stableUuid([
+        "external-binding-channel",
+        input.space.externalBinding.installationId,
+        input.space.externalBinding.path,
+        input.space.externalBinding.claimKey,
+      ])
+      : newId();
     const routeInput = {
       region: this.env.AVALON_REGION,
       workspaceId: this.workspaceId,
