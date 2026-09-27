@@ -449,7 +449,7 @@ beforeEach(async () => {
 });
 
 describe("a Sidekick's Slack request, answered in its thread, forwarded home", () => {
-  it("sends, binds, continues on the reply, posts home once, prompts a stray DM, and is readable later", async () => {
+  it("sends, binds, continues on the reply, posts home once, leaves a later DM alone, and is readable later", async () => {
     const home = await seedBreakout("Weekly call");
     await seedSidekick(home);
 
@@ -531,16 +531,14 @@ describe("a Sidekick's Slack request, answered in its thread, forwarded home", (
     expect((await homeState(home)).posts).toHaveLength(1);
     expect(await executions(runId)).toHaveLength(2);
 
-    // 4. A top-level message in the bot DM is asked, once, to move to the
-    //    request's thread, and creates no work anywhere.
+    // 4. The request's run has finished, so a top-level message in the bot DM
+    //    is no longer redirected to its thread (the prompt applies only while
+    //    the run is open; slack-workspace-assignment.test.ts covers it). It is
+    //    ordinary Agent work, which this fixture's installation, holding no
+    //    Agent grant, refuses; either way it reaches no run.
     const postsBefore = slackCalls.filter((call) => call.method === "chat.postMessage").length;
-    await founderSays("EvE2EStray", { text: "Also, one more thing", ts: "1790000060.000300" });
-    const prompts = slackCalls.filter((call) => call.method === "chat.postMessage").slice(postsBefore);
-    expect(prompts).toEqual([{ method: "chat.postMessage", body: expect.objectContaining({
-      channel: DM_CHANNEL, thread_ts: "1790000060.000300",
-      text: expect.stringContaining("Please reply in the thread of my request"),
-    }) }]);
-    expect(String(prompts[0]!.body.text)).toContain(REQUEST_TS.replace(".", ""));
+    await founderSays("EvE2EStray", { text: "Also, one more thing", ts: "1790000060.000300" }).catch(() => undefined);
+    expect(slackCalls.filter((call) => call.method === "chat.postMessage").slice(postsBefore)).toEqual([]);
     expect(await executions(runId)).toHaveLength(2);
     expect(await runInDurableObject(runChild(runId), (_instance, state) =>
       state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM pending_loop_inputs`).one().count)).toBe(0);
