@@ -84,7 +84,7 @@ import type { WorkstreamObjectProductService } from "../src/durable-objects/work
 import { WorkstreamMessageStorage } from "../src/durable-objects/workstream-message-storage";
 import { ParticipantAuthorityTransferStorage } from "../src/durable-objects/participant-authority-transfer";
 import type { ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
-import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
+import { hostedParentStub, insertChannelRow, withHostedParent } from "./helpers/hosted-parent";
 import { resolveSidekickSkills } from "../src/services/sidekick-skills";
 import { AuthorizationService } from "../src/services/authorization-service";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
@@ -2764,8 +2764,8 @@ describe("a member's message travels the whole pipeline", () => {
       await parent.authority({ workspaceId:WORKSPACE_ID,parentId:WORKSTREAM_ID });
       await runInDurableObject(parent, (_instance,state) => {
         state.storage.sql.exec(`INSERT OR IGNORE INTO parent_metadata
-          (parent_id,parent_kind,workspace_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
-          VALUES (?,'workstream',?,'global',1,'Child migration','','','personal','idle',0,0,0)`,WORKSTREAM_ID,WORKSPACE_ID);
+          (parent_id,parent_kind,workspace_id,region,authority_generation,created_at,updated_at)
+          VALUES (?,'workstream',?,'global',1,0,0)`,WORKSTREAM_ID,WORKSPACE_ID);
         // A hosted parent's Channel row is written with its metadata, and its
         // viewer rows land in the same transactions as the parent's writes,
         // so the Organization's directory holds the row at the parent's first
@@ -3615,8 +3615,8 @@ describe("a member's message travels the whole pipeline", () => {
       await parent.authority({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID });
       await runInDurableObject(parent, (_instance, state) => {
         state.storage.sql.exec(`INSERT OR IGNORE INTO parent_metadata
-          (parent_id,parent_kind,workspace_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
-          VALUES (?,'workstream',?,'global',1,'Inheritance sharing','','','personal','idle',0,0,0)`, WORKSTREAM_ID, WORKSPACE_ID);
+          (parent_id,parent_kind,workspace_id,region,authority_generation,created_at,updated_at)
+          VALUES (?,'workstream',?,'global',1,0,0)`, WORKSTREAM_ID, WORKSPACE_ID);
         state.storage.sql.exec("INSERT OR IGNORE INTO parent_children(parent_id,substream_id,kind,created_at) VALUES (?,'0','main',0)", WORKSTREAM_ID);
         state.storage.sql.exec("INSERT INTO parent_children(parent_id,substream_id,kind,created_at,audience) VALUES (?,?,'child',0,'inherits_workstream')", WORKSTREAM_ID, substreamId);
       });
@@ -3641,8 +3641,10 @@ describe("a member's message travels the whole pipeline", () => {
       await parent.authority({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID });
       await runInDurableObject(parent, (_instance, state) => {
         state.storage.sql.exec(`INSERT OR IGNORE INTO parent_metadata
-          (parent_id,parent_kind,workspace_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
-          VALUES (?,'workstream',?,'global',1,'Sharing test','','','workspace','idle',0,0,0)`, WORKSTREAM_ID, WORKSPACE_ID);
+          (parent_id,parent_kind,workspace_id,region,authority_generation,created_at,updated_at)
+          VALUES (?,'workstream',?,'global',1,0,0)`, WORKSTREAM_ID, WORKSPACE_ID);
+        // An open Channel, which is what lets a member join Main by speaking.
+        insertChannelRow(state, WORKSTREAM_ID, "Sharing test", "workspace");
         if (participation !== "controls") state.storage.sql.exec("INSERT OR IGNORE INTO parent_children(parent_id,substream_id,kind,created_at) VALUES (?,'0','main',0)", WORKSTREAM_ID);
       });
       const request = { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, actorUserId: OTHER_USER_ID,
@@ -3790,8 +3792,8 @@ describe("a member's message travels the whole pipeline", () => {
       const target = { kind: "workstream" as const, workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID };
       await runInDurableObject(parent, (_instance,state) => {
         state.storage.sql.exec(`INSERT OR IGNORE INTO parent_metadata
-          (parent_id,parent_kind,workspace_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
-          VALUES (?,'workstream',?,'global',1,'Projection test','','','personal','idle',0,0,0)`, WORKSTREAM_ID,WORKSPACE_ID);
+          (parent_id,parent_kind,workspace_id,region,authority_generation,created_at,updated_at)
+          VALUES (?,'workstream',?,'global',1,0,0)`, WORKSTREAM_ID,WORKSPACE_ID);
         state.storage.sql.exec("INSERT OR IGNORE INTO parent_children(parent_id,substream_id,kind,created_at) VALUES (?,'0','main',0)", WORKSTREAM_ID);
         state.storage.sql.exec(`CREATE TRIGGER fail_migration_completion BEFORE UPDATE OF phase ON parent_participant_migrations
           WHEN NEW.phase='complete' AND NEW.substream_id='0' BEGIN SELECT RAISE(ABORT, 'migration completion unavailable'); END`);

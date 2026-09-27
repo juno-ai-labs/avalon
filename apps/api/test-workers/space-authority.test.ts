@@ -334,9 +334,8 @@ async function openMemberChannel(workstreamId: WorkstreamId): Promise<void> {
     // case is about the provenance rows, not about how a Channel comes to be.
     state.storage.sql.exec(
       `INSERT INTO parent_metadata
-         (parent_id, parent_kind, workspace_id, region, authority_generation, title, description,
-          preview, scope, exact_state, last_activity_at, created_at, updated_at)
-       VALUES (?, 'workstream', ?, 'global', 1, 'Member Channel', '', '', 'workspace', 'idle', 1, 1, 1)`,
+         (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
+       VALUES (?, 'workstream', ?, 'global', 1, 1, 1)`,
       workstreamId,
       WORKSPACE_ID,
     );

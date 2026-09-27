@@ -276,10 +276,11 @@ receipt ledger, `parent_child_receipts`, with the legacy 180-day retention; see
 - **A parent's presentation is read from its directory row.** A Channel's
   title, scope, archive state and every other presentation column come from
   `channels`; a Space's title, scope and archive state from `spaces`
-  (`HostedParent.metadataRow()`). `parent_metadata` is read for identity and
-  generation, and for presentation only before the directory row exists. A
-  fixture or tool that changes a parent's scope or archive state writes the
-  directory row; writing `parent_metadata` changes nothing a parent reads.
+  (`HostedParent.metadataRow()`). `parent_metadata` holds only identity,
+  generation and revision (migration 79). Before the directory row exists a
+  parent reads constants: `personal`, untitled, not archived, so a parent
+  nobody has described admits its participants and nobody else. A fixture or
+  tool that changes a parent's scope or archive state writes the directory row.
 - **Every hosted table leads with `parent_id`, and every statement names it.**
   A statement without it reads or writes every Channel in the Organization; the
   worst case is `claimReaderAsDirect`, which deletes a reader's Space
@@ -331,11 +332,14 @@ directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
 
 ## Testing
 
-Fixtures seed a Channel's `channels` row beside its `parent_metadata` row
-(`insertChannelRow` in `test-workers/helpers/hosted-parent.ts`) and change scope
-or archive state on the directory row. `automation-post-result.test.ts` proves
-a Channel archived only on `channels` refuses a child while `parent_metadata`
-still says active; `space-authority.test.ts` proves the same for a Space
+Fixtures seed a Channel's `channels` row beside its identity row in
+`parent_metadata` (`insertChannelRow` in `test-workers/helpers/hosted-parent.ts`)
+and change scope or archive state on the directory row.
+`hosted-parent-migration.test.ts` upgrades a populated v78 object and proves
+migration 79 keeps every parent's identity row and leaves only the identity
+columns. `hosted-parent-isolation.test.ts` proves a parent with no directory row
+refuses a non-participant and admits them once its row says `workspace`. `automation-post-result.test.ts` proves a Channel archived only on
+`channels` refuses a child; `space-authority.test.ts` proves the same for a Space
 archived only on `spaces`, and that a member Channel archived only on
 `channels` takes the Queue for a Sidekick default; `scope-invitations.test.ts`
 proves a Main invitation names the Channel from `channels`.
@@ -413,17 +417,38 @@ Space in an Organization now shares one SQLite database and one socket set.
 - Spaces created before 2026-09-26 still have an idle hidden conversation
   object. Nothing writes or reads it ([`spaces.md`](spaces.md#the-retired-hidden-conversation));
   deleting those objects is its own decision.
-- `parent_metadata` still stores the 19 presentation columns `channels` holds.
-  A Channel's parent reads none of them once its directory row exists. Three
-  readers still do, and each blocks dropping them: a Space's parent reads the
-  16 columns `spaces` lacks (`description`, `preview`, `exact_state`,
-  `last_activity_at` and the rest, which only a Channel's surfaces show) from
-  its own row; the fallback before a directory row exists reads all 19; and
-  `forwardChildTerminalDeadline` compares against `next_terminal_action_at`,
-  its own bookkeeping, which stays. A Space's row needs constants or its own
-  select, and the fallback its own shape, before the drop.
 
 ## Changelog
+
+### 2026-09-26 — `parent_metadata` holds identity only
+
+**What changed:** `WorkspaceDO` migration 79 rebuilds `parent_metadata` down to
+`parent_id`, `parent_kind`, `workspace_id`, `region`, `authority_generation`,
+`revision`, `created_at` and `updated_at`, dropping the 19 presentation columns
+`channels` holds. A Main common effect now only advances the identity row's
+revision; the provisional reservation and a child's placeholder insert identity
+only. A Space's parent reads the columns `spaces` lacks as the values a Space
+has (untitled description, `idle`, no schedule), and a parent with no directory
+row reads constants with scope `personal`. `forwardChildTerminalDeadline` drops
+its own compare and publishes through `enqueueProjection`, whose payload-hash
+check already skips an unchanged deadline.
+
+**Why:** The previous change moved every read to the directory row, so the
+columns were a second copy written on every Main effect and read by nothing.
+Nothing references the table, so a plain create-copy-drop-rename keeps every
+row with foreign keys enforced.
+
+**Considered and rejected:** Reconciling `channels` from `parent_metadata`
+first. The 2026-09-26 audit found the two identical for every Channel, and
+where they differed (the two archived Spaces) the directory row was right.
+Keeping `next_terminal_action_at` as bookkeeping: the projection's hash check
+already answers "did this change". Keeping the placeholder's `workspace` scope:
+a parent nothing has described now fails closed.
+
+**Consequences:** Irreversible: a build before this one reads columns that no
+longer exist, so it cannot be redeployed over an upgraded object. A fixture
+that seeds a parent inserts identity into `parent_metadata` and presentation
+into `channels` or `spaces`.
 
 ### 2026-09-26 — A parent reads its presentation from its directory row
 
