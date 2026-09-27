@@ -1751,6 +1751,59 @@ describe("Terminal authority on real workerd", () => {
       expect(published.at(-1)).toBe(new Date(0).toISOString());
     });
 
+    it.each([
+      { stable: "running", claim: "stopping", deadline: 2_000_000 },
+      { stable: "stopped", claim: "archiving", deadline: 3_000_000 },
+    ] as const)("keeps publishing the $claim deadline while a failing pass claims and releases it", async ({ stable, claim, deadline }) => {
+      const stub = agent();
+      await boot(stub);
+      await runInDurableObject(stub, (_instance, state) => {
+        seedWorkstreamRoot(state);
+        seedRunRow(state, RUN_A, "running");
+      });
+      await reserve(stub, RUN_A);
+      await terminal(stub, "attachProviderSandbox", {
+        generation: 1,
+        sandboxId: "daytona-1",
+        lifecycleState: stable,
+        idleExpiresAt: 2_000_000,
+        archiveDueAt: 3_000_000,
+        expireDueAt: 4_000_000,
+        now: 1_500,
+      });
+      await terminal(stub, "beginProviderObservation", { sandboxId: "daytona-1", generation: 1 });
+      const before = (await terminal(stub, "sandbox")).value as { version: number };
+      const clearOutbox = () => runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(`DELETE FROM durable_outbox`);
+      });
+      const lifecycle = async () => {
+        const row = (await terminal(stub, "sandbox")).value as { lifecycleState: string; lifecycleClaimId: string | null };
+        return { lifecycleState: row.lifecycleState, lifecycleClaimId: row.lifecycleClaimId };
+      };
+
+      await clearOutbox();
+      const claimed = await terminalCommonEffects(stub, "claimLifecycleTransition", {
+        lifecycleState: claim,
+        claimId: "claim-due",
+        claimExpiresAt: 3_500_000 + 16 * 60_000,
+        generation: 1,
+        version: before.version,
+        now: 3_500_000,
+      });
+      expect(await lifecycle()).toEqual({ lifecycleState: claim, lifecycleClaimId: "claim-due" });
+      await clearOutbox();
+      const released = await terminalCommonEffects(stub, "failLifecycleClaim", {
+        lifecycleState: stable,
+        failureCode: `${stable}_provider_failed`,
+        claimId: "claim-due",
+        now: 3_600_000,
+      });
+      expect(await lifecycle()).toEqual({ lifecycleState: stable, lifecycleClaimId: null });
+
+      const due = new Date(deadline).toISOString();
+      expect([...claimed, ...released].filter((published) => published !== due)).toEqual([]);
+    });
+
     it("clears the published deadline when the sandbox expires", async () => {
       const stub = agent();
       await boot(stub);

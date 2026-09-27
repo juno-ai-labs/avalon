@@ -395,8 +395,9 @@ time moved, go reconcile" entry points.
 - **A handler legitimately cannot act yet.** It answers `{ waitMs }` and the
   entry is held that long with no attempt counted; the first reconcile after
   its source moves clears the hold. A Terminal deadline does this while a live
-  run holds the sandbox (one minute) and after a transition whose directory
-  effect is still on the Queue (thirty seconds).
+  run holds the sandbox or another pass's lifecycle claim is still live (one
+  minute), and after a transition whose directory effect is still on the Queue
+  (thirty seconds).
 - **A workspace target fails.** In addition to the gate, `schedule` and `watch`
   failures write a `schedule.failed` / `resource_watch.failed` audit event. That
   write is fire-and-forget: the gate is already durable, and losing the audit
