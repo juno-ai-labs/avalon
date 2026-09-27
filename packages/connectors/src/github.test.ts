@@ -13,6 +13,7 @@ import {
   GitHubCapabilities,
   GitHubWebhookResourceLimits,
   mintGitHubInstallationToken,
+  isDiscardedGitHubDelivery,
   normalizeGitHubWebhook,
   verifyGitHubWebhook,
   verifyGitHubWebhookSignature,
@@ -764,8 +765,10 @@ describe("GitHub connector", () => {
       { event: "workflow_run", action: "requested" },
       { event: "workflow_run", action: "in_progress" },
     ]) {
-      expect(normalizeGitHubWebhook(connection, { ...delivery, ...discarded }), discarded.action).toBeNull();
+      expect(isDiscardedGitHubDelivery(discarded), `${discarded.event}.${discarded.action}`).toBe(true);
     }
+    expect(isDiscardedGitHubDelivery({ event: "workflow_run", action: "completed" })).toBe(false);
+    expect(isDiscardedGitHubDelivery({ event: "pull_request", action: "opened" })).toBe(false);
     expect(normalizeGitHubWebhook(connection, {
       ...delivery,
       event: "workflow_run",

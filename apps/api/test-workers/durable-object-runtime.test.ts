@@ -70,6 +70,7 @@ import {
   type WorkspaceOpportunityPersistRequest,
 } from "../src/durable-objects/workspace-opportunity-protocol";
 import { WORKSPACE_LOCAL_TABLES } from "../src/services/workspace-runtime-database";
+import { workspaceConnectorEventQueueMessage } from "../src/services/workspace-connector-event-ingress";
 import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000101");
@@ -4045,12 +4046,17 @@ describe("Durable Objects in the Workers runtime", () => {
     await expect(ingest(firstId, restamped(firstId, "1"))).resolves.toMatchObject({
       eventId: firstId, duplicate: false,
     });
-    await expect(ingest(touchId, restamped(touchId, "2"))).resolves.toEqual({
+    const unchanged = {
       eventId: firstId,
       duplicate: true,
       processingStatus: "pending",
       processingAttempt: -1,
-    });
+      unchangedContent: true,
+    };
+    await expect(ingest(touchId, restamped(touchId, "2"))).resolves.toEqual(unchanged);
+    // The Queue redelivering the repeat is answered by its receipt, and is
+    // still a repeat rather than a replay of the earlier event's own delivery.
+    await expect(ingest(touchId, restamped(touchId, "2"))).resolves.toEqual(unchanged);
     await expect(ingest(editId, restamped(editId, "3", "Ada renamed the queue"))).resolves.toMatchObject({
       eventId: editId, duplicate: false,
     });
@@ -4064,6 +4070,45 @@ describe("Durable Objects in the Workers runtime", () => {
         "SELECT event_id FROM workspace_connector_events ORDER BY event_sequence",
       ).toArray().map((row) => row.event_id)).toEqual([firstId, editId, revertId]);
     });
+  });
+
+  it("wakes no processing for a repeat of an event still waiting to be processed", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const delivery = async (id: string, stamp: string) => {
+      const { activity, connectorType } = connectorEvent(id);
+      return workspaceConnectorEventQueueMessage({
+        connectorType,
+        activity: {
+          ...activity,
+          providerEventId: `delivery-${stamp}`,
+          dedupeKey: `github:delivery-${stamp}:pull-request-edited`,
+        },
+      });
+    };
+    const send = vi.spyOn(env.ACTIVITY_QUEUE, "send");
+    const processWakes = () => send.mock.calls
+      .filter(([body]) => (body as { kind?: string }).kind === "connector_event_process").length;
+    try {
+      const first = await delivery("00000000-0000-7000-8000-000000000511", "1");
+      const touch = await delivery("00000000-0000-7000-8000-000000000512", "2");
+      await consumeEffectBodies(env, [first]);
+      expect(processWakes()).toBe(1);
+      // The first event is still pending, and a failed one would be retried:
+      // either way its own admission owns that, not the repeat's.
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(
+          "UPDATE workspace_connector_events SET processing_status = 'failed', processing_attempt = 1",
+        );
+      });
+      await consumeEffectBodies(env, [touch, touch]);
+      expect(processWakes()).toBe(1);
+    } finally {
+      send.mockRestore();
+    }
   });
 
   it("owns connector events, deduplicates Queue replays, and fences processing settlement", async () => {

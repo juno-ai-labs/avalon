@@ -3896,12 +3896,9 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 80,
   description: "remember what each resource's latest connector event said",
   // Ingest drops an event that says what the last one for the same resource
-  // already said. Google re-stamped an ended calendar series twice a day with
-  // nothing changed: 77,000 events at Juno Labs, about 14 per meeting. A table
-  // of its own rather than a column and index on `workspace_connector_events`,
-  // so the migration builds no index over the 255,000 rows already there. It
-  // starts empty; each resource's first event after it fills its row. See
-  // docs/connectors.md#dropping-events-that-say-nothing-new.
+  // already said. A table of its own rather than a column on
+  // `workspace_connector_events`, so the migration builds no index over the
+  // rows already there. See docs/connectors.md#dropping-events-that-say-nothing-new.
   statements: [
     `CREATE TABLE workspace_connector_event_latest_content (
       connection_id TEXT NOT NULL,
@@ -8886,9 +8883,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           connector_event_id: string;
           processing_status: WorkspaceConnectorEventRow["processing_status"];
           processing_attempt: number;
+          provider_event_id: string;
+          dedupe_key: string;
         }>(
           `SELECT receipt.payload_hash, receipt.connector_event_id, event.processing_status,
-                  event.processing_attempt
+                  event.processing_attempt, event.provider_event_id, event.dedupe_key
              FROM workspace_connector_event_ingress_receipts receipt
              JOIN workspace_connector_events event ON event.event_id = receipt.connector_event_id
             WHERE receipt.ingress_event_id = ?`,
@@ -8898,11 +8897,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           if (receipt.payload_hash !== request.payloadHash) {
             throw new Error("connector_event_ingress_idempotency_conflict");
           }
+          // Only a content match receipts a delivery against an event with
+          // neither its provider identity nor its dedupe key, so a redelivered
+          // repeat is still answered as one.
+          unchangedContent = receipt.provider_event_id !== activity.providerEventId
+            && receipt.dedupe_key !== activity.dedupeKey;
           return {
             eventId: receipt.connector_event_id,
             duplicate: true,
             processingStatus: receipt.processing_status,
             processingAttempt: receipt.processing_attempt,
+            ...(unchangedContent ? { unchangedContent: true as const } : {}),
           };
         }
 
@@ -9033,6 +9038,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           duplicate: Boolean(existing),
           processingStatus,
           processingAttempt: existing?.processing_attempt ?? -1,
+          ...(unchangedContent ? { unchangedContent: true as const } : {}),
         };
       }),
     );

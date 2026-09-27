@@ -8,6 +8,7 @@ import {
   enqueueActivityOpportunity,
   isSuggestedWorkCandidateEventType,
   SUGGESTED_WORK_EXCLUDED_EVENT_TYPE_PREFIXES,
+  SUGGESTED_WORK_RETIRED_EVENT_TYPE_PREFIXES,
 } from "../src/services/work-opportunity-batching";
 import { WorkstreamService } from "../src/services/workstream-service";
 import { createCloudflareTestBinding, createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
@@ -221,10 +222,10 @@ describe("suggested-work aggregation", () => {
         connectionScope: "workspace",
         connectionOwnerUserId: null,
         provider: "github",
-        providerEventId: "workflow-run-event",
-        eventType: "github.workflow_run.completed",
-        resourceType: "github_workflow_run",
-        providerResourceId: "juno-ai-labs/avalon/actions/runs/1",
+        providerEventId: "check-run-event",
+        eventType: "github.check_run.completed",
+        resourceType: "github_check_run",
+        providerResourceId: "juno-ai-labs/avalon/check-runs/1",
         actor: {},
         subject: {},
         occurredAt: "2026-08-07T00:00:00.000Z",
@@ -262,6 +263,8 @@ describe("suggested-work aggregation", () => {
 
     // The families the gate names, and the neighbours it must keep admitting.
     for (const excluded of [
+      "github.check_run.created",
+      "github.check_run.completed",
       "github.workflow_run.requested",
       "github.workflow_run.in_progress",
       "github.workflow_run.completed",
@@ -333,11 +336,12 @@ describe("suggested-work aggregation", () => {
     // not, and the assertion above cannot see it, because withholding nothing
     // leaves that list unchanged. This is how a family renamed at the
     // connector (`check_run` to `check_suite`, say) surfaces here rather than
-    // as a bill.
+    // as a bill. The one exception is a family retired on purpose whose stored
+    // events can still drain, and it has to be named as that.
     const declared = registry.list().flatMap((manifest) => manifest.activityTypes);
     expect(SUGGESTED_WORK_EXCLUDED_EVENT_TYPE_PREFIXES.filter((prefix) => (
       !declared.some((eventType) => eventType.startsWith(prefix))
-    ))).toEqual([]);
+    ))).toEqual([...SUGGESTED_WORK_RETIRED_EVENT_TYPE_PREFIXES]);
   });
 
   // Two suites lived here and covered the D1 batching window: the debounce and
