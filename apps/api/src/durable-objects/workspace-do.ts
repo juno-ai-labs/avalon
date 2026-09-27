@@ -173,6 +173,7 @@ import {
 } from "../services/workspace-relationship-service";
 import { evaluateExternalEventPredicate } from "../services/external-event-evaluator";
 import { SIDEBAR_LIST_LIMIT } from "../services/sidebar-reads";
+import { workspaceConnectorEventContentFingerprint } from "../services/workspace-connector-event-ingress";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import {
   recordWorkspaceScheduleFailure,
@@ -3890,6 +3891,31 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
        FROM parent_metadata`,
     "DROP TABLE parent_metadata",
     "ALTER TABLE parent_metadata_v79 RENAME TO parent_metadata",
+  ],
+}, {
+  version: 80,
+  description: "remember what each resource's latest connector event said",
+  // Ingest drops an event that says what the last one for the same resource
+  // already said. Google re-stamped an ended calendar series twice a day with
+  // nothing changed: 77,000 events at Juno Labs, about 14 per meeting. A table
+  // of its own rather than a column and index on `workspace_connector_events`,
+  // so the migration builds no index over the 255,000 rows already there. It
+  // starts empty; each resource's first event after it fills its row. See
+  // docs/connectors.md#dropping-events-that-say-nothing-new.
+  statements: [
+    `CREATE TABLE workspace_connector_event_latest_content (
+      connection_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      provider_resource_id TEXT NOT NULL,
+      content_fingerprint TEXT NOT NULL CHECK (
+        substr(content_fingerprint, 1, 7) = 'sha256:' AND length(content_fingerprint) = 71
+      ),
+      event_id TEXT NOT NULL REFERENCES workspace_connector_events(event_id) ON DELETE CASCADE,
+      PRIMARY KEY (connection_id, event_type, provider_resource_id)
+    ) STRICT`,
+    // The retention reaper deletes events; the cascade looks them up here.
+    `CREATE INDEX workspace_connector_event_latest_content_event_idx
+      ON workspace_connector_event_latest_content(event_id)`,
   ],
 }];
 
@@ -8849,6 +8875,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ...(authorPersonIds.length > 0 ? { authorPersonIds } : {}),
       ...(authorPersonIds[0] ? { actorPersonId: authorPersonIds[0] } : {}),
     };
+    const contentFingerprint = activity.providerResourceId
+      ? await workspaceConnectorEventContentFingerprint(request.event)
+      : null;
+    let unchangedContent = false;
     const result = WorkspaceConnectorEventIngestResultSchema.parse(
       this.state.storage.transactionSync(() => {
         const receipt = this.state.storage.sql.exec<{
@@ -8898,9 +8928,27 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         }
 
         const now = Date.now();
-        let eventId = canonical?.event_id ?? activity.id;
-        let processingStatus = canonical?.processing_status ?? "pending";
-        if (!canonical) {
+        // A new identity that says what this resource's latest event already
+        // said is that event again: the delivery is receipted against it and
+        // nothing new is stored or processed. See
+        // docs/connectors.md#dropping-events-that-say-nothing-new.
+        const unchanged = !canonical && contentFingerprint
+          ? this.state.storage.sql.exec<WorkspaceConnectorEventRow>(
+            `SELECT event.* FROM workspace_connector_event_latest_content latest
+               JOIN workspace_connector_events event ON event.event_id = latest.event_id
+              WHERE latest.connection_id = ? AND latest.event_type = ?
+                AND latest.provider_resource_id = ? AND latest.content_fingerprint = ?`,
+            activity.connectionId,
+            activity.eventType,
+            activity.providerResourceId,
+            contentFingerprint,
+          ).toArray()[0]
+          : undefined;
+        unchangedContent = Boolean(unchanged);
+        const existing = canonical ?? unchanged;
+        let eventId = existing?.event_id ?? activity.id;
+        let processingStatus = existing?.processing_status ?? "pending";
+        if (!existing) {
           this.state.storage.sql.exec(
             `INSERT INTO workspace_connector_events (
               event_id, payload_hash, connection_id, connection_scope,
@@ -8946,6 +8994,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           );
           eventId = activity.id;
           processingStatus = "pending";
+          if (contentFingerprint) {
+            this.state.storage.sql.exec(
+              `INSERT INTO workspace_connector_event_latest_content
+                 (connection_id, event_type, provider_resource_id, content_fingerprint, event_id)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT (connection_id, event_type, provider_resource_id) DO UPDATE SET
+                 content_fingerprint = excluded.content_fingerprint,
+                 event_id = excluded.event_id`,
+              activity.connectionId,
+              activity.eventType,
+              activity.providerResourceId,
+              contentFingerprint,
+              activity.id,
+            );
+          }
         }
         this.state.storage.sql.exec(
           `INSERT INTO workspace_connector_event_ingress_receipts
@@ -8967,9 +9030,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         );
         return {
           eventId,
-          duplicate: Boolean(canonical),
+          duplicate: Boolean(existing),
           processingStatus,
-          processingAttempt: canonical?.processing_attempt ?? -1,
+          processingAttempt: existing?.processing_attempt ?? -1,
         };
       }),
     );
@@ -8981,6 +9044,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ingress_event_id: request.ingressEventId,
       connector_event_id: result.eventId,
       duplicate: result.duplicate,
+      unchanged_content: unchangedContent,
       processing_status: result.processingStatus,
       processing_attempt: result.processingAttempt,
       outcome: "committed",

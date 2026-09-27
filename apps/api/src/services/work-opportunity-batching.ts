@@ -53,7 +53,7 @@ async function enqueue(env: Env, input: EnqueueInput): Promise<void> {
  * produces work, so it stays a candidate.
  *
  * Every connector manifest already partitions its event types into
- * `digestible` and `operational`, and 142 of the 205 declared types are
+ * `digestible` and `operational`, and 136 of the 197 declared types are
  * operational — including exactly these two families. This list is not that
  * partition and must not become it. `activity-consumer.ts` records why:
  * Suggested Work reads the same activity independently and must not inherit
@@ -61,7 +61,7 @@ async function enqueue(env: Env, input: EnqueueInput): Promise<void> {
  * where a suggestion lives — "would a person want this read back to them on a
  * schedule" is No for `drive.file_changed` and `linear.comment.update`, while
  * "is there work here" may well be Yes. Inheriting the partition would
- * withhold all 142.
+ * withhold all 136.
  *
  * What is borrowed instead is the *floor*: a type this gate withholds must be
  * one its connector already called operational, so this can never be the
@@ -78,7 +78,6 @@ async function enqueue(env: Env, input: EnqueueInput): Promise<void> {
  * withheld.
  */
 export const SUGGESTED_WORK_EXCLUDED_EVENT_TYPE_PREFIXES: readonly string[] = [
-  "github.check_run.",
   "github.workflow_run.",
 ];
 

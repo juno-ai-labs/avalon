@@ -60,6 +60,7 @@ export const WORKSPACE_LOCAL_TABLES = [
   "external_user_identities",
   "workspace_connector_events",
   "workspace_connector_event_ingress_receipts",
+  "workspace_connector_event_latest_content",
   "slack_agent_policies",
   "slack_delivery_preferences",
   "slack_user_links",

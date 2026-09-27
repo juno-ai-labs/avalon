@@ -3913,7 +3913,13 @@ describe("Durable Objects in the Workers runtime", () => {
         payloadHash: `sha256:${String(index).repeat(64)}`,
         event: {
           ...event,
-          activity: { ...event.activity, providerEventId: `delivery-${index}`, dedupeKey: `retention:${index}` },
+          activity: {
+            ...event.activity,
+            providerEventId: `delivery-${index}`,
+            dedupeKey: `retention:${index}`,
+            // Distinct content, or ingest keeps only the first as nothing new.
+            summary: `Retention case ${index}`,
+          },
         },
       });
     }
@@ -4000,6 +4006,63 @@ describe("Durable Objects in the Workers runtime", () => {
 
     await runInDurableObject(stub, async (_instance, state) => {
       expect(await state.storage.getAlarm()).toBe(expiresAt);
+    });
+  });
+
+  it("receipts a new identity that repeats its resource's latest content against the earlier event", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    // A provider re-stamping an unchanged resource: every identity field moves
+    // and nothing a reader sees does.
+    const restamped = (id: string, stamp: string, summary = "Ada edited the connector architecture") => {
+      const event = connectorEvent(id);
+      return {
+        ...event,
+        activity: {
+          ...event.activity,
+          providerEventId: `delivery-${stamp}`,
+          dedupeKey: `github:delivery-${stamp}:pull-request-edited`,
+          occurredAt: `2026-08-1${stamp}T20:00:00.000Z`,
+          payloadRef: `global/provider-webhooks/github/${stamp}.json`,
+          summary,
+        },
+      };
+    };
+    const ingest = (id: string, event: ReturnType<typeof restamped>) => stub.ingestConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      ingressEventId: id,
+      payloadHash: `sha256:${id.slice(-1).repeat(64)}`,
+      event,
+    });
+    const firstId = "00000000-0000-7000-8000-000000000501";
+    const touchId = "00000000-0000-7000-8000-000000000502";
+    const editId = "00000000-0000-7000-8000-000000000503";
+    const revertId = "00000000-0000-7000-8000-000000000504";
+
+    await expect(ingest(firstId, restamped(firstId, "1"))).resolves.toMatchObject({
+      eventId: firstId, duplicate: false,
+    });
+    await expect(ingest(touchId, restamped(touchId, "2"))).resolves.toEqual({
+      eventId: firstId,
+      duplicate: true,
+      processingStatus: "pending",
+      processingAttempt: -1,
+    });
+    await expect(ingest(editId, restamped(editId, "3", "Ada renamed the queue"))).resolves.toMatchObject({
+      eventId: editId, duplicate: false,
+    });
+    // Only the latest event is compared: changing back is news.
+    await expect(ingest(revertId, restamped(revertId, "4"))).resolves.toMatchObject({
+      eventId: revertId, duplicate: false,
+    });
+
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ event_id: string }>(
+        "SELECT event_id FROM workspace_connector_events ORDER BY event_sequence",
+      ).toArray().map((row) => row.event_id)).toEqual([firstId, editId, revertId]);
     });
   });
 
