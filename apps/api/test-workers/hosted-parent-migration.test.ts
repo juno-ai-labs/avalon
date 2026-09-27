@@ -251,14 +251,14 @@ it("keeps every v70 index on the renamed tables, on the same columns", async () 
   });
 });
 
-it("narrows parent_metadata to identity at v78 and keeps every parent's row", async () => {
-  // Populated at v77 with the full old row, committed in its own event, then
+it("narrows parent_metadata to identity at v79 and keeps every parent's row", async () => {
+  // Populated at v78 with the full old row, committed in its own event, then
   // upgraded as a deployed object is: a fresh schema has no rows to lose.
-  const stub = env.MIGRATION_PROBE_DO!.getByName("hosted-parent-v77-metadata");
+  const stub = env.MIGRATION_PROBE_DO!.getByName("hosted-parent-v78-metadata");
   await stub.ping();
   await runInDurableObject(stub, (_instance, state) => {
-    const before = WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 77);
-    expect(before.at(-1)?.version).toBe(77);
+    const before = WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 78);
+    expect(before.at(-1)?.version).toBe(78);
     applyDurableObjectSqliteMigrations({
       storage: state.storage, migrations: before, component: "workspace_do",
       workerVersionId: "before-narrow-metadata", now: 1,

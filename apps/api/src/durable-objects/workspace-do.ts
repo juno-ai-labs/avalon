@@ -3852,13 +3852,29 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   statements: ['UPDATE resource_search_versions SET pending = 1'],
 }, {
   version: 78,
+  description: "index the stored object a resource or version points at",
+  // The maintenance schedule asks, for each object waiting in
+  // `resource_object_deletion_outbox`, whether a resource or an older version
+  // still points at it. Nothing indexed those columns, so one waiting row
+  // scanned every resource and every version (460,000 rows at Juno Labs) on
+  // each refresh, and a Channel directory effect with links refreshes it:
+  // most of `receiveChildEffects`' 700 ms of CPU. Connector resources store no
+  // object, so the partial indexes hold only the few rows that do.
+  statements: [
+    "CREATE INDEX resources_content_ref_idx ON resources(content_ref) WHERE content_ref IS NOT NULL",
+    "CREATE INDEX resources_model_content_ref_idx ON resources(model_content_ref) WHERE model_content_ref IS NOT NULL",
+    "CREATE INDEX resource_versions_content_ref_idx ON resource_versions(content_ref) WHERE content_ref IS NOT NULL",
+    "CREATE INDEX resource_versions_model_content_ref_idx ON resource_versions(model_content_ref) WHERE model_content_ref IS NOT NULL",
+  ],
+}, {
+  version: 79,
   description: "narrow parent_metadata to a parent's identity",
   // A parent reads its presentation from its directory row (`channels`,
   // `spaces`) since the change before this one, so the 19 copied columns are
   // dead weight written on every Main effect. Nothing references this table,
   // so a plain rebuild keeps the rows. See docs/hosted-conversation-parents.md.
   statements: [
-    `CREATE TABLE parent_metadata_v78 (
+    `CREATE TABLE parent_metadata_v79 (
       parent_id TEXT PRIMARY KEY,
       parent_kind TEXT NOT NULL CHECK (parent_kind IN ('workstream', 'space')),
       workspace_id TEXT NOT NULL,
@@ -3868,12 +3884,12 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     ) STRICT`,
-    `INSERT INTO parent_metadata_v78
+    `INSERT INTO parent_metadata_v79
        (parent_id, parent_kind, workspace_id, region, authority_generation, revision, created_at, updated_at)
      SELECT parent_id, parent_kind, workspace_id, region, authority_generation, revision, created_at, updated_at
        FROM parent_metadata`,
     "DROP TABLE parent_metadata",
-    "ALTER TABLE parent_metadata_v78 RENAME TO parent_metadata",
+    "ALTER TABLE parent_metadata_v79 RENAME TO parent_metadata",
   ],
 }];
 
