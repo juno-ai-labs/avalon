@@ -130,9 +130,12 @@ export function resourceSearchRevision(sql: SqlStorage, resourceId: string): num
  * events and search-authorization pushes with them. Only our own backfills
  * reach it; nothing else paces the loop, because the Queue accepts the batch
  * as soon as it is sent. A trip is a backlog that drains more slowly.
- * 30 seconds (200 resources a minute) was set by Adam on 2026-09-26.
+ * 60 seconds (100 resources a minute) was set by Adam on 2026-09-27, down
+ * from 30: at 30, Juno Labs' object still turned away about 1,400 calls an
+ * hour beside the old search-authorization store's pushes, and one connector
+ * event failed for good.
  */
-export const RESOURCE_SEARCH_BACKLOG_INTERVAL_MS = 30_000;
+export const RESOURCE_SEARCH_BACKLOG_INTERVAL_MS = 60_000;
 /** The activity Queue accepts at most 100 messages in one batch. */
 const RESOURCE_SEARCH_BATCH = 100;
 
