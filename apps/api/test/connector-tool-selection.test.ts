@@ -1419,11 +1419,13 @@ describe("connector tools selected for harness runs", () => {
     database.defaultPluginIds = ["plugin_google"];
     const selected = await __integrationTesting.loadHarnessTools(env(database), automationRunInput());
 
-    // Read from the automation for this run, by the reference the loop carries.
+    // Read from the automation for this run, by the reference the loop carries,
+    // at the definition revision that reference names.
     expect(database.runDefinitionReads).toEqual([{
       workspaceId: WORKSPACE_ID,
       automationId: AUTOMATION_ID,
       runId: RUN_ID,
+      definitionRevision: 1,
     }]);
 
     expect(googleToolNames(selected.tools)).toEqual(GOOGLE_WORKSPACE_TOOLS);
