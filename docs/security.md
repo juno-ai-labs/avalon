@@ -619,6 +619,20 @@ relationship, and current derivative dependency before any result is placed in
 the next model request. Missing authority omits that assistant/tool pair rather
 than replaying stale content.
 
+A Sidekick run continues on input from anyone who can reach it, including
+everyone in a provider thread bound to the run: people with no linked Rally
+account, workspace guests, and members of another company in a Slack Connect
+channel. The continued run acts with the Sidekick's run-as user's connectors
+whoever sent the input. That is the product decision the external conversation
+bindings PRD records, not a gap. The mitigation is framing, not admission:
+outside text in a run child reaches the model as labelled evidence from its
+sender and never as a member request, and the host's continuation note quotes
+the sender's display name as data and says the new message is handled only as
+the Sidekick's instructions direct
+([continuing a run](automation-lifecycle.md#continuing-a-run)). Output from
+`conversation_read` is untrusted model input in the same way: it is whatever
+people and other runs wrote in the conversations a Sidekick is attached to.
+
 ### Terminal sandbox boundary
 
 The model may run bounded code only inside the private Daytona sandbox described
