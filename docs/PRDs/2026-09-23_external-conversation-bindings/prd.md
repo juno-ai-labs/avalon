@@ -361,6 +361,71 @@ the run asked. Typing into a run is out of scope.
 Rally user typing into a run is not built. A forward the model misses stays
 invisible to people; the Breakout simply lacks that answer.
 
+### 2026-09-27: The run authority check trusts a continuation's approval, not a reopened row
+
+**Decided:** A continued run may act while its run row still reads
+`completed` or `failed`. It may act through a `stopped` row only if that stop
+came before `continueRun` approved the continuation. The run row reopens only
+from an accepted, newer child projection.
+
+**Why:** The design said the check passes "because the run is running", but
+the row reopens through the child's projection on the Queue, which lands after
+the continued execution checks its authority. `completed` and `failed` are only
+ever the child's own report; `stopped` is what a pause writes, so it stays
+fenced.
+
+**Changes:** Supersedes design "Run continuation / Proposed" on how authority
+passes. A pause still refuses a continuation. Known gap: an earlier activation
+reporting `stopped` after the approval refuses the continuation's writes until
+its own `running` projection lands.
+
+### 2026-09-27: Room bindings are active at birth, and outbound bindings drain through the run's outbox
+
+**Decided:** A room binding is written `active` in the same transaction as the
+Space it links; it has no `pending` state. An outbound binding is queued on
+the run child's own durable outbox inside the tool receipt's transaction and
+drained to WorkspaceDO by the alarm, not through the Sidekick's regional-effect
+outbox. A reply that arrives before that drain takes the ordinary Agent path.
+
+**Why:** Space creation turned out to be one synchronous transaction, so there
+is no intermediate state to fence. The Sidekick's effect outbox has a `CHECK`
+on its effect kinds that would need a table rebuild.
+
+**Changes:** Supersedes design "Creating bindings" for rooms and outbound
+sends. Thread bindings still use `pending` while a Channel is created.
+
+### 2026-09-27: Rooms where nobody is a Rally member
+
+**Decided:** A tagged thread in a linked public room with no resolvable Rally
+member falls back to General with a thread binding. In a private room it is
+declined with a visible message in the thread. An unlinked sender in a linked
+room creates the Channel acting as the Space's creator, and is refused with
+`external_room_space_actor_missing` when the Space has none. Channels the old
+join sweep already joined keep the bot but get no Space until someone invites
+or mentions it there. Unarchiving a Slack room does not reactivate its binding;
+re-inviting the bot does.
+
+**Why:** A Channel needs a Rally actor to create it, and a private room must
+never fall back to an Organization-wide audience.
+
+**Changes:** Adds behavior the design left unstated. Closing a binding has an
+RPC (`closeExternalConversationBinding`) but no screen yet.
+
+### 2026-09-27: The conversation list pages, and posts reuse the activation row
+
+**Decided:** `conversation_list` has a `conversation_list_next` page tool. Read
+messages carry an `externalSource` field, and the read cursor keys on sequence
+number. A post is stored as an `automation_activation` row through a new
+non-waking `appendConversationPost`. A Sidekick's home also narrows its viewer
+admission, not only the authorization owner.
+
+**Why:** A list with `nextPageId` needs a next-page tool or it silently stops at
+its limit. Reusing the activation row lets existing clients show posts under
+the Sidekick's name with no client change.
+
+**Changes:** Extends the design's tool catalog by one tool. `appendAutomationActivation`
+has no production caller left.
+
 ## Key design decisions
 
 1. **Bind by provider identity, not display name.** Duplicate or changed names
