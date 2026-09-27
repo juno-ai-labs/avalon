@@ -23,16 +23,18 @@ import {
   WorkspaceChannelReservationResultSchema,
   type WorkspaceChannelReservationRequest,
 } from "../durable-objects/workspace-space-protocol";
-import {
-  ExternalBindingActivateResultSchema,
-  type ExternalBindingClaim,
-} from "../durable-objects/workspace-external-binding-protocol";
+import type { ExternalBindingClaim } from "../durable-objects/workspace-external-binding-protocol";
 import { ApiError } from "../lib/api-error";
 import { resolveSpaceWorkstreamStart } from "../lib/channel-audience";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logWarn } from "../observability/logger";
 import { noFlowSpan, type FlowSpan } from "../observability/tracing";
 import { SpaceService, spaceRefusal } from "./space-service";
+import {
+  activateExternalBindingClaim,
+  externalBindingRefusal,
+  openUnderExternalBindingClaim,
+} from "./external-binding-claims";
 import { provisionalWorkstreamDescription } from "./workstream-description-service";
 import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-service";
 import {
@@ -306,7 +308,9 @@ export class WorkstreamObjectCreationService {
           workstreamId: asWorkstreamId(receipt.workstream_id),
         }));
       if (options.externalBinding) {
-        await this.activateExternalBinding(workspace, options.externalBinding, receipt.workstream_id);
+        await activateExternalBindingClaim(
+          this.env, workspace, this.auth.workspaceId, options.externalBinding, receipt.workstream_id,
+        );
       }
       return {
         workstream,
@@ -377,51 +381,15 @@ export class WorkstreamObjectCreationService {
         participantUserIds, originResourceIds, requestHash, at,
       });
     }
-    let created: Awaited<ReturnType<WorkstreamObjectCreationService["openReserved"]>>;
-    try {
-      created = await this.openReserved(span, body, options, input, {
+    // A failed creation must not leave a live binding to an absent
+    // destination; a completed one makes the claim the thread's route.
+    return openUnderExternalBindingClaim(
+      this.env, workspace, this.auth.workspaceId, options.externalBinding, workstreamId,
+      () => this.openReserved(span, body, options, input, {
         receipt, client, control, workstreamId, title, objective, email, scope,
         participantUserIds, originResourceIds, requestHash, at,
-      });
-    } catch (error) {
-      // A failed creation must not leave a live binding to an absent
-      // destination. Only this attempt's pending claim is released; a retry
-      // of the same create reclaims it.
-      await workspace.releaseExternalConversationBinding({
-        workspaceId: this.auth.workspaceId,
-        installationId: options.externalBinding.installationId,
-        path: options.externalBinding.path,
-        target: { kind: "conversation", parentKind: "workstream", parentId: workstreamId, substreamId: "0" },
-        at: new Date().toISOString(),
-      }).catch((releaseError: unknown) => {
-        logWarn(this.env, "external_binding_release_failed", {
-          workspace_id: this.auth.workspaceId,
-          workstream_id: workstreamId,
-          reason: releaseError instanceof Error ? releaseError.message : "unknown",
-        });
-      });
-      throw error;
-    }
-    await this.activateExternalBinding(workspace, options.externalBinding, workstreamId);
-    return created;
-  }
-
-  /** The thread binding a completed creation claimed becomes the thread's route. */
-  private async activateExternalBinding(
-    workspace: WorkspaceStub,
-    binding: ExternalBindingClaim,
-    workstreamId: string,
-  ): Promise<void> {
-    const activated = ExternalBindingActivateResultSchema.parse(await workspace.activateExternalConversationBinding({
-      workspaceId: this.auth.workspaceId,
-      installationId: binding.installationId,
-      path: binding.path,
-      target: { kind: "conversation", parentKind: "workstream", parentId: workstreamId, substreamId: "0" },
-      at: new Date().toISOString(),
-    }));
-    if (activated.outcome === "conflict") {
-      throw new ApiError(409, "external_binding_bound", "This conversation is already bound to another Channel");
-    }
+      }),
+    );
   }
 
   /**
@@ -605,14 +573,7 @@ export class WorkstreamObjectCreationService {
     }
     if (result.status === "reserved") return result;
     if (result.status === "refused") throw spaceRefusal(result.code, "");
-    if (result.status === "binding_refused") {
-      // `held`: another attempt is creating this thread's Channel, so this
-      // one retries and then finds it. `bound`: the thread already has a
-      // destination, and a second Channel for it must not exist.
-      throw result.outcome === "held"
-        ? new ApiError(503, "external_binding_held", "Another request is creating this conversation's Channel")
-        : new ApiError(409, "external_binding_bound", "This conversation is already bound to a Channel");
-    }
+    if (result.status === "binding_refused") throw externalBindingRefusal(result.outcome);
     // General was made above, so a second answer that it is missing is the
     // Organization contradicting itself rather than a state to wait out.
     throw new Error("workstream_create_general_space_missing");

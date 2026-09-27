@@ -716,7 +716,7 @@ describe("a Sidekick run's send", () => {
     installationId: INSTALLATION,
     path: ["D9", "1727.002"],
     // The run child's own address: the object refuses a target that is not itself.
-    target: { kind: "conversation", parentKind: "automation", parentId: SIDEKICK_ID, substreamId: "0" },
+    target: { kind: "conversation" as const, parentKind: "automation" as const, parentId: SIDEKICK_ID, substreamId: "0" },
   };
 
   async function resolveRun(path: string[]) {
