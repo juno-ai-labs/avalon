@@ -42,8 +42,8 @@ async function exec(sql: string, ...bindings: unknown[]) {
 
 function insertParentMetadata(state: DurableObjectState, id: string, title: string): void {
   state.storage.sql.exec(`INSERT INTO parent_metadata
-    (parent_id,parent_kind,workspace_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
-    VALUES (?,'workstream',?,'global',1,?,'','','personal','idle',0,0,0)`, id, workspaceId, title);
+    (parent_id,parent_kind,workspace_id,region,authority_generation,created_at,updated_at)
+    VALUES (?,'workstream',?,'global',1,0,0)`, id, workspaceId);
   insertChannelRow(state, id, title);
 }
 

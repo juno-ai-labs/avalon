@@ -402,22 +402,13 @@ describe("workspace retirement graph", () => {
       // suite's empty D1, and what is under test here is the walk.
       state.storage.sql.exec(
         `INSERT INTO parent_metadata
-           (parent_id, parent_kind, workspace_id, region, authority_generation, revision, title,
-            description, preview, email_address, scope, exact_state, created_by_user_id,
-            title_status, system_kind, last_activity_at, completed_at, archived_at,
-            latest_attention_ordinal, unread_tracking_start_ordinal, next_wakeup_due_at,
-            next_wakeup_prompt, next_terminal_action_at, source_created_at, source_updated_at,
+           (parent_id, parent_kind, workspace_id, region, authority_generation, revision,
             created_at, updated_at)
-         VALUES (?, 'workstream', ?, ?, 1, 1, 'Room 0', '', '', NULL, 'workspace', 'idle', ?,
-                 'settled', NULL, ?, NULL, NULL, 0, 0, NULL, NULL, NULL, ?, ?, ?, ?)
+         VALUES (?, 'workstream', ?, ?, 1, 1, ?, ?)
          ON CONFLICT (parent_id) DO NOTHING`,
         FIRST_ROOM_ID,
         workspaceId,
         TEST_ENV.AVALON_REGION,
-        ACTOR_ID,
-        Date.now(),
-        Date.now(),
-        Date.now(),
         Date.now(),
         Date.now(),
       );

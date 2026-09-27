@@ -96,11 +96,10 @@ beforeEach(async () => {
 async function seedParent(id: string, title: string, actorTargets: ScopeGrantTarget[]) {
   await room().authority({ workspaceId, parentId: id });
   await withHostedParent(room(), id, (parent, state) => {
-    // The title lives on the directory row; the parent's own copy is stale on
-    // purpose, so an invitation that read it would say so.
+    // The title lives only on the directory row; the parent's own row is identity.
     state.storage.sql.exec(`INSERT INTO parent_metadata
-      (parent_id,parent_kind,workspace_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
-      VALUES (?,'workstream',?,'global',1,'Stale copy','','','personal','idle',0,0,0)`, id, workspaceId);
+      (parent_id,parent_kind,workspace_id,region,authority_generation,created_at,updated_at)
+      VALUES (?,'workstream',?,'global',1,0,0)`, id, workspaceId);
     insertChannelRow(state, id, title);
     state.storage.sql.exec("INSERT INTO parent_children (parent_id,substream_id,kind,created_at) VALUES (?,'0','main',0), (?,?,'child',0)", id, id, childId);
     state.storage.sql.exec("INSERT INTO parent_participant_migrations VALUES (?, '0', ?, '{}', 'complete')", id, crypto.randomUUID());
@@ -207,8 +206,8 @@ it("answers a sharing request for a Space id as a scope that does not exist", as
   const spaceId = "00000000-0000-7000-8000-0000000005a1";
   await runInDurableObject(hostedParentStub(env, workspaceId), (_instance, state) => {
     state.storage.sql.exec(`INSERT INTO parent_metadata
-      (parent_id,parent_kind,workspace_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
-      VALUES (?,'space',?,'global',1,'Space','','','workspace','idle',0,0,0)`, spaceId, workspaceId);
+      (parent_id,parent_kind,workspace_id,region,authority_generation,created_at,updated_at)
+      VALUES (?,'space',?,'global',1,0,0)`, spaceId, workspaceId);
   });
   const app = createApp();
   const actorHeaders = { authorization: `Bearer ${await bearer(actorId, "actor-session", workspaceId)}` };
@@ -421,7 +420,6 @@ it("names the sender and the workspace, and still sends when the conversation ca
   if (whole.status !== "created") throw new Error(JSON.stringify(whole));
   const mainParts = await deliveredParts(whole.invitations[0]!.id);
   expect(mainParts.text).toContain("Private parent");
-  expect(mainParts.text).not.toContain("Stale copy");
   expect(html).toContain(`href="${(await deliveredLink(created.invitations[0]!.id)).toString()}"`);
 });
 
