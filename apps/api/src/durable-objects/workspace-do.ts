@@ -30,7 +30,6 @@ import {
   isUnknownSocketEvent,
   safeParseSocketEvent,
 } from "@rally/contracts";
-import { sha256Hex } from "../lib/crypto";
 import {
   InstallationCreateSchema,
   InstallationReadSchema,
@@ -884,7 +883,6 @@ import {
   type WorkspaceSlackThreadReleaseRequest,
   type WorkspaceSlackThreadRoutableRequest,
   type WorkspaceSlackThreadRoutableResult,
-  SLACK_SIDEKICK_SOURCE_JOIN_EVENT,
   WorkspaceSlackContextRequestSchema,
   WorkspaceSlackContextStoreRequestSchema,
   WorkspaceSlackFeedbackRequestSchema,
@@ -923,6 +921,7 @@ import {
   claimWorkspaceSlackThread,
   clearWorkspaceSlackPendingPrompt,
   completeWorkspaceSlackIngressJob,
+  enqueueSlackSourceJoins,
   enqueueWorkspaceSlackIngressJob,
   failWorkspaceSlackIngressJob,
   recoverableWorkspaceSlackIngressJobs,
@@ -948,6 +947,7 @@ import {
 import {
   ExternalBindingActivateResultSchema,
   ExternalBindingCloseRequestSchema,
+  ExternalConversationKeySchema,
   ExternalBindingLatestOutboundRequestSchema,
   ExternalBindingLatestOutboundResultSchema,
   ExternalBindingMoveRequestSchema,
@@ -4083,20 +4083,6 @@ function conversationToolRefusal(
  * leaf compared by equality or set membership. A rule that excludes channels
  * or names none leaves nothing to join.
  */
-function slackSourceChannelIds(when: unknown): string[] {
-  const predicate = when as { kind?: unknown; allOf?: unknown };
-  if (predicate.kind !== "all" || !Array.isArray(predicate.allOf)) return [];
-  return predicate.allOf.flatMap((leaf: unknown) => {
-    const candidate = leaf as { kind?: unknown; attribute?: unknown; operator?: unknown; value?: unknown };
-    if (candidate.kind !== "string" || candidate.attribute !== "channelId") return [];
-    if (candidate.operator === "equals" && typeof candidate.value === "string") return [candidate.value];
-    if (candidate.operator === "in" && Array.isArray(candidate.value)) {
-      return candidate.value.filter((value): value is string => typeof value === "string");
-    }
-    return [];
-  });
-}
-
 function externalEventContext(
   metadata: Record<string, unknown>,
   textSnippet: string | null,
@@ -7703,18 +7689,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * A Sidekick saved with a Slack source that names conversations keeps the
-   * bot in them: the Sidekick hears their messages only from conversations
-   * the bot has joined. The join is queued as a Slack ingress job, which the
-   * ingress runs with the installation's token; it is not an invitation and
-   * links no Space. Best effort: the registration has committed, and a join
+   * Queue the joins a Sidekick's saved Slack sources need (the Slack storage
+   * decides what they are; see `enqueueSlackSourceJoins`) and hand each to the
+   * ingress queue. Best effort: the registration has committed, and a join
    * that failed to queue is logged and made again by the next save.
-   *
-   * The job is keyed by the save's source generation, so every accepted save
-   * joins again: a bot removed from a conversation since the last save, or a
-   * source that moved away and back, is rejoined rather than deduplicated
-   * against a completed job for the same channel set. A projection without a
-   * generation gets a key of its own each time.
    */
   private async joinSlackSourceConversations(
     workspaceId: string,
@@ -7722,58 +7700,33 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     sourceGeneration: number | undefined,
     evaluators: readonly { source: { connectorType: string; connectionId: string }; when: unknown }[],
   ): Promise<void> {
-    const byConnection = new Map<string, Set<string>>();
-    for (const evaluator of evaluators) {
-      if (evaluator.source.connectorType !== "slack") continue;
-      const channelIds = slackSourceChannelIds(evaluator.when);
-      if (channelIds.length === 0) continue;
-      const set = byConnection.get(evaluator.source.connectionId) ?? new Set<string>();
-      for (const channelId of channelIds) set.add(channelId);
-      byConnection.set(evaluator.source.connectionId, set);
+    let jobs: Awaited<ReturnType<typeof enqueueSlackSourceJoins>>;
+    try {
+      jobs = await enqueueSlackSourceJoins(this.state.storage, {
+        workspaceId, automationId, sourceGeneration, evaluators, appId: this.env.SLACK_APP_ID ?? null,
+      });
+    } catch (error) {
+      logWarn(this.env, "slack_sidekick_source_join_enqueue_failed", {
+        workspace_id: workspaceId,
+        automation_id: automationId,
+        reason: diagnosticErrorCode(error, "slack_sidekick_source_join_enqueue_failed"),
+      });
+      return;
     }
-    for (const [connectionId, channelIds] of byConnection) {
+    if (jobs.length > 0) this.refreshScheduleAfterSlackWrite(workspaceId);
+    for (const job of jobs) {
       try {
-        const connection = this.state.storage.sql.exec<{ provider_account_id: string | null }>(
-          `SELECT provider_account_id FROM connector_connections
-            WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status <> 'disabled'`,
-          connectionId,
-        ).toArray()[0];
-        if (!connection?.provider_account_id) continue;
-        const channels = [...channelIds].sort();
-        const generation = sourceGeneration === undefined ? uuidV7() : `g${sourceGeneration}`;
-        const eventId = `rally-sidekick-source-join:${automationId}:${generation}:${channels.join(",")}`;
-        const envelope = {
-          type: "event_callback",
-          team_id: connection.provider_account_id,
-          ...(this.env.SLACK_APP_ID ? { api_app_id: this.env.SLACK_APP_ID } : {}),
-          event_id: eventId,
-          event: { type: SLACK_SIDEKICK_SOURCE_JOIN_EVENT, channel_ids: channels },
-        };
-        const payloadJson = JSON.stringify(envelope);
-        const jobId = `event:${eventId}`;
-        const admitted = enqueueWorkspaceSlackIngressJob(this.state.storage, {
-          workspaceId,
-          jobId,
-          connectionId,
-          teamId: connection.provider_account_id,
-          bodyHash: await sha256Hex(payloadJson),
-          kind: "event",
-          payloadJson,
-          at: new Date().toISOString(),
-        });
-        if (admitted.outcome === "replayed" && admitted.status === "completed") continue;
-        this.refreshScheduleAfterSlackWrite(workspaceId);
         await this.env.ACTIVITY_QUEUE.send(SlackIngressQueueMessageSchema.parse({
           kind: "slack_ingress",
           region: this.env.AVALON_REGION,
           workspaceId,
-          jobId,
+          jobId: job.jobId,
         }));
       } catch (error) {
         logWarn(this.env, "slack_sidekick_source_join_enqueue_failed", {
           workspace_id: workspaceId,
           automation_id: automationId,
-          connection_id: connectionId,
+          connection_id: job.connectionId,
           reason: diagnosticErrorCode(error, "slack_sidekick_source_join_enqueue_failed"),
         });
       }
@@ -7884,16 +7837,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     };
     // A message in a bound external conversation is claimed by its binding,
     // as a matched watch claims one, so a bound reply never also becomes
-    // Suggested Work. The adapter wrote the path beside the provider metadata.
-    const boundPath = Array.isArray(metadata.externalConversationPath)
-      && metadata.externalConversationPath.length > 0
-      && metadata.externalConversationPath.every((segment) => typeof segment === "string" && segment.length > 0)
-      && typeof metadata.teamId === "string" && event.connector_type === "slack"
-      ? metadata.externalConversationPath as string[]
-      : null;
-    const binding = boundPath === null ? null : this.externalBindings().resolve({
-      installationId: `slack:${metadata.teamId as string}`,
-      path: boundPath,
+    // Suggested Work. The adapter wrote the binding key beside the provider
+    // metadata; any connector that writes one is resolved the same way.
+    const boundKey = ExternalConversationKeySchema.safeParse({
+      installationId: metadata.externalConversationInstallationId,
+      path: metadata.externalConversationPath,
+    });
+    const binding = !boundKey.success ? null : this.externalBindings().resolve({
+      installationId: boundKey.data.installationId,
+      path: boundKey.data.path,
       addressed: false,
       claimKey: null,
       pendingStaleBefore: new Date(0).toISOString(),
