@@ -136,7 +136,6 @@ import { claimParentAnchor } from "./workstream-runtime-database";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { SLACK_THREAD_CLAIM_LEASE_MS } from "../durable-objects/workspace-slack-storage";
 import type { AdmitExternalMessageInput } from "../durable-objects/workstream-external-message-protocol";
-import { uuidV7 } from "../lib/uuid-v7";
 
 interface SlackConnectionRow extends Record<string, unknown> {
   id: string;
@@ -1952,7 +1951,10 @@ export class SlackAgentService {
         ? { outcome: "unresolved", channel }
         : { outcome: "blocked", reason: "no_rally_member_in_private_room" };
     }
-    const spaceId = uuidV7();
+    // Named by the room, so two invitations racing (or an invitation retried
+    // after its link committed) claim one anchor, and the loser's link reads
+    // back `existing` instead of leaving an anchor for a Space never made.
+    const spaceId = await stableUuid(`external-room-space:${installationId}:${channelId}`);
     let linked: ExternalRoomLinkResult;
     try {
       // The creation coordinator's gate: no Space is written while the
