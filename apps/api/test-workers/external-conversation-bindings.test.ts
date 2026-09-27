@@ -858,6 +858,51 @@ describe("the connector side of a binding", () => {
     expect(await ingest()).toEqual({ matched: true, deliveries: [] });
   });
 
+  it("does not also start the bound Sidekick from a reply its run receives, and still triggers others", async () => {
+    await seedSlackConnection();
+    const register = (automationId: string, evaluatorId: string) => workspace().applyExternalEventRegistrations({
+      schemaVersion: 1,
+      workspaceId: WORKSPACE_ID,
+      destination: { kind: "automation", automationId },
+      evaluators: [{
+        evaluatorId,
+        source: { connectorType: "slack", connectionId: CONNECTION, eventType: "slack.direct_message.received" },
+        when: { kind: "all", allOf: [{ kind: "string", attribute: "channelId", operator: "in", value: ["D1"] }] },
+      }],
+    });
+    await register(SIDEKICK, "00000000-0000-7000-8000-000000000ef6");
+    await register(AUTOMATION, "00000000-0000-7000-8000-000000000ef7");
+    await workspace().recordOutboundExternalConversationBinding({
+      workspaceId: WORKSPACE_ID, installationId: INSTALLATION, path: ["D1", "1727.002"],
+      target: { kind: "conversation", parentKind: "automation", parentId: SIDEKICK, substreamId: RUN }, at: at(),
+    });
+    const eventId = "00000000-0000-7000-8000-00000000ef21";
+    await workspace().ingestConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      ingressEventId: eventId,
+      payloadHash: `sha256:${"21".repeat(32)}`,
+      event: {
+        connectorType: "slack",
+        activity: {
+          id: eventId, workspaceId: WORKSPACE_ID, region: "global", connectionId: CONNECTION,
+          connectionScope: "workspace", connectionOwnerUserId: null, provider: "slack",
+          providerEventId: "Ev21", eventType: "slack.direct_message.received", resourceType: "slack_message",
+          providerResourceId: "D1:1727.121", actor: {}, subject: {}, occurredAt: at(), receivedAt: at(),
+          title: "Slack direct message", summary: "", textSnippet: "Nothing from me", payloadRef: null,
+          visibility: { kind: "workspace" }, targetUserIds: [], entityKeys: [], dedupeKey: "slack:21",
+          rawContentHash: null, externalPeople: [],
+          metadata: { teamId: "T1", channelId: "D1", threadTs: "1727.002", externalConversationPath: ["D1", "1727.002"] },
+        },
+      },
+    });
+    const matched = WorkspaceExternalEventMatchResultSchema.parse(
+      await workspace().matchExternalEventDestinations({ workspaceId: WORKSPACE_ID, eventId }),
+    );
+    expect(matched.matched).toBe(true);
+    expect(matched.deliveries.map((delivery) => delivery.destination))
+      .toEqual([{ kind: "automation", automationId: AUTOMATION }]);
+  });
+
   it("queues a join for the conversations a saved Slack source names, and links no Space", async () => {
     await seedSlackConnection();
     await workspace().applyExternalEventRegistrations({

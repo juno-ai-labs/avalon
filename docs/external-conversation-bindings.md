@@ -154,6 +154,11 @@ gone; the bot is in a room because somebody put it there or a Sidekick needs it.
 `metadata.externalConversationPath` resolves to a binding as claimed, even with
 no automation delivery, so a bound reply never also becomes Suggested Work.
 
+When the binding delivers to a Sidekick's run, **the binding wins for that
+Sidekick**: the event is not also a trigger delivery to the same Sidekick, so an
+answer continues the run it answers instead of starting a second one beside it.
+Other Sidekicks whose sources match the message still receive it as a trigger.
+
 ## Invariants
 
 - **One path, one target.** The primary key is (installation, path). Two
