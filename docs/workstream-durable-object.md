@@ -1212,6 +1212,7 @@ complete relationship map is:
 | (none) | | local | the provisional directory row a `reserveChild("0")` at creation writes is applied by `WorkspaceDO` to its own directory before `reserveChild` answers; there is no longer an object boundary to cross |
 | WorkspaceDO | AutomationDO | typed RPC | `setOwningRoomArchived`, fanned out with `Promise.allSettled` when a directory effect archives or unarchives a room that owns automations; a failed call is logged and the next archival change retries it |
 | a run's loop | AutomationDO | typed RPC | `readRunDefinition` at loop start (the definition revision is immutable, so a reference rather than a copy travels in the loop input) and `readRunState` before every provider write |
+| a Sidekick run child's `claimPersistentLoopExecution` | AutomationDO | typed RPC | `continueRun` before a pending input activates the loop: the run's context and run-as principal at the accepted revision, or a refusal code the child settles the input with ([continuing a run](automation-lifecycle.md#continuing-a-run)) |
 | a run's loop | WorkspaceDO (the room's hosted parent), then the room's SubstreamAgent `0` | typed RPC | the `post_result` tool: `authority` for the room's generation and archive state, then `appendAutomationActivation` keyed on the run id |
 | regional Worker | regional Queue | Cloudflare Queue | a generic member-visible work-stream filter is resolved once in WorkspaceDO, then one bounded update event is published per selected work stream |
 | regional Queue Worker | SubstreamAgent("0") | typed RPC | an idempotent, receipt-backed mark-read or archive transaction against that work stream's authoritative SQLite state; membership is rechecked at delivery |
@@ -1647,8 +1648,10 @@ shared parent statements `conversation-parent-object.ts` exports (the same
 
 [`automation-lifecycle.md`](automation-lifecycle.md) owns what these rows mean.
 The shared parent tables carry the automation's conversation (`"0"`) and its
-runs as children; `onChildCommonAggregate` maps a run child's conversation state
-onto `runs.state` forward only.
+runs as children; `onChildCommonProjection` maps a run child's accepted
+conversation state onto `runs.state`, and only a newer projection with a live
+state reopens a finished run (see
+[continuing a run](automation-lifecycle.md#continuing-a-run)).
 
 ### `SubstreamAgent`
 
