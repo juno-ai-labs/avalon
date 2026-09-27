@@ -7,6 +7,7 @@ import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import { __integrationTesting } from "../../src/services/integrations";
 import { createAvalonMultimodalGenerationPlugin } from "../../src/services/multimodal-generation/plugin";
 import { TERMINAL_TOOL_DEFINITIONS } from "../../src/services/terminal/contract";
+import { conversationToolPorts, createConversationsPlugin } from "../../src/services/conversation-tools";
 import { createTestEnv } from "./cloudflare-test";
 import { createTestConnectorRegistry, unconfiguredConnectorTypes } from "./connector-registry";
 
@@ -27,11 +28,10 @@ import { createTestConnectorRegistry, unconfiguredConnectorTypes } from "./conne
  * **What it does not reach, said plainly rather than claimed away.** Two tools
  * are built against live run state rather than registered, and neither can be
  * constructed from a schema walk's fixtures: `run_subagent` needs an attempt
- * lease, an abort signal, and a run-authority snapshot, and `post_result` needs
- * a Sidekick run definition with an owning room. Standing those up here would
- * buy two schemas at the price of a guard that breaks whenever the run
+ * lease, an abort signal, and a run-authority snapshot. Standing that up here
+ * would buy one schema at the price of a guard that breaks whenever the run
  * machinery moves, which is a bad trade for a walk whose whole value is that it
- * keeps working untended. They are the boundary of "every authored tool", and
+ * keeps working untended. It is the boundary of "every authored tool", and
  * anything else missing from this walk is a defect in it — the multimodal
  * plugin was exactly that, and reached this list only after a review noticed.
  */
@@ -65,6 +65,8 @@ export const EXPECTED_TOOLS = [
   "web.fetch:fetch",
   "rally.sidekick.plugins.list:plugins_list",
   "rally.sidekick.submit:submit_draft",
+  "rally.conversation.post:post",
+  "rally.conversation.attach:attach",
   "terminal.import_resource",
   "notion.create_comment",
   "x.get_user_timeline",
@@ -110,13 +112,21 @@ export function everyAuthoredToolSchema(): AuthoredToolSchema[] {
   });
   const multimodal = (createAvalonMultimodalGenerationPlugin(multimodalEnv, workflowInput())?.tools ?? [])
     .map((tool) => ({ name: label(tool.definition), schema: tool.definition.inputSchema }));
+  // Built for a Sidekick's configuration conversation, the one scope offering
+  // all four tools; pre-pagination, so `read` and `list` carry their private
+  // cursor exactly as the wrapper receives them.
+  const conversations = (createConversationsPlugin(
+    { ...workflowInput(), parentKind: "automation", parentId: "00000000-0000-4000-8000-00000000000a" },
+    conversationToolPorts(env, workflowInput()),
+    (tool) => [tool],
+  )?.tools ?? []).map((tool) => ({ name: label(tool.definition), schema: tool.definition.inputSchema }));
   const registry = createTestConnectorRegistry();
   const connectors = registry.list().flatMap((manifest) =>
     registry.get(manifest.type).agentPlugin.tools.map((definition) => ({
       name: `${manifest.type}.${definition.name}`,
       schema: definition.inputSchema,
     })));
-  const walked = [...core, ...discovery, ...terminal, ...multimodal, ...connectors]
+  const walked = [...core, ...discovery, ...terminal, ...multimodal, ...conversations, ...connectors]
     .map((entry) => ({ name: entry.name, schema: entry.schema as Record<string, unknown> }));
 
   // Thrown here rather than asserted in one `it`, so no check can run against a

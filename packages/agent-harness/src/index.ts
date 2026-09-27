@@ -73,6 +73,7 @@ export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from ".
 export { isAzureBoundModel } from "./bind-runtime";
 export {
   formatToolArgumentValidationError,
+  modelToolArgumentSchema,
   normalizeToolArguments,
   validateToolArguments,
 } from "./tool-arguments";

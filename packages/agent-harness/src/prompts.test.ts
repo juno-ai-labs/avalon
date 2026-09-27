@@ -45,7 +45,7 @@ const workstreamAutomation = {
   versionNumber: 3,
   instructions: currentDraft.instructions,
   expectedOutputs: currentDraft.expectedOutputs,
-  resultDelivery: [{ channel: "workstream" as const, destination: "00000000-0000-7000-8000-0000000000aa" }],
+  homeConversationId: "00000000-0000-7000-8000-0000000000aa/00000000-0000-7000-8000-0000000000ab",
   defaultBehavior: currentDraft.defaultBehavior,
   overrides: { tone: "concise" },
   durableTables: [],
@@ -93,7 +93,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           sidekick: workstreamAutomation,
         }),
-        hash: "48b11a3c27df42eb66d2770679d2677904e373edcfc1ad242ccf04e6addb037b",
+        hash: "0364720b2da989fc6ebffd834fc63bf2b79d407484e38fb0955f3626aac5cc48",
       },
       workstreamName: {
         actual: renderWorkstreamNameMessages({
@@ -213,93 +213,38 @@ describe("prompt renderers", () => {
     expect(prompt).not.toMatch(/\n{3,}/u);
   });
 
-  it("tells a room's automation run that the post-result tool is how the room hears it", () => {
+  it("names a room Sidekick's home in its task context and no posting tool in policy", () => {
     const prompt = renderWorkstreamSystemPrompt({
       title: "Weekly engineering brief: 2026-08-07",
       objective: "Produce the scheduled weekly engineering brief.",
       sidekick: workstreamAutomation,
     });
 
-    expect(prompt).toContain('"destination": "00000000-0000-7000-8000-0000000000aa"');
-    expect(prompt).toContain("# Result delivery");
-    // Nothing delivers a final message for a run any more. The room that owns
-    // the automation hears a result only through the one tool that posts
-    // there, so the section names the tool rather than promising a delivery.
-    expect(prompt).toContain("is the room that owns this Sidekick");
-    expect(prompt).toContain("the one way a result reaches that room is the post_result tool");
-    expect(prompt).not.toContain("Rally sends this run's final message");
+    // The home is where the conversation plugin posts by default. The prompt
+    // names the place; the plugin's system message names the tool, because a
+    // tool name in standing policy renders for runs whose plugin is absent.
+    expect(prompt).toContain('"homeConversationId": "00000000-0000-7000-8000-0000000000aa/00000000-0000-7000-8000-0000000000ab"');
+    expect(prompt).not.toContain("post_result");
+    expect(prompt).not.toMatch(/conversation_[a-z_]+/u);
+    expect(prompt).not.toContain("# Result delivery");
   });
 
-  it("tells an automation with no destination that sending is its own work", () => {
-    // The other arm, and the one that carries the new model. An automation
-    // has no destinations of its own beyond the room that owns it; a personal
-    // or workspace one has none at all, and nothing sends its result after the
-    // run. Left silent, a run that *describes* emailing the summary has not
-    // emailed it, and the person who asked gets nothing with no error anywhere.
+  it("tells a Sidekick with no home that sending is its own work", () => {
+    // A personal or workspace Sidekick has nowhere in Rally its result is read,
+    // and runs on the self-delivery surface. Left silent, a run that
+    // *describes* emailing the summary has not emailed it, and the person who
+    // asked gets nothing with no error anywhere.
     const undelivered = renderWorkstreamSystemPrompt({
       title: "Weekly engineering brief: 2026-08-07",
       objective: "Produce the scheduled weekly engineering brief.",
-      sidekick: { ...workstreamAutomation, resultDelivery: [] },
+      outputSurface: "self_delivery",
+      sidekick: { ...workstreamAutomation, homeConversationId: null },
     });
 
-    expect(undelivered).toContain("# Result delivery");
-    expect(undelivered).toContain("Rally sends this run's result nowhere");
-    expect(undelivered).toContain("sending it is part of doing the work, with your own tools, inside this run");
-    expect(undelivered).not.toContain("post_result");
-  });
-
-  it("charges the delivery rule to no interactive run", () => {
-    // An interactive run asked to "email this to Bob" must not meet a rule
-    // about a list its context does not carry, and reading it as applying is
-    // how a requested send becomes a description of one.
-    const interactive = renderWorkstreamSystemPrompt({
-      title: "Investigate checkout failures",
-      objective: "Find the cause and create a concise incident note.",
-    });
-
-    expect(interactive).not.toContain("# Result delivery");
-  });
-
-  it("names the channel an automation was set up in, without it being in the instructions", () => {
-    const prompt = renderWorkstreamSystemPrompt({
-      title: "Monday shipped digest",
-      objective: "Ask what each person shipped.",
-      sidekick: {
-        ...workstreamAutomation,
-        instructions: "Ask what each person shipped this weekend.",
-        authoringOrigin: {
-          kind: "slack",
-          teamId: "T0ENG",
-          channelId: "C0SHIPPED",
-          channelName: "eng-shipped",
-        },
-      },
-    });
-
-    expect(prompt).toContain("# Where this Sidekick was set up");
-    expect(prompt).toContain("eng-shipped");
-    expect(prompt).toContain("C0SHIPPED");
-    // The whole reason this is standing context: the instructions a person
-    // reads and edits carry no id, so a run told to post "here" has to be told
-    // where "here" is somewhere other than in that text.
-    expect(prompt).toContain('"instructions": "Ask what each person shipped this weekend."');
-    expect(prompt).toContain("it is not written into the instructions");
-    // Not a fence: an occurrence with a reason to post elsewhere names that
-    // destination itself.
-    expect(prompt).toContain("not a restriction on where it may act");
-  });
-
-  it("says nothing about an origin for an automation set up outside a channel", () => {
-    const prompt = renderWorkstreamSystemPrompt({
-      title: "Weekly engineering brief: 2026-08-07",
-      objective: "Produce the scheduled weekly engineering brief.",
-      sidekick: workstreamAutomation,
-    });
-
-    // A run with no channel behind it must not meet a section about one; a
-    // section that always rendered would have it reasoning about a "here" that
-    // does not exist.
-    expect(prompt).not.toContain("# Where this Sidekick was set up");
+    expect(undelivered).toContain('"homeConversationId": null');
+    expect(undelivered).toContain("A final message describing a send that did not happen is a failed run");
+    expect(undelivered).toContain("do not invent a recipient");
+    expect(undelivered).toContain("If the instructions ask for no delivery, send nothing.");
   });
 
 

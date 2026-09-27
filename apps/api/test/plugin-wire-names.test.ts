@@ -18,6 +18,11 @@ import { createTerminalPlugin } from "../src/services/terminal/contract";
 import type { TerminalToolExecutors } from "../src/services/terminal/contract";
 import { withToolPagination, type PaginationHost } from "../src/services/tool-pagination";
 import { createTestEnv } from "./helpers/cloudflare-test";
+import {
+  CONVERSATIONS_WIRE_PREFIX,
+  conversationToolPorts,
+  createConversationsPlugin,
+} from "../src/services/conversation-tools";
 
 /**
  * A wire prefix is a namespace. The plugins below declare none, so their
@@ -41,18 +46,12 @@ const workflowInput = (): WorkstreamWorkflowInput => ({
   executionPrincipal: { type: "user", userId: "00000000-0000-4000-8000-000000000000" },
 } as WorkstreamWorkflowInput);
 
-const automationRun = () => ({
-  automationId: "00000000-0000-4000-8000-00000000000a",
-  automationRunId: "00000000-0000-4000-8000-00000000000b",
-  generation: 1,
-}) as never;
-
 /** Page expansion with a projection-only host; nothing here issues a real page. */
 function expandPages(tool: HarnessTool, prefix: string): HarnessTool[] {
   if (!tool.definition.pagination) return [tool];
   const host: PaginationHost = {
     prefix,
-    wirePrefix: prefix === "table" ? prefix : "",
+    wirePrefix: prefix === "table" || prefix === CONVERSATIONS_WIRE_PREFIX ? prefix : "",
     connectionId: null,
     fence: { runId: "run", attemptId: "attempt", owner: "owner" },
     receipts: {
@@ -99,10 +98,11 @@ function allPlugins(): HarnessPlugin[] {
     createAgentCommunicationPlugin(new AgentCommunicationService(env, input), "role guidance"),
     createAvalonMultimodalGenerationPlugin(env, input),
     createTerminalPlugin(terminalExecutors),
-    __integrationTesting.createAutomationPostResultPlugin(
-      env,
-      { ...input, automationRun: automationRun() },
-      { owningWorkstreamId: "00000000-0000-4000-8000-000000000009" } as never,
+    // The configuration conversation's scope offers all four tools.
+    createConversationsPlugin(
+      { ...input, parentKind: "automation", parentId: "00000000-0000-4000-8000-00000000000a" },
+      conversationToolPorts(env, input),
+      (tool) => expandPages(tool, CONVERSATIONS_WIRE_PREFIX),
     ),
   ].filter((plugin): plugin is HarnessPlugin => plugin !== null);
 }
@@ -135,10 +135,10 @@ describe("plugin wire names", () => {
     // returns null for a missing provider key would drop out of it silently.
     expect(allPlugins().map((target) => target.canonicalId).sort()).toEqual([
       "avalon:agents",
+      "rally:conversations",
       "rally:core",
       "rally:memory",
       "rally:multimodal-generation",
-      "rally:sidekick-result",
       "rally:tables",
       "rally:terminal",
       "rally:web",
@@ -185,7 +185,6 @@ describe("plugin wire names", () => {
       "list_resources",
       "list_resources_next",
       "list_wakeups",
-      "post_result",
       "publish_branch_and_pr",
       "publish_resource",
       "query_artifact_data",
