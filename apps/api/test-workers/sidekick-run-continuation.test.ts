@@ -437,8 +437,12 @@ describe("Sidekick run continuation", () => {
     await activeSidekick();
     const runId = await completedRun();
 
-    const first = await sendToRun(runId, "Concurrent reply one.", "concurrent-1");
-    const second = await sendToRun(runId, "Concurrent reply two.", "concurrent-2");
+    // Sent at once, not one after the other: the second may land while the
+    // first is still being admitted or is already executing.
+    const [first, second] = await Promise.all([
+      sendToRun(runId, "Concurrent reply one.", "concurrent-1"),
+      sendToRun(runId, "Concurrent reply two.", "concurrent-2"),
+    ]);
     // Settled means both inputs were delivered to the loop and the loop has
     // let go of its last execution. Counting `pending_loop_inputs` alone is
     // not enough: an admitted message waits in the preparation mailbox before
@@ -472,8 +476,9 @@ describe("Sidekick run continuation", () => {
       expect(receipt.status).toBe("completed");
       expect(JSON.parse(receipt.execution_context_json)).toMatchObject({ automationRun: { runId } });
     }
-    expect(continued.map((receipt) =>
-      (JSON.parse(receipt.execution_context_json) as { triggerMessageId: string }).triggerMessageId)[0]).toBe(first);
+    // Whichever the object admitted first started the first continued activation.
+    expect([first, second]).toContain(continued.map((receipt) =>
+      (JSON.parse(receipt.execution_context_json) as { triggerMessageId: string }).triggerMessageId)[0]);
 
     // Every projection the child sent, delivered at once in no particular
     // order, leaves the run completed: the newest version wins.
@@ -502,9 +507,18 @@ describe("Sidekick run continuation", () => {
     // reopen, so it cannot close the continued run.
     await deliver(projection(completion, "completed", v, "stale-completion"));
     expect(await runState(runId)).toBe("running");
-    await deliver(projection(completion, "completed", v + 2, "complete-2"));
+    // The second completion lands a minute after the first, on the parent's
+    // clock, pinned so `completed_at` is seen to move to it rather than merely
+    // not to go backwards: the parent shares this isolate's `Date`.
+    const secondFinish = firstCompletedAt! + 60_000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(secondFinish);
+    try {
+      await deliver(projection(completion, "completed", v + 2, "complete-2"));
+    } finally {
+      clock.mockRestore();
+    }
     expect(await runState(runId)).toBe("completed");
-    expect(await completedAt()).toBeGreaterThanOrEqual(firstCompletedAt!);
+    expect(await completedAt()).toBe(secondFinish);
 
     // A second cycle.
     await deliver(projection(completion, "needs_input", v + 3, "reopen-2"));
@@ -586,7 +600,7 @@ describe("Sidekick run continuation", () => {
     expect(await runState(runId)).toBe("stopped");
 
     const continued = (decided: typeof approved) => {
-      const { outcome: _outcome, automationRun, executionPrincipal, ...fence } = decided;
+      const { automationRun, executionPrincipal, stopGeneration } = decided;
       return {
         region: "global" as const,
         workspaceId: WORKSPACE_ID,
@@ -599,7 +613,7 @@ describe("Sidekick run continuation", () => {
         activityId: null,
         executionPrincipal,
         automationRun,
-        automationContinuation: { ...fence, senderName: "Member", source: { kind: "run" as const } },
+        automationContinuation: { stopGeneration, senderName: "Member", source: { kind: "run" as const } },
         reason: "user_message",
       };
     };
