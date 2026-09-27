@@ -5,6 +5,7 @@ import {
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import type { Region } from "@rally/contracts/regions";
+import { truncateUtf16Safe } from "@rally/contracts/text";
 
 import {
   SidekickRunContinuationSchema,
@@ -72,7 +73,7 @@ export function continuationSource(pending: {
 
 function boundedName(name: string | null): string {
   const trimmed = name?.replace(/\s+/gu, " ").trim() ?? "";
-  return trimmed.length === 0 ? "Somebody" : trimmed.slice(0, 200);
+  return trimmed.length === 0 ? "Somebody" : truncateUtf16Safe(trimmed, 200);
 }
 
 /** What the run's transcript says when the Sidekick refused to continue it. */

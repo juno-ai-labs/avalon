@@ -77,6 +77,7 @@ import {
 } from "@rally/contracts";
 import { z } from "zod";
 
+import { ConversationPostRequestSchema } from "./workspace-conversation-tool-protocol";
 import {
   revocationClosesSession,
   SocketAccessRevocationSchema,
@@ -2237,15 +2238,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     messageId: string | null;
   }> {
     await this.initialized;
-    const request = parseRpcInput(z.strictObject({
-      schemaVersion: z.literal(1),
-      workspaceId: z.string().min(1),
-      workstreamId: z.string().min(1),
-      substreamId: z.union([z.literal("0"), z.string().min(1)]),
-      clientMessageId: z.string().min(1).max(300),
-      text: z.string().min(1).max(MESSAGE_MAX_CHARACTERS),
-      post: AutomationActivationV1Schema,
-    }), input, "append_conversation_post");
+    const request = parseRpcInput(ConversationPostRequestSchema, input, "append_conversation_post");
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== request.workspaceId

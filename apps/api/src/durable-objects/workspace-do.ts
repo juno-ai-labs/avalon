@@ -1019,7 +1019,6 @@ import {
   matchConversationReference,
   parseConversationId,
   scopeConversations,
-  type ConversationScope,
 } from "./workspace-sidekick-conversation-storage";
 import {
   ConversationToolAttachRequestSchema,
@@ -7324,7 +7323,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // A guest reads only what a grant gives them, which the directory's viewer
     // rows do not record, so their `readable` flag says nothing: each unarchived
     // candidate is admitted the way a read would be.
-    const listed = scopeConversations(this.state.storage.sql, request.scope as ConversationScope, request.userId)
+    const listed = scopeConversations(this.state.storage.sql, request.scope, request.userId)
       .filter((conversation) => (guest || conversation.readable) && !conversation.archived);
     const admitted = guest
       ? (await Promise.all(listed.map(async (conversation) => (await this.conversationToolAdmission(
@@ -7366,7 +7365,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(ConversationToolResolveRequestSchema, input, "conversation_tool_resolve");
     this.assertWorkspace(request.workspaceId);
-    const scoped = scopeConversations(this.state.storage.sql, request.scope as ConversationScope, request.userId);
+    const scoped = scopeConversations(this.state.storage.sql, request.scope, request.userId);
     const available = scoped.filter((conversation) => conversation.readable && !conversation.archived)
       .map((conversation) => conversation.conversationId);
     let target;
