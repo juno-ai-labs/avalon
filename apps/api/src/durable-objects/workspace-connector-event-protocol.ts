@@ -63,6 +63,9 @@ export const WorkspaceConnectorEventIngestResultSchema = z.strictObject({
   // Present when the event said nothing its resource's latest event had not:
   // `eventId` is that earlier event, whose own admission owns its processing.
   unchangedContent: z.literal(true).optional(),
+  // A dropped repeat this late, different event showed to be news, stored now
+  // as its own event and still to be processed.
+  restoredEventId: IdSchema.optional(),
 });
 
 export const WorkspaceConnectorEventRequestSchema = z.strictObject({
