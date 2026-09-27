@@ -78,18 +78,33 @@ export const AutomationActivationV1Schema = z.strictObject({
   automationId: AutomationIdSchema,
   /** Frozen at delivery so a later rename does not rewrite history. */
   automationName: z.string().min(1).max(300),
-  /** The run that produced it, which is also its substream under the automation. */
+  /**
+   * The run that produced it, which is also its substream under the automation.
+   * A `conversation_post` from the Sidekick's configuration conversation has no
+   * run, and carries that loop's harness run id instead.
+   */
   runId: IdSchema,
   deliveryId: z.string().min(1).max(200),
   /**
    * Provenance a reader and the model can both see. It narrows nothing about
    * what the woken run may do; the untrusted label carries the difference in
-   * how far to trust the text.
+   * how far to trust the text. Absent on a post from the configuration
+   * conversation, which no trigger started.
    */
   trigger: z.strictObject({
     kind: z.enum(["manual", "schedule", "external_event", "inbound_email"]),
-  }).strict(),
+  }).strict().optional(),
   occurredAt: z.number().int().nonnegative(),
+  /**
+   * The person outside Rally whose words this post forwards, when the run was
+   * continued by a message from a bound external thread. Host-derived from
+   * that message, never from the model, so a later reader of the conversation
+   * can tell forwarded external text from the Sidekick's own.
+   */
+  externalSource: z.strictObject({
+    provider: z.string().min(1).max(80),
+    displayName: z.string().min(1).max(180),
+  }).optional(),
 });
 export type AutomationActivationV1 = z.infer<typeof AutomationActivationV1Schema>;
 

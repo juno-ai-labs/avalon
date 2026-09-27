@@ -24,6 +24,7 @@ import {
   asSubstreamId,
   asUserId,
   asWorkspaceId,
+  SubstreamIdSchema,
   isExternalEventTrigger,
   semanticConditionsForEventType,
   type AutomationDetail,
@@ -197,6 +198,8 @@ interface AutomationRow extends Record<string, SqlStorageValue> {
   paused_by: "person" | "room_archive" | null;
   scope: AutomationScope;
   owning_workstream_id: string | null;
+  /** The home under `owning_workstream_id`: `"0"` for its Main conversation, else a Breakout id. */
+  owning_substream_id: string;
   owning_room_archived_at: number | null;
   title: string;
   description: string;
@@ -421,6 +424,16 @@ export const AUTOMATION_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
   // publishes again, so `afterMigrations` republishes once, as it did for 3.
   // The statement changes nothing; a migration must run at least one.
   statements: ["UPDATE automation SET updated_at = updated_at WHERE id = 1"],
+}, {
+  version: 11,
+  description: "a home conversation that can be a Breakout",
+  statements: [
+    // Beside `owning_workstream_id` rather than in place of it: replacing that
+    // column would rebuild a table whose CHECK names it. A Channel's Main
+    // conversation is substream "0", so every existing Sidekick keeps its home
+    // with no backfill. See docs/automation-lifecycle.md.
+    `ALTER TABLE automation ADD COLUMN owning_substream_id TEXT NOT NULL DEFAULT '0'`,
+  ],
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -533,12 +546,12 @@ export class SidekickDO extends ConversationParentDurableObject {
       this.state.storage.sql.exec(
         `INSERT INTO automation
            (id, automation_id, workspace_id, region, author_user_id, run_as_user_id, lifecycle,
-            paused_by, scope, owning_workstream_id, owning_room_archived_at, title, description,
-            current_definition_revision, accepted_definition_revision, connector_bindings_json,
+            paused_by, scope, owning_workstream_id, owning_substream_id, owning_room_archived_at, title,
+            description, current_definition_revision, accepted_definition_revision, connector_bindings_json,
             default_plugin_ids_json, activity_source_plugin_ids_json, evaluator_projection_json,
             model_override, email_address, effective_after_event_sequence, authority_generation,
             created_at, updated_at)
-         VALUES (1, ?, ?, ?, ?, ?, 'draft', NULL, ?, ?, NULL, '', '', 0, NULL, '{}', '[]', '{}', '[]',
+         VALUES (1, ?, ?, ?, ?, ?, 'draft', NULL, ?, ?, ?, NULL, '', '', 0, NULL, '{}', '[]', '{}', '[]',
                  NULL, NULL, NULL, ?, ?, ?)`,
         request.automationId,
         request.workspaceId,
@@ -547,6 +560,7 @@ export class SidekickDO extends ConversationParentDurableObject {
         request.authorUserId,
         request.scope,
         request.owningWorkstreamId,
+        request.owningSubstreamId,
         request.authorityGeneration,
         now,
         now,
@@ -1238,6 +1252,7 @@ export class SidekickDO extends ConversationParentDurableObject {
       connectorBindings: JSON.parse(row.connector_bindings_json),
       scope: row.scope,
       owningWorkstreamId: row.owning_workstream_id,
+      owningSubstreamId: row.owning_substream_id,
       runAsUserId: row.run_as_user_id,
       modelOverride: row.model_override,
       trigger: JSON.parse(run.trigger_json),
@@ -1424,11 +1439,20 @@ export class SidekickDO extends ConversationParentDurableObject {
         row.workspace_id,
         workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(row.workspace_id)),
       );
-      authorized = (await workspace.workstreamParticipant({
-        workspaceId: row.workspace_id,
-        workstreamId: row.owning_workstream_id,
-        userId: request.userId,
-      })).participant;
+      // A Breakout home narrows the room to the Breakout's own members, through
+      // the same admission the Breakout's conversation uses.
+      authorized = row.owning_substream_id === "0"
+        ? (await workspace.workstreamParticipant({
+          workspaceId: row.workspace_id,
+          workstreamId: row.owning_workstream_id,
+          userId: request.userId,
+        })).participant
+        : (await workspace.authorizeViewer({
+          workspaceId: asWorkspaceId(row.workspace_id),
+          parentId: row.owning_workstream_id,
+          substreamId: asSubstreamId(row.owning_substream_id),
+          userId: request.userId,
+        })).authorized;
     }
     return ConversationParentAuthorizeViewerResultSchema.parse({
       authorized,
@@ -1455,6 +1479,7 @@ export class SidekickDO extends ConversationParentDurableObject {
     if (!row || row.lifecycle === 'deleted') return { exists: false as const, validatedAt: Date.now() };
     this.assertAutomation(request.workspaceId, request.parentId);
     return { exists: true as const, scope: row.scope, owningWorkstreamId: row.owning_workstream_id,
+      owningSubstreamId: row.owning_substream_id,
       author: row.author_user_id === request.userId, executor: row.run_as_user_id === request.userId,
       children: this.childRegistry().map((child) => child.substreamId),
       revision: JSON.stringify([row.authority_generation, row.updated_at]), validatedAt: Date.now() };
@@ -2340,6 +2365,7 @@ export class SidekickDO extends ConversationParentDurableObject {
       lifecycle: row.lifecycle,
       scope: row.scope,
       owningWorkstreamId: row.owning_workstream_id,
+      owningSubstreamId: SubstreamIdSchema.parse(row.owning_substream_id),
       title: row.title,
       description: row.description,
       nextRunAt: iso(this.nextRunAt(row)),

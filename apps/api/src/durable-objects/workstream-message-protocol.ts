@@ -41,6 +41,7 @@ const DISPATCHED_OPERATIONS = [
   "message",
   "messageByClientId",
   "messagesBefore",
+  "readableMessagesBefore",
   "messagesAfter",
   "messageAtSequence",
   "saidMessages",
