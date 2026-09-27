@@ -23,12 +23,15 @@ import {
   asWorkspaceId,
   asWorkstreamId,
   type AutomationDraft,
+  WorkstreamWorkflowInputSchema,
   type SubstreamId,
 } from "@rally/contracts";
 
 import type { AutomationDO } from "../src/durable-objects/automation-do";
 import { automationDOName, conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
+import { AgentCommunicationService } from "../src/services/agent-communication-service";
+import { AuthorizationService } from "../src/services/authorization-service";
 import { createAutomation } from "../src/services/automation-service";
 import {
   bootstrapConversationChildRuntime,
@@ -126,16 +129,21 @@ async function seedRegionalDatabase(): Promise<void> {
 }
 
 /** A personal room with only the author in it, made the way creation makes one. */
-async function seedRoom(roomId: string, title: string, participantUserIds: string[] = [AUTHOR_ID]): Promise<void> {
+async function seedRoom(
+  roomId: string,
+  title: string,
+  participantUserIds: string[] = [AUTHOR_ID],
+  scope: "personal" | "workspace" = "personal",
+): Promise<void> {
   await workspace().reserveChild({
     workspaceId: WORKSPACE_ID, parentId: roomId, substreamId: asSubstreamId("0"), kind: "main",
     createdByUserId: AUTHOR_ID, authorityGeneration: 1,
-    directory: { title, description: "", scope: "personal", systemKind: null, emailAddress: null,
+    directory: { title, description: "", scope, systemKind: null, emailAddress: null,
       titleStatus: "settled", createdAt: NOW },
   });
   await bootstrapWorkstreamRuntimeEnvironment(TEST_ENV, WORKSPACE_ID, roomId, "workstream");
   await provisionWorkstreamObject(TEST_ENV, {
-    workspaceId: WORKSPACE_ID, workstreamId: roomId, title, objective: "", scope: "personal",
+    workspaceId: WORKSPACE_ID, workstreamId: roomId, title, objective: "", scope,
     createdByUserId: AUTHOR_ID, participantUserIds, harnessStatus: "idle", titleStatus: "settled",
     emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride: null, now: Date.now(),
   });
@@ -231,6 +239,29 @@ describe("a Sidekick's home conversation", () => {
       scope: sidekickScope(), reference: null })).toMatchObject({
       ok: true, sidekickName: "Weekly call prep", conversation: { conversationId: `${ROOM_ID}/${breakout}` },
     });
+  });
+
+  it("narrows a Breakout-homed Sidekick to the Breakout's members, wherever it is asked", async () => {
+    // The colleague is in the room, not in the Breakout.
+    const breakout = await seedBreakout("Weekly call");
+    await seedSidekick(breakout);
+
+    expect((await automation().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID,
+      userId: COLLEAGUE_ID })).authorized).toBe(false);
+    const authorization = new AuthorizationService(TEST_ENV);
+    expect(await authorization.checkMany({ workspaceId: WORKSPACE_ID, userId: COLLEAGUE_ID, delegation: null },
+      [{ kind: "conversation", workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, substreamId: asSubstreamId("0") }]))
+      .toMatchObject([{ status: "denied" }]);
+    // Nor can the colleague make a Sidekick homed there from its loop.
+    const loop = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: breakout, loopId: `workstream:${ROOM_ID}:substream:${breakout}:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: COLLEAGUE_ID }, reason: "test" });
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: loop.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: loop.executionPrincipal, signal: new AbortController().signal };
+    await expect(new AgentCommunicationService(TEST_ENV, loop).createSidekick("workstream", context))
+      .rejects.toMatchObject({ code: "sidekick_owning_workstream_forbidden" });
   });
 
   it("pauses the Sidekick when its home Breakout is archived", async () => {
@@ -462,6 +493,20 @@ describe("a guest", () => {
     expect(await opens()).toBe(false);
     await grant({ kind: "conversation", workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: breakout });
     expect(await opens()).toBe(true);
+  });
+
+  it("reaches only by grant: an Organization-wide Channel is not theirs to read", async () => {
+    // Every member reads an Organization-wide Channel without a seat; a guest
+    // reads only what a grant gives them, and has none here. (A guest cannot
+    // be seated in a Breakout without a share, so a seat is not a way in.)
+    await seedRoom(OTHER_ROOM_ID, "Announcements", [AUTHOR_ID], "workspace");
+    await seedGuest([]);
+    const scope = { kind: "conversation" as const, parentId: OTHER_ROOM_ID, substreamId: asSubstreamId("0") };
+
+    expect((await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: GUEST_ID, scope }))
+      .conversations).toEqual([]);
+    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: GUEST_ID,
+      scope, reference: OTHER_ROOM_ID })).toMatchObject({ ok: false, code: "conversation_access_denied" });
   });
 
   it("lists a conversation a grant gives them, as it resolves it", async () => {
