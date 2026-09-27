@@ -12,7 +12,7 @@ import {
   type WorkspaceScheduleContext,
   type WorkspaceScheduleTarget,
 } from "../src/services/workspace-schedule-execution";
-import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
+import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import {
   createTestWorkspaceDO,
@@ -2712,6 +2712,21 @@ describe("Slack replies routed by external conversation bindings", () => {
     ]);
   });
 
+  /** The Sidekick object's answer about the run the DM's latest request belongs to. */
+  function sidekickRuns(state: string, reads: Array<Record<string, unknown>> = []): Partial<Env> {
+    return {
+      AUTOMATION_DOS: createCloudflareTestBinding<Env["AUTOMATION_DOS"]>({
+        idFromName: (name: string) => createTestDurableObjectId(name),
+        get: () => ({
+          readRunState: async (request: Record<string, unknown>) => {
+            reads.push(request);
+            return { state, lifecycle: "active", completedAt: null };
+          },
+        }),
+      }),
+    };
+  }
+
   it("asks a top-level DM reply to answer in the open request's thread, the same way on a retry, and creates no work", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
@@ -2719,8 +2734,9 @@ describe("Slack replies routed by external conversation bindings", () => {
     seedBinding(objectDatabase, ["D1", "1727.002"]);
     insertSlackEventJob(objectDatabase, "event:top-level", dmMessage("EvTopLevel", { ts: "1727.200", text: "Nothing from me" }));
     const { posted } = slackStub();
+    const reads: Array<Record<string, unknown>> = [];
     const service = new SlackAgentService(slackMembershipEnvironment(
-      database, instance, credentialsKey, vi.fn(async () => undefined),
+      database, instance, credentialsKey, vi.fn(async () => undefined), undefined, sidekickRuns("needs_input", reads),
     ));
 
     await service.processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:top-level");
@@ -2735,7 +2751,60 @@ describe("Slack replies routed by external conversation bindings", () => {
     expect(posted[0]).toMatchObject({ channel: "D1", thread_ts: "1727.200" });
     expect(String(posted[0]!.text)).toContain("https://slack.com/archives/D1/p1727002");
     expect(posted[1]!.client_msg_id).toBe(posted[0]!.client_msg_id);
+    expect(reads[0]).toMatchObject({ automationId: SIDEKICK, runId: RUN });
+
+    // A reply under that prompt is still not the request's thread: asked
+    // again, in the prompt's own thread, rather than becoming Agent work.
+    insertSlackEventJob(objectDatabase, "event:under-prompt", dmMessage("EvUnderPrompt", {
+      ts: "1727.300", threadTs: "1727.200", text: "Nothing from me, again",
+    }));
+    await service.processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:under-prompt");
+    expect(posted).toHaveLength(3);
+    expect(posted[2]).toMatchObject({ channel: "D1", thread_ts: "1727.200" });
     expect(objectDatabase.prepare("SELECT COUNT(*) AS count FROM slack_agent_sessions").get()).toEqual({ count: 0 });
+  });
+
+  it("treats a top-level DM as Agent work again once the request's run has finished", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    seedBinding(objectDatabase, ["D1", "1727.002"]);
+    insertSlackEventJob(objectDatabase, "event:after-run", dmMessage("EvAfterRun", { ts: "1727.600", text: "investigate this" }));
+    const posted: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      const json = (body: unknown) => new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+      if (url.pathname.endsWith("users.info")) {
+        return json({
+          ok: true,
+          user: {
+            id: "U456", team_id: "T123", deleted: false, is_bot: false, name: "adam",
+            profile: { display_name: "Adam", real_name: "Adam" },
+          },
+        });
+      }
+      if (url.pathname.endsWith("assistant.threads.setStatus") || url.pathname.endsWith("assistant.threads.setTitle")) {
+        return json({ ok: true });
+      }
+      if (url.pathname.endsWith("chat.postMessage")) {
+        posted.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return json({ ok: true, channel: "D1", ts: "1727.900" });
+      }
+      throw new Error(`Unexpected Slack request ${url}`);
+    }));
+
+    const objectStores = new Map<string, DatabaseSync>();
+    await new SlackAgentService(slackMembershipEnvironment(
+      database, instance, credentialsKey, vi.fn(async () => undefined), objectStores, sidekickRuns("completed"),
+    )).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:after-run");
+
+    expect(posted).toEqual([]);
+    expect(objectDatabase.prepare(
+      "SELECT slack_channel_id, slack_thread_ts FROM slack_agent_sessions",
+    ).get()).toEqual({ slack_channel_id: "D1", slack_thread_ts: "1727.600" });
   });
 
   it("keeps today's one-to-one Agent behavior in a DM with no open request", async () => {
