@@ -18,7 +18,6 @@ import { searchIndexingConfigured } from '../services/search-embedding';
 import { conversationSearchDocumentIds, prepareConversationLinks, readConversationSearchLink, type ConversationDisplay } from './conversation-link-search';
 import {
   drainExternalBindingOutbox,
-  enqueueExternalBindingInTransaction,
   nextExternalBindingDueAt,
 } from "./external-binding-outbox";
 import { drainSearchProjectionOutbox, nextSearchProjectionDueAt, SearchConversationProjectionMessageSchema, SearchProjectionMessageSchema } from './search-projection-outbox';
@@ -1096,22 +1095,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         () => this.externalSubstreamId(),
       );
       this.terminal = new WorkstreamTerminalStorage(state.storage);
-      this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage, (binding, now) => {
-        // Only a run child binds its own sends, and only to itself: the host
-        // names the target, and this object refuses one that is not this run.
-        const identity = this.objectStore.identity();
-        if (!identity
-          || binding.target.parentKind !== identity.parentKind
-          || binding.target.parentId !== identity.parentId
-          || binding.target.substreamId !== this.externalSubstreamId()) {
-          throw new Error("tool_receipt_external_binding_target_mismatch");
-        }
-        enqueueExternalBindingInTransaction(state.storage.sql, {
-          ...binding,
-          workspaceId: identity.workspaceId,
-          at: new Date(now).toISOString(),
-        }, now);
-      });
+      this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage);
       this.residentContext = new WorkstreamResidentContextStorage(state.storage);
       this.scheduling = new WorkstreamSchedulingStorage(state.storage);
       this.messages = new WorkstreamMessageStorage(state.storage);
@@ -5833,12 +5817,20 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     try {
       const workspace = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
         identity.workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)));
+      // The thread routes to this run child: the conversation whose receipt
+      // committed the row.
+      const target = {
+        kind: "conversation" as const,
+        parentKind: identity.parentKind,
+        parentId: identity.parentId,
+        substreamId: this.externalSubstreamId(),
+      };
       const report = await drainExternalBindingOutbox(this.state.storage.sql, (binding) =>
         workspace.recordOutboundExternalConversationBinding({
-          workspaceId: binding.workspaceId,
+          workspaceId: identity.workspaceId,
           installationId: binding.installationId,
           path: binding.path,
-          target: binding.target,
+          target,
           at: binding.at,
         }));
       for (const [event, rows] of [
