@@ -231,6 +231,7 @@ export {
   verifyGitHubWebhook,
   verifyGitHubWebhookSignature,
   discoverGitHubWebhookResources,
+  isDiscardedGitHubDelivery,
   normalizeGitHubWebhook,
   refreshGitHubUserCredentials,
   canGitHubPersonalConnectionAccessRepository,
@@ -3710,6 +3711,12 @@ function normalizeDriveActivity(
     metadata: {
       removed,
       trashed: file ? readBoolean(file, "trashed") : null,
+      // The edit itself, in the content: ingest drops an event that repeats
+      // its file's last one, and a Google-native file has no checksum, so
+      // without these two consecutive edits would read the same. A change
+      // that moves neither, such as sharing, is dropped as nothing new.
+      modifiedTime: file ? readString(file, "modifiedTime") : null,
+      md5Checksum: file ? readString(file, "md5Checksum") : null,
       driveId: readString(change, "driveId"),
       parents: file ? readStringArray(file, "parents") : [],
       mimeType

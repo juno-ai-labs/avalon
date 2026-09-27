@@ -944,6 +944,7 @@ async function consumeOne(message: Message<unknown>, env: Env,
         processing_attempt: admission.processingAttempt,
         processing_owner_id: admission.processingOwnerId,
         processing_outcome: admission.processingOutcome,
+        restored_event_id: admission.accepted.restoredEventId ?? null,
         outcome: "admitted",
         reason: "workspace_event_committed",
         queue_attempts: message.attempts,
@@ -1113,8 +1114,14 @@ async function admitConnectorEvent(
       : Math.max(0, requestedAttempt);
   const recordedAttempt = Math.min(processingAttempt, 5);
   let processingOwnerId: string | null = null;
-  let processingOutcome: "enqueued" | "active_processing" | "already_processed" | "attempts_exhausted";
-  if (
+  let processingOutcome:
+    | "enqueued" | "active_processing" | "already_processed" | "attempts_exhausted" | "unchanged_content";
+  if (accepted.unchangedContent) {
+    // A repeat of an earlier event's content. That event's own admission
+    // enqueued its processing; waking or retrying it again here would turn
+    // every re-stamp into more work.
+    processingOutcome = "unchanged_content";
+  } else if (
     (accepted.processingStatus === "pending" || accepted.processingStatus === "failed")
     && processingAttempt <= 5
   ) {
@@ -1133,6 +1140,16 @@ async function admitConnectorEvent(
     processingOutcome = accepted.processingStatus === "processed"
       ? "already_processed"
       : "attempts_exhausted";
+  }
+  if (accepted.restoredEventId) {
+    // Nothing else wakes a restored repeat: its own delivery was dropped.
+    await enqueueWorkspaceConnectorEventProcess(env, {
+      region: env.AVALON_REGION,
+      workspaceId: request.workspaceId,
+      eventId: accepted.restoredEventId,
+      processingOwnerId: uuidV7(),
+      processingAttempt: 0,
+    });
   }
   return { accepted, processingAttempt, recordedAttempt, processingOwnerId, processingOutcome };
 }

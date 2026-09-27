@@ -1026,6 +1026,17 @@ describe("connectors", () => {
                 modifiedTime: "2026-07-31T12:00:00Z",
                 lastModifyingUser: { displayName: "Samantha", emailAddress: "samantha@example.com" }
               }
+            },
+            {
+              fileId: "file-3",
+              time: "2026-07-31T12:00:30Z",
+              file: {
+                id: "file-3",
+                name: "Budget.pdf",
+                mimeType: "application/pdf",
+                modifiedTime: "2026-07-31T12:00:30Z",
+                md5Checksum: "0123456789abcdef0123456789abcdef"
+              }
             }
           ],
           nextPageToken: "11"
@@ -1049,14 +1060,29 @@ describe("connectors", () => {
       neverAborts()
     );
     expect(incremental.cursor).toMatchObject({ drive: { pageToken: "20" } });
-    expect(incremental.activities).toHaveLength(2);
+    expect(incremental.activities).toHaveLength(3);
+    // The edit is in the content, not only the identity: ingest drops an event
+    // whose content repeats its file's last one, and a Google-native file has
+    // no checksum, so its modified time is the only thing telling edits apart.
     expect(incremental.activities[0]).toMatchObject({
       eventType: "docs.document_changed",
       resourceType: "google_doc",
       providerResourceId: "file-1",
-      metadata: { mimeType: "application/vnd.google-apps.document" }
+      metadata: {
+        mimeType: "application/vnd.google-apps.document",
+        modifiedTime: "2026-07-31T12:00:00Z",
+        md5Checksum: null
+      }
     });
     expect(incremental.activities[1]).toMatchObject({
+      eventType: "drive.file_changed",
+      providerResourceId: "file-3",
+      metadata: {
+        modifiedTime: "2026-07-31T12:00:30Z",
+        md5Checksum: "0123456789abcdef0123456789abcdef"
+      }
+    });
+    expect(incremental.activities[2]).toMatchObject({
       eventType: "drive.file_changed",
       providerResourceId: "file-2",
       title: "Drive file removed: Drive file file-2"

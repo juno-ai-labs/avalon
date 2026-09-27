@@ -44,9 +44,9 @@ events target their connection owner; there is no additional Canva recipient gat
 
 ## GitHub
 
-Thirty of ninety-one. The loudest connector Rally has: continuous integration
-alone reports two events per check and three per workflow run, so a repository
-under active development emits an order of magnitude more machinery than news.
+Thirty of eighty-seven. The loudest connector Rally has: continuous integration
+reports two events per check and three per workflow run, so ingress keeps only a
+workflow run's completion and discards the rest before it is stored.
 
 | Activity type | Digestible | Reason |
 | --- | --- | --- |
@@ -82,11 +82,7 @@ under active development emits an order of magnitude more machinery than news.
 | `github.repository.privatized` | Yes | Same, in the other direction. |
 | `github.push` | No | Fires for every branch, so on a repository that reviews its work it is the commits the pull request already reported, counted twice. |
 | `github.pull_request.synchronize` | No | The same commits again, seen from the pull request's side. |
-| `github.check_run.created` | No | Continuous integration starting. |
-| `github.check_run.completed` | No | Continuous integration finishing; the single largest source of events in the log. |
-| `github.workflow_run.requested` | No | A workflow queued. |
-| `github.workflow_run.in_progress` | No | A workflow running. |
-| `github.workflow_run.completed` | No | A workflow finished; its own history, in its own tab. |
+| `github.workflow_run.completed` | No | A workflow finished, the one CI event kept. Check runs and a run starting are discarded at ingress. |
 | `github.pull_request.edited` | No | The description changed after the reader was already told it exists. |
 | `github.pull_request.converted_to_draft` | No | Withdrawn from review; the return trip is `ready_for_review`. |
 | `github.pull_request.review_request_removed` | No | An ask that was never acted on being tidied up. |

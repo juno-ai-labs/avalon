@@ -8,6 +8,7 @@ import {
   enqueueActivityOpportunity,
   isSuggestedWorkCandidateEventType,
   SUGGESTED_WORK_EXCLUDED_EVENT_TYPE_PREFIXES,
+  SUGGESTED_WORK_RETIRED_EVENT_TYPE_PREFIXES,
 } from "../src/services/work-opportunity-batching";
 import { WorkstreamService } from "../src/services/workstream-service";
 import { createCloudflareTestBinding, createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
@@ -288,8 +289,8 @@ describe("suggested-work aggregation", () => {
   it("withholds only what the connector that emits it already called operational", () => {
     // The gate is Suggested Work's own judgement, not the digest's — the
     // recorded decision in `activity-consumer.ts` is that this surface must not
-    // inherit that notification choice, and 142 of the 205 declared types are
-    // operational where this gate withholds 5. What it may not do is disagree
+    // inherit that notification choice, and 136 of the 197 declared types are
+    // operational where this gate withholds 1. What it may not do is disagree
     // with a manifest: a type withheld from the home screen has to be one its
     // own connector already declined to call news. This is the check that keeps
     // the two from drifting apart, since neither file mentions the other in a
@@ -325,13 +326,9 @@ describe("suggested-work aggregation", () => {
 
     // Nothing this gate withholds is news to its own connector.
     expect(digestibleButWithheld).toEqual([]);
-    // And the five it withholds today are the two CI families, whole.
+    // And the one it withholds today is the CI family GitHub ingress keeps.
     expect([...withheld].sort()).toEqual([
-      "github.check_run.completed",
-      "github.check_run.created",
       "github.workflow_run.completed",
-      "github.workflow_run.in_progress",
-      "github.workflow_run.requested",
     ]);
 
     // Every prefix earns its place. A prefix matching no declared type is a
@@ -339,11 +336,12 @@ describe("suggested-work aggregation", () => {
     // not, and the assertion above cannot see it, because withholding nothing
     // leaves that list unchanged. This is how a family renamed at the
     // connector (`check_run` to `check_suite`, say) surfaces here rather than
-    // as a bill.
+    // as a bill. The one exception is a family retired on purpose whose stored
+    // events can still drain, and it has to be named as that.
     const declared = registry.list().flatMap((manifest) => manifest.activityTypes);
     expect(SUGGESTED_WORK_EXCLUDED_EVENT_TYPE_PREFIXES.filter((prefix) => (
       !declared.some((eventType) => eventType.startsWith(prefix))
-    ))).toEqual([]);
+    ))).toEqual([...SUGGESTED_WORK_RETIRED_EVENT_TYPE_PREFIXES]);
   });
 
   // Two suites lived here and covered the D1 batching window: the debounce and

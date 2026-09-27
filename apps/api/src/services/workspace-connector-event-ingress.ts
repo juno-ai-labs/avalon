@@ -36,6 +36,18 @@ function canonicalJson(value: unknown): string {
   )).join(",")}}`;
 }
 
+/** Hash the event with the named activity fields blanked. */
+async function hashEventWithout(
+  event: WorkspaceConnectorEvent,
+  blanked: readonly (keyof NormalizedActivity)[],
+): Promise<string> {
+  const content = {
+    ...event,
+    activity: { ...event.activity, ...Object.fromEntries(blanked.map((field) => [field, ""])) },
+  };
+  return `sha256:${await sha256Hex(canonicalJson(content))}`;
+}
+
 /** Delivery-only fields do not change the provider event's durable identity. */
 export async function workspaceConnectorEventPayloadHash(
   event: WorkspaceConnectorEvent,
@@ -45,16 +57,27 @@ export async function workspaceConnectorEventPayloadHash(
   // signal here, so renewed delivery metadata does not conflict with that ID.
   const renewableSignal = event.activity.provider === "ashby"
     && event.activity.eventType === "candidateRecentEmailMessagesUpdated";
-  const content = {
-    ...event,
-    activity: {
-      ...event.activity,
-      id: "",
-      receivedAt: "",
-      ...(renewableSignal ? { payloadRef: "", rawContentHash: "" } : {}),
-    },
-  };
-  return `sha256:${await sha256Hex(canonicalJson(content))}`;
+  return hashEventWithout(event, [
+    "id",
+    "receivedAt",
+    ...(renewableSignal ? ["payloadRef", "rawContentHash"] as const : []),
+  ]);
+}
+
+/**
+ * What the event says, without when or under which name it was said. Two
+ * events for one resource with the same fingerprint tell a reader nothing new:
+ * Google re-stamps a calendar event's `updated` with nothing visible changed,
+ * and that stamp is the event's identity, so each touch arrives as a new event.
+ * An adapter whose only change marker is its timestamp must put that marker in
+ * the content as well, or its genuine repeats are suppressed as no-ops.
+ */
+export function workspaceConnectorEventContentFingerprint(
+  event: WorkspaceConnectorEvent,
+): Promise<string> {
+  return hashEventWithout(event, [
+    "id", "receivedAt", "occurredAt", "providerEventId", "dedupeKey", "payloadRef",
+  ]);
 }
 
 export async function workspaceConnectorEventQueueMessage(input: {
