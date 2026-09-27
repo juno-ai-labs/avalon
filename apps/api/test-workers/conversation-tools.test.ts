@@ -314,6 +314,24 @@ describe("a conversation tool's scope", () => {
       .toEqual({ ok: false, code: "conversation_access_denied", available: [], resourceId: breakout });
   });
 
+  it("reaches nothing for a person whose membership has ended", async () => {
+    await seedSidekick("0");
+    const scope = { kind: "conversation" as const, parentId: ROOM_ID, substreamId: asSubstreamId("0") };
+    const listed = async () => (await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID,
+      userId: COLLEAGUE_ID, scope })).conversations.map((entry) => entry.conversationId);
+    expect(await listed()).toEqual([ROOM_ID]);
+
+    await workspace().applyMemberStatus({ workspaceId: WORKSPACE_ID, sequence: 2, removed: true, relationship: {
+      workspaceId: WORKSPACE_ID, userId: COLLEAGUE_ID, accessClass: "member", role: "member", status: "active",
+      incarnation: "existing-member", revision: 1,
+    } });
+
+    expect(await listed()).toEqual([]);
+    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: COLLEAGUE_ID,
+      scope, reference: ROOM_ID }))
+      .toEqual({ ok: false, code: "conversation_access_denied", available: [], resourceId: ROOM_ID });
+  });
+
   it("refuses an archived conversation by name, and lists it no longer", async () => {
     await seedRoom(OTHER_ROOM_ID, "Founders");
     await seedSidekick("0");
