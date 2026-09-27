@@ -4102,7 +4102,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           ? {
               automationRun: continuation.automationRun,
               automationContinuation: {
-                approvedAt: continuation.approvedAt,
+                stopGeneration: continuation.stopGeneration,
                 ...continuationSource(pending),
               },
             }

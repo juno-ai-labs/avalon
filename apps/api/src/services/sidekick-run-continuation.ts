@@ -58,7 +58,7 @@ export function continuationSource(pending: {
   actor: string;
   author_name_snapshot: string | null;
   external_actor_json: string | null;
-}): Omit<NonNullable<WorkstreamWorkflowInput["automationContinuation"]>, "approvedAt"> {
+}): Omit<NonNullable<WorkstreamWorkflowInput["automationContinuation"]>, "stopGeneration"> {
   if (pending.actor === "external" && pending.external_actor_json) {
     const actor = ExternalActorSchema.safeParse(JSON.parse(pending.external_actor_json));
     if (actor.success) {

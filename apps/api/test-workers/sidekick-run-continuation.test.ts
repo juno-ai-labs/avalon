@@ -22,10 +22,11 @@
 
 import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   asAutomationId,
+  asHarnessRunId,
   asSubstreamId,
   asUserId,
   asWorkspaceId,
@@ -38,9 +39,10 @@ import {
 } from "@rally/contracts/conversation-effects";
 
 import type { AutomationDO } from "../src/durable-objects/automation-do";
-import { automationDOName, conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
+import { automationDOName, conversationObjectName, substreamLoopId, workspaceDOName } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
+import { __integrationTesting } from "../src/services/integrations";
 import { consumeEffectBodies, deliverChildEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { useOpenRouterDouble, type ProviderReply } from "./helpers/openrouter-double";
@@ -510,6 +512,61 @@ describe("Sidekick run continuation", () => {
     await sidekickStub().pause({ ...addressed(), actor: actor() });
     await deliver(projection(completion, "running", v + 6, "reopen-paused"));
     expect(await runState(runId)).toBe("failed");
+  });
+
+  it("refuses a continuation's writes after a pause that followed its approval, even in the same millisecond", async () => {
+    await activeSidekick();
+    // The Sidekick's own activation ends, but with the queue held the row
+    // still reads `running`, so a pause has an open run to stop.
+    const { runId } = await startedRun();
+    expect(await runState(runId)).toBe("running");
+
+    // The approval and the pause on one millisecond, which is the order a
+    // wall-clock fence cannot tell apart. workerd often lands them there on
+    // its own, since it does not advance `Date.now()` without I/O; pinning
+    // the clock makes it certain. The object shares this isolate's `Date`.
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now());
+    let approved: Awaited<ReturnType<AutomationDO["continueRun"]>>;
+    try {
+      approved = await runInDurableObject(sidekickStub(), async (instance: AutomationDO) => {
+        const decided = await instance.continueRun({ ...addressed(), runId });
+        await instance.pause({ ...addressed(), actor: actor() });
+        return decided;
+      });
+    } finally {
+      clock.mockRestore();
+    }
+    if (approved.outcome !== "continue") throw new Error(`expected a continuation, got ${approved.code}`);
+    await sidekickStub().resume({ ...addressed(), actor: actor() });
+    expect(await runState(runId)).toBe("stopped");
+
+    const continued = (decided: typeof approved) => {
+      const { outcome: _outcome, automationRun, executionPrincipal, ...fence } = decided;
+      return {
+        region: "global" as const,
+        workspaceId: WORKSPACE_ID,
+        parentKind: "automation" as const,
+        parentId: AUTOMATION_ID,
+        substreamId: asSubstreamId(runId),
+        loopId: substreamLoopId(AUTOMATION_ID, asSubstreamId(runId)),
+        harnessRunId: asHarnessRunId(crypto.randomUUID()),
+        triggerMessageId: null,
+        activityId: null,
+        executionPrincipal,
+        automationRun,
+        automationContinuation: { ...fence, senderName: "Member", source: { kind: "run" as const } },
+        reason: "user_message",
+      };
+    };
+    await expect(__integrationTesting.assertRunAuthorityStillValid(TEST_ENV, continued(approved)))
+      .rejects.toThrow(/no longer running/i);
+
+    // A continuation approved after that stop acts through it: the fence
+    // refuses only a stop the approval did not already see.
+    const later = await sidekickStub().continueRun({ ...addressed(), runId });
+    if (later.outcome !== "continue") throw new Error(`expected a continuation, got ${later.code}`);
+    await expect(__integrationTesting.assertRunAuthorityStillValid(TEST_ENV, continued(later)))
+      .resolves.toMatchObject({ automationRunId: runId });
   });
 
   it("keeps the run's context when a person answers a question the run asked", async () => {
