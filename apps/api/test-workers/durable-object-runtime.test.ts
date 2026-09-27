@@ -70,6 +70,7 @@ import {
   type WorkspaceOpportunityPersistRequest,
 } from "../src/durable-objects/workspace-opportunity-protocol";
 import { WORKSPACE_LOCAL_TABLES } from "../src/services/workspace-runtime-database";
+import { workspaceConnectorEventQueueMessage } from "../src/services/workspace-connector-event-ingress";
 import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000101");
@@ -3913,7 +3914,13 @@ describe("Durable Objects in the Workers runtime", () => {
         payloadHash: `sha256:${String(index).repeat(64)}`,
         event: {
           ...event,
-          activity: { ...event.activity, providerEventId: `delivery-${index}`, dedupeKey: `retention:${index}` },
+          activity: {
+            ...event.activity,
+            providerEventId: `delivery-${index}`,
+            dedupeKey: `retention:${index}`,
+            // Distinct content, or ingest keeps only the first as nothing new.
+            summary: `Retention case ${index}`,
+          },
         },
       });
     }
@@ -4001,6 +4008,190 @@ describe("Durable Objects in the Workers runtime", () => {
     await runInDurableObject(stub, async (_instance, state) => {
       expect(await state.storage.getAlarm()).toBe(expiresAt);
     });
+  });
+
+  it("receipts a new identity that repeats its resource's latest content against the earlier event", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    // A provider re-stamping an unchanged resource: every identity field moves
+    // and nothing a reader sees does.
+    const restamped = (id: string, stamp: string, summary = "Ada edited the connector architecture") => {
+      const event = connectorEvent(id);
+      return {
+        ...event,
+        activity: {
+          ...event.activity,
+          providerEventId: `delivery-${stamp}`,
+          dedupeKey: `github:delivery-${stamp}:pull-request-edited`,
+          occurredAt: `2026-08-1${stamp}T20:00:00.000Z`,
+          payloadRef: `global/provider-webhooks/github/${stamp}.json`,
+          summary,
+        },
+      };
+    };
+    const ingest = (id: string, event: ReturnType<typeof restamped>) => stub.ingestConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      ingressEventId: id,
+      payloadHash: `sha256:${id.slice(-1).repeat(64)}`,
+      event,
+    });
+    const firstId = "00000000-0000-7000-8000-000000000501";
+    const touchId = "00000000-0000-7000-8000-000000000502";
+    const editId = "00000000-0000-7000-8000-000000000503";
+    const revertId = "00000000-0000-7000-8000-000000000504";
+
+    await expect(ingest(firstId, restamped(firstId, "1"))).resolves.toMatchObject({
+      eventId: firstId, duplicate: false,
+    });
+    const unchanged = {
+      eventId: firstId,
+      duplicate: true,
+      processingStatus: "pending",
+      processingAttempt: -1,
+      unchangedContent: true,
+    };
+    await expect(ingest(touchId, restamped(touchId, "2"))).resolves.toEqual(unchanged);
+    // The Queue redelivering the repeat is answered by its receipt, and is
+    // still a repeat rather than a replay of the earlier event's own delivery.
+    await expect(ingest(touchId, restamped(touchId, "2"))).resolves.toEqual(unchanged);
+    await expect(ingest(editId, restamped(editId, "3", "Ada renamed the queue"))).resolves.toMatchObject({
+      eventId: editId, duplicate: false,
+    });
+    // Only the latest event is compared: changing back is news.
+    await expect(ingest(revertId, restamped(revertId, "4"))).resolves.toMatchObject({
+      eventId: revertId, duplicate: false,
+    });
+
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ event_id: string }>(
+        "SELECT event_id FROM workspace_connector_events ORDER BY event_sequence",
+      ).toArray().map((row) => row.event_id)).toEqual([firstId, editId, revertId]);
+    });
+  });
+
+  it("wakes no processing for a repeat of a pending event, and retries one of a failed event afresh", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const delivery = async (id: string, stamp: string) => {
+      const { activity, connectorType } = connectorEvent(id);
+      return workspaceConnectorEventQueueMessage({
+        connectorType,
+        activity: {
+          ...activity,
+          providerEventId: `delivery-${stamp}`,
+          dedupeKey: `github:delivery-${stamp}:pull-request-edited`,
+        },
+      });
+    };
+    const send = vi.spyOn(env.ACTIVITY_QUEUE, "send");
+    const processWakes = () => send.mock.calls
+      .filter(([body]) => (body as { kind?: string }).kind === "connector_event_process").length;
+    try {
+      const firstId = "00000000-0000-7000-8000-000000000511";
+      const first = await delivery(firstId, "1");
+      const touch = await delivery("00000000-0000-7000-8000-000000000512", "2");
+      const afterFailureId = "00000000-0000-7000-8000-000000000513";
+      const afterFailure = await delivery(afterFailureId, "3");
+      await consumeEffectBodies(env, [first]);
+      expect(processWakes()).toBe(1);
+      // The first event is still pending: its own admission woke it, and the
+      // repeat, redelivered too, wakes nothing more.
+      await consumeEffectBodies(env, [touch, touch]);
+      expect(processWakes()).toBe(1);
+      // Once it has failed for good, a repeat is stored as a new event with a
+      // retry budget of its own, rather than folded into one that never ran.
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(
+          "UPDATE workspace_connector_events SET processing_status = 'failed', processing_attempt = 5",
+        );
+      });
+      await consumeEffectBodies(env, [afterFailure]);
+      expect(processWakes()).toBe(2);
+      await runInDurableObject(stub, (_instance, state) => {
+        expect(state.storage.sql.exec<{ event_id: string }>(
+          "SELECT event_id FROM workspace_connector_events ORDER BY event_sequence",
+        ).toArray().map((row) => row.event_id)).toEqual([firstId, afterFailureId]);
+      });
+    } finally {
+      send.mockRestore();
+    }
+  });
+
+  it("restores a dropped repeat when an older, different event for its resource arrives after it", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    // A changed to B and back to A, the change back delivered first.
+    const delivery = async (id: string, day: number, summary: string) => {
+      const { activity, connectorType } = connectorEvent(id);
+      return workspaceConnectorEventQueueMessage({
+        connectorType,
+        activity: {
+          ...activity,
+          providerEventId: `delivery-${day}`,
+          dedupeKey: `github:delivery-${day}:pull-request-edited`,
+          occurredAt: `2026-08-1${day}T20:00:00.000Z`,
+          summary,
+        },
+      });
+    };
+    const ids = {
+      first: "00000000-0000-7000-8000-000000000521",
+      change: "00000000-0000-7000-8000-000000000522",
+      changeBack: "00000000-0000-7000-8000-000000000523",
+      repeat: "00000000-0000-7000-8000-000000000524",
+    };
+    const first = await delivery(ids.first, 1, "A");
+    const change = await delivery(ids.change, 2, "B");
+    const changeBack = await delivery(ids.changeBack, 3, "A");
+    const repeat = await delivery(ids.repeat, 4, "A");
+    const send = vi.spyOn(env.ACTIVITY_QUEUE, "send");
+    const woken = () => send.mock.calls
+      .map(([body]) => body as { kind?: string; eventId?: string })
+      .filter((body) => body.kind === "connector_event_process")
+      .map((body) => body.eventId);
+    const stored = () => runInDurableObject(stub, (_instance, state) => state.storage.sql.exec<{
+      event_id: string;
+      occurred_at: number;
+    }>("SELECT event_id, occurred_at FROM workspace_connector_events ORDER BY event_sequence").toArray());
+    try {
+      await consumeEffectBodies(env, [first]);
+      await consumeEffectBodies(env, [changeBack]);
+      // In order, the change back repeats the latest content and is dropped.
+      expect((await stored()).map((row) => row.event_id)).toEqual([ids.first]);
+      expect(woken()).toEqual([ids.first]);
+
+      // The change arrives late: stored, and the dropped change back is
+      // restored after it under its own identity and time, and woken.
+      await consumeEffectBodies(env, [change]);
+      expect(await stored()).toEqual([
+        { event_id: ids.first, occurred_at: Date.parse("2026-08-11T20:00:00.000Z") },
+        { event_id: ids.change, occurred_at: Date.parse("2026-08-12T20:00:00.000Z") },
+        { event_id: ids.changeBack, occurred_at: Date.parse("2026-08-13T20:00:00.000Z") },
+      ]);
+      expect(woken()).toEqual([ids.first, ids.change, ids.changeBack]);
+
+      // A redelivery of the late change still wakes the restored event, which
+      // nothing else would.
+      await consumeEffectBodies(env, [change]);
+      expect(woken().slice(3)).toEqual([ids.change, ids.changeBack]);
+
+      // The restored event is now the latest, and a repeat of it is dropped.
+      await consumeEffectBodies(env, [repeat]);
+      expect((await stored()).map((row) => row.event_id))
+        .toEqual([ids.first, ids.change, ids.changeBack]);
+      expect(woken()).toHaveLength(5);
+    } finally {
+      send.mockRestore();
+    }
   });
 
   it("owns connector events, deduplicates Queue replays, and fences processing settlement", async () => {
