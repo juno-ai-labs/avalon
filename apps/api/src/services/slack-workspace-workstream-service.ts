@@ -8,6 +8,7 @@ import {
   type Scope,
   type SlackOriginContext,
   type SlackSearchAuthorization,
+  type SpaceId,
   type UserId,
   type WorkspaceId,
 } from "@rally/contracts";
@@ -40,6 +41,14 @@ import {
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { workspaceDOName } from "../durable-objects/names";
+import type { WorkspaceDO } from "../durable-objects/workspace-do";
+import { WorkspaceChannelReservationResultSchema } from "../durable-objects/workspace-space-protocol";
+import {
+  ExternalBindingActivateResultSchema,
+  type ExternalBindingClaim,
+} from "../durable-objects/workspace-external-binding-protocol";
+import { resolveSpaceWorkstreamStart } from "../lib/channel-audience";
+import { spaceRefusal } from "./space-service";
 
 const OpenElicitationRowSchema = z.object({
   id: z.string().min(1),
@@ -89,6 +98,17 @@ export class SlackWorkspaceWorkstreamService {
      */
     scope?: Scope;
     participantUserIds?: string[];
+    /**
+     * The linked room's Space this Channel is born in, instead of General, and
+     * the thread binding claimed with its birth. `actorUserId` is the member
+     * who linked the room: the Slack sender has no Rally identity to place a
+     * Channel with. See docs/external-conversation-bindings.md.
+     */
+    space?: {
+      spaceId: SpaceId;
+      actorUserId: UserId;
+      externalBinding: ExternalBindingClaim;
+    };
   }) {
     const actor = ExternalActorSchema.parse(input.actor);
     const title = input.title ?? provisionalWorkstreamTitle(input.objective, "Slack task");
@@ -141,6 +161,11 @@ export class SlackWorkspaceWorkstreamService {
       this.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.workspaceId)),
     );
+    if (input.space) {
+      return this.createInSpace(input, input.space, workstream, {
+        actor, title, workstreamId, emailRoute, executionEnv, at, creatorUserId, scope, participantUserIds, routeInput,
+      });
+    }
     await workstream.reserveChild({
       workspaceId: this.workspaceId,
       parentId: workstreamId,
@@ -193,6 +218,30 @@ export class SlackWorkspaceWorkstreamService {
       workspaceId: this.workspaceId,
       parentId: workstreamId,
     });
+    return this.openProvisioned(input, {
+      actor, title, workstreamId, executionEnv, at, creatorUserId, routeInput,
+    });
+  }
+
+  /**
+   * Everything after the Channel's parent and conversation exist and it has a
+   * home: telemetry, the email route, the origin attachment, the opening
+   * message under the Slack sender's external identity, and first naming.
+   */
+  private async openProvisioned(
+    input: SlackExternalMessageInput & { objective: string; title?: string; originResource?: OriginResourceDescriptor; creatorUserId?: UserId | null },
+    prepared: {
+      actor: ExternalActor;
+      title: string;
+      workstreamId: string;
+      executionEnv: Env;
+      at: number;
+      creatorUserId: UserId | null;
+      routeInput: { region: Env["AVALON_REGION"]; workspaceId: WorkspaceId; workstreamId: string };
+    },
+  ) {
+    const { actor, title, workstreamId, executionEnv, at, creatorUserId, routeInput } = prepared;
+    const emailRouting = new WorkstreamEmailRoutingService(this.env);
     const openingMessageId = newId();
     const created = { workstream: { id: workstreamId, createdByUserId: creatorUserId } };
     runtimeDeferral(recordWorkstreamCreatedTelemetry(this.env, {
@@ -255,6 +304,110 @@ export class SlackWorkspaceWorkstreamService {
       });
     }
     return created;
+  }
+
+  /**
+   * Birth in a linked room's Space: the membership, the Channel's parent row
+   * and its thread binding in one `reserveChannelInSpaces` transaction, acting
+   * as the member who linked the room, so there is no General placement and no
+   * window in which the Channel is listed outside a Space. A private room's
+   * Space that refuses the placement refuses the whole birth, with nothing
+   * written and nothing widened. The binding turns active once the opening
+   * message is admitted, and is released if anything after the claim fails.
+   */
+  private async createInSpace(
+    input: SlackExternalMessageInput & { objective: string; title?: string; originResource?: OriginResourceDescriptor },
+    space: { spaceId: SpaceId; actorUserId: UserId; externalBinding: ExternalBindingClaim },
+    workstream: Awaited<ReturnType<typeof durableObjectStubForWorkspace<WorkspaceDO>>>,
+    prepared: {
+      actor: ExternalActor;
+      title: string;
+      workstreamId: string;
+      emailRoute: { emailAddress: string | null };
+      executionEnv: Env;
+      at: number;
+      creatorUserId: UserId | null;
+      scope: Scope;
+      participantUserIds: string[];
+      routeInput: { region: Env["AVALON_REGION"]; workspaceId: WorkspaceId; workstreamId: string };
+    },
+  ) {
+    const { actor, title, workstreamId, at, creatorUserId } = prepared;
+    const reserved = WorkspaceChannelReservationResultSchema.parse(await workstream.reserveChannelInSpaces({
+      workspaceId: this.workspaceId,
+      userId: space.actorUserId,
+      workstreamId: asWorkstreamId(workstreamId),
+      spaceIds: [space.spaceId],
+      requestedScope: prepared.scope,
+      requestedParticipantUserIds: prepared.participantUserIds.map(asUserId),
+      authorityGeneration: (await readWorkstreamAuthorityControl(this.env)).generation,
+      directory: {
+        title,
+        description: input.objective,
+        emailAddress: prepared.emailRoute.emailAddress,
+        titleStatus: input.title == null ? "naming" : "settled",
+        createdAt: new Date(at).toISOString(),
+      },
+      externalBinding: space.externalBinding,
+      createdByUserId: creatorUserId,
+    }));
+    if (reserved.status === "refused") throw spaceRefusal(reserved.code, "");
+    if (reserved.status === "general_missing") throw new Error("slack_space_placement_general_missing");
+    if (reserved.status === "binding_refused") {
+      throw reserved.outcome === "held"
+        ? new ApiError(503, "external_binding_held", "Another request is creating this conversation's Channel")
+        : new ApiError(409, "external_binding_bound", "This conversation is already bound to a Channel");
+    }
+    const bindingTarget = {
+      kind: "conversation" as const, parentKind: "workstream" as const, parentId: workstreamId, substreamId: "0",
+    };
+    try {
+      const start = resolveSpaceWorkstreamStart({
+        spaces: reserved.spaces,
+        scope: prepared.scope,
+        requestedParticipantUserIds: prepared.participantUserIds,
+        originResourceIds: [],
+      });
+      await provisionWorkstreamObject(this.env, {
+        workspaceId: this.workspaceId,
+        workstreamId,
+        title,
+        titleStatus: input.title == null ? "naming" : "settled",
+        objective: input.objective,
+        scope: start.scope,
+        createdByUserId: creatorUserId,
+        participantUserIds: start.participantUserIds,
+        harnessStatus: "scheduled",
+        emailAddress: prepared.emailRoute.emailAddress,
+        emailRouteStatus: "reserved",
+        systemKind: null,
+        modelOverride: null,
+        now: at,
+      });
+      const created = await this.openProvisioned(input, {
+        actor, title, workstreamId, executionEnv: prepared.executionEnv, at, creatorUserId, routeInput: prepared.routeInput,
+      });
+      const activated = ExternalBindingActivateResultSchema.parse(await workstream.activateExternalConversationBinding({
+        workspaceId: this.workspaceId,
+        installationId: space.externalBinding.installationId,
+        path: space.externalBinding.path,
+        target: bindingTarget,
+        at: new Date().toISOString(),
+      }));
+      if (activated.outcome === "conflict") {
+        throw new ApiError(409, "external_binding_bound", "This conversation is already bound to another Channel");
+      }
+      return created;
+    } catch (error) {
+      await workstream.releaseExternalConversationBinding({
+        workspaceId: this.workspaceId,
+        installationId: space.externalBinding.installationId,
+        path: space.externalBinding.path,
+        target: bindingTarget,
+        at: new Date().toISOString(),
+      }).catch(() => undefined);
+      throw error;
+    }
   }
 
   async createMessage(workstreamId: string, input: SlackExternalMessageInput) {

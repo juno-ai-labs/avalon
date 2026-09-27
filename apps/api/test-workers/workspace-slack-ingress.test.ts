@@ -128,6 +128,7 @@ beforeEach(async () => {
     state.storage.sql.exec(`DELETE FROM slack_agent_feedback`);
     state.storage.sql.exec(`DELETE FROM slack_agent_contexts`);
     state.storage.sql.exec(`DELETE FROM slack_agent_sessions`);
+    state.storage.sql.exec(`DELETE FROM external_conversation_bindings`);
     state.storage.sql.exec(`DELETE FROM slack_link_challenges`);
     state.storage.sql.exec(`DELETE FROM slack_ingress_jobs`);
     state.storage.sql.exec(`DELETE FROM connector_connections`);
@@ -453,6 +454,7 @@ describe("Slack pending prompts and thread routing", () => {
     workspace().slackThreadRoutable({
       workspaceId: WORKSPACE_ID,
       connectionId: CONNECTION,
+      installationId: "slack:T1",
       channelId: "C1",
       threadTs,
       slackUserId: "U1",
@@ -474,29 +476,42 @@ describe("Slack pending prompts and thread routing", () => {
     expect(await loadPrompt("1.0")).toEqual({ prompt: null });
   });
 
-  it("routes a bare reply for a session's thread or a live pending prompt only", async () => {
-    expect(await routable("1.0")).toEqual({ routable: false });
+  it("routes a bare reply for a bound thread or a live pending prompt only", async () => {
+    expect(await routable("1.0")).toEqual({ routable: false, suspended: false });
     await prompt("1.0", 60);
-    expect(await routable("1.0")).toEqual({ routable: true });
+    expect(await routable("1.0")).toEqual({ routable: true, suspended: false });
     // An expired prompt no longer claims the thread.
-    expect(await routable("1.0", 90)).toEqual({ routable: false });
-    await runInDurableObject(workspace(), (_instance, state) => {
-      state.storage.sql.exec(
-        `INSERT INTO slack_agent_sessions
-           (id, workspace_id, connection_id, linked_user_id, execution_scope,
-            slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
-            opening_client_message_id, workstream_id, invocation_kind, channel_type,
-            context_json, created_at, updated_at)
-         VALUES ('session-1', ?, ?, NULL, 'workspace', 'T1', 'U1', 'C1', '2.0',
-                 'event:opening', '00000000-0000-7000-8000-0000000c1d50', 'app_mention',
-                 'public', '{}', ?, ?)`,
-        WORKSPACE_ID,
-        CONNECTION,
-        at(0),
-        at(0),
-      );
+    expect(await routable("1.0", 90)).toEqual({ routable: false, suspended: false });
+    // A session row alone is delivery state, not a route: the thread routes
+    // because creating the session bound it in the same transaction.
+    await workspace().createSlackSession({
+      workspaceId: WORKSPACE_ID,
+      sessionId: "session-1",
+      connectionId: CONNECTION,
+      teamId: "T1",
+      slackUserId: "U1",
+      channelId: "C1",
+      threadTs: "2.0",
+      openingClientMessageId: "event:opening",
+      workstreamId: "00000000-0000-7000-8000-0000000c1d50",
+      invocationKind: "app_mention",
+      channelType: "public",
+      assignedUserId: null,
+      assignedAt: null,
+      assignmentMethod: null,
+      claimedBySlackUserId: null,
+      claimedAt: null,
+      contextJson: "{}",
+      at: at(0),
     });
-    expect(await routable("2.0", 90)).toEqual({ routable: true });
+    expect(await routable("2.0", 90)).toEqual({ routable: true, suspended: false });
+    await workspace().suspendExternalConversationBindings({
+      workspaceId: WORKSPACE_ID,
+      installationId: "slack:T1",
+      reason: "connection_disconnected",
+      at: at(1),
+    });
+    expect(await routable("2.0", 90)).toEqual({ routable: false, suspended: true });
   });
 });
 

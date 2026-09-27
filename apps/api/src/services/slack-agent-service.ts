@@ -1,10 +1,11 @@
 import type { Region } from "@rally/contracts/regions";
 import {
   ConnectorError,
-  joinAllSlackPublicChannels,
-  type SlackPublicChannelSyncResult,
   joinSlackPublicChannel,
   normalizeSlackActivity,
+  slackExternalRoom,
+  slackInstallationId,
+  slackMessagePath,
   parseSlackAgentInvocation,
   parseSlackEventEnvelope,
   resolveSlackReactions,
@@ -31,8 +32,10 @@ import {
   LEGACY_WORKSTREAM_LINK_ORIGINS,
   SlackOriginContextSchema,
   SlackSearchAuthorizationSchema,
+  asSpaceId,
   asUserId,
   asWorkspaceId,
+  asWorkstreamId,
   addWorkspaceTarget,
   isWorkstreamId,
   parseWorkstreamLinkTarget,
@@ -59,9 +62,8 @@ import type { AuthContext, Env } from "../env";
 import { workspaceDOName } from "../durable-objects/names";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { logError, logInfo, logWarn, type LogEnv } from "../observability/logger";
+import { diagnosticErrorCode, logError, logInfo, logWarn, type LogEnv } from "../observability/logger";
 import { notifyOps } from "../observability/ops-slack-notifier";
-import { withDeadline } from "../lib/deadline";
 import { randomToken, sha256 } from "../lib/crypto";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import {
@@ -81,7 +83,7 @@ import { decryptVersionedConnectorCredentials } from "./connector-credential-env
 import { persistNormalizedActivity } from "./normalized-activity-service";
 import { SlackWorkspaceWorkstreamService } from "./slack-workspace-workstream-service";
 import { provisionalWorkstreamDescription } from "./workstream-description-service";
-import { WorkstreamService } from "./workstream-service";
+import { admitExternalWorkstreamMessage, WorkstreamService } from "./workstream-service";
 import { canonicalWorkstreamUrl } from "./workstream-link-service";
 import {
   describeWorkstreamOrigin,
@@ -95,6 +97,7 @@ import {
 } from "./workspace-runtime-database";
 import {
   SLACK_INGRESS_ATTEMPT_LIMIT,
+  SLACK_SIDEKICK_SOURCE_JOIN_EVENT,
   WorkspaceSlackIngressClaimResultSchema,
   WorkspaceSlackIngressEnqueueResultSchema,
   WorkspaceSlackIngressFailResultSchema,
@@ -115,6 +118,24 @@ import {
   // actually answers with.
   type WorkspaceSlackSession,
 } from "../durable-objects/workspace-slack-protocol";
+import {
+  ExternalBindingLatestOutboundResultSchema,
+  ExternalBindingMoveResultSchema,
+  ExternalBindingReadResultSchema,
+  ExternalBindingResolutionSchema,
+  ExternalBindingSuspendResultSchema,
+  ExternalRoomLinkResultSchema,
+  type ExternalBindingClaim,
+  type ExternalBindingConversationTarget,
+  type ExternalBindingResolution,
+  type ExternalBindingSuspensionReason,
+  type ExternalRoomLinkResult,
+} from "../durable-objects/workspace-external-binding-protocol";
+import { claimParentAnchor } from "./workstream-runtime-database";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { SLACK_THREAD_CLAIM_LEASE_MS } from "../durable-objects/workspace-slack-storage";
+import type { AdmitExternalMessageInput } from "../durable-objects/workstream-external-message-protocol";
+import { uuidV7 } from "../lib/uuid-v7";
 
 interface SlackConnectionRow extends Record<string, unknown> {
   id: string;
@@ -320,28 +341,28 @@ export class SlackAgentService {
     this.env = env;
   }
 
-  /** Durably schedule a full public-channel join after install or reconnect. */
-  async schedulePublicChannelSync(connectionId: string, retryAfterMs = 0): Promise<void> {
+  /**
+   * After an installation is authorized again, bring back the bindings its
+   * disconnect suspended. Rally no longer joins public channels on
+   * installation: it appears only where it is invited, and where a Slack
+   * automation source names a conversation.
+   */
+  async reactivateInstallationBindings(connectionId: string): Promise<void> {
     const connection = await this.connectionById(connectionId);
-    const eventId = `avalon-channel-sync:${crypto.randomUUID()}`;
-    const envelope: SlackIngressEnvelope = {
-      type: "event_callback",
-      team_id: connection.provider_account_id,
-      ...(this.env.SLACK_APP_ID ? { api_app_id: this.env.SLACK_APP_ID } : {}),
-      event_id: eventId,
-      event: { type: "rally_public_channel_sync" },
-    };
-    await this.enqueueIngressJob({
-      id: `event:${eventId}`,
-      teamId: connection.provider_account_id,
-      bodyHash: await sha256(JSON.stringify(envelope)),
-      kind: "event",
-      payload: envelope,
-      ...(retryAfterMs > 0 ? {
-        queueDelaySeconds: Math.min(43_200, Math.max(1, Math.ceil(retryAfterMs / 1_000))),
-      } : {}),
-      recoverQueueSendFailure: true,
-    });
+    const reactivated = ExternalBindingSuspendResultSchema.parse(
+      await (await this.workspaceDirectory(connection.workspace_id)).reactivateExternalConversationBindings({
+        workspaceId: connection.workspace_id,
+        installationId: slackInstallationId(connection.provider_account_id),
+        reason: "connection_disconnected",
+        at: nowIso(),
+      }),
+    );
+    if (reactivated.suspended.length > 0) {
+      logInfo(this.env, "external_bindings_reactivated", {
+        connection_id: connection.id,
+        count: reactivated.suspended.length,
+      });
+    }
   }
 
   async maintainIngress(workspaceId: string, limit = 100): Promise<void> {
@@ -524,11 +545,25 @@ export class SlackAgentService {
       )) {
       return { ok: true };
     }
-    if (activityEventType
+    const lifecycleType = SLACK_BINDING_LIFECYCLE_EVENTS.has(String(invocation.event.type ?? ""));
+    if (lifecycleType || (activityEventType
       && invocation.event.type !== "message"
-      && invocation.event.type !== "app_mention") {
+      && invocation.event.type !== "app_mention")) {
       const connection = await this.connectionForTeam(invocation.teamId);
       const botUserId = authorizedBotUserId(envelope) ?? await this.botUserId(connection);
+      // The bot joining or leaving, and a room archived or renumbered, move a
+      // binding whatever any automation subscribes to, so they are queued
+      // before the subscription gate and the bot's own-actor filter.
+      if (lifecycleType && slackBindingLifecycleApplies(invocation.event, botUserId)) {
+        return this.enqueueIngressJob({
+          id: `event:${invocation.eventId}`,
+          teamId: invocation.teamId,
+          bodyHash,
+          kind: "event",
+          payload: envelope,
+        });
+      }
+      if (!activityEventType) return { ok: true };
       if (botUserId && slackEventActorUserIds(invocation.event).includes(botUserId)) return { ok: true };
       if (invocation.event.type !== "channel_created"
         && !await this.hasSubscribedSlackActivity(connection, activityEventType)) return { ok: true };
@@ -1413,71 +1448,19 @@ export class SlackAgentService {
   private async dispatchEvent(teamId: string, envelope: SlackIngressEnvelope, bodyHash: string): Promise<void> {
     const event = envelope.event!;
     const type = String(event.type ?? "");
-    // A chunked sync enqueued before the rename is still in the queue with the
-    // superseded type; refusing it stops that sync silently partway through.
+    // Rally no longer joins every public channel. A chunked sync enqueued by
+    // a Worker from before that change is still in the queue under one of
+    // these types; it completes as a no-op rather than failing its job.
     if (type === "rally_public_channel_sync" || type === "avalon_public_channel_sync") {
-      const connection = await this.connectionForTeam(teamId);
-      let summary;
-      try {
-        // A cancellable deadline: this runs inside the activity queue consumer,
-        // whose invocation ends when the batch handler returns. An uncancellable
-        // three-minute timer would hold that invocation open for the remainder
-        // after a sync that finished in seconds, and the runtime would cancel it
-        // as a hang.
-        const token = await this.botToken(connection);
-        summary = await withDeadline(3 * 60_000, (signal) => joinAllSlackPublicChannels(token, signal));
-      } catch (error) {
-        if (!slackReconnectRequired(error)) throw error;
-        await this.markSlackReconnectRequired(connection.id, slackErrorReason(error));
-        return;
-      }
-      if (!summary.complete) {
-        await this.schedulePublicChannelSync(connection.id, summary.retryAfterMs);
-        logInfo(this.env, "slack_public_channel_sync_continued", {
-          connection_id: connection.id,
-          team_id: teamId,
-          ...publicChannelSyncFields(summary),
-        });
-        return;
-      }
-      logInfo(this.env, "slack_public_channel_sync_completed", {
-        connection_id: connection.id,
-        team_id: teamId,
-        ...publicChannelSyncFields(summary),
-      });
+      logInfo(this.env, "slack_public_channel_sync_retired", { team_id: teamId });
+      return;
+    }
+    if (type === SLACK_SIDEKICK_SOURCE_JOIN_EVENT) {
+      await this.joinSidekickSourceConversations(teamId, event);
       return;
     }
     const activityChannelResolution = await this.persistSlackEventActivity(teamId, envelope, bodyHash);
-    if (type === "channel_created") {
-      const channelId = asRecord(event.channel).id;
-      if (typeof channelId !== "string" || !channelId) return;
-      const connection = await this.connectionForTeam(teamId);
-      let result;
-      try {
-        result = await joinSlackPublicChannel(
-          await this.botToken(connection),
-          channelId,
-          AbortSignal.timeout(10_000),
-        );
-      } catch (error) {
-        if (!slackReconnectRequired(error)) throw error;
-        await this.markSlackReconnectRequired(connection.id, slackErrorReason(error));
-        return;
-      }
-      if (result === "skipped") {
-        // Slack refused the join for one of the allowlisted unjoinable reasons
-        // — archived, restricted, too many members. That is the expected
-        // outcome for those channels, and the bulk sync counts it under
-        // `skipped` too, so it must not read as a failure to a view built on
-        // the event name.
-        logWarn(this.env, "slack_public_channel_join_skipped", {
-          connection_id: connection.id,
-          team_id: teamId,
-          channel_id: channelId,
-        });
-      }
-      return;
-    }
+    if (await this.applyBindingLifecycle(teamId, envelope)) return;
     if (type === "app_home_opened") {
       const userId = String(event.user ?? "");
       if (userId && event.context) await this.storeSlackAppContext(teamId, userId, event.context);
@@ -1501,6 +1484,7 @@ export class SlackAgentService {
         `UPDATE connector_connections SET status = 'needs_reconnect', updated_at = ?
          WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status <> 'disabled'`,
       ).bind(nowIso(), connection.id).run();
+      await this.suspendInstallationBindings(connection, "connection_disconnected");
       await this.deactivateTeamRoute(connection);
       return;
     }
@@ -1514,6 +1498,7 @@ export class SlackAgentService {
           `UPDATE connector_connections SET status = 'needs_reconnect', updated_at = ?
            WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status <> 'disabled'`,
         ).bind(nowIso(), connection.id).run();
+        await this.suspendInstallationBindings(connection, "connection_disconnected");
         await this.deactivateTeamRoute(connection);
       }
       for (const userId of oauthUsers) {
@@ -1539,16 +1524,11 @@ export class SlackAgentService {
     const slackUserId = String(event.user);
     if (event.app_context) await this.storeSlackAppContext(teamId, slackUserId, event.app_context);
     const channelId = String(event.channel);
-    const rootTs = typeof event.thread_ts === "string" ? event.thread_ts : String(event.ts);
+    const threadTs = typeof event.thread_ts === "string" && event.thread_ts ? event.thread_ts : null;
+    const rootTs = threadTs ?? String(event.ts);
     const connection = await this.connectionForTeam(teamId);
     const token = await this.botToken(connection);
     const directMessage = type === "message" && isDirectSlackMessageEvent(event);
-    const existingSession = !directMessage
-      ? await this.loadSession(connection, channelId, rootTs)
-      : null;
-    const pendingPrompt = !directMessage && !existingSession
-      ? await this.loadPendingPrompt(connection.workspace_id, connection.id, channelId, rootTs, slackUserId)
-      : null;
     const botUserId = type === "app_mention" || !directMessage
       ? authorizedBotUserId(envelope) ?? await this.botUserId(connection)
       : null;
@@ -1556,8 +1536,84 @@ export class SlackAgentService {
       ? String(event.text ?? "").replaceAll(`<@${botUserId}>`, "")
       : String(event.text ?? "")).trim();
     if (!prompt) return;
-    if (type === "message" && !directMessage && !existingSession && !pendingPrompt) return;
-    if (type === "app_mention" && !existingSession && !pendingPrompt && isSlackRetryPrompt(prompt)) {
+
+    // One routing step: the message's external path against its bindings.
+    const installationId = slackInstallationId(teamId);
+    const path = slackMessagePath({ channelId, threadTs, messageTs: String(event.ts) });
+    const claimKey = `event:${envelope.event_id}`;
+    let resolution = await this.resolveBinding(connection, installationId, path, type === "app_mention", claimKey);
+    if (resolution.outcome === "suspended") {
+      logInfo(this.env, "binding_suspended", {
+        workspace_id: connection.workspace_id,
+        connection_id: connection.id,
+        channel_id: channelId,
+        suspended_depth: resolution.path.length,
+        reason: resolution.reason,
+      });
+      return;
+    }
+    if (resolution.outcome === "hold") {
+      throw new ApiError(503, "external_binding_held", "This Slack thread's Channel is still being created");
+    }
+    if (resolution.outcome === "deliver" && resolution.target.parentKind === "automation") {
+      await this.deliverToRunChild(connection, token, teamId, slackUserId, resolution.target, {
+        channelId, threadTs: rootTs, messageTs: String(event.ts), text: prompt, clientMessageId: claimKey,
+        channelType: directMessage ? "im" : slackChannelType(event.channel_type),
+      });
+      return;
+    }
+    // A top-level message in a DM with the bot. When that DM holds an open
+    // request a Sidekick run sent, the answer belongs in that request's
+    // thread: ask for it there, once per event, and create no work.
+    if (directMessage && !threadTs && resolution.outcome === "none"
+      && await this.promptForBoundDmThread(connection, token, teamId, installationId, channelId, String(event.ts), claimKey)) {
+      return;
+    }
+    // A mention in a shared room nobody has linked yet: the same ensure an
+    // invitation runs, whichever of the two arrives first.
+    let roomChannel: SlackChannelResolution | null = null;
+    if (!directMessage && type === "app_mention" && resolution.outcome === "none" && !resolution.roomBound) {
+      const linked = await this.linkRoom(
+        connection, token, teamId, channelId, { triggeringSlackUserId: slackUserId }, "fall_through",
+      );
+      if (linked.outcome === "linked") {
+        resolution = await this.resolveBinding(connection, installationId, path, true, claimKey);
+      } else if (linked.outcome === "blocked") {
+        await this.postRoutingFailure(token, channelId, rootTs, linked.reason);
+        return;
+      } else {
+        roomChannel = linked.channel ?? null;
+      }
+    }
+    const route: SlackThreadRoute | undefined = resolution.outcome === "spawn"
+      ? {
+          kind: "spawn",
+          spaceId: resolution.spaceId,
+          spaceScope: resolution.space?.scope ?? "personal",
+          spaceActorUserId: resolution.space?.createdByUserId ?? null,
+          claim: {
+            installationId,
+            path,
+            claimKey,
+            pendingStaleBefore: new Date(Date.now() - SLACK_THREAD_CLAIM_LEASE_MS).toISOString(),
+          },
+        }
+      : resolution.outcome === "deliver"
+        ? { kind: "bound", workstreamId: resolution.target.parentId }
+        : undefined;
+    if (resolution.outcome === "spawn" && resolution.space?.archived) {
+      // An archived Space is not restored by a provider message; that needs a
+      // decision in Rally.
+      await this.postRoutingFailure(token, channelId, rootTs, "space_archived");
+      return;
+    }
+    const pendingPrompt = !directMessage && !route
+      ? await this.loadPendingPrompt(connection.workspace_id, connection.id, channelId, rootTs, slackUserId)
+      : null;
+    // An unaddressed message in a shared room that no binding claims is not
+    // Rally's, unless its sender is replying `try again` to a denial.
+    if (type === "message" && !directMessage && !route && !pendingPrompt) return;
+    if (type === "app_mention" && !route && !pendingPrompt && isSlackRetryPrompt(prompt)) {
       const recovered = await this.recoverLegacyDeniedPrompt(
         token,
         connection,
@@ -1583,10 +1639,14 @@ export class SlackAgentService {
       }, AbortSignal.timeout(5_000));
       return;
     }
+    const existingSession = route?.kind === "bound"
+      ? await this.loadSession(connection, channelId, rootTs)
+      : null;
     const channelResolution = existingSession
       && (existingSession.channel_type === "public" || existingSession.channel_type === "private")
       ? { channelType: existingSession.channel_type, channelName: null, failure: null }
       : activityChannelResolution
+        ?? roomChannel
         ?? await resolveSlackChannelType(this.env, token, channelId, event.channel_type);
     await this.startFromPrompt(
       teamId,
@@ -1594,7 +1654,7 @@ export class SlackAgentService {
       channelId,
       rootTs,
       prompt,
-      `event:${envelope.event_id}`,
+      claimKey,
       {
         kind: type === "app_mention" || !directMessage ? "app_mention" : "direct_message",
         channelType: channelResolution.channelType,
@@ -1607,7 +1667,403 @@ export class SlackAgentService {
       },
       slackEventSearchAuthorization(event),
       invocation,
+      route,
     );
+  }
+
+  /** Resolve one message's external path through the Organization's bindings. */
+  private async resolveBinding(
+    connection: SlackConnectionRow,
+    installationId: string,
+    path: string[],
+    addressed: boolean,
+    claimKey: string,
+  ): Promise<ExternalBindingResolution> {
+    return ExternalBindingResolutionSchema.parse(
+      await (await this.workspaceDirectory(connection.workspace_id)).resolveExternalConversation({
+        workspaceId: connection.workspace_id,
+        installationId,
+        path,
+        addressed,
+        claimKey,
+        pendingStaleBefore: new Date(Date.now() - SLACK_THREAD_CLAIM_LEASE_MS).toISOString(),
+      }),
+    );
+  }
+
+  /**
+   * The room lifecycle events that move a binding: the bot invited, the bot
+   * removed, the room archived, and a Slack Connect room renumbered. Returns
+   * whether the event was one of them and has been handled.
+   *
+   * A member other than the bot joining or leaving changes no binding: a
+   * person who leaves a private room keeps their Rally access until it is
+   * changed in Rally.
+   */
+  private async applyBindingLifecycle(teamId: string, envelope: SlackIngressEnvelope): Promise<boolean> {
+    const event = envelope.event ?? {};
+    const type = String(event.type ?? "");
+    if (!SLACK_BINDING_LIFECYCLE_EVENTS.has(type)) return false;
+    const connection = await this.connectionForTeam(teamId);
+    const botUserId = authorizedBotUserId(envelope) ?? await this.botUserId(connection);
+    if (!slackBindingLifecycleApplies(event, botUserId)) return false;
+    const installationId = slackInstallationId(teamId);
+    const workspace = await this.workspaceDirectory(connection.workspace_id);
+    if (type === "channel_id_changed") {
+      const from = typeof event.old_channel_id === "string" ? event.old_channel_id : null;
+      const to = typeof event.new_channel_id === "string" ? event.new_channel_id : null;
+      if (!from || !to) return true;
+      const moved = ExternalBindingMoveResultSchema.parse(await workspace.moveExternalConversationBindings({
+        workspaceId: connection.workspace_id,
+        installationId,
+        from: [from],
+        to: [to],
+        at: nowIso(),
+      }));
+      (moved.outcome === "moved" ? logInfo : logWarn)(this.env, "slack_room_id_changed", {
+        workspace_id: connection.workspace_id,
+        connection_id: connection.id,
+        outcome: moved.outcome,
+        moved_count: moved.outcome === "moved" ? moved.count : 0,
+      });
+      return true;
+    }
+    const channelId = typeof event.channel === "string" ? event.channel : null;
+    if (!channelId) return true;
+    if (type === "member_joined_channel") {
+      const token = await this.botToken(connection);
+      const inviter = typeof event.inviter === "string" && event.inviter ? event.inviter : null;
+      const linked = await this.linkRoom(connection, token, teamId, channelId, {
+        ...(inviter ? { inviterSlackUserId: inviter } : {}),
+      });
+      logInfo(this.env, "slack_room_invitation", {
+        workspace_id: connection.workspace_id,
+        connection_id: connection.id,
+        channel_id: channelId,
+        outcome: linked.outcome,
+        ...(linked.outcome === "blocked" || linked.outcome === "ignored" ? { reason: linked.reason } : {}),
+      });
+      return true;
+    }
+    const reason: ExternalBindingSuspensionReason = type === "channel_archive" || type === "group_archive"
+      ? "provider_room_archived"
+      : "provider_membership_ended";
+    const suspended = ExternalBindingSuspendResultSchema.parse(await workspace.suspendExternalConversationBindings({
+      workspaceId: connection.workspace_id,
+      installationId,
+      path: [channelId],
+      reason,
+      at: nowIso(),
+    }));
+    logInfo(this.env, "slack_room_binding_suspended", {
+      workspace_id: connection.workspace_id,
+      connection_id: connection.id,
+      channel_id: channelId,
+      reason,
+      suspended: suspended.suspended.length,
+    });
+    return true;
+  }
+
+  /** Stop every binding of an installation that has disconnected, keeping each for reconnection. */
+  private async suspendInstallationBindings(
+    connection: SlackConnectionRow,
+    reason: "connection_disconnected",
+  ): Promise<void> {
+    const suspended = ExternalBindingSuspendResultSchema.parse(
+      await (await this.workspaceDirectory(connection.workspace_id)).suspendExternalConversationBindings({
+        workspaceId: connection.workspace_id,
+        installationId: slackInstallationId(connection.provider_account_id),
+        reason,
+        at: nowIso(),
+      }),
+    );
+    logInfo(this.env, "external_bindings_suspended", {
+      connection_id: connection.id,
+      reason,
+      count: suspended.suspended.length,
+    });
+  }
+
+  /**
+   * Ensure a shared Slack room has its linked Space: the invitation's step,
+   * and a first mention's when it arrives first. Both reach the same
+   * WorkspaceDO transaction, which answers with the existing Space when the
+   * other got there first.
+   *
+   * The Space needs a Rally member to create it: the inviter, then the member
+   * whose mention arrived, then any Rally member the room's roster resolves
+   * to. A public room with none of them keeps today's behavior (the thread's
+   * Channel goes to General, bound to its thread); a private room or group DM
+   * with none is refused visibly, because a private room must never become a
+   * Space nobody in it can read or be widened to make placement succeed.
+   */
+  private async linkRoom(
+    connection: SlackConnectionRow,
+    token: string,
+    teamId: string,
+    channelId: string,
+    actors: { inviterSlackUserId?: string; triggeringSlackUserId?: string },
+    /**
+     * What an invitation owes a failure it cannot verify is a retry: it must
+     * not claim a link that did not happen. A mention has somewhere to go
+     * instead: a public room's mention falls through to today's path, and a
+     * room it could not classify falls through to the denial that path posts.
+     */
+    unverifiable: "throw" | "fall_through" = "throw",
+  ): Promise<
+    | { outcome: "linked"; spaceId: string }
+    | { outcome: "ignored"; reason: string; channel?: SlackChannelResolution }
+    | { outcome: "unresolved"; channel?: SlackChannelResolution }
+    | { outcome: "blocked"; reason: string }
+  > {
+    const installationId = slackInstallationId(teamId);
+    const workspace = await this.workspaceDirectory(connection.workspace_id);
+    const existing = ExternalBindingReadResultSchema.parse(await workspace.externalConversationBinding({
+      workspaceId: connection.workspace_id,
+      installationId,
+      path: [channelId],
+    })).binding;
+    if (existing?.state === "active" && existing.target.kind === "space") {
+      return { outcome: "linked", spaceId: existing.target.spaceId };
+    }
+    let room;
+    try {
+      room = slackExternalRoom((await slackApi(token, "conversations.info", { channel: channelId }, AbortSignal.timeout(5_000))).channel);
+    } catch (error) {
+      if (slackReconnectRequired(error)) await this.markSlackReconnectRequired(connection.id, slackErrorReason(error));
+      if (unverifiable === "throw") throw error;
+      // The lookup already failed once; the mention's own path reports it with
+      // its denial rather than asking Slack a second time.
+      const reason = slackErrorReason(error);
+      return {
+        outcome: "ignored",
+        reason: codeShaped(reason),
+        channel: {
+          channelType: "unknown",
+          channelName: null,
+          failure: reason === "missing_scope" ? "missing_scope" : "lookup_failed",
+        },
+      };
+    }
+    const channel: SlackChannelResolution = {
+      channelType: room.kind === "direct" ? "im" : room.visibility,
+      channelName: room.kind === "shared" ? room.displayName.slice(0, 255) : null,
+      failure: null,
+    };
+    if (room.kind === "direct") return { outcome: "ignored", reason: "direct_message", channel };
+    if (room.archived) return { outcome: "ignored", reason: "room_archived", channel };
+    const audience = room.visibility === "private"
+      ? await this.slackConversationAudience(token, connection, teamId, channelId)
+      : { userIds: [] as string[], memberCount: 0 };
+    let actorUserId: string | null = null;
+    for (const slackUserId of [actors.inviterSlackUserId, actors.triggeringSlackUserId]) {
+      if (!slackUserId || actorUserId) continue;
+      actorUserId = await this.rallyMemberForSlackUser(token, connection, teamId, slackUserId);
+    }
+    actorUserId ??= audience.userIds[0] ?? null;
+    if (!actorUserId) {
+      return room.visibility === "public"
+        ? { outcome: "unresolved", channel }
+        : { outcome: "blocked", reason: "no_rally_member_in_private_room" };
+    }
+    const spaceId = uuidV7();
+    let linked: ExternalRoomLinkResult;
+    try {
+      // The creation coordinator's gate: no Space is written while the
+      // region's authority is not open.
+      const control = await readWorkstreamAuthorityControl(this.env);
+      if (control.phase !== "durable_object_open") {
+        throw new ApiError(503, "workstream_maintenance", "Work-stream maintenance is in progress");
+      }
+      // Asked before the D1 anchor, as `SpaceService.create` asks, so a
+      // refused actor leaves no anchor behind.
+      const admitted = await workspace.admitSpaceCreation({
+        workspaceId: asWorkspaceId(connection.workspace_id),
+        userId: asUserId(actorUserId),
+      });
+      if (!admitted.ok) {
+        return room.visibility === "public"
+          ? { outcome: "unresolved", channel }
+          : { outcome: "blocked", reason: admitted.code };
+      }
+      await claimParentAnchor(this.env, connection.workspace_id, spaceId, "space");
+      linked = ExternalRoomLinkResultSchema.parse(await workspace.linkExternalRoom({
+        workspaceId: connection.workspace_id,
+        installationId,
+        path: [channelId],
+        userId: actorUserId,
+        spaceId,
+        space: { name: room.displayName, scope: room.visibility === "public" ? "workspace" : "personal" },
+        participantUserIds: room.visibility === "private" ? audience.userIds : [],
+        at: nowIso(),
+      }));
+    } catch (error) {
+      // The Space authority did not answer. Nothing is linked; an invitation
+      // is retried, and a public room's mention takes today's path meanwhile.
+      logWarn(this.env, "slack_room_link_failed", {
+        workspace_id: connection.workspace_id,
+        connection_id: connection.id,
+        channel_id: channelId,
+        reason: diagnosticErrorCode(error, "slack_room_link_failed"),
+      });
+      if (unverifiable === "throw" || room.visibility !== "public") throw error;
+      return { outcome: "unresolved", channel };
+    }
+    if (!linked.ok) {
+      return room.visibility === "public"
+        ? { outcome: "unresolved", channel }
+        : { outcome: "blocked", reason: codeShaped(linked.code) };
+    }
+    return { outcome: "linked", spaceId: linked.spaceId };
+  }
+
+  /** The active Rally member a Slack user is, when Rally knows; never a guest. */
+  private async rallyMemberForSlackUser(
+    token: string,
+    connection: SlackConnectionRow,
+    teamId: string,
+    slackUserId: string,
+  ): Promise<string | null> {
+    const linked = await this.linkedAccount(teamId, slackUserId);
+    if (linked) return linked.auth.userId;
+    try {
+      const external = await this.externalSlackActor(token, connection.workspace_id, teamId, slackUserId);
+      return external.mayJoinWorkstream ? external.matchedWorkspaceUserId : null;
+    } catch (error) {
+      logWarn(this.env, "slack_room_actor_lookup_failed", {
+        connection_id: connection.id,
+        reason: slackErrorReason(error),
+      });
+      return null;
+    }
+  }
+
+  /** A reply that could not be placed says so in its thread, rather than vanishing. */
+  private async postRoutingFailure(token: string, channelId: string, threadTs: string, reason: string): Promise<void> {
+    await slackApi(token, "chat.postMessage", {
+      channel: channelId,
+      thread_ts: threadTs,
+      text: reason === "space_archived"
+        ? "This conversation's Rally Space is archived, so Rally did not start work here. A Rally admin can restore the Space in Rally."
+        : "Rally couldn't open a Channel for this conversation in its linked Rally Space, because nobody here can open that Space in Rally yet. Connect your Rally account in App Home, or ask a member of the Space to add you, then mention Rally again.",
+    }, AbortSignal.timeout(5_000));
+  }
+
+  /**
+   * One-to-one DM policy: a top-level message in a bot DM that holds an open
+   * request a Sidekick run sent gets one reply, asking the person to answer in
+   * that request's thread (the most recent one), and creates no Rally work.
+   * Returns false when the DM holds no such request, so today's one-to-one
+   * Agent behavior applies. The reply is keyed on the provider event, so a
+   * Slack retry does not ask twice.
+   */
+  private async promptForBoundDmThread(
+    connection: SlackConnectionRow,
+    token: string,
+    teamId: string,
+    installationId: string,
+    channelId: string,
+    messageTs: string,
+    claimKey: string,
+  ): Promise<boolean> {
+    const latest = ExternalBindingLatestOutboundResultSchema.parse(
+      await (await this.workspaceDirectory(connection.workspace_id)).latestOutboundExternalConversation({
+        workspaceId: connection.workspace_id,
+        installationId,
+        prefix: [channelId],
+      }),
+    ).path;
+    if (!latest) return false;
+    const requestTs = latest[1];
+    if (!requestTs) return false;
+    await slackApi(token, "chat.postMessage", {
+      channel: channelId,
+      thread_ts: messageTs,
+      client_msg_id: await stableUuid(`dm-thread-prompt:${claimKey}`),
+      text: `Please reply in the thread of my request so your answer reaches it: ${slackMessagePermalink(teamId, channelId, requestTs)}`,
+    }, AbortSignal.timeout(5_000));
+    logInfo(this.env, "slack_dm_thread_prompt_sent", {
+      workspace_id: connection.workspace_id,
+      connection_id: connection.id,
+    });
+    return true;
+  }
+
+  /**
+   * A reply in a thread bound to a Sidekick run child: delivered to that run
+   * through ordinary message admission, as an external message attributed to
+   * its Slack sender, so the run child's loop wakes. The run's own authority,
+   * not the sender's, is what continues it; the sender is only the author.
+   */
+  private async deliverToRunChild(
+    connection: SlackConnectionRow,
+    token: string,
+    teamId: string,
+    slackUserId: string,
+    target: ExternalBindingConversationTarget,
+    message: {
+      channelId: string;
+      threadTs: string;
+      messageTs: string;
+      text: string;
+      clientMessageId: string;
+      channelType: SlackPromptSource["channelType"];
+    },
+  ): Promise<void> {
+    const external = await this.externalSlackActor(token, connection.workspace_id, teamId, slackUserId);
+    await admitExternalWorkstreamMessage(this.env, externalBindingReplyAdmission({
+      workspaceId: connection.workspace_id,
+      teamId,
+      slackUserId,
+      actor: external.actor,
+      matchedWorkspaceUserId: external.matchedWorkspaceUserId,
+      target,
+      message,
+      now: Date.now(),
+    }));
+    logInfo(this.env, "external_binding_delivered", {
+      workspace_id: connection.workspace_id,
+      parent_kind: target.parentKind,
+      parent_id: target.parentId,
+      substream_id: target.substreamId,
+    });
+  }
+
+  /**
+   * Join the bot to the conversations a Slack automation source names, so a
+   * Slack-triggered Sidekick keeps receiving their events. Such a join is not
+   * an invitation and links no Space. A private conversation cannot be joined
+   * by the bot and is skipped: somebody has to invite it there.
+   */
+  private async joinSidekickSourceConversations(teamId: string, event: Record<string, unknown>): Promise<void> {
+    const channelIds = Array.isArray(event.channel_ids)
+      ? event.channel_ids.filter((value): value is string => typeof value === "string" && value.length > 0)
+      : [];
+    if (channelIds.length === 0) return;
+    const connection = await this.connectionForTeam(teamId);
+    let token: string;
+    try {
+      token = await this.botToken(connection);
+    } catch (error) {
+      if (!slackReconnectRequired(error)) throw error;
+      await this.markSlackReconnectRequired(connection.id, slackErrorReason(error));
+      return;
+    }
+    for (const channelId of new Set(channelIds)) {
+      try {
+        const result = await joinSlackPublicChannel(token, channelId, AbortSignal.timeout(10_000));
+        logInfo(this.env, "slack_sidekick_source_joined", {
+          connection_id: connection.id,
+          channel_id: channelId,
+          outcome: result,
+        });
+      } catch (error) {
+        if (!slackReconnectRequired(error)) throw error;
+        await this.markSlackReconnectRequired(connection.id, slackErrorReason(error));
+        return;
+      }
+    }
   }
 
   private async startFromPrompt(
@@ -1620,6 +2076,7 @@ export class SlackAgentService {
     source: SlackPromptSource,
     slackSearchAuthorization?: SlackSearchAuthorization,
     activationInvocation?: SlackAgentInvocation,
+    route?: SlackThreadRoute,
   ): Promise<void> {
     const connection = await this.connectionForTeam(teamId);
     const token = await this.botToken(connection);
@@ -1737,26 +2194,46 @@ export class SlackAgentService {
         try {
           session = await this.loadSession(connection, channel, thread);
           if (!session) {
-            session = await this.createSlackWorkstreamSession({
-              connection,
-              identity,
-              actor,
-              matchedWorkspaceUserId,
-              mayJoinWorkstream,
-              matchedVerification,
-              teamId,
-              token,
-              slackUserId,
-              channel,
-              thread,
-              prompt: requestedPrompt,
-              clientMessageId,
-              source,
-              slackOrigin,
-              ...(slackSearchAuthorization ? { slackSearchAuthorization } : {}),
-            });
-            sessionCreatedThisCall = true;
             try {
+              session = await this.createSlackWorkstreamSession({
+                connection,
+                identity,
+                actor,
+                matchedWorkspaceUserId,
+                mayJoinWorkstream,
+                matchedVerification,
+                teamId,
+                token,
+                slackUserId,
+                channel,
+                thread,
+                prompt: requestedPrompt,
+                clientMessageId,
+                source,
+                slackOrigin,
+                ...(slackSearchAuthorization ? { slackSearchAuthorization } : {}),
+                ...(route ? { route } : {}),
+              });
+            } catch (error) {
+              // A Channel the linked room's Space refuses (a private room
+              // this member cannot open in Rally, an archived Space) is a
+              // routing failure the thread is told about. It is never placed
+              // in General and never widened to make placement succeed.
+              if (route?.kind !== "spawn" || !(error instanceof ApiError)
+                || error.status >= 500 || error.status === 429) throw error;
+              logWarn(this.env, "external_binding_placement_refused", {
+                workspace_id: connection.workspace_id,
+                connection_id: connection.id,
+                space_id: route.spaceId,
+                code: error.code,
+              });
+              await this.postRoutingFailure(token, channel, thread, error.code);
+              return;
+            }
+            // A bound thread whose session row was lost gets its delivery state
+            // back without a second Channel; there is nothing to title.
+            sessionCreatedThisCall = route?.kind !== "bound";
+            if (sessionCreatedThisCall) try {
               await slackApi(token, "assistant.threads.setTitle", {
                 channel_id: channel,
                 thread_ts: thread,
@@ -1899,7 +2376,16 @@ export class SlackAgentService {
     source: SlackPromptSource;
     slackOrigin: SlackOriginContext;
     slackSearchAuthorization?: SlackSearchAuthorization;
+    route?: SlackThreadRoute;
   }): Promise<WorkspaceSlackSession> {
+    if (input.route?.kind === "bound") {
+      // The thread already routes to a Channel; only its delivery state is
+      // missing. The opening id names the repair rather than this message, so
+      // the message is still delivered below as a continuation (idempotently,
+      // if it was the Channel's own opening message).
+      return this.writeSlackSession(input, input.route.workstreamId, `bound:${input.clientMessageId}`.slice(0, 120));
+    }
+    const spawn = input.route?.kind === "spawn" ? input.route : null;
     const originResource = await this.slackSessionOrigin(input.connection, {
       teamId: input.teamId,
       // `channel` and `thread` rather than the origin context's own pair: a DM
@@ -1928,11 +2414,17 @@ export class SlackAgentService {
       input.teamId,
       input.channel,
     );
-    const scope = connectorWorkstreamScope({
-      audience: input.source.channelType === "public" ? "public" : "private",
-      memberCount: audience.memberCount,
-      workspaceScopeThreshold: SLACK_CONVERSATION_WORKSPACE_SCOPE_THRESHOLD,
-    });
+    // Under a linked room the Space decides who the Channel is for: a public
+    // room's Space is Organization-wide, and a private room's or group DM's is
+    // personal whatever its member count. The member-count promotion applies
+    // only to a Channel with no linked Space.
+    const scope = spawn
+      ? spawn.spaceScope
+      : connectorWorkstreamScope({
+        audience: input.source.channelType === "public" ? "public" : "private",
+        memberCount: audience.memberCount,
+        workspaceScopeThreshold: SLACK_CONVERSATION_WORKSPACE_SCOPE_THRESHOLD,
+      });
     // The whole roster goes into the create, not a prefix of it. Avalon puts no
     // cap of its own on the room: the conversation's membership is the
     // provider's fact, and truncating it would be Avalon deciding that some of
@@ -1943,6 +2435,9 @@ export class SlackAgentService {
     // Neither branch passes a title. Both derive the same provisional one from
     // the objective, and leaving it to them is what lets the naming agent
     // replace it — a title supplied here would read as a deliberate choice.
+    if (spawn && !input.identity && !spawn.spaceActorUserId) {
+      throw new ApiError(409, "external_room_space_actor_missing", "The linked Space has no member to place a Channel for this sender");
+    }
     const created = input.identity
       ? await new WorkstreamService(this.env, input.identity.auth).create({
           objective: provisionalWorkstreamDescription(input.prompt, "Slack task"),
@@ -1951,8 +2446,9 @@ export class SlackAgentService {
           clientMessageId: input.clientMessageId.slice(0, 120),
           attachmentIds: [],
           scope,
+          ...(spawn ? { spaceIds: [asSpaceId(spawn.spaceId)] } : {}),
           ...(originResource ? { originResource } : {}),
-        }, input.slackOrigin, input.slackSearchAuthorization)
+        }, input.slackOrigin, input.slackSearchAuthorization, spawn?.claim)
       : await new SlackWorkspaceWorkstreamService(this.env, asWorkspaceId(input.connection.workspace_id)).create({
           actor: ExternalActorSchema.parse(input.actor),
           objective: provisionalWorkstreamDescription(input.prompt, "Slack task"),
@@ -1969,7 +2465,40 @@ export class SlackAgentService {
           ...(input.slackSearchAuthorization
             ? { slackSearchAuthorization: input.slackSearchAuthorization }
             : {}),
+          ...(spawn && spawn.spaceActorUserId ? {
+            space: {
+              spaceId: asSpaceId(spawn.spaceId),
+              actorUserId: asUserId(spawn.spaceActorUserId),
+              externalBinding: spawn.claim,
+            },
+          } : {}),
         });
+    return this.writeSlackSession(input, created.workstream.id, input.clientMessageId.slice(0, 120));
+  }
+
+  /**
+   * The Slack session row for a thread's Channel: delivery state (stream,
+   * delivery key, reaction, assignment), written beside the thread's binding.
+   */
+  private async writeSlackSession(
+    input: {
+      connection: SlackConnectionRow;
+      identity: SlackIdentity | null;
+      actor: ExternalActor | null;
+      matchedWorkspaceUserId: string | null;
+      matchedVerification: ConnectorActorVerification | null;
+      mayJoinWorkstream: boolean;
+      teamId: string;
+      slackUserId: string;
+      channel: string;
+      thread: string;
+      source: SlackPromptSource;
+      slackOrigin: SlackOriginContext;
+    },
+    workstreamId: string,
+    openingClientMessageId: string,
+  ): Promise<WorkspaceSlackSession> {
+    const created = { workstream: { id: workstreamId } };
     const id = newId();
     const at = nowIso();
     const workspace = await this.workspaceDirectory(input.connection.workspace_id);
@@ -1982,7 +2511,7 @@ export class SlackAgentService {
         slackUserId: input.slackUserId,
         channelId: input.channel,
         threadTs: input.thread,
-        openingClientMessageId: input.clientMessageId.slice(0, 120),
+        openingClientMessageId,
         workstreamId: created.workstream.id,
         invocationKind: input.source.kind,
         channelType: input.source.channelType,
@@ -2137,12 +2666,23 @@ export class SlackAgentService {
       await (await this.workspaceDirectory(connection.workspace_id)).slackThreadRoutable({
         workspaceId: connection.workspace_id,
         connectionId: connection.id,
+        installationId: slackInstallationId(teamId),
         channelId,
         threadTs,
         slackUserId,
         at: nowIso(),
       }),
     );
+    if (routable.suspended) {
+      // A reply to a suspended binding creates no Rally work. It is not queued
+      // for the Agent at all; an automation subscribed to the activity still
+      // receives it.
+      logInfo(this.env, "binding_suspended", {
+        workspace_id: connection.workspace_id,
+        connection_id: connection.id,
+        channel_id: channelId,
+      });
+    }
     return routable.routable || activitySubscribed;
   }
 
@@ -3450,6 +3990,127 @@ export class SlackAgentService {
 }
 
 
+/**
+ * The Slack events that move an external conversation binding. A member event
+ * counts only when the member is the bot itself; see
+ * `slackBindingLifecycleApplies`.
+ */
+const SLACK_BINDING_LIFECYCLE_EVENTS: ReadonlySet<string> = new Set([
+  "member_joined_channel",
+  "member_left_channel",
+  "channel_left",
+  "group_left",
+  "channel_archive",
+  "group_archive",
+  "channel_id_changed",
+]);
+
+function slackBindingLifecycleApplies(event: Record<string, unknown>, botUserId: string | null): boolean {
+  const type = String(event.type ?? "");
+  if (type === "member_joined_channel" || type === "member_left_channel") {
+    return botUserId !== null && event.user === botUserId;
+  }
+  return SLACK_BINDING_LIFECYCLE_EVENTS.has(type);
+}
+
+
+/**
+ * Where a Slack thread's message goes, decided by its binding before a
+ * Channel is looked up or created. `bound`: the thread already routes to a
+ * Channel. `spawn`: an addressed message under a linked room creates a
+ * Channel in the room's Space, claiming the thread's binding with its birth.
+ */
+type SlackChannelResolution = {
+  channelType: SlackPromptSource["channelType"];
+  channelName: string | null;
+  failure: SlackPromptSource["channelResolutionFailure"];
+};
+
+type SlackThreadRoute =
+  | { kind: "bound"; workstreamId: string }
+  | {
+      kind: "spawn";
+      spaceId: string;
+      spaceScope: "personal" | "workspace";
+      spaceActorUserId: string | null;
+      claim: ExternalBindingClaim;
+    };
+
+/**
+ * The admission a reply in a thread bound to a Sidekick run child becomes:
+ * the run child's own address (the Sidekick parent, the run's substream), the
+ * Slack sender as the external actor, and the reply's source (installation,
+ * channel, thread, message and a link back) on its Slack origin. The run's
+ * authority, not the sender's, continues it; the principal here only carries
+ * the message to the loop, which restores the run.
+ */
+export function externalBindingReplyAdmission(input: {
+  workspaceId: string;
+  teamId: string;
+  slackUserId: string;
+  actor: ExternalActor;
+  matchedWorkspaceUserId: string | null;
+  target: ExternalBindingConversationTarget;
+  message: {
+    channelId: string;
+    threadTs: string;
+    messageTs: string;
+    text: string;
+    clientMessageId: string;
+    channelType: SlackPromptSource["channelType"];
+  };
+  now: number;
+}): AdmitExternalMessageInput {
+  const workspaceId = asWorkspaceId(input.workspaceId);
+  return {
+    workspaceId,
+    workstreamId: asWorkstreamId(input.target.parentId),
+    substreamId: input.target.substreamId,
+    messageId: newId(),
+    clientMessageId: input.message.clientMessageId.slice(0, 120),
+    actor: input.actor,
+    messageType: "text",
+    text: input.message.text,
+    structuredContentJson: null,
+    origin: "external_conversation_binding",
+    executionPrincipal: { type: "workspace", workspaceId },
+    slackOrigin: SlackOriginContextSchema.parse({
+      teamId: input.teamId,
+      actorSlackUserId: input.slackUserId,
+      channelId: input.message.channelId,
+      channelName: null,
+      threadTs: input.message.threadTs,
+      messageTs: input.message.messageTs,
+      permalink: slackMessagePermalink(
+        input.teamId, input.message.channelId, input.message.messageTs, input.message.threadTs,
+      ),
+      invocationType: input.message.channelType === "im" ? "direct_message" : "app_mention",
+      channelType: input.message.channelType,
+      matchedAvalonUserId: input.matchedWorkspaceUserId,
+      nearbyMessagesStatus: "not_applicable",
+      nearbyMessages: [],
+      attachments: [],
+    }),
+    runMode: "steer",
+    now: input.now,
+  };
+}
+
+/**
+ * A browser link to one Slack message. Slack resolves `slack.com/archives`
+ * links against the viewer's own workspace, so the team is carried only for
+ * Slack's redirect, and a reply's link names its thread.
+ */
+function slackMessagePermalink(teamId: string, channelId: string, messageTs: string, threadTs?: string): string {
+  const url = new URL(`https://slack.com/archives/${encodeURIComponent(channelId)}/p${messageTs.replace(".", "")}`);
+  if (threadTs && threadTs !== messageTs) {
+    url.searchParams.set("thread_ts", threadTs);
+    url.searchParams.set("cid", channelId);
+  }
+  url.searchParams.set("team", teamId);
+  return url.toString();
+}
+
 const SlackResponseMessageSchema = z.strictObject({
   response_type: z.enum(["ephemeral", "in_channel"]),
   replace_original: z.boolean(),
@@ -3720,15 +4381,6 @@ function slackElicitationRequest(
 // The connector returns its sync tally in camelCase. Log fields are
 // snake_case, so map it here rather than spreading the interface into an entry
 // and indexing `alreadyMember` beside `already_member` elsewhere.
-function publicChannelSyncFields(summary: SlackPublicChannelSyncResult): Record<string, unknown> {
-  return {
-    joined: summary.joined,
-    already_member: summary.alreadyMember,
-    skipped: summary.skipped,
-    complete: summary.complete,
-    ...(summary.retryAfterMs === undefined ? {} : { retry_after_ms: summary.retryAfterMs }),
-  };
-}
 
 /** The unique violation alone — never a FOREIGN KEY, NOT NULL, or CHECK failure. */
 function isSlackUniqueConstraintError(error: unknown): boolean {

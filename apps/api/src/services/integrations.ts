@@ -1,5 +1,6 @@
 import { readCanvaReference } from "./canva-resource-access";
 
+import type { OutboundExternalBinding } from "../durable-objects/external-binding-outbox";
 import { runtimeDeferral } from "../lib/defer";
 import { Preparation, ToolSurfacePreparations } from "./harness-preparation";
 import { AGENT_MESSAGE_CONTENT_KIND, ImportedMessageProvenanceSchema } from "@rally/contracts";
@@ -4231,6 +4232,7 @@ export async function runWorkstreamHarness(
               ? { providerOperationId: event.result.providerOperationId }
               : {}),
             memberSafePayload: { toolName: event.toolName },
+            ...outboundExternalBinding(input, event.result.externalConversation),
           });
           // The durable replay payload and fenced completed receipt now exist;
           // only after this awaited boundary may Bind observe the tool result.
@@ -5000,6 +5002,7 @@ async function persistSuccessfulToolResult(
     memberSafePayload?: Record<string, unknown>;
     allowAmbiguousReconciliation?: boolean;
     allowCancellationRequested?: boolean;
+    externalBinding?: OutboundExternalBinding;
   },
   ownershipGuard?: () => Promise<void>,
   /**
@@ -5065,6 +5068,7 @@ async function persistSuccessfulToolResult(
     ...(result.allowCancellationRequested
       ? { allowCancellationRequested: true }
       : {}),
+    ...(result.externalBinding ? { externalBinding: result.externalBinding } : {}),
   });
   await ownershipGuard?.();
   return outputRef;
@@ -5083,6 +5087,7 @@ async function settleRootHarnessToolCompletion(
     outputSummary: string;
     providerOperationId?: string;
     memberSafePayload?: Record<string, unknown>;
+    externalBinding?: OutboundExternalBinding;
   },
   /** Injectable for the same reason `persistSuccessfulToolResult`'s is. */
   receipts: ToolReceiptObjectPort
@@ -5105,6 +5110,7 @@ async function settleRootHarnessToolCompletion(
     // requires this exact live attempt and rejects parent terminalization while
     // any receipt from any attempt remains pending or started.
     allowCancellationRequested: true,
+    ...(result.externalBinding ? { externalBinding: result.externalBinding } : {}),
   }, undefined, receipts, runs);
   // The invocation completion is the authority for this dependency. If the
   // Worker disappears between these writes, replay finds no dependency,
@@ -8568,6 +8574,34 @@ function wireTimestamp(at: number | null): string | null {
  * terminal event that closes it said `workstream`, so no automation's tool
  * outcomes could be counted from the pair.
  */
+/**
+ * The reply thread a Sidekick run's send opened, bound to that run's child.
+ *
+ * Only a run child binds: a Channel or config loop that sends a message has
+ * no run for a reply to continue. The adapter reports the path only for a
+ * send whose replies reach Rally's ingress (a workspace-bot send); a personal
+ * connection's send reports none. See docs/external-conversation-bindings.md.
+ */
+function outboundExternalBinding(
+  input: Pick<WorkstreamWorkflowInput, "automationRun" | "parentKind" | "parentId" | "substreamId">,
+  conversation: { installationId: string; path: string[] } | undefined,
+): { externalBinding: OutboundExternalBinding } | Record<string, never> {
+  if (!conversation || !input.automationRun || input.parentKind !== "automation"
+    || !input.substreamId || input.substreamId === "0") return {};
+  return {
+    externalBinding: {
+      installationId: conversation.installationId,
+      path: conversation.path,
+      target: {
+        kind: "conversation",
+        parentKind: "automation",
+        parentId: input.parentId,
+        substreamId: input.substreamId,
+      },
+    },
+  };
+}
+
 function automationRunProvenance(
   input: WorkstreamWorkflowInput,
 ): { automationId: string; automationRunId: string } | Record<string, never> {
