@@ -85,9 +85,13 @@ it.
 WorkspaceDO answers each read or post in one call: it builds the scope from its
 own `automation_directory`, attachment rows, `channels`, `breakouts`,
 `channel_viewers` and `breakout_viewers`, matches the reference against it,
-and then admits the acting person to that one conversation through the hosted
-parent's `authorizeViewer`, the same admission the conversation's transport
-uses. Attach admits the same way and additionally refuses an archived target,
+and then admits the acting person to that one conversation: an active
+relationship in `workspace_member_status`, then the hosted parent's
+`authorizeViewer`, the same admission the conversation's transport uses, with
+`requireGrantAuthority` for a guest so a guest reaches only what a grant gives
+them. A list re-admits the same way: nothing for a person whose membership
+ended, the directories for a member, and each conversation's admission for a
+guest, whose grants the directory rows do not record. Attach admits the same way and additionally refuses an archived target,
 which is the rule a write through `ConversationService.writableClient` follows:
 attaching is the consent to publish there.
 
@@ -164,8 +168,10 @@ the shared failure-detail bound.
   queries.
 - `apps/api/test-workers/conversation-tools.test.ts` (workerd): the home
   projection, archive pausing a Breakout-homed Sidekick, attach refusal and
-  idempotency, scope refusal, list re-admission after leaving a Breakout,
-  archived refusal, and an append that lands once without waking.
+  idempotency, scope refusal, list re-admission after leaving a Breakout or
+  after a membership ends, archived refusal, and an append that lands once
+  without waking. The guest arm of admission has no workerd test of its own;
+  it is the transport's `requireGrantAuthority` path, covered where that is.
 - `apps/api/test-workers/automation-post-result.test.ts` (workerd): a real run,
   scripted with `useOpenRouterDouble`, calling `conversation_post` into its home.
 

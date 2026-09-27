@@ -7318,11 +7318,40 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(ConversationToolScopeRequestSchema, input, "conversation_tool_scope");
     this.assertWorkspace(request.workspaceId);
-    return {
-      conversations: scopeConversations(this.state.storage.sql, request.scope as ConversationScope, request.userId)
-        .filter((conversation) => conversation.readable && !conversation.archived)
-        .map(conversationToolEntry),
-    };
+    const relationship = await this.readRelationship(request.workspaceId, request.userId);
+    if (relationship?.status !== "active") return { conversations: [] };
+    const listed = scopeConversations(this.state.storage.sql, request.scope as ConversationScope, request.userId)
+      .filter((conversation) => conversation.readable && !conversation.archived);
+    // A guest reads only what a grant gives them, which the directory rows do
+    // not record, so each of theirs is admitted the way a read would be.
+    const admitted = relationship.accessClass === "guest"
+      ? (await Promise.all(listed.map(async (conversation) => (await this.conversationToolAdmission(
+        request.workspaceId, conversation, request.userId)).authorized ? conversation : null)))
+        .filter((conversation) => conversation !== null)
+      : listed;
+    return { conversations: admitted.map(conversationToolEntry) };
+  }
+
+  /**
+   * One person's admission to one conversation, as its transport decides it:
+   * an active relationship, then the hosted parent's `authorizeViewer`, which
+   * for a guest consults only their grants (`ConversationService` does the
+   * same through the role it reads from the session).
+   */
+  private async conversationToolAdmission(
+    workspaceId: string,
+    address: { parentId: string; substreamId: string },
+    userId: string,
+  ): Promise<{ authorized: boolean; archived: boolean }> {
+    const relationship = await this.readRelationship(workspaceId, userId);
+    if (relationship?.status !== "active") return { authorized: false, archived: false };
+    return this.authorizeViewer({
+      workspaceId: asWorkspaceId(workspaceId),
+      parentId: address.parentId,
+      substreamId: asSubstreamId(address.substreamId),
+      userId: asUserId(userId),
+      ...(relationship.accessClass === "guest" ? { requireGrantAuthority: true } : {}),
+    });
   }
 
   /**
@@ -7352,12 +7381,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     const resourceId = target.substreamId === "0" ? target.parentId : target.substreamId;
     if (target.archived) return conversationToolRefusal("conversation_archived", [], resourceId);
-    const admission = await this.authorizeViewer({
-      workspaceId: request.workspaceId,
-      parentId: target.parentId,
-      substreamId: asSubstreamId(target.substreamId),
-      userId: request.userId,
-    });
+    const admission = await this.conversationToolAdmission(request.workspaceId, target, request.userId);
     if (!admission.authorized) return conversationToolRefusal("conversation_access_denied", [], resourceId);
     if (admission.archived) return conversationToolRefusal("conversation_archived", [], resourceId);
     const sidekickName = request.scope.kind !== "sidekick" ? null
@@ -7393,12 +7417,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!facts) return conversationToolRefusal("conversation_not_found", []);
     const resourceId = address.substreamId === "0" ? address.parentId : address.substreamId;
     if (facts.archived) return conversationToolRefusal("conversation_archived", [], resourceId);
-    const admission = await this.authorizeViewer({
-      workspaceId: request.workspaceId,
-      parentId: address.parentId,
-      substreamId: asSubstreamId(address.substreamId),
-      userId: request.userId,
-    });
+    const admission = await this.conversationToolAdmission(request.workspaceId, address, request.userId);
     if (!admission.authorized) return conversationToolRefusal("conversation_access_denied", [], resourceId);
     if (admission.archived) return conversationToolRefusal("conversation_archived", [], resourceId);
     const attached = this.state.storage.transactionSync(() => {
