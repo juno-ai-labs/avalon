@@ -606,13 +606,13 @@ one identity and one history, and can complete more than once.
 2. `continueRun` is a read with no side effects. It answers a refusal code, or
    the `automationRun` block and run-as `executionPrincipal` the scheduled
    start builds, with `definitionRevision` the Sidekick's **currently
-   accepted** revision and the run's original trigger, plus `approvedAt`, its
-   own clock. Continuing a run acts on today's consent, so a run started under
+   accepted** revision and the run's original trigger, plus `stopGeneration`, its
+   stop counter. Continuing a run acts on today's consent, so a run started under
    revision 1 continues under revision 3, and as whoever the Sidekick runs as
    now. It does not ask who sent the input: anyone who can reach a run may
    continue it.
 3. The loop input carries `automationRun`, the run-as principal, and
-   `automationContinuation: {approvedAt, senderName, source}`; the sender stays
+   `automationContinuation: {stopGeneration, senderName, source}`; the sender stays
    the author of their own message. `readRunDefinition` reads the revision the
    reference names rather than the run row's own, so the instructions, tools
    and plugins are the accepted revision's.
@@ -654,17 +654,17 @@ version and cannot close a continued run.
 **The run authority check before the row reopens.** The reopening projection
 travels the Queue and lands after the continued execution has started, which
 reads its authority at run start. `readRunState` therefore also answers
-`completedAt`, and `continuedAfterFinish` in `integrations.ts` lets a
+`stopGeneration`, a counter on the `automation` row (migration 11) that every
+Sidekick-side stop of open runs (`stopOpenRuns`, from pause and archive) moves
+in the same transaction. `continuedAfterFinish` in `integrations.ts` lets a
 continuation act through a finished row: through `completed` or `failed`
 always, because those are only ever the child's own report of an activation
-that ended; through `stopped` only when the row stopped no later than
-`approvedAt`, because a pause stops open runs and a resume does not reopen
-them. A pause that lands after the approval therefore still refuses, even once
-the Sidekick is resumed. The lifecycle check is unchanged: a Sidekick that is
-not `active` refuses every write. A child that reports `stopped` from an
-earlier activation after the continuation was approved refuses the
-continuation's writes until its own `running` projection lands; that is a
-refused tool call the model reports, not a lost write.
+that ended; through `stopped` only while the counter is where `continueRun`
+read it, because a pause stops open runs and a resume does not reopen them. A
+pause that lands after the approval therefore still refuses, even once the
+Sidekick is resumed and even on the approval's own millisecond, which is why
+the fence is a counter and not a time. The lifecycle check is unchanged: a
+Sidekick that is not `active` refuses every write.
 
 **Completing more than once.** The `runs` row has no constraint on its finish;
 `completed_at` is the latest finish. Run-outcome telemetry is keyed per

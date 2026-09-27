@@ -189,6 +189,8 @@ type Lifecycle = "draft" | "active" | "paused" | "deleted";
 
 interface AutomationRow extends Record<string, SqlStorageValue> {
   registration_generation: number;
+  /** Moved by every Sidekick-side stop of open runs; see `continueRun`. */
+  stop_generation: number;
   automation_id: string;
   workspace_id: string;
   region: Region;
@@ -433,6 +435,16 @@ export const AUTOMATION_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     // conversation is substream "0", so every existing Sidekick keeps its home
     // with no backfill. See docs/automation-lifecycle.md.
     `ALTER TABLE automation ADD COLUMN owning_substream_id TEXT NOT NULL DEFAULT '0'`,
+  ],
+}, {
+  version: 11,
+  description: "a counter every Sidekick-side stop of open runs moves",
+  statements: [
+    // The fence a continued run's authority check compares instead of a
+    // wall-clock time: a pause that stops runs after `continueRun` approved a
+    // continuation moves it, however close together the two land. Zero on
+    // every existing Sidekick; only its movement is compared, never its value.
+    `ALTER TABLE automation ADD COLUMN stop_generation INTEGER NOT NULL DEFAULT 0 CHECK (stop_generation >= 0)`,
   ],
 }];
 
@@ -1264,20 +1276,24 @@ export class SidekickDO extends ConversationParentDurableObject {
   /**
    * Whether a run may still act: its own state, and the automation's.
    *
-   * `completedAt` is when the row last finished, on this object's clock, so a
-   * continued run can tell a finish it was approved after from one that
-   * landed since. See `continueRun`.
+   * `stopGeneration` is how many times this Sidekick has stopped its open
+   * runs, so a continued run can tell a stop it was approved after from one
+   * that landed since. See `continueRun`. `completedAt` is when the row last
+   * finished, for display.
    */
   async readRunState(input: AutomationRunRequest): Promise<{
     state: RunState;
     lifecycle: Lifecycle;
     completedAt: number | null;
+    stopGeneration: number;
   } | null> {
     await this.initialized;
     const request = parseRpcInput(AutomationRunRequestSchema, input, "read_run_state");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     const run = this.run(request.runId);
-    return run ? { state: run.state, lifecycle: row.lifecycle, completedAt: run.completed_at } : null;
+    return run
+      ? { state: run.state, lifecycle: row.lifecycle, completedAt: run.completed_at, stopGeneration: row.stop_generation }
+      : null;
   }
 
   /**
@@ -1318,7 +1334,7 @@ export class SidekickDO extends ConversationParentDurableObject {
         trigger: JSON.parse(run.trigger_json),
       },
       executionPrincipal: { type: "user", userId: asUserId(row.run_as_user_id) },
-      approvedAt: Date.now(),
+      stopGeneration: row.stop_generation,
     });
   }
 
@@ -1976,6 +1992,9 @@ export class SidekickDO extends ConversationParentDurableObject {
       now,
       now,
     );
+    // In the same transaction as the stop, so no continuation can be approved
+    // between the two and read the old count with the new stop.
+    this.state.storage.sql.exec(`UPDATE automation SET stop_generation = stop_generation + 1 WHERE id = 1`);
   }
 
   /** The workspace's registrations for this automation, replaced whole. */

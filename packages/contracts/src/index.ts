@@ -3358,14 +3358,14 @@ export const WorkstreamWorkflowInputSchema = z.object({
    * Optional so every existing producer keeps parsing unchanged;
    * `docs/automation-lifecycle.md` owns it.
    *
-   * `approvedAt` is the Sidekick object's clock when `continueRun` approved
-   * the continuation, which the run authority check fences a `stopped` run row
-   * against. `senderName` and `source` are what the host-rendered continuation
+   * `stopGeneration` is the Sidekick's stop counter when `continueRun`
+   * approved the continuation, which the run authority check fences a
+   * `stopped` run row against. `senderName` and `source` are what the host-rendered continuation
    * note tells the model: who replied, and whether in a bound provider thread
    * or in the run itself.
    */
   automationContinuation: z.strictObject({
-    approvedAt: z.number().int().nonnegative(),
+    stopGeneration: z.number().int().nonnegative(),
     senderName: z.string().min(1).max(200),
     source: z.discriminatedUnion("kind", [
       z.strictObject({ kind: z.literal("run") }),
