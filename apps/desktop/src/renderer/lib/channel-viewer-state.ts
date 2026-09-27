@@ -29,7 +29,11 @@ interface BreakoutAppearanceOverlay {
 }
 
 export type WorkstreamChildDirectory = Pick<Workstream, 'privateChildren' | 'privateChildrenWaterline'> & {
-  stateVersion: WorkstreamStateVersion;
+  /**
+   * Absent on a list restored from the device, which has no version to hold
+   * against the socket: the first live row for the Channel replaces it.
+   */
+  stateVersion?: WorkstreamStateVersion;
   /** Receipt-backed rows waiting for the parent's authoritative projection. */
   appearanceOverlays?: Record<string, BreakoutAppearanceOverlay>;
 };
@@ -136,6 +140,38 @@ function roster(directory: WorkstreamChildDirectory | undefined): string | null 
 function pinChannelViewerState(queryClient: QueryClient): void {
   queryClient.setQueryDefaults(['workstream-children'], { gcTime: Number.POSITIVE_INFINITY });
   queryClient.setQueryDefaults(['workstream-background-agents'], { gcTime: Number.POSITIVE_INFINITY });
+}
+
+/** A Channel's breakout list as the device keeps it, by Channel id. */
+export type ChannelBreakoutLists = Record<string, NonNullable<Workstream['privateChildren']>>;
+
+/**
+ * The breakout lists held for these Channels, for the directory row on disk.
+ * Only what a live row said: a Channel whose list is still a seed has one only
+ * because a live row once said it, and a Channel with no list is left out.
+ */
+export function heldChannelBreakouts(queryClient: QueryClient, workstreamIds: readonly string[]): ChannelBreakoutLists {
+  const lists: ChannelBreakoutLists = {};
+  for (const workstreamId of workstreamIds) {
+    const held = queryClient.getQueryData<WorkstreamChildDirectory>(workstreamChildrenQueryKey(workstreamId));
+    if (held?.privateChildren) lists[workstreamId] = held.privateChildren;
+  }
+  return lists;
+}
+
+/**
+ * Put breakout lists restored from the device into Channels that hold none.
+ * No version and no waterline go with them, so the first live row for each
+ * Channel replaces its list whatever it says, and nothing is pruned: a seed
+ * says nothing about what may be removed from the disk.
+ */
+export function seedChannelBreakouts(queryClient: QueryClient, lists: ChannelBreakoutLists): void {
+  pinChannelViewerState(queryClient);
+  for (const [workstreamId, privateChildren] of Object.entries(lists)) {
+    const key = workstreamChildrenQueryKey(workstreamId);
+    if (queryClient.getQueryData(key) !== undefined) continue;
+    queryClient.setQueryData<WorkstreamChildDirectory>(key, { privateChildren });
+  }
 }
 
 /**

@@ -2141,6 +2141,7 @@ describe('the organization socket over the local cache', () => {
       spaces: { waterline: 2, items: [] },
       inactiveSpaces: { waterline: 2, items: [] },
       ordering: [],
+      breakouts: {},
     });
     const conversation = {
       detail: {
