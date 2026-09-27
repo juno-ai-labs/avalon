@@ -1,4 +1,7 @@
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { z } from "zod";
+
+import { diagnosticErrorCode } from "../observability/logger";
 
 import {
   ExternalBindingConversationTargetSchema,
@@ -70,16 +73,30 @@ export function nextExternalBindingDueAt(sql: SqlStorage): number | null {
   ).toArray()[0]?.due_at ?? null;
 }
 
+/** What one drain did that its caller reports: nothing here logs. */
+export interface ExternalBindingDrainReport {
+  /** A row that can never be delivered, parked `dead` with the reason. */
+  dead: { messageId: string; code: string }[];
+  /** Put off on the retry interval; the rows behind it were still tried. */
+  deferred: { messageId: string; code: string }[];
+}
+
 /**
- * Deliver every due binding, deleting each row only once WorkspaceDO has it.
- * A failure puts the row off on the same retry interval as the other outbox
- * lanes and rethrows, so the caller's lane logs it and the alarm retries.
+ * Deliver every due binding, deleting each row once WorkspaceDO has it.
+ *
+ * One row never holds up the rows behind it. A payload that does not parse
+ * cannot succeed on any retry, so it is parked `dead` with its schema reason
+ * rather than retried forever; a delivery that failed is put off on the same
+ * retry interval as the other outbox lanes. A delivery WorkspaceDO answered
+ * with `conflict` is done: the thread's first binding stands, and WorkspaceDO
+ * logs it as `external_binding_outbound_conflict`.
  */
 export async function drainExternalBindingOutbox(
   sql: SqlStorage,
-  deliver: (payload: OutboxPayload) => Promise<void>,
+  deliver: (payload: OutboxPayload) => Promise<unknown>,
   now = Date.now(),
-): Promise<void> {
+): Promise<ExternalBindingDrainReport> {
+  const report: ExternalBindingDrainReport = { dead: [], deferred: [] };
   const rows = sql.exec<{ message_id: string; payload_json: string }>(
     `SELECT message_id, payload_json FROM durable_outbox
       WHERE channel = ? AND state = 'pending' AND not_before <= ?
@@ -88,8 +105,22 @@ export async function drainExternalBindingOutbox(
     now,
   ).toArray();
   for (const row of rows) {
+    const parsed = OutboxPayloadSchema.safeParse(safeJson(row.payload_json));
+    if (!parsed.success) {
+      sql.exec(
+        `UPDATE durable_outbox SET state = 'dead', attempts = attempts + 1
+          WHERE channel = ? AND message_id = ?`,
+        EXTERNAL_BINDING_OUTBOX_CHANNEL,
+        row.message_id,
+      );
+      report.dead.push({
+        messageId: row.message_id,
+        code: zodDiagnosticCode(parsed.error, "external_binding_payload") ?? "external_binding_payload_invalid",
+      });
+      continue;
+    }
     try {
-      await deliver(OutboxPayloadSchema.parse(JSON.parse(row.payload_json)));
+      await deliver(parsed.data);
       sql.exec(
         `DELETE FROM durable_outbox WHERE channel = ? AND message_id = ?`,
         EXTERNAL_BINDING_OUTBOX_CHANNEL,
@@ -103,7 +134,16 @@ export async function drainExternalBindingOutbox(
         EXTERNAL_BINDING_OUTBOX_CHANNEL,
         row.message_id,
       );
-      throw error;
+      report.deferred.push({ messageId: row.message_id, code: diagnosticErrorCode(error, "external_binding_delivery_failed") });
     }
+  }
+  return report;
+}
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
   }
 }

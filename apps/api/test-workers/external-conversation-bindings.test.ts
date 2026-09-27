@@ -44,7 +44,11 @@ import {
   ExternalBindingResolutionSchema,
   type ExternalBindingClaim,
 } from "../src/durable-objects/workspace-external-binding-protocol";
-import { EXTERNAL_BINDING_OUTBOX_CHANNEL } from "../src/durable-objects/external-binding-outbox";
+import {
+  EXTERNAL_BINDING_OUTBOX_CHANNEL,
+  drainExternalBindingOutbox,
+  enqueueExternalBindingInTransaction,
+} from "../src/durable-objects/external-binding-outbox";
 import { SlackWorkspaceWorkstreamService } from "../src/services/slack-workspace-workstream-service";
 import { SpaceService } from "../src/services/space-service";
 import { WorkstreamEmailRoutingService } from "../src/services/workstream-email-routing-service";
@@ -736,6 +740,46 @@ describe("a Sidekick run's send", () => {
       target: { kind: "conversation", parentKind: "automation", parentId: SIDEKICK_ID, substreamId: "0" },
     });
     expect(await outboxRows(stub)).toEqual([]);
+  });
+
+  it("parks a binding that can never be delivered, and keeps delivering the ones behind a failing one", async () => {
+    const stub = runChild();
+    await seedRunChild(stub);
+    const result = await runInDurableObject(stub, async (_instance, state) => {
+      const sql = state.storage.sql;
+      const now = Date.now();
+      for (const [index, path] of [["D1", "1.0"], ["D2", "1.0"]].entries()) {
+        enqueueExternalBindingInTransaction(sql, { ...binding, path, workspaceId: RUN_WORKSPACE_ID, at: at() }, now + index);
+      }
+      // A row whose payload no longer parses, written ahead of both.
+      sql.exec(
+        `INSERT INTO durable_outbox
+           (message_id, channel, destination_kind, destination_id, partition_key, source_version, source_epoch,
+            contract_version, payload_json, payload_ref, payload_hash, state, attempts, not_before, created_at, acked_at)
+         VALUES ('poisoned', ?, 'durable_object', ?, 'p', 1, 0, 1, '{"installationId":"slack:T1"}', NULL, 'h',
+                 'pending', 0, ?, ?, NULL)`,
+        EXTERNAL_BINDING_OUTBOX_CHANNEL, RUN_WORKSPACE_ID, now - 1, now - 1,
+      );
+      const delivered: string[] = [];
+      const report = await drainExternalBindingOutbox(sql, async (payload) => {
+        if (payload.path[0] === "D1") throw new Error("workspace_unavailable");
+        delivered.push(payload.path[0]!);
+        return "bound";
+      }, now + 10);
+      const rows = sql.exec<{ message_id: string; state: string; attempts: number }>(
+        "SELECT message_id, state, attempts FROM durable_outbox WHERE channel = ? ORDER BY message_id",
+        EXTERNAL_BINDING_OUTBOX_CHANNEL,
+      ).toArray().map((row) => ({ ...row, message_id: row.message_id.includes("D1") ? "D1" : row.message_id }));
+      return { delivered, report, rows };
+    });
+    // The failing row did not stop the one behind it.
+    expect(result.delivered).toEqual(["D2"]);
+    expect(result.rows).toEqual([
+      { message_id: "D1", state: "pending", attempts: 1 },
+      { message_id: "poisoned", state: "dead", attempts: 1 },
+    ]);
+    expect(result.report.dead).toEqual([{ messageId: "poisoned", code: expect.stringContaining("external_binding_payload_invalid") }]);
+    expect(result.report.deferred).toEqual([{ messageId: expect.stringContaining("D1"), code: "workspace_unavailable" }]);
   });
 
   it("writes no binding for a send whose receipt did not commit, nor for one that carried none", async () => {
