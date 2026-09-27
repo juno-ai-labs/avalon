@@ -515,9 +515,13 @@ export function releaseWorkspaceSlackThreadClaim(
 const SLACK_SESSION_COLUMNS = `id, workspace_id, connection_id, slack_team_id, slack_user_id,
   slack_channel_id, slack_thread_ts, slack_stream_ts, workstream_id, last_delivery_key,
   opening_client_message_id, invocation_kind, channel_type, assigned_user_id,
-  reaction_channel_id, reaction_message_ts, reaction_current, reaction_cursor`;
+  reaction_channel_id, reaction_message_ts, reaction_current, reaction_cursor,
+  COALESCE(json_extract(context_json, '$.source.threadable'), 1) AS threadable`;
 
-function sessionResult(row: WorkspaceSlackSession | undefined): WorkspaceSlackSessionResult {
+/** A session row as SQLite returns it: `threadable` is the 0/1 the schema reads as a boolean. */
+type SlackSessionRow = Omit<WorkspaceSlackSession, "threadable"> & { threadable: number };
+
+function sessionResult(row: SlackSessionRow | undefined): WorkspaceSlackSessionResult {
   return WorkspaceSlackSessionResultSchema.parse({ session: row ?? null });
 }
 
@@ -525,7 +529,7 @@ export function workspaceSlackSessionById(
   storage: DurableObjectStorage,
   request: WorkspaceSlackSessionByIdRequest,
 ): WorkspaceSlackSessionResult {
-  return sessionResult(storage.sql.exec<WorkspaceSlackSession>(
+  return sessionResult(storage.sql.exec<SlackSessionRow>(
     `SELECT ${SLACK_SESSION_COLUMNS} FROM slack_agent_sessions
       WHERE id = ? AND workspace_id = ?`,
     request.sessionId,
@@ -537,7 +541,7 @@ export function workspaceSlackSessionByThread(
   storage: DurableObjectStorage,
   request: WorkspaceSlackSessionByThreadRequest,
 ): WorkspaceSlackSessionResult {
-  return sessionResult(storage.sql.exec<WorkspaceSlackSession>(
+  return sessionResult(storage.sql.exec<SlackSessionRow>(
     `SELECT ${SLACK_SESSION_COLUMNS} FROM slack_agent_sessions
       WHERE workspace_id = ? AND connection_id = ? AND slack_channel_id = ? AND slack_thread_ts = ?`,
     request.workspaceId,
@@ -551,7 +555,7 @@ export function workspaceSlackSessionByWorkstream(
   storage: DurableObjectStorage,
   request: WorkspaceSlackSessionByWorkstreamRequest,
 ): WorkspaceSlackSessionResult {
-  return sessionResult(storage.sql.exec<WorkspaceSlackSession>(
+  return sessionResult(storage.sql.exec<SlackSessionRow>(
     `SELECT ${SLACK_SESSION_COLUMNS} FROM slack_agent_sessions
       WHERE workspace_id = ? AND workstream_id = ?`,
     request.workspaceId,
@@ -609,7 +613,7 @@ function insertWorkspaceSlackSession(
   storage: DurableObjectStorage,
   request: WorkspaceSlackSessionCreateRequest,
 ): WorkspaceSlackSessionResult {
-  return sessionResult(storage.sql.exec<WorkspaceSlackSession>(
+  return sessionResult(storage.sql.exec<SlackSessionRow>(
     `INSERT INTO slack_agent_sessions
        (id, workspace_id, connection_id, linked_user_id, execution_scope,
         slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
