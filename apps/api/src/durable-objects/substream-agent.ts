@@ -4050,7 +4050,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const pending = this.transcript.nextActivationInput(loop.loop_id);
     if (pending) {
       const identity = this.objectStore.identity();
-      const projection = this.transcript.readBindProjection(loop.loop_id);
       if (!identity) throw new Error("substream_loop_identity_unavailable");
       const authorization = z.looseObject({
         executionPrincipal: z.unknown(),
@@ -4077,12 +4076,25 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           automationId: identity.parentId,
           runId: externalSubstreamId,
         });
+        // The answer took an RPC, and the loop may have moved meanwhile: a
+        // second input admitted behind this one bumps its revision. Acting on
+        // the loop read before the call would trip the activation's revision
+        // fence, fail the drain, and leave every queued input waiting for the
+        // recovery alarm, so claim again from what is current instead.
+        const current = this.loop.loop();
+        if (!current || current.status !== "idle" || current.revision !== loop.revision
+          || this.transcript.nextActivationInput(loop.loop_id)?.input_id !== pending.input_id) {
+          return this.claimPersistentLoopExecution();
+        }
         if (decided.outcome === "refused") {
           await this.refuseSidekickRunInput(loop, pending, decided.code);
           return this.claimPersistentLoopExecution();
         }
         continuation = decided;
       }
+      // Read after any continuation call, so the Bind fences the activation
+      // carries are the ones current when it commits.
+      const projection = this.transcript.readBindProjection(loop.loop_id);
       const executionPrincipal = continuation?.executionPrincipal ?? authorization.executionPrincipal;
       const runId = asHarnessRunId(uuidV7(now));
       const input = WorkstreamWorkflowInputSchema.parse({
