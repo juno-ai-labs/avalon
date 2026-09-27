@@ -325,13 +325,10 @@ describe("Sidekick run continuation", () => {
   it("continues a completed run as its run-as user, with its instructions at the revision accepted now", async () => {
     await activeSidekick();
     const runId = await completedRun();
-    // Today's consent, not the run's: a newer accepted revision, and a new
-    // run-as user, the way `claimExecutionPrincipal` would leave them.
+    // Today's consent, not the run's: a newer accepted revision. (A new run-as
+    // user refuses instead; see the `run_principal_changed` case.)
     expect(await submit({ ...DEFINITION, instructions: "Revision two: forward each reply to the home room." })).toBe(2);
     await apply();
-    await runInDurableObject(sidekickStub(), (_instance, state) => {
-      state.storage.sql.exec(`UPDATE automation SET run_as_user_id = ? WHERE id = 1`, CLAIMANT_ID);
-    });
 
     const turnId = await sendToRun(runId, "Here is my update: shipped the beta.", "continue-completed-1");
     const execution = await settledExecutionFor(runId, turnId);
@@ -344,7 +341,7 @@ describe("Sidekick run continuation", () => {
       parentKind: "automation",
       parentId: AUTOMATION_ID,
       substreamId: runId,
-      executionPrincipal: { type: "user", userId: CLAIMANT_ID },
+      executionPrincipal: { type: "user", userId: AUTHOR_ID },
       automationRun: {
         schemaVersion: 1,
         automationId: AUTOMATION_ID,
@@ -411,6 +408,14 @@ describe("Sidekick run continuation", () => {
     ["run_not_found", async (runId: string) => {
       await runInDurableObject(sidekickStub(), (_instance, state) => {
         state.storage.sql.exec(`DELETE FROM runs WHERE run_id = ?`, runId);
+      });
+    }],
+    // Another member takes over who the Sidekick runs as, the way
+    // `claimExecutionPrincipal` leaves it: the run's transcript is still the
+    // first principal's, so it is not handed to the second.
+    ["run_principal_changed", async () => {
+      await runInDurableObject(sidekickStub(), (_instance, state) => {
+        state.storage.sql.exec(`UPDATE automation SET run_as_user_id = ? WHERE id = 1`, CLAIMANT_ID);
       });
     }],
   ] as const)("refuses input with %s and leaves nothing queued", async (code, arrange) => {

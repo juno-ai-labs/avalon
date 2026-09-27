@@ -81,4 +81,5 @@ export const SIDEKICK_RUN_REFUSAL_TEXT: Record<SidekickRunContinuationRefusalCod
   sidekick_paused: "This message did not continue the run because its Sidekick is paused.",
   sidekick_deleted: "This message did not continue the run because its Sidekick was archived.",
   run_not_found: "This message did not continue the run because its Sidekick no longer knows the run.",
+  run_principal_changed: "This message did not continue the run because its Sidekick now runs as somebody else.",
 };
