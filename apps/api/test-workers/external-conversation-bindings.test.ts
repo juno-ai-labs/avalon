@@ -739,14 +739,18 @@ describe("a Sidekick run's send", () => {
     await seedRunChild(stub);
 
     expect(await sentMessage(stub, binding)).toMatchObject({ ok: true, value: "persisted" });
-    // No check of the undrained state: the receipt schedules the outbox alarm
-    // for now, and workerd can fire it before the next call here.
-    await runDurableObjectAlarm(stub);
+    // The receipt schedules the outbox alarm for now, so workerd may already be
+    // draining it: running the alarm here can find none pending and return
+    // before that drain finishes. The row is deleted only once WorkspaceDO has
+    // the binding, so wait for the empty outbox, not for the alarm call.
+    await vi.waitFor(async () => {
+      await runDurableObjectAlarm(stub);
+      expect(await outboxRows(stub)).toEqual([]);
+    });
     expect(await resolveRun(["D9", "1727.002"])).toEqual({
       outcome: "deliver",
       target: { kind: "conversation", parentKind: "automation", parentId: SIDEKICK_ID, substreamId: "0" },
     });
-    expect(await outboxRows(stub)).toEqual([]);
   });
 
   it("parks a binding that can never be delivered, and keeps delivering the ones behind a failing one", async () => {
