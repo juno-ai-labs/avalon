@@ -17,7 +17,7 @@
 
 import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   asSpaceId,
@@ -47,6 +47,7 @@ import {
 import { EXTERNAL_BINDING_OUTBOX_CHANNEL } from "../src/durable-objects/external-binding-outbox";
 import { SlackWorkspaceWorkstreamService } from "../src/services/slack-workspace-workstream-service";
 import { SpaceService } from "../src/services/space-service";
+import { WorkstreamEmailRoutingService } from "../src/services/workstream-email-routing-service";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
 import {
   WORKSPACE_ID as RUN_WORKSPACE_ID,
@@ -400,6 +401,55 @@ describe("a thread addressed under a linked room", () => {
     ).toArray());
     expect(rows.map((row) => ({ scope: row.scope, createdBy: row.created_by_user_id })))
       .toEqual([{ scope: "personal", createdBy: null }, { scope: "personal", createdBy: null }]);
+  });
+
+  it("re-enters the Channel a failed attempt reserved when the same event is retried", async () => {
+    const linked = await linkRoom("G3", "00000000-0000-7000-8000-000000000e91", {
+      scope: "personal", participantUserIds: [OTHER_USER_ID],
+    });
+    if (!linked.ok) throw new Error("link refused");
+    const attempt = () => new SlackWorkspaceWorkstreamService(creationEnv(), WORKSPACE_ID).create({
+      actor: {
+        provider: "slack", providerAccountId: "T1", providerUserId: "UGUEST",
+        displayName: "Guest", avatarUrl: null,
+      },
+      title: "Retried request",
+      objective: "Look into it",
+      text: "Look into it",
+      clientMessageId: "event:retried",
+      creatorUserId: null,
+      scope: "personal",
+      slackOrigin: {
+        teamId: "T1", channelId: "G3", channelName: null, threadTs: "7.0",
+        invocationType: "app_mention", channelType: "private", matchedAvalonUserId: null,
+        nearbyMessagesStatus: "not_applicable", nearbyMessages: [], attachments: [],
+      },
+      space: {
+        spaceId: asSpaceId(linked.spaceId),
+        actorUserId: USER_ID,
+        externalBinding: claim(["G3", "7.0"], "event:retried"),
+      },
+    });
+    // The first attempt reserves and provisions its Channel in the Space,
+    // then fails activating its email route.
+    const activation = vi.spyOn(WorkstreamEmailRoutingService.prototype, "activateWorkstreamRoute")
+      .mockRejectedValueOnce(new Error("email_route_unavailable"));
+    const failure = await attempt().then(() => null, (error: unknown) => error);
+    activation.mockRestore();
+    expect(failure).toMatchObject({ message: "email_route_unavailable" });
+
+    const channel = await attempt();
+    const members = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{
+      workstream_id: string;
+    }>(
+      "SELECT workstream_id FROM space_channel_memberships WHERE space_id = ? AND state = 'active'",
+      linked.spaceId,
+    ).toArray().map((row) => row.workstream_id));
+    expect(members).toEqual([channel.workstream.id]);
+    expect(await resolve(["G3", "7.0"])).toEqual({
+      outcome: "deliver",
+      target: { kind: "conversation", parentKind: "workstream", parentId: channel.workstream.id, substreamId: "0" },
+    });
   });
 
   it("refuses to place a Channel in a private room's Space its member cannot open, and binds nothing", async () => {
