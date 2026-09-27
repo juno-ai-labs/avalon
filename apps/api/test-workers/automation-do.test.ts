@@ -1008,7 +1008,7 @@ describe("AutomationDO", () => {
 
     expect(await automationRow()).toMatchObject({ lifecycle: "paused", paused_by: "person" });
     expect(await automationStub().readRunState({ ...addressed(), runId: started.runId }))
-      .toEqual({ state: "stopped", lifecycle: "paused" });
+      .toMatchObject({ state: "stopped", lifecycle: "paused" });
     expect((await alarms()).filter((alarm) => (
       alarm.kind === AUTOMATION_SCHEDULE_ALARM_KIND || alarm.kind === AUTOMATION_RUN_ALARM_KIND
     ))).toEqual([]);
@@ -1025,7 +1025,7 @@ describe("AutomationDO", () => {
     expect(rearmed[0]!.due_at).toBeGreaterThan(Date.now());
     // A stopped run stays stopped: resuming re-arms the future, not the past.
     expect(await automationStub().readRunState({ ...addressed(), runId: started.runId }))
-      .toEqual({ state: "stopped", lifecycle: "active" });
+      .toMatchObject({ state: "stopped", lifecycle: "active" });
   });
 
   it("removes: tombstones the row, reports archived, and is gone from the sidebar", async () => {
@@ -1511,29 +1511,32 @@ describe("AutomationDO", () => {
     const delivered = await deliverChildEffects(TEST_ENV, childStub(started.runId));
     expect(delivered.some((envelope) => envelope.effect.kind === "directory_common")).toBe(true);
     expect(await automationStub().readRunState({ ...addressed(), runId: started.runId }))
-      .toEqual({ state: "completed", lifecycle: "active" });
+      .toMatchObject({ state: "completed", lifecycle: "active" });
     const parent = await deliverParentEffects(TEST_ENV, automationStub());
     expect(parent.length).toBeGreaterThanOrEqual(1);
     expect(new Set(parent.map((envelope) => envelope.effect.kind))).toEqual(new Set(["directory_automation"]));
     const listed = await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID });
     expect(listed.items.map((item) => [item.id, item.status])).toEqual([[AUTOMATION_ID, "active"]]);
 
-    // Forward only: a later `running` from the same child cannot reopen a
-    // completed run.
-    const latest = delivered.filter((envelope) => envelope.effect.kind === "directory_common").at(-1)!;
+    // A stale `running` from the same child, older than the completion the
+    // parent holds, cannot reopen the run. A newer one can: that is input
+    // continuing the run, which `sidekick-run-continuation.test.ts` covers.
+    const latest = delivered
+      .filter((envelope) => envelope.effect.kind === "directory_common")
+      .reduce((newest, envelope) => envelope.sourceVersion > newest.sourceVersion ? envelope : newest);
     const latestEffect = latest.effect;
     if (latestEffect.kind !== "directory_common") throw new Error("expected the child's directory_common effect");
     const regressed = { ...latestEffect, state: "running" };
     const regression: ConversationEffectEnvelope = ConversationEffectEnvelopeSchema.parse({
       ...latest,
       messageId: `${latest.messageId}:regression`,
-      sourceVersion: latest.sourceVersion + 1,
+      sourceVersion: latest.sourceVersion - 1,
       effect: regressed,
       payloadHash: conversationEffectHash(regressed),
     });
     expect(await consumeEffectBodies(TEST_ENV, [regression])).toEqual({ acked: 1, retried: 0 });
     expect(await automationStub().readRunState({ ...addressed(), runId: started.runId }))
-      .toEqual({ state: "completed", lifecycle: "active" });
+      .toMatchObject({ state: "completed", lifecycle: "active" });
   });
 });
 

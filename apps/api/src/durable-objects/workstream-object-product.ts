@@ -3898,6 +3898,7 @@ export class WorkstreamObjectProductService {
     });
     const bindMessage = await projectParticipantModelMessage(this.env, {
       author: { type: "external", actor: input.actor },
+      externalFraming: this.transcript.externalInputFraming(),
       messageType: input.messageType,
       text: input.text,
       structuredContent: input.structuredContentJson === null

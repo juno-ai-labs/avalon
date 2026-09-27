@@ -96,9 +96,11 @@ import {
   AutomationExternalEventAdmissionSchema,
   AutomationInboundEmailAdmissionSchema,
   AutomationOwningRoomArchivedRequestSchema,
+  AutomationRunDefinitionRequestSchema,
   AutomationRunNowRequestSchema,
   AutomationRunRequestSchema,
   AutomationRunSeededRequestSchema,
+  SidekickRunContinuationSchema,
   AutomationSetAppearanceRequestSchema,
   AutomationSubmitDefinitionRequestSchema,
   type AutomationActor,
@@ -108,9 +110,11 @@ import {
   type AutomationExternalEventPlan,
   type AutomationInboundEmailAdmission,
   type AutomationOwningRoomArchivedRequest,
+  type AutomationRunDefinitionRequest,
   type AutomationRunNowRequest,
   type AutomationRunRequest,
   type AutomationRunSeededRequest,
+  type SidekickRunContinuation,
   type AutomationSetAppearanceRequest,
   type AutomationSubmitDefinitionRequest,
 } from "./automation-do-protocol";
@@ -1201,20 +1205,23 @@ export class SidekickDO extends ConversationParentDurableObject {
     });
   }
 
-  async readRunDefinition(input: AutomationRunRequest): Promise<AutomationRunDefinitionV1> {
+  async readRunDefinition(input: AutomationRunDefinitionRequest): Promise<AutomationRunDefinitionV1> {
     await this.initialized;
-    const request = parseRpcInput(AutomationRunRequestSchema, input, "read_run_definition");
+    const request = parseRpcInput(AutomationRunDefinitionRequestSchema, input, "read_run_definition");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     const run = this.run(request.runId);
     if (!run) throw new ApiError(404, "sidekick_run_not_found", "This run does not exist");
-    const revision = this.revision(run.definition_revision);
+    // A continued run names the revision it continued under; a scheduled start
+    // names the one it was admitted under, which is the run row's own.
+    const definitionRevision = request.definitionRevision ?? run.definition_revision;
+    const revision = this.revision(definitionRevision);
     if (!revision) throw new ApiError(404, "sidekick_definition_not_found", "The run's definition revision is missing");
     const definition = AutomationDraftSchema.parse(JSON.parse(revision.definition_json));
     return AutomationRunDefinitionV1Schema.parse({
       schemaVersion: 1,
       automationId: row.automation_id,
       runId: run.run_id,
-      definitionRevision: run.definition_revision,
+      definitionRevision,
       definition: {
         name: definition.name,
         description: definition.description,
@@ -1239,13 +1246,65 @@ export class SidekickDO extends ConversationParentDurableObject {
     });
   }
 
-  /** Whether a run may still act: its own state, and the automation's. */
-  async readRunState(input: AutomationRunRequest): Promise<{ state: RunState; lifecycle: Lifecycle } | null> {
+  /**
+   * Whether a run may still act: its own state, and the automation's.
+   *
+   * `completedAt` is when the row last finished, on this object's clock, so a
+   * continued run can tell a finish it was approved after from one that
+   * landed since. See `continueRun`.
+   */
+  async readRunState(input: AutomationRunRequest): Promise<{
+    state: RunState;
+    lifecycle: Lifecycle;
+    completedAt: number | null;
+  } | null> {
     await this.initialized;
     const request = parseRpcInput(AutomationRunRequestSchema, input, "read_run_state");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     const run = this.run(request.runId);
-    return run ? { state: run.state, lifecycle: row.lifecycle } : null;
+    return run ? { state: run.state, lifecycle: row.lifecycle, completedAt: run.completed_at } : null;
+  }
+
+  /**
+   * Whether input that reached a run child may continue the run, and with
+   * what: the `automationRun` block and run-as principal the scheduled start
+   * builds, against the Sidekick's **currently accepted** revision. A
+   * continued run acts on today's consent, not on the consent it started
+   * with.
+   *
+   * A read with no side effects. The run row moves back to `running` through
+   * the child's own `directory_common` projection (`onChildCommonProjection`),
+   * so a caller that fails between this answer and its activation leaves
+   * nothing here to undo. Who sent the input is not asked: anyone who can
+   * reach a run may continue it.
+   */
+  async continueRun(input: AutomationRunRequest): Promise<SidekickRunContinuation> {
+    await this.initialized;
+    const request = parseRpcInput(AutomationRunRequestSchema, input, "continue_run");
+    const row = this.row();
+    // A Sidekick object that never held a row has no run to continue.
+    if (!row) return { outcome: "refused", code: "run_not_found" };
+    this.assertAutomation(request.workspaceId, request.automationId);
+    if (row.lifecycle === "deleted") return { outcome: "refused", code: "sidekick_deleted" };
+    // A room archive pauses the Sidekick with `paused_by = 'room_archive'`,
+    // so it refuses here under the same code as a person's pause.
+    if (row.lifecycle === "paused") return { outcome: "refused", code: "sidekick_paused" };
+    const run = this.run(request.runId);
+    if (!run || row.lifecycle !== "active" || row.accepted_definition_revision === null) {
+      return { outcome: "refused", code: "run_not_found" };
+    }
+    return SidekickRunContinuationSchema.parse({
+      outcome: "continue",
+      automationRun: {
+        schemaVersion: 1,
+        automationId: asAutomationId(row.automation_id),
+        runId: run.run_id,
+        definitionRevision: row.accepted_definition_revision,
+        trigger: JSON.parse(run.trigger_json),
+      },
+      executionPrincipal: { type: "user", userId: asUserId(row.run_as_user_id) },
+      approvedAt: Date.now(),
+    });
   }
 
   async readDetail(input: AutomationActorRequest): Promise<AutomationDetail> {
@@ -1474,22 +1533,50 @@ export class SidekickDO extends ConversationParentDurableObject {
     };
   }
 
-  /** A run's conversation moved; the run row follows it, forward only. */
-  protected override onChildCommonAggregate(
+  /**
+   * A run's conversation moved; the run row follows it.
+   *
+   * Driven by the *accepted* projection only: the parent calls this hook when
+   * the child's envelope carried a newer `sourceVersion` than the one it
+   * holds, and never for a stale one. That is what lets a finished run reopen
+   * safely. Input that continues a run (`continueRun`) moves its child back to
+   * a live state, and the child's next projection is the only thing that
+   * reopens the row; a `completed` projection from an earlier activation that
+   * arrives after it carries an older version, is not accepted, and cannot
+   * close the continued run.
+   *
+   * A live state is the only thing that moves a finished row, and it reopens
+   * one only while the Sidekick is active: a
+   * paused or deleted Sidekick keeps its runs finished whatever a child that
+   * was already continuing reports, and the run authority check refuses that
+   * child's writes on the lifecycle alone. `idle` does not reopen either; it
+   * is what an unarchive or a runtime bootstrap reports, not a sign the run
+   * is working again.
+   *
+   * A run completes once per activation, so `completed_at` is its latest
+   * finish, not its first.
+   */
+  protected override onChildCommonProjection(
     substreamId: string,
-    _aggregate: DirectoryCommonEffect,
-    envelope: ConversationEffectEnvelope,
+    effect: DirectoryCommonEffect,
     now: number,
   ): void {
-    if (substreamId === "0" || envelope.effect.kind !== "directory_common") return;
-    const next = RUN_STATE_FROM_CONVERSATION_STATE[envelope.effect.state] ?? null;
+    if (substreamId === "0") return;
+    const next = RUN_STATE_FROM_CONVERSATION_STATE[effect.state] ?? null;
     if (next === null) return;
     const run = this.run(substreamId);
-    if (!run || TERMINAL_RUN_STATES.has(run.state) || run.state === next) {
-      if (run && !TERMINAL_RUN_STATES.has(run.state)) {
+    if (!run) return;
+    const summary = effect.preview || null;
+    const finished = TERMINAL_RUN_STATES.has(run.state);
+    const live = !TERMINAL_RUN_STATES.has(next);
+    const reopens = finished && live && effect.state !== "idle" && this.row()?.lifecycle === "active";
+    // One finished state never replaces another: a run a pause stopped stays
+    // stopped when its child's last activation later reports `completed`.
+    if (run.state === next || (finished && !reopens)) {
+      if (!finished) {
         this.state.storage.sql.exec(
           `UPDATE runs SET summary = ?, updated_at = ? WHERE run_id = ?`,
-          envelope.effect.preview || null,
+          summary,
           now,
           substreamId,
         );
@@ -1502,8 +1589,8 @@ export class SidekickDO extends ConversationParentDurableObject {
               updated_at = ?
         WHERE run_id = ?`,
       next,
-      envelope.effect.preview || null,
-      TERMINAL_RUN_STATES.has(next) ? 1 : 0,
+      summary,
+      live ? 0 : 1,
       now,
       now,
       substreamId,
