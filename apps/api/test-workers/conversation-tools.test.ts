@@ -304,6 +304,8 @@ describe("a conversation tool's scope", () => {
       substreamId: breakout, actorUserId: AUTHOR_ID, userId: AUTHOR_ID, operationId: "author-leaves" });
     // The Breakout reports its roster to its parent, which the Organization
     // hosts; the parent applies the Breakout's viewer rows in the same object.
+    // The parent outbox is left alone: adding a member queued a
+    // participant_notification this suite's D1 has no tables to deliver.
     await deliverChildEffects(TEST_ENV, conversation(ROOM_ID, breakout));
 
     expect(await listed()).toEqual([ROOM_ID]);

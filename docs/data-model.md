@@ -86,6 +86,8 @@ then.
 
 SidekickDO migration 3 adds automation.loadable, atomically maintained with the accepted revision. WorkspaceDO migration 35 projects this value, using null for unresolved legacy eligibility. Substream migration 43 adds sidekick_attachments and sidekick_execution_skills for conversation ownership and retry-stable instruction snapshots. Existing namespace lookup keys remain unchanged.
 
+SidekickDO migration 10 and WorkspaceDO migration 81 add `owning_substream_id TEXT NOT NULL DEFAULT '0'` to `automation` and `automation_directory`: a room Sidekick's home conversation under its owning Channel, `"0"` for Main. WorkspaceDO migration 81 also adds `sidekick_conversation_attachments` (`automation_id`, `parent_kind`, `parent_id`, `substream_id`, `attached_by_user_id`, `attached_at`), the conversations a Sidekick may read and post to beyond its home; it is typed-RPC only, and it is not `sidekick_attachments` or `parent_sidekicks`, which record skill loading. [`conversation-tools.md`](conversation-tools.md) and [`automation-lifecycle.md`](automation-lifecycle.md) own them.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -901,9 +903,13 @@ column catalog; what follows is only what WorkspaceDO still holds.
 
 - An automation has no destinations anywhere: `AutomationDO` stores none, and
   a run's loop input is a reference to its definition revision. A room-owned
-  automation's result reaches the room through the run's own
-  `post_result` tool; any other destination is the run's own work,
-  sent with its connector tools.
+  automation's result reaches its home conversation (a Channel's Main or a
+  Breakout, `automation_directory.owning_workstream_id` and
+  `owning_substream_id`) or another attached conversation through the run's
+  own `conversation_post` tool; attachments are
+  `sidekick_conversation_attachments` in WorkspaceDO, keyed by the Sidekick and
+  the conversation address. Any other destination is the run's own work, sent
+  with its connector tools.
 
 - `slack_unfurled_links` records which Slack message carries which work-stream
   link, plus a hash of the attachment posted on it, so a posted unfurl card is
