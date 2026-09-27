@@ -12877,7 +12877,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(ExternalBindingReactivateRequestSchema, input, "reactivate_external_conversation_bindings");
     this.assertWorkspace(request.workspaceId);
     return ExternalBindingSuspendResultSchema.parse({
-      suspended: this.externalBindings().reactivate(request.installationId, request.reason, request.at),
+      suspended: this.externalBindings().reactivate(request.installationId, request.at, request.path),
     });
   }
 

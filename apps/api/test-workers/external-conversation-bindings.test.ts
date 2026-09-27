@@ -520,7 +520,7 @@ describe("suspending bindings", () => {
     expect(await resolve(["D1", "1.0"])).toMatchObject({ outcome: "suspended", reason: "connection_disconnected" });
 
     await workspace().reactivateExternalConversationBindings({
-      workspaceId: WORKSPACE_ID, installationId: INSTALLATION, reason: "connection_disconnected", at: at(),
+      workspaceId: WORKSPACE_ID, installationId: INSTALLATION, at: at(),
     });
     expect(await resolve(["D1", "1.0"])).toMatchObject({ outcome: "deliver" });
     expect(await resolve(["D2", "1.0"])).toMatchObject({ outcome: "suspended", reason: "closed" });
@@ -570,7 +570,7 @@ describe("a lasting suspension during a disconnect", () => {
     });
 
     await workspace().reactivateExternalConversationBindings({
-      workspaceId: WORKSPACE_ID, installationId: INSTALLATION, reason: "connection_disconnected", at: at(),
+      workspaceId: WORKSPACE_ID, installationId: INSTALLATION, at: at(),
     });
 
     expect(await resolve(["D1", "1.0"])).toEqual({ outcome: "suspended", path: ["D1", "1.0"], reason: "sidekick_deleted" });

@@ -435,17 +435,33 @@ export class ExternalConversationBindingStorage {
     return rows.map((row) => JSON.parse(row.path_json) as ExternalPath);
   }
 
-  /** Bring back what a disconnect suspended, and nothing a person or a deletion did. */
-  reactivate(installationId: string, reason: "connection_disconnected", at: string): ExternalPath[] {
-    return this.sql.exec<{ path_json: string }>(
-      `UPDATE external_conversation_bindings
-          SET state = 'active', suspended_reason = NULL, updated_at = ?
-        WHERE installation_id = ? AND state = 'suspended' AND suspended_reason = ?
-        RETURNING path_json`,
-      at,
-      installationId,
-      reason,
-    ).toArray().map((row) => JSON.parse(row.path_json) as ExternalPath);
+  /**
+   * Bring back what the provider side suspended, and nothing a person or a
+   * deletion did. Without a path: what a disconnect suspended across the
+   * installation. With one: that room, suspended because the bot left or the
+   * room was archived, now that the bot is back in it.
+   */
+  reactivate(installationId: string, at: string, path?: ExternalPath): ExternalPath[] {
+    const rows = path
+      ? this.sql.exec<{ path_json: string }>(
+        `UPDATE external_conversation_bindings
+            SET state = 'active', suspended_reason = NULL, updated_at = ?
+          WHERE installation_id = ? AND path_json = ? AND state = 'suspended'
+            AND suspended_reason IN ('provider_membership_ended', 'provider_room_archived', 'connection_disconnected')
+          RETURNING path_json`,
+        at,
+        installationId,
+        externalPathKey(path),
+      ).toArray()
+      : this.sql.exec<{ path_json: string }>(
+        `UPDATE external_conversation_bindings
+            SET state = 'active', suspended_reason = NULL, updated_at = ?
+          WHERE installation_id = ? AND state = 'suspended' AND suspended_reason = 'connection_disconnected'
+          RETURNING path_json`,
+        at,
+        installationId,
+      ).toArray();
+    return rows.map((row) => JSON.parse(row.path_json) as ExternalPath);
   }
 
   /** Suspend every binding to one conversation, or to every child of a parent. */

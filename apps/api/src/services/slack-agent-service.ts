@@ -365,7 +365,6 @@ export class SlackAgentService {
       await (await this.workspaceDirectory(connection.workspace_id)).reactivateExternalConversationBindings({
         workspaceId: connection.workspace_id,
         installationId: slackInstallationId(connection.provider_account_id),
-        reason: "connection_disconnected",
         at: nowIso(),
       }),
     );
@@ -1565,6 +1564,20 @@ export class SlackAgentService {
     const path = slackMessagePath({ channelId, threadTs, messageTs: String(event.ts) });
     const claimKey = `event:${envelope.event_id}`;
     let resolution = await this.resolveBinding(connection, installationId, path, type === "app_mention", claimKey);
+    // A room suspended because the bot left or the room was archived, where
+    // the bot is now mentioned: Slack delivers a mention only from a room the
+    // bot is in, so it is back. The mention runs the step an invitation runs,
+    // which reactivates the room's binding, rather than meeting silence.
+    if (resolution.outcome === "suspended" && type === "app_mention" && !directMessage
+      && resolution.path.length === 1
+      && (resolution.reason === "provider_membership_ended" || resolution.reason === "provider_room_archived")) {
+      const relinked = await this.linkRoom(
+        connection, token, teamId, channelId, { triggeringSlackUserId: slackUserId }, "fall_through",
+      );
+      if (relinked.outcome === "linked") {
+        resolution = await this.resolveBinding(connection, installationId, path, true, claimKey);
+      }
+    }
     if (resolution.outcome === "suspended") {
       logInfo(this.env, "binding_suspended", {
         workspace_id: connection.workspace_id,
@@ -1906,6 +1919,25 @@ export class SlackAgentService {
     };
     if (room.kind === "direct") return { outcome: "ignored", reason: "direct_message", channel };
     if (room.archived) return { outcome: "ignored", reason: "room_archived", channel };
+    if (existing?.state === "suspended" && existing.target.kind === "space") {
+      // The room already has its Space; the bot being back in it is all a
+      // reactivation needs. No actor is resolved and nothing is created.
+      const reactivated = ExternalBindingSuspendResultSchema.parse(await workspace.reactivateExternalConversationBindings({
+        workspaceId: connection.workspace_id,
+        installationId,
+        path: [channelId],
+        at: nowIso(),
+      }));
+      if (reactivated.suspended.length > 0) {
+        logInfo(this.env, "slack_room_linked", {
+          workspace_id: connection.workspace_id,
+          connection_id: connection.id,
+          channel_id: channelId,
+          outcome: "reactivated",
+        });
+        return { outcome: "linked", spaceId: existing.target.spaceId };
+      }
+    }
     const audience = room.visibility === "private"
       ? await this.slackConversationAudience(token, connection, teamId, channelId)
       : { userIds: [] as string[], memberCount: 0 };
