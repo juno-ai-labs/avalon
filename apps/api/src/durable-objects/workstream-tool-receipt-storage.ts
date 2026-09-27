@@ -25,6 +25,7 @@
  * `pending` and `started`.
  */
 
+import { OutboundExternalBindingSchema, type OutboundExternalBinding } from "./external-binding-outbox";
 import { uuidV7 } from "../lib/uuid-v7";
 import { ToolPageError, ToolPageStorage, type PageIssueSchema, type PageClaimSchema } from "./tool-page-storage";
 import type { z } from "zod";
@@ -260,7 +261,15 @@ function first<T extends Record<string, SqlStorageValue>>(
 const LEASE_HOLDING_STATUSES = new Set(["running"]);
 
 export class WorkstreamToolReceiptStorage {
-  constructor(private readonly storage: DurableObjectStorage) {}
+  constructor(
+    private readonly storage: DurableObjectStorage,
+    /**
+     * Commits an outbound external binding inside a completion's transaction.
+     * The conversation object supplies it; a completion that carries a binding
+     * where none was supplied is refused rather than completed without it.
+     */
+    private readonly enqueueExternalBinding?: (binding: OutboundExternalBinding, now: number) => void,
+  ) {}
 
   issuePage(input: z.infer<typeof PageIssueSchema> & { fence: ToolReceiptFence }): string | null {
     return this.storage.transactionSync(() => {
@@ -1275,10 +1284,23 @@ export class WorkstreamToolReceiptStorage {
     allowAmbiguousReconciliation: boolean;
     /** Optional, and absent means the ordinary cancellation fence applies. */
     allowCancellationRequested?: boolean;
+    /**
+     * The reply thread this send opened, bound to the run that sent it. It is
+     * committed with the completion or not at all: a send whose receipt never
+     * completed has no binding. See docs/external-conversation-bindings.md.
+     */
+    externalBinding?: OutboundExternalBinding;
     fence: ToolReceiptFence;
     now: number;
   }): ToolReceiptSettlement {
     const summary = input.outputSummary.slice(0, 4_000);
+    const externalBinding = input.externalBinding
+      ? OutboundExternalBindingSchema.parse(input.externalBinding)
+      : null;
+    const enqueueExternalBinding = this.enqueueExternalBinding;
+    if (externalBinding && !enqueueExternalBinding) {
+      throw new Error("tool_receipt_external_binding_unsupported");
+    }
     return this.storage.transactionSync(() => {
       const held = this.#fence(input.fence, input.now, input.allowCancellationRequested === true);
       if (held !== "held") return held === "cancelled" ? "cancelled" : "ownership_lost";
@@ -1307,7 +1329,10 @@ export class WorkstreamToolReceiptStorage {
           input.effectIntentId,
         ),
       });
-      if (moved) return "persisted";
+      if (moved) {
+        if (externalBinding && enqueueExternalBinding) enqueueExternalBinding(externalBinding, input.now);
+        return "persisted";
+      }
       const settled = first(this.sql.exec<{
         status: string; output_ref: string | null;
         output_summary: string | null; provider_operation_id: string | null;

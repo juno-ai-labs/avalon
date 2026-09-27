@@ -30,6 +30,13 @@ import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
  */
 
 const TimestampSchema = z.string().datetime({ offset: true });
+
+/**
+ * The synthetic ingress event queued when a Sidekick with a Slack source is
+ * saved: join the bot to the conversations the source names. It is an
+ * ingress job so the join runs with the installation's token in the Worker.
+ */
+export const SLACK_SIDEKICK_SOURCE_JOIN_EVENT = "rally_sidekick_source_join";
 const SlackIngressJobKindSchema = z.enum(["event", "interaction", "command"]);
 const SlackIngressJobStatusSchema = z.enum(["queued", "processing", "completed", "failed"]);
 
@@ -188,9 +195,16 @@ export const WorkspaceSlackIngressSweepResultSchema = deferredZodSchema(() => z.
   })),
 }));
 
+/**
+ * Whether a bare thread reply belongs to Rally. The thread is looked up as an
+ * external conversation binding under the installation (`slack:<team>`), so
+ * the answer is the same one ingress will act on; the connection still keys
+ * the pending-prompt half, which is connection-scoped delivery state.
+ */
 export const WorkspaceSlackThreadRoutableRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
+  installationId: z.string().min(1),
   channelId: z.string().min(1),
   threadTs: z.string().min(1),
   slackUserId: z.string().min(1),
@@ -199,6 +213,8 @@ export const WorkspaceSlackThreadRoutableRequestSchema = deferredZodSchema(() =>
 
 export const WorkspaceSlackThreadRoutableResultSchema = deferredZodSchema(() => z.strictObject({
   routable: z.boolean(),
+  /** The thread or its room is suspended: the reply creates no work. */
+  suspended: z.boolean(),
 }));
 
 export const WorkspaceSlackPendingPromptRequestSchema = deferredZodSchema(() => z.strictObject({

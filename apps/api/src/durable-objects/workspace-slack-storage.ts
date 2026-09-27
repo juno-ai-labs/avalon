@@ -1,4 +1,5 @@
 import { uuidV7 } from "../lib/uuid-v7";
+import { ExternalConversationBindingStorage } from "./workspace-external-binding-storage";
 import {
   WorkspaceSlackIngressClaimResultSchema,
   WorkspaceSlackIngressEnqueueResultSchema,
@@ -72,7 +73,7 @@ const SLACK_INGRESS_LEASE_MS = 5 * 60_000;
  * service-side `5 * 60_000` it replaces — sized for one session creation, and
  * reaped by the maintenance sweep once expired.
  */
-const SLACK_THREAD_CLAIM_LEASE_MS = 5 * 60_000;
+export const SLACK_THREAD_CLAIM_LEASE_MS = 5 * 60_000;
 
 /**
  * Admit one ingress job, or say what stands where it would have gone.
@@ -350,33 +351,44 @@ export function sweepWorkspaceSlackIngress(
 }
 
 /**
- * Whether a bare thread reply belongs to Rally: an existing session, or a
- * live pending prompt from this member awaiting `try again`.
+ * Whether a bare thread reply belongs to Rally: a thread binding that is
+ * active or still being created, or a live pending prompt from this member
+ * awaiting `try again`. A binding that resolves suspended (the thread, or its
+ * room) is reported as such so ingress can log it and drop the reply.
+ *
+ * The binding is the routing authority; `slack_agent_sessions` is delivery
+ * state and is no longer consulted here.
  */
 export function workspaceSlackThreadRoutable(
   storage: DurableObjectStorage,
   request: WorkspaceSlackThreadRoutableRequest,
 ): WorkspaceSlackThreadRoutableResult {
-  const routable = storage.sql.exec<{ routable: number }>(
-    `SELECT 1 AS routable
-     WHERE EXISTS (
-       SELECT 1 FROM slack_agent_sessions
-       WHERE connection_id = ? AND slack_channel_id = ? AND slack_thread_ts = ?
-     ) OR EXISTS (
-       SELECT 1 FROM slack_agent_pending_prompts
-       WHERE connection_id = ? AND slack_channel_id = ? AND slack_thread_ts = ?
-         AND slack_user_id = ? AND expires_at > ?
-     )`,
-    request.connectionId,
-    request.channelId,
-    request.threadTs,
+  const resolution = new ExternalConversationBindingStorage(storage).resolve({
+    installationId: request.installationId,
+    path: [request.channelId, request.threadTs],
+    addressed: false,
+    claimKey: null,
+    // Only the holding question matters to a routability check, and a
+    // pending claim of any age still means the thread is Rally's.
+    pendingStaleBefore: "0000-01-01T00:00:00.000Z",
+  });
+  if (resolution.outcome === "suspended") {
+    return WorkspaceSlackThreadRoutableResultSchema.parse({ routable: false, suspended: true });
+  }
+  if (resolution.outcome === "deliver" || resolution.outcome === "hold") {
+    return WorkspaceSlackThreadRoutableResultSchema.parse({ routable: true, suspended: false });
+  }
+  const pending = storage.sql.exec<{ routable: number }>(
+    `SELECT 1 AS routable FROM slack_agent_pending_prompts
+      WHERE connection_id = ? AND slack_channel_id = ? AND slack_thread_ts = ?
+        AND slack_user_id = ? AND expires_at > ?`,
     request.connectionId,
     request.channelId,
     request.threadTs,
     request.slackUserId,
     request.at,
   ).toArray();
-  return WorkspaceSlackThreadRoutableResultSchema.parse({ routable: routable.length > 0 });
+  return WorkspaceSlackThreadRoutableResultSchema.parse({ routable: pending.length > 0, suspended: false });
 }
 
 /** The prompt this member is still owed a retry of, if it has not expired. */
@@ -573,6 +585,27 @@ export function workspaceSlackSessionExists(
  * it.
  */
 export function createWorkspaceSlackSession(
+  storage: DurableObjectStorage,
+  request: WorkspaceSlackSessionCreateRequest,
+): WorkspaceSlackSessionResult {
+  return storage.transactionSync(() => {
+    // The thread's binding is the routing authority, so a session that exists
+    // without one would be a Channel nobody's reply could reach. A spawn under
+    // a linked room has already claimed and activated it; every other path (a
+    // DM, a slash command, a Channel placed in General) gets it here, first
+    // binding wins, in the same transaction as the session row.
+    const bound = new ExternalConversationBindingStorage(storage).recordOutbound(
+      `slack:${request.teamId}`,
+      [request.channelId, request.threadTs],
+      { kind: "conversation", parentKind: "workstream", parentId: request.workstreamId, substreamId: "0" },
+      request.at,
+    );
+    if (bound === "conflict") throw new Error("slack_session_thread_bound_elsewhere");
+    return insertWorkspaceSlackSession(storage, request);
+  });
+}
+
+function insertWorkspaceSlackSession(
   storage: DurableObjectStorage,
   request: WorkspaceSlackSessionCreateRequest,
 ): WorkspaceSlackSessionResult {

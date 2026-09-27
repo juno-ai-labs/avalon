@@ -71,6 +71,7 @@ export const WORKSPACE_LOCAL_TABLES = [
   "slack_agent_contexts",
   "slack_agent_feedback",
   "slack_agent_sessions",
+  "external_conversation_bindings",
   // Still executed generically, deliberately: the schedule's alarm-target
   // derivation reads these tables' due times through the object's local
   // executor, alongside the other alarm sources.

@@ -16,6 +16,11 @@ import { sidekickSkillCatalog, sidekickSkillRef } from "../services/sidekick-ski
 import { flushAuthorizationProjection, nextAuthorizationProjectionAt } from './authorization-projection';
 import { searchIndexingConfigured } from '../services/search-embedding';
 import { conversationSearchDocumentIds, prepareConversationLinks, readConversationSearchLink, type ConversationDisplay } from './conversation-link-search';
+import {
+  drainExternalBindingOutbox,
+  enqueueExternalBindingInTransaction,
+  nextExternalBindingDueAt,
+} from "./external-binding-outbox";
 import { drainSearchProjectionOutbox, nextSearchProjectionDueAt, SearchConversationProjectionMessageSchema, SearchProjectionMessageSchema } from './search-projection-outbox';
 import { searchDocumentId } from '../services/text-search';
 import { conversationSearchAudience } from '../services/search-audience';
@@ -1091,7 +1096,22 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         () => this.externalSubstreamId(),
       );
       this.terminal = new WorkstreamTerminalStorage(state.storage);
-      this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage);
+      this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage, (binding, now) => {
+        // Only a run child binds its own sends, and only to itself: the host
+        // names the target, and this object refuses one that is not this run.
+        const identity = this.objectStore.identity();
+        if (!identity
+          || binding.target.parentKind !== identity.parentKind
+          || binding.target.parentId !== identity.parentId
+          || binding.target.substreamId !== this.externalSubstreamId()) {
+          throw new Error("tool_receipt_external_binding_target_mismatch");
+        }
+        enqueueExternalBindingInTransaction(state.storage.sql, {
+          ...binding,
+          workspaceId: identity.workspaceId,
+          at: new Date(now).toISOString(),
+        }, now);
+      });
       this.residentContext = new WorkstreamResidentContextStorage(state.storage);
       this.scheduling = new WorkstreamSchedulingStorage(state.storage);
       this.messages = new WorkstreamMessageStorage(state.storage);
@@ -2569,7 +2589,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const identity = this.objectStore.identity();
     if (!identity || identity.workspaceId !== parsed.data.workspaceId
       || identity.parentId !== parsed.data.workstreamId
-      || this.externalSubstreamId() !== "0") {
+      || this.externalSubstreamId() !== (parsed.data.substreamId ?? "0")) {
       return responseToRpcResult(jsonResponse({ error: "external_message_identity_mismatch" }, 409));
     }
     try {
@@ -2708,6 +2728,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const method = this.toolReceipts[parsed.data.operation] as (...args: unknown[]) => unknown;
     try {
       const value = await method.apply(this.toolReceipts, parsed.data.args);
+      if (parsed.data.operation === "complete") {
+        // A completion may have committed an outbound binding beside it.
+        const bindingDueAt = nextExternalBindingDueAt(this.state.storage.sql);
+        if (bindingDueAt !== null) await this.ensureAlarmNoLaterThan(bindingDueAt);
+      }
       return { status: 200, payload: { ok: true, value: value ?? null } };
     } catch (error) {
       if (error instanceof ToolPageError) return { status: 400, payload: { ok: false, error: error.message } };
@@ -5811,6 +5836,38 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return links;
   }
 
+  /**
+   * Deliver the outbound bindings this run child's sends committed, to the
+   * WorkspaceDO that routes their replies. WorkspaceDO's write is idempotent,
+   * so a row delivered twice is `already_bound`.
+   */
+  private async flushExternalBindingOutbox(): Promise<void> {
+    const identity = this.objectStore.identity();
+    if (!identity) return;
+    try {
+      const workspace = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
+        identity.workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)));
+      await drainExternalBindingOutbox(this.state.storage.sql, async (binding) => {
+        await workspace.recordOutboundExternalConversationBinding({
+          workspaceId: binding.workspaceId,
+          installationId: binding.installationId,
+          path: binding.path,
+          target: binding.target,
+          at: binding.at,
+        });
+      });
+    } catch (error) {
+      logWarn(this.env, "external_binding_delivery_deferred", {
+        workspace_id: identity.workspaceId,
+        workstream_id: identity.parentId,
+        substream_id: this.externalSubstreamId(),
+        reason: diagnosticErrorCode(error, "external_binding_delivery_failed"),
+      });
+    }
+    const next = nextExternalBindingDueAt(this.state.storage.sql);
+    if (next !== null) await this.ensureAlarmNoLaterThan(next);
+  }
+
   private async flushSearchProjectionOutbox(): Promise<void> {
     if (!searchIndexingConfigured(this.env)) return;
     const identity = this.objectStore.identity();
@@ -6814,6 +6871,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   private hasDueAlarmWork(now: number): boolean {
     return this.objectStore.nextRegionalEffectDueAt() !== null
+      || nextExternalBindingDueAt(this.state.storage.sql) !== null
       || this.objectStore.nextSemanticRealtimeDueAt() !== null
       || this.nextLoopWorkAt(now) !== null
       || this.nextExternalSettlementAt() !== null
@@ -6893,6 +6951,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const nextSemanticRealtimeAt = this.objectStore.nextSemanticRealtimeDueAt();
     const nextSearchProjectionAt = nextSearchProjectionDueAt(this.state.storage.sql, this.env);
     const nextAuthorizationProjectionDueAt = nextAuthorizationProjectionAt(this.state.storage.sql);
+    const nextExternalBindingAt = nextExternalBindingDueAt(this.state.storage.sql);
     const nextLoopAt = this.nextLoopWorkAt(now);
     const nextExternalSettlementAt = this.nextExternalSettlementAt();
     // A timer that fired above may have left the index behind the table.
@@ -6900,7 +6959,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
     const projectionDue = (nextRegionalEffectAt !== null && nextRegionalEffectAt <= now)
       || (nextSearchProjectionAt !== null && nextSearchProjectionAt <= now)
-      || (nextAuthorizationProjectionDueAt !== null && nextAuthorizationProjectionDueAt <= now);
+      || (nextAuthorizationProjectionDueAt !== null && nextAuthorizationProjectionDueAt <= now)
+      || (nextExternalBindingAt !== null && nextExternalBindingAt <= now);
     const loopDue = nextLoopAt !== null && nextLoopAt <= now;
     if (!projectionDue
       && !loopDue
@@ -6974,6 +7034,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       } catch { logWarn(this.env, 'authorization_projection_dispatch_deferred', { region: this.env.AVALON_REGION }); }
     }
     await this.flushSearchProjectionOutbox();
+    await this.flushExternalBindingOutbox();
     const nextEffectAt = this.objectStore.nextRegionalEffectDueAt();
     if (nextEffectAt !== null && nextEffectAt <= Date.now()) {
       await this.drainRegionalEffects();
