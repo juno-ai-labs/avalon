@@ -536,6 +536,12 @@ describe("a Sidekick's Slack request, answered in its thread, forwarded home", (
     //    the run is open; slack-workspace-assignment.test.ts covers it). It is
     //    ordinary Agent work, which this fixture's installation, holding no
     //    Agent grant, refuses; either way it reaches no run.
+    //    The run child has finished; the Sidekick must hear it before the DM
+    //    arrives, or the run still reads as open and the prompt is right.
+    await expect.poll(async () => {
+      await deliverChildEffects(TEST_ENV, runChild(runId));
+      return (await sidekick().readRunState({ workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID, runId }))?.state;
+    }, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 }).toBe("completed");
     const postsBefore = slackCalls.filter((call) => call.method === "chat.postMessage").length;
     await founderSays("EvE2EStray", { text: "Also, one more thing", ts: "1790000060.000300" }).catch(() => undefined);
     expect(slackCalls.filter((call) => call.method === "chat.postMessage").slice(postsBefore)).toEqual([]);
