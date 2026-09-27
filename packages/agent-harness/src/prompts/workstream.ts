@@ -11,30 +11,13 @@ export interface WorkstreamAutomationPromptContext {
   instructions: string;
   expectedOutputs: string[];
   /**
-   * Where Rally itself posts this run's final message once the run ends: the
-   * work stream that owns the Sidekick, when one does, and nothing else. The
-   * model is told so it does not post the same result there a second time, and
-   * told when the list is empty so it knows that nothing sends for it.
+   * The conversation id of the Sidekick's home (a Channel's Main conversation
+   * or a Breakout), or null for a Sidekick no room owns. Standing context: it
+   * is the default target of the conversation plugin's post tool, which owns
+   * the protocol for posting there, so the prompt names the place and not the
+   * tool. If that Channel began in Slack, its origin resource carries the link.
    */
-  resultDelivery: Array<{
-    channel: "workstream";
-    destination: string;
-  }>;
-  /**
-   * Where this Sidekick was set up, when that was somewhere it can speak.
-   *
-   * Standing context rather than instructions: the instructions say what the
-   * Sidekick does, and this says where this occurrence is speaking from.
-   * Putting the channel id in the instructions would freeze a literal into text
-   * a person reads and edits, and every rename, edit, or move would have to
-   * find and rewrite an id in prose.
-   */
-  authoringOrigin?: {
-    kind: "slack";
-    teamId: string;
-    channelId: string;
-    channelName: string | null;
-  } | null;
+  homeConversationId: string | null;
   defaultBehavior: Record<string, unknown>;
   overrides: Record<string, unknown>;
   durableTables: Array<{
@@ -115,27 +98,10 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
 - This run's final message is delivered outside the work stream, where recipients cannot open Rally resource embeds. For a document-shaped request, put the complete usable result in the final message. You may publish a resource too, but never replace the delivered body with only an embed, title, or invitation to open Rally.`
     : input.outputSurface === "self_delivery"
       ? `# Sending the result yourself
-- Nothing sends this run's final message anywhere. Whatever this run produces reaches its reader only through the sends you make with your own tools, outside the work stream, where recipients cannot open Rally resource embeds. Put the complete usable result in what you send. You may publish a resource too, but never send only an embed, title, or invitation to open Rally.`
-    : null;
-  const resultDeliverySection = input.sidekick === undefined
-    ? null
-    : input.sidekick.resultDelivery.length > 0
-      ? `# Result delivery
-- The \`workstream\` destination in the task context's sidekick.resultDelivery is the room that owns this Sidekick. Nothing posts there for you: the one way a result reaches that room is the post_result tool, called once with the message the room should read, after the work is done.
-- Posting anywhere else the instructions ask for is part of the work, with your own tools, inside this run.`
-      : `# Result delivery
-- Rally sends this run's result nowhere. sidekick.resultDelivery is empty, and that is the whole answer: there is no destination configured on this Sidekick and none will be resolved after the run ends.
-- If the instructions ask for the result to reach anyone — an inbox, a channel, a DM, a document — sending it is part of doing the work, with your own tools, inside this run. A final message describing a send that did not happen is a failed run that reads like a successful one.
+- Nothing sends this run's final message anywhere. Whatever this run produces reaches its reader only through the sends you make with your own tools, outside the work stream, where recipients cannot open Rally resource embeds. Put the complete usable result in what you send. You may publish a resource too, but never send only an embed, title, or invitation to open Rally.
+- A final message describing a send that did not happen is a failed run that reads like a successful one.
 - Send to what the instructions name. Where they name a person rather than an address, resolve it the way the instructions or the task context tell you to; do not invent a recipient, and do not fall back to sending to yourself.
-- If the instructions ask for no delivery, send nothing. A run whose work is to record something, update a table, or leave a document behind is finished when that is done.`;
-  const origin = input.sidekick?.authoringOrigin ?? null;
-  const authoringOriginSection = origin
-    ? `# Where this Sidekick was set up
-- This Sidekick was created from ${origin.channelName
-      ? `the Slack channel ${origin.channelName} (${origin.channelId})`
-      : `Slack channel ${origin.channelId}`} in team ${origin.teamId}.
-- When the Sidekick's instructions say to post, send, or ask "here", "this channel", or "the channel", that is the channel they mean. Pass its id to the tool call; it is not written into the instructions, so do not expect to find it there.
-- This is where the occurrence speaks from, not a restriction on where it may act. A run with a reason to post somewhere else names that destination in its own tool call.`
+- If the instructions ask for no delivery, send nothing. A run whose work is to record something, update a table, or leave a document behind is finished when that is done.`
     : null;
   const workspaceAuthoritySection = input.executionAuthority === "workspace"
     ? `# Workspace execution authority
@@ -146,25 +112,14 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
     : null;
   const conditionalSections = [
     outputSurfaceSection,
-    resultDeliverySection,
-    authoringOriginSection,
     workspaceAuthoritySection,
   ].filter((section): section is string => section !== null).join("\n\n");
-  // Result delivery: only for a Sidekick run. As a standing bullet it was
-  // charged to every interactive run — where `resultDelivery` is not in the
-  // context at all — and a rule whose subject is absent is one a model has to
-  // resolve before it can ignore it.
-  //
-  // Both arms are load-bearing now that a Sidekick has no destinations of
-  // its own beyond the room that owns it. The populated arm names the one tool
-  // that reaches that room, since nothing delivers a final message for the run
-  // any more. The empty arm is the one that carries the new model: with
-  // nothing delivering for it, a run that only *describes* emailing the result
-  // has not emailed it, and the person who asked for a weekly summary gets
-  // silence. "Email this to Bob" used to be the case that cost, read as
-  // applying and turning a requested send into a description of one; now the
-  // expensive misreading is the opposite one, so the empty arm says outright
-  // that sending is part of the work.
+  // A Sidekick with a home posts there with the conversation plugin, whose
+  // system message names the tool: a tool name in standing policy would render
+  // for runs whose plugin is not loaded. The prompt carries only where home is,
+  // in the task context. A Sidekick with no home runs on `self_delivery`, whose
+  // section says outright that sending is part of the work: a run that only
+  // *describes* emailing the result has not emailed it.
   return `
 You are Rally a helpful assistant in a multi-player collaborative environment (more than one human participant (a user) can be expected).
 
