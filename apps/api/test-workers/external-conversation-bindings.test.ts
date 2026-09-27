@@ -782,4 +782,34 @@ describe("the connector side of a binding", () => {
     expect(await bindingRows()).toEqual([]);
     expect(await spaceIds()).toEqual([]);
   });
+
+  it("joins again on every accepted save of the same conversations, and not on a stale one", async () => {
+    await seedSlackConnection();
+    const save = (sourceGeneration: number, channels = ["C9"]) => workspace().applyExternalEventRegistrations({
+      schemaVersion: 1,
+      workspaceId: WORKSPACE_ID,
+      destination: { kind: "automation", automationId: AUTOMATION },
+      sourceGeneration,
+      evaluators: [{
+        evaluatorId: "00000000-0000-7000-8000-000000000ef4",
+        source: { connectorType: "slack", connectionId: CONNECTION, eventType: "slack.message.posted" },
+        when: { kind: "all", allOf: [{ kind: "string", attribute: "channelId", operator: "in", value: channels }] },
+      }],
+    });
+    const jobs = () => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ id: string }>(
+      "SELECT id FROM slack_ingress_jobs ORDER BY id",
+    ).toArray().map((row) => row.id));
+    await save(1);
+    expect(await jobs()).toHaveLength(1);
+    // The first join ran; the bot has since been removed from C9.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE slack_ingress_jobs SET status = 'completed', payload_json = NULL");
+    });
+    await save(2);
+    expect(await jobs()).toHaveLength(2);
+    // A projection older than the one applied changes nothing, so it joins
+    // nothing, whatever conversations it names.
+    await save(1, ["C7"]);
+    expect(await jobs()).toHaveLength(2);
+  });
 });
