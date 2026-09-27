@@ -1082,7 +1082,10 @@ Manifests and facets are cross-validated at registry construction: a connector t
    audience rule, evaluates each one's typed DNF predicate with no model
    inference, and inserts one delivery row per match. A durable `claimed`
    witness remains true after those delivery rows settle, so processing retries
-   cannot mistake handled work for an unmatched event. Only an unclaimed event
+   cannot mistake handled work for an unmatched event. An event whose
+   `metadata.externalConversationPath` resolves to an external conversation
+   binding is claimed too, with no delivery row, because the binding's own
+   ingress already delivered it. Only an unclaimed event
    enters WorkspaceDO's Suggested Work batch tables; activity-log projection is
    unconditional. There is no semantic route into an existing work stream.
    Admission and ranking are separate fenced Workflows whose durable product
@@ -1183,7 +1186,7 @@ Admission failures are retried through new batch windows only while an event's a
 
 A connector's normalized `title`/`summary` is not independently bounded to the API contract's resource limits (`ResourceSchema` in `packages/contracts`, 300 characters for `title`). Each connector truncates to its own cap before writing `activities` — GitHub's webhook titles cap at 500 — which is wider than what the response schema accepts. `WorkstreamService`/`SubstreamAgent` defensively truncate at every read and write site that surfaces this data, but a new connector should not rely on that alone: keep any new title/summary truncation at or under 300/2,000 characters at the connector layer too, so a work stream never depends solely on a downstream guard to stay openable.
 
-Slack is a composable `resource` and `messaging_agent` connector. Workspace installations host the Agent, App Home, interactive surfaces, activity triggers, and deterministic automation delivery; the bot joins existing public channels after install/reconnect and new public channels when Slack reports their creation. Accepted DM and mention prompts receive an immediate `eyes` reaction through the shared activation hook before processing. Optional personal authorizations use Slack's hosted MCP server and its live `tools/list` surface rather than Rally's historical snapshot. Slack delivers bounded message, reaction, file-share, channel, and membership events. Agent-thread events follow the existing conversational path; events matching an exact active automation source are normalized into the shared regional activity pipeline. Unmatched activity is discarded before durable queueing and is never turned into a general Slack feed or mirrored corpus. See `docs/slack-integration.md` for the product and data flow and `docs/slack-permissions.md` for the complete OAuth scope inventory.
+Slack is a composable `resource` and `messaging_agent` connector. Workspace installations host the Agent, App Home, interactive surfaces, activity triggers, and deterministic automation delivery; the bot is in a conversation only where it was invited, which links the room to a Space, or where a Sidekick's Slack source names it (see [`external-conversation-bindings.md`](external-conversation-bindings.md)). Accepted DM and mention prompts receive an immediate `eyes` reaction through the shared activation hook before processing. Optional personal authorizations use Slack's hosted MCP server and its live `tools/list` surface rather than Rally's historical snapshot. Slack delivers bounded message, reaction, file-share, channel, and membership events. Agent-thread events follow the existing conversational path; events matching an exact active automation source are normalized into the shared regional activity pipeline. Unmatched activity is discarded before durable queueing and is never turned into a general Slack feed or mirrored corpus. See `docs/slack-integration.md` for the product and data flow and `docs/slack-permissions.md` for the complete OAuth scope inventory.
 
 ### Product measurement
 
@@ -1244,6 +1247,8 @@ or a log-based handoff a persistent credential in observability.*
 **A work stream started from a conversation is that conversation's, not one member's.** Its visibility is the conversation's own — public for a public channel, private for anything else, including anything the connector could not classify — and a private one's participants are that conversation's members. Anybody in the conversation may continue it, and a member who arrives later is seated by their own message. *A Slack thread used to belong to whichever member happened to be linked first, and every other person in the channel — the workspace owner included — was answered with "this thread is already running with another Rally member's personal authority", in a public channel, in front of everyone.*
 
 **Authority is resolved per message, and only an account link grants it.** A run spends personal connectors, memory, and approvals made in somebody's name, so it may run as a member only where that member has authenticated to Rally and bound their provider identity to it. A `verified_email` match credits and seats somebody; it never authorizes a run as them, and a connector must not promote it to one because it makes a thread work more smoothly.
+
+**The exception: input bound to a Sidekick run follows the run, not the sender.** A reply in a provider thread bound to a Sidekick run child continues that run with its run-as user's connectors, whoever sent it, including a sender who is not a Rally member. The reply is framed to the model as labelled evidence from its sender, never as a member request, and only the Sidekick's config conversation can add the conversations a run reads or posts to. A connector opts a send into this by returning `externalConversation: { installationId, path }` on its `ConnectorToolResult`; the host binds the thread only for a run child, in the tool receipt's own transaction, and a binding already held elsewhere wins. See [`external-conversation-bindings.md`](external-conversation-bindings.md).
 
 **Do not spend a provider round trip on something Rally already knows.** Revalidation between model turns is answered from WorkspaceDO connector state plus current D1 membership; only an activation goes to the provider. *Eight model iterations against a workspace Granola connection made roughly twenty-four provider calls per run purely to re-establish authority already recorded locally.*
 
@@ -1441,6 +1446,31 @@ Workspace-principal automation runs retain their separate lifecycle authority.
 **Rejected:** Keying Calendar identity on content inside the adapter would fix one connector; the ingest filter covers any adapter that re-stamps unchanged content. Comparing against all history instead of the latest event would drop a reversal, which is news. Ordering the comparison by `occurredAt` alone was not enough: by the time an older event arrives, the newer repeat it makes news has already been dropped, so the drop keeps its identity and is restored instead. A column and index on `workspace_connector_events` would have built an index over 255,000 rows in the migration, where the new table starts empty.
 
 **What a future change must respect:** An adapter's content must change when the thing it reports changes; a change marker carried only in `occurredAt` or the identity is dropped as a repeat. A dropped repeat must never wake or retry the earlier event's processing. Arrival order is not event order: anything that compares against the latest content has to go by `occurredAt`, and a drop has to stay recoverable until an older event can no longer arrive. Keeping a CI type again means removing it from `isDiscardedGitHubDelivery` and declaring it in the manifest together.
+
+### 2026-09-27: A connector send can bind its thread to a Sidekick run, and authority follows the run
+
+**What changed:** `ConnectorToolResult` gained `externalConversation`, which the
+host turns into an outbound binding for a Sidekick run child, committed with the
+tool receipt. A reply in that thread continues the run under the run's
+authority. An event on a bound path counts as claimed.
+
+**Why:** A Sidekick that asked a question in Slack could not hear the answer:
+the reply opened an Agent work stream under the sender's authority. The
+"authority is resolved per message" rule was written for Agent threads, where
+the sender is the requester; in a Sidekick's thread the requester is the run.
+
+**Considered and rejected:** Running the reply under the sender's link, which
+would let an unlinked or external replier's thread run under the workspace
+principal with none of the Sidekick's tools. Binding the thread from the
+adapter itself: an adapter has no transaction with the receipt, so a lost
+receipt could leave a binding for a send that never happened.
+
+**Consequences:** The authority invariant above now has a stated exception.
+Only Slack returns `externalConversation` today; another connector opts in by
+returning it for a workspace-scoped send. Bound events never reach Suggested
+Work.
+
+Design: `docs/PRDs/2026-09-23_external-conversation-bindings/`.
 
 ### 2026-09-26 — Tool counts ride the connection list
 

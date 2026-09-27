@@ -31,6 +31,7 @@ listed in [`slack-permissions.md`](slack-permissions.md) rather than here.
 | `apps/api/src/durable-objects/substream-agent.ts` | The run-settlement output sink that reaches Slack. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Installation administration. |
 | `config/provider-apps/slack.json` | The manifest. |
+| `apps/api/src/durable-objects/workspace-external-binding-storage.ts` | Room and thread bindings, which decide where every Slack message routes. Owned by [`external-conversation-bindings.md`](external-conversation-bindings.md). |
 
 ### Product boundary
 
@@ -59,7 +60,7 @@ Global D1 stores only `team_id -> region/workspace/connection` routing metadata.
 Raw Slack APIs are the workspace Agent and workspace-tool plane:
 
 - OAuth installation and token rotation
-- public-channel discovery and bot membership
+- conversation classification and bot membership
 - Events API and request signing
 - Agent messages, status, title, suggested prompts, and streaming
 - App Home (`views.publish`)
@@ -89,7 +90,7 @@ before health checks and tool calls succeed.
 
 The canonical definition is in `docs/provider-apps.md`: zero-copy means Rally does not recreate Slack inside Rally. It is a product and architecture boundary, not a claim that no Slack data crosses the connector or is ever persisted. Rally must not become a parallel Slack inbox, channel browser, history store, or generally searchable Slack replica.
 
-Within that boundary, Rally may subscribe to Slack activity, retain bounded normalized trigger evidence and provenance for configured automations, fetch authorized task-specific context on demand, and preserve Slack-derived content in the Rally work that uses it. The workspace bot joins every current public channel after installation or reconnection and joins new public channels from `channel_created` events so `@Rally` is consistently available. To support natural follow-ups, Slack delivers `message.channels` and `message.groups` events for conversations the bot has joined because Slack offers no thread-only event filter. The regional ingress accepts human replies in an existing Rally thread, a recent denied Rally thread, or a message event matched by an explicitly configured Slack automation source; unrelated messages are discarded before durable queueing. Normalized automation activity retains bounded trigger evidence and identifiers, not a general-purpose copy of the source conversation or file content.
+Within that boundary, Rally may subscribe to Slack activity, retain bounded normalized trigger evidence and provenance for configured automations, fetch authorized task-specific context on demand, and preserve Slack-derived content in the Rally work that uses it. The workspace bot is in a conversation only because somebody invited it, or because a Sidekick's Slack source names that conversation and Rally joined it for that source. Rally does not join public channels on its own, and does not join a channel because Slack reports its creation. An invitation links the room to a Space; a Sidekick-source join links nothing. See [external conversation bindings](external-conversation-bindings.md). To support natural follow-ups, Slack delivers `message.channels`, `message.groups` and `message.mpim` events for conversations the bot has joined because Slack offers no thread-only event filter. The regional ingress accepts human replies in a bound thread, a recent denied Rally thread, or a message event matched by an explicitly configured Slack automation source; unrelated messages are discarded before durable queueing. Normalized automation activity retains bounded trigger evidence and identifiers, not a general-purpose copy of the source conversation or file content.
 
 When a prompt is denied because the channel classification or Agent policy needs attention, Rally retains that prompt regionally for at most 24 hours. This lets the same Slack member reply `try again` after the problem is fixed without retyping the request. The prompt is deleted when a session starts and expired rows are removed by scheduled maintenance. A narrowly matched, explicitly mentioned retry of a denial created before this mechanism may read at most the first 15 messages in that single thread to recover the prompting mention; unmentioned messages in other threads are ignored.
 
@@ -220,7 +221,10 @@ answers the channel it belongs to rather than 404ing at it. A Slack member Rally
 an account at all still has their message recorded, under their Slack actor.
 
 **Each message runs under the authority of whoever sent it**: a member with a confirmed account
-link runs as themselves, and everybody else runs under the workspace principal. Nothing weaker
+link runs as themselves, and everybody else runs under the workspace principal. The one exception
+is a reply in a thread bound to a Sidekick run: **authority follows the run, not the sender**, so
+the run continues with its run-as user's connectors whoever replied, and the reply reaches the
+model as labelled evidence from its sender rather than as a member request. Nothing weaker
 than a link authorizes a run — a `users.lookupByEmail`-grade match seats and credits somebody
 and cannot spend their credentials — so two replies in one thread can run under different
 principals, exactly as they do when two members type into the same work stream in Rally.
@@ -260,7 +264,11 @@ with the workspace principal, and the opening message keeps its external Slack a
 
 ### Agent sessions and delivery
 
-A Slack root DM or root mention creates a stable `slack_agent_sessions` row keyed by installation, channel, and root timestamp. It maps to exactly one durable Rally workstream. Human replies in that Slack thread add messages to the same workstream without requiring another `@Rally` mention, whoever sends them. Rally ignores messages outside its session threads and does not replay or import the rest of the Slack conversation.
+Every Slack message is routed by its **binding** before a work stream is looked up or created: a thread bound to a work stream delivers there, a thread bound to a Sidekick run delivers to that run, an addressed thread in a room linked to a Space opens a work stream in that Space, and anything else takes the Agent path below. [`external-conversation-bindings.md`](external-conversation-bindings.md) owns resolution and the lifecycle events (`member_joined_channel`, `member_left_channel`, `channel_left`, `group_left`, `channel_archive`, `group_archive`, `channel_id_changed`) that link, suspend and move bindings.
+
+A Slack root DM or root mention on the Agent path creates a stable `slack_agent_sessions` row keyed by installation, channel, and root timestamp, and writes the thread's binding in the same transaction. It maps to exactly one durable Rally workstream. The session row is delivery state (status, reaction, who started it); the binding is routing. Human replies in that Slack thread add messages to the same workstream without requiring another `@Rally` mention, whoever sends them. Rally ignores messages outside its bound threads and does not replay or import the rest of the Slack conversation.
+
+A top-level message in a DM with the bot, while that DM holds a Sidekick request, is answered once asking the person to reply in the request's thread, with a link to it. It creates no work. A DM with no such request keeps the one-to-one Agent behavior.
 
 The session row records who started the thread and where; it does not decide who may use it. The only reply Rally refuses is one answering a question addressed to a specific member — the same rule the Rally app applies to a targeted elicitation, per question rather than per thread.
 
@@ -522,7 +530,15 @@ At each run Rally ranks actionable inbox items, sends up to three (fewer if fewe
   stream is public for a public channel and private for anything else, a private
   one's room is the conversation's members, and anybody in the conversation may
   continue it. Each message runs as whoever sent it, and only a confirmed account
-  link authorizes running as a member.
+  link authorizes running as a member, except a reply bound to a Sidekick run,
+  which runs with the run's authority.
+- **Routing is the binding, not the session row.** A path that decides where a
+  message goes from `slack_agent_sessions` instead of
+  `resolveExternalConversation` will miss every room link and every Sidekick
+  run's thread, and send their replies to a new Agent work stream.
+- **The bot is only where it was invited or where a Sidekick source needs it.**
+  A join Rally makes on its own reads, to everyone in the room, as an
+  invitation it never received.
 - **The persisted Rally run is canonical.** A Slack delivery failure never
   rewrites a completed run as failed.
 - **The `action_token` is hidden run authorization** and never enters a prompt,
@@ -795,6 +811,37 @@ briefing's three/one/zero-result cases.
 8. Submit the exact scopes and test credentials/instructions. Explain why broad user scopes are optional and user initiated, why public-channel membership does not ingest ordinary channel traffic, how account linking works, and how automation approval/delivery binding works.
 
 The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Slack later made PKCE immutable for this app. CLI 4.6.0 strips `pkce_enabled` from its validation request even when the generated manifest contains `"pkce_enabled": true`, so the API interprets the omission as an attempt to disable PKCE. Until the CLI preserves that field, validate and apply production changes through Slack's App Manifest editor instead. Validation does not replace deployment or Marketplace review.
+
+### 2026-09-27: Bindings route Slack messages, and the bot stops joining channels on its own
+
+**What changed:** Routing moved from `slack_agent_sessions` and
+`slackThreadRoutable` to external conversation bindings (migration 80 carries
+every session's thread). Inviting the bot links a room to a Space. The
+public-channel join sweep and the `channel_created` join are gone; the bot joins
+only conversations a Sidekick's Slack source names. The manifest adds
+`message.mpim`, `channel_id_changed`, `channel_left`, `group_left`,
+`channel_archive` and `group_archive`. A reply in a thread a Sidekick run posted
+to reaches that run, under the run's authority.
+
+**Why:** A person who answered a Sidekick's question in Slack got a new,
+unrelated Agent work stream, because only the Agent's own sessions were
+routable. Joining every public channel made the bot's presence meaningless as a
+signal of where Rally is wanted, and left no way to say which Space a room
+belongs to.
+
+**Considered and rejected:** Keeping the sweep and linking every joined room to
+a Space: it would create a Space for every public channel in the team.
+Routing a reply by the sender's authority: the sender of a reply to a Sidekick
+may not be a Rally member at all, and the run already holds the authority its
+request was made with.
+
+**Consequences:** Existing installations keep the channels the sweep already
+joined, but those rooms have no Space until somebody re-invites the bot or
+mentions it. The "each message runs as whoever sent it" rule now has one
+exception, recorded above. The mechanism is owned by
+[`external-conversation-bindings.md`](external-conversation-bindings.md).
+
+Design: `docs/PRDs/2026-09-23_external-conversation-bindings/`.
 
 ### 2026-09-01 — Slack handoffs retain their Rally workspace
 
