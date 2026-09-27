@@ -86,7 +86,17 @@ async function quiesceUnsettledTasks(
       // accepted command can keep mutating after the session handle disappears.
       // Whole-sandbox stop is the provider boundary scheduled cleanup needs.
       await renewClaim();
-      sandboxAbsent = await stopTerminalSandbox(provider, providerSandboxId) === "absent";
+      try {
+        sandboxAbsent = await stopTerminalSandbox(provider, providerSandboxId) === "absent";
+      } catch (error) {
+        // A sandbox Daytona cannot recover will never stop, and its command
+        // cannot outlive it: retire it here, or the task keeps the sweep
+        // retrying a stop that cannot succeed.
+        const observed = await observeTerminalSandbox(provider, providerSandboxId).catch(() => null);
+        if (!isTerminalSandboxLost(observed)) throw error;
+        await deleteTerminalSandbox(provider, providerSandboxId);
+        sandboxAbsent = true;
+      }
       sandboxStopped = !sandboxAbsent;
     }
 

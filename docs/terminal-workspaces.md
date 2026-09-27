@@ -441,7 +441,8 @@ when an accepted archive request still reads back as stopped. Expiry recovers
 a recoverable failed sandbox before attempting final-diff preservation. A
 sandbox Daytona reports unrecoverable is deleted and settled by whichever
 transition was due: expiry clears it, and a warm stop or archive retires the
-generation so the next Terminal call starts fresh, as acquisition does. No
+generation so the next Terminal call starts fresh, as acquisition does. A
+leftover command whose stop fails on such a sandbox retires it the same way. No
 stop, archive or final diff can reach it, so retrying one only fails again. SDK
 `start()` and `recover()` wait for provider lifecycle state, which is insufficient
 proof of toolbox availability. Restore and recovery run a no-op command and
@@ -766,7 +767,8 @@ delegations; a side thread's own Daytona name, and a background agent holding
 its owner's lease from another conversation until it yields, are in
 `terminal-coordinator.test.ts`; the sweep holding such a sandbox is in
 `terminal-lifecycle.test.ts`, as are an unrecoverable sandbox deleted and
-settled rather than retried and a live claim waited out without a provider
+settled rather than retried, including one whose leftover command could not
+be stopped, and a live claim waited out without a provider
 call; the port resolution rule is in
 `workstream-tool-receipt-locality.test.ts`. On real workerd,
 `test-workers/terminal-authority.test.ts` proves the lease SQL for a holder
