@@ -140,6 +140,21 @@ async function createForThread(clientMessageId: string, spaceId: SpaceId, path: 
   });
 }
 
+/**
+ * A person closing a run's binding. No surface does this yet; the state and
+ * its reason exist, so the tests that must tell it apart from a disconnect
+ * write it directly.
+ */
+async function closeRunBindings(runId: string) {
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec(
+      `UPDATE external_conversation_bindings SET state = 'suspended', suspended_reason = 'closed'
+        WHERE parent_kind = 'automation' AND substream_id = ?`,
+      runId,
+    );
+  });
+}
+
 async function bindingRows() {
   return runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{
     path_json: string; target_kind: string; parent_id: string | null; state: string;
@@ -512,10 +527,7 @@ describe("suspending bindings", () => {
     await outbound(["D1", "1.0"], RUN);
     await outbound(["D2", "1.0"], "00000000-0000-7000-8000-000000000ec7");
     // A person closes one run's binding first.
-    await workspace().closeExternalConversationBindings({
-      workspaceId: WORKSPACE_ID, parentKind: "automation", parentId: SIDEKICK,
-      substreamId: "00000000-0000-7000-8000-000000000ec7", reason: "closed", at: at(),
-    });
+    await closeRunBindings("00000000-0000-7000-8000-000000000ec7");
     expect(await resolve(["D2", "1.0"])).toEqual({ outcome: "suspended", path: ["D2", "1.0"], reason: "closed" });
 
     await workspace().suspendExternalConversationBindings({
@@ -644,9 +656,8 @@ describe("outbound bindings", () => {
     expect(await latest("D1")).toEqual({ latest: { path: ["D1", "1.0"], sidekickId: SIDEKICK, runId: RUN } });
     expect(await latest("D2")).toEqual({ latest: null });
     // A closed request is no longer one to point at.
-    await workspace().closeExternalConversationBindings({
-      workspaceId: WORKSPACE_ID, parentKind: "automation", parentId: SIDEKICK, reason: "closed", at: at(),
-    });
+    await closeRunBindings(RUN);
+    await closeRunBindings(EARLIER_RUN);
     expect(await latest("D1")).toEqual({ latest: null });
   });
 });
@@ -712,12 +723,8 @@ describe("a Sidekick run's send", () => {
     });
   }
 
-  const binding = {
-    installationId: INSTALLATION,
-    path: ["D9", "1727.002"],
-    // The run child's own address: the object refuses a target that is not itself.
-    target: { kind: "conversation" as const, parentKind: "automation" as const, parentId: SIDEKICK_ID, substreamId: "0" },
-  };
+  // Where the send's replies arrive; the run child that commits it is the target.
+  const binding = { installationId: INSTALLATION, path: ["D9", "1727.002"] };
 
   async function resolveRun(path: string[]) {
     return ExternalBindingResolutionSchema.parse(await workspace(RUN_WORKSPACE_ID).resolveExternalConversation({
@@ -749,7 +756,7 @@ describe("a Sidekick run's send", () => {
       const sql = state.storage.sql;
       const now = Date.now();
       for (const [index, path] of [["D1", "1.0"], ["D2", "1.0"]].entries()) {
-        enqueueExternalBindingInTransaction(sql, { ...binding, path, workspaceId: RUN_WORKSPACE_ID, at: at() }, now + index);
+        enqueueExternalBindingInTransaction(sql, { ...binding, path, at: at() }, now + index);
       }
       // A row whose payload no longer parses, written ahead of both.
       sql.exec(

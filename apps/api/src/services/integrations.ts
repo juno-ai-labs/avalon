@@ -8501,18 +8501,7 @@ function outboundExternalBinding(
 ): { externalBinding: OutboundExternalBinding } | Record<string, never> {
   if (!conversation || !input.automationRun || input.parentKind !== "automation"
     || !input.substreamId || input.substreamId === "0") return {};
-  return {
-    externalBinding: {
-      installationId: conversation.installationId,
-      path: conversation.path,
-      target: {
-        kind: "conversation",
-        parentKind: "automation",
-        parentId: input.parentId,
-        substreamId: input.substreamId,
-      },
-    },
-  };
+  return { externalBinding: { installationId: conversation.installationId, path: conversation.path } };
 }
 
 function automationRunProvenance(

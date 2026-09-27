@@ -25,7 +25,11 @@
  * `pending` and `started`.
  */
 
-import { OutboundExternalBindingSchema, type OutboundExternalBinding } from "./external-binding-outbox";
+import {
+  enqueueExternalBindingInTransaction,
+  OutboundExternalBindingSchema,
+  type OutboundExternalBinding,
+} from "./external-binding-outbox";
 import { uuidV7 } from "../lib/uuid-v7";
 import { ToolPageError, ToolPageStorage, type PageIssueSchema, type PageClaimSchema } from "./tool-page-storage";
 import type { z } from "zod";
@@ -263,12 +267,6 @@ const LEASE_HOLDING_STATUSES = new Set(["running"]);
 export class WorkstreamToolReceiptStorage {
   constructor(
     private readonly storage: DurableObjectStorage,
-    /**
-     * Commits an outbound external binding inside a completion's transaction.
-     * The conversation object supplies it; a completion that carries a binding
-     * where none was supplied is refused rather than completed without it.
-     */
-    private readonly enqueueExternalBinding?: (binding: OutboundExternalBinding, now: number) => void,
   ) {}
 
   issuePage(input: z.infer<typeof PageIssueSchema> & { fence: ToolReceiptFence }): string | null {
@@ -1297,10 +1295,6 @@ export class WorkstreamToolReceiptStorage {
     const externalBinding = input.externalBinding
       ? OutboundExternalBindingSchema.parse(input.externalBinding)
       : null;
-    const enqueueExternalBinding = this.enqueueExternalBinding;
-    if (externalBinding && !enqueueExternalBinding) {
-      throw new Error("tool_receipt_external_binding_unsupported");
-    }
     return this.storage.transactionSync(() => {
       const held = this.#fence(input.fence, input.now, input.allowCancellationRequested === true);
       if (held !== "held") return held === "cancelled" ? "cancelled" : "ownership_lost";
@@ -1330,7 +1324,12 @@ export class WorkstreamToolReceiptStorage {
         ),
       });
       if (moved) {
-        if (externalBinding && enqueueExternalBinding) enqueueExternalBinding(externalBinding, input.now);
+        if (externalBinding) {
+          enqueueExternalBindingInTransaction(this.sql, {
+            ...externalBinding,
+            at: new Date(input.now).toISOString(),
+          }, input.now);
+        }
         return "persisted";
       }
       const settled = first(this.sql.exec<{
