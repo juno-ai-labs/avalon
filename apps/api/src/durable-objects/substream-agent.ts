@@ -5833,15 +5833,28 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     try {
       const workspace = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
         identity.workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)));
-      await drainExternalBindingOutbox(this.state.storage.sql, async (binding) => {
-        await workspace.recordOutboundExternalConversationBinding({
+      const report = await drainExternalBindingOutbox(this.state.storage.sql, (binding) =>
+        workspace.recordOutboundExternalConversationBinding({
           workspaceId: binding.workspaceId,
           installationId: binding.installationId,
           path: binding.path,
           target: binding.target,
           at: binding.at,
-        });
-      });
+        }));
+      for (const [event, rows] of [
+        ["external_binding_delivery_dead", report.dead],
+        ["external_binding_delivery_deferred", report.deferred],
+      ] as const) {
+        for (const row of rows) {
+          logWarn(this.env, event, {
+            workspace_id: identity.workspaceId,
+            workstream_id: identity.parentId,
+            substream_id: this.externalSubstreamId(),
+            message_id: row.messageId,
+            reason: row.code,
+          });
+        }
+      }
     } catch (error) {
       logWarn(this.env, "external_binding_delivery_deferred", {
         workspace_id: identity.workspaceId,
