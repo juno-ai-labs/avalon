@@ -337,7 +337,8 @@ Fixtures seed a Channel's `channels` row beside its identity row in
 and change scope or archive state on the directory row.
 `hosted-parent-migration.test.ts` upgrades a populated v77 object and proves
 migration 78 keeps every parent's identity row and leaves only the identity
-columns. `automation-post-result.test.ts` proves a Channel archived only on
+columns. `hosted-parent-isolation.test.ts` proves a parent with no directory row
+refuses a non-participant and admits them once its row says `workspace`. `automation-post-result.test.ts` proves a Channel archived only on
 `channels` refuses a child; `space-authority.test.ts` proves the same for a Space
 archived only on `spaces`, and that a member Channel archived only on
 `channels` takes the Queue for a Sidekick default; `scope-invitations.test.ts`

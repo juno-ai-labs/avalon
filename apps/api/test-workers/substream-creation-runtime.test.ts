@@ -319,7 +319,7 @@ describe("substream preparation on workerd", () => {
       expect(state.storage.sql.exec(`SELECT 1 FROM parent_child_viewer_projections WHERE parent_id = ? AND substream_id = '0' AND user_id = ?`, WORKSTREAM_ID, OTHER_ID).toArray()).toEqual([]);
       expect(state.storage.sql.exec(`SELECT 1 FROM parent_child_viewer_projections WHERE parent_id = ? AND substream_id = ? AND user_id = ?`, WORKSTREAM_ID, substreamId, OTHER_ID).toArray()).toHaveLength(1);
       expect(state.storage.sql.exec(`SELECT 1 FROM parent_child_receipts WHERE parent_id = ? AND substream_id = ?`, WORKSTREAM_ID, substreamId).toArray().length).toBeGreaterThan(0);
-      expect(state.storage.sql.exec<{ title: string }>(`SELECT title FROM parent_metadata WHERE parent_id = ?`, WORKSTREAM_ID).one().title).toBe("Source");
+      expect(state.storage.sql.exec<{ title: string }>(`SELECT title FROM channels WHERE workstream_id = ?`, WORKSTREAM_ID).one().title).toBe("Source");
     });
   });
 
@@ -505,9 +505,6 @@ describe("substream preparation on workerd", () => {
     expect(await runInDurableObject(workspace, (_instance, state) => state.storage.sql.exec(
       "SELECT title FROM breakouts WHERE workstream_id = ? AND substream_id = ?", WORKSTREAM_ID, substreamId,
     ).toArray())).toEqual([{ title: "Mentioning child" }]);
-    expect(await runInDurableObject(parent(), (_instance, state) =>
-      state.storage.sql.exec<{ title: string }>(`SELECT title FROM parent_metadata WHERE parent_id = ?`, WORKSTREAM_ID).one().title,
-    )).toBe("Source");
 
 
   });
