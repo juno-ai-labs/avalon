@@ -57,6 +57,32 @@ export async function workspaceConnectorEventPayloadHash(
   return `sha256:${await sha256Hex(canonicalJson(content))}`;
 }
 
+/**
+ * What the event says, without when or under which name it was said. Two
+ * events for one resource with the same fingerprint tell a reader nothing new:
+ * Google re-stamps a calendar event's `updated` with nothing visible changed,
+ * and that stamp is the event's identity, so each touch arrives as a new event.
+ * An adapter whose only change marker is its timestamp must put that marker in
+ * the content as well, or its genuine repeats are suppressed as no-ops.
+ */
+export async function workspaceConnectorEventContentFingerprint(
+  event: WorkspaceConnectorEvent,
+): Promise<string> {
+  const content = {
+    ...event,
+    activity: {
+      ...event.activity,
+      id: "",
+      receivedAt: "",
+      occurredAt: "",
+      providerEventId: "",
+      dedupeKey: "",
+      payloadRef: "",
+    },
+  };
+  return `sha256:${await sha256Hex(canonicalJson(content))}`;
+}
+
 export async function workspaceConnectorEventQueueMessage(input: {
   connectorType: string;
   activity: NormalizedActivity;

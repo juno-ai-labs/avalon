@@ -2,6 +2,7 @@ import { regionalBindings } from "../lib/regional-bindings";
 import { isConfiguredRegion, configuredRegions } from "@rally/contracts/regions";
 import {
   ConnectorError,
+  isDiscardedGitHubDelivery,
   verifyGitHubWebhook,
   type GitHubWebhookDelivery,
 } from "@rally/connectors";
@@ -212,7 +213,7 @@ export class GitHubRoutingService {
     const delivery = await this.verifyIngress(bytes, headers);
     await this.cleanupExpiredPending();
 
-    if (delivery.event === "ping") {
+    if (delivery.event === "ping" || isDiscardedGitHubDelivery(delivery)) {
       return { accepted: true, duplicate: false, activityCount: 0 };
     }
     if (delivery.event === "github_app_authorization" && delivery.installationId === null) {
