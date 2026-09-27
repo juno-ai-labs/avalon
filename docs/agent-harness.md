@@ -1401,6 +1401,38 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
+### 2026-09-27 — A run's result reaches a conversation only by conversation_post
+
+**What changed:** The `# Result delivery` section of the work-stream system
+prompt and the `rally:sidekick-result` plugin (`post_result`, formerly
+`automation_post_result`) are gone. A Sidekick run's instruction about where
+its work goes now lives in the `rally:conversations` system message: its final
+message stays in the run, and when the instructions say a conversation should
+hear something it posts it with `conversation_post`, once, in full, after the
+work is done. This reverses "2026-09-03 — A run delivers its own result, and
+no trigger narrows its tools" (the section's two arms) and the consequence in
+"2026-09-03 — Drafting is a conversation, and a run reads its automation by
+revision" that a prompt edit keep the populated arm naming
+`automation_post_result` and no other path.
+
+**Why:** The one result tool could reach only the owning Channel's Main and
+was keyed on the run, so a run homed in a Breakout, or one continued to
+forward a second reply, had no way to deliver; the argument is
+[`conversation-tools.md`](conversation-tools.md#changelog)'s. What the first
+answer got right still holds: a run must not read silence as "Rally has it
+covered", so the replacement instruction says outright that the final message
+reaches nobody outside the run.
+
+**Considered and rejected:** Keeping `# Result delivery` and rewording its
+populated arm to name `conversation_post`. The home is now one of several
+reachable conversations, chosen by the instructions, so the prompt section
+would restate the plugin's own system message in a second place.
+
+**Consequences:** A prompt edit that tells a run where its result goes belongs
+in `conversationsSystemMessage`, which a test pins.
+
+Shipped in #1006.
+
 ### 2026-09-23 — Remove repeated cross-resource checks from model and tool turns
 
 **What changed:** Initial plugin authorization checks run concurrently, with preparation and durable writes kept in stable order. Bind reuses the host's just-validated activation IDs during immediate rehydration instead of repeating connector and provider health checks; other restored hints are checked concurrently and applied in hint order. Active plugin continuation checks run concurrently, and connector continuation preserves the activated tool surface without a connection-row read. The final run-authority and lease checks run concurrently after them. A connector tool call reads live run authority and the connection row together before receipt replay or execution and passes that validated row to credential preparation and execution without a second live check. Built-in reads spend the model-call run-authority result while writes still recheck. Sidekick skill access is resolved at run start and on new skill load, then held for that run. Principal and Channel identity reads also overlap. Model windows arrive from the Channel agent's KV-backed memory rather than a provider catalog request.

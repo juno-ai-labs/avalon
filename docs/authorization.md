@@ -148,7 +148,10 @@ children. Content and search passages still come from canonical source records.
 Public resource metadata, content, version reads and previews admit workspace-bound
 guests through this same policy; the byte handlers recheck after storage awaits.
 Resources attached to workstream-owned Sidekick conversations reuse that
-Sidekick's viewer admission, including its owning workstream management grant.
+Sidekick's viewer admission, which for a guest follows the Sidekick's home: the
+owning workstream's management grant for a home in its Main conversation, and
+the home Breakout's own grant for a Breakout home, which a workstream grant
+does not reach.
 Guest admission observations are shared only within the current authorization
 batch, like other owner observations. Skill visibility alone does not expose a
 Sidekick's resources; existing member authorization remains on its original path.
