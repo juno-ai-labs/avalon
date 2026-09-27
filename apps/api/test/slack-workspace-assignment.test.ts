@@ -1961,6 +1961,46 @@ describe("Slack public channel membership", () => {
     expect(threadTitles).toEqual(["investigate this"]);
   });
 
+  it("brings a room back when the bot is mentioned there after it was removed", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    objectDatabase.exec(`
+      INSERT INTO spaces
+        (space_id, title, scope, authority_generation, source_version, payload_hash,
+         revision, created_at, updated_at, created_by_user_id)
+      VALUES ('00000000-0000-7000-8000-0000000000b2', 'launch', 'workspace', 1, 1,
+              'fixture', 1, 0, 0, '019fc4e0-4444-7000-8000-000000000044');
+      INSERT INTO external_conversation_bindings
+        (installation_id, path_json, target_kind, space_id, state, suspended_reason, created_at, updated_at)
+      VALUES ('slack:T123', '["C123"]', 'space', '00000000-0000-7000-8000-0000000000b2', 'suspended',
+              'provider_membership_ended', '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z');
+    `);
+    insertSlackEventJob(objectDatabase, "event:mentioned-again", appMention("EvMentionedAgain"));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      if (url.pathname.endsWith("conversations.info")) {
+        return new Response(JSON.stringify({
+          ok: true, channel: { id: "C123", name: "launch", is_private: false, is_im: false, is_mpim: false },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      // Past the relink, the mention goes on to start work; this test stops there.
+      throw new Error("past_relink");
+    }));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    await new SlackAgentService(slackMembershipEnvironment(
+      database, instance, credentialsKey, vi.fn(async () => undefined),
+    )).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:mentioned-again").catch(() => undefined);
+
+    // Back, with its Space, without anyone having to re-invite the bot, and
+    // without a Rally member to act as: the Space already exists.
+    expect(objectDatabase.prepare(
+      "SELECT state, suspended_reason, space_id FROM external_conversation_bindings WHERE path_json = '[\"C123\"]'",
+    ).get()).toEqual({ state: "active", suspended_reason: null, space_id: "00000000-0000-7000-8000-0000000000b2" });
+  });
+
   it("refuses to open a Channel in an Organization-wide Space for a room that has become private", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";

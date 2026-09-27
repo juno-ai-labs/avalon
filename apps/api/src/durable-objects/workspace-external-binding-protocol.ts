@@ -199,8 +199,11 @@ export type ExternalBindingSuspendRequest = z.infer<typeof ExternalBindingSuspen
 export const ExternalBindingReactivateRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   installationId: ExternalInstallationIdSchema,
-  /** Only bindings suspended for this reason come back. */
-  reason: z.literal("connection_disconnected"),
+  /**
+   * Omitted: every binding a disconnect suspended. Named: that one room, when
+   * the bot left it or it was archived and the bot is now back.
+   */
+  path: ExternalPathSchema.optional(),
   at: TimestampSchema,
 }));
 export type ExternalBindingReactivateRequest = z.infer<typeof ExternalBindingReactivateRequestSchema>;
