@@ -1,4 +1,5 @@
 import type { SqlStorageValue } from "@cloudflare/workers-types";
+import type { ConversationToolScope } from "./workspace-conversation-tool-protocol";
 
 /**
  * Which Rally conversations an agent loop may reach with the conversation
@@ -34,9 +35,6 @@ export interface ConversationAddress {
   substreamId: string;
 }
 
-export type ConversationScope =
-  | { kind: "sidekick"; automationId: string }
-  | { kind: "conversation"; parentId: string; substreamId: string };
 
 export interface ScopedConversation extends ConversationAddress {
   conversationId: string;
@@ -162,7 +160,7 @@ function sidekickExists(sql: SqlStorage, automationId: string): boolean {
  * first, then Main for a Breakout loop, then attachments in the order they
  * were made.
  */
-export function scopeConversations(sql: SqlStorage, scope: ConversationScope, userId: string): ScopedConversation[] {
+export function scopeConversations(sql: SqlStorage, scope: ConversationToolScope, userId: string): ScopedConversation[] {
   const addresses: Array<ConversationAddress & { isHome: boolean; isOwn: boolean }> = [];
   if (scope.kind === "conversation") {
     addresses.push({ parentKind: "workstream", parentId: scope.parentId, substreamId: scope.substreamId,

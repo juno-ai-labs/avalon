@@ -5388,12 +5388,15 @@ async function loadHarnessTools(
       tools: sidekickPlugin.tools.filter((tool) => ["sidekicks_list", "attach", "detach"].includes(tool.definition.name)),
     }
     : sidekickPlugin;
-  // List, read and post to Rally conversations, scoped by the loop: a Channel
-  // or Breakout loop reaches its own conversation and its Channel's Main; a
+  // List, read and post to Rally conversations, scoped by the loop: a
+  // Breakout loop reaches its own conversation and its Channel's Main; a
   // Sidekick's configuration conversation and runs reach its home and
-  // attachments. The only way a Sidekick run reaches a room.
+  // attachments. The only way a Sidekick run reaches a room. A run knows from
+  // its definition whether the Sidekick has a home; the configuration
+  // conversation does not read one.
   const conversationsPlugin = createConversationsPlugin(input, conversationToolPorts(env, input),
-    (tool) => expandPages(tool, CONVERSATIONS_WIRE_PREFIX, null));
+    (tool) => expandPages(tool, CONVERSATIONS_WIRE_PREFIX, null),
+    { home: runDefinition ? runDefinition.owningWorkstreamId !== null : null });
   // `tools` retains the historical flattened view for API diagnostics and
   // tests. Bind receives stable always-active core plugins plus loadable
   // built-in and credential-scoped plugins.

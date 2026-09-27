@@ -1,4 +1,11 @@
-import { IdSchema, SubstreamIdSchema, UserIdSchema, WorkspaceIdSchema } from "@rally/contracts";
+import {
+  AutomationActivationV1Schema,
+  IdSchema,
+  MESSAGE_MAX_CHARACTERS,
+  SubstreamIdSchema,
+  UserIdSchema,
+  WorkspaceIdSchema,
+} from "@rally/contracts";
 import { z } from "zod";
 
 /**
@@ -13,6 +20,24 @@ export const ConversationToolScopeSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("sidekick"), automationId: IdSchema }),
   z.strictObject({ kind: z.literal("conversation"), parentId: IdSchema, substreamId: SubstreamIdSchema }),
 ]);
+/** Whose conversations a tool call reaches: a Sidekick's, or a loop's own and its Channel's Main. */
+export type ConversationToolScope = z.input<typeof ConversationToolScopeSchema>;
+
+/**
+ * A `conversation_post`, as the addressed conversation's SubstreamAgent takes
+ * it (`appendConversationPost`): the conversation it is for, the host-derived
+ * key it lands once under, and the Sidekick's post.
+ */
+export const ConversationPostRequestSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  workspaceId: z.string().min(1),
+  workstreamId: z.string().min(1),
+  substreamId: z.union([z.literal("0"), z.string().min(1)]),
+  clientMessageId: z.string().min(1).max(300),
+  text: z.string().min(1).max(MESSAGE_MAX_CHARACTERS),
+  post: AutomationActivationV1Schema,
+});
+export type ConversationPostRequest = z.input<typeof ConversationPostRequestSchema>;
 
 const Addressed = {
   workspaceId: WorkspaceIdSchema,
