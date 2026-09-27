@@ -2322,6 +2322,12 @@ export class SlackAgentService {
                 ...(route ? { route } : {}),
               });
             } catch (error) {
+              // Another event for this thread bound it first. That is not a
+              // refusal to tell anyone about: retried, this message resolves
+              // to the thread's Channel and is delivered there.
+              if (route?.kind === "spawn" && error instanceof ApiError && error.code === "external_binding_bound") {
+                throw new ApiError(503, "external_binding_raced", "This Slack thread was bound by another event; retry to deliver there");
+              }
               // A Channel the linked room's Space refuses (a private room
               // this member cannot open in Rally, an archived Space) is a
               // routing failure the thread is told about. It is never placed
