@@ -7608,7 +7608,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         `SELECT source_generation, effective_after_event_sequence FROM external_registration_generations WHERE destination_key = ?`, destinationKey,
       ).toArray()[0];
       if (previous && (request.sourceGeneration === undefined || request.sourceGeneration <= previous.source_generation)) {
-        return { effectiveAfterEventSequence: previous.effective_after_event_sequence };
+        return { effectiveAfterEventSequence: previous.effective_after_event_sequence, applied: false };
       }
       const now = Date.now();
       const cutoff = this.latestConnectorEventSequence();
@@ -7687,13 +7687,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           WHERE state = 'removed' AND updated_at < ?`,
         now - 24 * 60 * 60_000,
       );
-      return { effectiveAfterEventSequence: cutoff };
+      return { effectiveAfterEventSequence: cutoff, applied: true };
     });
     await this.refreshScheduleKinds(request.workspaceId, ["schedule"]);
-    if (request.destination.kind === "automation") {
-      await this.joinSlackSourceConversations(request.workspaceId, request.destination.automationId, request.evaluators);
+    // A stale projection changed nothing, so it has nothing to join.
+    if (result.applied && request.destination.kind === "automation") {
+      await this.joinSlackSourceConversations(
+        request.workspaceId,
+        request.destination.automationId,
+        request.sourceGeneration,
+        request.evaluators,
+      );
     }
-    return result;
+    return { effectiveAfterEventSequence: result.effectiveAfterEventSequence };
   }
 
   /**
@@ -7703,10 +7709,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * ingress runs with the installation's token; it is not an invitation and
    * links no Space. Best effort: the registration has committed, and a join
    * that failed to queue is logged and made again by the next save.
+   *
+   * The job is keyed by the save's source generation, so every accepted save
+   * joins again: a bot removed from a conversation since the last save, or a
+   * source that moved away and back, is rejoined rather than deduplicated
+   * against a completed job for the same channel set. A projection without a
+   * generation gets a key of its own each time.
    */
   private async joinSlackSourceConversations(
     workspaceId: string,
     automationId: string,
+    sourceGeneration: number | undefined,
     evaluators: readonly { source: { connectorType: string; connectionId: string }; when: unknown }[],
   ): Promise<void> {
     const byConnection = new Map<string, Set<string>>();
@@ -7727,7 +7740,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         ).toArray()[0];
         if (!connection?.provider_account_id) continue;
         const channels = [...channelIds].sort();
-        const eventId = `rally-sidekick-source-join:${automationId}:${channels.join(",")}`;
+        const generation = sourceGeneration === undefined ? uuidV7() : `g${sourceGeneration}`;
+        const eventId = `rally-sidekick-source-join:${automationId}:${generation}:${channels.join(",")}`;
         const envelope = {
           type: "event_callback",
           team_id: connection.provider_account_id,
