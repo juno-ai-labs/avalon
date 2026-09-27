@@ -3505,11 +3505,16 @@ export class WorkstreamObjectProductService {
           AND w.sandbox_id = o.sandbox_id AND w.generation = o.generation
         WHERE o.id = 1`,
     ));
+    // A lifecycle claim keeps the deadline it claimed: `stopping` still
+    // projects the warm stop and `archiving` the archive. Were the claim to
+    // swap in its own expiry, a pass that fails and restores the stable state
+    // would move the directory away and back, and each move resets the alarm
+    // entry's retry gate, so a failing transition retried every minute.
     const terminalCandidates = terminal?.sandbox_id
       ? [
           observation?.next_observe_at ?? 0,
-          terminal.lifecycle_state === "running" ? terminal.idle_expires_at : null,
-          terminal.lifecycle_state === "stopped" ? terminal.archive_due_at : null,
+          ["running", "stopping"].includes(terminal.lifecycle_state) ? terminal.idle_expires_at : null,
+          ["stopped", "archiving"].includes(terminal.lifecycle_state) ? terminal.archive_due_at : null,
           terminal.expire_due_at,
           ["stopping", "archiving", "expiring"].includes(terminal.lifecycle_state)
             ? terminal.lifecycle_claim_expires_at
