@@ -67,9 +67,11 @@ example, `search_messages` is exposed as `slack_search_messages`.
 | `read_message_context` | `conversations.history` or `conversations.replies` | `channels:history`, `groups:history`, `im:history`, `mpim:history` | Reads only a bounded window: at most 50 messages before and 50 after the requested timestamp. |
 | `read_file` | `files.info` plus an authenticated private-file download | `files:read` | Returns metadata for an accessible file. Text files are downloaded only from trusted Slack HTTPS hosts and only up to 512 KiB; binary or larger content is omitted. |
 
-The workspace bot joins current and newly created public channels so mentions and
-bounded reads work there. Rally does not poll channel history or mirror Slack
-content. Private channels, DMs, MPIMs, and files remain limited by the bot's actual
+The workspace bot is in a conversation because somebody invited it (which links
+the room to a Rally Space) or because a Sidekick's Slack source names that public
+channel and Rally joined it for the source. It does not join public channels on
+its own. Rally does not poll channel history or mirror Slack content. See
+[`external-conversation-bindings.md`](external-conversation-bindings.md). Private channels, DMs, MPIMs, and files remain limited by the bot's actual
 Slack membership and visibility.
 
 **Write tools**
@@ -94,7 +96,7 @@ The production manifest requests these scopes as one administrator-approved bund
 | `app_mentions:read` | Receive `app_mention` events when someone invokes `@Rally` in a channel. |
 | `assistant:write` | Update Agent thread status and title and stream Agent output. |
 | `channels:history` | Receive public-channel follow-ups in existing Rally threads, perform bounded explicit-retry recovery, and run authorized channel/thread/context reads. Unrelated public messages are discarded before durable queueing. |
-| `channels:join` | Join current and newly created public channels so `@Rally` is consistently available. |
+| `channels:join` | Join the public channels a saved Sidekick's Slack source names, so the Sidekick receives their events. Such a join links no Space. |
 | `channels:manage` | Create a public channel with workspace `slack_create_conversation`. |
 | `channels:read` | Discover public channels, read conversation metadata, maintain bot membership, classify the Slack surface, list visible members, and detect a Slack Connect channel before an unfurl names a work stream. |
 | `chat:write` | Post and stream Agent replies, errors, controls, proactive notifications, automation results, and workspace `slack_send_message` output. |
@@ -109,7 +111,7 @@ The production manifest requests these scopes as one administrator-approved bund
 | `links:read` | Receive `link_shared` events for supported Rally URLs. Slack's own permalink for a thread Rally was summoned in is read with `chat.getPermalink`, which needs no scope of its own beyond the bot's access to that conversation. |
 | `links:write` | Attach a work-stream preview — title, status, last activity, origin — to an eligible Rally URL with `chat.unfurl`, or an anonymous card where the audience is not known to be internal. |
 | `mpim:history` | Read accessible multi-person-DM history and threads. |
-| `mpim:read` | Discover accessible multi-person DMs and membership, and read their conversation metadata for the same unfurl audience check. Rally does not subscribe to ordinary `message.mpim` traffic. |
+| `mpim:read` | Discover accessible multi-person DMs and membership, and read their conversation metadata for the same unfurl audience check. Replies in group DMs arrive through `message.mpim`, routed like any other message by their binding. |
 | `mpim:write` | Open a group DM with workspace `slack_create_conversation`. |
 | `reactions:read` | Receive bounded reaction-added and reaction-removed activity for explicitly configured automations. |
 | `reactions:write` | Add an emoji reaction with workspace `slack_add_reaction`, and add the host-owned `eyes` reaction to the exact triggering DM or mention after durable admission and authorization but before context gathering or workstream processing. Slack's `already_reacted` response makes retries idempotent; a provider-side acknowledgement failure is logged and does not discard the admitted request. |
@@ -184,20 +186,25 @@ Event subscriptions are not additional OAuth scopes. The manifest subscribes to:
 | `app_home_opened` | Publish the linked, unlinked, or administrator App Home view. |
 | `app_mention` | Start or continue a channel task when a user explicitly mentions Rally. |
 | `app_uninstalled` | Mark the workspace installation disconnected and stop routing work to it. |
-| `channel_created` | Join a newly created public channel. |
+| `channel_archive` | Suspend the archived room's binding (`provider_room_archived`); a re-invitation or a mention brings it back. |
+| `channel_created` | Offer bounded channel-creation activity to explicitly configured automations. Rally does not join the channel. |
+| `channel_id_changed` | Move a Slack Connect room's bindings to its new id. |
+| `channel_left` | Suspend the room's binding when the bot is removed (`provider_membership_ended`). |
 | `link_shared` | Produce authorized previews for supported Rally links. |
 | `file_shared` | Offer bounded file-share activity to explicitly configured automations. |
-| `member_joined_channel` | Trigger explicitly configured channel-membership automations. |
-| `member_left_channel` | Trigger explicitly configured channel-membership automations. |
+| `group_archive` | As `channel_archive`, for a private channel. |
+| `group_left` | As `channel_left`, for a private channel. |
+| `member_joined_channel` | The bot's own join is the invitation that links the room to a Space; anyone else's triggers explicitly configured channel-membership automations. |
+| `member_left_channel` | The bot's own leave suspends the room's binding; anyone else's triggers explicitly configured channel-membership automations. |
 | `message.channels` | Continue a Rally-owned public thread or offer bounded message activity to an explicitly configured automation; unmatched messages are discarded before durable queueing. |
 | `message.groups` | Continue a Rally-owned invited-private-channel thread or offer bounded activity to an authorized personal automation; unmatched messages are discarded before durable queueing. |
 | `message.im` | Receive Agent prompts and follow-ups, or offer bounded DM activity to an authorized personal automation. |
+| `message.mpim` | Continue a bound group-DM thread, or offer bounded activity to an explicitly configured automation; unmatched messages are discarded before durable queueing. |
 | `reaction_added` | Offer bounded emoji-reaction activity to explicitly configured automations. |
 | `reaction_removed` | Offer bounded emoji-reaction removal activity to explicitly configured automations. |
 | `tokens_revoked` | Mark affected credentials unhealthy and require reconnection. |
 
-Rally intentionally does not subscribe to `message.mpim` or broad file lifecycle
-events. `file_shared` carries only bounded trigger evidence; it does not import file
+Rally intentionally does not subscribe to broad file lifecycle events. `file_shared` carries only bounded trigger evidence; it does not import file
 content.
 
 ### Event data and model context

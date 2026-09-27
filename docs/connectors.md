@@ -1449,28 +1449,14 @@ Workspace-principal automation runs retain their separate lifecycle authority.
 
 ### 2026-09-27: A connector send can bind its thread to a Sidekick run, and authority follows the run
 
-**What changed:** `ConnectorToolResult` gained `externalConversation`, which the
-host turns into an outbound binding for a Sidekick run child, committed with the
-tool receipt. A reply in that thread continues the run under the run's
-authority. An event on a bound path counts as claimed.
+### 2026-09-27 — Input bound to a Sidekick run follows the run, not the sender
 
-**Why:** A Sidekick that asked a question in Slack could not hear the answer:
-the reply opened an Agent work stream under the sender's authority. The
-"authority is resolved per message" rule was written for Agent threads, where
-the sender is the requester; in a Sidekick's thread the requester is the run.
+`ConnectorToolResult` gained `externalConversation`, a bound event counts as
+claimed, and the per-message authority invariant gained its one exception,
+stated above under Invariants. The why, the alternatives and the consequences
+are recorded in [`external-conversation-bindings.md`](external-conversation-bindings.md#changelog).
 
-**Considered and rejected:** Running the reply under the sender's link, which
-would let an unlinked or external replier's thread run under the workspace
-principal with none of the Sidekick's tools. Binding the thread from the
-adapter itself: an adapter has no transaction with the receipt, so a lost
-receipt could leave a binding for a send that never happened.
-
-**Consequences:** The authority invariant above now has a stated exception.
-Only Slack returns `externalConversation` today; another connector opts in by
-returning it for a workspace-scoped send. Bound events never reach Suggested
-Work.
-
-Design: `docs/PRDs/2026-09-23_external-conversation-bindings/`.
+Shipped in #1006. Design: `docs/PRDs/2026-09-23_external-conversation-bindings/`.
 
 ### 2026-09-26 — Tool counts ride the connection list
 
