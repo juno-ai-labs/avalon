@@ -353,7 +353,13 @@ export class SlackAgentService {
    * automation source names a conversation.
    */
   async reactivateInstallationBindings(connectionId: string): Promise<void> {
-    const connection = await this.connectionById(connectionId);
+    await this.reactivateBindingsFor(await this.connectionById(connectionId), "reauthorized");
+  }
+
+  private async reactivateBindingsFor(
+    connection: SlackConnectionRow,
+    trigger: "reauthorized" | "event_received",
+  ): Promise<void> {
     const reactivated = ExternalBindingSuspendResultSchema.parse(
       await (await this.workspaceDirectory(connection.workspace_id)).reactivateExternalConversationBindings({
         workspaceId: connection.workspace_id,
@@ -365,6 +371,7 @@ export class SlackAgentService {
     if (reactivated.suspended.length > 0) {
       logInfo(this.env, "external_bindings_reactivated", {
         connection_id: connection.id,
+        trigger,
         count: reactivated.suspended.length,
       });
     }
@@ -1695,7 +1702,7 @@ export class SlackAgentService {
     addressed: boolean,
     claimKey: string,
   ): Promise<ExternalBindingResolution> {
-    return ExternalBindingResolutionSchema.parse(
+    const resolve = async () => ExternalBindingResolutionSchema.parse(
       await (await this.workspaceDirectory(connection.workspace_id)).resolveExternalConversation({
         workspaceId: connection.workspace_id,
         installationId,
@@ -1705,6 +1712,15 @@ export class SlackAgentService {
         pendingStaleBefore: new Date(Date.now() - SLACK_THREAD_CLAIM_LEASE_MS).toISOString(),
       }),
     );
+    const resolution = await resolve();
+    if (resolution.outcome !== "suspended" || resolution.reason !== "connection_disconnected") return resolution;
+    // Slack signed and delivered this event for the installation, so it is
+    // installed and connected now. The reconnect's own reactivation is one
+    // best-effort call, and a revocation that arrives late suspends an
+    // installation that has since reconnected; either way the next message is
+    // where the suspension is found stale and lifted.
+    await this.reactivateBindingsFor(connection, "event_received");
+    return resolve();
   }
 
   /**

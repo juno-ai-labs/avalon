@@ -2568,14 +2568,19 @@ describe("Slack replies routed by external conversation bindings", () => {
   const SIDEKICK = "33333333-3333-4333-8333-333333333333";
   const RUN = "44444444-4444-4444-8444-444444444444";
 
-  function seedBinding(objectDatabase: DatabaseSync, path: string[], state: "active" | "suspended" = "active"): void {
+  function seedBinding(
+    objectDatabase: DatabaseSync,
+    path: string[],
+    state: "active" | "suspended" = "active",
+    reason: "sidekick_deleted" | "connection_disconnected" = "sidekick_deleted",
+  ): void {
     objectDatabase.prepare(
       `INSERT INTO external_conversation_bindings
          (installation_id, path_json, target_kind, space_id, parent_kind, parent_id, substream_id,
           state, suspended_reason, claim_key, created_at, updated_at)
        VALUES ('slack:T123', ?, 'conversation', NULL, 'automation', ?, ?, ?, ?, NULL,
                '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z')`,
-    ).run(JSON.stringify(path), SIDEKICK, RUN, state, state === "suspended" ? "sidekick_deleted" : null);
+    ).run(JSON.stringify(path), SIDEKICK, RUN, state, state === "suspended" ? reason : null);
   }
 
   function dmMessage(eventId: string, input: { ts: string; threadTs?: string; text: string }): Record<string, unknown> {
@@ -2666,6 +2671,45 @@ describe("Slack replies routed by external conversation bindings", () => {
     // No Agent Channel, no session, and nothing said in Slack.
     expect(objectDatabase.prepare("SELECT COUNT(*) AS count FROM slack_agent_sessions").get()).toEqual({ count: 0 });
     expect(posted).toEqual([]);
+  });
+
+  it("lifts a disconnect's suspension when the installation delivers a reply, and delivers it", async () => {
+    // The reconnect's own reactivation did not land (or a late revocation
+    // suspended the new installation): Slack delivering this event is proof
+    // enough that the installation is connected.
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    seedBinding(objectDatabase, ["D1", "1727.002"], "suspended", "connection_disconnected");
+    seedBinding(objectDatabase, ["D9", "1727.009"], "suspended", "sidekick_deleted");
+    insertSlackEventJob(objectDatabase, "event:after-reconnect", dmMessage("EvAfterReconnect", {
+      ts: "1727.100", threadTs: "1727.002", text: "Nothing from me",
+    }));
+    slackStub();
+    const admitted: Array<Record<string, unknown>> = [];
+    await new SlackAgentService(slackMembershipEnvironment(database, instance, credentialsKey, vi.fn(async () => undefined), undefined, {
+      SUBSTREAM_AGENTS: createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>(testSubstreamAgentsBinding(database, {
+        extra: {
+          admitExternalMessage: vi.fn(async (input: Record<string, unknown>) => {
+            admitted.push(input);
+            return { status: 200, bodyJson: JSON.stringify({
+              turn: { turnId: "turn-1", clientMessageId: input.clientMessageId, createdAt: "2026-09-01T00:00:00.000Z" },
+              deliveryState: "pending",
+            }) };
+          }),
+        },
+      })),
+    })).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:after-reconnect");
+
+    expect(admitted).toHaveLength(1);
+    expect(admitted[0]).toMatchObject({ workstreamId: SIDEKICK, substreamId: RUN, text: "Nothing from me" });
+    expect(objectDatabase.prepare(
+      "SELECT path_json, state, suspended_reason FROM external_conversation_bindings ORDER BY path_json",
+    ).all()).toEqual([
+      { path_json: '["D1","1727.002"]', state: "active", suspended_reason: null },
+      // A lasting suspension is not the installation's to lift.
+      { path_json: '["D9","1727.009"]', state: "suspended", suspended_reason: "sidekick_deleted" },
+    ]);
   });
 
   it("asks a top-level DM reply to answer in the open request's thread, the same way on a retry, and creates no work", async () => {
