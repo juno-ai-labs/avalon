@@ -885,7 +885,7 @@ describe("the connector side of a binding", () => {
             title: "Slack direct message", summary: "", textSnippet: "Nothing from me", payloadRef: null,
             visibility: { kind: "workspace" }, targetUserIds: [], entityKeys: [], dedupeKey: `slack:${ordinal}`,
             rawContentHash: null, externalPeople: [],
-            metadata: { teamId: "T1", channelId: "D1", threadTs: "1727.002", externalConversationPath: ["D1", "1727.002"] },
+            metadata: { teamId: "T1", channelId: "D1", threadTs: "1727.002", externalConversationPath: ["D1", "1727.002"], externalConversationInstallationId: INSTALLATION },
           },
         },
       });
@@ -935,7 +935,7 @@ describe("the connector side of a binding", () => {
           title: "Slack direct message", summary: "", textSnippet: "Nothing from me", payloadRef: null,
           visibility: { kind: "workspace" }, targetUserIds: [], entityKeys: [], dedupeKey: "slack:21",
           rawContentHash: null, externalPeople: [],
-          metadata: { teamId: "T1", channelId: "D1", threadTs: "1727.002", externalConversationPath: ["D1", "1727.002"] },
+          metadata: { teamId: "T1", channelId: "D1", threadTs: "1727.002", externalConversationPath: ["D1", "1727.002"], externalConversationInstallationId: INSTALLATION },
         },
       },
     });

@@ -659,7 +659,11 @@ export function normalizeSlackActivity(
       ...(userId ? { userId } : {}),
       ...(messageTs ? { messageTs } : {}),
       ...(threadTs ? { threadTs, isThread: true } : { isThread: false }),
-      ...(externalConversationPath ? { externalConversationPath } : {}),
+      // The binding key a message resolves under, spelled by the adapter so
+      // the host resolves it without knowing Slack's installation scheme.
+      ...(externalConversationPath
+        ? { externalConversationPath, externalConversationInstallationId: slackInstallationId(teamId) }
+        : {}),
       ...(reaction ? { reaction } : {}),
       ...(typeof event.item_user === "string" ? { itemUserId: event.item_user } : {}),
       ...(itemType ? { itemType } : {}),

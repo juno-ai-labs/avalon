@@ -1,6 +1,8 @@
+import { sha256Hex } from "../lib/crypto";
 import { uuidV7 } from "../lib/uuid-v7";
 import { ExternalConversationBindingStorage } from "./workspace-external-binding-storage";
 import {
+  SLACK_SIDEKICK_SOURCE_JOIN_EVENT,
   WorkspaceSlackIngressClaimResultSchema,
   WorkspaceSlackIngressEnqueueResultSchema,
   WorkspaceSlackIngressFailResultSchema,
@@ -85,6 +87,88 @@ export const SLACK_THREAD_CLAIM_LEASE_MS = 5 * 60_000;
  * same id with a different body is Slack reusing an event identity, which is
  * a conflict the caller refuses loudly.
  */
+/**
+ * The joins a Sidekick's saved Slack sources need, written as Slack ingress
+ * jobs. A Sidekick hears a conversation's messages only if the bot is in it,
+ * so a source that names conversations keeps the bot there; the ingress runs
+ * the job with the installation's token. A join is not an invitation and
+ * links no Space.
+ *
+ * A job is keyed by the save's source generation, so every accepted save
+ * joins again: a bot removed from a conversation since the last save, or a
+ * source that moved away and back, is rejoined rather than deduplicated
+ * against a completed job for the same channel set. A projection without a
+ * generation gets a key of its own each time. Returns the jobs to dispatch.
+ */
+export async function enqueueSlackSourceJoins(
+  storage: DurableObjectStorage,
+  input: {
+    workspaceId: string;
+    automationId: string;
+    sourceGeneration: number | undefined;
+    evaluators: readonly { source: { connectorType: string; connectionId: string }; when: unknown }[];
+    appId: string | null;
+  },
+): Promise<{ jobId: string; connectionId: string }[]> {
+  const byConnection = new Map<string, Set<string>>();
+  for (const evaluator of input.evaluators) {
+    if (evaluator.source.connectorType !== "slack") continue;
+    const channelIds = slackSourceChannelIds(evaluator.when);
+    if (channelIds.length === 0) continue;
+    const set = byConnection.get(evaluator.source.connectionId) ?? new Set<string>();
+    for (const channelId of channelIds) set.add(channelId);
+    byConnection.set(evaluator.source.connectionId, set);
+  }
+  const jobs: { jobId: string; connectionId: string }[] = [];
+  for (const [connectionId, channelIds] of byConnection) {
+    const connection = storage.sql.exec<{ provider_account_id: string | null }>(
+      `SELECT provider_account_id FROM connector_connections
+        WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status <> 'disabled'`,
+      connectionId,
+    ).toArray()[0];
+    if (!connection?.provider_account_id) continue;
+    const channels = [...channelIds].sort();
+    const generation = input.sourceGeneration === undefined ? uuidV7() : `g${input.sourceGeneration}`;
+    const eventId = `rally-sidekick-source-join:${input.automationId}:${generation}:${channels.join(",")}`;
+    const payloadJson = JSON.stringify({
+      type: "event_callback",
+      team_id: connection.provider_account_id,
+      ...(input.appId ? { api_app_id: input.appId } : {}),
+      event_id: eventId,
+      event: { type: SLACK_SIDEKICK_SOURCE_JOIN_EVENT, channel_ids: channels },
+    });
+    const jobId = `event:${eventId}`;
+    const admitted = enqueueWorkspaceSlackIngressJob(storage, {
+      workspaceId: input.workspaceId,
+      jobId,
+      connectionId,
+      teamId: connection.provider_account_id,
+      bodyHash: await sha256Hex(payloadJson),
+      kind: "event",
+      payloadJson,
+      at: new Date().toISOString(),
+    });
+    if (admitted.outcome === "replayed" && admitted.status === "completed") continue;
+    jobs.push({ jobId, connectionId });
+  }
+  return jobs;
+}
+
+/** The conversations a Slack source's predicate names by `channelId`. */
+function slackSourceChannelIds(when: unknown): string[] {
+  const predicate = when as { kind?: unknown; allOf?: unknown };
+  if (predicate.kind !== "all" || !Array.isArray(predicate.allOf)) return [];
+  return predicate.allOf.flatMap((leaf: unknown) => {
+    const candidate = leaf as { kind?: unknown; attribute?: unknown; operator?: unknown; value?: unknown };
+    if (candidate.kind !== "string" || candidate.attribute !== "channelId") return [];
+    if (candidate.operator === "equals" && typeof candidate.value === "string") return [candidate.value];
+    if (candidate.operator === "in" && Array.isArray(candidate.value)) {
+      return candidate.value.filter((value): value is string => typeof value === "string");
+    }
+    return [];
+  });
+}
+
 export function enqueueWorkspaceSlackIngressJob(
   storage: DurableObjectStorage,
   request: WorkspaceSlackIngressEnqueueRequest,
