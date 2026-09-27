@@ -1419,14 +1419,28 @@ describe("connector tools selected for harness runs", () => {
     database.defaultPluginIds = ["plugin_google"];
     const selected = await __integrationTesting.loadHarnessTools(env(database), automationRunInput());
 
-    // Read from the automation for this run, by the reference the loop carries,
-    // at the definition revision that reference names.
+    // Read from the automation for this run, by the reference the loop carries.
+    // A scheduled activation names only the run, in the request shape every
+    // deployed SidekickDO accepts: its strict schema would refuse a field it
+    // does not know during a mixed-version rollout.
     expect(database.runDefinitionReads).toEqual([{
       workspaceId: WORKSPACE_ID,
       automationId: AUTOMATION_ID,
       runId: RUN_ID,
-      definitionRevision: 1,
     }]);
+
+    // A continuation names the revision `continueRun` handed it, which may be
+    // newer than the one the run started with.
+    await __integrationTesting.loadHarnessTools(env(database), {
+      ...automationRunInput(),
+      automationContinuation: { stopGeneration: 0, senderName: "Member", source: { kind: "run" } },
+    });
+    expect(database.runDefinitionReads.at(-1)).toEqual({
+      workspaceId: WORKSPACE_ID,
+      automationId: AUTOMATION_ID,
+      runId: RUN_ID,
+      definitionRevision: 1,
+    });
 
     expect(googleToolNames(selected.tools)).toEqual(GOOGLE_WORKSPACE_TOOLS);
     expect(new Set(selected.connectionByTool.values())).toEqual(new Set([WORKSPACE_CONNECTION_ID]));
