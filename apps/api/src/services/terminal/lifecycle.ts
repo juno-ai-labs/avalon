@@ -12,7 +12,13 @@ import {
   attachWorkstreamRuntimeResource,
   type WorkstreamRuntimeResourceAttacher,
 } from "../workstream-object-client";
-import { observeTerminalSandbox, deleteTerminalSandbox, stopTerminalSandbox, type TerminalSandboxProvider } from "./provider-contract";
+import {
+  deleteTerminalSandbox,
+  isTerminalSandboxLost,
+  observeTerminalSandbox,
+  stopTerminalSandbox,
+  type TerminalSandboxProvider,
+} from "./provider-contract";
 import { isLegacyTerminalAliasRow, TERMINAL_WARM_STOP_MS } from "./coordinator";
 import { TerminalToolError } from "./tools";
 import type { HarnessRunPortFactory } from "../../runtime/harness-run-port";
@@ -150,6 +156,13 @@ export async function reconcileDueTerminalSandbox(
 
   if (await terminal.hasLiveTask(row.generation, now.getTime())) return { transition: "deferred" };
 
+  // Another pass holds this transition. Its claim no longer moves the
+  // directory deadline, so this pass sees the due instant it claimed; wait for
+  // the claim to settle or lapse rather than count a pass with nothing to do.
+  if (row.lifecycleClaimId && row.lifecycleClaimExpiresAt !== null && row.lifecycleClaimExpiresAt > now.getTime()) {
+    return { transition: "deferred" };
+  }
+
   const desired = row.lifecycleState === "expiring"
     ? "expired" as const
     : row.lifecycleState === "archiving"
@@ -217,6 +230,13 @@ export async function reconcileDueTerminalSandbox(
     if (cleanup.sandboxAbsent) return settleMissingSandbox(true);
     const observed = await observeTerminalSandbox(provider, claimedSandboxId);
     if (!observed || observed.state === "expired") return await settleMissingSandbox(observed?.state === "expired");
+    if (isTerminalSandboxLost(observed)) {
+      // Daytona says it cannot recover this sandbox, so no stop, archive or
+      // final diff can reach it. Delete it and settle, as acquisition does
+      // before it replaces one; otherwise every pass throws until expiry.
+      await deleteTerminalSandbox(provider, claimedSandboxId);
+      return await settleMissingSandbox(true);
+    }
     let providerStopped = observed.state === "stopped" || observed.state === "archived";
     if (desired !== "expired" && !providerStopped && observed.state !== "running") {
       throw new Error("terminal_lifecycle_provider_transition_pending");

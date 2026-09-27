@@ -254,6 +254,51 @@ describe("Terminal scheduled lifecycle", () => {
       .toEqual({ lifecycle_state: "expired", sandbox_id: null });
   });
 
+  it("deletes and retires a sandbox Daytona reports unrecoverable instead of retrying its stop", async () => {
+    const { objectStore, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
+    });
+    vi.mocked(provider.getSandbox).mockResolvedValue({ id: "provider-1", name: "sandbox-lifecycle", state: "failed", recoverable: false, domainAllowList: [] });
+    const preserve = vi.fn(async () => undefined);
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW, preserve))
+      .resolves.toEqual({ transition: "deferred" });
+    expect(provider.deleteSandbox).toHaveBeenCalledWith("provider-1");
+    expect(provider.stopSandbox).not.toHaveBeenCalled();
+    expect(preserve).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id, lifecycle_state, failure_code FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ generation: 2, sandbox_id: null, lifecycle_state: "starting", failure_code: null });
+  });
+
+  it("expires a sandbox Daytona reports unrecoverable without preserving from it", async () => {
+    const { objectStore, provider } = fixture("archived", {
+      warm: "2026-08-13T11:00:00.000Z", archive: "2026-08-13T11:30:00.000Z", expire: "2026-08-13T11:59:00.000Z",
+    });
+    vi.mocked(provider.getSandbox).mockResolvedValue({ id: "provider-1", name: "sandbox-lifecycle", state: "failed", recoverable: false, domainAllowList: [] });
+    const preserve = vi.fn(async () => undefined);
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW, preserve))
+      .resolves.toEqual({ transition: "expired" });
+    expect(provider.deleteSandbox).toHaveBeenCalledWith("provider-1");
+    expect(provider.recoverSandbox).not.toHaveBeenCalled();
+    expect(preserve).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(objectStore, "SELECT lifecycle_state, sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ lifecycle_state: "expired", sandbox_id: null });
+  });
+
+  it("waits out another pass's live claim without touching the provider", async () => {
+    const { objectStore, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
+    });
+    workstreamObjectRun(
+      objectStore,
+      "UPDATE terminal_workspace SET lifecycle_state = 'stopping', lifecycle_claim_id = 'other-pass', lifecycle_claim_expires_at = ? WHERE id = 1",
+      NOW.getTime() + 60_000,
+    );
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW))
+      .resolves.toEqual({ transition: "deferred" });
+    expect(provider.getSandbox).not.toHaveBeenCalled();
+    expect(provider.stopSandbox).not.toHaveBeenCalled();
+  });
+
   it("archives stopped state and expires archived state without polling", async () => {
     const stopped = fixture("stopped", {
       warm: "2026-08-13T11:00:00.000Z", archive: "2026-08-13T11:59:00.000Z", expire: "2026-09-12T12:00:00.000Z",
