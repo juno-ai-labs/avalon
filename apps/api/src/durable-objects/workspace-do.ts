@@ -8935,14 +8935,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         const now = Date.now();
         // A new identity that says what this resource's latest event already
         // said is that event again: the delivery is receipted against it and
-        // nothing new is stored or processed. See
+        // nothing new is stored or processed. Never a failed one: its content
+        // was never delivered, and folding repeats into it would leave it
+        // undelivered for good, so a repeat of it is stored with a fresh retry
+        // budget instead. See
         // docs/connectors.md#dropping-events-that-say-nothing-new.
         const unchanged = !canonical && contentFingerprint
           ? this.state.storage.sql.exec<WorkspaceConnectorEventRow>(
             `SELECT event.* FROM workspace_connector_event_latest_content latest
                JOIN workspace_connector_events event ON event.event_id = latest.event_id
               WHERE latest.connection_id = ? AND latest.event_type = ?
-                AND latest.provider_resource_id = ? AND latest.content_fingerprint = ?`,
+                AND latest.provider_resource_id = ? AND latest.content_fingerprint = ?
+                AND event.processing_status <> 'failed'`,
             activity.connectionId,
             activity.eventType,
             activity.providerResourceId,
