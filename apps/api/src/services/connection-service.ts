@@ -1966,7 +1966,7 @@ export class ConnectionService {
         // credentials or routing after the OAuth state is consumed.
         logWarn(this.env, "external_bindings_reactivation_failed", {
           connection_id: connectionId,
-          reason: error instanceof Error ? error.message : "unknown",
+          reason: diagnosticErrorCode(error, "external_bindings_reactivation_failed"),
         });
       }
     }
@@ -2453,7 +2453,7 @@ export class ConnectionService {
         }).catch((error: unknown) => {
           logWarn(this.env, "external_bindings_suspension_failed", {
             connection_id: id,
-            reason: error instanceof Error ? error.message : "unknown",
+            reason: diagnosticErrorCode(error, "external_bindings_suspension_failed"),
           });
         });
       }
