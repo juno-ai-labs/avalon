@@ -22,7 +22,7 @@ const ExternalMessageBaseSchema = z.strictObject({
    * when absent. A reply routed through an external conversation binding to a
    * Sidekick run names the run child (the run id) under the Sidekick parent.
    */
-  substreamId: z.string().min(1).max(180).optional(),
+  substreamId: z.union([z.literal("0"), IdSchema]).optional(),
   messageId: IdSchema,
   clientMessageId: z.string().min(1).max(120),
   actor: ExternalActorSchema,

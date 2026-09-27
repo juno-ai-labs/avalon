@@ -24,6 +24,9 @@ export const ExternalPathSegmentSchema = z.string().min(1);
 export const ExternalPathSchema = z.array(ExternalPathSegmentSchema).min(1);
 export type ExternalPath = z.infer<typeof ExternalPathSchema>;
 
+/** A conversation's substream: the main one, or a Breakout or run by its id (`SubstreamIdSchema`'s shape). */
+const ConversationSubstreamSchema = z.union([z.literal("0"), IdSchema]);
+
 /** `<connector type>:<provider installation>`, e.g. `slack:T123`. */
 export const ExternalInstallationIdSchema = z.string().regex(/^[a-z][a-z0-9_]*:.+$/u);
 
@@ -37,7 +40,7 @@ export const ExternalBindingConversationTargetSchema = z.strictObject({
   kind: z.literal("conversation"),
   parentKind: z.enum(["workstream", "automation"]),
   parentId: IdSchema,
-  substreamId: z.string().min(1).max(180),
+  substreamId: ConversationSubstreamSchema,
 });
 export type ExternalBindingConversationTarget = z.infer<typeof ExternalBindingConversationTargetSchema>;
 
@@ -98,7 +101,7 @@ const BindingKeySchema = z.strictObject({
  */
 export const ExternalBindingResolveRequestSchema = deferredZodSchema(() => BindingKeySchema.extend({
   addressed: z.boolean(),
-  claimKey: z.string().min(1).max(300).nullable(),
+  claimKey: z.string().min(1).nullable(),
   pendingStaleBefore: TimestampSchema,
 }).strict());
 export type ExternalBindingResolveRequest = z.infer<typeof ExternalBindingResolveRequestSchema>;
@@ -142,7 +145,7 @@ export type ExternalBindingResolution = z.infer<typeof ExternalBindingResolution
 export const ExternalBindingClaimSchema = deferredZodSchema(() => z.strictObject({
   installationId: ExternalInstallationIdSchema,
   path: ExternalPathSchema,
-  claimKey: z.string().min(1).max(300),
+  claimKey: z.string().min(1),
   pendingStaleBefore: TimestampSchema,
 }));
 export type ExternalBindingClaim = z.infer<typeof ExternalBindingClaimSchema>;
