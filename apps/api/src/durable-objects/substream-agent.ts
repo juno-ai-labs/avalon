@@ -172,7 +172,18 @@ import {
   UnsettledToolBatchError,
   isUnsettledToolBatchError,
 } from "./workstream-transcript-storage";
-import { LOOP_EXECUTION_LEASE_MS, SubstreamLoopStorage } from "./substream-loop-storage";
+import {
+  LOOP_EXECUTION_LEASE_MS,
+  SubstreamLoopStorage,
+  type PendingLoopInputRow,
+  type SubstreamLoopRow,
+} from "./substream-loop-storage";
+import type { SidekickRunContinuation, SidekickRunContinuationRefusalCode } from "./automation-do-protocol";
+import {
+  continuationSource,
+  continueSidekickRun,
+  SIDEKICK_RUN_REFUSAL_TEXT,
+} from "../services/sidekick-run-continuation";
 import {
   TranscriptOperationRequestSchema,
   type TranscriptOperationRequest,
@@ -3967,23 +3978,57 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         seed: DemoSeedSchema.nullable().optional(),
         agentExchange: AgentExchangeSchema.optional(),
       }).parse(JSON.parse(pending.authorization_json));
+      // Input to a Sidekick run child continues that run: its instructions,
+      // tools and run-as authority, against the Sidekick's accepted revision
+      // today. Asked before anything is activated, so a refusal leaves the
+      // loop idle, and the refused input is landed rather than left at the
+      // head of the queue holding everything behind it.
+      let continuation: Extract<SidekickRunContinuation, { outcome: "continue" }> | null = null;
+      const externalSubstreamId = this.externalSubstreamId();
+      if (identity.parentKind === "automation" && externalSubstreamId !== "0") {
+        const decided = await continueSidekickRun(this.env, {
+          region: this.env.AVALON_REGION,
+          workspaceId: identity.workspaceId,
+          automationId: identity.parentId,
+          runId: externalSubstreamId,
+        });
+        if (decided.outcome === "refused") {
+          await this.refuseSidekickRunInput(loop, pending, decided.code);
+          return this.claimPersistentLoopExecution();
+        }
+        continuation = decided;
+      }
+      const executionPrincipal = continuation?.executionPrincipal ?? authorization.executionPrincipal;
       const runId = asHarnessRunId(uuidV7(now));
       const input = WorkstreamWorkflowInputSchema.parse({
         region: this.env.AVALON_REGION,
         workspaceId: asWorkspaceId(identity.workspaceId),
         parentKind: identity.parentKind,
         parentId: identity.parentId,
-        substreamId: asSubstreamId(this.externalSubstreamId()),
+        substreamId: asSubstreamId(externalSubstreamId),
         loopId: loop.loop_id,
         harnessRunId: runId,
         triggerMessageId: pending.prepared_turn_id,
         activityId: null,
-        executionPrincipal: authorization.executionPrincipal,
+        // A continued run acts as the Sidekick's run-as user whoever sent the
+        // input; the sender stays the author of their message.
+        executionPrincipal,
+        ...(continuation
+          ? {
+              automationRun: continuation.automationRun,
+              automationContinuation: {
+                approvedAt: continuation.approvedAt,
+                ...continuationSource(pending),
+              },
+            }
+          : {}),
         ...(authorization.agentExchange ? { agentExchange: authorization.agentExchange } : {}),
         backgroundAgent: this.state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM background_agent").one().n > 0,
         ...(authorization.telemetryOperationId
           ? {
               telemetryOperationId: authorization.telemetryOperationId,
+              // The journey is the sender's, even when the run acts as
+              // somebody else.
               ...(typeof authorization.executionPrincipal === "object"
                 && authorization.executionPrincipal !== null
                 && "type" in authorization.executionPrincipal
@@ -4079,6 +4124,56 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         executionEpoch: loop.active_execution_epoch!,
       },
     };
+  }
+
+  /**
+   * Settle input the Sidekick would not continue its run for.
+   *
+   * The input lands as the sender wrote it, and a system row after it says
+   * why nothing answered, under the refusal's own code. Both in one
+   * transaction, keyed on the input, so a retried drain neither duplicates
+   * the note nor lands the input without it.
+   */
+  private async refuseSidekickRunInput(
+    loop: SubstreamLoopRow,
+    pending: PendingLoopInputRow,
+    code: SidekickRunContinuationRefusalCode,
+  ): Promise<void> {
+    const now = Date.now();
+    const prepared = await this.messages.prepareMessage({
+      messageId: uuidV7(now),
+      clientMessageId: `sidekick-run-refused:${pending.input_id}`,
+      authorType: "system",
+      authorUserId: null,
+      externalActorJson: null,
+      messageType: "system",
+      text: SIDEKICK_RUN_REFUSAL_TEXT[code],
+      structuredContentJson: JSON.stringify({
+        kind: "sidekick_run_refused",
+        code,
+        turnId: pending.prepared_turn_id,
+      }),
+      producedByRunId: null,
+      now,
+    });
+    await this.product.commitRuntimeMutation(() => {
+      this.product.enqueueRegionalEffectsInTransaction(this.transcript.deliverRefusedInputInTransaction({
+        loopId: loop.loop_id,
+        inputId: pending.input_id,
+        expectedLoopRevision: loop.revision,
+        now,
+      }));
+      this.messages.appendPreparedMessage(prepared);
+    }, true);
+    const identity = this.objectStore.identity();
+    logInfo(this.env, "sidekick_run_continuation_refused", {
+      workspace_id: identity?.workspaceId ?? null,
+      automation_id: identity?.parentId ?? null,
+      run_id: this.externalSubstreamId(),
+      input_id: pending.input_id,
+      code,
+    });
+    await this.flushSemanticRealtimeOutboxBestEffort();
   }
 
   private nextUnsettledExecutionReceipt(now: number): {

@@ -1,5 +1,6 @@
 import {
   AutomationDraftSchema,
+  AutomationRunReferenceV1Schema,
   AutomationScopeSchema,
   AutomationSetEvaluatorRulesInputV1Schema,
   DemoSeedSchema,
@@ -193,6 +194,51 @@ export const AutomationRunRequestSchema = z.strictObject({
   runId: IdSchema,
 });
 export type AutomationRunRequest = z.infer<typeof AutomationRunRequestSchema>;
+
+/**
+ * A run's definition, read by the revision its loop input names.
+ *
+ * `definitionRevision` is optional so a caller that names only the run keeps
+ * reading the revision the run was admitted under. A continued run names the
+ * revision `continueRun` handed it, which is the Sidekick's accepted revision
+ * at the moment the run continued, not the one it started with.
+ */
+export const AutomationRunDefinitionRequestSchema = AutomationRunRequestSchema.extend({
+  definitionRevision: z.number().int().positive().optional(),
+});
+export type AutomationRunDefinitionRequest = z.infer<typeof AutomationRunDefinitionRequestSchema>;
+
+/** Why input to a Sidekick run child did not continue the run. */
+export const SidekickRunContinuationRefusalCodeSchema = z.enum([
+  "sidekick_paused",
+  "sidekick_deleted",
+  "run_not_found",
+]);
+export type SidekickRunContinuationRefusalCode = z.infer<typeof SidekickRunContinuationRefusalCodeSchema>;
+
+/**
+ * What `continueRun` answers: a refusal, or the run context the scheduled start
+ * builds, against the Sidekick's currently accepted revision.
+ *
+ * `approvedAt` is the Sidekick object's clock when it approved the
+ * continuation. The run row still reads finished until the child's own
+ * `running` projection reaches the parent through the Queue, so the run
+ * authority check accepts a finished row only when it finished no later than
+ * this: a stop or a completion that lands after the approval still refuses.
+ */
+export const SidekickRunContinuationSchema = z.discriminatedUnion("outcome", [
+  z.strictObject({
+    outcome: z.literal("refused"),
+    code: SidekickRunContinuationRefusalCodeSchema,
+  }),
+  z.strictObject({
+    outcome: z.literal("continue"),
+    automationRun: AutomationRunReferenceV1Schema,
+    executionPrincipal: z.strictObject({ type: z.literal("user"), userId: UserIdSchema }),
+    approvedAt: z.number().int().nonnegative(),
+  }),
+]);
+export type SidekickRunContinuation = z.infer<typeof SidekickRunContinuationSchema>;
 
 export const AUTOMATION_SCHEDULE_ALARM_KIND = "automation_schedule";
 export const AUTOMATION_RUN_ALARM_KIND = "automation_run";

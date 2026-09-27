@@ -203,11 +203,13 @@ import {
   type ModelAttachmentSource,
 } from "./attachment-model-content";
 import {
+  externalInputFraming,
   participantModelMessageContent,
   projectElicitationResponseMessage,
   projectImportedSourceMessage,
   projectParticipantModelMessage,
   renderElicitationResponseMessage,
+  renderRunContinuationNote,
 } from "./workstream-participant-model-message";
 import {
   createWorkstreamAttachmentTools,
@@ -1175,9 +1177,13 @@ function automationActivationName(structuredContent: unknown): string {
 async function projectModelProtocolTranscript(
   env: Env,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "triggerMessageId" | "substreamId">
-    & Partial<Pick<WorkstreamWorkflowInput, "executionPrincipal">>,
+    & Partial<Pick<WorkstreamWorkflowInput, "executionPrincipal" | "parentKind">>,
   storedMessages: Message[],
 ): Promise<{ messages: ModelMessage[]; issues: ModelTranscriptProjectionIssue[] }> {
+  const externalFraming = externalInputFraming({
+    parentKind: input.parentKind ?? "workstream",
+    substreamId: input.substreamId ?? "0",
+  });
   const attachmentSources = await loadModelAttachmentSources(env, input.workspaceId, storedMessages);
   const toolMessageIds = storedMessages
     .filter((message) => message.messageType === "tool")
@@ -1476,6 +1482,7 @@ async function projectModelProtocolTranscript(
     const participantMessage = message.author.type === "external"
       ? await projectParticipantModelMessage(env, {
           author: { type: "external", actor: message.author.actor },
+          externalFraming,
           messageType: message.messageType,
           text: message.textContent,
           structuredContent: message.structuredContent,
@@ -4896,6 +4903,16 @@ async function loadRunPromptContext(
     }, "memory_context", frozenMemory.memoryContextHash));
   }
   if (triggerMessage) additionalMessages.push(triggerMessage);
+  if (input.automationRun && input.automationContinuation) {
+    // After the input that continued the run, which is already in the
+    // transcript above. Keyed on that input, so a recovered execution reuses
+    // the same activation input rather than adding a second note.
+    additionalMessages.push(modelDerivative(
+      renderRunContinuationNote(input.automationContinuation),
+      "run_continuation",
+      input.triggerMessageId ?? input.harnessRunId,
+    ));
+  }
   return {
     // The prompt prefix is intentionally pure with respect to a saved task.
     // Volatile execution metadata stays in the durable host and does not become
@@ -6386,7 +6403,8 @@ async function readRunAuthority(
     runId: run.runId,
   });
   recordOptionalTiming(onTiming, "automation", startedAt);
-  if (!live || live.lifecycle !== "active" || (live.state !== "running" && live.state !== "needs_input")) {
+  if (!live || live.lifecycle !== "active"
+    || (live.state !== "running" && live.state !== "needs_input" && !continuedAfterFinish(input, live))) {
     throw new ConnectorError("unauthorized", "This automation run is no longer running");
   }
   const snapshot: RunAuthoritySnapshot = {
@@ -6400,6 +6418,33 @@ async function readRunAuthority(
     expected.triggerType !== snapshot.triggerType
   )) throw new ConnectorError("unauthorized", "The immutable run authority changed");
   return { ...snapshot, principalIsGuest: guest };
+}
+
+/**
+ * Whether a finished run row still belongs to a continuation of it.
+ *
+ * A continued run's row reopens only when the child's `running` projection
+ * reaches the Sidekick through the Queue, which is after this execution has
+ * started and possibly after its first provider write. Until then the row
+ * reads a finish from an earlier activation.
+ *
+ * `completed` and `failed` are only ever the child's own reports of an
+ * activation that ended, never a revocation, so a continuation acts through
+ * them. `stopped` can be the Sidekick's: a pause stops every open run, and a
+ * resume does not reopen it. A continuation acts through a `stopped` row only
+ * when the row stopped no later than `continueRun` approved it, so a pause
+ * that lands after the approval refuses even once the Sidekick is resumed,
+ * exactly as it would for a scheduled run. Both timestamps are the Sidekick
+ * object's own clock.
+ */
+function continuedAfterFinish(
+  input: WorkstreamWorkflowInput,
+  live: { state: string; completedAt: number | null },
+): boolean {
+  const continuation = input.automationContinuation;
+  if (!continuation) return false;
+  if (live.state === "completed" || live.state === "failed") return true;
+  return live.state === "stopped" && live.completedAt !== null && live.completedAt <= continuation.approvedAt;
 }
 
 /** A run's definition, read from its parent by revision; one call per loop start. */
@@ -6419,6 +6464,9 @@ async function readAutomationRunDefinition(
     workspaceId: asWorkspaceId(input.workspaceId),
     automationId: run.automationId,
     runId: run.runId,
+    // The reference's revision, not the run row's: a continued run carries
+    // the revision accepted when it continued.
+    definitionRevision: run.definitionRevision,
   }));
 }
 
