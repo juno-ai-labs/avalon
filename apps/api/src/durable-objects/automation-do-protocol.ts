@@ -234,12 +234,13 @@ export type SidekickRunContinuationRefusalCode = z.infer<typeof SidekickRunConti
  * What `continueRun` answers: a refusal, or the run context the scheduled start
  * builds, against the Sidekick's currently accepted revision.
  *
- * `approvedAt` is the Sidekick object's clock when it approved the
+ * `stopGeneration` is the Sidekick's stop counter when it approved the
  * continuation. The run row still reads finished until the child's own
  * `running` projection reaches the parent through the Queue, so the run
  * authority check lets a continuation act through a finished row; a `stopped`
- * row only when it stopped no later than this, so a pause that lands after
- * the approval still refuses.
+ * row only while the counter has not moved, so a pause that lands after the
+ * approval still refuses. A counter rather than a time: a pause on the
+ * approval's own millisecond is still after it.
  */
 export const SidekickRunContinuationSchema = z.discriminatedUnion("outcome", [
   z.strictObject({
@@ -250,7 +251,7 @@ export const SidekickRunContinuationSchema = z.discriminatedUnion("outcome", [
     outcome: z.literal("continue"),
     automationRun: AutomationRunReferenceV1Schema,
     executionPrincipal: z.strictObject({ type: z.literal("user"), userId: UserIdSchema }),
-    approvedAt: z.number().int().nonnegative(),
+    stopGeneration: z.number().int().nonnegative(),
   }),
 ]);
 export type SidekickRunContinuation = z.infer<typeof SidekickRunContinuationSchema>;

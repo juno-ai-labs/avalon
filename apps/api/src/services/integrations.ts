@@ -6441,19 +6441,19 @@ async function readRunAuthority(
  * activation that ended, never a revocation, so a continuation acts through
  * them. `stopped` can be the Sidekick's: a pause stops every open run, and a
  * resume does not reopen it. A continuation acts through a `stopped` row only
- * when the row stopped no later than `continueRun` approved it, so a pause
+ * while the Sidekick's stop counter is where `continueRun` read it, so a pause
  * that lands after the approval refuses even once the Sidekick is resumed,
- * exactly as it would for a scheduled run. Both timestamps are the Sidekick
- * object's own clock.
+ * exactly as it would for a scheduled run. A counter, not a timestamp: a
+ * pause on the approval's own millisecond still moves it.
  */
 function continuedAfterFinish(
   input: WorkstreamWorkflowInput,
-  live: { state: string; completedAt: number | null },
+  live: { state: string; stopGeneration: number },
 ): boolean {
   const continuation = input.automationContinuation;
   if (!continuation) return false;
   if (live.state === "completed" || live.state === "failed") return true;
-  return live.state === "stopped" && live.completedAt !== null && live.completedAt <= continuation.approvedAt;
+  return live.state === "stopped" && live.stopGeneration === continuation.stopGeneration;
 }
 
 /** A run's definition, read from its parent by revision; one call per loop start. */
