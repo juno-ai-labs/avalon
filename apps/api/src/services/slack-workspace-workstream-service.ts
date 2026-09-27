@@ -31,6 +31,7 @@ import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { placeConnectorChannelInGeneral } from "./space-bootstrap-service";
+import { externalBindingRefusal, openUnderExternalBindingClaim } from "./external-binding-claims";
 import {
   attachWorkstreamOriginResource,
   type OriginResourceDescriptor,
@@ -44,10 +45,7 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { workspaceDOName } from "../durable-objects/names";
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
 import { WorkspaceChannelReservationResultSchema } from "../durable-objects/workspace-space-protocol";
-import {
-  ExternalBindingActivateResultSchema,
-  type ExternalBindingClaim,
-} from "../durable-objects/workspace-external-binding-protocol";
+import type { ExternalBindingClaim } from "../durable-objects/workspace-external-binding-protocol";
 import { resolveSpaceWorkstreamStart } from "../lib/channel-audience";
 import { spaceRefusal } from "./space-service";
 
@@ -365,15 +363,8 @@ export class SlackWorkspaceWorkstreamService {
     }));
     if (reserved.status === "refused") throw spaceRefusal(reserved.code, "");
     if (reserved.status === "general_missing") throw new Error("slack_space_placement_general_missing");
-    if (reserved.status === "binding_refused") {
-      throw reserved.outcome === "held"
-        ? new ApiError(503, "external_binding_held", "Another request is creating this conversation's Channel")
-        : new ApiError(409, "external_binding_bound", "This conversation is already bound to a Channel");
-    }
-    const bindingTarget = {
-      kind: "conversation" as const, parentKind: "workstream" as const, parentId: workstreamId, substreamId: "0",
-    };
-    try {
+    if (reserved.status === "binding_refused") throw externalBindingRefusal(reserved.outcome);
+    return openUnderExternalBindingClaim(this.env, workstream, this.workspaceId, space.externalBinding, workstreamId, async () => {
       const start = resolveSpaceWorkstreamStart({
         spaces: reserved.spaces,
         scope: prepared.scope,
@@ -396,30 +387,10 @@ export class SlackWorkspaceWorkstreamService {
         modelOverride: null,
         now: at,
       });
-      const created = await this.openProvisioned(input, {
+      return this.openProvisioned(input, {
         actor, title, workstreamId, executionEnv: prepared.executionEnv, at, creatorUserId, routeInput: prepared.routeInput,
       });
-      const activated = ExternalBindingActivateResultSchema.parse(await workstream.activateExternalConversationBinding({
-        workspaceId: this.workspaceId,
-        installationId: space.externalBinding.installationId,
-        path: space.externalBinding.path,
-        target: bindingTarget,
-        at: new Date().toISOString(),
-      }));
-      if (activated.outcome === "conflict") {
-        throw new ApiError(409, "external_binding_bound", "This conversation is already bound to another Channel");
-      }
-      return created;
-    } catch (error) {
-      await workstream.releaseExternalConversationBinding({
-        workspaceId: this.workspaceId,
-        installationId: space.externalBinding.installationId,
-        path: space.externalBinding.path,
-        target: bindingTarget,
-        at: new Date().toISOString(),
-      }).catch(() => undefined);
-      throw error;
-    }
+    });
   }
 
   async createMessage(workstreamId: string, input: SlackExternalMessageInput) {
