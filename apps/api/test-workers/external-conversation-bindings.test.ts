@@ -477,6 +477,57 @@ describe("suspending bindings", () => {
   });
 });
 
+describe("a lasting suspension during a disconnect", () => {
+  it("keeps a deleted Sidekick's thread and a left room suspended through the reconnect", async () => {
+    await workspace().recordOutboundExternalConversationBinding({
+      workspaceId: WORKSPACE_ID, installationId: INSTALLATION, path: ["D1", "1.0"],
+      target: { kind: "conversation", parentKind: "automation", parentId: SIDEKICK, substreamId: RUN }, at: at(),
+    });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO external_conversation_bindings
+           (installation_id, path_json, target_kind, space_id, state, created_at, updated_at)
+         VALUES (?, '["C1"]', 'space', '00000000-0000-7000-8000-000000000ed1', 'active', ?, ?)`,
+        INSTALLATION, at(), at(),
+      );
+    });
+    await workspace().suspendExternalConversationBindings({
+      workspaceId: WORKSPACE_ID, installationId: INSTALLATION, reason: "connection_disconnected", at: at(),
+    });
+    // While disconnected: the bot is removed from the room, and the Sidekick is deleted.
+    await workspace().suspendExternalConversationBindings({
+      workspaceId: WORKSPACE_ID, installationId: INSTALLATION, path: ["C1"], reason: "provider_membership_ended", at: at(),
+    });
+    const effect = {
+      kind: "directory_automation",
+      automationId: SIDEKICK,
+      authorUserId: USER_ID,
+      lifecycle: "deleted",
+      scope: "workspace",
+      owningWorkstreamId: null,
+      title: "Weekly call prep",
+      description: "",
+      nextRunAt: null,
+    } satisfies Extract<ParentEffect, { kind: "directory_automation" }>;
+    await workspace().applyAutomationDirectory({
+      workspaceId: WORKSPACE_ID,
+      envelope: {
+        kind: "parent_effect", contractVersion: 1, region: "global", workspaceId: WORKSPACE_ID,
+        parentKind: "automation", parentId: SIDEKICK, generation: 1, messageId: "deleted-while-disconnected",
+        partitionKey: "automation", sourceVersion: 1, requiredProjectionVersion: null,
+        payloadHash: conversationEffectHash(effect), effect,
+      },
+    });
+
+    await workspace().reactivateExternalConversationBindings({
+      workspaceId: WORKSPACE_ID, installationId: INSTALLATION, reason: "connection_disconnected", at: at(),
+    });
+
+    expect(await resolve(["D1", "1.0"])).toEqual({ outcome: "suspended", path: ["D1", "1.0"], reason: "sidekick_deleted" });
+    expect(await resolve(["C1", "5.0"])).toEqual({ outcome: "suspended", path: ["C1"], reason: "provider_membership_ended" });
+  });
+});
+
 describe("a Slack Connect room whose ID changes", () => {
   it("moves the room and every path beneath it, keeping each target, and refuses to merge into a bound ID", async () => {
     const linked = await linkRoom("C1", "00000000-0000-7000-8000-000000000e91");
