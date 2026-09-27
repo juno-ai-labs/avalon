@@ -605,6 +605,26 @@ export function createWorkspaceSlackSession(
       request.at,
     );
     if (bound === "conflict") throw new Error("slack_session_thread_bound_elsewhere");
+    // A reconnect writes a new connection row, and the binding (keyed by the
+    // installation) outlives the old one. The thread's session is then found
+    // by its Channel rather than its connection, and moves to the connection
+    // that is delivering now: a second row would break the one-session-per-
+    // Channel rule and fail the reply for good.
+    const moved = storage.sql.exec<SlackSessionRow>(
+      `UPDATE slack_agent_sessions
+          SET connection_id = ?, updated_at = ?
+        WHERE workspace_id = ? AND workstream_id = ? AND slack_team_id = ?
+          AND slack_channel_id = ? AND slack_thread_ts = ?
+        RETURNING ${SLACK_SESSION_COLUMNS}`,
+      request.connectionId,
+      request.at,
+      request.workspaceId,
+      request.workstreamId,
+      request.teamId,
+      request.channelId,
+      request.threadTs,
+    ).toArray()[0];
+    if (moved) return sessionResult(moved);
     return insertWorkspaceSlackSession(storage, request);
   });
 }

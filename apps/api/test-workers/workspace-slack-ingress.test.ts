@@ -612,6 +612,31 @@ describe("Slack agent sessions", () => {
       ).one());
   }
 
+  it("moves a thread's session to the connection a reconnect wrote, instead of refusing a second row", async () => {
+    await createSession();
+    const RECONNECTED = "00000000-0000-7000-8000-0000000c1d40";
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO connector_connections
+           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+            display_name, encrypted_credentials, credential_iv, credential_key_version,
+            granted_scopes_json, status, cursor_json, config_json, created_at, updated_at,
+            model_plugin_id)
+         VALUES (?, ?, 'slack', 'workspace', NULL, 'T1', 'Slack', 'encrypted', 'iv', 1,
+                 '["slack.agent"]', 'healthy', '{}', '{}', ?, ?, 'plugin_slack_reconnected')`,
+        RECONNECTED, WORKSPACE_ID, at(0), at(0),
+      );
+    });
+    // The bound thread's reply arrives on the new connection and repairs its
+    // delivery state.
+    const repaired = await createSession({ sessionId: "session-repair", connectionId: RECONNECTED, atMinutes: 5 });
+    expect(repaired.session).toMatchObject({ id: "session-1", connection_id: RECONNECTED, workstream_id: WORKSTREAM });
+    const byThread = WorkspaceSlackSessionResultSchema.parse(await workspace().slackSessionByThread({
+      workspaceId: WORKSPACE_ID, connectionId: RECONNECTED, channelId: "C1", threadTs: "1.0",
+    }));
+    expect(byThread.session?.id).toBe("session-1");
+  });
+
   it("answers with the row it stored, and finds it by thread, work stream, and id", async () => {
     const created = await createSession();
     expect(created.session).toMatchObject({
