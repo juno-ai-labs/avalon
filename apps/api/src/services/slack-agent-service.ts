@@ -180,6 +180,11 @@ type SlackPromptSource = {
   threadTs: string | null;
   messageTs: string | null;
   attachments: SlackOriginAttachment[];
+  /**
+   * False for a conversation Slack marks `is_non_threadable`: every Rally
+   * message there is top-level, and the Agent thread APIs are not called.
+   */
+  threadable?: boolean;
 };
 
 const SlackModalContextSchema = z.strictObject({
@@ -1300,6 +1305,8 @@ export class SlackAgentService {
       )
       : true;
     let deliveryError: unknown;
+    // A room Slack does not thread gets its result top-level, never chained.
+    const sessionThread = session.threadable ? session.slack_thread_ts : undefined;
     if (session.slack_stream_ts) {
       try {
         // Compatibility for sessions admitted before saved-turn-only delivery
@@ -1321,10 +1328,18 @@ export class SlackAgentService {
     }
     try {
       if (responseText) {
-        await postSlackTextChunks(token, session.slack_channel_id, responseText, session.slack_thread_ts, `${session.id}:${deliveryKey}:result`);
+        await postSlackTextChunks(
+          token,
+          session.slack_channel_id,
+          responseText,
+          sessionThread,
+          `${session.id}:${deliveryKey}:result`,
+          undefined,
+          session.threadable,
+        );
         await slackApi(token, "chat.postMessage", {
           channel: session.slack_channel_id,
-          thread_ts: session.slack_thread_ts,
+          ...(sessionThread ? { thread_ts: sessionThread } : {}),
           client_msg_id: await stableUuid(`${session.id}:${deliveryKey}:controls`),
           text: "Rally task controls",
           blocks: responseActionBlocks(workstreamId, await canonicalWorkstreamUrl(this.env, {
@@ -1352,7 +1367,7 @@ export class SlackAgentService {
         if (dmChannel !== session.slack_channel_id) {
           await slackApi(token, "chat.postMessage", {
             channel: session.slack_channel_id,
-            thread_ts: session.slack_thread_ts,
+            ...(sessionThread ? { thread_ts: sessionThread } : {}),
             client_msg_id: await stableUuid(`${session.id}:${deliveryKey}:connect-notice`),
             text: openElicitation?.target_user_id
               ? "This task needs input from a specific Rally workspace member. That member can reply here once their Rally account is connected."
@@ -1370,8 +1385,8 @@ export class SlackAgentService {
       deliveryError = error;
       logWarn(this.env, "slack_workstream_delivery_failed", { workspace_id: workspaceId, workstream_id: workstreamId, reason: error instanceof Error ? error.message : "unknown" });
     } finally {
-      try {
-        await slackApi(token, "assistant.threads.setStatus", { channel_id: session.slack_channel_id, thread_ts: session.slack_thread_ts, status: "" }, AbortSignal.timeout(5_000));
+      if (sessionThread) try {
+        await slackApi(token, "assistant.threads.setStatus", { channel_id: session.slack_channel_id, thread_ts: sessionThread, status: "" }, AbortSignal.timeout(5_000));
       } catch (error) {
         logWarn(this.env, "slack_thread_status_cleanup_failed", { workspace_id: workspaceId, workstream_id: workstreamId, reason: error instanceof Error ? error.message : "unknown" });
       }
@@ -1642,9 +1657,9 @@ export class SlackAgentService {
     const existingSession = route?.kind === "bound"
       ? await this.loadSession(connection, channelId, rootTs)
       : null;
-    const channelResolution = existingSession
+    const channelResolution: SlackChannelResolution = existingSession
       && (existingSession.channel_type === "public" || existingSession.channel_type === "private")
-      ? { channelType: existingSession.channel_type, channelName: null, failure: null }
+      ? { channelType: existingSession.channel_type, channelName: null, failure: null, threadable: existingSession.threadable }
       : activityChannelResolution
         ?? roomChannel
         ?? await resolveSlackChannelType(this.env, token, channelId, event.channel_type);
@@ -1664,6 +1679,7 @@ export class SlackAgentService {
         threadTs: rootTs,
         messageTs: String(event.ts),
         attachments: slackOriginAttachments(event),
+        ...(channelResolution.threadable === false ? { threadable: false } : {}),
       },
       slackEventSearchAuthorization(event),
       invocation,
@@ -1850,6 +1866,7 @@ export class SlackAgentService {
       channelType: room.kind === "direct" ? "im" : room.visibility,
       channelName: room.kind === "shared" ? room.displayName.slice(0, 255) : null,
       failure: null,
+      threadable: room.threadable,
     };
     if (room.kind === "direct") return { outcome: "ignored", reason: "direct_message", channel };
     if (room.archived) return { outcome: "ignored", reason: "room_archived", channel };
@@ -1940,10 +1957,15 @@ export class SlackAgentService {
   }
 
   /** A reply that could not be placed says so in its thread, rather than vanishing. */
-  private async postRoutingFailure(token: string, channelId: string, threadTs: string, reason: string): Promise<void> {
+  private async postRoutingFailure(
+    token: string,
+    channelId: string,
+    threadTs: string | undefined,
+    reason: string,
+  ): Promise<void> {
     await slackApi(token, "chat.postMessage", {
       channel: channelId,
-      thread_ts: threadTs,
+      ...(threadTs ? { thread_ts: threadTs } : {}),
       text: reason === "space_archived"
         ? "This conversation's Rally Space is archived, so Rally did not start work here. A Rally admin can restore the Space in Rally."
         : "Rally couldn't open a Channel for this conversation in its linked Rally Space, because nobody here can open that Space in Rally yet. Connect your Rally account in App Home, or ask a member of the Space to add you, then mention Rally again.",
@@ -2177,13 +2199,18 @@ export class SlackAgentService {
     const channel = channelId ?? await this.openDm(token, slackUserId);
     const thread = threadTs ?? await this.createUserPromptRoot(token, channel, requestedPrompt);
     const openingClientMessageId = clientMessageId.slice(0, 120);
+    // A non-threadable room keys its session by the message itself, as Slack
+    // would a thread root, but nothing is ever posted into that thread.
+    const threaded = source.threadable !== false;
     let session = await this.loadSession(connection, channel, thread);
     if (session?.opening_client_message_id === openingClientMessageId) return;
-    await slackApi(token, "assistant.threads.setStatus", {
-      channel_id: channel,
-      thread_ts: thread,
-      status: "Working…",
-    }, AbortSignal.timeout(5_000));
+    if (threaded) {
+      await slackApi(token, "assistant.threads.setStatus", {
+        channel_id: channel,
+        thread_ts: thread,
+        status: "Working…",
+      }, AbortSignal.timeout(5_000));
+    }
     let sessionCreatedThisCall = false;
     if (!session) {
       const claimId = await this.claimThread(connection.workspace_id, connection.id, channel, thread);
@@ -2227,13 +2254,13 @@ export class SlackAgentService {
                 space_id: route.spaceId,
                 code: error.code,
               });
-              await this.postRoutingFailure(token, channel, thread, error.code);
+              await this.postRoutingFailure(token, channel, threaded ? thread : undefined, error.code);
               return;
             }
             // A bound thread whose session row was lost gets its delivery state
             // back without a second Channel; there is nothing to title.
             sessionCreatedThisCall = route?.kind !== "bound";
-            if (sessionCreatedThisCall) try {
+            if (sessionCreatedThisCall && threaded) try {
               await slackApi(token, "assistant.threads.setTitle", {
                 channel_id: channel,
                 thread_ts: thread,
@@ -2290,7 +2317,7 @@ export class SlackAgentService {
           if (!identity) await this.sendPrivateConnectPrompt(slackUserId, token);
           await slackApi(token, "chat.postMessage", {
             channel,
-            thread_ts: thread,
+            ...(threaded ? { thread_ts: thread } : {}),
             text: identity
               ? "This question is targeted to another Rally workspace member, so only that member can answer it."
               : "This question is targeted to a specific Rally workspace member. Only that linked member can answer it; I sent you a private message with a Connect Rally button in case that member is you.",
@@ -4024,6 +4051,8 @@ type SlackChannelResolution = {
   channelType: SlackPromptSource["channelType"];
   channelName: string | null;
   failure: SlackPromptSource["channelResolutionFailure"];
+  /** Absent reads as threadable: only Slack's explicit flag turns threads off. */
+  threadable?: boolean;
 };
 
 type SlackThreadRoute =
@@ -4147,6 +4176,7 @@ async function postSlackTextChunks(
   threadTs?: string,
   clientMessageKey?: string,
   header?: string,
+  threadable = true,
 ): Promise<string> {
   const messages = slackMarkdownMessages(text, { ...(header ? { header } : {}), fallback: SLACK_EMPTY_RESULT_TEXT });
   let rootTs = threadTs;
@@ -4160,7 +4190,7 @@ async function postSlackTextChunks(
       blocks: message.blocks,
     }, AbortSignal.timeout(10_000));
     firstMessageTs ??= result.ts;
-    rootTs ??= result.ts;
+    if (threadable) rootTs ??= result.ts;
   }
   if (!firstMessageTs) throw new ApiError(502, "slack_message_failed", "Slack did not return a message timestamp");
   return firstMessageTs;
@@ -4243,11 +4273,7 @@ async function resolveSlackChannelType(
   token: string,
   channelId: string,
   hint: unknown,
-): Promise<{
-  channelType: SlackPromptSource["channelType"];
-  channelName: string | null;
-  failure: SlackPromptSource["channelResolutionFailure"];
-}> {
+): Promise<SlackChannelResolution> {
   const hinted = slackChannelType(hint);
   if (hinted === "im" || channelId.startsWith("D")) {
     return { channelType: "im", channelName: null, failure: null };
@@ -4261,10 +4287,11 @@ async function resolveSlackChannelType(
     // `is_private` is optional on the wire. Only an explicit `false` classifies
     // a conversation as public; anything else stays private, because this
     // classification gates whether Avalon will start a workspace task here.
+    const threadable = result.channel.is_non_threadable !== true;
     if (result.channel.is_mpim === true || result.channel.is_private !== false) {
-      return { channelType: "private", channelName, failure: null };
+      return { channelType: "private", channelName, failure: null, threadable };
     }
-    return { channelType: "public", channelName, failure: null };
+    return { channelType: "public", channelName, failure: null, threadable };
   } catch (error) {
     const reason = slackErrorReason(error);
     logWarn(env, "slack_conversation_privacy_lookup_failed", {
