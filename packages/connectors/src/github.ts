@@ -2791,12 +2791,11 @@ export function discoverGitHubWebhookResources(
 }
 
 /**
- * Deliveries Rally discards at ingress. Continuous integration reports every
- * check twice and every workflow run three times: 136,000 of Juno Labs' 255,000
- * stored events, about fifteen check runs a commit. A check run's outcome is
- * read on demand with the Actions tools, and a workflow run is kept once, when
- * it completes, because that is the event that carries a result. Dropped
- * before routing, so none of it is stored, inventoried, or queued.
+ * Deliveries Rally discards at ingress, before anything is stored,
+ * inventoried, or queued. Continuous integration reports every check twice and
+ * every workflow run three times; a workflow run is kept once, when it
+ * completes, because that event carries the result. See
+ * docs/connectors.md#dropping-events-that-say-nothing-new.
  */
 export function isDiscardedGitHubDelivery(delivery: Pick<GitHubWebhookDelivery, "event" | "action">): boolean {
   if (delivery.event === "check_run") return true;
@@ -2822,7 +2821,6 @@ export function normalizeGitHubWebhook(
     throw new ConnectorError("unauthorized", "The GitHub webhook does not belong to this connection's installation");
   }
   if (["ping", "installation"].includes(delivery.event)) return null;
-  if (isDiscardedGitHubDelivery(delivery)) return null;
 
   const payload = delivery.payload;
   const repository = recordValue(payload, "repository") ?? {};
@@ -3481,18 +3479,6 @@ function webhookSubject(
       subject,
       titleVerb: `workflow run ${action}`,
       summaryVerb: `${action} a workflow run`,
-    };
-  }
-  if (event === "check_run") {
-    const subject = recordValue(payload, "check_run") ?? {};
-    const sha = stringValue(subject, "head_sha");
-    return {
-      eventType: `github.check_run.${action}`,
-      resourceType: sha ? "github_commit" : null,
-      providerResourceId: sha ? `${repositoryName}@${sha}` : null,
-      subject,
-      titleVerb: `check run ${action}`,
-      summaryVerb: `${action} a check run`,
     };
   }
   if (event === "release") {

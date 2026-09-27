@@ -77,7 +77,18 @@ async function enqueue(env: Env, input: EnqueueInput): Promise<void> {
  * reaches the activity feed; only the speculative home-screen surface is
  * withheld.
  */
+/**
+ * Families no connector declares any more whose stored events can still be
+ * processed. GitHub ingress stopped accepting check runs, but the ones already
+ * stored pending or failed drain through here after it did. Remove a prefix once
+ * none of its events can still be processed.
+ */
+export const SUGGESTED_WORK_RETIRED_EVENT_TYPE_PREFIXES: readonly string[] = [
+  "github.check_run.",
+];
+
 export const SUGGESTED_WORK_EXCLUDED_EVENT_TYPE_PREFIXES: readonly string[] = [
+  ...SUGGESTED_WORK_RETIRED_EVENT_TYPE_PREFIXES,
   "github.workflow_run.",
 ];
 
