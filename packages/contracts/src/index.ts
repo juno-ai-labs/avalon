@@ -1600,8 +1600,14 @@ export const AutomationRunDefinitionV1Schema = z.strictObject({
   activitySourcePluginIds: ActivitySourcePluginIdsSchema,
   connectorBindings: z.record(z.string(), z.string()),
   scope: AutomationScopeSchema,
-  /** The room that owns a `workstream`-scoped automation: the one place a run may post its result. */
+  /** The Channel that owns a `workstream`-scoped automation; null for the other two scopes. */
   owningWorkstreamId: IdSchema.nullable(),
+  /**
+   * The home conversation under `owningWorkstreamId`: `"0"` for the Channel's
+   * Main conversation, a Breakout id otherwise. The home is where a run posts
+   * by default with `conversation_post`.
+   */
+  owningSubstreamId: SubstreamIdSchema.default("0" as SubstreamId),
   runAsUserId: IdSchema,
   modelOverride: z.string().min(1).nullable(),
   trigger: AutomationRunTriggerV1Schema,

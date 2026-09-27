@@ -554,6 +554,7 @@ function runDefinition(database: ToolSelectionDatabase): AutomationRunDefinition
     ),
     scope: "personal",
     owningWorkstreamId: null,
+    owningSubstreamId: asSubstreamId("0"),
     runAsUserId: USER_ID,
     modelOverride: null,
     trigger: { kind: "manual", requestedByUserId: USER_ID },

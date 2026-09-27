@@ -110,6 +110,13 @@ export const AutomationDirectoryEffectSchema = z.strictObject({
   lifecycle: z.enum(["draft", "active", "paused", "deleted"]),
   scope: z.enum(["personal", "workspace", "workstream"]),
   owningWorkstreamId: IdSchema.nullable(),
+  /**
+   * The home conversation under `owningWorkstreamId`: `"0"` for the Channel's
+   * Main conversation, a Breakout id otherwise. Optional because an effect an
+   * object queued before the field existed carries none, and every such
+   * Sidekick's home is its Channel's Main conversation.
+   */
+  owningSubstreamId: SubstreamIdSchema.optional(),
   title: z.string().max(500),
   description: z.string().max(4_000),
   nextRunAt: NullableTimestampSchema,
@@ -119,6 +126,13 @@ export const AutomationDirectoryEffectSchema = z.strictObject({
       code: "custom",
       path: ["owningWorkstreamId"],
       message: "a room-scoped automation names its room, and no other scope may",
+    });
+  }
+  if (effect.owningWorkstreamId === null && effect.owningSubstreamId !== undefined && effect.owningSubstreamId !== "0") {
+    context.addIssue({
+      code: "custom",
+      path: ["owningSubstreamId"],
+      message: "only a room-scoped automation has a home Breakout",
     });
   }
 });
