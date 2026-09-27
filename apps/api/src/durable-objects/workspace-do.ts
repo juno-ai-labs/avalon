@@ -7882,8 +7882,31 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         ? "workspace" as const
         : "restricted" as const,
     };
+    // A message in a bound external conversation is claimed by its binding,
+    // as a matched watch claims one, so a bound reply never also becomes
+    // Suggested Work. The adapter wrote the path beside the provider metadata.
+    const boundPath = Array.isArray(metadata.externalConversationPath)
+      && metadata.externalConversationPath.length > 0
+      && metadata.externalConversationPath.every((segment) => typeof segment === "string" && segment.length > 0)
+      && typeof metadata.teamId === "string" && event.connector_type === "slack"
+      ? metadata.externalConversationPath as string[]
+      : null;
+    const binding = boundPath === null ? null : this.externalBindings().resolve({
+      installationId: `slack:${metadata.teamId as string}`,
+      path: boundPath,
+      addressed: false,
+      claimKey: null,
+      pendingStaleBefore: new Date(0).toISOString(),
+    });
+    // A reply bound to a Sidekick's run continues that run through the
+    // binding. The same message is not also a new trigger for that Sidekick,
+    // or one answer would start a second run beside the one it answers.
+    const boundSidekickId = binding?.outcome === "deliver" && binding.target.parentKind === "automation"
+      ? binding.target.parentId
+      : null;
     const deliveries = registrations.flatMap((registration) => {
       if (registration.resource_id && !resourceIds.includes(registration.resource_id)) return [];
+      if (boundSidekickId !== null && registration.automation_id === boundSidekickId) return [];
       if (restrictedUserIds !== null && registration.destination_kind === "automation") {
         // A workspace automation is readable by every member, so a restricted
         // activity can never reach one. A personal automation may see it only
@@ -7927,24 +7950,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       delivery_count: deliveries.length,
       destinations: deliveries.map((delivery) => `${delivery.destination.kind}:${delivery.registrationId}`).slice(0, 20),
     });
-    // A message in a bound external conversation is claimed by its binding,
-    // as a matched watch claims one, so a bound reply never also becomes
-    // Suggested Work. The adapter wrote the path beside the provider metadata.
-    const boundPath = Array.isArray(metadata.externalConversationPath)
-      && metadata.externalConversationPath.length > 0
-      && metadata.externalConversationPath.every((segment) => typeof segment === "string" && segment.length > 0)
-      && typeof metadata.teamId === "string" && event.connector_type === "slack"
-      ? metadata.externalConversationPath as string[]
-      : null;
-    const bound = boundPath !== null && this.externalBindings().resolve({
-      installationId: `slack:${metadata.teamId as string}`,
-      path: boundPath,
-      addressed: false,
-      claimKey: null,
-      pendingStaleBefore: new Date(0).toISOString(),
-    }).outcome === "deliver";
     return WorkspaceExternalEventMatchResultSchema.parse({
-      matched: deliveries.length > 0 || bound,
+      matched: deliveries.length > 0 || binding?.outcome === "deliver",
       deliveries,
     });
   }
