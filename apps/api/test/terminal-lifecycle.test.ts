@@ -254,6 +254,104 @@ describe("Terminal scheduled lifecycle", () => {
       .toEqual({ lifecycle_state: "expired", sandbox_id: null });
   });
 
+  it("deletes and retires a sandbox Daytona reports unrecoverable instead of retrying its stop", async () => {
+    const { objectStore, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
+    });
+    vi.mocked(provider.getSandbox).mockResolvedValue({ id: "provider-1", name: "sandbox-lifecycle", state: "failed", recoverable: false, domainAllowList: [] });
+    const preserve = vi.fn(async () => undefined);
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW, preserve))
+      .resolves.toEqual({ transition: "deferred", lostSandbox: true });
+    expect(provider.deleteSandbox).toHaveBeenCalledWith("provider-1");
+    expect(provider.stopSandbox).not.toHaveBeenCalled();
+    expect(preserve).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id, lifecycle_state, failure_code FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ generation: 2, sandbox_id: null, lifecycle_state: "starting", failure_code: null });
+  });
+
+  it("retires an unrecoverable sandbox whose leftover command it could not stop", async () => {
+    const { objectStore, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
+    });
+    seedWorkstreamRun(objectStore, { id: "run-lost", status: "needs_input",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
+    seedToolReceipt(objectStore, { id: "lost-invocation", runId: "run-lost", toolCallId: "lost-call", toolName: "run_command", position: 0 });
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO terminal_tasks
+        (task_id, run_id, effect_intent_id, sandbox_generation, provider_task_name, state,
+         command_sha256, command_deadline_at, stdout_head, stdout_tail, stderr_head,
+         stderr_tail, stdout_bytes, stderr_bytes, created_at, updated_at)
+      VALUES ('lost-task', 'run-lost', 'lost-invocation', 1, 'lost-provider-task', 'running', 'hash', ?, '', '', '', '', 0, 0, ?, ?)`,
+      Date.parse("2026-08-13T11:59:00.000Z"),
+      Date.parse("2026-08-13T11:00:00.000Z"),
+      Date.parse("2026-08-13T11:00:00.000Z"),
+    );
+    vi.mocked(provider.getSandbox).mockResolvedValue({ id: "provider-1", name: "sandbox-lifecycle", state: "failed", recoverable: false, domainAllowList: [] });
+    vi.mocked(provider.stopSandbox).mockRejectedValue(new Error("sandbox is in an error state"));
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW))
+      .resolves.toEqual({ transition: "deferred", lostSandbox: true });
+    expect(provider.deleteSandbox).toHaveBeenCalledWith("provider-1");
+    expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ generation: 2, sandbox_id: null });
+    expect(workstreamObjectGet(objectStore, "SELECT state FROM terminal_tasks WHERE task_id = 'lost-task'"))
+      .not.toEqual({ state: "running" });
+  });
+
+  it("expires a sandbox Daytona reports unrecoverable without preserving from it", async () => {
+    const { objectStore, provider } = fixture("archived", {
+      warm: "2026-08-13T11:00:00.000Z", archive: "2026-08-13T11:30:00.000Z", expire: "2026-08-13T11:59:00.000Z",
+    });
+    vi.mocked(provider.getSandbox).mockResolvedValue({ id: "provider-1", name: "sandbox-lifecycle", state: "failed", recoverable: false, domainAllowList: [] });
+    const preserve = vi.fn(async () => undefined);
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW, preserve))
+      .resolves.toEqual({ transition: "expired", lostSandbox: true });
+    expect(provider.deleteSandbox).toHaveBeenCalledWith("provider-1");
+    expect(provider.recoverSandbox).not.toHaveBeenCalled();
+    expect(preserve).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(objectStore, "SELECT lifecycle_state, sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ lifecycle_state: "expired", sandbox_id: null });
+  });
+
+  it("keeps the sandbox and its generation when deleting an unrecoverable sandbox fails", async () => {
+    const { objectStore, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
+    });
+    vi.mocked(provider.getSandbox).mockResolvedValue({ id: "provider-1", name: "sandbox-lifecycle", state: "failed", recoverable: false, domainAllowList: [] });
+    vi.mocked(provider.deleteSandbox).mockRejectedValue(new Error("delete refused"));
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW))
+      .rejects.toThrow("delete refused");
+    expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id, lifecycle_state, failure_code FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ generation: 1, sandbox_id: "provider-1", lifecycle_state: "running", failure_code: "stopped_provider_failed" });
+  });
+
+  it("never deletes a failed sandbox whose recoverability Daytona has not reported", async () => {
+    const { objectStore, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
+    });
+    vi.mocked(provider.getSandbox).mockResolvedValue({ id: "provider-1", name: "sandbox-lifecycle", state: "failed", domainAllowList: [] });
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW))
+      .rejects.toThrow("terminal_lifecycle_provider_transition_pending");
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ generation: 1, sandbox_id: "provider-1" });
+  });
+
+  it("waits out another pass's live claim without touching the provider", async () => {
+    const { objectStore, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
+    });
+    workstreamObjectRun(
+      objectStore,
+      "UPDATE terminal_workspace SET lifecycle_state = 'stopping', lifecycle_claim_id = 'other-pass', lifecycle_claim_expires_at = ? WHERE id = 1",
+      NOW.getTime() + 60_000,
+    );
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW))
+      .resolves.toEqual({ transition: "deferred" });
+    expect(provider.getSandbox).not.toHaveBeenCalled();
+    expect(provider.stopSandbox).not.toHaveBeenCalled();
+  });
+
   it("archives stopped state and expires archived state without polling", async () => {
     const stopped = fixture("stopped", {
       warm: "2026-08-13T11:00:00.000Z", archive: "2026-08-13T11:59:00.000Z", expire: "2026-09-12T12:00:00.000Z",

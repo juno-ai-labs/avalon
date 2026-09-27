@@ -514,8 +514,9 @@ export async function recordWorkspaceScheduleFailure(
  * Its due time is `next_terminal_action_at` in the workspace directory, which
  * only the work stream's own directory effect moves, off the Queue. A sandbox
  * a live run holds keeps its deadline until the run settles; a transition this
- * pass just made keeps it until that effect lands. Both re-derive the identical
- * instant, and neither is a stall: a held entry is re-checked rather than
+ * pass just made keeps it until that effect lands; a transition another pass
+ * has claimed keeps it until that claim settles or lapses. Each re-derives the
+ * identical instant, and none is a stall: a held entry is re-checked rather than
  * counted, and the first reconcile after the directory moves clears the hold.
  */
 const TERMINAL_HELD_SANDBOX_RECHECK_MS = 60_000;
@@ -600,6 +601,15 @@ async function reconcileConversationTerminalSandbox(
     undefined,
     substreamId,
   );
+  if (result.lostSandbox) {
+    // A deleted workspace is a loss someone should see, not a routine transition.
+    logStructuredEvent(ctx.env, "warn", "terminal_sandbox_retired_after_loss", {
+      workspace_id: ctx.workspaceId,
+      workstream_id: workstreamId,
+      substream_id: substreamId,
+      transition: result.transition,
+    });
+  }
   if (result.transition !== "none") {
     logStructuredEvent(ctx.env, "info", "terminal_sandbox_lifecycle_transition", {
       workspace_id: ctx.workspaceId,
