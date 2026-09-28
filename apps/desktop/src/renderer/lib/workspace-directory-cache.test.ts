@@ -1,4 +1,5 @@
-import { WorkstreamPrivateChildSchema } from '@rally/contracts';
+import { ChannelRailSchema, WorkstreamPrivateChildSchema } from '@rally/contracts';
+import { applyChannelRails, channelRailQueryKey, isRailStale, noteRailWaterline } from './channel-rails';
 import { QueryClient } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearAllLocalCache, closeLocalCache, defineLocalCacheSlice, localCacheScope } from './local-cache';
@@ -55,6 +56,7 @@ function directory(overrides: Partial<CachedWorkspaceDirectory> = {}): CachedWor
     inactiveSpaces: { waterline: 3, items: [] },
     ordering: [],
     breakouts: {},
+    rails: {},
     ...overrides,
   };
 }
@@ -177,6 +179,27 @@ describe('organization directory cache', () => {
     applyChannelViewerState(after, { id: channel, privateChildren: [breakout('00000000-0000-7000-8000-000000000012', 'Launch')], privateChildrenWaterline: 1 }, version(1), null);
     expect(after.getQueryData<WorkstreamChildDirectory>(workstreamChildrenQueryKey(channel))?.privateChildren)
       .toEqual([breakout('00000000-0000-7000-8000-000000000012', 'Launch')]);
+  });
+
+  it('paints each remembered Channel\'s rail on the next launch, current at the waterline it was answered at', async () => {
+    const channel = summary().id;
+    const rail = ChannelRailSchema.parse({
+      workstreamId: channel, railWaterline: 6, participantUserIds: ['00000000-0000-7000-8000-0000000000aa'],
+      sidekicks: { owned: [], recommended: [], attached: [] },
+      resources: [{ id: '00000000-0000-7000-8000-0000000000c1', title: 'Plan', resourceType: 'document', mimeType: null, direction: 'source', currentVersion: 2 }],
+    });
+    const before = new QueryClient();
+    const mirror = mirrorWorkspaceDirectory(before, scope, { live: () => true });
+    setCachedWorkstreams(before, [summary()]);
+    applyChannelRails(before, { rails: [rail], oversized: [], unavailable: [] });
+    await mirror.flush();
+    mirror.stop();
+
+    const after = new QueryClient();
+    await expect(hydrateWorkspaceDirectory(after, scope, () => true)).resolves.toBe(true);
+    expect(after.getQueryData(channelRailQueryKey(channel))).toEqual({ railWaterline: 6, rail });
+    noteRailWaterline(after, channel, 6);
+    expect(isRailStale(after, channel)).toBe(false);
   });
 
   it('keeps one page of the flat list, however many pages the sidebar has loaded', async () => {

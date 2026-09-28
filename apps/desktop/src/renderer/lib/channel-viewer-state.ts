@@ -5,6 +5,7 @@ import type {
   WorkstreamStateVersion,
 } from '@rally/contracts';
 import type { QueryClient } from '@tanstack/react-query';
+import { noteRailWaterline } from './channel-rails';
 import { retainConversationChildren } from './conversation-cache';
 import type { WorkstreamDetail } from './types';
 import { workstreamDetailQueryKey } from './workstreams-cache';
@@ -179,10 +180,11 @@ export function seedChannelBreakouts(queryClient: QueryClient, lists: ChannelBre
  */
 export function applyChannelViewerState(
   queryClient: QueryClient,
-  row: Pick<Workstream, 'id' | 'privateChildren' | 'privateChildrenWaterline' | 'backgroundAgentCounts'>,
+  row: Pick<Workstream, 'id' | 'privateChildren' | 'privateChildrenWaterline' | 'backgroundAgentCounts' | 'railWaterline'>,
   stateVersion: WorkstreamStateVersion,
   localCacheScope: string | null,
 ): void {
+  if (row.railWaterline !== undefined) noteRailWaterline(queryClient, row.id, row.railWaterline);
   if (row.privateChildren === undefined && row.backgroundAgentCounts === undefined) return;
   pinChannelViewerState(queryClient);
   if (row.backgroundAgentCounts !== undefined) {

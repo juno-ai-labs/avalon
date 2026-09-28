@@ -114,7 +114,7 @@ socket answers defines a third:
 
 | Slice | Key | Subject | Holds |
 | --- | --- | --- | --- |
-| `directory` | `directory` | `directory` | The Channel list as the sidebar holds it, each of those Channels' breakout lists, the automation list, the active and archived Space directories, and the compatible personal-order payload used by the manually arranged Space rail. |
+| `directory` | `directory` | `directory` | The Channel list as the sidebar holds it, each of those Channels' breakout lists and rails, the automation list, the active and archived Space directories, and the compatible personal-order payload used by the manually arranged Space rail. |
 | `conversation` | `<parentId>:<substreamId>` | `<parentId>` | The `WorkstreamDetail` the header and composer read, the transcript trimmed to its opening ranges, and a private child's inherited context. |
 
 The store is best-effort by construction, like the draft cache beside it: every
@@ -207,9 +207,17 @@ observes and writes nothing, so the seed never persists itself.
 ### What a Channel's rail paints before its conversation answers
 
 The Channel rail lists only what the workspace socket carries, so it draws from
-the directory row and the breakout list above while the conversation's snapshot
-is in flight (`renderOpeningSidebar` in `screens/workstream.tsx`). Only the
-people and the Sidekicks wait for the snapshot.
+the directory row, the breakout list and the Channel's rail while the
+conversation's snapshot is in flight (`renderOpeningSidebar` in
+`screens/workstream.tsx`). A rail is the Channel's people, its owned,
+recommended and attached Sidekicks, and its Channel resources, which the
+workspace socket answers a Space at a time ahead of need
+(`lib/channel-rails.ts`; the protocol is in
+[`realtime-sockets.md`](realtime-sockets.md)). Rails ride the `directory` row
+under `rails`, read like `breakouts`, each kept at the `railWaterline` it was
+answered at: a waterline and its data are committed together, so a live row at
+the same waterline asks for nothing. Without a rail, the people and the
+Sidekicks wait for the snapshot.
 
 ### What opening a conversation paints
 
@@ -547,13 +555,12 @@ scrolling.
 
 ## Changelog
 
-### 2026-09-27 — The Channel rail paints its breakouts without waiting for the conversation
+### 2026-09-27 — The Channel rail paints without waiting for the conversation
 
-**What changed:** The `directory` row gained `breakouts`, each kept Channel's
-breakout list, seeded into `workstream-children` on a cold launch. And the
-Channel rail is drawn from the directory while its conversation's first
-snapshot is in flight, instead of as three placeholder rows beside the feed's
-own placeholders.
+**What changed:** The `directory` row gained `breakouts` and `rails`, each kept
+Channel's breakout list and rail, seeded on a cold launch. And the Channel rail
+is drawn from them while its conversation's first snapshot is in flight,
+instead of as three placeholder rows beside the feed's own placeholders.
 
 **Why:** Spaces and Channels painted at once and breakouts did not, which read
 as breakouts being slow. The list had already moved onto the workspace socket,

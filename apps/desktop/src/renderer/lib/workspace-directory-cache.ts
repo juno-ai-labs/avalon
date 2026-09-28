@@ -1,4 +1,5 @@
-import { PersonalOrderSchema, SpaceDirectorySchema, WorkstreamPrivateChildSchema, type PersonalOrder, type SpaceDirectory } from '@rally/contracts';
+import { ChannelRailSchema, PersonalOrderSchema, SpaceDirectorySchema, WorkstreamPrivateChildSchema, type ChannelRail, type PersonalOrder, type SpaceDirectory } from '@rally/contracts';
+import { heldChannelRails, isChannelRailQueryKey, seedChannelRails } from './channel-rails';
 import { heldChannelBreakouts, isWorkstreamChildrenQueryKey, seedChannelBreakouts, type ChannelBreakoutLists } from './channel-viewer-state';
 import { notifyManager, type QueryClient } from '@tanstack/react-query';
 import { defineLocalCacheSlice, localCacheEpoch } from './local-cache';
@@ -48,6 +49,8 @@ export interface CachedWorkspaceDirectory {
    * launch. A Channel whose list this build cannot read is left out alone.
    */
   breakouts: ChannelBreakoutLists;
+  /** Each listed Channel's rail, read the same way as `breakouts`. */
+  rails: Record<string, ChannelRail>;
 }
 
 export const DIRECTORY_CACHE_KEY = 'directory';
@@ -135,6 +138,17 @@ function parseBreakouts(value: unknown): ChannelBreakoutLists | undefined {
   return lists;
 }
 
+function parseRails(value: unknown): Record<string, ChannelRail> | undefined {
+  if (value === undefined) return {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const rails: Record<string, ChannelRail> = {};
+  for (const [workstreamId, rail] of Object.entries(value)) {
+    const parsed = ChannelRailSchema.safeParse(rail);
+    if (parsed.success && parsed.data.workstreamId === workstreamId) rails[workstreamId] = parsed.data;
+  }
+  return rails;
+}
+
 function parseCachedDirectory(value: unknown): CachedWorkspaceDirectory | null {
   if (!value || typeof value !== 'object') return null;
   const candidate = value as Record<string, unknown>;
@@ -144,9 +158,10 @@ function parseCachedDirectory(value: unknown): CachedWorkspaceDirectory | null {
   const inactiveSpaces = parseSpaces(candidate['inactiveSpaces']);
   const ordering = parseOrdering(candidate['ordering']);
   const breakouts = parseBreakouts(candidate['breakouts']);
+  const rails = parseRails(candidate['rails']);
   if (!workstreams || !automations || spaces === undefined || inactiveSpaces === undefined) return null;
-  if (ordering === undefined || breakouts === undefined) return null;
-  return { workstreams, automations, spaces, inactiveSpaces, ordering, breakouts };
+  if (ordering === undefined || breakouts === undefined || rails === undefined) return null;
+  return { workstreams, automations, spaces, inactiveSpaces, ordering, breakouts, rails };
 }
 
 /**
@@ -209,6 +224,7 @@ export async function hydrateWorkspaceDirectory(
       queryClient.setQueryData(PERSONAL_ORDER_QUERY_KEY, cached.ordering);
     }
     seedChannelBreakouts(queryClient, cached.breakouts);
+    seedChannelRails(queryClient, cached.rails);
   });
   return true;
 }
@@ -233,7 +249,7 @@ export function mirrorWorkspaceDirectory(
   options: { live: () => boolean },
 ): QueryMirror {
   return mirrorQueriesToLocalCache<CachedWorkspaceDirectory>(queryClient, {
-    matches: (queryKey) => directoryKey(queryKey) || isWorkstreamChildrenQueryKey(queryKey),
+    matches: (queryKey) => directoryKey(queryKey) || isWorkstreamChildrenQueryKey(queryKey) || isChannelRailQueryKey(queryKey),
     snapshot: () => {
       if (!options.live()) return null;
       const workstreams = queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY);
@@ -247,6 +263,7 @@ export function mirrorWorkspaceDirectory(
       return {
         workstreams: kept,
         breakouts: heldChannelBreakouts(queryClient, kept.map((row) => row.id)),
+        rails: heldChannelRails(queryClient, kept.map((row) => row.id)),
         automations: queryClient.getQueryData<AutomationSummary[]>(SIDEBAR_LIST_QUERY_KEYS.automations) ?? [],
         spaces: queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY) ?? null,
         inactiveSpaces: queryClient.getQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY) ?? null,

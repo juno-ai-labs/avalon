@@ -56,6 +56,11 @@ export const WorkstreamDirectoryCommonEffectSchema = z.strictObject({
     watchEnabled: z.boolean(),
     relationshipType: ResourceRelationshipTypeSchema,
   })).max(WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT).optional(),
+  /**
+   * The Sidekicks this conversation has attached, in attach order. Main's is
+   * the Channel rail's list. Absent on an envelope written before it existed.
+   */
+  sidekickAttachmentIds: z.array(IdSchema).optional(),
   attachmentReservationReleases: z.array(z.strictObject({
     inputId: IdSchema,
     resourceId: IdSchema,

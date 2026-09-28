@@ -31,7 +31,8 @@ import type { ClientSession } from '@rally/contracts/client-session';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { useCitations } from '../lib/use-citations';
 import { breakoutResourceActions } from '../lib/breakout-resource-actions';
-import { ApiError, type MentionIdentity } from '../lib/api';
+import { ApiError, mapWorkstreamAutomationSummary, type MentionIdentity } from '../lib/api';
+import { useChannelRail } from '../lib/channel-rails';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { useBrowserRailLinks } from '../lib/browser-rail-links';
 import { desktopBridge } from '../lib/platform';
@@ -1979,10 +1980,13 @@ export function ConversationSurface({
   // The two halves of what this room's rails show under **Sidekicks**: the
   // Sidekicks the room owns, and the ones its main conversation has loaded.
   // Both are the room's, so both are fetched here and folded into one list.
+  // Main's three lists ride its Channel rail on the workspace socket; REST
+  // stays for a breakout, an older server, and a Main not yet reported.
+  const railSidekicks = useChannelRail(parentKind === 'workstream' && substreamId === '0' ? id ?? null : null)?.sidekicks;
   const attachedSidekicks = useQuery({
     queryKey: ['attached-sidekicks', id, substreamId],
     queryFn: ({ signal }) => api!.getAttachedSidekicks(id!, signal, substreamId),
-    enabled: Boolean(api && id && parentKind === 'workstream'),
+    enabled: Boolean(api && id && parentKind === 'workstream' && railSidekicks?.attached === undefined),
   });
   // Guest recommendations already include eligible owned sources as minimal
   // summaries. The member-only authoring directory is neither needed nor allowed.
@@ -1997,12 +2001,12 @@ export function ConversationSurface({
       if (error instanceof ApiError && error.status === 403) return [];
       throw error;
     }),
-    enabled: Boolean(api && id && parentKind === 'workstream' && readOwnedSidekickDetails),
+    enabled: Boolean(api && id && parentKind === 'workstream' && readOwnedSidekickDetails && !railSidekicks),
   });
   const recommendedSidekicks = useQuery({
     queryKey: ['recommended-sidekicks', id, substreamId],
     queryFn: ({ signal }) => api!.getRecommendedSidekicks(id!, signal, substreamId),
-    enabled: Boolean(api && id && parentKind === 'workstream'),
+    enabled: Boolean(api && id && parentKind === 'workstream' && !railSidekicks),
   });
   const recommendationOptions = useQuery({
     queryKey: ['sidekick-recommendation-options', id, substreamId],
@@ -2017,6 +2021,7 @@ export function ConversationSurface({
       } else await api!.removeAttachedSidekick(workstreamId, sidekickId, targetSubstreamId);
     },
     onSettled: (_result, _error, { workstreamId }) => {
+      workspaceSocket?.refreshChannelRails([workstreamId]);
       void queryClient.invalidateQueries({ queryKey: ['sidekick-recommendation-options', workstreamId] });
       void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks', workstreamId] });
       void queryClient.invalidateQueries({ queryKey: ['recommended-sidekicks', workstreamId] });
@@ -2505,9 +2510,11 @@ export function ConversationSurface({
     // A failed owned read is not a pending one: the attachments answered, and
     // hiding them because the other half failed takes down a list that worked.
     // The error still travels beside the rows that did arrive.
-    owned: readOwnedSidekickDetails ? ownedSidekicks.data ?? (ownedSidekicks.isError ? [] : undefined) : [],
-    attached: attachedSidekicks.data ?? (attachedSidekicks.isError ? [] : undefined),
-    recommended: recommendedSidekicks.data ?? (recommendedSidekicks.isError ? [] : undefined),
+    owned: railSidekicks
+      ? railSidekicks.owned.map(mapWorkstreamAutomationSummary)
+      : readOwnedSidekickDetails ? ownedSidekicks.data ?? (ownedSidekicks.isError ? [] : undefined) : [],
+    attached: railSidekicks?.attached ?? attachedSidekicks.data ?? (attachedSidekicks.isError ? [] : undefined),
+    recommended: railSidekicks?.recommended ?? recommendedSidekicks.data ?? (recommendedSidekicks.isError ? [] : undefined),
     ...(detail.participants.some((person) => person.id === session?.user.id)
       ? { onRemoveAttachment: (sidekickId: string) => removeSidekick.mutate({ sidekickId, recommendation: false, workstreamId: id!, substreamId }) }
       : {}),
@@ -2538,9 +2545,10 @@ export function ConversationSurface({
     void recommendationOptions.refetch();
   };
   const refreshSidekicks = (): void => {
-    if (readOwnedSidekickDetails) void ownedSidekicks.refetch();
-    void attachedSidekicks.refetch();
-    void recommendedSidekicks.refetch();
+    if (railSidekicks && id) workspaceSocket?.refreshChannelRails([id]);
+    if (readOwnedSidekickDetails && !railSidekicks) void ownedSidekicks.refetch();
+    if (railSidekicks?.attached === undefined) void attachedSidekicks.refetch();
+    if (!railSidekicks) void recommendedSidekicks.refetch();
   };
   const discoveredResources = [...new Map(
     (availableResources.data?.pages.flatMap((page) => page.items) ?? []).map((resource) => [resource.id, resource]),
