@@ -232,6 +232,31 @@ existing `rallywithai:` deep link for the main app.
 
 ## Changelog
 
+### 2026-09-28 — The API gate waits for a deployment it cannot list yet
+
+**What changed:** When no `deploy-api.yml` run contains the contract commit,
+the shared-contract API gate checks again every 30 seconds instead of failing,
+and fetches `main` before each check. The job's timeout bounds the wait. It also
+filters runs itself rather than through GitHub's `branch` and `event` query
+filters, and stops at the first run older than the contract commit.
+
+**Why:** The #1007 merge (`a34092be`) failed Sideline's gate with "No
+main-line API deployment contains contract commit" while that commit's own API
+deployment was in progress on the same push. The listing did not return the
+in-progress run, so the gate walked every completed ancestor for about 40
+seconds and exited. The API run finished green about nine minutes later. Why
+the run was missing was not observed; the filtered query may omit a run just
+created.
+
+**Considered and rejected:** Failing fast and rerunning by hand, which is what
+this replaces and which costs a full lint and typecheck per attempt.
+
+**Consequences:** Every contract change matches `deploy-api.yml`'s `packages/**`
+path, so a missing run means one not listed or created yet. A gate that truly
+finds none now fails at the job timeout rather than at once. Adam set the
+30-second interval: about 90 `GITHUB_TOKEN` calls over a full 45-minute wait,
+against 1,000 an hour.
+
 ### 2026-09-24 — Sideline's catalog follows membership changes
 
 **What changed:** Sideline's main process holds the operator's workspace socket
