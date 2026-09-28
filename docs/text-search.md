@@ -697,13 +697,24 @@ on the next search instead of within a push delay.
 that is one object RPC over tables the object already holds. Recomputing access
 rules in a new module: the person side calls the parent's own
 `readableSubstreams` and the connection facts' predicate, so each rule has one
-implementation.
+implementation. Batching that call into one query per table across every
+Channel was also rejected for now: it would restate `canReadConversation` in
+set form. Instead each parent reads its facts for the person once
+(`conversationReadFacts`, about eight statements) and decides every
+conversation from them, which took a local 320-Channel, 1,280-conversation
+Organization from about 85 ms to about 23 ms per search; the per-conversation
+reads had cost six to eight statements each. A Sidekick that changes hands
+republishes its directory row in the same write, since the executor's group
+comes only from that row.
 
 **What a future change has to respect:** Search is only as correct as the
 coverage of `audience`: a live row without it is invisible, so a new producer
 must write it and a new row kind must have a group. Guests hold only their own
 group, conversations they are admitted to through grants or a Breakout, and
-Sidekicks reachable through management access on the owning Channel. Semantic
+Sidekicks reachable through management access on the owning Channel. The group
+read runs inside the WorkspaceDO on every search and grows with the number of
+Channels and conversations, so keep per-parent work to reading facts once;
+anything that writes who runs a Sidekick must republish its directory row. Semantic
 chunk rows still carry no audience, so any semantic read path must backfill it
 first (2026-09-26 decision).
 
