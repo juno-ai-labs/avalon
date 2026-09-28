@@ -896,10 +896,19 @@ Query-based memory search resolves the run's scopes with `resolveMemoryAccess`,
 the canonical run check, on every search, and stores no decision; a run that no
 longer matches its principal or Organization searches nothing. Scope ids come
 from `ensureScope`, which keeps each immutable `memory_scopes` row per isolate
-and applies the caller's `writable` per call (see
+(`memory-scope-cache.ts`) and applies the caller's `writable` per call (see
 [text search](text-search.md#changelog), 2026-09-28). Canonical item revision
 and expiry checks still determine which content is current. Exact memory reads
 and writes retain their existing canonical access path.
+
+**Never delete, re-create or re-id a `memory_scopes` row without clearing that
+cache first**, or a warm isolate keeps handing out the old id. The cache is
+correct only because a scope row is immutable (`memory_scopes_are_immutable`),
+typed-RPC-only, and never deleted. Tests break that premise — storage isolation
+gives each test a fresh object under the same workspace id — so
+`apps/api/test/setup.ts` clears it after every test in both suites. The cache is
+unbounded: its size is the distinct scopes one isolate has served, and whether
+it needs a cap is the team's call.
 
 Root work-stream runs receive the stable `rally_memory` plugin. `memory_search`
 accepts exactly one of a content query or `memoryItemId`; the exact-ID form is the

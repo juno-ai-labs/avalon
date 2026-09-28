@@ -84,7 +84,7 @@ import type { WorkstreamObjectProductService } from "../src/durable-objects/work
 import { WorkstreamMessageStorage } from "../src/durable-objects/workstream-message-storage";
 import { ParticipantAuthorityTransferStorage } from "../src/durable-objects/participant-authority-transfer";
 import type { ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
-import { hostedParentStub, insertChannelRow, withHostedParent } from "./helpers/hosted-parent";
+import { hostedParentStub, insertChannelRow, readSharedWorkstream, withHostedParent } from "./helpers/hosted-parent";
 import { resolveSidekickSkills } from "../src/services/sidekick-skills";
 import { AuthorizationService } from "../src/services/authorization-service";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
@@ -2876,7 +2876,7 @@ describe("a member's message travels the whole pipeline", () => {
           body: JSON.stringify({ archived }),
         }, apiEnv);
         expect(archiveResponse.status).toBe(204);
-        const directory = await parent.readSharedWorkstream({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID,
+        const directory = await readSharedWorkstream(parent, { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID,
           userId: USER_ID, membershipIncarnation: "existing-member" });
         expect(directory?.conversations.find((conversation) => conversation.substreamId === substreamId)?.archived).toBe(archived);
         await runInDurableObject(parent, (_instance, state) => {

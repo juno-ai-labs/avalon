@@ -185,9 +185,8 @@ Sideline's perspective even when later addressing or harness work fails.
 WorkspaceDO migrations and proves direction, self-pairs, idempotent setup, and
 revocation in workerd. `apps/api/test-workers/sideline-catalog.test.ts` builds
 the catalog against the real Organization object and D1 for an operator and one
-represented person over three Channels, and pins both each person's
-destinations and the round trips spent (one directory page and one Breakout
-read per person). Demo preparation tests cover the producer phase. API
+represented person over three Channels, and pins each person's destinations
+and one Breakout read per person. Demo preparation tests cover the producer phase. API
 tests cover access, membership, relationship, destination, audit, self-send, and
 cross-participant admission boundaries.
 `apps/api/test-workers/workspace-reach-changed.test.ts` proves on real sockets
@@ -244,8 +243,10 @@ existing `rallywithai:` deep link for the main app.
 **What changed:** For each person in the catalog, the service asks the
 Organization object once, through `listVisiblePrivateChildrenForParents`, for
 their Breakouts across every Channel their directory lists, instead of calling
-`listVisiblePrivateChildren` once per Channel. A person with no Channels makes
-no Breakout call. The destinations are unchanged.
+`listVisiblePrivateChildren` once per Channel; the object answers from
+`visiblePrivateChildren`'s single multi-parent statement, the one the sidebar's
+control socket uses. A person with no Channels makes no Breakout call. The
+single-parent RPC is gone.
 
 **Why:** Production measurements on 2026-09-27 showed the catalog making 92
 Organization calls to open, and it rereads in the background on every
@@ -253,11 +254,11 @@ Organization calls to open, and it rereads in the background on every
 object, so the per-Channel calls were round trips to the same place; the count
 grew with people times Channels.
 
-**Considered and rejected:** Answering from `visiblePrivateChildren`'s single
-multi-parent query. It skips a parent it cannot find where the per-parent read
-throws `conversation_parent_missing`, so the catalog would quietly change its
-failure behaviour; looping the hosted parents keeps it identical, and each
-iteration is local SQLite.
+**Considered and rejected:** Looping the per-parent read inside the object,
+which kept its `conversation_parent_missing` throw for a parent it does not
+host. The catalog already treats a Channel with no answer as having no
+Breakouts, its Channels come from this object's own directory, and one missing
+parent failing the whole catalog for every person is the worse outcome.
 
 **Consequences:** The catalog now costs one relationship read plus two calls
 per person (directory page and Breakouts). A new per-Channel detail in a

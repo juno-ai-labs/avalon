@@ -6,7 +6,7 @@ import {
 } from "@rally/contracts/scope-grants";
 import { EFFECT_QUEUE_MESSAGE_MAX_BYTES, isPersonNotificationEffect, ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
 import { ConversationEffectEnvelopeSchema, type ConversationEffectEnvelope } from "@rally/contracts/conversation-effects";
-import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
+import type { ConversationParentKind, ListVisiblePrivateChildrenRequest } from "@rally/contracts/conversation-parent";
 
 /**
  * One object the retirement walk has to close before this workspace can report
@@ -211,7 +211,6 @@ import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   SCHEDULED_ALARM_SCHEMA_STATEMENTS,
   ScheduledDurableObject,
-  derivedAlarmLaneDue,
   scheduledAlarmRetryDelay,
   type ScheduledAlarm,
   type ScheduledAlarmOutcome,
@@ -718,6 +717,7 @@ import {
   parentControlSocketTag,
   readControlSocketAttachment,
   runningBackgroundAgents,
+  visiblePrivateChildren,
   type ChannelViewerState,
   type HostedParentHost,
 } from "./hosted-parent";
@@ -1193,22 +1193,6 @@ const CONNECTOR_EVENT_BODY_RETENTION_MS = 90 * 24 * 60 * 60_000;
  */
 const CONNECTOR_EVENT_REAP_PAGE = 50;
 const ACTIVITY_EVENT_RETENTION_MS = 90 * 24 * 60 * 60_000;
-/**
- * The alarm's derived lanes: work whose due time its own table holds, run by
- * `runDueAlarmWork` only when due. Named for the phase that runs each one
- * where it has a phase.
- */
-type WorkspaceDerivedAlarmLane =
-  | "parent_outbox"
-  | "parent_breakouts"
-  | "directory_followup"
-  | "authorization_delivery"
-  | "resource_search"
-  | "space_default_publish"
-  | "space_bootstrap"
-  | "activity_reap"
-  | "connector_event_reap"
-  | "space_intent_resume";
 const PRODUCT_ALARM_BATCH = 6;
 /** How often a workspace rechecks a region that is closed for maintenance. */
 const MAINTENANCE_RECHECK_MS = 5 * 60_000;
@@ -3966,14 +3950,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, {
   version: 82,
   description: "index when authorization deliveries come due",
-  // The alarm asks each lane when it is next due before running it, and arms
-  // from the same answers, so `MIN(not_before)` runs on every wake and every
-  // re-arm. This table had no index but its key, so that read scanned it: on
-  // workerd, 1,000 rows read for 1,000 rows held, and 1 with this index. The
-  // other polled outboxes (`parent_outbox`, `resource_search_versions`,
-  // `workspace_directory_followups`, `space_intents`) already answer it from
-  // an index in one to four rows, so they get none. See
-  // docs/durable-object-alarms.md.
+  // The alarm reads `MIN(not_before)` on every wake; see docs/durable-object-alarms.md.
   statements: [
     "CREATE INDEX authorization_delivery_due_idx ON authorization_delivery(not_before)",
   ],
@@ -5538,10 +5515,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return (await this.hostedParent(input.target.parentId, input.target.workspaceId)).readScopeAccess(input);
   }
 
-  async readSharedWorkstream(input: Parameters<HostedParent["readSharedWorkstream"]>[0]) {
-    return (await this.channelParent(input.parentId, input.workspaceId)).readSharedWorkstream(input);
-  }
-
   /**
    * `readSharedWorkstream` for every named Channel in one round trip, in the
    * order named, each Channel still deciding for itself what it releases. The
@@ -5614,25 +5587,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).setPrivateChildTerminalStatus(input));
   }
 
-  async listVisiblePrivateChildren(input: Parameters<HostedParent["listVisiblePrivateChildren"]>[0]) {
-    return (await this.hostedParent(input.parentId, input.workspaceId)).listVisiblePrivateChildren(input);
-  }
-
   /**
-   * `listVisiblePrivateChildren` for one person across many hosted parents in
-   * one round trip, answered in the order the parents were named.
+   * The Breakouts one person may open under each named parent, in the order
+   * named, from one statement. A parent this object does not host answers no
+   * Breakouts, as it does on the sidebar's control socket.
    */
   async listVisiblePrivateChildrenForParents(
-    input: Omit<Parameters<HostedParent["listVisiblePrivateChildren"]>[0], "parentId"> & { parentIds: string[] },
+    input: Omit<ListVisiblePrivateChildrenRequest, "parentId"> & { parentIds: string[] },
   ) {
-    const { parentIds, ...request } = input;
-    const parents = [];
-    for (const parentId of parentIds) {
-      const { children } = (await this.hostedParent(parentId, request.workspaceId))
-        .listVisiblePrivateChildren({ ...request, parentId });
-      parents.push({ parentId, children });
-    }
-    return { parents };
+    await this.initialized;
+    await this.ensureParentWorkspace(input.workspaceId);
+    const children = visiblePrivateChildren(this.state.storage.sql, input.userId, input.parentIds);
+    return { parents: input.parentIds.map((parentId) => ({ parentId, children: children.get(parentId) ?? [] })) };
   }
 
   async addPrivateChildParticipant(input: Parameters<HostedParent["addPrivateChildParticipant"]>[0]) {
@@ -6153,12 +6119,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * The one list both sides of the alarm read: `nextDerivedAlarmCandidates`
    * arms from every lane, and `runDueAlarmWork` runs a lane only when its
    * answer is at or before the wake's `now`. Read lazily, just before the lane
-   * would run, so rows an earlier lane of the same wake wrote are seen. A lane
-   * this wake skips is still a candidate for the final re-arm, so skipping can
-   * only delay work to the instant it was already armed for. The first-frame
-   * watch is not a lane: `scheduledAlarmDeferral` runs it before these.
+   * would run, so rows an earlier lane of the same wake wrote are seen. The
+   * first-frame watch is not a lane: `scheduledAlarmDeferral` runs it before these.
    */
-  private derivedAlarmLanes(): Record<WorkspaceDerivedAlarmLane, () => number | null> {
+  private derivedAlarmLanes() {
     const sql = this.state.storage.sql;
     // An Organization held below the parent schema has no `parent_*` tables.
     const hosted = this.hostedParentSchemaPresent();
@@ -6184,7 +6148,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         return oldest === null ? null : Number(oldest) + CONNECTOR_EVENT_BODY_RETENTION_MS;
       },
       space_intent_resume: () => this.spaceStorage().nextIntentResumeDueAt(),
-    };
+    } satisfies Record<string, () => number | null>;
   }
 
   /**
@@ -6280,7 +6244,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     };
     const lanes = this.derivedAlarmLanes();
-    const due = (lane: WorkspaceDerivedAlarmLane) => derivedAlarmLaneDue(lanes[lane](), now);
+    const due = (lane: keyof typeof lanes) => {
+      const dueAt = lanes[lane]();
+      return dueAt !== null && dueAt <= now;
+    };
     if (workspaceId) {
       // Hosted parents first: an outbox row is a directory update somebody is
       // waiting to see. An Organization below the parent schema has no due

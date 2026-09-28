@@ -80,7 +80,7 @@ describe("the connection list's reads", () => {
     const { env, auth, object } = fixture({
       slack: true,
       regional: ownersRead,
-      onRuntimeSql: (input) => { if (JSON.stringify(input).includes("slack_user_links")) events.push("links:start"); },
+      onRuntimeSql: (input, phase) => { if (JSON.stringify(input).includes("slack_user_links")) events.push(`links:${phase}`); },
     });
     const connectionId = "00000000-0000-7000-8000-000000000501";
     insertConnection(object, { id: connectionId, connectorType: "slack", grants: [] });
@@ -96,7 +96,9 @@ describe("the connection list's reads", () => {
       "Workspace Owner",
       { targetType: "slack_agent_dm", label: "Slack DM", description: "Rally Agent DM in this Slack workspace." },
     ]]);
-    expect(events).toEqual(["owners:start", "links:start", "owners:end"]);
+    // Concurrent, in either order: each read starts before the other ends.
+    expect(events.indexOf("owners:start")).toBeLessThan(events.lastIndexOf("links:end"));
+    expect(events.indexOf("links:start")).toBeLessThan(events.lastIndexOf("owners:end"));
   });
 });
 
@@ -461,7 +463,7 @@ function fixture(options: {
   /** Stands between the service and the regional database. */
   regional?: (database: D1Database) => D1Database;
   /** Sees every statement the service routes to the Organization object. */
-  onRuntimeSql?: (input: unknown) => void;
+  onRuntimeSql?: (input: unknown, phase: "start" | "end") => void;
 } = {}): {
   env: Env;
   auth: AuthContext;
@@ -490,9 +492,9 @@ function fixture(options: {
   const executeRuntimeSql = rpcs.executeRuntimeSql as (...args: unknown[]) => unknown;
   const stub = {
     ...rpcs,
-    executeRuntimeSql: (...args: unknown[]) => {
-      options.onRuntimeSql?.(args[0]);
-      return executeRuntimeSql(...args);
+    executeRuntimeSql: async (...args: unknown[]) => {
+      options.onRuntimeSql?.(args[0], "start");
+      try { return await executeRuntimeSql(...args); } finally { options.onRuntimeSql?.(args[0], "end"); }
     },
     publishSync: async (topics: string[], _workspaceId: string, _placement: unknown, detail?: { connectionId?: string }) => {
       published.push([...topics]);
