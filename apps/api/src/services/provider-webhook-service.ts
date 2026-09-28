@@ -38,7 +38,9 @@ import { connectorRegistryForEnv, linearConnectorConfig } from "../lib/connector
 import { decryptVersionedConnectorCredentials, decryptVersionedCredentialValue } from "./connector-credential-envelope";
 import { workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { logWarn } from "../observability/logger";
+import type { GitHubVerifiedDeliveryInput } from "../lib/rpc-contracts";
+import { stableUuid } from "../lib/stable-uuid";
+import { logInfo, logWarn } from "../observability/logger";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { enqueueWorkspaceConnectorEvent } from "./workspace-connector-event-ingress";
@@ -50,18 +52,6 @@ export interface ProviderWebhookIngestionResult {
   accepted: true;
   duplicate: boolean;
   activityCount: number;
-}
-
-/**
- * A GitHub delivery after its signature was verified at the edge: the exact
- * signed bytes and the two headers the parser reads. Nothing here is a
- * signature, because nothing downstream checks one.
- */
-export interface VerifiedGitHubDelivery {
-  rawBody: Uint8Array | ArrayBuffer;
-  deliveryId: string;
-  event: string;
-  receivedAt: string;
 }
 
 /**
@@ -103,6 +93,13 @@ interface LifecycleUpdate {
   connectionId: string;
   status: "healthy" | "needs_reconnect" | "error" | "disabled";
   error: Record<string, unknown> | null;
+  /**
+   * When the delivery carrying this update was received, as an ISO timestamp.
+   * When present, the update applies only if no later-received lifecycle
+   * update has already applied to the connection (see
+   * {@link ProviderWebhookService.claimLifecycleWatermark}).
+   */
+  at?: string;
 }
 
 interface VerifiedIngestion {
@@ -176,7 +173,7 @@ export class ProviderWebhookService {
    * verify them again: the signature is checked once, at the edge.
    */
   async ingestVerifiedGitHub(
-    input: VerifiedGitHubDelivery,
+    input: GitHubVerifiedDeliveryInput,
   ): Promise<ProviderWebhookIngestionResult> {
     return this.stableProviderError("GitHub", async () => {
       const raw = this.exactRawBody(input.rawBody, GITHUB_WEBHOOK_MAX_BYTES);
@@ -198,7 +195,10 @@ export class ProviderWebhookService {
       return { accepted: true, duplicate: false, activityCount: 0 };
     }
     const source = this.webhookActivity("github");
-    const lifecycle = githubLifecycle(delivery);
+    const lifecycleState = githubLifecycle(delivery);
+    // A retried delivery can land after a later one; its receipt time is what
+    // orders the two.
+    const lifecycle = lifecycleState ? { ...lifecycleState, at: delivery.receivedAt } : null;
     const resourceDiscovery = discoverGitHubWebhookResources(delivery);
     const routingUserId = delivery.event === "github_app_authorization"
       ? githubSenderUserId(delivery)
@@ -483,7 +483,12 @@ export class ProviderWebhookService {
   ): Promise<ProviderWebhookIngestionResult> {
     const payloadRef = `${this.env.AVALON_REGION}/provider-webhooks/${input.provider}/${input.bodyHash}.json`;
     const priorReceipt = await this.loadReceipt(input.provider, input.deliveryId);
-    if (priorReceipt) {
+    const legacyRegionalAuthority = !this.env.WORKSPACE_DOS;
+    // With WorkspaceDO authority a pending receipt is a delivery whose effects
+    // did not finish — the Queue consumer threw after the receipt committed —
+    // so it falls through and re-applies them below; every one is keyed to the
+    // delivery. Only a processed receipt is answered here.
+    if (priorReceipt && (legacyRegionalAuthority || priorReceipt.processed_at !== null)) {
       this.assertMatchingReceipt(priorReceipt, input.eventType, payloadRef);
       if (
         priorReceipt.processed_at === null
@@ -569,8 +574,15 @@ export class ProviderWebhookService {
       receivedAt,
     );
 
-    const activityIds = normalized.map(() => newId());
-    const legacyRegionalAuthority = !this.env.WORKSPACE_DOS;
+    // Keyed to the delivery and connection rather than drawn fresh, so an
+    // event re-enqueued by a retry carries the id WorkspaceDO already
+    // receipted and is answered there as the same event.
+    const activityIds = await Promise.all(normalized.map(({ connection }) => stableUuid([
+      "provider_webhook_activity",
+      input.provider,
+      input.deliveryId,
+      connection.id,
+    ])));
     const activityStatements = legacyRegionalAuthority ? normalized.map(({ activity }, index) =>
       this.activityInsertStatement(
         activityIds[index]!,
@@ -659,6 +671,7 @@ export class ProviderWebhookService {
         for (const update of lifecycleUpdates) {
           const workspaceId = connectionWorkspace.get(update.connectionId);
           if (!workspaceId) continue;
+          if (!await this.claimLifecycleWatermark(update, input)) continue;
           await this.lifecycleUpdateStatement(
             withWorkspaceRuntimeDatabase(this.env, workspaceId).DB,
             input.provider,
@@ -1055,6 +1068,37 @@ export class ProviderWebhookService {
         ? []
         : [provider, deliveryId, receiptPayloadRef]),
     );
+  }
+
+  /**
+   * Orders lifecycle updates for one connection by when their deliveries were
+   * received. A Queue retry can deliver an older `installation.unsuspend`
+   * after a newer `installation.suspend` was applied; without this the older
+   * one would win. The watermark is `connector_ingress_routes.lifecycle_at` in
+   * the regional database, advanced only forward. An equal timestamp claims
+   * again, so a retry of the delivery that holds the watermark re-applies.
+   *
+   * The claim and the WorkspaceDO write are separate stores, so two updates
+   * for one connection processed at the same moment can still interleave; the
+   * watermark closes the retry case, which is the one backoff makes common.
+   */
+  private async claimLifecycleWatermark(
+    update: LifecycleUpdate,
+    input: Pick<VerifiedIngestion, "provider" | "deliveryId">,
+  ): Promise<boolean> {
+    if (update.at === undefined) return true;
+    const claimed = await this.env.DB.prepare(
+      `UPDATE connector_ingress_routes SET lifecycle_at = ?
+        WHERE connection_id = ? AND (lifecycle_at IS NULL OR lifecycle_at <= ?)`,
+    ).bind(update.at, update.connectionId, update.at).run();
+    if (resultChanges(claimed) > 0) return true;
+    logInfo(this.env, "provider_webhook_lifecycle_superseded", {
+      provider: input.provider,
+      delivery_id: input.deliveryId,
+      connection_id: update.connectionId,
+      status: update.status,
+    });
+    return false;
   }
 
   private async findPendingReceiptActivities(
