@@ -146,11 +146,13 @@ recommendations. The UI separates local removal, shared recommendation removal,
 and recommending an eligible local source. The agent catalog reports `canAttach`
 from the same decision and only reads owned definitions with parent management.
 
-A work stream's own rails list **Sidekicks**: the Sidekicks the room owns —
-`listWorkstreamAutomations`, read through `GET /sidekicks/workstream/:id`, which
-refuses a caller who is not a participant — together with explicit workspace
-recommendations and the current substream's loaded attachments, folded into one
-list keyed by Sidekick id. The plus-marked Add Sidekick rail row opens a menu:
+A work stream's own rails list **Sidekicks**: the Sidekicks the room owns,
+explicit workspace recommendations and the current substream's loaded
+attachments, folded into one list keyed by Sidekick id. A Channel's Main reads
+them from its rail on the Organization socket (below); a breakout, and a Main
+whose rail has not arrived, read them over REST — the owned list through
+`listWorkstreamAutomations` (`GET /sidekicks/workstream/:id`, which refuses a
+caller who is not a participant). The plus-marked Add Sidekick rail row opens a menu:
 Attach existing Sidekick selects a non-archived workspace Sidekick, while Create
 new Sidekick opens the existing Sidekick composer.
 A row opens that Sidekick in the library window; Remove lives in its right-click
@@ -169,9 +171,10 @@ from the attachment, because each list knows one of them. The section keeps its
 heading for a room with none and while the answer is still on its way; rows
 appear only for Sidekicks themselves. A failed read keeps whichever rows did
 arrive and adds a normal **Refresh** row; if none arrived, the heading and
-Refresh row are the recovery path without a warning-only section. Refresh
-retries the owned, attached, and recommended sources while
-guests continue to skip the member-only owned directory. Read and action
+Refresh row are the recovery path without a warning-only section. Refresh asks
+the socket again for a rail-backed list and retries REST for the rest (the
+attachments while the rail has none; all three for a breakout or with no rail),
+and guests continue to skip the member-only owned directory. Read and action
 failures remain distinct: refused local removal, recommendation, and recommendation
 removal each name the action that failed and stay visible until the next
 Sidekick-management interaction. That interaction clears only a
@@ -181,6 +184,22 @@ request or discard the eventual result. The lazy management-options query
 belongs only to the picker and never changes the list's state. Those states and
 the picker’s load/attach failures are stable Rally-owned copy; raw API,
 transport and provider messages never become sidebar text.
+
+Main's three lists ride its Channel rail (`channel_rails`,
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-channels-rail-and-its-waterline)),
+read from the Organization object's own rows: the room's `automation_directory`
+rows, `parent_sidekicks`, and the attachment list Main reports on its
+`directory_common` effect. SubstreamAgent does not send that list yet — the
+Organization learns to read it first and emission follows in a later deploy —
+so until then every Main's rail omits `attached` and the desktop keeps the REST
+attachment read. A listed Sidekick is named by its title and shown under the
+one audience predicate `SidekickDO.readSkillSummary` applies
+(`sidekick-audience.ts`, shared by both), with the directory row's
+`run_as_user_id`, which is null until the Sidekick next publishes and leaves the
+author alone until then. The directory cannot see a Sidekick's accepted revision
+or its owning room's archive, so a rail can call available a Sidekick whose REST
+summary would not; loading it still goes through `readSkillSource`, which
+refuses.
 
 The Sidekicks library opens in its own window from the account popup, immediately
 above Settings. It lists accessible personal, workspace, and room Sidekicks.
@@ -616,8 +635,11 @@ lifecycle, scope, owning work stream, title, description, next run. It travels
 the parent outbox and the Queue like a work stream's aggregate and lands in
 `WorkspaceDO.applyAutomationDirectory`, which accepts a strictly newer
 `sourceVersion`, ignores an older one, refuses an equal one with a different
-hash, bumps the `automations` sidebar waterline, and republishes the list. The
-row is content-free by design; `GET /automations/:id` reads the object.
+hash, bumps the `automations` sidebar waterline, and republishes the list. An
+applied row that changes something a rail shows (not its run times) also
+advances the rail waterline of the Channel that owns it and of every Channel
+recommending or attaching it. The row is content-free by design; `GET /automations/:id` reads the
+object.
 
 ### Memory
 
@@ -971,6 +993,24 @@ check is the one that answers less.
 with an `AuthContext` whose membership was proved in the same request. A caller
 that cannot say that uses `listSidekickDirectory`, as the Bind
 `verify_membership` path in `agent-communication-service.ts` does.
+
+### 2026-09-28 — A Channel's Sidekicks ride its rail, under a shared audience predicate
+
+**What changed:** A Channel's owned, recommended and attached Sidekicks are
+answered from `automation_directory` as part of its rail on the Organization
+socket, and the audience `SidekickDO` applies to a skill read moved to
+`sidekick-audience.ts`, which the rail calls too. The reasoning is in
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md#changelog).
+
+**Why:** The rail's first draft copied the predicate and drifted from it within
+the pull request (the name fallback and the run-as handling).
+
+**Considered and rejected:** Reading each summary from its `SidekickDO`, as
+REST does: a hop per Sidekick per Channel, multiplied by a Space prefetch.
+
+**Consequences:** A change to who may see a Sidekick is made once, in
+`sidekickAudienceAllows`. A field the rail shows must be on the directory row
+and in the rail triggers' column lists, or the rail will not notice it moved.
 
 ### 2026-09-25 — The setup chat chooses a Sidekick's icon and color
 

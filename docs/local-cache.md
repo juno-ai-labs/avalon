@@ -29,14 +29,16 @@ socket hooks' first frame.
 | `apps/desktop/src/renderer/lib/workspace-directory-cache.ts` | The `directory` slice: one row per workspace holding the Channel list, the automation and note lists, and both Space directories; `hydrateWorkspaceDirectory`, `mirrorWorkspaceDirectory`. |
 | `apps/desktop/src/renderer/lib/transcript.ts` (`openingTranscriptSnapshot`) | The shape a transcript is persisted in: its opening ranges only. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Hydrates a conversation at effect start, mirrors it while mounted, and treats a seed as neither a completed opening nor a snapshot fence. |
-| `apps/desktop/src/renderer/lib/channel-viewer-state.ts` | Prunes cached children that left the parent's private-child roster, from the breakout list each Channel row carries on the workspace socket. |
+| `apps/desktop/src/renderer/lib/channel-rails.ts` | Holds each Channel's rail at the waterline it was answered at, decides which rails are stale and what to ask for next, and reads and seeds the rails the directory row keeps. |
+| `apps/desktop/src/renderer/lib/channel-viewer-state.ts` | Prunes cached children that left the parent's private-child roster, from the breakout list each Channel row carries on the workspace socket; reads those lists for the directory row and seeds them back from it. |
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Hydrates the directory before connecting, mirrors it after the first subscribe answer, and prunes conversations whose parent that answer no longer lists. |
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | `evictCachedWorkstream` and `evictCachedSubstream` forget the disk along with the memory. |
 | `apps/desktop/src/renderer/lib/app-session.tsx` | Wipes the whole cache when the account leaves the device and one workspace's rows when that membership ends or the workspace refuses the account, beside the draft cache's wipes. |
 | `apps/desktop/src/renderer/App.tsx` | Mounts the scope provider above the workspace socket provider. |
 | `apps/desktop/src/renderer/components/connecting-card.tsx` | The floating card, connecting, waiting for a connection, or failed with a retry, and the always-mounted slot that is its live region. |
 | `apps/desktop/src/renderer/components/substream-launch.tsx` | Carries the parent's card and send gate while a substream is branched off a seed. |
-| `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Reads the seed marker: shows the card, gates sending, and holds range loads and read acknowledgements until the feed is live. |
+| `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Reads the seed marker: shows the card, gates sending, and holds range loads and read acknowledgements until the feed is live. Takes the host's opening rail while the first snapshot is in flight. |
+| `apps/desktop/src/renderer/screens/workstream.tsx` (`renderOpeningSidebar`) | Draws the Channel rail from the directory row and the Channel's breakout list while the conversation has no detail yet. |
 | `apps/desktop/src/renderer/screens/space-dashboard.tsx` | Shows the card over a Space painted from the seeded directory. |
 | `apps/desktop/src/renderer/components/workstream-composer.tsx` | `sendBlocked`: everything but sending. |
 
@@ -53,8 +55,8 @@ change their garbage-collection duration. On release, the ordinary cache
 collection rules resume. Multiple producers can hold the same entry.
 
 The workspace socket holds its directories, feature flags and work-stream
-ordering ledgers. The work-stream control socket holds its private-child
-roster and the version stored with it. Each conversation socket holds its
+ordering ledgers, and each Channel's breakout list and the version stored
+with it, which arrive on that Channel's row. Each conversation socket holds its
 detail, transcript, inherited context, streaming overlays, feed source and
 snapshot generation. These leases follow the socket-owning effects, including
 background retention and reconnects, rather than the visible route.
@@ -113,7 +115,7 @@ socket answers defines a third:
 
 | Slice | Key | Subject | Holds |
 | --- | --- | --- | --- |
-| `directory` | `directory` | `directory` | The Channel list as the sidebar holds it, the automation list, the active and archived Space directories, and the compatible personal-order payload used by the manually arranged Space rail. |
+| `directory` | `directory` | `directory` | The Channel list as the sidebar holds it, each of those Channels' breakout lists and rails, the automation list, the active and archived Space directories, and the compatible personal-order payload used by the manually arranged Space rail. |
 | `conversation` | `<parentId>:<substreamId>` | `<parentId>` | The `WorkstreamDetail` the header and composer read, the transcript trimmed to its opening ranges, and a private child's inherited context. |
 
 The store is best-effort by construction, like the draft cache beside it: every
@@ -168,6 +170,17 @@ is what somebody tightening `parseCachedDirectory` later needs it to do — the
 alternative is every person on the branch getting a cold, empty sidebar on their
 next launch with nothing failing.
 
+**Each listed Channel's breakout list is on the row too**, under `breakouts`,
+keyed by Channel id and holding only the Channels the row keeps. A cold launch
+seeds them into the `workstream-children` entries the Channel rail reads, so a
+Channel's breakouts paint when its sidebar row does. They go in with no state
+version and no waterline, so the first live row for each Channel replaces its
+list whatever its numbers say, and a seed prunes nothing from the disk. A row
+written before the key existed reads as no lists, which is how every Channel
+waited before, for one launch; that absence has a correct reading, so the
+version did not move. A single Channel's list this build cannot read is left
+out alone, since it costs that Channel's rail its placeholder and nothing else.
+
 `spacesReady` is deliberately **not** on the row. It is the Organization's
 current cutover state rather than something the device last saw, and a
 remembered `true` would paint a hierarchy the next connect may contradict; the
@@ -191,6 +204,21 @@ After the first live payload the provider mirrors those entries back to the
 row: any change to any of them schedules one write, coalesced over
 `LOCAL_CACHE_WRITE_COALESCE_MS`. Until that payload has landed the mirror
 observes and writes nothing, so the seed never persists itself.
+
+### What a Channel's rail paints before its conversation answers
+
+The Channel rail lists only what the workspace socket carries, so it draws from
+the directory row, the breakout list and the Channel's rail while the
+conversation's snapshot is in flight (`renderOpeningSidebar` in
+`screens/workstream.tsx`). A rail is the Channel's people, its owned,
+recommended and attached Sidekicks, and its Channel resources, which the
+workspace socket answers a Space at a time ahead of need
+(`lib/channel-rails.ts`; the protocol is in
+[`realtime-sockets.md`](realtime-sockets.md)). Rails ride the `directory` row
+under `rails`, read like `breakouts`, each kept at the `railWaterline` it was
+answered at: a waterline and its data are committed together, so a live row at
+the same waterline asks for nothing. Without a rail, the people and the
+Sidekicks wait for the snapshot.
 
 ### What opening a conversation paints
 
@@ -312,9 +340,9 @@ The bound on this cache is membership, not a number or an age:
   page of the flat list, `WORKSTREAM_PAGE_SIZE` rows, however many pages the
   sidebar has loaded, so the next launch paints what a fresh subscribe answer
   would carry and the live answer replaces it without a visible collapse.
-- **The control socket prunes children.** A work stream's metadata frame names
-  the private children this reader may still open; a cached child that left
-  that roster is removed. The roster followed is the one the version guard
+- **The Channel row prunes children.** A Channel's row on the workspace socket
+  names the private children this reader may still open; a cached child that
+  left that roster is removed. The roster followed is the one the version guard
   accepted into the query cache, so a stale frame the cache rejects prunes
   nothing. The main conversation always stays.
 - **Eviction forgets the disk.** `evictCachedWorkstream` removes every row
@@ -360,6 +388,9 @@ Nothing else evicts, and nothing expires.
   after the first subscribe answer. Break it and a seed, or a launch surface's
   optimistic turn, becomes what the next launch paints, with no live frame
   having vouched for it.
+- **A seeded breakout list holds no version.** Break it and the first live
+  row for a Channel, numbered below what the device remembered from a room
+  rebuilt since, is dropped, and the rail shows breakouts that are gone.
 - **Hydration lands only in empty caches.** Break it and a read that lands
   after the live snapshot puts the older state back over it.
 - **A seed moves no ledger.** The waterline ledgers stay untouched by
@@ -524,6 +555,32 @@ is small. The cost that would grow is the persisted transcript, and
 scrolling.
 
 ## Changelog
+
+### 2026-09-27 — The Channel rail paints without waiting for the conversation
+
+**What changed:** The `directory` row gained `breakouts` and `rails`, each kept
+Channel's breakout list and rail, seeded on a cold launch. And the Channel rail
+is drawn from them while its conversation's first snapshot is in flight,
+instead of as three placeholder rows beside the feed's own placeholders.
+
+**Why:** Spaces and Channels painted at once and breakouts did not, which read
+as breakouts being slow. The list had already moved onto the workspace socket,
+so the delay was two gaps around it. The rail was gated on the conversation
+detail from the feed socket, though nothing it lists comes from there. And the
+list lived only in memory, so a cold launch had nothing to paint until the
+socket's first answer.
+
+**Considered and rejected:** Waiting for the detail but showing the cached list
+inside the placeholder rail. That still drew a second rail and swapped it, for
+no data the first one lacked. Bumping the slice version for the new key: an
+absent list has a correct reading, "wait as before", so the bump would have
+cost every device a cold sidebar to avoid one launch of old behavior.
+
+**Consequences:** Anything added to the rail must have an opening source,
+the Channel's rail or the directory, or a pending state of its own until the
+conversation detail arrives; controls that need the detail stay disabled
+until then. A seeded list must stay
+unversioned, or a room rebuilt with lower numbers is refused for the session.
 
 ### 2026-09-19 — The directory slice goes to version 4 for a field it cannot absorb
 

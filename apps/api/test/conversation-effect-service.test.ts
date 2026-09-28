@@ -874,6 +874,38 @@ describe("the activity Queue consumer's effect legs", () => {
     }
   });
 
+  it("names the field of an effect this consumer's contract refuses, and acks it", async () => {
+    const database = seedAuthority();
+    const workspace = workspaceSyncNamespace();
+    const receiveChildEffects = vi.fn(async () => undefined);
+    const env = regionalEnv(database, workspace, { workstreamReceive: receiveChildEffects });
+    // A writer a deploy ahead of this reader: a key the strict effect lacks.
+    const envelope = childMessage(directoryCommon(), {
+      messageId: MESSAGE_ID,
+      parentKind: "workstream",
+      parentId: WORKSTREAM_ID,
+    });
+    const { batch, ack, retry } = queued({ ...envelope, effect: { ...envelope.effect, futureField: [] } });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    try {
+      await consumeActivityQueue(batch, env);
+      expect(receiveChildEffects).not.toHaveBeenCalled();
+      expect(ack).toHaveBeenCalledOnce();
+      expect(retry).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+        event: "effect_queue_message_invalid",
+        workspace_id: WORKSPACE_ID,
+        message_id: MESSAGE_ID,
+        code: "effect_queue_message_invalid:effect:unrecognized_keys:futureField",
+      }));
+      expect(info).not.toHaveBeenCalledWith(expect.objectContaining({ reason: "legacy_message_after_cutover" }));
+    } finally {
+      database.close();
+      workspace.database.close();
+    }
+  });
+
   it("brings a child's effect back when its parent could not take it", async () => {
     const database = seedAuthority();
     const workspace = workspaceSyncNamespace();

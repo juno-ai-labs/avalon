@@ -26,9 +26,10 @@ export function unlistedResourceMetadata(): { listing: typeof UNLISTED_RESOURCE_
  * `json_valid` CHECK, so `json_extract` cannot fault on a stored row.
  *
  * The alias is a union rather than a string: this is spliced into a `WHERE`
- * clause, and the callers are countable.
+ * clause, and the callers are countable. `OLD` and `NEW` are a trigger's rows:
+ * the Channel rail's waterline moves when a linked resource's listing does.
  */
-export function listedResourceVisibilitySql(alias: "r" | "resource"): string {
+export function listedResourceVisibilitySql(alias: "r" | "resource" | "OLD" | "NEW"): string {
   return `COALESCE(json_extract(${alias}.metadata_json, '$.${RESOURCE_LISTING_METADATA_KEY}'), '')`
     + ` != '${UNLISTED_RESOURCE_LISTING}'`;
 }

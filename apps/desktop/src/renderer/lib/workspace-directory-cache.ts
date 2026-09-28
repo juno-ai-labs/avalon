@@ -1,4 +1,6 @@
-import { PersonalOrderSchema, SpaceDirectorySchema, type PersonalOrder, type SpaceDirectory } from '@rally/contracts';
+import { ChannelRailSchema, PersonalOrderSchema, SpaceDirectorySchema, WorkstreamPrivateChildSchema, type ChannelRail, type PersonalOrder, type SpaceDirectory } from '@rally/contracts';
+import { heldChannelRails, isChannelRailQueryKey, seedChannelRails } from './channel-rails';
+import { heldChannelBreakouts, isWorkstreamChildrenQueryKey, seedChannelBreakouts, type ChannelBreakoutLists } from './channel-viewer-state';
 import { notifyManager, type QueryClient } from '@tanstack/react-query';
 import { defineLocalCacheSlice, localCacheEpoch } from './local-cache';
 import { mirrorQueriesToLocalCache, queryKeyIsOneOf, type QueryMirror } from './local-cache-mirror';
@@ -37,6 +39,18 @@ export interface CachedWorkspaceDirectory {
    * dropping every cached row to avoid it.
    */
   ordering: PersonalOrder;
+  /**
+   * Each listed Channel's breakouts for this viewer, as the workspace socket
+   * last said them, so the Channel rail paints its breakouts on a cold launch
+   * the way the sidebar paints its Channels.
+   *
+   * Absent on a row written before this existed, which `parse` reads as no
+   * lists: those Channels wait for the socket, as they always did, for one
+   * launch. A Channel whose list this build cannot read is left out alone.
+   */
+  breakouts: ChannelBreakoutLists;
+  /** Each listed Channel's rail, read the same way as `breakouts`. */
+  rails: Record<string, ChannelRail>;
 }
 
 export const DIRECTORY_CACHE_KEY = 'directory';
@@ -111,6 +125,30 @@ function parseOrdering(value: unknown): PersonalOrder | undefined {
   return parsed.success ? parsed.data : undefined;
 }
 
+const BreakoutListSchema = WorkstreamPrivateChildSchema.array();
+
+function parseBreakouts(value: unknown): ChannelBreakoutLists | undefined {
+  if (value === undefined) return {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const lists: ChannelBreakoutLists = {};
+  for (const [workstreamId, list] of Object.entries(value)) {
+    const parsed = BreakoutListSchema.safeParse(list);
+    if (parsed.success) lists[workstreamId] = parsed.data;
+  }
+  return lists;
+}
+
+function parseRails(value: unknown): Record<string, ChannelRail> | undefined {
+  if (value === undefined) return {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const rails: Record<string, ChannelRail> = {};
+  for (const [workstreamId, rail] of Object.entries(value)) {
+    const parsed = ChannelRailSchema.safeParse(rail);
+    if (parsed.success && parsed.data.workstreamId === workstreamId) rails[workstreamId] = parsed.data;
+  }
+  return rails;
+}
+
 function parseCachedDirectory(value: unknown): CachedWorkspaceDirectory | null {
   if (!value || typeof value !== 'object') return null;
   const candidate = value as Record<string, unknown>;
@@ -119,9 +157,11 @@ function parseCachedDirectory(value: unknown): CachedWorkspaceDirectory | null {
   const spaces = parseSpaces(candidate['spaces']);
   const inactiveSpaces = parseSpaces(candidate['inactiveSpaces']);
   const ordering = parseOrdering(candidate['ordering']);
+  const breakouts = parseBreakouts(candidate['breakouts']);
+  const rails = parseRails(candidate['rails']);
   if (!workstreams || !automations || spaces === undefined || inactiveSpaces === undefined) return null;
-  if (ordering === undefined) return null;
-  return { workstreams, automations, spaces, inactiveSpaces, ordering };
+  if (ordering === undefined || breakouts === undefined || rails === undefined) return null;
+  return { workstreams, automations, spaces, inactiveSpaces, ordering, breakouts, rails };
 }
 
 /**
@@ -183,9 +223,19 @@ export async function hydrateWorkspaceDirectory(
     if (queryClient.getQueryData(PERSONAL_ORDER_QUERY_KEY) === undefined) {
       queryClient.setQueryData(PERSONAL_ORDER_QUERY_KEY, cached.ordering);
     }
+    seedChannelBreakouts(queryClient, cached.breakouts);
+    seedChannelRails(queryClient, cached.rails);
   });
   return true;
 }
+
+const directoryKey = queryKeyIsOneOf([
+  WORKSTREAMS_QUERY_KEY,
+  SIDEBAR_LIST_QUERY_KEYS.automations,
+  SPACES_QUERY_KEY,
+  INACTIVE_SPACES_QUERY_KEY,
+  PERSONAL_ORDER_QUERY_KEY,
+]);
 
 /**
  * Keep the workspace's directory row equal to the lists in the query cache,
@@ -199,24 +249,21 @@ export function mirrorWorkspaceDirectory(
   options: { live: () => boolean },
 ): QueryMirror {
   return mirrorQueriesToLocalCache<CachedWorkspaceDirectory>(queryClient, {
-    matches: queryKeyIsOneOf([
-      WORKSTREAMS_QUERY_KEY,
-      SIDEBAR_LIST_QUERY_KEYS.automations,
-      SPACES_QUERY_KEY,
-      INACTIVE_SPACES_QUERY_KEY,
-      PERSONAL_ORDER_QUERY_KEY,
-    ]),
+    matches: (queryKey) => directoryKey(queryKey) || isWorkstreamChildrenQueryKey(queryKey) || isChannelRailQueryKey(queryKey),
     snapshot: () => {
       if (!options.live()) return null;
       const workstreams = queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY);
       if (!workstreams) return null;
+      // The flat list grows with every page the sidebar loads; the row keeps
+      // what a fresh subscribe answer would carry, so the next launch paints
+      // page one and the live answer replaces it without a visible collapse.
+      // A pending row is a create in flight in this window only; restored on
+      // the next launch it would be a Channel nothing ever created.
+      const kept = workstreams.filter((row) => !row.pending).slice(0, WORKSTREAM_PAGE_SIZE);
       return {
-        // The flat list grows with every page the sidebar loads; the row keeps
-        // what a fresh subscribe answer would carry, so the next launch paints
-        // page one and the live answer replaces it without a visible collapse.
-        // A pending row is a create in flight in this window only; restored on
-        // the next launch it would be a Channel nothing ever created.
-        workstreams: workstreams.filter((row) => !row.pending).slice(0, WORKSTREAM_PAGE_SIZE),
+        workstreams: kept,
+        breakouts: heldChannelBreakouts(queryClient, kept.map((row) => row.id)),
+        rails: heldChannelRails(queryClient, kept.map((row) => row.id)),
         automations: queryClient.getQueryData<AutomationSummary[]>(SIDEBAR_LIST_QUERY_KEYS.automations) ?? [],
         spaces: queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY) ?? null,
         inactiveSpaces: queryClient.getQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY) ?? null,

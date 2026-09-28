@@ -1976,6 +1976,90 @@ describe('a Channel\'s breakouts and background agents on the organization socke
     return queryClient.getQueryData<WorkstreamChildDirectory>(['workstream-children', workstreamId]);
   }
 
+  function railsSent(socket: FakeWebSocket): Record<string, unknown>[] {
+    return socket.send.mock.calls
+      .map(([frame]) => JSON.parse(String(frame)) as Record<string, unknown>)
+      .filter((frame) => frame['type'] === 'channel_rails');
+  }
+
+  function railAnswer(requestId: unknown, railWaterline: number, extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      type: 'workspace_channel_rails',
+      requestId,
+      rails: [{
+        workstreamId, railWaterline, participantUserIds: [creator],
+        sidekicks: { owned: [], recommended: [], attached: [] }, resources: [],
+      }],
+      oversized: [], unavailable: [], nextAfter: null, final: true,
+      ...extra,
+    };
+  }
+
+  it('asks for a Channel rail once its row says one, holds the answer, and asks again when the row moves it', async () => {
+    const queryClient = new QueryClient();
+    const socket = await connect(queryClient);
+    act(() => socket.message(sidebarFrame({ railWaterline: 3 })));
+    await flushPromises();
+    const [first] = railsSent(socket);
+    expect(first).toMatchObject({ workstreamIds: [workstreamId] });
+
+    act(() => socket.message(railAnswer(first!['requestId'], 3)));
+    await flushPromises();
+    expect(queryClient.getQueryData(['channel-rail', workstreamId]))
+      .toMatchObject({ railWaterline: 3, rail: { participantUserIds: [creator] } });
+    expect(railsSent(socket)).toHaveLength(1);
+
+    act(() => socket.message(stateFrame(8, { railWaterline: 4 })));
+    await flushPromises();
+    expect(railsSent(socket)).toHaveLength(2);
+  });
+
+  it('keeps a rail it was just answered when a row raises the waterline mid-request, and asks again', async () => {
+    const queryClient = new QueryClient();
+    const socket = await connect(queryClient);
+    act(() => socket.message(sidebarFrame({ railWaterline: 5 })));
+    await flushPromises();
+    const [first] = railsSent(socket);
+
+    // The attach that moved the rail lands before the answer does.
+    act(() => socket.message(stateFrame(8, { railWaterline: 6 })));
+    act(() => socket.message(railAnswer(first!['requestId'], 5)));
+    await flushPromises();
+
+    expect(queryClient.getQueryData(['channel-rail', workstreamId]))
+      .toMatchObject({ railWaterline: 5, rail: { participantUserIds: [creator] } });
+    const [, second] = railsSent(socket);
+    expect(second).toMatchObject({ workstreamIds: [workstreamId] });
+  });
+
+  it('asks a wholly stale Space by Space and follows its pages', async () => {
+    const spaceId = '00000000-0000-4000-8000-000000000031';
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(['spaces'], { waterline: 1, items: [{ id: spaceId }] });
+    const socket = await connect(queryClient);
+    act(() => socket.message(sidebarFrame({ railWaterline: 1, spaceIds: [spaceId] })));
+    await flushPromises();
+    const [first] = railsSent(socket);
+    expect(first).toMatchObject({ spaceId });
+    expect(first).not.toHaveProperty('after');
+
+    act(() => socket.message({ ...railAnswer(first!['requestId'], 1), rails: [], nextAfter: workstreamId }));
+    await flushPromises();
+    const [, second] = railsSent(socket);
+    expect(second).toMatchObject({ spaceId, after: workstreamId });
+    act(() => socket.message(railAnswer(second!['requestId'], 1)));
+    await flushPromises();
+    expect(railsSent(socket)).toHaveLength(2);
+  });
+
+  it('asks for no rail when rows carry no rail waterline', async () => {
+    const queryClient = new QueryClient();
+    const socket = await connect(queryClient);
+    act(() => socket.message(sidebarFrame({})));
+    await flushPromises();
+    expect(railsSent(socket)).toEqual([]);
+  });
+
   it('takes the breakouts and running agents from the connect sidebar and keeps them with no screen open', async () => {
     vi.useFakeTimers();
     const queryClient = new QueryClient();
@@ -2141,6 +2225,8 @@ describe('the organization socket over the local cache', () => {
       spaces: { waterline: 2, items: [] },
       inactiveSpaces: { waterline: 2, items: [] },
       ordering: [],
+      breakouts: {},
+      rails: {},
     });
     const conversation = {
       detail: {

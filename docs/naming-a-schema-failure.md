@@ -151,6 +151,7 @@ its own is a boundary that drifts.
 | `apps/api/src/durable-objects/substream-agent.ts` | `appendWatchedResourceEvent`, the other destination an external event is delivered to |
 | `packages/db/src/link-payloads.ts` | a link payload that no longer satisfies the schema its prefix promises reports `link_payload_drift_invalid:<prefix>:<path>:<code>` — including when it is no longer JSON, as `-root-:invalid_json` — where the row's own existence proves this deployment wrote it. The `_invalid:` label is what `isDiagnosticCode` matches, without which the code reaches an operator as the caller's generic fallback |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | `receiveChildEffects`, which every conversation effect crosses |
+| `apps/api/src/queues/activity-consumer.ts` | an effect envelope the consumer's contract refuses logs `effect_queue_message_invalid` with its failing paths, including unknown key names (the Queue's producers are our own objects, so they are the diagnosis of a deploy skew), where it logged `legacy_message_after_cutover` under a connector-event code; it is still acked |
 | `apps/api/src/queues/access-revocation-consumer.ts` | `access_revocation_message_invalid` names each failing field of a queue message it cannot read, where it formatted the issues by hand and spelled the whole-value case `(root)` |
 
 The label a Durable Object entry point passes to `parseRpcInput` is the RPC
