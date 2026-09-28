@@ -1437,6 +1437,15 @@ Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
 
+### 2026-09-27 — Input bound to a Sidekick run follows the run, not the sender
+
+`ConnectorToolResult` gained `externalConversation`, a bound event counts as
+claimed, and the per-message authority invariant gained its one exception,
+stated above under Invariants. The why, the alternatives and the consequences
+are recorded in [`external-conversation-bindings.md`](external-conversation-bindings.md#changelog).
+
+Shipped in #1006. Design: `docs/PRDs/2026-09-23_external-conversation-bindings/`.
+
 ### 2026-09-27: Ingest drops CI noise and events that repeat themselves
 
 **What changed:** GitHub `check_run` deliveries, and every `workflow_run` action but `completed`, are discarded at ingress and no longer declared. WorkspaceDO ingest drops a new event whose content matches its resource's latest event (migration 80). A repeat of a pending event wakes nothing, one of a failed event is stored with a fresh retry budget, and a repeat dropped before an older, different event arrives is restored. Drive metadata now carries `modifiedTime` and `md5Checksum`, and the dev synthetic route a per-delivery `rawContentHash`, so their genuine repeats still count.
@@ -1446,17 +1455,6 @@ Workspace-principal automation runs retain their separate lifecycle authority.
 **Rejected:** Keying Calendar identity on content inside the adapter would fix one connector; the ingest filter covers any adapter that re-stamps unchanged content. Comparing against all history instead of the latest event would drop a reversal, which is news. Ordering the comparison by `occurredAt` alone was not enough: by the time an older event arrives, the newer repeat it makes news has already been dropped, so the drop keeps its identity and is restored instead. A column and index on `workspace_connector_events` would have built an index over 255,000 rows in the migration, where the new table starts empty.
 
 **What a future change must respect:** An adapter's content must change when the thing it reports changes; a change marker carried only in `occurredAt` or the identity is dropped as a repeat. A dropped repeat must never wake or retry the earlier event's processing. Arrival order is not event order: anything that compares against the latest content has to go by `occurredAt`, and a drop has to stay recoverable until an older event can no longer arrive. Keeping a CI type again means removing it from `isDiscardedGitHubDelivery` and declaring it in the manifest together.
-
-### 2026-09-27: A connector send can bind its thread to a Sidekick run, and authority follows the run
-
-### 2026-09-27 — Input bound to a Sidekick run follows the run, not the sender
-
-`ConnectorToolResult` gained `externalConversation`, a bound event counts as
-claimed, and the per-message authority invariant gained its one exception,
-stated above under Invariants. The why, the alternatives and the consequences
-are recorded in [`external-conversation-bindings.md`](external-conversation-bindings.md#changelog).
-
-Shipped in #1006. Design: `docs/PRDs/2026-09-23_external-conversation-bindings/`.
 
 ### 2026-09-26 — Tool counts ride the connection list
 

@@ -1,5 +1,5 @@
 /**
- * WorkspaceDO migration 80: the external conversation binding table, and the
+ * WorkspaceDO migration 83: the external conversation binding table, and the
  * carry of every Slack Agent session's exact thread key into it.
  *
  * What a Node run proves here is the migration's SQL against the shipped
@@ -17,7 +17,7 @@ import { ExternalConversationBindingStorage } from "../src/durable-objects/works
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
 
-const BINDING_MIGRATION_VERSION = 80;
+const BINDING_MIGRATION_VERSION = 83;
 const WORKSPACE = "00000000-0000-7000-8000-0000000b1d00";
 const CONNECTION = "00000000-0000-7000-8000-0000000b1d10";
 const CHANNEL_WORKSTREAM = "00000000-0000-7000-8000-0000000b1d20";
@@ -66,7 +66,7 @@ function seedSession(database: DatabaseSync, input: {
   ).run(input.id, WORKSPACE, CONNECTION, input.channelId, input.threadTs, input.workstreamId);
 }
 
-describe("WorkspaceDO migration 80", () => {
+describe("WorkspaceDO migration 83", () => {
   it("carries each session's exact thread key into an active thread binding, and infers no room", () => {
     const database = openDatabase();
     apply(database, BINDING_MIGRATION_VERSION - 1);
