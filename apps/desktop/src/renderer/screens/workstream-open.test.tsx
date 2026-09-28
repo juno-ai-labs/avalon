@@ -1040,6 +1040,30 @@ describe('socket-first channel open', () => {
     await waitFor(() => expect(locationInTest.search).toBe(`?substream=${childId}`));
   });
 
+  it('paints the channel\'s people, resources and Sidekicks from its rail before the snapshot', async () => {
+    const member = { id: '00000000-0000-7000-8000-000000000681', name: 'Rail person', email: 'rail@example.test', timezone: 'UTC' };
+    api.getWorkspaceMembers.mockResolvedValue([member]);
+    renderScreen((cache) => {
+      setCachedWorkstreams(cache, [{ id: workstreamId, title: 'Launch plan', scope: 'workspace' } as WorkstreamSummary]);
+      cache.setQueryData(['workstream-children', workstreamId], { privateChildren: [] });
+      cache.setQueryData(['channel-rail', workstreamId], { railWaterline: 1, rail: {
+        workstreamId, railWaterline: 1, participantUserIds: [member.id],
+        sidekicks: {
+          owned: [],
+          recommended: [{ id: '00000000-0000-7000-8000-000000000682', name: 'Weekly brief', description: 'Every Monday', available: true }],
+          attached: [],
+        },
+        resources: [{ id: '00000000-0000-7000-8000-000000000683', title: 'Pricing sheet', resourceType: 'spreadsheet', mimeType: null, direction: 'artifact', currentVersion: 1 }],
+      } });
+    });
+
+    expect(screen.getByRole('status', { name: 'Opening channel…' })).toBeVisible();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Manage channel participants' })).toBeEnabled());
+    expect(screen.getByRole('button', { name: 'Manage channel participants' })).toHaveAccessibleDescription('Rail person');
+    expect(screen.getByRole('button', { name: 'Open Pricing sheet' })).toBeVisible();
+    expect(screen.getByText('Weekly brief')).toBeVisible();
+  });
+
   it('keeps the opening rail, and its focus, when the snapshot lands', async () => {
     const childId = '00000000-0000-7000-8000-00000000067b';
     const parent = recoveryBoot();
