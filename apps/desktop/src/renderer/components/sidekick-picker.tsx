@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { SidekickPicker as SharedSidekickPicker } from '@rally/ui/components/sidekick-picker';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCollaborationSession } from '../lib/collaboration-session';
+import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 
 /** Recommends workspace knowledge to every conversation in this workstream. */
 export function SidekickPicker(props: { workstreamId: string; substreamId?: string }): React.JSX.Element {
@@ -11,6 +12,7 @@ export function SidekickPicker(props: { workstreamId: string; substreamId?: stri
 function WorkstreamSidekickPicker({ workstreamId, substreamId = '0' }: { workstreamId: string; substreamId?: string }): React.JSX.Element | null {
   const { api, session, createSidekick } = useCollaborationSession();
   const queryClient = useQueryClient();
+  const workspaceSocket = useOptionalWorkspaceSocket();
   const [open, setOpen] = useState(false);
   const directory = useQuery({ queryKey: ['sidekick-recommendation-options', workstreamId, substreamId],
     queryFn: ({ signal }) => api!.getSidekickRecommendationOptions(workstreamId, substreamId, signal),
@@ -25,6 +27,8 @@ function WorkstreamSidekickPicker({ workstreamId, substreamId = '0' }: { workstr
       await queryClient.invalidateQueries({ queryKey: ['recommended-sidekicks', workstreamId],
         predicate: (query) => query.queryKey[2] !== substreamId });
       await queryClient.invalidateQueries({ queryKey: ['sidekick-recommendation-options', workstreamId] });
+      // Main's list is read from the Channel rail, not the cache written above.
+      workspaceSocket?.refreshChannelRails([workstreamId]);
       setOpen(false);
     },
     onError: () => { void queryClient.invalidateQueries({ queryKey: ['sidekick-recommendation-options', workstreamId] }); },

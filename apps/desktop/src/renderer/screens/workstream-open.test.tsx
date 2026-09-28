@@ -1043,6 +1043,7 @@ describe('socket-first channel open', () => {
   it('paints the channel\'s people, resources and Sidekicks from its rail before the snapshot', async () => {
     const member = { id: '00000000-0000-7000-8000-000000000681', name: 'Rail person', email: 'rail@example.test', timezone: 'UTC' };
     api.getWorkspaceMembers.mockResolvedValue([member]);
+    session.current = { user: member, workspace: { id: '00000000-0000-7000-8000-000000000672', region: 'global', role: 'member' } };
     renderScreen((cache) => {
       setCachedWorkstreams(cache, [{ id: workstreamId, title: 'Launch plan', scope: 'workspace' } as WorkstreamSummary]);
       cache.setQueryData(['workstream-children', workstreamId], { privateChildren: [] });
@@ -1062,6 +1063,8 @@ describe('socket-first channel open', () => {
     expect(screen.getByRole('button', { name: 'Manage channel participants' })).toHaveAccessibleDescription('Rail person');
     expect(screen.getByRole('button', { name: 'Open Pricing sheet' })).toBeVisible();
     expect(screen.getByText('Weekly brief')).toBeVisible();
+    // The row the live rail ends with is there already, so nothing shifts.
+    expect(screen.getByRole('button', { name: 'Add Sidekick' })).toBeVisible();
   });
 
   it('keeps the opening rail, and its focus, when the snapshot lands', async () => {
