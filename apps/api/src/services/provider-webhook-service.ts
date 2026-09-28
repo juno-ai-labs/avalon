@@ -15,6 +15,7 @@ import {
   normalizeGitHubWebhook,
   normalizeLinearWebhook,
   normalizeNotionWebhook,
+  parseGitHubWebhook,
   readNotionWebhookVerificationToken,
   verifyGitHubWebhook,
   verifyLinearWebhook,
@@ -50,6 +51,24 @@ export interface ProviderWebhookIngestionResult {
   duplicate: boolean;
   activityCount: number;
 }
+
+/**
+ * A GitHub delivery after its signature was verified at the edge: the exact
+ * signed bytes and the two headers the parser reads. Nothing here is a
+ * signature, because nothing downstream checks one.
+ */
+export interface VerifiedGitHubDelivery {
+  rawBody: Uint8Array | ArrayBuffer;
+  deliveryId: string;
+  event: string;
+  receivedAt: string;
+}
+
+/**
+ * GitHub's own ceiling on a webhook payload (25 MB), not a number of ours:
+ * GitHub drops a larger payload before sending it.
+ */
+export const GITHUB_WEBHOOK_MAX_BYTES = 25 * 1024 * 1024;
 
 export interface ProviderWebhookServiceOptions {
   fetch?: typeof globalThis.fetch;
@@ -135,68 +154,85 @@ export class ProviderWebhookService {
     headers: ProviderWebhookHeaders,
   ): Promise<ProviderWebhookIngestionResult> {
     return this.stableProviderError("GitHub", async () => {
-      const githubMaxBytes = 25 * 1024 * 1024;
-      const raw = this.exactRawBody(rawBody, githubMaxBytes);
+      const raw = this.exactRawBody(rawBody, GITHUB_WEBHOOK_MAX_BYTES);
       const normalizedHeaders = new Headers(headers);
-      const source = this.webhookActivity("github");
-      const envelope = source
-        ? await source.verify({
-            rawBody: raw.text,
-            headers: normalizedHeaders,
-            receivedAt: new Date(this.now()).toISOString(),
-            maxBytes: githubMaxBytes,
-            now: this.now(),
-          })
-        : null;
-      const delivery = envelope
-        ? envelope.event as GitHubWebhookDelivery
-        : await verifyGitHubWebhook({
-            secret: requiredConfiguration(this.env.GITHUB_WEBHOOK_SECRET, "GitHub webhook signing secret"),
-            rawBody: raw.text,
-            signatureHeader: normalizedHeaders.get("x-hub-signature-256"),
-            eventHeader: normalizedHeaders.get("x-github-event"),
-            deliveryHeader: normalizedHeaders.get("x-github-delivery"),
-            receivedAt: new Date(this.now()).toISOString(),
-            maxBytes: githubMaxBytes,
-          });
-      const verifiedEnvelope: ConnectorVerifiedActivityWebhook = envelope ?? {
-        deliveryId: delivery.deliveryId,
-        eventType: delivery.event,
-        providerAccountId: delivery.installationId,
-        bodyHash: delivery.rawContentHash,
-        event: delivery,
-      };
-      if (isDiscardedGitHubDelivery(delivery)) {
-        return { accepted: true, duplicate: false, activityCount: 0 };
-      }
-      const lifecycle = githubLifecycle(delivery);
-      const resourceDiscovery = discoverGitHubWebhookResources(delivery);
-      const routingUserId = delivery.event === "github_app_authorization"
-        ? githubSenderUserId(delivery)
-        : null;
-      return this.ingestVerified({
-        provider: "github",
-        deliveryId: delivery.deliveryId,
-        eventType: delivery.event,
-        accountId: delivery.installationId,
-        ...(routingUserId ? { routingUserId } : {}),
-        bodyHash: delivery.rawContentHash,
-        raw,
-        normalize: (connection, payloadRef) => source
-          ? source.normalize(connection, verifiedEnvelope, payloadRef)
-          : normalizeGitHubWebhook(connection, delivery, payloadRef),
-        resources: () => resourceDiscovery.resources,
-        filterConnections: (connections) =>
-          this.filterGitHubPersonalConnections(connections, delivery),
-        ...(lifecycle
-          ? {
-              lifecycle: (connection: ConnectorConnectionContext) => ({
-                ...lifecycle,
-                connectionId: connection.id,
-              }),
-            }
-          : {}),
+      const delivery = await verifyGitHubWebhook({
+        secret: requiredConfiguration(this.env.GITHUB_WEBHOOK_SECRET, "GitHub webhook signing secret"),
+        rawBody: raw.text,
+        signatureHeader: normalizedHeaders.get("x-hub-signature-256"),
+        eventHeader: normalizedHeaders.get("x-github-event"),
+        deliveryHeader: normalizedHeaders.get("x-github-delivery"),
+        receivedAt: new Date(this.now()).toISOString(),
+        maxBytes: GITHUB_WEBHOOK_MAX_BYTES,
       });
+      return this.ingestParsedGitHub(delivery, raw);
+    });
+  }
+
+  /**
+   * Ingests a GitHub delivery whose signature the Global receiver already
+   * verified, handed on by its Queue consumer (in this region) or over the
+   * account-internal regional bridge. It parses the same bytes and does not
+   * verify them again: the signature is checked once, at the edge.
+   */
+  async ingestVerifiedGitHub(
+    input: VerifiedGitHubDelivery,
+  ): Promise<ProviderWebhookIngestionResult> {
+    return this.stableProviderError("GitHub", async () => {
+      const raw = this.exactRawBody(input.rawBody, GITHUB_WEBHOOK_MAX_BYTES);
+      const delivery = await parseGitHubWebhook({
+        rawBody: raw.text,
+        eventHeader: input.event,
+        deliveryHeader: input.deliveryId,
+        receivedAt: input.receivedAt,
+      });
+      return this.ingestParsedGitHub(delivery, raw);
+    });
+  }
+
+  private async ingestParsedGitHub(
+    delivery: GitHubWebhookDelivery,
+    raw: ExactRawBody,
+  ): Promise<ProviderWebhookIngestionResult> {
+    if (isDiscardedGitHubDelivery(delivery)) {
+      return { accepted: true, duplicate: false, activityCount: 0 };
+    }
+    const source = this.webhookActivity("github");
+    const lifecycle = githubLifecycle(delivery);
+    const resourceDiscovery = discoverGitHubWebhookResources(delivery);
+    const routingUserId = delivery.event === "github_app_authorization"
+      ? githubSenderUserId(delivery)
+      : null;
+    const verifiedEnvelope: ConnectorVerifiedActivityWebhook = {
+      deliveryId: delivery.deliveryId,
+      eventType: delivery.event,
+      providerAccountId: delivery.installationId,
+      ...(routingUserId ? { routingUserId } : {}),
+      bodyHash: delivery.rawContentHash,
+      event: delivery,
+    };
+    return this.ingestVerified({
+      provider: "github",
+      deliveryId: delivery.deliveryId,
+      eventType: delivery.event,
+      accountId: delivery.installationId,
+      ...(routingUserId ? { routingUserId } : {}),
+      bodyHash: delivery.rawContentHash,
+      raw,
+      normalize: (connection, payloadRef) => source
+        ? source.normalize(connection, verifiedEnvelope, payloadRef)
+        : normalizeGitHubWebhook(connection, delivery, payloadRef),
+      resources: () => resourceDiscovery.resources,
+      filterConnections: (connections) =>
+        this.filterGitHubPersonalConnections(connections, delivery),
+      ...(lifecycle
+        ? {
+            lifecycle: (connection: ConnectorConnectionContext) => ({
+              ...lifecycle,
+              connectionId: connection.id,
+            }),
+          }
+        : {}),
     });
   }
 

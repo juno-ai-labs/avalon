@@ -691,8 +691,32 @@ an administrator can change the default or select individual repositories on
 the GitHub Settings child page. A present but malformed policy does not receive
 that compatibility default and fails closed.
 
-GitHub delivery signatures are verified against the exact raw body before
-installation-aware normalization and queueing. Webhooks also discover durable
+**A GitHub delivery is answered before it is routed.** The Global receiver
+(`GitHubRoutingService.ingestGitHub`) verifies the signature once, over the
+exact request bytes, drops `ping` and what `isDiscardedGitHubDelivery`
+discards, enqueues a `github_webhook_delivery_v1` message on the Global
+`ACTIVITY_QUEUE`, and answers `202` — with no D1 read, R2 write or GitHub call
+for a body that fits in a message. The body rides inline when it fits under
+`MAX_CONNECTOR_EVENT_QUEUE_BYTES` (the Queue's 128 KB limit less the envelope)
+and is staged in `PAYLOADS` under
+`<region>/github-ingress/<delivery id>/<body hash>.json` otherwise, because
+GitHub sends payloads of up to 25 MB. The consumer
+(`GitHubRoutingService.consumeDelivery`) looks up the installation's regions in
+`github_installation_routes`, hands each region the verified bytes —
+`ProviderWebhookService.ingestVerifiedGitHub` in-process, or the bridge's
+`ingestVerifiedGitHub` — disables the routes after `installation.deleted`,
+and deletes a staged body. Connection matching, the personal-connection GitHub
+calls, and every regional write happen there. Nothing after the receiver
+verifies the signature again: the message and the bridge input carry none, and
+`parseGitHubWebhook` is the parse without a check. The delivery id is the
+idempotency key: each region's `provider_webhook_receipts` row answers a
+redelivery, from the Queue or from GitHub, as a duplicate. A throw retries the
+message and `max_retries` sends it to the dead-letter queue; an installation no
+region has connected — every `installation.created` that beats the setup
+redirect — is acknowledged and logged as `unrouted`, not retried. The
+non-shared host's `/ingest/github` still ingests synchronously through
+`ProviderWebhookService.ingestGitHub`, which verifies once and shares the
+same verified path. Webhooks also discover durable
 repository, commit, file, issue, pull-request, release, workflow-run, and
 check-run resources so people and agents can attach provider objects directly
 to work streams without copying their content into Rally. Issue-dependency and
@@ -1431,6 +1455,16 @@ active workspace guest is insufficient after the addressed share is revoked.
 Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
+
+### 2026-09-28: GitHub deliveries are answered first and routed from the Queue
+
+**What changed:** The Global GitHub receiver now verifies the signature, applies the discard checks, enqueues the delivery on the Global `ACTIVITY_QUEUE` and answers `202`. Route lookup, regional connection matching, GitHub API calls and every regional write moved to the consumer. The signature is checked once, over the exact bytes at the receiver; the receiver's second check (`verifyGitHubWebhook` after the exact-byte HMAC) and the region's third are gone, and the regional bridge's `ingestGitHub(rawBody, headers)` became `ingestVerifiedGitHub`, which takes no signature. The three per-delivery D1 statements against `github_ingress_pending_deliveries` — the expired-row sweep, the replay read and the `dispatched_at` update — and the replay on setup were removed. A delivery for an installation with no route is now acknowledged and logged rather than answered `503`.
+
+**Why:** Measured in production on 2026-09-27, a GitHub delivery took a median of 3 s and a p95 of 7 s to answer, against GitHub's 10 s timeout, and was the most CPU-hungry route: every regional write and the personal-connection GitHub calls ran while GitHub waited. The pending table was never written outside a test double — its replay machinery had no producer — so its reads were pure latency. The repeated HMACs were three passes over bodies of up to 25 MB. A `503` for an unrouted installation was never retried by anything: GitHub does not redeliver on its own, and nothing wrote the pending row the replay would have read.
+
+**Rejected:** Keeping the route lookup at the edge and enqueueing to each region's own queue would cost one D1 read before the reply and was not needed while Global is the only deployment. Retrying an unrouted delivery into the dead-letter queue would put every new installation's `installation.created` there and bury real failures. Always staging the body in R2 would add a write before every reply; it is paid only when the body exceeds a Queue message. The pending table itself is not dropped here; that is a separate D1 migration.
+
+**What a future change must respect:** Nothing downstream of the receiver may verify a GitHub signature or be reachable with bytes that did not pass it — the Queue message and the bridge are the only ways in, and neither carries a signature. The delivery id stays the idempotency key, so every regional side effect must keep deduplicating on `provider_webhook_receipts`. While Global is the only deployment the Queue and staged bodies are in-region; adding a deployment puts that deployment's delivery bytes in Global's queue until the consumer routes them, which [`regionalization.md`](regionalization.md) has to allow before that ships.
 
 ### 2026-09-27: Ingest drops CI noise and events that repeat themselves
 

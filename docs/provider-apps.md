@@ -179,11 +179,12 @@ write operation. Issue dependencies and sub-issues require the existing Issues
 permission, so those subscriptions do not broaden App access.
 
 The shared setup and webhook host, `github.rallywith.ai`, runs on Rally's
-Global ingress Worker. It verifies GitHub's signature before parsing, maps an
-installation to every Rally region where it is connected, and forwards the exact
-signed bytes over a Worker service binding. Each regional Worker verifies the
-delivery again before regional persistence and processing. OAuth callbacks remain
-regional so user tokens never cross the selected boundary.
+Global ingress Worker. It verifies GitHub's signature once, before parsing,
+enqueues the delivery and answers; its Queue consumer maps the installation to
+every Rally region where it is connected and forwards the verified bytes over a
+Worker service binding, which does not verify them again.
+[`connectors.md`](connectors.md#github-app) owns that path. OAuth callbacks
+remain regional so user tokens never cross the selected boundary.
 
 The setup URL is deliberately separate from the OAuth callback: Rally first
 validates the installation with an app JWT, then starts a one-use PKCE user
