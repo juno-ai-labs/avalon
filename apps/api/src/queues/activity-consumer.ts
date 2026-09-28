@@ -52,6 +52,7 @@ import type { AuthContext } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
 import { SlackAgentService } from "../services/slack-agent-service";
+import { consumeGitHubDeliveryMessage, isGitHubDeliveryQueueMessage } from "../services/github-routing-service";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 import { recordActivityEvent } from "../services/activity-event-service";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
@@ -241,8 +242,29 @@ async function loadSearchSource(env: Env, reference: SearchSourceReference, capt
   return stub.prepareSearchTurnDocument(reference, documentId, captureLinks);
 }
 
+/**
+ * A resource's watermark, without extracting its text. Every input of a
+ * resource's search text bumps it (`resource-search-projection.ts`), so an
+ * equal revision is equal text. A turn has no such read: a link capture can
+ * change a page's text at the same revision, so a turn is re-read in full.
+ */
+function searchSourceRevision(env: Env, reference: SearchSourceReference): (() => Promise<number | null>) | undefined {
+  if (reference.type !== 'resource_search_projection_v1') return undefined;
+  return async () => {
+    const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, reference.workspaceId,
+      workspaceDOName(reference.region, reference.workspaceId));
+    return stub.resourceSearchRevision({ workspaceId: reference.workspaceId, resourceId: reference.resourceId });
+  };
+}
+
 async function consumeOne(message: Message<unknown>, env: Env,
   indexSearch: ReturnType<typeof createSearchIndexingPipeline>): Promise<void> {
+  if (isGitHubDeliveryQueueMessage(message.body)) {
+    // A GitHub delivery the Global receiver verified and answered; routing it
+    // to its regions happens here, off GitHub's ten-second clock.
+    await consumeGitHubDeliveryMessage(message, env);
+    return;
+  }
   const searchAuthorizationJob = SearchAuthorizationPushJobSchema.safeParse(message.body);
   if (searchAuthorizationJob.success) {
     // Search no longer reads this store (phase 3 of
@@ -285,7 +307,8 @@ async function consumeOne(message: Message<unknown>, env: Env,
       return;
     }
     const outcome = await indexSemanticBatch(await workspaceSearchIndex(env, job.reference.workspaceId), job,
-      () => loadSearchSource(env, job.reference, false, job.document.id), (texts) => embedSearchDocuments(env, job.reference.workspaceId, texts));
+      () => loadSearchSource(env, job.reference, false, job.document.id), (texts) => embedSearchDocuments(env, job.reference.workspaceId, texts),
+      searchSourceRevision(env, job.reference));
     if (outcome === 'stale') logWarn(env, 'search_embedding_stale', { region: env.AVALON_REGION,
       workspace_id: job.reference.workspaceId, source: job.document.source, source_id: job.document.sourceId, revision: job.document.revision });
     message.ack();

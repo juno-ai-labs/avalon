@@ -24,6 +24,7 @@ import type { AuthContext, Env } from "../src/env";
 import { workspaceDOName } from "../src/durable-objects/names";
 import { SlackWorkspaceWorkstreamService } from "../src/services/slack-workspace-workstream-service";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
+import { countingNamespace } from "./helpers/counting-namespace";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 /** Its own workspace id: object storage is reset per case, object names are not. */
@@ -41,39 +42,6 @@ const AUTH: AuthContext = {
 
 function workspace() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
-}
-
-/**
- * The Organization namespace, recording each method the coordinator calls on
- * a stub it hands out. The object itself is real; only the calling side is
- * observed, which is where a round trip is spent.
- */
-function countingNamespace(calls: string[]): Env["WORKSPACE_DOS"] {
-  const namespace = env.WORKSPACE_DOS;
-  return new Proxy(namespace, {
-    get: (target, property) => {
-      const value: unknown = Reflect.get(target, property);
-      if (property !== "get" || typeof value !== "function") {
-        return typeof value === "function" ? value.bind(target) : value;
-      }
-      return (...args: Parameters<typeof namespace.get>) => {
-        const stub = namespace.get(...args);
-        return new Proxy(stub, {
-          get: (stubTarget, method) => {
-            const member: unknown = Reflect.get(stubTarget, method);
-            if (typeof method !== "string" || typeof member !== "function") return member;
-            // Called through the stub rather than `apply`d: an RPC method is
-            // itself a stub, and would take `apply` for a remote method name.
-            const rpc = stubTarget as unknown as Record<string, (...values: unknown[]) => unknown>;
-            return (...input: unknown[]) => {
-              calls.push(method);
-              return rpc[method]!(...input);
-            };
-          },
-        });
-      };
-    },
-  });
 }
 
 /** The address allocator needs a key; it is configuration, not behaviour. */

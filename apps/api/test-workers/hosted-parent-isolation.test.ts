@@ -18,7 +18,7 @@ import type { ScopeGrantTarget } from "@rally/contracts/scope-grants";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { conversationObjectName } from "../src/durable-objects/names";
-import { hostedParentStub, insertChannelRow, withHostedParent } from "./helpers/hosted-parent";
+import { hostedParentStub, insertChannelRow, readSharedWorkstream, withHostedParent } from "./helpers/hosted-parent";
 import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
 
 const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000e0001");
@@ -132,7 +132,7 @@ describe("hosted parent isolation", () => {
   });
 
   it("lists only Channel A's own conversations to a reader of both, and nothing of it to a reader of B alone", async () => {
-    const read = (parentId: string, userId: UserId) => organization().readSharedWorkstream({
+    const read = (parentId: string, userId: UserId) => readSharedWorkstream(organization(), {
       workspaceId, parentId, userId, membershipIncarnation: userId,
     });
 

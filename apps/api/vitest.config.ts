@@ -62,6 +62,7 @@ export default defineConfig({
     unstubGlobals: true,
     unstubEnvs: true,
     globalSetup: ["./test/global-setup.ts"],
+    setupFiles: ["./test/setup.ts"],
     include: ["test/**/*.test.ts"],
     coverage: {
       reporter: ["text", "json-summary"],

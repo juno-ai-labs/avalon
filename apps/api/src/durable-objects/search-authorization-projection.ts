@@ -39,3 +39,28 @@ export const SEARCH_AUTHORIZATION_PUSH_MIGRATION = [
        first_mutated_at = COALESCE(first_mutated_at, excluded.first_mutated_at); END`;
   })),
 ];
+
+/**
+ * The keys memory search registered, a set per agent run, under a subject whose
+ * `delegation` is `memory-search:v1:<run context>`. Nothing registers one since
+ * memory search began checking each run with `resolveMemoryAccess`
+ * (docs/text-search.md, 2026-09-28), and a key names its run, so none is read
+ * again; each still cost a re-check on every push that reached its scope.
+ *
+ * The delegation is stored only in the snapshot, so the snapshot is how a key is
+ * found, and the rows keyed by `cache_key` go with it. A push row is keyed by its
+ * target, which for a memory key is the scope id in `resource_id`: it goes only
+ * when no other key still names that target, and before the keys that find it.
+ * The four tables declare no foreign keys between them.
+ */
+const MEMORY_SEARCH_KEY = `substr(json_extract(snapshot_json, '$.subject.delegation'), 1, 17) = 'memory-search:v1:'`;
+const MEMORY_SEARCH_KEYS = `SELECT cache_key FROM authorization_snapshots WHERE ${MEMORY_SEARCH_KEY}`;
+export const MEMORY_SEARCH_KEY_PURGE_MIGRATION = [
+  `DELETE FROM search_authorization_push WHERE kind = 'resource'
+    AND target_id IN (SELECT resource_id FROM search_authorization_keys WHERE cache_key IN (${MEMORY_SEARCH_KEYS}))
+    AND NOT EXISTS (SELECT 1 FROM search_authorization_keys other
+      WHERE other.resource_id = search_authorization_push.target_id AND other.cache_key NOT IN (${MEMORY_SEARCH_KEYS}))`,
+  `DELETE FROM search_authorization_dependencies WHERE cache_key IN (${MEMORY_SEARCH_KEYS})`,
+  `DELETE FROM search_authorization_keys WHERE cache_key IN (${MEMORY_SEARCH_KEYS})`,
+  `DELETE FROM authorization_snapshots WHERE ${MEMORY_SEARCH_KEY}`,
+];

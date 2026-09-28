@@ -35,7 +35,10 @@ Sideline authenticates an ordinary Rally user with the dedicated
 `sideline://auth/complete` PKCE callback. Its main process keeps the refresh
 token in an encrypted session file and exposes only named operations to the
 sandboxed renderer. The catalog service returns active represented members and
-the Channels and Breakouts each represented member can currently see.
+the Channels and Breakouts each represented member can currently see. Per
+person it reads the Channel directory, then asks the Organization object once,
+through `listVisiblePrivateChildrenForParents`, for that person's Breakouts
+across all of those Channels.
 
 The catalog always includes the signed-in operator through their ordinary
 membership and adds other participants from active relationships. When the
@@ -180,7 +183,10 @@ Sideline's perspective even when later addressing or harness work fails.
 
 `apps/api/test-workers/workspace-impersonation.test.ts` applies the real
 WorkspaceDO migrations and proves direction, self-pairs, idempotent setup, and
-revocation in workerd. Demo preparation tests cover the producer phase. API
+revocation in workerd. `apps/api/test-workers/sideline-catalog.test.ts` builds
+the catalog against the real Organization object and D1 for an operator and one
+represented person over three Channels, and pins each person's destinations
+and one Breakout read per person. Demo preparation tests cover the producer phase. API
 tests cover access, membership, relationship, destination, audit, self-send, and
 cross-participant admission boundaries.
 `apps/api/test-workers/workspace-reach-changed.test.ts` proves on real sockets
@@ -195,7 +201,7 @@ renderer bundles. Release-tooling tests cover update-feed structure and the
 publication order through in-memory R2 and public-cache adapters. Run:
 
 ```bash
-pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-impersonation.test.ts test-workers/workspace-reach-changed.test.ts
+pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-impersonation.test.ts test-workers/workspace-reach-changed.test.ts test-workers/sideline-catalog.test.ts
 pnpm --filter @rally/api exec vitest run test/impersonation-service.test.ts test/demo-operations.test.ts
 pnpm --filter @rally/sideline test
 pnpm --filter @rally/sideline build
@@ -231,6 +237,32 @@ operator key. It registers only `sideline:`, while **Open in Rally** emits the
 existing `rallywithai:` deep link for the main app.
 
 ## Changelog
+
+### 2026-09-28 — The catalog reads each person's Breakouts in one call
+
+**What changed:** For each person in the catalog, the service asks the
+Organization object once, through `listVisiblePrivateChildrenForParents`, for
+their Breakouts across every Channel their directory lists, instead of calling
+`listVisiblePrivateChildren` once per Channel; the object answers from
+`visiblePrivateChildren`'s single multi-parent statement, the one the sidebar's
+control socket uses. A person with no Channels makes no Breakout call. The
+single-parent RPC is gone.
+
+**Why:** Production measurements on 2026-09-27 showed the catalog making 92
+Organization calls to open, and it rereads in the background on every
+`workspace_reach_changed`. Every Channel is a hosted parent of that one
+object, so the per-Channel calls were round trips to the same place; the count
+grew with people times Channels.
+
+**Considered and rejected:** Looping the per-parent read inside the object,
+which kept its `conversation_parent_missing` throw for a parent it does not
+host. The catalog already treats a Channel with no answer as having no
+Breakouts, its Channels come from this object's own directory, and one missing
+parent failing the whole catalog for every person is the worse outcome.
+
+**Consequences:** The catalog now costs one relationship read plus two calls
+per person (directory page and Breakouts). A new per-Channel detail in a
+destination belongs in the batched read, not in a loop around it.
 
 ### 2026-09-28 — The API gate waits for a deployment it cannot list yet
 

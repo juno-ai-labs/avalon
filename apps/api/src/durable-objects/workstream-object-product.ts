@@ -3498,18 +3498,14 @@ export class WorkstreamObjectProductService {
               expire_due_at, lifecycle_claim_expires_at
          FROM terminal_workspace WHERE id = 1`,
     ));
-    const observation = first(this.storage.sql.exec<{ next_observe_at: number }>(
-      `SELECT o.next_observe_at FROM terminal_provider_observation o
-        JOIN terminal_workspace w ON w.id = o.id
-          AND w.sandbox_id = o.sandbox_id AND w.generation = o.generation
-        WHERE o.id = 1`,
-    ));
     // A claim keeps projecting the deadline it claimed (see "Invariants" in
     // docs/terminal-workspaces.md); its own expiry stays as a floor in case a
-    // claimed deadline is pushed out mid-claim.
+    // claimed deadline is pushed out mid-claim. The provider-observation
+    // deadline is deliberately absent: it moves on every check, and this
+    // object's own alarm runs the check, so projecting it only made each check
+    // a directory write that changed nothing else.
     const terminalCandidates = terminal?.sandbox_id
       ? [
-          observation?.next_observe_at ?? 0,
           ["running", "stopping"].includes(terminal.lifecycle_state) ? terminal.idle_expires_at : null,
           ["stopped", "archiving"].includes(terminal.lifecycle_state) ? terminal.archive_due_at : null,
           terminal.expire_due_at,

@@ -234,7 +234,7 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by a room's first draft; and `AutomationService`, the Worker-side access every route goes through, which resolves whether the caller is in the owning room before asking the object. |
 | `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /workstream/:workstreamId`, `GET /:id`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/pause`, `POST /:id/resume`, `POST /:id/archive`, legacy `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
 | `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; the run prompt context built from the definition, which names the home conversation; and the loading of `rally:conversations` ([`conversation-tools.md`](conversation-tools.md)), the one way a run reaches a room. |
-| `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | The home read, `sidekick_conversation_attachments` (WorkspaceDO migration 84), and the conversation scope a Sidekick or a Channel or Breakout loop reaches. |
+| `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | The home read, `sidekick_conversation_attachments` (WorkspaceDO migration 86), and the conversation scope a Sidekick or a Channel or Breakout loop reaches. |
 | `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:sidekicks` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
 | `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), and `AutomationDraftProposedV1` (the card). |
 | `packages/contracts/src/index.ts` | `AutomationDraftSchema`, `AutomationRunDefinitionV1Schema` (the `readRunDefinition` answer), `AutomationSummarySchema`, `WorkstreamAutomationSummarySchema`, `AutomationRunSchema`, `AutomationDetailSchema`. |
@@ -258,8 +258,12 @@ not export a Cloudflare class from the Worker entrypoint.
 
 The separate Sidekicks window lists all accessible personal, workspace and
 workstream-owned entries, including drafts. `GET /sidekicks` uses
-`WorkspaceDO.listSidekickDirectory`; the old `/automations` listing remains a
-compatibility adapter. Directory membership never grants access to an owner.
+`WorkspaceDO.listSidekickDirectoryForAuthorizedMember`: the request's session
+authentication already joined the caller's active member row, so the object
+applies only the per-row scope filter and does not read `workspace_members`
+again. `listSidekickDirectory`, which does check membership itself, remains for
+a caller that has not. The old `/automations` listing remains a compatibility
+adapter. Directory membership never grants access to an owner.
 
 The window closes on **Escape**, through the shared
 `renderer/lib/window-escape.ts` that Settings also uses, and nominates nothing as
@@ -967,7 +971,7 @@ substreams. Harness `skills.test.ts` proves recommendations do not load bodies.
 | --- | --- | --- |
 | `apps/api/test-workers/automation-do.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: draft, `submitDefinition`, and `apply` binding a workspace connection, reserving the address, and activating; a missing connection refused; a second ready revision re-applied on an active automation; pause stopping the in-flight run and clearing registrations, resume re-arming; delete tombstoning the row and leaving the sidebar; management refused to a member who is neither author nor principal; `runNow` idempotent on its key; `admitExternalEvent` idempotent and refused before the boundary; `admitInboundEmail` answering a retry from its receipt and refusing a stranger; the run provisioned as a child substream whose loop reads its definition by revision, with `runs.state` following the child's state through the effect leg. |
 | `apps/api/test-workers/automation-post-result.test.ts` | `pnpm --filter @rally/api test:workers` | The result tool appending into the owning room's substream `0`, and refused for an archived room and a stale generation. |
-| `apps/api/test-workers/automation-directory.test.ts` | `pnpm --filter @rally/api test:workers` | `create` alone putting a draft row in the author's sidebar, a workspace row in everyone's, and a room's row only in `listWorkstreamAutomations`; and `setAppearance` — driven through the object's stub, the boundary `AutomationService` crosses — merging one field at a time, reaching both directory listings through the real effect legs, and refusing somebody who cannot manage the Sidekick. |
+| `apps/api/test-workers/automation-directory.test.ts` | `pnpm --filter @rally/api test:workers` | `create` alone putting a draft row in the author's sidebar, a workspace row in everyone's, and a room's row only in `listWorkstreamAutomations`; and `setAppearance` — driven through the object's stub, the boundary `AutomationService` crosses — merging one field at a time, reaching both directory listings through the real effect legs, and refusing somebody who cannot manage the Sidekick; and `AutomationService.listSidekicks` listing each scope to exactly the members it did before while the object sends D1 no `workspace_members` read. |
 | `apps/desktop/src/renderer/screens/automation.test.tsx` | `pnpm --filter @rally/desktop test` | The profile's appearance saving: an older response losing to a newer Sidekick already in the cache, and its own response applied when nothing newer arrived. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx`, `components/workstream-glyph.test.tsx` | `pnpm --filter @rally/desktop test` | The strip: which Sidekicks qualify, the tile's accessible name, the play cut out of the hexagon with its own mask, and the two tooltips — the tile carrying the name and scope through `Tip` rather than a native `title`, the tile's one tooltip saying whichever part of it the pointer is on, swapping both ways with no second delay, and answering for the play even when the pointer reaches it inside the tile tooltip's own delay — that one driven on fake timers, each advance flushed on its own. |
 | `apps/api/test-workers/automation-acceptance-bindings.test.ts` | `pnpm --filter @rally/api test:workers` | The binding half in isolation: the table absent from D1, a recommended plugin bound from the workspace object's connections, a missing one refused, a disabled row skipped for the live one. |
@@ -1028,10 +1032,10 @@ automation run had made. [`data-model.md`](data-model.md) is the map of both
 authorities. Workspace migration 35 projects stored `loadable`; migration 36
 adds `external_registration_generations`, retaining the latest generation and
 activation cutoff even for an empty replacement; migration 49 adds
-`automation_directory.appearance_json`, nullable and never backfilled; migration 84
+`automation_directory.appearance_json`, nullable and never backfilled; migration 86
 adds `automation_directory.owning_substream_id` (`NOT NULL DEFAULT '0'`) and
 `sidekick_conversation_attachments`, keyed by `(automation_id, parent_kind,
-parent_id, substream_id)` with who attached it and when. Migration 83 is the
+parent_id, substream_id)` with who attached it and when. Migration 85 is the
 external conversation bindings table's. Owner migration 4 stores the
 source counter. Versioned registration IDs equal immutable evaluator IDs, so a
 late delivery from a superseded predicate is refused by the owner.
@@ -1119,6 +1123,33 @@ Desktop and browser request management options only when their controls open, no
 on every transcript update.
 
 ## Changelog
+
+### 2026-09-28 — The Sidekick library checks membership once, at authentication
+
+**What changed:** `AutomationService.listSidekicks`, behind `GET /sidekicks`,
+calls `WorkspaceDO.listSidekickDirectoryForAuthorizedMember` instead of
+`listSidekickDirectory`. The object no longer re-reads the caller's
+`workspace_members` row from D1; it still filters every row by scope,
+authorship and room participation.
+
+**Why:** Production measurements on 2026-09-27 put the list at a median of
+1 s, and it checked access twice. Session authentication joins the caller's
+active member row (with its incarnation) before the handler runs, and the route
+requires a role, so a guest never reaches it; the object then asked D1 the same
+question again from wherever it runs. The other two callers hold equally
+verified contexts: Sidekick recommendations read the relationship themselves,
+and demo readiness builds its viewer from `demoMemberAuth`. Who sees what is
+unchanged — the object's own check was the weaker of the two, since it ignored
+the incarnation and admitted guests.
+
+**Considered and rejected:** Keeping the object's check and dropping the
+request's. Authentication cannot be skipped for one route, and the object's
+check is the one that answers less.
+
+**Consequences:** `AutomationService.listSidekicks` must only be constructed
+with an `AuthContext` whose membership was proved in the same request. A caller
+that cannot say that uses `listSidekickDirectory`, as the Bind
+`verify_membership` path in `agent-communication-service.ts` does.
 
 ### 2026-09-28 — A Channel's Sidekicks ride its rail, under a shared audience predicate
 

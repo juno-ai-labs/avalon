@@ -47,7 +47,7 @@ export interface ScopedConversation extends ConversationAddress {
   readable: boolean;
 }
 
-/** The migration-84 table. Keyed by the Sidekick and the whole address, so a repeat attach is one row. */
+/** The migration-86 table. Keyed by the Sidekick and the whole address, so a repeat attach is one row. */
 export const SIDEKICK_CONVERSATION_ATTACHMENT_SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE TABLE sidekick_conversation_attachments (
     automation_id TEXT NOT NULL,

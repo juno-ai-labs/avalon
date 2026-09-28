@@ -246,7 +246,13 @@ chunk order. `SEARCH_EMBEDDING_BATCH_SIZE` in `search-embedding.ts` controls how
 many chunks share a request: 64, approved by the team on 2026-09-06. This bounds
 one response to 65,536 vector values without limiting total document content. Every chunk is still processed, including a final partial
 batch. A missing or extra vector, model drift, wrong dimension, or nonfinite value
-rejects that batch before its semantic rows are written. A child reads the source twice: once before embedding and once after its write; stale work removes only its exact content
+rejects that batch before its semantic rows are written. A child first asks the
+index whether its batch is already written (below) and, if so, acknowledges
+without touching the source. Otherwise it reads the source once before
+embedding and checks freshness once after its write: a resource by its
+`resourceSearchRevision` watermark, which every input of its text bumps, and a
+turn by a second full read, because a link capture can change a page's text at
+the same revision. Stale work removes only its exact content
 generation. Batches do not change chunk boundaries, namespace identity, or
 lexical indexing. Search jobs remain sequential within each Queue delivery.
 
@@ -271,8 +277,23 @@ Fan-out chunk IDs also include the complete-text generation hash, so two
 same-revision extraction results cannot overwrite each other's chunks. Hashing
 JSON-escaped text preserves exact UTF-16, including lone surrogates that raw UTF-8
 encoding would replace. A strongly
-consistent count of the batch's deterministic IDs lets redelivery skip embeddings
-already stored successfully. The source job removes older revisions and legacy
+consistent count of the batch's rows lets redelivery skip embeddings already
+stored successfully, and it runs before the source read, so a resource batch
+already written costs one index query and one revision read, with no document
+load. The count cannot use
+the IDs, which hash the chunk text the child has not loaded; it counts rows
+matching the document, revision, generation and each span's exact
+`(chunk_start, chunk_end)` pair instead. That is the same set: a generation is
+the hash of the whole text a span slices, so those attributes determine the
+text and therefore the ID. Spans are paired rather than matched as two `In`
+lists because a recursive passage and a sliding window can share a start. A
+missing or partial batch, or rows of another revision or generation, count
+short and the batch is embedded; so does a namespace not written since
+generation fan-out, whose provider refuses a `generation` filter with a 400 the
+count reads as zero. Skipping still runs the post-write freshness
+check: a delivery cancelled between its upsert and that check leaves rows no one
+validated, and a later revision's source job may already have reclaimed that
+generation, so acknowledging unchecked would resurrect them. The source job removes older revisions and legacy
 same-revision rows before publishing the new plan. Those rows cannot pass current
 canonical validation, so retaining them until the last child succeeds would add
 strong queries and stale candidates without preserving usable results. Cleanup
@@ -508,6 +529,12 @@ intent, and rejecting stale link labels. `test-workers/search-indexing-pipeline.
 drives the Queue consumer through real source RPC and R2 reads, verifies identical
 chunks across messages/files/artifacts/pages, and proves concurrent deletion causes
 generation cleanup and retry. Its only doubles are external APIs/model assets.
+It also records the WorkspaceDO RPCs an embedding delivery makes, through
+`helpers/counting-namespace.ts` over the real namespace, proving a written batch makes only a revision
+read, and a new revision makes one document read and one revision read. A written
+batch whose revision has since moved on is reclaimed rather than acknowledged. A resource's content
+change is staged the way production makes it (a new `content_ref`, which bumps
+the revision), not by overwriting R2 in place.
 The pinned Qwen tokenizer was separately exercised in workerd with its actual
 public model assets served from a temporary local mirror. The same pipeline suite
 proves the display attributes each producer writes and the patch passes a renamed
@@ -520,7 +547,10 @@ a document from a build ahead of it and naming the keys it dropped;
 design's rule table; `test-workers/conversation-parent-contract.test.ts` proves
 the index returns only what a reader's groups admit, including after revocation;
 `test/search-route.test.ts` proves the HTTP boundary fails closed;
-`test/scoped-memory.test.ts` proves memory search checks each run canonically.
+`test/scoped-memory.test.ts` proves memory search checks each run canonically,
+and asks the WorkspaceDO for each scope once per isolate while deciding
+writability per call; `test-workers/workspace-memory-search-key-purge-migration.test.ts`
+proves WorkspaceDO migration 84 removes memory search's keys and nothing else.
 The executor's group is proved in `automation-directory.test.ts` and
 `automation-do.test.ts`. The old store's suites remain until phase 4 deletes it.
 A disposable live namespace in gcp-us-west1 verified on 2026-09-28 that
@@ -572,7 +602,10 @@ missing it is invisible until its object migrates: force the migrations before
 that deploy, and re-count afterwards. The old search-authorization store is no
 longer pushed or read; its tables and triggers stay until phase 4 drops them, so
 a Worker rollback finds the recorded targets and must be followed by a full push
-(migration 48's pass).
+(migration 48's pass). WorkspaceDO migration 84 has already deleted the keys
+memory search registered per run; a rollback past it re-registers them on the
+next memory search, as before. Their Global `AUTHORIZATION_CACHE` copies were
+written without a TTL and stay, unread, until phase 4 retires the namespace.
 
 A WorkspaceDO dispatches resource references 100 at a time. While more are due
 after a batch, the next waits `RESOURCE_SEARCH_BACKLOG_INTERVAL_MS` (60
@@ -661,6 +694,44 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-28 — Embedding batches check the index first; memory search drops its per-run keys
+
+**Embedding batches.** A delivery now counts its batch's rows in the index
+before reading the source, matching document, revision, generation and each
+span's exact `(chunk_start, chunk_end)` pair, since the chunk IDs hash text it
+has not loaded. When the batch is already there it skips the load and the
+embed but still runs the post-write freshness check — one
+`resourceSearchRevision` read for a resource, one full load for a turn — because
+rows alone do not prove their writer ran that check, and acknowledging unchecked
+could resurrect a generation a later revision already reclaimed. A resource's
+freshness check after a write is that same revision read rather than a second
+load. *Why:* on 2026-09-27 about 10,000 `prepareResourceSearchDocument` calls an
+hour came from embedding deliveries, and about 98% loaded the document twice and
+embedded nothing, because re-projections (migrations 47, 48, 77) and
+redeliveries re-send written batches; each load reads R2 inside the object the
+backlog pacing protects. *Rejected:* a ledger of completed batches, which
+duplicates the index rows; counting by generation alone or by two `In` lists,
+which can count another batch's rows; a revision read for turns, whose captured
+pages can change text at the same revision. *Respect:* the skip is exact only
+while a chunk ID is a function of (document, revision, generation, range) and a
+generation hashes the full text; the resource fence holds only while every input
+of `resourceSearchText` and `resourceSearchCategory` bumps
+`resource_search_versions`; and a namespace not written since fan-out has no
+`generation`, which the count must read as zero rather than fail.
+
+**Memory search.** WorkspaceDO migration 84 deletes every search-authorization
+key whose delegation starts with `memory-search:v1:`, with its snapshot, its
+dependency rows, and the push row of a scope no other key names; the rest of the
+old store waits for phase 4. `ensureScope` caches each scope row per isolate, so
+repeat searches make no `ensureMemoryScope` RPC; `writable` is still decided per
+call. *Why:* each key named one run and none is read again, yet one scope held
+628 that a rollback's full push would walk; `ensureScope` ran about 453 times an
+hour for rows that never change. *Rejected:* waiting for phase 4; finding keys
+by shape rather than delegation; a KV sweep of the unread Global copies, which a
+migration cannot make; caching `writable`, which depends on the caller's role.
+*Respect:* the cache invariant in
+[agent harness](agent-harness.md#scoped-durable-memory).
 
 ### 2026-09-28 — Member search filters on the searcher's audience groups
 

@@ -503,15 +503,19 @@ export class ConnectionService {
     const rows = await this.listedConnectionRows(auth.workspaceId, result.results ?? []);
     const ownerIds = [...new Set(rows.flatMap((row) =>
       typeof row.owner_user_id === "string" ? [row.owner_user_id] : []))];
-    const owners = ownerIds.length === 0 ? [] : (await workspaceRegionalDatabase(this.env).prepare(
-      `SELECT id, name FROM users WHERE id IN (${ownerIds.map(() => "?").join(",")})`,
-    ).bind(...ownerIds).all<{ id: string; name: string }>()).results;
+    // Owner names and delivery surfaces both depend only on the rows, so they
+    // are read concurrently; either failing still fails the list.
+    const [owners, userDelivery] = await Promise.all([
+      ownerIds.length === 0 ? [] : workspaceRegionalDatabase(this.env).prepare(
+        `SELECT id, name FROM users WHERE id IN (${ownerIds.map(() => "?").join(",")})`,
+      ).bind(...ownerIds).all<{ id: string; name: string }>().then((result) => result.results),
+      resolveUserDelivery(
+        this.env,
+        { workspaceId: auth.workspaceId, userId: auth.userId },
+        rows.map((row) => ({ id: String(row.id), connector_type: row.connector_type, status: row.status })),
+      ),
+    ]);
     const ownerNames = new Map(owners.map((owner) => [owner.id, owner.name]));
-    const userDelivery = await resolveUserDelivery(
-      this.env,
-      { workspaceId: auth.workspaceId, userId: auth.userId },
-      rows.map((row) => ({ id: String(row.id), connector_type: row.connector_type, status: row.status })),
-    );
     const adapterFor = this.registeredAdapters();
     return rows.map((row) => connectionFromRow({
       ...row,
