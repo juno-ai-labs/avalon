@@ -105,8 +105,18 @@ export class AutomationService {
     return { automationId };
   }
 
+  /**
+   * The Sidekick library for this member. Every caller holds an `AuthContext`
+   * whose membership was already proved this request (session authentication
+   * joins the active member row; the others resolve it before constructing
+   * one), so the object is asked for the authorized-member listing rather than
+   * repeating that D1 read from inside the object. The object still decides
+   * which rows this member may see.
+   */
   async listSidekicks(): Promise<{ items: AutomationSummary[] }> {
-    return (await this.workspace()).listSidekickDirectory({ workspaceId: this.auth.workspaceId, userId: this.auth.userId });
+    return (await this.workspace()).listSidekickDirectoryForAuthorizedMember({
+      workspaceId: this.auth.workspaceId, userId: this.auth.userId,
+    });
   }
 
   async list(): Promise<{ items: AutomationSummary[] }> {

@@ -231,6 +231,7 @@ export {
   getGitHubInstallation,
   mintGitHubInstallationToken,
   verifyGitHubWebhook,
+  parseGitHubWebhook,
   verifyGitHubWebhookSignature,
   discoverGitHubWebhookResources,
   isDiscardedGitHubDelivery,
@@ -255,6 +256,7 @@ export {
   type GitHubWebhookResourceDiscovery,
   type GitHubWebhookResourceHint,
   type VerifyGitHubWebhookInput,
+  type ParseGitHubWebhookInput,
 } from "./github";
 export {
   canPersonalLinearConnectionAccessWebhook,

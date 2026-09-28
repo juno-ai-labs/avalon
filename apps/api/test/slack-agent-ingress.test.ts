@@ -112,7 +112,7 @@ class IngressDatabase {
       threadTs,
       `workstream-${channelId}-${threadTs}`,
     );
-    // The thread's route, as migration 83 carries every session's thread key
+    // The thread's route, as migration 85 carries every session's thread key
     // into a binding and as creating a session writes one beside it.
     this.objectDatabase.prepare(
       `INSERT INTO external_conversation_bindings

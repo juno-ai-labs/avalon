@@ -892,13 +892,23 @@ the Bind runtime library, not a parallel loop or a runtime patch in Rally.
 
 ### Scoped durable memory
 
-Query-based memory search uses the same pushed authorization projections as
-workspace search. Host-owned run context selects candidate scope addresses;
-initial population and queued updates resolve canonical run authority. Subsequent
-searches trust projected grants and do not reauthorize after retrieval. Canonical
-item revision and expiry checks still determine which content is current. Exact
-memory reads and writes retain their existing canonical access path. See
-[authorization](authorization.md) for publication and retry behavior.
+Query-based memory search resolves the run's scopes with `resolveMemoryAccess`,
+the canonical run check, on every search, and stores no decision; a run that no
+longer matches its principal or Organization searches nothing. Scope ids come
+from `ensureScope`, which keeps each immutable `memory_scopes` row per isolate
+(`memory-scope-cache.ts`) and applies the caller's `writable` per call (see
+[text search](text-search.md#changelog), 2026-09-28). Canonical item revision
+and expiry checks still determine which content is current. Exact memory reads
+and writes retain their existing canonical access path.
+
+**Never delete, re-create or re-id a `memory_scopes` row without clearing that
+cache first**, or a warm isolate keeps handing out the old id. The cache is
+correct only because a scope row is immutable (`memory_scopes_are_immutable`),
+typed-RPC-only, and never deleted. Tests break that premise — storage isolation
+gives each test a fresh object under the same workspace id — so
+`apps/api/test/setup.ts` clears it after every test in both suites. The cache is
+unbounded: its size is the distinct scopes one isolate has served, and whether
+it needs a cap is the team's call.
 
 Root work-stream runs receive the stable `rally_memory` plugin. `memory_search`
 accepts exactly one of a content query or `memoryItemId`; the exact-ID form is the
@@ -939,7 +949,7 @@ it the same way. Until the projector filters a replayed memory result against
 the current union, the scope union is the authority for what a run may
 *search*, not a guarantee about everything in its context.
 
-Memory items retain structured provenance, access metadata, expiry, revisions, and reversible invalidation, but no confidence field. Agents add by scope kind and update or invalidate by item ID plus expected revision. Workspace writes require a workspace principal or an owner/admin user. WorkspaceDO FTS is synchronous; OpenRouter `qwen/qwen3-embedding-8b` embeddings and the regional Vectorize projection advance through a replayable WorkspaceDO outbox. Requests explicitly ask for 1,024 dimensions—supported by Qwen3 Embedding 8B's Matryoshka representation—to match the immutable Vectorize index shape and distinguish query from document input. The model is a fixed inference-gateway constant with no Flagship role, Worker override, or model fallback. A fixed-model-and-dimension-derived namespace prevents embeddings from different semantic spaces from ever being compared; Provider model capitalization is normalized through the shared `isMemoryEmbeddingModel` comparison used by text search; OpenRouter reporting a genuinely different resolved model fails the request closed, and retrieval falls back to FTS. Changing the constant requires a code change paired with requeueing active memories, and retrieval safely falls back to FTS until that rebuild completes. Hybrid hits are reloaded from WorkspaceDO within the scopes admitted by the stored authorization projection; membership changes push replacement decisions through workspace sync. A non-message root run that performs automatic admission recall stores an immutable snapshot and hash; a message-origin run stores no memory-context hash.
+Memory items retain structured provenance, access metadata, expiry, revisions, and reversible invalidation, but no confidence field. Agents add by scope kind and update or invalidate by item ID plus expected revision. Workspace writes require a workspace principal or an owner/admin user. WorkspaceDO FTS is synchronous; OpenRouter `qwen/qwen3-embedding-8b` embeddings and the regional Vectorize projection advance through a replayable WorkspaceDO outbox. Requests explicitly ask for 1,024 dimensions—supported by Qwen3 Embedding 8B's Matryoshka representation—to match the immutable Vectorize index shape and distinguish query from document input. The model is a fixed inference-gateway constant with no Flagship role, Worker override, or model fallback. A fixed-model-and-dimension-derived namespace prevents embeddings from different semantic spaces from ever being compared; Provider model capitalization is normalized through the shared `isMemoryEmbeddingModel` comparison used by text search; OpenRouter reporting a genuinely different resolved model fails the request closed, and retrieval falls back to FTS. Changing the constant requires a code change paired with requeueing active memories, and retrieval safely falls back to FTS until that rebuild completes. Hybrid hits are reloaded from WorkspaceDO within the scopes that search's run check admitted, so a membership change applies on the next search. A non-message root run that performs automatic admission recall stores an immutable snapshot and hash; a message-origin run stores no memory-context hash.
 
 Root runs also receive the separate stable `rally_tables` plugin for large structured collections that should not enter prompt context as prose memories. Tables inherit the same work-stream, automation, user, and workspace authorization union. Reads accept a reauthorized table ID plus typed filter/search/projection/order/cursor arguments or an exact `memoryTableRowIds` selector for conflict recovery; they never accept scope or owner selectors and expose no raw SQL. Rows use typed columns, a declared natural key, synchronous WorkspaceDO FTS for searchable text, typed cell indexes, revision compare-and-swap, reversible invalidation, and receipt-backed append-only mutation records.
 

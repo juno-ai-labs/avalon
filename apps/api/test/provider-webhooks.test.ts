@@ -632,6 +632,59 @@ describe("provider-wide webhook ingestion", () => {
     expect(bucket.puts).toHaveLength(1);
   });
 
+  it("ingests a delivery the Global receiver verified without checking its signature again", async () => {
+    const database = new FakeDatabase();
+    database.connections.push(await connection({
+      id: CONNECTION_ONE,
+      workspaceId: WORKSPACE_ONE,
+      provider: "github",
+      providerAccountId: "42",
+      scope: "workspace",
+      credentials: { installationId: "42", tokenKind: "installation" },
+    }));
+    const queue = new FakeQueue();
+    const service = serviceFor(database, new FakeBucket(), queue);
+    const rawBody = new TextEncoder().encode(JSON.stringify({
+      action: "opened",
+      installation: { id: 42 },
+      repository: { id: 10, full_name: "avalon/example", html_url: "https://github.com/avalon/example", owner: { login: "avalon" } },
+      issue: { id: 20, number: 1, title: "Verified once", html_url: "https://github.com/avalon/example/issues/1" },
+    }));
+    const verify = vi.spyOn(crypto.subtle, "verify");
+    const sign = vi.spyOn(crypto.subtle, "sign");
+    const delivery = {
+      rawBody: rawBody.buffer,
+      deliveryId: "github-verified-delivery-1",
+      event: "issues",
+      receivedAt: new Date(NOW).toISOString(),
+    };
+
+    await expect(service.ingestVerifiedGitHub(delivery)).resolves.toEqual({
+      accepted: true,
+      duplicate: false,
+      activityCount: 1,
+    });
+    expect(database.activities).toHaveLength(1);
+    expect(database.activities[0]).toMatchObject({
+      connectionId: CONNECTION_ONE,
+      providerEventId: "github-verified-delivery-1",
+      eventType: "github.issue.opened",
+    });
+    expect(queue.messages).toHaveLength(1);
+    expect(verify).not.toHaveBeenCalled();
+    expect(sign).not.toHaveBeenCalled();
+
+    // A second copy of the delivery — a Queue redelivery, or GitHub sending it
+    // again — is keyed on the delivery id and changes nothing.
+    await expect(service.ingestVerifiedGitHub(delivery)).resolves.toEqual({
+      accepted: true,
+      duplicate: true,
+      activityCount: 0,
+    });
+    expect(database.activities).toHaveLength(1);
+    expect(queue.messages).toHaveLength(1);
+  });
+
   it("lets GitHub deletion override a recoverable status without creating an activity", async () => {
     const database = new FakeDatabase();
     database.connections.push(await connection({

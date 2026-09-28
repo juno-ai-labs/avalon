@@ -225,13 +225,15 @@ to converge. Provisioning temporarily disables an existing endpoint while
 checking its credentials. Periodic reconciliation continues during this window.
 
 Finally, it walks all Daytona sandbox pages and submits signed refresh hints for
-existing labelled sandboxes, including archives. This wakes their observation
-schedule without waiting for the old expiry deadline. Sandboxes already deleted
-before rollout cannot be discovered from Daytona; those old rows are reconciled
-on acquisition or their existing retention alarm. Newly attached generations
-publish an immediate observation deadline. `providerObservation` on the Terminal
-state API exposes the last successful observation and its freshness/error; a
-successful setup probe proves receiver configuration, not lifecycle delivery.
+existing labelled sandboxes, including archives. Each hint records a fresh
+observation at once instead of waiting for the next periodic check. Sandboxes
+already deleted before rollout cannot be discovered from Daytona; those old
+rows are reconciled on acquisition or their existing retention alarm. A newly
+attached generation is due a check at once on its own conversation's alarm; the
+observation deadline is never published to the directory. `providerObservation`
+on the Terminal state API exposes the last successful observation and its
+freshness/error; a successful setup probe proves receiver configuration, not
+lifecycle delivery.
 Use a disposable sandbox to verify actual provider-generated events after rollout.
 
 The receiver accepts only the configured organization, and uses Daytona metadata
@@ -2375,6 +2377,31 @@ cross-region tooling.
 ### Queue backlog or dead letters
 
 Pause connector polling if ingestion exceeds safe capacity. Inspect receipts and activity dedupe keys, fix the deterministic consumer failure, and replay only opaque activity IDs. Unique constraints and processing leases remain the authoritative duplicate barrier.
+
+#### GitHub delivery dead letters
+
+A `github_webhook_delivery_v1` message is not an opaque ID: it carries the
+verified GitHub body inline (`body.kind: "inline"`) or a `payloadRef` into
+Global `PAYLOADS` (`body.kind: "staged"`). Treat it as GitHub content — do not
+copy it into a ticket or log. GitHub answered `202` long before it failed and
+will not redeliver it, so the dead-letter queue holds the only copy.
+
+- **Fix the cause first.** `github_delivery_retry` names it in `error_code` —
+  a regional error code, `github_verified_delivery_invalid:<field>` for a
+  bridge shape mismatch, or a GitHub rate limit already waited out.
+- **Redrive the message unchanged.** A redrive is safe: a region answers a
+  processed receipt as a duplicate and re-runs a pending one's effects keyed to
+  the delivery, and an older lifecycle event than the one a connection already
+  holds is skipped (`provider_webhook_lifecycle_superseded`). A staged message
+  whose object is gone is acknowledged as `already_processed`.
+- **Staged bodies can outlive their message.** A dead-lettered staged message
+  keeps its object under `global/github-ingress/<delivery id>/`, and a failed
+  cleanup logs `github_delivery_staged_body_cleanup_failed`. Delete the object
+  once its message is redriven or abandoned; nothing expires that prefix yet.
+- **`unrouted` is not an incident.** It is logged at `info` whenever no
+  deployment has connected the installation — every new installation's
+  `installation.created` beats the setup redirect. Look only if an installation
+  that completed setup keeps logging it.
 
 ### Google token revoked
 
