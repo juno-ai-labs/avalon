@@ -207,7 +207,9 @@ proactively connected. It joins the active work
 stream, the five most recently active unpinned rows, and any running work stream
 in the socket pool; pin order does not sequence their handshakes. WorkspaceDO
 supplements the first 250-row recent page with every visible running row, so an
-older active run is not omitted from that pool by pagination.
+older active run is not omitted from that pool by pagination. A desktop that
+loads Channels a Space at a time holds every Channel once its walk ends, so
+running rows reach the pool from there.
 
 Command-number navigation and its hint overlay are retired. Pinning, pointer
 reordering, and Alt+Arrow keyboard reordering remain unchanged. Historical

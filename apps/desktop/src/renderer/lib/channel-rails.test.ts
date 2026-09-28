@@ -41,31 +41,30 @@ describe('channel rails', () => {
     expect(nextChannelRailRequest(queryClient, a, rows, spaces)).toBeNull();
   });
 
-  it('asks for the Channel in front, then whole stale Spaces, then Channels in no Space', () => {
+  it('asks by name for the Channel in front, then each Space\'s stale Channels, then Channels in no Space', () => {
     const queryClient = new QueryClient();
     for (const id of [a, b, c, d]) noteRailWaterline(queryClient, id, 1);
 
-    expect(nextChannelRailRequest(queryClient, c, rows, spaces)).toEqual({ workstreamIds: [c] });
+    expect(nextChannelRailRequest(queryClient, c, rows, spaces)).toEqual([c]);
     applyChannelRails(queryClient, { rails: [rail(c, 1)], oversized: [], unavailable: [] });
-    // Design holds only `c`, now current; General is wholly stale.
-    expect(nextChannelRailRequest(queryClient, c, rows, spaces)).toEqual({ spaceId: general, expected: [a, b] });
+    // Design holds only `c`, now current; General's stale Channels are named.
+    expect(nextChannelRailRequest(queryClient, c, rows, spaces)).toEqual([a, b]);
     applyChannelRails(queryClient, { rails: [rail(a, 1), rail(b, 1)], oversized: [], unavailable: [] });
-    expect(nextChannelRailRequest(queryClient, c, rows, spaces)).toEqual({ workstreamIds: [d] });
+    expect(nextChannelRailRequest(queryClient, c, rows, spaces)).toEqual([d]);
     applyChannelRails(queryClient, { rails: [rail(d, 1)], oversized: [], unavailable: [] });
     expect(nextChannelRailRequest(queryClient, c, rows, spaces)).toBeNull();
   });
 
-  it('asks the foreground Channel\'s Space first, and by Channel when only part of it is stale', () => {
+  it('asks the foreground Channel\'s Space first, and only its stale Channels', () => {
     const queryClient = new QueryClient();
     for (const id of [a, b, c]) noteRailWaterline(queryClient, id, 1);
     applyChannelRails(queryClient, { rails: [rail(a, 1), rail(c, 1)], oversized: [], unavailable: [] });
 
-    // Only `b` is stale in General, so General is not resent whole.
-    expect(nextChannelRailRequest(queryClient, c, rows, spaces)).toEqual({ workstreamIds: [b] });
+    expect(nextChannelRailRequest(queryClient, c, rows, spaces)).toEqual([b]);
 
     noteRailWaterline(queryClient, c, 2);
-    expect(nextChannelRailRequest(queryClient, null, rows, spaces)).toEqual({ workstreamIds: [b] });
-    expect(nextChannelRailRequest(queryClient, c, rows, spaces)).toEqual({ workstreamIds: [c] });
+    expect(nextChannelRailRequest(queryClient, null, rows, spaces)).toEqual([b]);
+    expect(nextChannelRailRequest(queryClient, c, rows, spaces)).toEqual([c]);
   });
 
   it('keeps the newer rail when an older answer arrives late', () => {

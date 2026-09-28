@@ -10,7 +10,7 @@ import type { SpaceDirectory } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { act, render, screen } from '@testing-library/react';
-import { StrictMode, useEffect, type JSX } from 'react';
+import { StrictMode, useEffect, type JSX, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSummary } from './types';
 import { applyBreakoutAppearanceReceipt, type WorkstreamChildDirectory } from './channel-viewer-state';
@@ -485,7 +485,9 @@ describe('WorkspaceSocketProvider', () => {
     expect(FakeWebSocket.instances).toHaveLength(1);
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
-    const subscribe = JSON.parse(socket.send.mock.calls[0]![0] as string) as {
+    // Asks for Channels by Space, then subscribes.
+    expect(JSON.parse(socket.send.mock.calls[0]![0] as string)).toEqual({ type: 'channels_by_space' });
+    const subscribe = JSON.parse(socket.send.mock.calls[1]![0] as string) as {
       type: string; afterWaterline: number; diagnosticAttemptId: string;
     };
     expect(subscribe).toMatchObject({ type: 'subscribe', afterWaterline: 0 });
@@ -1172,7 +1174,7 @@ describe('WorkspaceSocketProvider', () => {
     // had got to. A directory request here would be the round trip this frame
     // exists to remove.
     const sent = socket.send.mock.calls.map(([frame]) => JSON.parse(String(frame)) as { type: string });
-    expect(sent.map((frame) => frame.type)).toEqual(['subscribe', 'set_presence']);
+    expect(sent.map((frame) => frame.type)).toEqual(['channels_by_space', 'subscribe', 'set_presence']);
     // No screen observes these entries. The workspace subscription owns the
     // directory and its ordering ledgers even when their screens are absent.
     const keys = ['workstreams', 'automations', 'spaces', 'spaces-inactive', 'personal-order',
@@ -1948,7 +1950,11 @@ describe('a Channel\'s breakouts and background agents on the organization socke
     };
   }
 
-  async function connect(queryClient: QueryClient, scope: string | null = null): Promise<FakeWebSocket> {
+  async function connect(
+    queryClient: QueryClient,
+    scope: string | null = null,
+    content: ReactNode = <div />,
+  ): Promise<FakeWebSocket> {
     const api = {
       getWorkspaceSocketTicket: vi.fn(async () => ({
         url: 'wss://api.rally.test/socket/workspaces/workspace-1',
@@ -1957,7 +1963,7 @@ describe('a Channel\'s breakouts and background agents on the organization socke
       })),
     };
     const provider = (
-      <WorkspaceSocketProvider region="global" api={api} workspaceId={workspaceId}><div /></WorkspaceSocketProvider>
+      <WorkspaceSocketProvider region="global" api={api} workspaceId={workspaceId}>{content}</WorkspaceSocketProvider>
     );
     render(
       <QueryClientProvider client={queryClient}>
@@ -2032,24 +2038,150 @@ describe('a Channel\'s breakouts and background agents on the organization socke
     expect(second).toMatchObject({ workstreamIds: [workstreamId] });
   });
 
-  it('asks a wholly stale Space by Space and follows its pages', async () => {
-    const spaceId = '00000000-0000-4000-8000-000000000031';
-    const queryClient = new QueryClient();
-    queryClient.setQueryData(['spaces'], { waterline: 1, items: [{ id: spaceId }] });
-    const socket = await connect(queryClient);
-    act(() => socket.message(sidebarFrame({ railWaterline: 1, spaceIds: [spaceId] })));
-    await flushPromises();
-    const [first] = railsSent(socket);
-    expect(first).toMatchObject({ spaceId });
-    expect(first).not.toHaveProperty('after');
+  describe('loading Channels a Space at a time', () => {
+    const general = '00000000-0000-4000-8000-000000000031';
+    const design = '00000000-0000-4000-8000-000000000032';
+    const other = '00000000-0000-7000-8000-000000000003';
 
-    act(() => socket.message({ ...railAnswer(first!['requestId'], 1), rails: [], nextAfter: workstreamId }));
-    await flushPromises();
-    const [, second] = railsSent(socket);
-    expect(second).toMatchObject({ spaceId, after: workstreamId });
-    act(() => socket.message(railAnswer(second!['requestId'], 1)));
-    await flushPromises();
-    expect(railsSent(socket)).toHaveLength(2);
+    function spaceSent(socket: FakeWebSocket): Record<string, unknown>[] {
+      return socket.send.mock.calls
+        .map(([frame]) => JSON.parse(String(frame)) as Record<string, unknown>)
+        .filter((frame) => frame['type'] === 'space_channels');
+    }
+
+    function spaceAnswer(
+      requestId: unknown,
+      rows: Record<string, unknown>[],
+      nextAfter: string | null,
+      rails: Record<string, unknown>[] = [],
+    ): Record<string, unknown> {
+      return {
+        type: 'workspace_space_channels', requestId, directoryWaterline: 7, items: rows,
+        stateVersions: rows.map((item) => ({ workstreamId: item['id'], ...version(7) })), rails, nextAfter,
+      };
+    }
+
+    function bySpaceSidebar(): Record<string, unknown> {
+      const frame = sidebarFrame({});
+      const sidebar = frame['sidebar'] as Record<string, unknown>;
+      return {
+        ...frame,
+        sidebar: {
+          ...sidebar,
+          workstreams: { directoryWaterline: 7, nextCursor: null, stateVersions: [], items: [] },
+          channelsBySpace: true,
+        },
+      };
+    }
+
+    async function connectWithProbe(queryClient: QueryClient): Promise<{
+      socket: FakeWebSocket;
+      api: () => ReturnType<typeof useWorkspaceSocket>;
+    }> {
+      let current: ReturnType<typeof useWorkspaceSocket> | null = null;
+      function Probe(): null {
+        current = useWorkspaceSocket();
+        return null;
+      }
+      const socket = await connect(queryClient, null, <Probe />);
+      return { socket, api: () => current! };
+    }
+
+    it('walks the Space on screen first, follows its pages, and takes rows and rails from each answer', async () => {
+      const queryClient = new QueryClient();
+      queryClient.setQueryData(['spaces'], { waterline: 1, items: [{ id: general }, { id: design }] });
+      const { socket, api } = await connectWithProbe(queryClient);
+      act(() => socket.message(bySpaceSidebar()));
+      await flushPromises();
+      expect(api().sidebarConnect?.channelsBySpace).toBe(true);
+
+      act(() => api().prioritizeSpace(design));
+      let walked!: Promise<Set<string> | null>;
+      act(() => { walked = api().walkSpaceChannels(); });
+      await flushPromises();
+      const [first] = spaceSent(socket);
+      expect(first).toMatchObject({ spaceId: design, rails: true });
+      expect(first).not.toHaveProperty('after');
+
+      act(() => socket.message(spaceAnswer(first!['requestId'], [row({ spaceIds: [design], railWaterline: 2 })], workstreamId, [{
+        workstreamId, railWaterline: 2, participantUserIds: [creator],
+        sidekicks: { owned: [], recommended: [], attached: [] }, resources: [],
+      }])));
+      await flushPromises();
+      // Painted as it lands, before the walk is over.
+      expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.map((item) => item.id))
+        .toEqual([workstreamId]);
+      const [, second] = spaceSent(socket);
+      expect(second).toMatchObject({ spaceId: design, after: workstreamId });
+      act(() => socket.message(spaceAnswer(second!['requestId'], [], null)));
+      await flushPromises();
+
+      const [, , third] = spaceSent(socket);
+      expect(third).toMatchObject({ spaceId: general });
+      act(() => socket.message(spaceAnswer(third!['requestId'], [row({ id: other, spaceIds: [general] })], null)));
+      await expect(walked).resolves.toEqual(new Set([workstreamId, other]));
+      await flushPromises();
+
+      expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.map((item) => item.id).sort())
+        .toEqual([workstreamId, other].sort());
+      expect(queryClient.getQueryData(['channel-rail', workstreamId]))
+        .toMatchObject({ railWaterline: 2, rail: { participantUserIds: [creator] } });
+      expect(api().loadedSpaceIds).toEqual(new Set([design, general]));
+      // The rail came with its row, so nothing is asked for by name.
+      expect(railsSent(socket)).toEqual([]);
+    });
+
+    it('keeps the rows it holds when the sidebar carries none, and leaves out rails it already holds', async () => {
+      const queryClient = new QueryClient();
+      queryClient.setQueryData(['spaces'], { waterline: 1, items: [{ id: general }, { id: design }] });
+      setCachedWorkstreams(queryClient, [summary({ id: workstreamId, spaceIds: [general] })]);
+      queryClient.setQueryData(['channel-rail', workstreamId], { railWaterline: 1, rail: null });
+      const { socket, api } = await connectWithProbe(queryClient);
+      act(() => socket.message(bySpaceSidebar()));
+      await flushPromises();
+      expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.map((item) => item.id))
+        .toEqual([workstreamId]);
+
+      let walked!: Promise<Set<string> | null>;
+      act(() => { walked = api().walkSpaceChannels(); });
+      await flushPromises();
+      const [first] = spaceSent(socket);
+      expect(first).toMatchObject({ spaceId: general, rails: false });
+      act(() => socket.message(spaceAnswer(first!['requestId'], [row({ spaceIds: [general] })], null)));
+      await flushPromises();
+      const [, second] = spaceSent(socket);
+      expect(second).toMatchObject({ spaceId: design, rails: true });
+      act(() => socket.message(spaceAnswer(second!['requestId'], [], null)));
+      await expect(walked).resolves.toEqual(new Set([workstreamId]));
+    });
+
+    it('stops a walk a newer one replaced, before asking for another page', async () => {
+      const queryClient = new QueryClient();
+      queryClient.setQueryData(['spaces'], { waterline: 1, items: [{ id: general }, { id: design }] });
+      const { socket, api } = await connectWithProbe(queryClient);
+      act(() => socket.message(bySpaceSidebar()));
+      await flushPromises();
+      const controller = new AbortController();
+      let walked!: Promise<Set<string> | null>;
+      act(() => { walked = api().walkSpaceChannels(controller.signal); });
+      const settled = walked.then(() => 'resolved', () => 'rejected');
+      await flushPromises();
+      const [first] = spaceSent(socket);
+      controller.abort();
+      act(() => socket.message(spaceAnswer(first!['requestId'], [], null)));
+      await expect(settled).resolves.toBe('rejected');
+      expect(spaceSent(socket)).toHaveLength(1);
+    });
+
+    it('walks nothing when the sidebar carried Channel rows', async () => {
+      const queryClient = new QueryClient();
+      queryClient.setQueryData(['spaces'], { waterline: 1, items: [{ id: general }] });
+      const { socket, api } = await connectWithProbe(queryClient);
+      act(() => socket.message(sidebarFrame({ spaceIds: [general] })));
+      await flushPromises();
+      await expect(api().walkSpaceChannels()).resolves.toBeNull();
+      expect(spaceSent(socket)).toEqual([]);
+    });
   });
 
   it('asks for no rail when rows carry no rail waterline', async () => {
@@ -2508,7 +2640,7 @@ describe('the organization-sync relay between windows', () => {
     await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2), { timeout: 2_000 });
     const replacement = FakeWebSocket.instances[1]!;
     act(() => replacement.open());
-    expect(JSON.parse(replacement.send.mock.calls[0]![0] as string)).toMatchObject({ type: 'subscribe', afterWaterline: 0 });
+    expect(JSON.parse(replacement.send.mock.calls[1]![0] as string)).toMatchObject({ type: 'subscribe', afterWaterline: 0 });
     // It relays nothing: only the main window publishes.
     expect(syncRelay.published).toEqual([]);
   });
