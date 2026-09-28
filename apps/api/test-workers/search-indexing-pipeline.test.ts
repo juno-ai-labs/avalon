@@ -378,7 +378,7 @@ describe('shared Queue indexing pipeline', () => {
     expect(publishedEmbeddingSends().flat()).toHaveLength(count);
   });
 
-  it('makes no WorkspaceDO call and no embedding for a batch already indexed', async () => {
+  it('confirms a batch already indexed by revision alone, with no document load and no embedding', async () => {
     await seedResource();
     await consume([resourceMessage()]);
     const job = publishedEmbeddingJobs()[0]!;
@@ -388,9 +388,30 @@ describe('shared Queue indexing pipeline', () => {
     const calls: string[] = [];
     // The same batch again, as a redelivery or a same-revision re-projection sends it.
     expect((await consume([job], { WORKSPACE_DOS: recordingWorkspaceObjects(calls) })).explicitAcks).toEqual(['search-0']);
-    expect(calls).toEqual([]);
+    expect(calls).toEqual(['resourceSearchRevision']);
     expect(embeddingInputs).toHaveLength(embedded);
     expect([...indexed.values()].filter((row) => row.record_type === 'chunk')).toHaveLength(chunks);
+  });
+
+  it('reclaims a batch already indexed when the delivery that wrote it never confirmed its revision', async () => {
+    const workspace = await seedResource();
+    await consume([resourceMessage()]);
+    const job = publishedEmbeddingJobs()[0]!;
+    const written = [...indexed].filter(([, row]) => row.record_type === 'chunk');
+    expect(written).toHaveLength(job.spans.length);
+    // The writer was cancelled after its upsert and before its check; the
+    // resource then moved on, and the new revision's source job reclaimed.
+    await runInDurableObject(workspace, (_instance, state) => {
+      state.storage.sql.exec("UPDATE resources SET uploaded_by_user_id = 'someone-else' WHERE id = ?", resourceId);
+    });
+    await consume([resourceMessage()], {}, false);
+    // The cancelled writer's rows, as its upsert left them.
+    for (const [key, row] of written) indexed.set(key, row);
+    const embedded = embeddingInputs.length;
+    expect((await consume([job])).explicitAcks).toEqual(['search-0']);
+    expect(embeddingInputs).toHaveLength(embedded);
+    expect([...indexed.values()].filter((row) => row.record_type === 'chunk' && row.revision === job.document.revision))
+      .toEqual([]);
   });
 
   it('embeds a new revision of unchanged text, loading it once and confirming by revision', async () => {
