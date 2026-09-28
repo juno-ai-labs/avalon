@@ -620,9 +620,11 @@ the next model request. Missing authority omits that assistant/tool pair rather
 than replaying stale content.
 
 A Sidekick run continues on input from anyone who can reach it, including
-everyone in a provider thread bound to the run: people with no linked Rally
-account, workspace guests, and members of another company in a Slack Connect
-channel. The continued run acts with the Sidekick's run-as user's connectors
+everyone in a provider thread bound to the run who is a full member of the
+connected workspace, whether or not they have a linked Rally account. For Slack,
+the sender check refuses guests (restricted and single-channel accounts) and
+members of another team, such as Slack Connect users, before the reply reaches
+the run. The continued run acts with the Sidekick's run-as user's connectors
 whoever sent the input. That is the product decision the external conversation
 bindings PRD records, not a gap. The mitigation is framing, not admission:
 outside text in a run child reaches the model as labelled evidence from its

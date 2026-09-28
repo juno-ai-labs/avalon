@@ -203,9 +203,10 @@ keeps one identity and one history, so a run can complete more than once.
 **Anyone who can reach a run may continue it.** That is any sender in a
 thread bound to the run, and anyone who can post in the run itself. Each
 message keeps its sender, so the run knows who said what. The run acts through
-the run-as user's connectors whoever sent the input. This includes a Slack
-guest, or a member of another company in a Slack Connect channel, when the run
-posted into a shared channel with the workspace bot. That is the intended
+the run-as user's connectors whoever sent the input. This includes a member
+of the connected Slack workspace with no Rally account. (As built, Slack's
+sender check refuses guests and members of another team, such as Slack Connect
+users, before a reply reaches the run.) That is the intended
 consequence of this rule, not a gap, and it changes a rule documented today
 (see Impact on the product contract).
 
