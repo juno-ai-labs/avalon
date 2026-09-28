@@ -542,7 +542,10 @@ a document from a build ahead of it and naming the keys it dropped;
 design's rule table; `test-workers/conversation-parent-contract.test.ts` proves
 the index returns only what a reader's groups admit, including after revocation;
 `test/search-route.test.ts` proves the HTTP boundary fails closed;
-`test/scoped-memory.test.ts` proves memory search checks each run canonically.
+`test/scoped-memory.test.ts` proves memory search checks each run canonically,
+and asks the WorkspaceDO for each scope once per isolate while deciding
+writability per call; `test-workers/workspace-memory-search-key-purge-migration.test.ts`
+proves WorkspaceDO migration 83 removes memory search's keys and nothing else.
 The executor's group is proved in `automation-directory.test.ts` and
 `automation-do.test.ts`. The old store's suites remain until phase 4 deletes it.
 A disposable live namespace in gcp-us-west1 verified on 2026-09-28 that
@@ -594,7 +597,10 @@ missing it is invisible until its object migrates: force the migrations before
 that deploy, and re-count afterwards. The old search-authorization store is no
 longer pushed or read; its tables and triggers stay until phase 4 drops them, so
 a Worker rollback finds the recorded targets and must be followed by a full push
-(migration 48's pass).
+(migration 48's pass). WorkspaceDO migration 83 has already deleted the keys
+memory search registered per run; a rollback past it re-registers them on the
+next memory search, as before. Their Global `AUTHORIZATION_CACHE` copies were
+written without a TTL and stay, unread, until phase 4 retires the namespace.
 
 A WorkspaceDO dispatches resource references 100 at a time. While more are due
 after a batch, the next waits `RESOURCE_SEARCH_BACKLOG_INTERVAL_MS` (60
@@ -684,16 +690,18 @@ budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
 
-### 2026-09-28 — An embedding batch checks the index before its source
+### 2026-09-28 — Embedding batches check the index first; memory search drops its per-run keys
 
-**What changed:** An embedding delivery counts its batch's rows in the index
+This entry covers two independent changes in one pull request. Each keeps its own four parts.
+
+**What changed (embedding batches):** An embedding delivery counts its batch's rows in the index
 before reading the source, and acknowledges with no WorkspaceDO call when all
 are there. The count matches document, revision, generation and each span's
 exact range instead of the chunk IDs, which need the text. A resource's
 post-write freshness check reads `resourceSearchRevision` instead of preparing
 the document again; a turn still re-reads in full.
 
-**Why:** In production on 2026-09-27, about 10,000
+**Why (embedding batches):** In production on 2026-09-27, about 10,000
 `prepareResourceSearchDocument` calls an hour came from embedding deliveries,
 and about 98% of those deliveries loaded the document twice and then embedded
 nothing because the rows already existed: the same-revision re-projections
@@ -703,19 +711,55 @@ backlog pacing exists to prevent. An already-written batch now costs no object
 call; a batch that is embedded costs one document read and one watermark read
 instead of two document reads.
 
-**Considered and rejected:** A ledger of completed batches in the object or
+**Considered and rejected (embedding batches):** A ledger of completed batches in the object or
 the Queue message, which duplicates what the index rows already record.
 Counting by generation alone or by `In` lists of starts and ends, which can
 count another batch's rows and skip a batch that is missing. A revision read
 for turns, which has no such watermark and whose captured pages can change
 text at the same revision.
 
-**What a future change has to respect:** The skip is exact only while a chunk's
+**What a future change has to respect (embedding batches):** The skip is exact only while a chunk's
 ID is a function of (document, revision, generation, range), and a generation
 is the hash of the full text. The resource fence is sound only while every input of
 `resourceSearchText` and `resourceSearchCategory` bumps
 `resource_search_versions`: a new input that does not (the `listing` trap
 above) would let a stale write pass the fence, not only miss a re-projection.
+
+**What changed (memory search):** WorkspaceDO migration 83 deletes every search-authorization key
+whose subject's `delegation` starts with `memory-search:v1:`, found through the
+snapshot that holds the delegation, together with its snapshot, its dependency
+rows, and a `resource` push row for a scope that no other key names. Every other
+key of the old store is left for phase 4. Separately, `ensureScope` keeps each
+memory scope row (id, workspace, kind, owner) in a module-level `Map` keyed by
+(workspace, kind, owner), so a memory search after the first in an isolate makes
+no `ensureMemoryScope` RPC; `writable` is still decided per call.
+
+**Why (memory search):** Nothing has registered a memory-search key since the change below, and
+each key names one run, so none would be read again — yet an object still held
+hundreds (628 on one Juno Labs scope) that a rollback-driven full push or
+`listSearchAuthorizationSnapshots` would walk. `ensureScope` ran on every memory
+search, about 453 calls an hour, for rows that never change once created:
+`memory_scopes_are_immutable` refuses an update, the table is typed-RPC-only and
+nothing deletes from it, and `ensureWorkspaceMemoryScope` answers the stored row
+for an existing key.
+
+**Considered and rejected (memory search):** Waiting for phase 4 to drop the tables, which
+leaves the largest part of the store in place for a rollback to re-push. Finding
+the keys by shape (`resource_id` and `parent_id` both set) rather than by
+delegation, which is true of memory resources today but is not what makes a key
+memory search's. A KV sweep for the Global copies: they are unread, a migration
+cannot do network I/O, and phase 4 retires the namespace. Caching the whole
+`MemoryScope`: `writable` depends on the caller's role, so one caller's flag
+would leak to the next.
+
+**What a future change has to respect (memory search):** The scope cache is correct only while
+a scope row is immutable and never deleted. Anything that deletes, re-creates or
+re-ids a `memory_scopes` row has to drop the cache first, or a warm isolate
+keeps handing out the old id; a test fixture that rebuilds scopes under the same
+workspace id calls `clearMemoryScopeCache`. The cache is unbounded: its size is
+the number of distinct scopes an isolate has served, which is small at today's
+size and bounded by the isolate's life; whether it needs a cap is the team's
+call.
 
 ### 2026-09-28 — Member search filters on the searcher's audience groups
 
