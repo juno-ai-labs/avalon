@@ -6071,8 +6071,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    *
    * The page is the one `channel_rails` reads for a Space, so a hidden Channel
    * is never on it and `nextAfter` never names one. A guest, or a Space the
-   * viewer cannot see, is answered with an empty page. System Channels are
-   * left off, as the connect page leaves them off.
+   * viewer cannot see, is answered with an empty page. The page leaves out
+   * system Channels, as the connect page does.
    *
    * Rails are an extra: one that does not fit, or fails its schema, is left
    * out, and the client asks for it by name.
@@ -6094,8 +6094,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       : [];
     const byId = new Map(boundParameterChunks(page).flatMap((chunk) => sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
-        WHERE directory.workstream_id IN (${chunk.map(() => "?").join(", ")})
-          AND directory.system_kind IS NULL`,
+        WHERE directory.workstream_id IN (${chunk.map(() => "?").join(", ")})`,
       identity.userId, identity.userId, ...chunk,
     ).toArray()).map((row) => [row.workstream_id, row]));
     const rows = page.flatMap((id) => byId.get(id) ?? []);
