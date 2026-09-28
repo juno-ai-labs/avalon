@@ -73,13 +73,12 @@ catalog descriptions while retaining the assigned tool name.
 Substream migration 43 adds `sidekick_attachments` (conversation-owned, deduplicated
 by Sidekick) and `sidekick_execution_skills` (admitted snapshots and activation
 refs pinned to an execution). Loading attaches within the current substream; removal
-affects future executions. The conversation's `directory_common` effect carries
-the list as `sidekickAttachmentIds` (attach order), and an attach or a removal
-that changes a row commits that effect with it
-(`WorkstreamObjectProductService.commitWithCommonEffect`); Main's list is its
-Channel rail's ([`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-channels-rail-and-its-waterline)).
-A conversation that attached Sidekicks before the field existed reports them
-with its next common effect, which any message or state change commits. Future runs reauthorize attachments and pin the latest
+affects future executions. `directory_common` has an optional
+`sidekickAttachmentIds` that WorkspaceDO applies as Main's Channel-rail list
+([`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-channels-rail-and-its-waterline)),
+but the conversation does not send it yet: emission follows in a later deploy,
+once every Queue consumer parses the field, and until then every Main's rail
+omits `attached` and the desktop keeps the REST attachment read. Future runs reauthorize attachments and pin the latest
 accepted revisions. Workspace migration 35 projects the owner stored `loadable`
 policy output; unknown legacy values exclude discovery. Workspace migration 36
 adds `external_registration_generations` for ordered registration replacements
@@ -1442,7 +1441,7 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | Participant removal targets the final active participant | The object returns `409 workstream_participant_required` and leaves the participant active. The desktop disables the action when its current snapshot already shows only one participant, but that is not the authority fence. |
 | Somebody loses access while holding sockets | A queue message per object closes their sockets; a failed hop retries and then dead-letters. Nothing else closes them, so a message that is never published leaves the socket open until the client reconnects. See [`access-revocation.md`](access-revocation.md). |
 | Queue duplicates/reorders effects | Stable IDs/hashes deduplicate immutable effects; the parent's receipt table and WorkspaceDO's receipt table answer a replay without applying it; generation/version orders mutable state. |
-| An effect envelope exceeds `EFFECT_QUEUE_MESSAGE_MAX_BYTES` (120,000 bytes, under Cloudflare's 128 KB per-message limit) | The sender deletes the row and logs `conversation_effect_oversized` or `parent_effect_oversized` with the byte count; it is never retried, because nothing in the object can shrink it and the Queue would refuse it on every attempt. Two fields are unbounded enough to cross the guard: `resourceLinks`, capped at `WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT` (10,000), and `sidekickAttachmentIds`. A `directory_common` envelope that fits without its attachment list is sent without it (`outcome: "attachments_omitted"`), so the parent keeps its last list rather than losing every other directory field; only one that still does not fit is dropped. The guard is written open and the number is the team's to set. |
+| An effect envelope exceeds `EFFECT_QUEUE_MESSAGE_MAX_BYTES` (120,000 bytes, under Cloudflare's 128 KB per-message limit) | The sender deletes the row and logs `conversation_effect_oversized` or `parent_effect_oversized` with the byte count; it is never retried, because nothing in the object can shrink it and the Queue would refuse it on every attempt. Two fields are unbounded enough to cross the guard: `resourceLinks`, capped at `WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT` (10,000), and `sidekickAttachmentIds` (not sent yet; see above). A `directory_common` envelope that fits without its attachment list is sent without it (`outcome: "attachments_omitted"`), so the parent keeps its last list rather than losing every other directory field; only one that still does not fit is dropped. The guard is written open and the number is the team's to set. |
 | A reader opens a conversation whose parent is archived | Admitted for reading; every write on that socket and every REST write answers `409 conversation_parent_archived`. |
 | A synchronous transaction callback returns a Promise | The callback finishes before the Promise continuation, so SQLite can commit an incomplete state transition and later writes can escape the transaction. Prepare all yielding work first; the commit callback performs only synchronous SQLite and revalidates its fences. |
 | The Queue refuses a send | The batch is deferred five seconds in the source outbox and the alarm tries again; user transcript commits are not rolled back. |
@@ -1669,7 +1668,7 @@ onto `runs.state` forward only.
 | `workstream_resource_links`, `resource_inventory_revision` | Links to workspace resources with a CHECK-constrained relationship (`attachment`, `message_attachment`, `origin`, `generated`, `inbound_email`, or `context`) and the authorization revision every relationship change advances. `generated` derives artifact direction; every other value derives source direction. |
 | `terminal_workspace`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Rally state for the Daytona-backed Terminal plugin. |
 | `resident_context_blocks`, `resident_context_compactions` | The context-residency ledger: blocks delivered to this conversation, their residency and remaining prompt lifetime, pending deliveries, and the compaction events already applied. |
-| `sidekick_attachments` | The Sidekicks this conversation has loaded, reported to its parent on every common effect. |
+| `sidekick_attachments` | The Sidekicks this conversation has loaded. Not yet reported to its parent (see the Sidekick attachment paragraph above). |
 | `projection_keys`, `durable_outbox`, `durable_inbox_receipts` | Versioned child-to-parent `conversation_effect` envelopes awaiting the alarm's `sendBatch` (deleted once the Queue accepts them), and inbound dedupe such as feed tickets. |
 
 `participant_transcript_turns.transcript_sequence` is canonical transcript
@@ -1800,29 +1799,29 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ## Changelog
 
-### 2026-09-28 — A conversation reports its Sidekick attachments on its directory effect
+### 2026-09-28 — An oversized directory effect is sent without its Sidekick attachments
 
-**What changed:** `directory_common` always carries `sidekickAttachmentIds`.
-Attaching a Sidekick on skill load and removing one from the rail commit that
-effect with the row change. An existing conversation reports its list with its
-next common effect.
+**What changed:** `drainRegionalEffects` sends a `directory_common` envelope
+that is too large for one Queue message only because of
+`sidekickAttachmentIds` without that list, rather than dropping it. The field is
+defined, and WorkspaceDO reads it, but no conversation sends it in this deploy.
 
-**Why:** The Channel rail on the Organization socket lists Main's attachments,
-and the only other way to learn them was a call into each Main.
+**Why:** `directory_common` is a strict schema, so an effect carrying a new
+field is refused and acked by a consumer one deploy behind, losing the whole
+directory projection. The reader ships first
+([`hosted-conversation-parents.md`](hosted-conversation-parents.md#changelog)
+owns the rail it serves); the emission and its tests follow once every consumer
+parses the field. The drain rule is generic and ships now so the list, once
+sent, cannot take every other directory field down with it.
 
-**Considered and rejected:** A separate effect kind for attachments. The
-common effect is already the conversation's whole projection, deduplicated by
-payload hash, and the parent already stores it; a new kind would need its own
-outbox ordering and receipts for one list. Backfilling from the parent side:
-the parent cannot enumerate an idle conversation's rows. A one-time report on
-the object's first wake after deploy: committing an effect during construction
-set the alarm to now and cost a recovering loop its re-derived wake, and a quiet
-Channel loses nothing by waiting, since its rail keeps the REST read for
-attachments until Main reports.
+**Considered and rejected:** Emitting in the same deploy: the skew window loses
+projections. A separate effect kind for attachments: it would need its own
+ordering and receipts for one list the common effect already fits.
 
-**Consequences:** `activateSidekickSkill` is now asynchronous (it awaits the
-commit's alarm). An effect from a Worker before this one omits the field, and
-the Organization treats that as "not reported" rather than "none".
+**Consequences:** Every Main's rail omits `attached` until the emission ships.
+When it does, an existing conversation reports its list with its next common
+effect; the emitting change must also restore attach and removal committing
+that effect.
 
 ### 2026-09-26 — Processed connector events age out at 90 days, on the alarm
 
