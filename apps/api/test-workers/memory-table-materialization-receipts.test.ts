@@ -22,7 +22,6 @@ import { asWorkspaceId, type AutomationMemoryTable } from "@rally/contracts";
 import { sha256 } from "../src/lib/crypto";
 import { workspaceDOName } from "../src/durable-objects/names";
 import { WorkspaceMemoryScopeSchema, WorkspaceMemoryTableCreateResultSchema } from "../src/durable-objects/workspace-memory-protocol";
-import { clearMemoryScopeCache } from "../src/services/memory-service";
 import { materializeAutomationMemoryTables } from "../src/services/memory-table-service";
 import { createTestEnv } from "../test/helpers/cloudflare-test";
 
@@ -122,9 +121,6 @@ beforeEach(async () => {
       state.storage.sql.exec(`DELETE FROM ${table}`);
     }
   });
-  // Scopes are deleted above, which production never does; forget the ids
-  // this isolate remembered for them.
-  clearMemoryScopeCache();
 });
 
 describe("materializing a Sidekick's declared tables across the rename", () => {

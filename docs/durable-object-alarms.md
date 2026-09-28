@@ -134,7 +134,7 @@ before a full re-arm.
    `WorkspaceDO` runs each of its derived lanes here **only when that lane is
    due**: `derivedAlarmLanes()` is the one list of lane due-time reads, the
    candidates arm from all of it, and `runDueAlarmWork` reads a lane just
-   before it would run and passes it through `derivedAlarmLaneDue(dueAt, now)`.
+   before it would run and runs it when that answer is at or before `now`.
    A lane skipped on this wake is still a candidate in step 7, so skipping can
    only leave work for the instant it was already armed for. The schedule
    reconcile is the one phase with no due time and runs on every wake.
@@ -585,8 +585,7 @@ rows from an existing index, and an index nothing needs is write cost on every
 row.
 
 **Consequences:** A new derived lane goes in `derivedAlarmLanes()` and is gated
-in `runDueAlarmWork` by the same entry; a lane armed from one read and run on
-another can strand work or run for nothing. A lane's due read runs on every
+in `runDueAlarmWork` by the same entry, never by a read of its own. A lane's due read runs on every
 wake and every re-arm, so it must be answered from an index. A write path that
 arms must arm on a returned witness of the row it queued, not unconditionally.
 

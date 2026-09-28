@@ -80,8 +80,6 @@ import {
   ConversationParentReserveChildResultSchema,
   ConversationParentTerminalDeadlinesRequestSchema,
   ConversationParentTerminalDeadlinesResultSchema,
-  ListVisiblePrivateChildrenRequestSchema,
-  ListVisiblePrivateChildrenResultSchema,
   MutatePrivateChildParticipantRequestSchema,
   MutatePrivateChildParticipantResultSchema,
   PrivateChildPreparationOperationSchema,
@@ -105,7 +103,6 @@ import {
   type ConversationParentReserveChildResult,
   type ConversationParentTerminalDeadlinesRequest,
   type ConversationParentTerminalDeadlinesResult,
-  type ListVisiblePrivateChildrenRequest,
   type ListVisiblePrivateChildrenResult,
   type MutatePrivateChildParticipantRequest,
   type MutatePrivateChildParticipantResult,
@@ -2732,12 +2729,6 @@ export class HostedParent {
     }
     await this.broadcastMetadata();
     return this.requirePrivateChildPreparation(request.operationId);
-  }
-
-  listVisiblePrivateChildren(input: ListVisiblePrivateChildrenRequest): ListVisiblePrivateChildrenResult {
-    const request = ListVisiblePrivateChildrenRequestSchema.parse(input);
-    this.assertParent(request.workspaceId, request.parentId);
-    return ListVisiblePrivateChildrenResultSchema.parse({ children: this.visiblePrivateChildrenForUser(request.userId) });
   }
 
   /** Archive the child registry entry without deleting membership or transcript. */

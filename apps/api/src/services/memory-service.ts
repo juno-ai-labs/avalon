@@ -22,6 +22,7 @@ import {
   type WorkspaceMemoryOutboxRow,
 } from "../durable-objects/workspace-memory-protocol";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { memoryScopeRows } from "./memory-scope-cache";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createIdentityObjectPort } from "../runtime/identity-port";
@@ -255,21 +256,6 @@ function ftsQuery(value: string): string | null {
     .join(" OR ");
 }
 
-/**
- * Scope rows this isolate has already seen, keyed by (workspace, kind, owner).
- * A row never changes once created: `memory_scopes_are_immutable` refuses an
- * update, the table is typed-RPC-only and nothing deletes from it, and
- * `ensureWorkspaceMemoryScope` answers the stored row for an existing key. So
- * the id is safe to keep for the isolate's life. `writable` is not part of the
- * row — it depends on the caller's role — and is applied per call.
- */
-const scopeRows = new Map<string, Omit<MemoryScope, "writable">>();
-
-/** Drops every remembered scope. Exists for tests, whose fixtures re-create scopes under the same key. */
-export function clearMemoryScopeCache(): void {
-  scopeRows.clear();
-}
-
 export async function ensureScope(
   env: Env,
   workspaceId: string,
@@ -278,7 +264,7 @@ export async function ensureScope(
   writable: boolean,
 ): Promise<MemoryScope> {
   const key = JSON.stringify([workspaceId, kind, ownerId]);
-  const known = scopeRows.get(key);
+  const known = memoryScopeRows.get(key);
   if (known) return { ...known, writable };
   const workspace = await workspaceMemoryObject(env, workspaceId);
   const scope = WorkspaceMemoryScopeSchema.parse(await workspace.ensureMemoryScope({
@@ -294,7 +280,7 @@ export async function ensureScope(
     kind: scope.kind,
     ownerId: scope.ownerId,
   };
-  scopeRows.set(key, row);
+  memoryScopeRows.set(key, row);
   return { ...row, writable };
 }
 

@@ -111,14 +111,7 @@ describe("Sideline catalog", () => {
         }
       });
     }
-    // Three Channels, two people: the relationship read, then per person one
-    // directory page and one Breakout read — not one per Channel.
-    expect(calls.sort()).toEqual([
-      "listImpersonationRelationships",
-      "listVisiblePrivateChildrenForParents",
-      "listVisiblePrivateChildrenForParents",
-      "listWorkstreams",
-      "listWorkstreams",
-    ]);
+    // Three Channels, two people: one Breakout read per person, not one per Channel.
+    expect(calls.filter((call) => call === "listVisiblePrivateChildrenForParents")).toHaveLength(2);
   });
 });

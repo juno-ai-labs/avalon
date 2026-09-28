@@ -10,6 +10,7 @@ import { workspaceDOName, conversationObjectName } from '../src/durable-objects/
 import { consumeActivityQueue } from '../src/queues/activity-consumer';
 import { ResourceSearchProjectionSchema } from '../src/durable-objects/resource-search-projection';
 import { seedWorkstreamRoot, seedParticipantMessage } from './helpers/substream-fixture';
+import { countingNamespace } from './helpers/counting-namespace';
 import { searchDocumentId } from '../src/services/text-search';
 import { searchAudienceGroupId } from '../src/services/search-audience';
 import type { Env } from '../src/env';
@@ -197,30 +198,6 @@ function publishedEmbeddingSends() {
     .filter((messages) => messages.length);
 }
 
-/**
- * The real WorkspaceDO namespace, recording each RPC method a delivery calls on
- * it. The object itself answers every call as usual.
- */
-function recordingWorkspaceObjects(calls: string[]): Env['WORKSPACE_DOS'] {
-  return new Proxy(env.WORKSPACE_DOS, {
-    get(namespace, property) {
-      if (property === 'get') {
-        return (id: DurableObjectId, options?: DurableObjectNamespaceGetDurableObjectOptions) => new Proxy(
-          namespace.get(id, options), {
-            get: (stub, method) => {
-              const value: unknown = Reflect.get(stub, method);
-              if (typeof value !== 'function' || typeof method !== 'string') return value;
-              // An RPC method is itself a stub: calling `.apply` on it would be an RPC too.
-              return (...args: unknown[]) => { calls.push(method); return (value as (...input: unknown[]) => unknown)(...args); };
-            },
-          });
-      }
-      const value: unknown = Reflect.get(namespace, property);
-      return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(namespace) : value;
-    },
-  });
-}
-
 const RowsSchema = z.array(z.object({ source: z.string(), text: z.string(), record_type: z.string(),
   chunk_start: z.number().nullable(), chunk_end: z.number().nullable() }));
 function liveRows() {
@@ -387,7 +364,7 @@ describe('shared Queue indexing pipeline', () => {
     const embedded = embeddingInputs.length;
     const calls: string[] = [];
     // The same batch again, as a redelivery or a same-revision re-projection sends it.
-    expect((await consume([job], { WORKSPACE_DOS: recordingWorkspaceObjects(calls) })).explicitAcks).toEqual(['search-0']);
+    expect((await consume([job], { WORKSPACE_DOS: countingNamespace(calls) })).explicitAcks).toEqual(['search-0']);
     expect(calls).toEqual(['resourceSearchRevision']);
     expect(embeddingInputs).toHaveLength(embedded);
     expect([...indexed.values()].filter((row) => row.record_type === 'chunk')).toHaveLength(chunks);
@@ -432,7 +409,7 @@ describe('shared Queue indexing pipeline', () => {
     for (const [key, row] of previous) indexed.set(key, row);
     const embedded = embeddingInputs.length;
     const calls: string[] = [];
-    expect((await consume(jobs, { WORKSPACE_DOS: recordingWorkspaceObjects(calls) })).explicitAcks).toEqual(['search-0']);
+    expect((await consume(jobs, { WORKSPACE_DOS: countingNamespace(calls) })).explicitAcks).toEqual(['search-0']);
     expect(calls).toEqual(['prepareResourceSearchDocument', 'resourceSearchRevision']);
     expect(embeddingInputs.length - embedded).toBe(jobs[0]!.spans.length);
     expect([...indexed.values()].filter((row) => row.record_type === 'chunk' && row.revision === jobs[0]!.document.revision))
