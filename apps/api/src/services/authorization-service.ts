@@ -13,7 +13,7 @@ import type { AutomationDO } from '../durable-objects/automation-do';
 import type { WorkspaceDO } from '../durable-objects/workspace-do';
 import type { WorkstreamResourceStorage } from '../durable-objects/workstream-resource-storage';
 import {
-  AccessContext, evaluateReadPolicy,
+  AccessContext, evaluateReadPolicy, owningChannelAdmitsMember, sidekickAdmitsMember,
   type AuthorizationDecision, type AuthorizationEvidence, type AuthorizationResource,
   type AuthorizationSubject, type ReadPolicy,
 } from './authorization-policy';
@@ -242,14 +242,14 @@ class AuthorizationBatch {
           userId, substreamId: resource.substreamId, requireGrantAuthority: true }), validatedAt: Date.now() }));
       return evaluateReadPolicy(fact(admission.authorized, 'not_participant', evidence), Date.now());
     }
-    const policies = [fact(facts.scope === 'workspace' || facts.author || facts.executor, 'not_participant', evidence)];
+    const policies = [fact(sidekickAdmitsMember(facts), 'not_participant', evidence)];
     if (facts.scope === 'workstream' && facts.owningWorkstreamId) {
       const owningWorkstreamId = facts.owningWorkstreamId;
       const userId = subject.userId;
       const owner = await ownerEvidence(this.identities, JSON.stringify([subject, owningWorkstreamId]),
         () => createIdentityObjectPort(this.env, subject.workspaceId, owningWorkstreamId)
           .readAuthorizationFacts({ userId }));
-      policies.push(fact(owner.exists && !owner.archived && owner.participant, 'not_participant', {
+      policies.push(fact(owner.exists && owningChannelAdmitsMember(owner), 'not_participant', {
         owner: `${facts.owningWorkstreamId}/0`, revision: owner.revision, validatedAt: owner.validatedAt,
       }));
     }

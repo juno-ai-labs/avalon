@@ -342,7 +342,7 @@ reloaded from a canonical source.
 ## Invariants
 
 - Search scope enumeration includes archived and system conversations and has its own complete-list contract. Sidebar visibility is not search readability.
-- The searcher's audience groups decide which rows member search returns: a row is a candidate only when its `audience` shares one of them. This reverses the earlier rule that an index attribute never grants access, deliberately and only for search (see the 2026-09-28 changelog entry). The groups are computed live on every search by `readSearchAudience`, which decides each conversation through its parent's own `readableSubstreams` and each connection by the predicate `authorizationConnectionFacts` applies; no other code may compute a person's groups. The attribute still grants nothing beyond the excerpt: opening a row keeps its own canonical check. Scope prefilters remain an optimization, and `connection_id` grants nothing.
+- The searcher's audience groups decide which rows member search returns: a row is a candidate only when its `audience` shares one of them. This reverses the earlier rule that an index attribute never grants access, deliberately and only for search (see the 2026-09-28 changelog entry). The groups are computed live on every search by `readSearchAudience`, the only code that computes them. It decides each conversation through its parent's own `readableSubstreams`, and each Sidekick and connection through the predicates canonical authorization shares (`sidekickAdmitsMember`, `owningChannelAdmitsMember`, `connectionAdmits`); search adds two narrowings of its own (a guest never holds a workspace connection, and reaches a Channel-owned Sidekick only through management access) and skips archived Channels and Spaces, whose rows member search never returns. The attribute still grants nothing beyond the excerpt: opening a row keeps its own canonical check. Scope prefilters remain an optimization, and `connection_id` grants nothing.
 - The response never reports what it omitted. A failed group read fails the search (the route's 503); it never returns an unfiltered page.
 - A row without its display attributes, or with `archived` set, is never returned. Member retrieval filters on `archived Eq false`, which a null attribute does not match, so neither kind consumes a candidate page; the read path checks the same value again on every row it renders. Omission is the safe failure; nothing falls back to a canonical reload.
 - Every writer of a conversation's display writes the current state it reads beside the text: the producer at upsert time, the patch job when it runs. A display job names the conversation and never carries a title, so a delayed or redelivered job cannot write an old one; the pipeline's post-write fence retries an upsert whose display changed underneath it, and the patch job re-reads the display after patching and retries when it changed, so two overlapping deliveries for one conversation converge on the newest state rather than the last to run.
@@ -374,8 +374,8 @@ All, Messages, Links, Artifacts, and Files tabs use literal case-insensitive
 substring retrieval. BM25 and ANN are available at the shared boundary but are
 not yet exposed through this member endpoint.
 
-The index admits every candidate through its `audience`; loaders only render,
-and neither reads an owner. The route revalidates the workspace session before
+Admission is the `audience` clause (see Invariants); loaders only render and
+never read an owner. The route revalidates the workspace session before
 returning. The index returns candidate identifiers, the canonical text and the
 display attributes the owning object wrote beside it. Excerpts
 contain UTF-16 source ranges and excerpt-relative highlight ranges; React renders
@@ -516,19 +516,13 @@ covers the display trigger, its outbox channel, the migration-52 requeue and the
 migration-51 and migration-53 re-projections against a cleared watermark and a
 drained outbox row; `test/search-document.test.ts` covers the contract accepting
 a document from a build ahead of it and naming the keys it dropped;
-`test-workers/search-audience-person.test.ts` holds the person side against the
-design's rule table (members and guests, open and personal Channels, a Breakout's
-own roster, Sidekicks by scope, author, executor and owning Channel, connections
-by scope, owner and status, a suspended member), and the executor arriving on a
-Sidekick's directory row; `test-workers/conversation-parent-contract.test.ts`
-covers index-served rendering, a member seeing only what their groups admit, and
-a removed reader losing a room's rows on the next search, with the provider
-double applying the query's audience clause as Turbopuffer does;
-`test/search-route.test.ts` covers the HTTP boundary, including a failed group
-read answering 503 without querying the index; `test/scoped-memory.test.ts`
-covers memory search checking each run canonically and storing no decision. `test-workers/search-authorization.test.ts` and
-`test-workers/search-authorization-universe.test.ts` still cover the old store
-until phase 4 deletes it, including that a push left in the Queue is dropped.
+`test-workers/search-audience-person.test.ts` proves the person side against the
+design's rule table; `test-workers/conversation-parent-contract.test.ts` proves
+the index returns only what a reader's groups admit, including after revocation;
+`test/search-route.test.ts` proves the HTTP boundary fails closed;
+`test/scoped-memory.test.ts` proves memory search checks each run canonically.
+The executor's group is proved in `automation-directory.test.ts` and
+`automation-do.test.ts`. The old store's suites remain until phase 4 deletes it.
 A disposable live namespace in gcp-us-west1 verified on 2026-09-28 that
 `ContainsAny` over a `[]uuid` attribute returns exactly the rows sharing a group,
 that a row with an empty or absent audience never matches, and that the clause
@@ -648,15 +642,11 @@ explicitly continue; legacy clients receive only the first candidate page.
 
 ## Security and trust model
 
-A row's `audience` decides whether member search returns it, against the
-searcher's groups read live from the WorkspaceDO; beyond the excerpt it grants
-nothing, and every way of opening a row keeps its own canonical check. A bug in
-either side now shows rows rather than hiding them, which is why each side has
-exactly one implementation and the person side is tested against the canonical
-rule table. Unknown or empty audiences admit nobody, and a failed group read is a
-503. Member routes revalidate workspace sessions before returning. Connector rows
-admit only their connection's readers, and guests never hold a workspace
-connection's group. Attachment access checks the exact owning child when opened.
+A row's `audience` decides whether member search returns it (see Invariants);
+a bug on either side shows rows rather than hiding them, so each side has one
+implementation and the person side is tested against the rule table. Opening a
+row keeps its own canonical check, and attachment access checks the exact owning
+child.
 
 The public tokenizer commit is an identifier, not a secret. Production and
 development keys must have appropriately separate provider permissions; namespace
@@ -696,8 +686,9 @@ on the next search instead of within a push delay.
 (KV or a per-person table), which adds a write pipeline and staleness for a read
 that is one object RPC over tables the object already holds. Recomputing access
 rules in a new module: the person side calls the parent's own
-`readableSubstreams` and the connection facts' predicate, so each rule has one
-implementation. Batching that call into one query per table across every
+`readableSubstreams`, and the Sidekick and connection predicates moved to
+`authorization-policy.ts` where canonical authorization calls them too, so each
+rule has one implementation. Batching that call into one query per table across every
 Channel was also rejected for now: it would restate `canReadConversation` in
 set form. Instead each parent reads its facts for the person once
 (`conversationReadFacts`, about eight statements) and decides every

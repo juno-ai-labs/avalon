@@ -717,6 +717,34 @@ describe("AutomationDO", () => {
     expect(detail.runnable).toBe(true);
   });
 
+  it("upgrades a populated directory and republishes who each Sidekick runs as", async () => {
+    await activeAutomation();
+    await deliverParentEffects(TEST_ENV, automationStub());
+    // Both objects as they shipped before this change: the directory has no
+    // executor column, and the Sidekick has not run migration 10.
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(`ALTER TABLE automation_directory DROP COLUMN run_as_user_id`);
+      state.storage.sql.exec(`DELETE FROM _sql_schema_migrations WHERE version = 81`);
+    });
+    await runInDurableObject(automationStub(), (_instance, state) => {
+      state.storage.sql.exec(`DELETE FROM _sql_schema_migrations WHERE version = 10`);
+      // Its last directory row was published before the effect carried an executor.
+      state.storage.sql.exec(`UPDATE projection_keys SET last_payload_hash = 'published-without-executor' WHERE projection_key = 'automation'`);
+    });
+    await evictDurableObject(workspaceStub());
+    await evictDurableObject(automationStub());
+    const directoryRow = () => runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ run_as_user_id: string | null; title: string }>(
+      `SELECT run_as_user_id, title FROM automation_directory WHERE automation_id = ?`, AUTOMATION_ID).toArray());
+    // The existing row survives the additive migration with no executor yet.
+    const [upgraded] = await directoryRow();
+    expect(upgraded).toMatchObject({ run_as_user_id: null });
+    await automationStub().readDetail({ ...addressed(), actor: actor() });
+    const delivered = await deliverParentEffects(TEST_ENV, automationStub());
+    expect(delivered.map((envelope) => envelope.effect)).toContainEqual(expect.objectContaining({
+      kind: "directory_automation", runAsUserId: AUTHOR_ID }));
+    expect(await directoryRow()).toEqual([{ run_as_user_id: AUTHOR_ID, title: upgraded?.title }]);
+  });
+
   it("reconciles stored policy and republishes discovery without accepting a caller boolean", async () => {
     await createDraft();
     await automationStub().saveDefinition({ ...addressed(), draft: { ...DEFINITION, definitionVersion: 2, triggers: [] }, evaluatorRules: null, submittedByRunId: null, actor: actor() });
