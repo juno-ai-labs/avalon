@@ -234,7 +234,7 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by a room's first draft; and `AutomationService`, the Worker-side access every route goes through, which resolves whether the caller is in the owning room before asking the object. |
 | `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /workstream/:workstreamId`, `GET /:id`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/pause`, `POST /:id/resume`, `POST /:id/archive`, legacy `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
 | `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; the run prompt context built from the definition, which names the home conversation; and the loading of `rally:conversations` ([`conversation-tools.md`](conversation-tools.md)), the one way a run reaches a room. |
-| `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | The home read, `sidekick_conversation_attachments` (WorkspaceDO migration 81), and the conversation scope a Sidekick or a Channel or Breakout loop reaches. |
+| `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | The home read, `sidekick_conversation_attachments` (WorkspaceDO migration 84), and the conversation scope a Sidekick or a Channel or Breakout loop reaches. |
 | `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:sidekicks` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
 | `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), and `AutomationDraftProposedV1` (the card). |
 | `packages/contracts/src/index.ts` | `AutomationDraftSchema`, `AutomationRunDefinitionV1Schema` (the `readRunDefinition` answer), `AutomationSummarySchema`, `WorkstreamAutomationSummarySchema`, `AutomationRunSchema`, `AutomationDetailSchema`. |
@@ -610,7 +610,7 @@ one identity and one history, and can complete more than once.
    stop counter. Continuing a run acts on today's consent, so a run started under
    revision 1 continues under revision 3. It does not continue as somebody
    else: a run records its run-as user when it is provisioned
-   (`runs.run_as_user_id`, migration 12), and a Sidekick claimed by someone
+   (`runs.run_as_user_id`, migration 13), and a Sidekick claimed by someone
    else since refuses with `run_principal_changed` rather than put the old
    principal's transcript in front of the new one's connectors. It does not
    ask who sent the input: anyone who can reach a run may continue it.
@@ -661,7 +661,7 @@ version and cannot close a continued run.
 **The run authority check before the row reopens.** The reopening projection
 travels the Queue and lands after the continued execution has started, which
 reads its authority at run start. `readRunState` therefore also answers
-`stopGeneration`, a counter on the `automation` row (migration 11) that every
+`stopGeneration`, a counter on the `automation` row (migration 12) that every
 Sidekick-side stop of open runs (`stopOpenRuns`, from pause and archive) moves
 in the same transaction. `continuedAfterFinish` in `integrations.ts` lets a
 continuation act through a finished row: through `completed` or `failed`
@@ -1011,7 +1011,7 @@ above. `run_id` is the child substream id, and `harness_run_id` is unique per
 run. Migration 6 adds `runs.seed_json`, null on every run but one a demo
 seeded; migration 7 adds `automation.appearance_json`, null until somebody
 picks an icon or a colour. Migration 9 adds `automation.chat_appearance_json`, the
-appearance the setup chat last submitted, null until it first does. Migration 10
+appearance the setup chat last submitted, null until it first does. Migration 11
 adds `automation.owning_substream_id`, `NOT NULL DEFAULT '0'`: the home
 conversation under the owning Channel.
 
@@ -1028,10 +1028,10 @@ automation run had made. [`data-model.md`](data-model.md) is the map of both
 authorities. Workspace migration 35 projects stored `loadable`; migration 36
 adds `external_registration_generations`, retaining the latest generation and
 activation cutoff even for an empty replacement; migration 49 adds
-`automation_directory.appearance_json`, nullable and never backfilled; migration 81
+`automation_directory.appearance_json`, nullable and never backfilled; migration 84
 adds `automation_directory.owning_substream_id` (`NOT NULL DEFAULT '0'`) and
 `sidekick_conversation_attachments`, keyed by `(automation_id, parent_kind,
-parent_id, substream_id)` with who attached it and when. Migration 80 is the
+parent_id, substream_id)` with who attached it and when. Migration 83 is the
 external conversation bindings table's. Owner migration 4 stores the
 source counter. Versioned registration IDs equal immutable evaluator IDs, so a
 late delivery from a superseded predicate is refused by the owner.
@@ -1137,10 +1137,6 @@ REST does: a hop per Sidekick per Channel, multiplied by a Space prefetch.
 **Consequences:** A change to who may see a Sidekick is made once, in
 `sidekickAudienceAllows`. A field the rail shows must be on the directory row
 and in the rail triggers' column lists, or the rail will not notice it moved.
-
-### 2026-09-27 — Input to a Sidekick run continues the run
-
-### 2026-09-27: Sidekick runs continue from input, and post to a home conversation with the conversation tools
 
 ### 2026-09-27 — Sidekick runs continue from input, and post to a home conversation with the conversation tools
 

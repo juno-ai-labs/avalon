@@ -149,6 +149,23 @@ describe("search audience: the person side", () => {
     expect(await groups(SUSPENDED)).toEqual([]);
   });
 
+  it("narrows a Breakout-homed Sidekick to the people who read that Breakout", async () => {
+    await seedOrganization();
+    const homedInBreakout = "00000000-0000-7000-8000-00000000d007";
+    await runInDurableObject(workspace(), (_instance, state) => {
+      // Written by the suspended member, so no reader here gets it by
+      // authorship or execution; only the home decides.
+      state.storage.sql.exec(`INSERT INTO automation_directory (automation_id, workspace_id, author_user_id, run_as_user_id,
+          source_version, payload_hash, lifecycle, scope, owning_workstream_id, owning_substream_id, title, description, projected_at)
+        VALUES (?, ?, ?, ?, 1, 'hash', 'active', 'workstream', ?, ?, 'Sidekick', '', 1)`,
+        homedInBreakout, WORKSPACE_ID, SUSPENDED, SUSPENDED, PRIVATE, BREAKOUT);
+    });
+    const [group] = await searchAudienceGroupIds([sidekick(homedInBreakout)]);
+    // The Channel's Main participant is not in the Breakout.
+    expect(await groups(PARTICIPANT)).not.toContain(group);
+    expect(await groups(BREAKOUT_MEMBER)).toContain(group);
+  });
+
   it("learns who a Sidekick runs as from its directory row, and keeps it past an older effect", async () => {
     await seedOrganization();
     const automationId = "00000000-0000-7000-8000-00000000d005";

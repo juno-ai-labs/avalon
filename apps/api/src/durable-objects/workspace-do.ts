@@ -4077,11 +4077,6 @@ function conversationToolRefusal(
   return { ok: false, code, available: [...available], resourceId };
 }
 
-/**
- * The Slack conversations a Sidekick source's rule names: every `channelId`
- * leaf compared by equality or set membership. A rule that excludes channels
- * or names none leaves nothing to join.
- */
 function externalEventContext(
   metadata: Record<string, unknown>,
   textSnippet: string | null,
@@ -14191,18 +14186,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     for (const sidekick of sql.exec<{
-      automation_id: string; scope: string; author_user_id: string; run_as_user_id: string | null; owning_workstream_id: string | null;
-    }>(`SELECT automation_id, scope, author_user_id, run_as_user_id, owning_workstream_id
+      automation_id: string; scope: string; author_user_id: string; run_as_user_id: string | null;
+      owning_workstream_id: string | null; owning_substream_id: string;
+    }>(`SELECT automation_id, scope, author_user_id, run_as_user_id, owning_workstream_id, owning_substream_id
           FROM automation_directory WHERE lifecycle <> 'deleted'`).toArray()) {
       // A guest reads a Sidekick only through management access on the Channel
       // that owns it; a member through its scope, authorship, execution, or
-      // participation in that Channel while it is not archived.
+      // participation in that Channel while it is not archived. A Breakout home
+      // narrows both to whoever reads that Breakout, as viewer admission does.
       let readable = member && sidekickAdmitsMember({ scope: sidekick.scope,
         author: sidekick.author_user_id === request.userId, executor: sidekick.run_as_user_id === request.userId });
       if (!readable && hosted && sidekick.scope === "workstream" && sidekick.owning_workstream_id) {
         const owner = await parent(sidekick.owning_workstream_id);
         const metadata = owner.metadataRow();
-        readable = metadata !== null && (member
+        const home = sidekick.owning_substream_id;
+        readable = metadata !== null && (home !== "0"
+          ? metadata.archived_at === null && owner.readableSubstreams(request.userId, relationship).includes(asSubstreamId(home))
+          : member
           ? owningChannelAdmitsMember({ archived: metadata.archived_at !== null, participant: owner.isParticipant(request.userId) })
           : owner.managementAccess({ workspaceId: request.workspaceId, parentId: sidekick.owning_workstream_id,
             userId: request.userId }, relationship).allowed);
