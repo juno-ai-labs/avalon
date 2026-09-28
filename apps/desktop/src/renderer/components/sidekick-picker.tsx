@@ -28,7 +28,7 @@ function WorkstreamSidekickPicker({ workstreamId, substreamId = '0' }: { workstr
         predicate: (query) => query.queryKey[2] !== substreamId });
       await queryClient.invalidateQueries({ queryKey: ['sidekick-recommendation-options', workstreamId] });
       // Main's list is read from the Channel rail, not the cache written above.
-      workspaceSocket?.refreshChannelRails([workstreamId]);
+      void workspaceSocket?.refreshChannelRails([workstreamId]).catch(() => undefined);
       setOpen(false);
     },
     onError: () => { void queryClient.invalidateQueries({ queryKey: ['sidekick-recommendation-options', workstreamId] }); },
