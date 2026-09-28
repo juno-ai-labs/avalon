@@ -246,7 +246,13 @@ chunk order. `SEARCH_EMBEDDING_BATCH_SIZE` in `search-embedding.ts` controls how
 many chunks share a request: 64, approved by the team on 2026-09-06. This bounds
 one response to 65,536 vector values without limiting total document content. Every chunk is still processed, including a final partial
 batch. A missing or extra vector, model drift, wrong dimension, or nonfinite value
-rejects that batch before its semantic rows are written. A child reads the source twice: once before embedding and once after its write; stale work removes only its exact content
+rejects that batch before its semantic rows are written. A child first asks the
+index whether its batch is already written (below) and, if so, acknowledges
+without touching the source. Otherwise it reads the source once before
+embedding and checks freshness once after its write: a resource by its
+`resourceSearchRevision` watermark, which every input of its text bumps, and a
+turn by a second full read, because a link capture can change a page's text at
+the same revision. Stale work removes only its exact content
 generation. Batches do not change chunk boundaries, namespace identity, or
 lexical indexing. Search jobs remain sequential within each Queue delivery.
 
@@ -271,8 +277,19 @@ Fan-out chunk IDs also include the complete-text generation hash, so two
 same-revision extraction results cannot overwrite each other's chunks. Hashing
 JSON-escaped text preserves exact UTF-16, including lone surrogates that raw UTF-8
 encoding would replace. A strongly
-consistent count of the batch's deterministic IDs lets redelivery skip embeddings
-already stored successfully. The source job removes older revisions and legacy
+consistent count of the batch's rows lets redelivery skip embeddings already
+stored successfully, and it runs before the source read, so a batch already
+written costs one index query and no Durable Object call. The count cannot use
+the IDs, which hash the chunk text the child has not loaded; it counts rows
+matching the document, revision, generation and each span's exact
+`(chunk_start, chunk_end)` pair instead. That is the same set: a generation is
+the hash of the whole text a span slices, so those attributes determine the
+text and therefore the ID. Spans are paired rather than matched as two `In`
+lists because a recursive passage and a sliding window can share a start. A
+missing or partial batch, or rows of another revision or generation, count
+short and the batch is embedded. Skipping needs no freshness check: whoever
+wrote the rows ran one after its write, and a later revision's source job
+reclaims them at planning. The source job removes older revisions and legacy
 same-revision rows before publishing the new plan. Those rows cannot pass current
 canonical validation, so retaining them until the last child succeeds would add
 strong queries and stale candidates without preserving usable results. Cleanup
@@ -508,6 +525,11 @@ intent, and rejecting stale link labels. `test-workers/search-indexing-pipeline.
 drives the Queue consumer through real source RPC and R2 reads, verifies identical
 chunks across messages/files/artifacts/pages, and proves concurrent deletion causes
 generation cleanup and retry. Its only doubles are external APIs/model assets.
+It also records the WorkspaceDO RPCs an embedding delivery makes, through a
+proxy over the real namespace, proving a written batch makes none and a new
+revision makes one document read and one revision read. A resource's content
+change is staged the way production makes it (a new `content_ref`, which bumps
+the revision), not by overwriting R2 in place.
 The pinned Qwen tokenizer was separately exercised in workerd with its actual
 public model assets served from a temporary local mirror. The same pipeline suite
 proves the display attributes each producer writes and the patch passes a renamed
@@ -661,6 +683,39 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-28 — An embedding batch checks the index before its source
+
+**What changed:** An embedding delivery counts its batch's rows in the index
+before reading the source, and acknowledges with no WorkspaceDO call when all
+are there. The count matches document, revision, generation and each span's
+exact range instead of the chunk IDs, which need the text. A resource's
+post-write freshness check reads `resourceSearchRevision` instead of preparing
+the document again; a turn still re-reads in full.
+
+**Why:** In production on 2026-09-27, about 10,000
+`prepareResourceSearchDocument` calls an hour came from embedding deliveries,
+and about 98% of those deliveries loaded the document twice and then embedded
+nothing because the rows already existed: the same-revision re-projections
+(migrations 47, 48 and 77) and redeliveries re-send batches already written. Each load
+extracts the text and reads R2 inside the object whose overload the 60-second
+backlog pacing exists to prevent. An already-written batch now costs no object
+call; a batch that is embedded costs one document read and one watermark read
+instead of two document reads.
+
+**Considered and rejected:** A ledger of completed batches in the object or
+the Queue message, which duplicates what the index rows already record.
+Counting by generation alone or by `In` lists of starts and ends, which can
+count another batch's rows and skip a batch that is missing. A revision read
+for turns, which has no such watermark and whose captured pages can change
+text at the same revision.
+
+**What a future change has to respect:** The skip is exact only while a chunk's
+ID is a function of (document, revision, generation, range), and a generation
+is the hash of the full text. The resource fence is sound only while every input of
+`resourceSearchText` and `resourceSearchCategory` bumps
+`resource_search_versions`: a new input that does not (the `listing` trap
+above) would let a stale write pass the fence, not only miss a re-projection.
 
 ### 2026-09-28 — Member search filters on the searcher's audience groups
 
