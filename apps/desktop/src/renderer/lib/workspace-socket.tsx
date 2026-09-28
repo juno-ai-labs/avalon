@@ -539,6 +539,12 @@ export function WorkspaceSocketProvider({
     const applyConnectedSidebar = (sidebar: WorkspaceSidebar): boolean => {
       channelsBySpace = sidebar.channelsBySpace === true;
       if (channelsBySpace) {
+        // Every Space is loading again: the walk this starts is what says
+        // what the socket missed while it was away.
+        loadedSpaces.clear();
+        staleSpaces.clear();
+        fullWalkFinished = false;
+        setLoadedSpaceIds(new Set());
         applyVersionedSidebarList(
           queryClient,
           'automations',
@@ -693,9 +699,13 @@ export function WorkspaceSocketProvider({
      * One Space's pages, in order: each asks after the last. `onFirstPage`
      * is called once the first page is written.
      */
-    /** Spaces a walk has returned whole, and Spaces being walked now. */
+    /**
+     * Spaces a walk has returned whole, Spaces being walked now, and loaded
+     * Spaces to ask again when they next come on screen.
+     */
     const loadedSpaces = new Set<string>();
     const walkingSpaces = new Set<string>();
+    const staleSpaces = new Set<string>();
     /** Whole walks running now, and whether one has finished. */
     let fullWalks = 0;
     let fullWalkFinished = false;
@@ -706,6 +716,7 @@ export function WorkspaceSocketProvider({
       onFirstPage: () => void = () => undefined,
     ): Promise<void> => {
       walkingSpaces.add(spaceId);
+      staleSpaces.delete(spaceId);
       try {
         await walkSpacePages(spaceId, returned, signal, onFirstPage);
       } finally {
@@ -740,13 +751,19 @@ export function WorkspaceSocketProvider({
         after = answer.nextAfter;
       } while (after !== null && !stopped);
     };
-    // A Space put on screen that no walk has returned: one listed since the
-    // last whole walk, such as a Space just created. A whole walk still to
-    // come or running reaches it itself. Its failure leaves it for the next.
+    // A Space put on screen that no walk has returned (one listed since the
+    // last whole walk, such as a Space just created) or that the directory
+    // has moved under since. A whole walk still to come or running reaches it
+    // itself. A failure shows what is held and asks again next time, rather
+    // than leaving the Space loading.
     walkSpaceNowRef.current = (spaceId) => {
-      if (!channelsBySpace || !subscribed || !fullWalkFinished || fullWalks > 0
-        || loadedSpaces.has(spaceId) || walkingSpaces.has(spaceId)) return;
-      void walkSpace(spaceId, new Set(), undefined).catch(() => undefined);
+      if (!channelsBySpace || !subscribed || !fullWalkFinished || fullWalks > 0 || walkingSpaces.has(spaceId)
+        || (loadedSpaces.has(spaceId) && !staleSpaces.has(spaceId))) return;
+      void walkSpace(spaceId, new Set(), undefined).catch(() => {
+        loadedSpaces.add(spaceId);
+        staleSpaces.add(spaceId);
+        setLoadedSpaceIds((current) => current.has(spaceId) ? current : new Set([...current, spaceId]));
+      });
     };
     walkSpaceChannelsRef.current = async (signal) => {
       if (!channelsBySpace) return null;
@@ -970,6 +987,15 @@ export function WorkspaceSocketProvider({
               // the refetch is the only thing that can retire a tombstone the
               // socket was away for.
               if (topic === 'workstream_directory' && sync.data.sidebar && !directoryNeedsReconciling) continue;
+              // Loading a Space at a time, the directory moved somewhere this
+              // cannot see: the Space on screen is asked again now, and every
+              // other Space when it next comes on screen, rather than every
+              // desktop asking every Space at once.
+              if (topic === 'workstream_directory' && channelsBySpace) {
+                for (const spaceId of loadedSpaces) staleSpaces.add(spaceId);
+                if (prioritySpaceIdRef.current !== null) walkSpaceNowRef.current(prioritySpaceIdRef.current);
+                continue;
+              }
               invalidateTopic(queryClient, topic);
             }
             return;

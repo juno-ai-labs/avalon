@@ -11,7 +11,9 @@ import { useAppSession } from '../lib/app-session';
 /** Resolve only the default route; live list updates never replace an open conversation. */
 export function WorkstreamLandingScreen(): React.JSX.Element {
   const workstreams = useWorkstreamsQuery();
-  const spaces = useSpaceDirectories().active.data;
+  const spaceDirectories = useSpaceDirectories();
+  const spaces = spaceDirectories.active.data;
+  const inactiveSpaces = spaceDirectories.inactive.data;
   const { session } = useAppSession();
   const { state, sidebarConnect, loadedSpaceIds } = useWorkspaceSocket();
   const routeState: unknown = useLocation().state;
@@ -50,9 +52,10 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
       ? !candidates.some((row) => row.id === savedChannelId)
       : candidates.length === 0 && !awaitingSpace
         && !spaces?.items.some((row) => row.id === savedSpaceId));
-  // Loading a Space at a time, the same wait is for the Spaces not yet in.
-  const awaitingSpaces = loaded !== undefined && sidebarConnect?.channelsBySpace === true
-    && (spaces?.items ?? []).some((space) => !loadedSpaceIds.has(space.id))
+  // Loading a Space at a time, the same wait is for the Spaces not yet in,
+  // archived ones included, unless the walk has failed.
+  const awaitingSpaces = loaded !== undefined && sidebarConnect?.channelsBySpace === true && !workstreams.isError
+    && [...(spaces?.items ?? []), ...(inactiveSpaces?.items ?? [])].some((space) => !loadedSpaceIds.has(space.id))
     && (savedChannelId !== null
       ? !candidates.some((row) => row.id === savedChannelId)
       : candidates.length === 0);

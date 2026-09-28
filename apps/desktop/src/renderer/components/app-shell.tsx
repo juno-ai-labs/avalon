@@ -1061,7 +1061,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         hasMoreWorkstreams={workstreams.hasMore}
         loadingMoreWorkstreams={workstreams.isFetchingMore}
         onLoadMoreWorkstreams={workstreams.fetchMore}
-        loadedSpaceIds={sidebarConnect?.channelsBySpace ? loadedSpaceIds : undefined}
+        // A walk that failed says so through the query; the Spaces it did not
+        // reach stop drawing placeholders rather than waiting for it.
+        loadedSpaceIds={sidebarConnect?.channelsBySpace && !workstreams.isError ? loadedSpaceIds : undefined}
         onViewSpace={prioritizeSpace}
         workspace={workspace}
         workstreams={sidebarWorkstreams}

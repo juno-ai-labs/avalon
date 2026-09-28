@@ -626,6 +626,21 @@ describe("space_channels and the sidebar without Channel rows", () => {
     connection.socket.close(1000, "done");
   });
 
+  it("leaves a system Channel off the page, so it never fills one or becomes its cursor", async () => {
+    const digest = "00000000-0000-4000-8000-0000000d7000";
+    await runInDurableObject(organization(), (_instance, state) => {
+      insertChannel(state, digest, "workspace");
+      state.storage.sql.exec(`UPDATE channels SET system_kind = 'digest' WHERE workstream_id = ?`, digest);
+      insertSpace(state, [digest, channelA, channelC]);
+    });
+    const connection = await connect(owner);
+    const answer = await askSpace(connection, { spaceId, rails: true });
+    expect(answer.items.map((item) => item.id)).toEqual([channelA, channelC]);
+    expect(answer.rails.map((rail) => rail.workstreamId)).toEqual([channelA, channelC]);
+    expect(answer.nextAfter).toBeNull();
+    connection.socket.close(1000, "done");
+  });
+
   it("pages a Space by id, naming as `nextAfter` only a Channel it answered", async () => {
     const hex = (prefix: string, index: number) =>
       `00000000-0000-4000-8000-0000000${prefix}${index.toString(16).padStart(4, "0")}`;
