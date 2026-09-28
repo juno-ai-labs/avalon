@@ -468,13 +468,36 @@ and generation. Polling never takes a mutation lease or extends retention. A
 failed lookup preserves the last successful observation and records
 `provider_unavailable`; it does not record a lost sandbox.
 
-The directory's next Terminal deadline includes the observation deadline, even
-for archived sandboxes and active runs. Refresh is scheduled every sixty seconds,
-matching the existing held-sandbox scheduler cadence. This is an eventual view:
-provider latency, alarm retries, and directory delivery can add delay. The state
-API exposes `providerObservation` with `observedAt`, `nextObserveAt`, recovery
-verdict, and error code; its existing `state` field remains Rally's lifecycle
-intent. Callers must not present the intent as a fresh Daytona observation.
+**The periodic check belongs to the conversation that owns the sandbox, not
+to the workspace sweep.** Each Channel conversation's object derives an alarm
+candidate from its own `terminal_provider_observation.next_observe_at` (a
+sandbox never observed is due at once) and, when it comes due, reserves the
+read, asks Daytona, and settles the answer — one provider call and no RPC.
+Reserving the read is what moves the deadline, so a failing provider waits a
+full interval rather than spinning the alarm; the failure is logged as
+`terminal_provider_observation_failed` with its code. The check does not delay
+the conversation's run lane: it starts beside it and is joined before the alarm
+re-arms. A Sidekick's conversation and an archived Channel are not observed,
+as before.
+
+The observation deadline is **not** in the directory. The directory's Terminal
+deadline is the lifecycle one alone — warm stop, archive, expiry, a live claim —
+so a check, which moves only the observation deadline, publishes nothing, and
+neither reserving nor settling a read is a directory-affecting operation.
+
+A running sandbox (and one in any state other than stopped or archived) is
+checked every sixty seconds (`TERMINAL_PROVIDER_OBSERVATION_INTERVAL_MS`). A
+stopped or archived one is checked every ten minutes
+(`TERMINAL_STOPPED_SANDBOX_OBSERVATION_INTERVAL_MS`), a number the team set,
+recorded in the changelog; the interval is chosen from Rally's lifecycle intent when the read is reserved.
+Between checks, Daytona's signed webhooks below carry a state change as it
+happens, and each one resets the interval, so the poll only bounds how stale
+the view can get when a webhook is missed. This is an eventual view: provider
+latency, alarm retries and a missed webhook can add up to one interval of
+delay. The state API exposes `providerObservation` with `observedAt`,
+`nextObserveAt`, recovery verdict, and error code; its existing `state` field
+remains Rally's lifecycle intent. Callers must not present the intent as a
+fresh Daytona observation.
 
 `POST /ingest/daytona` verifies Svix signatures against the raw body and the
 standard five-minute replay window, then checks the configured organization.
@@ -804,7 +827,12 @@ an agent refusing rather than replacing its owner's sandbox are in
 `terminal-coordinator.test.ts`; an unresolved authority taking only Terminal
 away, and a background agent composed onto its owner's object, are in
 `terminal-plugin-integration.test.ts`; the sweep reconciling two conversations
-the parent lists is in `terminal-webhook.test.ts`.
+the parent lists, and asking Daytona nothing when no lifecycle action is due,
+is in `terminal-webhook.test.ts`. On real workerd,
+`test-workers/terminal-authority.test.ts` also proves a check publishes no
+directory effect while the directory carries the lifecycle deadline, and that a
+stopped sandbox is checked on its own object's alarm at the ten-minute
+interval.
 Run the API set with:
 
 ```text
@@ -913,14 +941,22 @@ recovery ledger.
 
 ## Operations
 
-A sandbox's provider-observation, warm-stop, archive, and expiry deadlines are workspace alarm
+A sandbox's warm-stop, archive, and expiry deadlines are workspace alarm
 entries derived from `next_terminal_action_at` in the workspace directory
-([`durable-object-alarms.md`](durable-object-alarms.md)). When the pass finds
+([`durable-object-alarms.md`](durable-object-alarms.md)); its provider
+observation is its own conversation object's alarm, above. When the pass finds
 the sandbox held by a live run it is re-checked a minute later; after a
 transition it is re-checked thirty seconds later, which is how long the
 directory effect takes to land off the Queue. A pass that finds another pass's
 lifecycle claim still live waits a minute the same way. None of these counts
-toward the stall report; a deadline the pass finds nothing to do for does.
+toward the stall report; a deadline the pass finds nothing to do for does, and
+the pass also republishes that conversation's deadline (`republishDeadline`),
+which the object skips when the projection has not changed. A deadline that
+stays stale therefore keeps backing off and reporting rather than polling
+quietly. The republish is rollout scaffolding for the observation deadlines an
+older version stamped into the directory; remove it once this version has run
+in every region for a day, by which time every such entry has come due and been
+corrected.
 
 
 See [`runbook.md`](runbook.md#terminal-provider-activation-and-recovery) for
@@ -1015,6 +1051,14 @@ The gate's two probe endpoints are Rally's own, on `rallywith.ai`:
 holds the operator steps.
 
 ## Performance and cost
+
+**The status poll is the recurring cost that scales with retention, not with
+use.** Every sandbox is checked for up to thirty days whether anyone opens it,
+so a check must stay one Daytona `GET` made by the owning object, with no RPC
+and no directory update, and a stopped or archived sandbox is checked a tenth
+as often as a running one. What it cost before that is in the 2026-09-28
+changelog entry. Webhooks cost two `GET`s each (routing, then the ordered
+read).
 
 An explicit Terminal `load_plugin` starts and initializes the sandbox because
 the next model action is overwhelmingly likely to use one of its tools — in
@@ -1159,6 +1203,47 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-09-28 — The sandbox status check moves into its conversation, stops publishing, and slows for stopped sandboxes
+
+**What changed:** The periodic Daytona status check runs on the sandbox's own
+conversation object's alarm, not in the workspace's lifecycle sweep, and its
+deadline left the `directory_common` projection: `next_terminal_action_at`
+carries lifecycle deadlines only, and reserving or settling a read publishes
+nothing. A stopped or archived sandbox is checked every ten minutes, a running
+one every minute. A sweep that finds a due entry with nothing behind it
+republishes that conversation's deadline (`republishDeadline`), which is how
+the observation deadlines older versions published get replaced.
+
+**Why:** Measured in production on 2026-09-27, the check was the most-called
+RPC in the system: about 14,700 Terminal calls and 1,800
+`receiveChildEffects` calls an hour, about 285 s of CPU. Each check made six
+Terminal object calls, two of them duplicate reads, and both writes offered a
+directory update because the observation deadline was projected; about 99% of
+directory updates changed nothing else. The workspace could learn when to
+check only through the directory, so every check was a directory write. The
+2026-09-14 entry's "one `GET` per sandbox per minute" left out that churn and
+charged stopped sandboxes, which only a webhook-delivered event will change,
+at the running rate for thirty days; this reverses its cadence decision. Adam
+set the ten minutes on 2026-09-27; it is the team's number, not a measurement.
+
+**Considered and rejected:** Keeping the check in the sweep minus the duplicate
+reads — the first publish is what fed the sweep its next check, so the churn
+stays. A per-sandbox timer in the workspace — it would need its own copy of
+which sandboxes exist and in what state. Webhooks alone — a missed one would
+leave the observation stale until the next tool call. A one-time object
+migration instead of the sweep's republish — migrations are SQL, cannot build
+a projection, and run only when the object is next woken, which for a dormant
+sandbox is that same sweep.
+
+**Consequences:** A missed webhook can leave a stopped sandbox's view, or a
+missed deletion, up to ten minutes stale. Nothing added to `directory_common`
+may move on every check, or the churn returns. A new conversation parent that
+owns a sandbox must decide whether its object observes it, as a Channel's does
+and a Sidekick's does not. At rollout each stale entry is swept once, reported
+once as a stall, and republished. `republishDeadline` is scaffolding for that:
+remove it with its protocol entry and the sweep's call once this version has
+run a day in every region.
 
 ### 2026-09-27 — An unrecoverable sandbox is retired, and a failing pass backs off
 

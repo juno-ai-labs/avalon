@@ -95,7 +95,7 @@ describe("Daytona webhook reconciliation", () => {
     f.env.AVALON_REGION = "eu";
     expect(await (await f.send(event)).json()).toEqual({ accepted: true, ignored: true });
   });
-  it("the workspace scheduler refreshes retained sandboxes even with no lifecycle action due", async () => {
+  it("the workspace scheduler leaves provider observation to the conversation and waits out a stale deadline", async () => {
     const f = fixture();
     const unused = async (): Promise<never> => { throw new Error("unrelated scheduler operation"); };
     const context = { env: f.env, workspaceEnv: f.env, workspaceId: W,
@@ -105,15 +105,13 @@ describe("Daytona webhook reconciliation", () => {
       // the one this fixture's sandbox row belongs to.
       dueTerminalSubstreams: async () => [] };
     const target = { kind: "terminal" as const, id: S, dueAt: new Date(0).toISOString() };
-    expect(await runWorkspaceScheduleTarget(context, target, new Date())).toEqual({ waitMs: 30_000 });
-    expect(await f.terminal.providerObservation()).toMatchObject({ state: "archived" });
-    f.getSandbox.mockClear();
-    await runWorkspaceScheduleTarget(context, target, new Date());
+    // Nothing is due on this row, so the entry that woke the sweep is stale:
+    // it reports no wait and asks Daytona nothing — the object's own alarm
+    // owns observation. That it republishes the deadline needs the object's
+    // projection, so it is proved on workerd in `terminal-authority.test.ts`.
+    expect(await runWorkspaceScheduleTarget(context, target, new Date())).toBeUndefined();
     expect(f.getSandbox).not.toHaveBeenCalled();
-    f.store.exec("UPDATE terminal_provider_observation SET next_observe_at = 0");
-    f.getSandbox.mockResolvedValue({ ok: false, error: { kind: "not_found", message: "deleted" } });
-    await runWorkspaceScheduleTarget(context, target, new Date());
-    expect(await f.terminal.providerObservation()).toMatchObject({ state: "absent" });
+    expect(await f.terminal.providerObservation()).toBeNull();
   });
 
   it("the workspace scheduler reconciles every conversation the parent lists as due", async () => {
@@ -124,9 +122,12 @@ describe("Daytona webhook reconciliation", () => {
     seedWorkstreamObjectRoot(threadStore, { workspaceId: W, workstreamId: S });
     threadStore.exec(`INSERT INTO terminal_workspace
       (id, provider, lifecycle_state, stable_name, sandbox_id, generation, authority_fingerprint,
-       applied_network_revision, version, created_at, updated_at, expire_due_at)
-      VALUES (1, 'daytona', 'running', '${await terminalSandboxStableName(W, S, thread)}', 'sandbox-2', 1, 'authority', 1, 1, 0, 0, 9999999999999)`);
+       applied_network_revision, version, created_at, updated_at, archive_due_at, expire_due_at)
+      VALUES (1, 'daytona', 'stopped', '${await terminalSandboxStableName(W, S, thread)}', 'sandbox-2', 1, 'authority', 1, 1, 0, 0, 1, 9999999999999)`);
     f.objectStores.set(`${S}:${thread}`, threadStore);
+    // Both conversations' archives are due, and Daytona has already archived
+    // both, so each pass settles its own row without a provider mutation.
+    f.store.exec("UPDATE terminal_workspace SET lifecycle_state = 'stopped', archive_due_at = 1 WHERE id = 1");
     f.getSandbox.mockImplementation(async (id) => ({ ok: true, value: { ...f.snapshot, id, labels: { ...f.snapshot.labels, ...(id === "sandbox-2" ? { "rally.substream": thread } : {}) } } }));
     const unused = async (): Promise<never> => { throw new Error("unrelated scheduler operation"); };
     const context = { env: f.env, workspaceEnv: f.env, workspaceId: W,
@@ -137,10 +138,9 @@ describe("Daytona webhook reconciliation", () => {
     const target = { kind: "terminal" as const, id: S, dueAt: new Date(0).toISOString() };
 
     await runWorkspaceScheduleTarget(context, target, new Date());
-    expect(f.getSandbox.mock.calls.map(([id]) => id).sort()).toEqual(["sandbox-1", "sandbox-2"]);
-    expect(await f.terminal.providerObservation()).toMatchObject({ sandboxId: "sandbox-1", state: "archived" });
-    expect(await testTerminalPortFactory(threadStore)(W, S, thread).providerObservation())
-      .toMatchObject({ sandboxId: "sandbox-2", state: "archived" });
+    expect(await f.terminal.sandbox()).toMatchObject({ sandboxId: "sandbox-1", lifecycleState: "archived" });
+    expect(await testTerminalPortFactory(threadStore)(W, S, thread).sandbox())
+      .toMatchObject({ sandboxId: "sandbox-2", lifecycleState: "archived" });
   });
 
   it("keeps the last observation on provider failure and can observe deletion without a webhook", async () => {

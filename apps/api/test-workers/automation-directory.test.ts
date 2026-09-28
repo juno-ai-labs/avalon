@@ -24,7 +24,7 @@ import { automationDOName, workspaceDOName } from "../src/durable-objects/names"
 import type { SidekickDO } from "../src/durable-objects/sidekick-do";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { Env } from "../src/env";
-import { createAutomation } from "../src/services/automation-service";
+import { AutomationService, createAutomation } from "../src/services/automation-service";
 import { searchAudienceGroup, searchAudienceGroupIds } from "../src/services/search-audience";
 import { deliverParentEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
@@ -195,6 +195,37 @@ describe("automation directory", () => {
     const owned = await createAndPublish("workstream");
     expect((await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID })).items.map((item) => item.id).sort()).toEqual([personal, shared, owned].sort());
     expect((await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID })).items.map((item) => item.id)).toEqual([shared]);
+  });
+
+  it("lists an authenticated member's library without the object re-reading their membership", async () => {
+    const personal = await createAndPublish("personal");
+    const shared = await createAndPublish("workspace");
+    const owned = await createAndPublish("workstream");
+    // Every statement the Organization object sends to D1 from here on. The
+    // request's own authentication already joined the member row; a second
+    // read of it inside the object is the round trip this listing must not pay.
+    const objectReads: string[] = [];
+    await runInDurableObject(workspaceStub(), (instance) => {
+      const target = instance as unknown as { env: Env };
+      const database = target.env.DB;
+      target.env = new Proxy(target.env, {
+        get: (current, property, receiver) => property === "DB"
+          ? new Proxy(database, {
+            get: (db, member) => member === "prepare"
+              ? (sql: string) => { objectReads.push(sql); return db.prepare(sql); }
+              : Reflect.get(db, member, db),
+          })
+          : Reflect.get(current, property, receiver),
+      });
+    });
+    const library = (userId: typeof AUTHOR_ID) => new AutomationService(TEST_ENV, {
+      sessionId: SESSION_ID, userId, workspaceId: WORKSPACE_ID, region: "global", role: "member",
+    }).listSidekicks();
+
+    // Who sees what is unchanged: the author sees all three, a member only the workspace one.
+    expect((await library(AUTHOR_ID)).items.map((item) => item.id).sort()).toEqual([personal, shared, owned].sort());
+    expect((await library(MEMBER_ID)).items.map((item) => item.id)).toEqual([shared]);
+    expect(objectReads.filter((sql) => sql.includes("workspace_members"))).toEqual([]);
   });
 
   it("keeps the three scopes apart in one workspace", async () => {

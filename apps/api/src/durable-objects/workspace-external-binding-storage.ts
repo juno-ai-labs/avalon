@@ -9,7 +9,7 @@ import type {
 } from "./workspace-external-binding-protocol";
 
 /**
- * WorkspaceDO migration 83: the binding table, and every existing Slack Agent
+ * WorkspaceDO migration 85: the binding table, and every existing Slack Agent
  * session's thread key carried into it as an active thread binding.
  *
  * The key is installation + path. The installation is the provider

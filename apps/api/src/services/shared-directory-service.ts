@@ -1,4 +1,4 @@
-import { asWorkspaceId, type UserId, type WorkspaceId } from "@rally/contracts";
+import type { UserId, WorkspaceId } from "@rally/contracts";
 import {
   SharedDirectorySchema,
   SharedNavigationDirectorySchema,
@@ -21,14 +21,11 @@ export async function listSharedDirectory(env: Env, workspaceId: WorkspaceId, us
   const candidates = ScopeGrantCandidatesSchema.parse(await workspace.listScopeGrantCandidates({
     workspaceId, userId, membershipIncarnation: relationship.incarnation,
   }));
-  const items = await Promise.all(candidates.map(async (parentId) => {
-    const parent = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
-      workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)));
-    const item = SharedNavigationWorkstreamSchema.nullable().parse(await parent.readSharedWorkstream({
-      workspaceId, parentId, userId, membershipIncarnation: relationship.incarnation,
-    }));
-    return item;
-  }));
+  const items = candidates.length === 0 ? [] : SharedNavigationWorkstreamSchema.nullable().array().parse(
+    await workspace.readSharedWorkstreams({
+      workspaceId, parentIds: candidates, userId, membershipIncarnation: relationship.incarnation,
+    }),
+  );
   const workstreams = items.filter((item) => item !== null).map((item) => SharedWorkstreamSchema.parse({
     parentId: item.parentId,
     title: item.conversations.some((conversation) => conversation.substreamId === "0") ? item.title : null,
@@ -57,13 +54,14 @@ export async function listSharedNavigationDirectory(env: Env, workspaceId: Works
   const candidates = ScopeGrantCandidatesSchema.parse(await workspace.listScopeGrantCandidates({
     workspaceId, userId, membershipIncarnation: relationship.incarnation,
   }));
-  const items = await Promise.all(candidates.map(async (parentId) => {
-    const parent = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
-      workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)));
-    return SharedNavigationWorkstreamSchema.nullable().parse(await parent.readSharedWorkstream({
-      workspaceId, parentId, userId, membershipIncarnation: relationship.incarnation, includeAttention,
-    }));
-  }));
+  // Every candidate Channel is hosted in this one object, so one RPC answers
+  // for all of them; each Channel still decides what it releases. Nobody
+  // shared anything with most members, and that answer needs no round trip.
+  const items = candidates.length === 0 ? [] : SharedNavigationWorkstreamSchema.nullable().array().parse(
+    await workspace.readSharedWorkstreams({
+      workspaceId, parentIds: candidates, userId, membershipIncarnation: relationship.incarnation, includeAttention,
+    }),
+  );
   const workstreams = items.filter((item) => item !== null);
   const spaces = SharedNavigationSpaceSchema.array().parse(await workspace.listSharedNavigationSpaces({
     workspaceId,

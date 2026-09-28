@@ -142,7 +142,10 @@ import {
   withLocalWorkstreamAuthorities,
   type LocalAuthorityExecutor,
 } from "../runtime/local-authorities";
-import { TerminalObjectPortError } from "../services/terminal/object-port";
+import { createTerminalObjectPort, TerminalObjectPortError } from "../services/terminal/object-port";
+import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
+import { refreshTerminalProviderObservation } from "../services/terminal/observation";
+import { createTerminalProviderRpcClient } from "../services/terminal/provider-rpc-client";
 import { fireWorkstreamWakeup } from "../services/workstream-service";
 import { loadWorkstreamWakeup } from "../services/workstream-wakeup-service";
 import {
@@ -6866,7 +6869,68 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       || this.objectStore.nextSemanticRealtimeDueAt() !== null
       || this.nextLoopWorkAt(now) !== null
       || this.nextExternalSettlementAt() !== null
+      || this.terminalObservationDue(now)
       || this.scheduledAlarms.due(now, 1).length > 0;
+  }
+
+  /**
+   * When this conversation's own Terminal sandbox is next due a provider
+   * observation, or `null` when this object has none to observe.
+   *
+   * A Channel conversation's check runs here, on its own alarm, rather than
+   * on the workspace's: the workspace could only learn the deadline from the
+   * directory, which made every check a directory write. A Sidekick's
+   * conversation has never been observed — its sandbox is retired by Daytona
+   * alone — and an archived Channel is not swept, so neither is observed.
+   */
+  private nextTerminalObservationAt(): number | null {
+    if (this.objectStore.identity()?.parentKind !== "workstream") return null;
+    const root = this.state.storage.sql.exec<{ archived_at: number | null }>(
+      `SELECT archived_at FROM workstream WHERE id = 1`,
+    ).toArray()[0];
+    if (root && root.archived_at !== null) return null;
+    return this.terminal.nextProviderObservationAt();
+  }
+
+  private terminalObservationDue(now: number): boolean {
+    const dueAt = this.nextTerminalObservationAt();
+    return dueAt !== null && dueAt <= now;
+  }
+
+  /**
+   * Ask Daytona what this conversation's sandbox is, and record the answer.
+   *
+   * The read reserves its request before the provider call, which is also what
+   * moves the deadline out, so a failing provider waits a full interval rather
+   * than turning this alarm into a hot loop. Nothing here publishes: the
+   * observation feeds the state API and nothing the directory carries.
+   */
+  private async observeDueTerminalSandbox(): Promise<void> {
+    const identity = this.objectStore.identity();
+    const sandbox = this.terminal.sandbox();
+    if (!identity || !sandbox?.sandboxId) return;
+    const provider = {
+      getSandbox: (id: string) => {
+        const configuration = parseTerminalRegionConfiguration(this.env);
+        if (configuration.capability !== "supported") throw new Error("terminal_provider_unavailable");
+        return createTerminalProviderRpcClient(this.env.TERMINAL_PROVIDER, configuration).getSandbox(id);
+      },
+    };
+    try {
+      await refreshTerminalProviderObservation(
+        createTerminalObjectPort(this.env, identity.workspaceId, identity.parentId, this.terminal,
+          this.externalSubstreamId()),
+        provider,
+        { sandboxId: sandbox.sandboxId, generation: sandbox.generation },
+      );
+    } catch (error) {
+      logWarn(this.env, "terminal_provider_observation_failed", {
+        workspace_id: identity.workspaceId,
+        workstream_id: identity.parentId,
+        substream_id: this.externalSubstreamId(),
+        code: diagnosticErrorCode(error, "terminal_provider_observation_failed"),
+      });
+    }
   }
 
   /**
@@ -6947,7 +7011,35 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const nextExternalSettlementAt = this.nextExternalSettlementAt();
     // A timer that fired above may have left the index behind the table.
     this.syncAgentTimerAlarms();
+    // Started, not awaited here: a provider read must not delay the run lane
+    // below, which a member's message may be waiting on. It catches its own
+    // failures and is joined before this alarm re-arms.
+    const terminalObservation = this.terminalObservationDue(now)
+      ? this.observeDueTerminalSandbox()
+      : null;
+    try {
+      await this.runDueAlarmLanes(now, {
+        nextRegionalEffectAt, nextSemanticRealtimeAt, nextSearchProjectionAt,
+        nextAuthorizationProjectionDueAt, nextExternalBindingAt, nextLoopAt, nextExternalSettlementAt,
+      });
+    } finally {
+      if (terminalObservation) await terminalObservation;
+    }
+  }
 
+  private async runDueAlarmLanes(now: number, due: {
+    nextRegionalEffectAt: number | null;
+    nextSemanticRealtimeAt: number | null;
+    nextSearchProjectionAt: number | null;
+    nextAuthorizationProjectionDueAt: number | null;
+    nextExternalBindingAt: number | null;
+    nextLoopAt: number | null;
+    nextExternalSettlementAt: number | null;
+  }): Promise<void> {
+    const {
+      nextRegionalEffectAt, nextSemanticRealtimeAt, nextSearchProjectionAt,
+      nextAuthorizationProjectionDueAt, nextExternalBindingAt, nextLoopAt, nextExternalSettlementAt,
+    } = due;
     const projectionDue = (nextRegionalEffectAt !== null && nextRegionalEffectAt <= now)
       || (nextSearchProjectionAt !== null && nextSearchProjectionAt <= now)
       || (nextAuthorizationProjectionDueAt !== null && nextAuthorizationProjectionDueAt <= now)
@@ -7547,6 +7639,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         nextSearchProjectionDueAt(this.state.storage.sql, this.env),
         nextAuthorizationProjectionAt(this.state.storage.sql),
         this.nextExternalSettlementAt(),
+        this.nextTerminalObservationAt(),
         now + KEEP_ALIVE_INTERVAL_MS,
       ],
     });
@@ -7641,6 +7734,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         nextAuthorizationProjectionAt(this.state.storage.sql),
       this.nextLoopWorkAt(now),
       this.nextExternalSettlementAt(),
+      this.nextTerminalObservationAt(),
     ];
     if (this.keepAliveLease.active) candidates.push(now + KEEP_ALIVE_INTERVAL_MS);
     return candidates.filter((candidate): candidate is number => candidate !== null);

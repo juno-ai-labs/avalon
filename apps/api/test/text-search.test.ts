@@ -223,9 +223,42 @@ describe("semantic indexing", () => {
     const [job] = await searchEmbeddingJobs(reference, document, policy);
     provider.query.mockResolvedValueOnce({ aggregations: { count: job!.spans.length } });
     const embed = vi.fn();
-    await indexSemanticBatch(index, job!, load, embed);
+    const source = vi.fn(load);
+    // Rows alone do not prove their writer ran its freshness check, so the
+    // skip still confirms the revision; it only saves the load and the embed.
+    const revision = vi.fn(async () => document.revision);
+    expect(await indexSemanticBatch(index, job!, source, embed, revision)).toBe("indexed");
+    expect(revision).toHaveBeenCalledTimes(1);
+    expect(source).not.toHaveBeenCalled();
     expect(embed).not.toHaveBeenCalled();
     expect(provider.write).not.toHaveBeenCalled();
+    // The receipt is the batch's exact ranges in this generation, not its ids.
+    expect(provider.query.mock.calls[0]?.[0].filters[1]).toEqual(expect.arrayContaining([
+      ["generation", "Eq", job!.generation],
+      ["Or", job!.spans.map((span) => ["And", [["chunk_start", "Eq", span.start], ["chunk_end", "Eq", span.end]]])],
+    ]));
+  });
+
+  it("embeds a batch into a namespace not written since generation fan-out", async () => {
+    const [job] = await searchEmbeddingJobs(reference, document, policy);
+    provider.query.mockRejectedValueOnce(Object.assign(
+      new Error('400 {"error":"filter error in key `generation`: attribute not found"}'), { status: 400 }));
+    const embed = vi.fn(async (texts: string[]) => ({ model: "Qwen/Qwen3-Embedding-8B", vectors: vectors(texts) }));
+    expect(await indexSemanticBatch(index, job!, load, embed)).toBe("indexed");
+    expect(embed).toHaveBeenCalledTimes(1);
+    expect(provider.write).toHaveBeenCalledWith(expect.objectContaining({ upsert_rows: expect.any(Array) }));
+    provider.query.mockRejectedValueOnce(Object.assign(new Error("unrelated bad request"), { status: 400 }));
+    await expect(indexSemanticBatch(index, job!, load, embed)).rejects.toThrow("search_index_query_failed");
+  });
+
+  it("confirms a written batch with the source's revision instead of a second load", async () => {
+    const [job] = await searchEmbeddingJobs(reference, document, policy);
+    const source = vi.fn(load);
+    expect(await indexSemanticBatch(index, job!, source, async (texts) => ({ model: "Qwen/Qwen3-Embedding-8B",
+      vectors: vectors(texts) }), async () => document.revision + 1)).toBe("stale");
+    expect(source).toHaveBeenCalledTimes(1);
+    expect(provider.write).toHaveBeenLastCalledWith(expect.objectContaining({ delete_by_filter:
+      ["And", expect.arrayContaining([["generation", "Eq", job!.generation]])] }));
   });
 
   it("rejects equal-revision content changes before embedding", async () => {

@@ -234,6 +234,28 @@ describe("the shared Durable Object alarm list", () => {
         key: "workspace",
         dueAt: Date.now() - 1,
       });
+      // Every derived lane answers "due" while the due work runs, so this case
+      // pins the order of all of them; which lanes run on a quieter wake is
+      // the next describe's subject. Only for the pass itself: a lane that
+      // stayed due would arm the real alarm at the next millisecond.
+      const lanes = instance as unknown as {
+        derivedAlarmLanes(): Record<string, () => number | null>;
+        runDueAlarmWork(now: number): Promise<void>;
+      };
+      const realLanes = lanes.derivedAlarmLanes.bind(instance);
+      const realRun = lanes.runDueAlarmWork.bind(instance);
+      let everyLaneDue = false;
+      lanes.derivedAlarmLanes = () => everyLaneDue
+        ? Object.fromEntries(Object.keys(realLanes()).map((lane) => [lane, () => 0]))
+        : realLanes();
+      lanes.runDueAlarmWork = async (now) => {
+        everyLaneDue = true;
+        try {
+          await realRun(now);
+        } finally {
+          everyLaneDue = false;
+        }
+      };
 
       await instance.alarm();
 
@@ -582,6 +604,115 @@ describe("the shared Durable Object alarm list", () => {
 
       expect(store.get("schedule", "moved")).toMatchObject({ attempt: 0, retryAt: 0 });
     });
+  });
+});
+
+describe("a workspace's derived alarm lanes", () => {
+  /** Record each instrumented phase the next `alarm()` runs, as it runs it. */
+  function recordPhases(instance: WorkspaceDO): string[] {
+    const phases: string[] = [];
+    (instance as unknown as {
+      instrumentWorkspaceAlarmPhase: <T>(phase: string, alarmKind: string | undefined, run: () => Promise<T>) => Promise<T>;
+    }).instrumentWorkspaceAlarmPhase = async (phase, _alarmKind, run) => {
+      phases.push(phase);
+      return run();
+    };
+    return phases;
+  }
+
+  function insertActivityEvent(sql: SqlStorage, eventId: string, createdAt: number): void {
+    sql.exec(
+      `INSERT INTO workspace_activity_events
+         (event_id, event_type, subject_type, subject_id, subject_sequence_number,
+          actor_type, actor_user_id, actor_label, title, body, canonical_url,
+          audience_kind, audience_user_id, audience_workstream_id, digestible,
+          occurred_at, created_at, source_kind, source_id, dedupe_key, metadata_json)
+       VALUES (?, 'test', 'workspace', NULL, NULL,
+               'system', NULL, '', 'Event', '', NULL,
+               'workspace', NULL, NULL, 0,
+               ?, ?, 'test', NULL, ?, '{}')`,
+      eventId, createdAt, createdAt, eventId,
+    );
+  }
+
+  it("runs a lane that is due, skips every lane that is not, and arms for the one it skipped", async () => {
+    await seedOpenAuthority();
+    const stub = await initializedWorkspace();
+
+    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
+      const sql = state.storage.sql;
+      const now = Date.now();
+      // Past retention: the activity sweep is due.
+      insertActivityEvent(sql, "expired", 0);
+      // Inside retention, so the sweep must leave it.
+      insertActivityEvent(sql, "recent", now);
+      // A directory update waiting out a backoff: its lane is not due yet.
+      const outboxDueAt = now + 10 * 60_000;
+      sql.exec(
+        `INSERT INTO parent_outbox
+           (parent_id, message_id, partition_key, source_version, source_epoch, effect_kind,
+            payload_json, payload_hash, state, attempts, not_before, created_at)
+         VALUES (?, 'waiting', 'partition', 1, 1, 'directory_common', '{}', 'hash', 'pending', 1, ?, ?)`,
+        WORKSTREAM_ID, outboxDueAt, now,
+      );
+      const phases = recordPhases(instance);
+
+      await instance.alarm();
+
+      expect(phases).toEqual([
+        "recovery_rearm",
+        "authority_check",
+        "activity_reap",
+        // The one phase with no due time of its own.
+        "schedule_reconcile",
+        "final_rearm",
+      ]);
+      expect(sql.exec<{ event_id: string }>("SELECT event_id FROM workspace_activity_events").toArray())
+        .toEqual([{ event_id: "recent" }]);
+      expect(sql.exec<{ message_id: string; attempts: number }>(
+        "SELECT message_id, attempts FROM parent_outbox",
+      ).toArray()).toEqual([{ message_id: "waiting", attempts: 1 }]);
+      // Skipped, not dropped: the alarm now points at the row it skipped.
+      expect(await state.storage.getAlarm()).toBe(outboxDueAt);
+    });
+  });
+
+  it("re-arms a register call only when it queued a delivery", async () => {
+    await seedOpenAuthority();
+    const stub = await initializedWorkspace();
+    const known = "00000000-0000-7000-8000-0000000000b1";
+    const added = "00000000-0000-7000-8000-0000000000b2";
+    const deliveryDueAt = Date.now() + 10 * 60_000;
+    await runInDurableObject(stub, (_instance: WorkspaceDO, state) => {
+      // A child already registered, with its delivery waiting out a backoff,
+      // and no alarm armed: whatever arms it next is this call.
+      state.storage.sql.exec(
+        "INSERT INTO authorization_backfill_children(parent_id, substream_id) VALUES (?, ?)", WORKSTREAM_ID, known,
+      );
+      state.storage.sql.exec(
+        "INSERT INTO authorization_delivery(job_key, payload_json, not_before) VALUES (?, '{}', ?)",
+        JSON.stringify([WORKSTREAM_ID, known]), deliveryDueAt,
+      );
+      return state.storage.deleteAlarm();
+    });
+
+    // Held in one block so the alarm this arms cannot fire, flush the new
+    // delivery and re-arm for the waiting one before the read.
+    const registerThenReadAlarm = (substreamIds: string[]) =>
+      runInDurableObject(stub, (instance: WorkspaceDO, state) => state.blockConcurrencyWhile(async () => {
+        await instance.registerAuthorizationChildren({
+          workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamIds, refreshExisting: false,
+        });
+        return state.storage.getAlarm();
+      }));
+
+    // Every child is known and `refreshExisting: false` skips it: nothing queued.
+    expect(await registerThenReadAlarm([known])).toBeNull();
+
+    // A new child queues its discovery, due at once.
+    const armed = await registerThenReadAlarm([known, added]);
+    expect(armed).not.toBeNull();
+    expect(armed!).toBeLessThan(deliveryDueAt);
   });
 });
 

@@ -22,6 +22,7 @@ import {
   type WorkspaceMemoryOutboxRow,
 } from "../durable-objects/workspace-memory-protocol";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { memoryScopeRows } from "./memory-scope-cache";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createIdentityObjectPort } from "../runtime/identity-port";
@@ -262,6 +263,9 @@ export async function ensureScope(
   ownerId: string,
   writable: boolean,
 ): Promise<MemoryScope> {
+  const key = JSON.stringify([workspaceId, kind, ownerId]);
+  const known = memoryScopeRows.get(key);
+  if (known) return { ...known, writable };
   const workspace = await workspaceMemoryObject(env, workspaceId);
   const scope = WorkspaceMemoryScopeSchema.parse(await workspace.ensureMemoryScope({
     workspaceId,
@@ -270,13 +274,14 @@ export async function ensureScope(
     ownerId,
     at: nowIso(),
   }));
-  return {
+  const row = {
     memoryScopeId: scope.memoryScopeId,
     workspaceId: scope.workspaceId,
     kind: scope.kind,
     ownerId: scope.ownerId,
-    writable,
   };
+  memoryScopeRows.set(key, row);
+  return { ...row, writable };
 }
 
 /** Resolve the complete memory scope union from host-owned run authority. */

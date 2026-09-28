@@ -54,6 +54,19 @@ without embedding a second copy of deployment configuration.
 - An unconfigured destination is unavailable; its records are not reassigned.
 - Existing lower-level authentication, membership checks, and typed RPC contracts
   remain responsible for access control.
+- **Exception: GitHub delivery bytes rest in Global before they are routed.**
+  The shared GitHub receiver runs in Global and queues each verified delivery on
+  Global's activity Queue; a body too large for a message is staged in Global's
+  `PAYLOADS` under `global/github-ingress/`. The consumer deletes it once every
+  connected deployment has taken the delivery (or none has the installation),
+  and the receiver deletes it if the message could not be sent. A message that
+  exhausts its retries leaves its body there, and so does a failed cleanup
+  delete, so for a delivery bound for another deployment that deployment's
+  GitHub content stays in Global until an operator clears it
+  ([runbook](runbook.md#github-delivery-dead-letters)). No lifecycle rule
+  expires that prefix yet; its age is a decision still to be made. Adding a
+  second deployment has to accept this or move the consumer
+  ([`connectors.md`](connectors.md#github-app)).
 
 ## Boundary
 
