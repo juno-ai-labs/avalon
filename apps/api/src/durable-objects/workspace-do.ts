@@ -140,7 +140,7 @@ import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, RESOURCE_SEARCH_CONTENT_UPDATE_MI
   resourceSearchRevision, nextResourceSearchDueAt, publishResourceSearch, prepareResourceSearch, type ResourceSearchPace } from './resource-search-projection';
 import { isDraftUpload, requiresAttachment } from '../services/resource-read-rules';
 import { searchAudienceGroup, searchAudienceGroupIds } from '../services/search-audience';
-import { SEARCH_AUTHORIZATION_PUSH_MIGRATION } from './search-authorization-projection';
+import { MEMORY_SEARCH_KEY_PURGE_MIGRATION, SEARCH_AUTHORIZATION_PUSH_MIGRATION } from './search-authorization-projection';
 import { enumerateSearchAuthorizationUniverse, type SearchAuthorizationTarget } from './search-authorization-universe';
 import { resolveWorkspaceEventResources } from "./workspace-event-resources";
 
@@ -3977,6 +3977,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   statements: [
     "CREATE INDEX authorization_delivery_due_idx ON authorization_delivery(not_before)",
   ],
+}, {
+  version: 83,
+  description: "purge the search-authorization keys memory search registered per run",
+  statements: MEMORY_SEARCH_KEY_PURGE_MIGRATION,
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {

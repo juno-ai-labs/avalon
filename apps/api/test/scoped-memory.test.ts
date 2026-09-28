@@ -8,12 +8,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import type { Env } from "../src/env";
 import {
+  clearMemoryScopeCache,
   createMemoryTools,
   freezeRunMemoryContext,
   memorySearch,
   processMemoryIndexOutbox,
   resolveMemoryAccess,
+  type MemoryScope,
 } from "../src/services/memory-service";
+import { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { createMemoryTableTools } from "../src/services/memory-table-service";
 import { validateToolArguments } from "@rally/agent-harness";
 import { MEMORY_RECALL_QUERY_LIMIT } from "@rally/contracts";
@@ -166,6 +169,9 @@ const objectStores = new Map<string, DatabaseSync>();
 afterEach(() => {
   vi.unstubAllGlobals();
   objectStores.clear();
+  // Each fixture is a fresh WorkspaceDO under the same workspace id, so its
+  // scopes get new ids that the isolate's scope cache must not answer for.
+  clearMemoryScopeCache();
   for (const database of openDatabases.splice(0)) database.close();
 });
 
@@ -559,6 +565,25 @@ describe("scoped agent memory", () => {
     expect((await memorySearch(routedEnv(env, second), second, "crimson summary")).results).toEqual([]);
     expect((await memorySearch(routedEnv(env, second), second, "release Thursday")).results)
       .toEqual([expect.objectContaining({ scopeKind: "workspace" })]);
+  });
+
+  it("asks the WorkspaceDO for each scope once, and decides writability on every call", async () => {
+    const ensure = vi.spyOn(WorkspaceDO.prototype, "ensureMemoryScope");
+    try {
+      const { env } = fixture();
+      const workspaceScope = (scopes: readonly MemoryScope[]) => scopes.find((scope) => scope.kind === "workspace");
+      const owner = await resolveMemoryAccess(env, input("owner"));
+      expect(ensure).toHaveBeenCalledTimes(3);
+      expect(await resolveMemoryAccess(env, input("owner"))).toEqual(owner);
+      expect(ensure).toHaveBeenCalledTimes(3);
+      // The member reads the same workspace scope, but only an owner may write it.
+      const member = await resolveMemoryAccess(env, input("member"));
+      expect(ensure).toHaveBeenCalledTimes(5);
+      expect(workspaceScope(owner)?.writable).toBe(true);
+      expect(workspaceScope(member)).toEqual({ ...workspaceScope(owner), writable: false });
+    } finally {
+      ensure.mockRestore();
+    }
   });
 
   it("replays receipts and uses revision CAS for updates and invalidation", async () => {
