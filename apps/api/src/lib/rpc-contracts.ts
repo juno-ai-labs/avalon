@@ -35,6 +35,19 @@ const rawBody = z.custom<ArrayBuffer>(
 /** Exact-byte webhook hand-off from a shared Global ingress to a regional data plane. */
 export const RegionalWebhookInputSchema = z.object({ rawBody, headers: headerBag });
 
+/**
+ * A GitHub delivery the Global receiver has already verified, on its way from
+ * the Global Queue consumer to a regional data plane. It carries no signature:
+ * the edge checked it once, and the region parses the same bytes without
+ * checking it again.
+ */
+export const GitHubVerifiedDeliveryInputSchema = z.object({
+  rawBody,
+  deliveryId: z.string().min(1).max(200),
+  event: z.string().min(1).max(100),
+  receivedAt: z.string().datetime({ offset: true }),
+});
+
 export const GitHubRegionalSetupInputSchema = z.object({
   installationId: providerId,
   state: z.string().min(1).max(4_096),

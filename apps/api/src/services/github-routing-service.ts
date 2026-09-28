@@ -3,28 +3,35 @@ import { isConfiguredRegion, configuredRegions } from "@rally/contracts/regions"
 import {
   ConnectorError,
   isDiscardedGitHubDelivery,
-  verifyGitHubWebhook,
+  parseGitHubWebhook,
   type GitHubWebhookDelivery,
 } from "@rally/connectors";
 import type { Region } from "@rally/contracts";
+import { z } from "zod";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { githubRegionFromInstallState } from "../lib/github-install-state";
-import { logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import {
   ConnectionService,
   type GitHubSetupResult,
 } from "./connection-service";
 import {
+  GITHUB_WEBHOOK_MAX_BYTES,
   ProviderWebhookService,
   type ProviderWebhookIngestionResult,
+  type VerifiedGitHubDelivery,
 } from "./provider-webhook-service";
+import { MAX_CONNECTOR_EVENT_QUEUE_BYTES } from "./workspace-connector-event-ingress";
 
 export const DEFAULT_GITHUB_INGRESS_BASE_URL = "https://github.rallywith.ai";
 
-export interface GitHubRegionalWebhookInput {
+/** The verified delivery as it crosses the regional bridge: bytes, not a view. */
+export interface GitHubRegionalVerifiedDeliveryInput {
   rawBody: ArrayBuffer;
-  headers: Record<string, string>;
+  deliveryId: string;
+  event: string;
+  receivedAt: string;
 }
 
 export interface GitHubRegionalSetupInput {
@@ -51,7 +58,9 @@ export interface GlobalGitHubRouterRpcBinding {
 export interface GitHubRegionalBridgeRpcBinding {
   setupGitHub(input: GitHubRegionalSetupInput): Promise<GitHubRegionalRpcResult<GitHubSetupResult>>;
   failGitHubSetup(input: GitHubRegionalSetupFailureInput): Promise<GitHubRegionalRpcResult<string>>;
-  ingestGitHub(input: GitHubRegionalWebhookInput): Promise<GitHubRegionalRpcResult<ProviderWebhookIngestionResult>>;
+  ingestVerifiedGitHub(
+    input: GitHubRegionalVerifiedDeliveryInput,
+  ): Promise<GitHubRegionalRpcResult<ProviderWebhookIngestionResult>>;
 }
 
 type GitHubRegionalErrorStatus = ApiError["status"];
@@ -89,6 +98,50 @@ export async function serializeGitHubRegionalRpcResult<T>(
   }
 }
 
+const GITHUB_DELIVERY_QUEUE_KIND = "github_webhook_delivery_v1";
+
+/**
+ * One verified GitHub delivery on its way from the Global receiver to the
+ * consumer that routes it. It rides the Global `ACTIVITY_QUEUE`, the queue
+ * connector ingest already uses.
+ *
+ * The body travels inline when it fits the Queue's 128 KB message limit and is
+ * staged in `PAYLOADS` otherwise: GitHub sends payloads of up to 25 MB. The
+ * staged key names the delivery and its content, so a GitHub redelivery of the
+ * same delivery writes the same object rather than a second one.
+ *
+ * There is no signature on it. The receiver verified the bytes before sending
+ * this, and nothing after the receiver verifies them again.
+ */
+export const GitHubDeliveryQueueMessageSchema = z.strictObject({
+  kind: z.literal(GITHUB_DELIVERY_QUEUE_KIND),
+  deliveryId: z.string().min(1).max(200),
+  event: z.string().min(1).max(100),
+  receivedAt: z.string().datetime({ offset: true }),
+  body: z.discriminatedUnion("kind", [
+    z.strictObject({
+      kind: z.literal("inline"),
+      bytes: z.custom<ArrayBuffer>((value) => value instanceof ArrayBuffer, { message: "must be an ArrayBuffer" }),
+    }),
+    z.strictObject({
+      kind: z.literal("staged"),
+      payloadRef: z.string().min(1).max(1_024),
+    }),
+  ]),
+});
+
+export type GitHubDeliveryQueueMessage = z.infer<typeof GitHubDeliveryQueueMessageSchema>;
+
+const GitHubDeliveryQueueKindSchema = z.object({ kind: z.literal(GITHUB_DELIVERY_QUEUE_KIND) });
+
+/** True for a message the GitHub delivery consumer owns, well-formed or not. */
+export function isGitHubDeliveryQueueMessage(body: unknown): boolean {
+  return GitHubDeliveryQueueKindSchema.safeParse(body).success;
+}
+
+/** What the consumer did with one delivery; the log names it. */
+export type GitHubDeliveryOutcome = "dispatched" | "unrouted" | "already_processed";
+
 interface GitHubRoutingServiceOptions {
   now?: () => number;
   setupInRegion?: (
@@ -103,29 +156,19 @@ interface GitHubRoutingServiceOptions {
   ) => Promise<string>;
   ingestInRegion?: (
     region: Region,
-    rawBody: Uint8Array,
-    headers: Record<string, string>,
+    delivery: VerifiedGitHubDelivery & { rawBody: Uint8Array },
   ) => Promise<ProviderWebhookIngestionResult>;
-}
-
-interface PendingDeliveryRow {
-  delivery_id: string;
-  installation_id: string;
-  event_type: string;
-  action: string | null;
-  signature_header: string;
-  payload_ref: string;
-}
-
-interface ExpiredPendingDeliveryRow {
-  delivery_id: string;
-  payload_ref: string;
 }
 
 /**
  * Coordinates the one public GitHub App without moving canonical connector
  * state out of its workspace region. This service is used only by the Global
  * `github.rallywith.ai` ingress.
+ *
+ * A delivery takes two steps. {@link ingestGitHub} runs while GitHub waits: it
+ * verifies the signature, drops what is discarded, and enqueues the rest.
+ * {@link consumeDelivery} runs from the Queue: it finds the installation's
+ * regions and hands each one the verified bytes.
  */
 export class GitHubRoutingService {
   private readonly now: () => number;
@@ -142,8 +185,8 @@ export class GitHubRoutingService {
       this.defaultSetupInRegion(region, installationId, state));
     this.failSetupInRegion = options.failSetupInRegion ?? ((region, state, errorCode) =>
       this.defaultFailSetupInRegion(region, state, errorCode));
-    this.ingestInRegion = options.ingestInRegion ?? ((region, rawBody, headers) =>
-      this.defaultIngestInRegion(region, rawBody, headers));
+    this.ingestInRegion = options.ingestInRegion ?? ((region, delivery) =>
+      this.defaultIngestInRegion(region, delivery));
   }
 
   async setupGitHub(installationId: string, state: string): Promise<string> {
@@ -158,8 +201,6 @@ export class GitHubRoutingService {
        ON CONFLICT(installation_id, region, workspace_id) DO UPDATE SET
          status = 'active', updated_at = excluded.updated_at, disabled_at = NULL`,
     ).bind(installationId, region, setup.workspaceId, at, at).run();
-    await this.replayPendingBestEffort(installationId);
-    await this.cleanupExpiredPending();
     return setup.url;
   }
 
@@ -203,6 +244,12 @@ export class GitHubRoutingService {
     return { updated: true };
   }
 
+  /**
+   * The part of a delivery GitHub waits for: verify the signature once over
+   * the exact bytes, drop what is discarded, enqueue the rest, and answer.
+   * Nothing here reads D1 or calls GitHub; the routing and every regional
+   * write happen in {@link consumeDelivery}.
+   */
   async ingestGitHub(
     rawBody: Uint8Array | ArrayBuffer,
     inputHeaders: Headers | HeadersInit,
@@ -211,37 +258,117 @@ export class GitHubRoutingService {
     const bytes = copyBytes(rawBody);
     const headers = relevantGitHubHeaders(inputHeaders);
     const delivery = await this.verifyIngress(bytes, headers);
-    await this.cleanupExpiredPending();
 
     if (delivery.event === "ping" || isDiscardedGitHubDelivery(delivery)) {
       return { accepted: true, duplicate: false, activityCount: 0 };
     }
-    if (delivery.event === "github_app_authorization" && delivery.installationId === null) {
-      // User authorization revocation is user-scoped rather than installation-
-      // scoped. Each regional data plane must match the sender against its own
-      // encrypted personal connections.
-      return this.dispatch(bytes, headers, delivery, configuredRegions);
-    }
-    if (delivery.installationId === null) {
+    if (delivery.installationId === null && delivery.event !== "github_app_authorization") {
       throw new ConnectorError(
         "provider_error",
         "The GitHub delivery cannot be routed without an installation identity",
       );
     }
 
-    await this.replayPendingBestEffort(delivery.installationId);
-    const regions = await this.activeRegions(delivery.installationId);
+    await this.enqueueDelivery(bytes, delivery);
+    return { accepted: true, duplicate: false, activityCount: 0 };
+  }
+
+  /**
+   * Routes one verified delivery from the Queue: find the regions the
+   * installation is connected in, hand each the verified bytes, and disable
+   * the routes when the installation was deleted.
+   *
+   * Idempotent on the delivery id. A redelivery — from the Queue, or GitHub
+   * sending the same delivery again — reaches each region's
+   * `provider_webhook_receipts` row for that id and is answered as a duplicate
+   * there. A throw is the consumer's cue to retry the message, and after
+   * `max_retries` the dead-letter queue has it.
+   */
+  async consumeDelivery(message: GitHubDeliveryQueueMessage): Promise<GitHubDeliveryOutcome> {
+    this.assertGlobalIngress();
+    const rawBody = await this.loadBody(message);
+    if (rawBody === null) {
+      // Staged bodies are deleted only after every region has taken the
+      // delivery, so a missing one is a sibling copy of this delivery that
+      // already finished.
+      return "already_processed";
+    }
+    const delivery = await parseGitHubWebhook({
+      rawBody: decodeUtf8(rawBody),
+      eventHeader: message.event,
+      deliveryHeader: message.deliveryId,
+      receivedAt: message.receivedAt,
+    });
+    const verified = {
+      rawBody,
+      deliveryId: message.deliveryId,
+      event: message.event,
+      receivedAt: message.receivedAt,
+    };
+
+    let regions: Region[];
+    if (delivery.installationId === null) {
+      // User authorization revocation is user-scoped rather than
+      // installation-scoped. Each regional data plane matches the sender
+      // against its own encrypted personal connections.
+      regions = [...configuredRegions];
+    } else {
+      regions = await this.activeRegions(delivery.installationId);
+    }
     if (regions.length === 0) {
-      // The Global control plane may route opaque bytes, but it must never
-      // retain workspace content before a regional route exists.
-      throw new ApiError(503, "github_route_pending", "The GitHub installation route is not ready; retry this delivery");
+      // No region has connected this installation, so there is nothing to
+      // hand it to — the Global counterpart of a region matching no
+      // connection. `installation.created` lands here whenever it beats the
+      // setup redirect, which is every new installation, so this is not a
+      // failure and is not retried into the dead-letter queue.
+      await this.deleteStagedBody(message);
+      return "unrouted";
     }
 
-    const result = await this.dispatch(bytes, headers, delivery, regions);
-    if (isInstallationDeleted(delivery)) {
+    await Promise.all(regions.map((region) => this.ingestInRegion(region, verified)));
+    if (delivery.installationId !== null && isInstallationDeleted(delivery)) {
       await this.disableInstallationRoutes(delivery.installationId);
     }
-    return result;
+    await this.deleteStagedBody(message);
+    return "dispatched";
+  }
+
+  private async enqueueDelivery(bytes: Uint8Array, delivery: GitHubWebhookDelivery): Promise<void> {
+    const body: GitHubDeliveryQueueMessage["body"] = bytes.byteLength <= MAX_CONNECTOR_EVENT_QUEUE_BYTES
+      ? { kind: "inline", bytes: exactArrayBuffer(bytes) }
+      : { kind: "staged", payloadRef: stagedPayloadRef(this.env.AVALON_REGION, delivery) };
+    if (body.kind === "staged") {
+      await this.env.PAYLOADS.put(body.payloadRef, exactArrayBuffer(bytes), {
+        httpMetadata: { contentType: "application/json" },
+      });
+    }
+    await this.env.ACTIVITY_QUEUE.send(GitHubDeliveryQueueMessageSchema.parse({
+      kind: GITHUB_DELIVERY_QUEUE_KIND,
+      deliveryId: delivery.deliveryId,
+      event: delivery.event,
+      receivedAt: delivery.receivedAt,
+      body,
+    } satisfies GitHubDeliveryQueueMessage));
+  }
+
+  private async loadBody(message: GitHubDeliveryQueueMessage): Promise<Uint8Array | null> {
+    if (message.body.kind === "inline") return new Uint8Array(message.body.bytes);
+    const object = await this.env.PAYLOADS.get(message.body.payloadRef);
+    return object ? new Uint8Array(await object.arrayBuffer()) : null;
+  }
+
+  private async deleteStagedBody(message: GitHubDeliveryQueueMessage): Promise<void> {
+    if (message.body.kind !== "staged") return;
+    try {
+      await this.env.PAYLOADS.delete(message.body.payloadRef);
+    } catch (error) {
+      // The delivery is done; an object left behind costs storage, not
+      // correctness, and retrying the message would re-run every region.
+      logWarn(this.env, "github_delivery_staged_body_cleanup_failed", {
+        delivery_id: message.deliveryId,
+        error_code: diagnosticErrorCode(error, "github_delivery_staged_body_cleanup_failed"),
+      });
+    }
   }
 
   private async defaultSetupInRegion(
@@ -280,37 +407,19 @@ export class GitHubRoutingService {
 
   private async defaultIngestInRegion(
     region: Region,
-    rawBody: Uint8Array,
-    headers: Record<string, string>,
+    delivery: VerifiedGitHubDelivery & { rawBody: Uint8Array },
   ): Promise<ProviderWebhookIngestionResult> {
     if (region === this.env.AVALON_REGION) {
-      return new ProviderWebhookService(this.env).ingestGitHub(rawBody, headers);
+      return new ProviderWebhookService(this.env).ingestVerifiedGitHub(delivery);
     }
     const bridge = regionalBindings(this.env, region).github;
     if (this.env.AVALON_REGION === "global" && bridge) {
-      return unwrapRegionalResult(await bridge.ingestGitHub({
-          rawBody: exactArrayBuffer(rawBody),
-          headers,
-        }));
+      return unwrapRegionalResult(await bridge.ingestVerifiedGitHub({
+        ...delivery,
+        rawBody: exactArrayBuffer(delivery.rawBody),
+      }));
     }
     throw new ApiError(503, "github_region_unavailable", `The ${region} GitHub webhook service is unavailable`);
-  }
-
-  private async dispatch(
-    rawBody: Uint8Array,
-    headers: Record<string, string>,
-    delivery: GitHubWebhookDelivery,
-    regions: Region[],
-  ): Promise<ProviderWebhookIngestionResult> {
-    const results = await Promise.all(
-      regions.map((region) => this.ingestInRegion(region, rawBody, headers)),
-    );
-    await this.markPendingDispatched(delivery.deliveryId);
-    return {
-      accepted: true,
-      duplicate: results.length > 0 && results.every((result) => result.duplicate),
-      activityCount: results.reduce((total, result) => total + result.activityCount, 0),
-    };
   }
 
   private async activeRegions(installationId: string): Promise<Region[]> {
@@ -322,88 +431,6 @@ export class GitHubRoutingService {
     return (result.results ?? []).map((row) => row.region);
   }
 
-  private async replayPending(installationId: string): Promise<void> {
-    const at = new Date(this.now()).toISOString();
-    const pending = await this.env.DB.prepare(
-      `SELECT delivery_id, installation_id, event_type, action, signature_header, payload_ref
-       FROM github_ingress_pending_deliveries
-       WHERE installation_id = ? AND dispatched_at IS NULL AND expires_at > ?
-       ORDER BY received_at`,
-    ).bind(installationId, at).all<PendingDeliveryRow>();
-    if (!pending.results?.length) return;
-
-    const regions = await this.activeRegions(installationId);
-    for (const row of pending.results) {
-      const object = await this.env.PAYLOADS.get(row.payload_ref);
-      if (!object) continue;
-      const rawBody = new Uint8Array(await object.arrayBuffer());
-      const headers = {
-        "x-github-delivery": row.delivery_id,
-        "x-github-event": row.event_type,
-        "x-hub-signature-256": row.signature_header,
-      };
-      const delivery = await this.verifyIngress(rawBody, headers);
-      await this.dispatch(rawBody, headers, delivery, regions);
-      if (isInstallationDeleted(delivery)) {
-        await this.disableInstallationRoutes(installationId);
-      }
-      await this.deletePendingPayloadBestEffort(row.payload_ref);
-    }
-  }
-
-  private async markPendingDispatched(deliveryId: string): Promise<void> {
-    await this.env.DB.prepare(
-      `UPDATE github_ingress_pending_deliveries
-       SET dispatched_at = COALESCE(dispatched_at, ?)
-       WHERE delivery_id = ?`,
-    ).bind(new Date(this.now()).toISOString(), deliveryId).run();
-  }
-
-  private async cleanupExpiredPending(limit = 25): Promise<void> {
-    try {
-      const expired = await this.env.DB.prepare(
-        `SELECT delivery_id, payload_ref FROM github_ingress_pending_deliveries
-         WHERE expires_at <= ?
-         ORDER BY expires_at
-         LIMIT ?`,
-      ).bind(new Date(this.now()).toISOString(), limit).all<ExpiredPendingDeliveryRow>();
-      for (const row of expired.results ?? []) {
-        if (!await this.deletePendingPayloadBestEffort(row.payload_ref)) continue;
-        await this.env.DB.prepare(
-          `DELETE FROM github_ingress_pending_deliveries
-           WHERE delivery_id = ? AND expires_at <= ?`,
-        ).bind(row.delivery_id, new Date(this.now()).toISOString()).run();
-      }
-    } catch (error) {
-      logWarn(this.env, "github_pending_delivery_cleanup_failed", {
-        reason: error instanceof Error ? error.message : "unknown cleanup error",
-      });
-    }
-  }
-
-  private async replayPendingBestEffort(installationId: string): Promise<void> {
-    try {
-      await this.replayPending(installationId);
-    } catch (error) {
-      logWarn(this.env, "github_pending_delivery_replay_failed", {
-        installation_id: installationId,
-        reason: error instanceof Error ? error.message : "unknown replay error",
-      });
-    }
-  }
-
-  private async deletePendingPayloadBestEffort(payloadRef: string): Promise<boolean> {
-    try {
-      await this.env.PAYLOADS.delete(payloadRef);
-      return true;
-    } catch (error) {
-      logWarn(this.env, "github_pending_payload_cleanup_failed", {
-        reason: error instanceof Error ? error.message : "unknown R2 cleanup error",
-      });
-      return false;
-    }
-  }
-
   private async disableInstallationRoutes(installationId: string): Promise<void> {
     const at = new Date(this.now()).toISOString();
     await this.env.DB.prepare(
@@ -413,12 +440,16 @@ export class GitHubRoutingService {
     ).bind(at, at, installationId).run();
   }
 
+  /**
+   * The one signature check a delivery gets: an HMAC over the exact request
+   * bytes, before anything is parsed. The parse that follows does not check
+   * it again, and neither does anything downstream.
+   */
   private async verifyIngress(
     rawBody: Uint8Array,
     headers: Record<string, string>,
   ): Promise<GitHubWebhookDelivery> {
-    const maxBytes = 25 * 1024 * 1024;
-    if (rawBody.byteLength > maxBytes) {
+    if (rawBody.byteLength > GITHUB_WEBHOOK_MAX_BYTES) {
       throw new ConnectorError("payload_too_large", "The GitHub webhook exceeded the configured size limit");
     }
     const secret = this.env.GITHUB_WEBHOOK_SECRET?.trim();
@@ -426,23 +457,11 @@ export class GitHubRoutingService {
       throw new ConnectorError("invalid_configuration", "GitHub webhook signing secret is not configured");
     }
     await verifyExactGitHubHmac(secret, rawBody, headers["x-hub-signature-256"] ?? null);
-
-    let rawText: string;
-    try {
-      rawText = new TextDecoder("utf-8", { fatal: true }).decode(rawBody);
-    } catch (error) {
-      throw new ConnectorError("provider_error", "The GitHub webhook body is not valid UTF-8", error);
-    }
-    // This shared parser also performs a second signature check before JSON
-    // parsing. The first check above is over the untouched byte array.
-    return verifyGitHubWebhook({
-      secret,
-      rawBody: rawText,
-      signatureHeader: headers["x-hub-signature-256"] ?? null,
+    return parseGitHubWebhook({
+      rawBody: decodeUtf8(rawBody),
       eventHeader: headers["x-github-event"] ?? null,
       deliveryHeader: headers["x-github-delivery"] ?? null,
       receivedAt: new Date(this.now()).toISOString(),
-      maxBytes,
     });
   }
 
@@ -450,6 +469,59 @@ export class GitHubRoutingService {
     if (this.env.AVALON_REGION !== "global") {
       throw new ApiError(503, "github_ingress_misconfigured", "The shared GitHub ingress must run in the Global control plane");
     }
+  }
+}
+
+/**
+ * The Queue side of the Global GitHub receiver: parse, route, then ack or
+ * retry. A malformed message throws before anything is routed, and its code
+ * names the field.
+ */
+export async function consumeGitHubDeliveryMessage(
+  message: Message<unknown>,
+  env: Env,
+  service: GitHubRoutingService = new GitHubRoutingService(env),
+): Promise<void> {
+  const parsed = GitHubDeliveryQueueMessageSchema.safeParse(message.body);
+  if (!parsed.success) {
+    logWarn(env, "github_delivery_message_invalid", {
+      queue_attempts: message.attempts,
+      error_code: diagnosticErrorCode(parsed.error, "github_delivery_message"),
+    });
+    message.retry();
+    return;
+  }
+  try {
+    const outcome = await service.consumeDelivery(parsed.data);
+    logInfo(env, "github_delivery_consumed", {
+      delivery_id: parsed.data.deliveryId,
+      event_type: parsed.data.event,
+      outcome,
+      queue_attempts: message.attempts,
+    });
+    message.ack();
+  } catch (error) {
+    logWarn(env, "github_delivery_retry", {
+      delivery_id: parsed.data.deliveryId,
+      event_type: parsed.data.event,
+      queue_attempts: message.attempts,
+      error_code: error instanceof ConnectorError
+        ? error.code
+        : diagnosticErrorCode(error, "github_delivery_failed"),
+    });
+    message.retry();
+  }
+}
+
+function stagedPayloadRef(region: string, delivery: GitHubWebhookDelivery): string {
+  return `${region}/github-ingress/${delivery.deliveryId}/${delivery.rawContentHash}.json`;
+}
+
+function decodeUtf8(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch (error) {
+    throw new ConnectorError("provider_error", "The GitHub webhook body is not valid UTF-8", error);
   }
 }
 
