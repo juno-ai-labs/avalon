@@ -235,8 +235,12 @@ not export a Cloudflare class from the Worker entrypoint.
 
 The separate Sidekicks window lists all accessible personal, workspace and
 workstream-owned entries, including drafts. `GET /sidekicks` uses
-`WorkspaceDO.listSidekickDirectory`; the old `/automations` listing remains a
-compatibility adapter. Directory membership never grants access to an owner.
+`WorkspaceDO.listSidekickDirectoryForAuthorizedMember`: the request's session
+authentication already joined the caller's active member row, so the object
+applies only the per-row scope filter and does not read `workspace_members`
+again. `listSidekickDirectory`, which does check membership itself, remains for
+a caller that has not. The old `/automations` listing remains a compatibility
+adapter. Directory membership never grants access to an owner.
 
 The window closes on **Escape**, through the shared
 `renderer/lib/window-escape.ts` that Settings also uses, and nominates nothing as
@@ -808,7 +812,7 @@ substreams. Harness `skills.test.ts` proves recommendations do not load bodies.
 | --- | --- | --- |
 | `apps/api/test-workers/automation-do.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: draft, `submitDefinition`, and `apply` binding a workspace connection, reserving the address, and activating; a missing connection refused; a second ready revision re-applied on an active automation; pause stopping the in-flight run and clearing registrations, resume re-arming; delete tombstoning the row and leaving the sidebar; management refused to a member who is neither author nor principal; `runNow` idempotent on its key; `admitExternalEvent` idempotent and refused before the boundary; `admitInboundEmail` answering a retry from its receipt and refusing a stranger; the run provisioned as a child substream whose loop reads its definition by revision, with `runs.state` following the child's state through the effect leg. |
 | `apps/api/test-workers/automation-post-result.test.ts` | `pnpm --filter @rally/api test:workers` | The result tool appending into the owning room's substream `0`, and refused for an archived room and a stale generation. |
-| `apps/api/test-workers/automation-directory.test.ts` | `pnpm --filter @rally/api test:workers` | `create` alone putting a draft row in the author's sidebar, a workspace row in everyone's, and a room's row only in `listWorkstreamAutomations`; and `setAppearance` — driven through the object's stub, the boundary `AutomationService` crosses — merging one field at a time, reaching both directory listings through the real effect legs, and refusing somebody who cannot manage the Sidekick. |
+| `apps/api/test-workers/automation-directory.test.ts` | `pnpm --filter @rally/api test:workers` | `create` alone putting a draft row in the author's sidebar, a workspace row in everyone's, and a room's row only in `listWorkstreamAutomations`; and `setAppearance` — driven through the object's stub, the boundary `AutomationService` crosses — merging one field at a time, reaching both directory listings through the real effect legs, and refusing somebody who cannot manage the Sidekick; and `AutomationService.listSidekicks` listing each scope to exactly the members it did before while the object sends D1 no `workspace_members` read. |
 | `apps/desktop/src/renderer/screens/automation.test.tsx` | `pnpm --filter @rally/desktop test` | The profile's appearance saving: an older response losing to a newer Sidekick already in the cache, and its own response applied when nothing newer arrived. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx`, `components/workstream-glyph.test.tsx` | `pnpm --filter @rally/desktop test` | The strip: which Sidekicks qualify, the tile's accessible name, the play cut out of the hexagon with its own mask, and the two tooltips — the tile carrying the name and scope through `Tip` rather than a native `title`, the tile's one tooltip saying whichever part of it the pointer is on, swapping both ways with no second delay, and answering for the play even when the pointer reaches it inside the tile tooltip's own delay — that one driven on fake timers, each advance flushed on its own. |
 | `apps/api/test-workers/automation-acceptance-bindings.test.ts` | `pnpm --filter @rally/api test:workers` | The binding half in isolation: the table absent from D1, a recommended plugin bound from the workspace object's connections, a missing one refused, a disabled row skipped for the live one. |
@@ -940,6 +944,33 @@ Desktop and browser request management options only when their controls open, no
 on every transcript update.
 
 ## Changelog
+
+### 2026-09-28 — The Sidekick library checks membership once, at authentication
+
+**What changed:** `AutomationService.listSidekicks`, behind `GET /sidekicks`,
+calls `WorkspaceDO.listSidekickDirectoryForAuthorizedMember` instead of
+`listSidekickDirectory`. The object no longer re-reads the caller's
+`workspace_members` row from D1; it still filters every row by scope,
+authorship and room participation.
+
+**Why:** Production measurements on 2026-09-27 put the list at a median of
+1 s, and it checked access twice. Session authentication joins the caller's
+active member row (with its incarnation) before the handler runs, and the route
+requires a role, so a guest never reaches it; the object then asked D1 the same
+question again from wherever it runs. The other two callers hold equally
+verified contexts: Sidekick recommendations read the relationship themselves,
+and demo readiness builds its viewer from `demoMemberAuth`. Who sees what is
+unchanged — the object's own check was the weaker of the two, since it ignored
+the incarnation and admitted guests.
+
+**Considered and rejected:** Keeping the object's check and dropping the
+request's. Authentication cannot be skipped for one route, and the object's
+check is the one that answers less.
+
+**Consequences:** `AutomationService.listSidekicks` must only be constructed
+with an `AuthContext` whose membership was proved in the same request. A caller
+that cannot say that uses `listSidekickDirectory`, as the Bind
+`verify_membership` path in `agent-communication-service.ts` does.
 
 ### 2026-09-25 — The setup chat chooses a Sidekick's icon and color
 
