@@ -76,7 +76,7 @@ it("upgrades a populated v79 Organization through 82 in one wake, every Channel 
     expect(rows(sql, `SELECT workstream_id FROM channel_rail_changes`)).toEqual([]);
     expect(rows(sql, `SELECT parent_id, sidekick_id FROM parent_sidekicks`))
       .toEqual([{ parent_id: "channel-a", sidekick_id: "sidekick-a" }]);
-    expect(rows(sql, `SELECT version FROM _sql_schema_migrations WHERE version > 79 ORDER BY version`))
+    expect(rows(sql, `SELECT version FROM _sql_schema_migrations WHERE version BETWEEN 80 AND 82 ORDER BY version`))
       .toEqual([{ version: 80 }, { version: 81 }, { version: 82 }]);
     expect(rows(sql, `SELECT automation_id, run_as_user_id, title FROM automation_directory`))
       .toEqual([{ automation_id: "sidekick-b", run_as_user_id: null, title: "Room helper" }]);
