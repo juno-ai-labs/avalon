@@ -87,6 +87,8 @@ const DISPATCHED_OPERATIONS = [
   "providerObservation",
   "beginProviderObservation",
   "settleProviderObservation",
+  "nextProviderObservationAt",
+  "republishDeadline",
   "reserveFirstGeneration",
   "claimOperation",
   "releaseOperation",
@@ -187,6 +189,7 @@ const NON_DIRECTORY_OPERATIONS = new Set<TerminalOperation>([
   "hasLiveTask",
   "unsettledTaskCount",
   "importedResources",
+  "nextProviderObservationAt",
   "repository",
   "selectedRepository",
   "latestPublicationGrant",
@@ -198,6 +201,12 @@ const NON_DIRECTORY_OPERATIONS = new Set<TerminalOperation>([
   // the participant and link walk per call for a row that never changes.
   "claimOperation",
   "releaseOperation",
+  // Provider observation. Its deadline is the owning object's own alarm, not
+  // the directory's, so neither reserving nor settling a read republishes: a
+  // check that moved only that deadline used to publish twice, 99% of the
+  // directory updates in production.
+  "beginProviderObservation",
+  "settleProviderObservation",
   // Writes that leave `terminal_workspace` alone.
   "insertTask",
   "renewTaskSubmissionAuthority",

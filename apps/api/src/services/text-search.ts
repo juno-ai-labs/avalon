@@ -176,6 +176,17 @@ export function searchRanking(options: TextSearchOptions): RankBy {
   return options.mode === "substring" ? ["id", "asc"] : ["text", "BM25", options.query];
 }
 
+/**
+ * A namespace not written since generation fan-out has no `generation` in its
+ * schema. Verified live: a filter on it answers the first form, a returned
+ * attribute the second.
+ */
+function lacksGeneration(error: unknown): boolean {
+  return error instanceof Error && "status" in error && error.status === 400
+    && (error.message.includes("filter error in key `generation`: attribute not found")
+      || error.message.includes('attribute "generation" not found in schema'));
+}
+
 /** The sole Turbopuffer boundary. Credentials and namespace stay on the server. */
 export class TextSearchIndex {
   private readonly namespace;
@@ -257,8 +268,7 @@ export class TextSearchIndex {
       if (error instanceof Error && "status" in error && error.status === 404) return;
       // Live API, 2026-09-06: delete filters see the schema before this write.
       // Existing pre-fan-out namespaces need a separate schema initialization.
-      if (error instanceof Error && "status" in error && error.status === 400
-        && error.message.includes("filter error in key `generation`: attribute not found")) {
+      if (lacksGeneration(error)) {
         try {
           await this.namespace.write({ schema: SEARCH_DOCUMENT_SCHEMA });
           await this.namespace.write({ delete_by_filter: filter });
@@ -269,20 +279,32 @@ export class TextSearchIndex {
     }
   }
 
-  /** Persisted batch IDs make duplicate deliveries receipts, without a separate ledger. */
+  /**
+   * Persisted chunk rows make duplicate deliveries receipts, without a separate
+   * ledger. A chunk's id hashes its document, revision, generation, range and
+   * text, and a generation is the hash of the whole text its range slices, so
+   * (document, revision, generation, start, end) names exactly one id: counting
+   * those attributes is counting the ids, without the text needed to form them.
+   */
   async countSemanticChunks(document: Pick<TextSearchDocument, "source" | "scopeId" | "sourceId" | "revision">,
-    ids: string[]): Promise<number> {
+    generation: string, spans: ReadonlyArray<{ start: number; end: number }>): Promise<number> {
     const result = await this.namespace.query({
       aggregate_by: { count: ["Count"] },
       filters: ["And", [
         ["source", "Eq", document.source], ["scope_id", "Eq", document.scopeId],
         ["source_id", "Eq", document.sourceId], ["revision", "Eq", document.revision],
+        ["generation", "Eq", generation],
         ["record_type", "Eq", "chunk"], ["deleted", "Eq", false],
-        ["id", "In", ids],
+        // Pairs, not two `In` lists: a recursive passage and a sliding window
+        // can share a start, and a cross pair would count another batch's row.
+        ["Or", spans.map((span): Filter => ["And", [["chunk_start", "Eq", span.start], ["chunk_end", "Eq", span.end]]])],
       ]],
       consistency: { level: "strong" },
     }).catch((error: unknown) => {
-      if (error instanceof Error && "status" in error && error.status === 404) return { aggregations: { count: 0 } };
+      // A namespace that does not exist, or has no generation yet, holds none of this batch.
+      if (lacksGeneration(error) || error instanceof Error && "status" in error && error.status === 404) {
+        return { aggregations: { count: 0 } };
+      }
       throw new Error("search_index_query_failed");
     });
     return z.object({ count: z.number().int().nonnegative() }).parse(result.aggregations).count;
@@ -400,8 +422,7 @@ export class TextSearchIndex {
     const result = await query(options.mode === "semantic").catch((error: unknown) => {
       // Pre-fan-out namespaces have no generation attribute until their first
       // new write. Preserve their existing revision-based retrieval contract.
-      if (options.mode === "semantic" && error instanceof Error && "status" in error && error.status === 400
-        && error.message.includes('attribute "generation" not found in schema')) return query(false);
+      if (options.mode === "semantic" && lacksGeneration(error)) return query(false);
       throw error;
     }).catch((error: unknown) => {
       // A namespace does not exist until its first write.
