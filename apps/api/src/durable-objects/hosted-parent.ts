@@ -139,7 +139,7 @@ import {
   type SocketAccessRevocation,
 } from "../services/access-revocation";
 import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationRequest } from "../services/authorization-policy";
-import { resolveScopedAccess } from "../services/scope-grant-policy";
+import { resolveScopedAccess, type ScopedAccess } from "../services/scope-grant-policy";
 import type { WorkspaceRelationship } from "../services/workspace-relationship-service";
 import {
   ReceiveChildEffectsRequestSchema,
@@ -551,6 +551,24 @@ interface PrivateChildMembershipEffectRow extends Record<string, SqlStorageValue
 interface ProjectionKeyRow extends Record<string, SqlStorageValue> {
   next_version: number;
   last_payload_hash: string;
+}
+
+interface ConversationReadRow extends Record<string, SqlStorageValue> {
+  substream_id: string;
+  kind: "main" | "child";
+  status: "reserved" | "ready" | "failed";
+  archived_at: number | null;
+  audience: "restricted" | "inherits_workstream";
+}
+
+/** One person's read facts for every conversation of a parent; see `conversationReadFacts`. */
+interface ConversationReadFacts {
+  metadata: ParentMetadataRow;
+  migrationPhases: Map<string, "pending" | "complete">;
+  conversations: Map<string, ConversationReadRow>;
+  grants: ScopeGrant[];
+  breakoutMemberships: Set<string>;
+  isParticipant: () => boolean;
 }
 
 interface StoredStateRow extends Record<string, SqlStorageValue> {
@@ -1847,11 +1865,41 @@ export class HostedParent {
    * index admits exactly what opening the conversation would.
    */
   readableSubstreams(userId: UserId, relationship: WorkspaceRelationship | null): SubstreamId[] {
+    const facts = this.conversationReadFacts({ parentId: this.parentId, userId });
+    if (!facts) return [];
+    const address = { workspaceId: facts.metadata.workspace_id, parentId: this.parentId, userId };
+    // The same children `childRegistry` lists: every row, and Main even before it has one.
+    return [...new Set(["0", ...facts.conversations.keys()])].map(asSubstreamId)
+      .filter((substreamId) => this.canReadConversation(address, substreamId, relationship, facts));
+  }
+
+  /**
+   * What {@link canReadConversation} decides from, read once for every
+   * conversation of this parent. A caller that checks many conversations for
+   * one person passes it in: search asks for every conversation in the
+   * Organization on each query, and reading these per conversation cost six
+   * to eight statements each.
+   */
+  private conversationReadFacts(address: { workspaceId?: string; parentId: string; userId: UserId }): ConversationReadFacts | null {
     const metadata = this.metadataRow();
-    if (!metadata) return [];
-    const address = { workspaceId: metadata.workspace_id, parentId: this.parentId, userId };
-    return this.childRegistry().map((child) => asSubstreamId(child.substreamId))
-      .filter((substreamId) => this.canReadConversation(address, substreamId, relationship));
+    if (!metadata) return null;
+    this.assertParent(address.workspaceId ?? metadata.workspace_id, address.parentId);
+    let participant: boolean | undefined;
+    return {
+      metadata,
+      migrationPhases: new Map(this.sql.exec<{ substream_id: string; phase: "pending" | "complete" }>(
+        "SELECT substream_id, phase FROM parent_participant_migrations WHERE parent_id = ?", this.parentId,
+      ).toArray().map((row) => [row.substream_id, row.phase])),
+      conversations: new Map(this.sql.exec<ConversationReadRow>(
+        "SELECT substream_id, kind, status, archived_at, audience FROM parent_children WHERE parent_id = ?", this.parentId,
+      ).toArray().map((row) => [row.substream_id, row])),
+      grants: this.scopeGrants({ workspaceId: metadata.workspace_id, parentId: address.parentId }).forUser(address.userId),
+      breakoutMemberships: new Set(this.sql.exec<{ substream_id: string }>(
+        "SELECT substream_id FROM parent_breakout_members WHERE parent_id = ? AND user_id = ? AND active = 1",
+        this.parentId, address.userId,
+      ).toArray().map((row) => row.substream_id)),
+      isParticipant: () => participant ??= this.isParticipant(address.userId),
+    };
   }
 
   /** A union of the grant authority and the legacy roster; see the legacy object's comment. */
@@ -1859,43 +1907,48 @@ export class HostedParent {
     address: { workspaceId: string; parentId: string; userId: UserId },
     substreamId: SubstreamId,
     relationship: WorkspaceRelationship | null,
+    facts: ConversationReadFacts | null = this.conversationReadFacts(address),
   ): boolean {
-    if (this.participantMigrationPhase(substreamId) !== null) {
-      return this.migratedConversationAccess(address, substreamId, relationship).allowed;
-    }
-    if (this.resolveScopeAccess({ userId: address.userId, target: { kind: "conversation",
-      workspaceId: asWorkspaceId(address.workspaceId), parentId: address.parentId, substreamId } }, relationship).allowed) {
-      return true;
-    }
+    if (!facts) return false;
+    const conversation = facts.conversations.get(substreamId) ?? null;
+    const scoped = () => this.scopedAccess({ userId: address.userId, target: { kind: "conversation",
+      workspaceId: asWorkspaceId(address.workspaceId), parentId: address.parentId, substreamId } },
+    relationship, facts.metadata, conversation, facts.grants).allowed;
+    const phase = facts.migrationPhases.get(substreamId) ?? null;
+    if (phase !== null) return phase === "complete" && scoped();
+    if (scoped()) return true;
     if (relationship?.status !== "active" || relationship.accessClass !== "member") return false;
-    if (substreamId === "0") return this.metadataRow()?.scope === "workspace" || this.isParticipant(address.userId);
-    return first(this.sql.exec<{ one: number }>(
-      `SELECT 1 AS one FROM parent_children child
-         JOIN parent_breakout_members member
-           ON member.parent_id = child.parent_id AND member.substream_id = child.substream_id
-          AND member.user_id = ? AND member.active = 1
-        WHERE child.parent_id = ? AND child.substream_id = ? AND child.kind = 'child' AND child.status = 'ready'`,
-      address.userId, this.parentId, substreamId,
-    )) !== null;
+    if (substreamId === "0") return facts.metadata.scope === "workspace" || facts.isParticipant();
+    return conversation?.kind === "child" && conversation.status === "ready" && facts.breakoutMemberships.has(substreamId);
   }
 
   private resolveScopeAccess(request: ScopeAccessRequest, relationship: WorkspaceRelationship | null): ScopeAccessResult {
     const metadata = this.metadataRow();
     if (!metadata) return { allowed: false, reason: "not_found" };
     this.assertParent(request.target.workspaceId, request.target.parentId);
-    const conversation = request.target.kind === "conversation" ? first(this.sql.exec<{
-      status: "reserved" | "ready" | "failed"; archived_at: number | null; audience: "restricted" | "inherits_workstream";
-    }>(`SELECT status, archived_at, audience FROM parent_children WHERE parent_id = ? AND substream_id = ?`,
+    const conversation = request.target.kind === "conversation" ? first(this.sql.exec<ConversationReadRow>(
+      `SELECT substream_id, kind, status, archived_at, audience FROM parent_children WHERE parent_id = ? AND substream_id = ?`,
       this.parentId, request.target.substreamId)) : null;
-    return ScopeAccessResultSchema.parse(resolveScopedAccess({
+    return ScopeAccessResultSchema.parse(this.scopedAccess(request, relationship, metadata, conversation,
+      this.scopeGrants(request.target).forUser(request.userId)));
+  }
+
+  private scopedAccess(
+    request: ScopeAccessRequest,
+    relationship: WorkspaceRelationship | null,
+    metadata: ParentMetadataRow,
+    conversation: ConversationReadRow | null,
+    grants: ScopeGrant[],
+  ): ScopedAccess {
+    return resolveScopedAccess({
       userId: request.userId, target: request.target, relationship,
       parentExists: true, parentArchived: metadata.archived_at !== null,
       parentVisibility: metadata.scope,
       conversation: conversation
         ? { status: conversation.status, archived: conversation.archived_at !== null, audience: conversation.audience }
         : null,
-      grants: this.scopeGrants(request.target).forUser(request.userId),
-    }));
+      grants,
+    });
   }
 
   private async membershipIncarnations(workspaceId: string): Promise<Record<string, string>> {
@@ -2258,6 +2311,7 @@ export class HostedParent {
     const metadata = this.metadataRow();
     if (!metadata || relationship?.status !== "active" || relationship.incarnation !== request.membershipIncarnation) return null;
     this.assertParent(request.workspaceId, request.parentId);
+    const facts = this.conversationReadFacts(request);
     const projections = new Map(this.sql.exec<{ substream_id: string; effect_json: string }>(
       "SELECT substream_id, effect_json FROM parent_child_projections WHERE parent_id = ?", this.parentId,
     ).toArray().map((row) => [row.substream_id, WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(row.effect_json))]));
@@ -2272,7 +2326,7 @@ export class HostedParent {
     }>(
       "SELECT substream_id, title, archived_at, audience FROM parent_children WHERE parent_id = ? ORDER BY substream_id",
       this.parentId,
-    ).toArray().filter((child) => this.canReadConversation(request, asSubstreamId(child.substream_id), relationship))
+    ).toArray().filter((child) => this.canReadConversation(request, asSubstreamId(child.substream_id), relationship, facts))
       .map((child) => {
         const common = projections.get(child.substream_id);
         const viewer = viewerProjections?.get(child.substream_id);
@@ -3298,8 +3352,9 @@ export class HostedParent {
     // Losing this Channel is not losing a breakout, whose roster is its own.
     const relationship = await this.host.readRelationship(request.workspaceId, request.userId);
     const address = { workspaceId: request.workspaceId, parentId: this.parentId, userId: UserIdSchema.parse(request.userId) };
+    const facts = this.conversationReadFacts(address);
     return { substreamIds: substreamIds.filter((substreamId) => substreamId === "0"
-      || !this.canReadConversation(address, asSubstreamId(substreamId), relationship)) };
+      || !this.canReadConversation(address, asSubstreamId(substreamId), relationship, facts)) };
   }
 
   /** Every child this parent knows about, for the retirement walk. */

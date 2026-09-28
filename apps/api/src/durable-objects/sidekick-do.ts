@@ -1307,12 +1307,19 @@ export class SidekickDO extends ConversationParentDurableObject {
     }
     const changed = row.run_as_user_id !== request.actor.userId || rebound.length > 0;
     if (changed) {
-      this.state.storage.sql.exec(
-        `UPDATE automation SET run_as_user_id = ?, connector_bindings_json = ?, updated_at = ? WHERE id = 1`,
-        request.actor.userId,
-        JSON.stringify(next),
-        Date.now(),
-      );
+      const now = Date.now();
+      // Search reads who a Sidekick runs as from the directory row, so a
+      // handoff republishes it in the same write.
+      this.state.storage.transactionSync(() => {
+        this.state.storage.sql.exec(
+          `UPDATE automation SET run_as_user_id = ?, connector_bindings_json = ?, updated_at = ? WHERE id = 1`,
+          request.actor.userId,
+          JSON.stringify(next),
+          now,
+        );
+        if (row.run_as_user_id !== request.actor.userId) this.enqueueDirectory(now);
+      });
+      await this.armNextAlarm();
     }
     return AutomationExecutionPrincipalClaimSchema.parse({
       principalUserId: request.actor.userId,

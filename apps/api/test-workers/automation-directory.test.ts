@@ -25,6 +25,7 @@ import type { SidekickDO } from "../src/durable-objects/sidekick-do";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
+import { searchAudienceGroup, searchAudienceGroupIds } from "../src/services/search-audience";
 import { deliverParentEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { hostedParentStub } from "./helpers/hosted-parent";
@@ -263,6 +264,23 @@ describe("automation directory", () => {
       actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: false },
     });
     expect(detail.appearance).toBeUndefined();
+  });
+
+  it("republishes who a Sidekick runs as when somebody takes it over, so search follows the handoff", async () => {
+    const automationId = await createAndPublish("workstream");
+    const [group] = await searchAudienceGroupIds([searchAudienceGroup.sidekick(automationId)]);
+    const audience = (userId: string) => workspaceStub().readSearchAudience({ workspaceId: WORKSPACE_ID, userId });
+    // The member is not in the owning room, so only running the Sidekick lets them search it.
+    expect(await audience(MEMBER_ID)).not.toContain(group);
+    const claim = await automationStub(automationId).claimExecutionPrincipal({
+      workspaceId: WORKSPACE_ID,
+      automationId,
+      actor: { userId: MEMBER_ID, actorRole: "member", participantOfOwningWorkstream: true },
+    });
+    expect(claim.changed).toBe(true);
+    const delivered = await deliverParentEffects(TEST_ENV, automationStub(automationId));
+    expect(delivered.at(-1)?.effect).toMatchObject({ kind: "directory_automation", runAsUserId: MEMBER_ID });
+    expect(await audience(MEMBER_ID)).toContain(group);
   });
 
   it("names every automation for a member's revocation, and a room's own for a lost room", async () => {
