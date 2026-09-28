@@ -107,7 +107,10 @@ jobs:
             run_id=""
             run_status=""
             run_conclusion=""
-            # Newest first. The branch and event query filters can omit a run
+            # A deploy for a commit pushed after checkout has a SHA this clone
+            # lacks, and both ancestry checks would skip it.
+            git fetch -q origin main
+            # Newest first. The branch and event query filters may omit a run
             # that was just created, so filter here instead. A run whose commit
             # is an ancestor of the contract commit was pushed before it, and so
             # was every older run: stop there rather than walk all history.
@@ -126,7 +129,8 @@ jobs:
               --jq '.workflow_runs[] | select(.head_branch == "main" and .event == "push") | [.id, .head_sha, .status, (.conclusion // "")] | @tsv')
 
             # Every contract change matches deploy-api.yml's paths, so its run
-            # exists and is not listed yet. The job's timeout bounds the wait.
+            # exists and is not listed or created yet. The job's timeout bounds
+            # the wait.
             # 30 s set by Adam (2026-09-28): about 90 GITHUB_TOKEN calls over a
             # full 45-minute wait, against 1,000 an hour.
             if [[ -z "$run_id" ]]; then
