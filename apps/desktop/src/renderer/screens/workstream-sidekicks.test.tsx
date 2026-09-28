@@ -117,7 +117,11 @@ function boot(participant = false): WorkstreamBoot {
   };
 }
 
-function renderScreen(participant = false, cachedOwnedSidekicks?: WorkstreamAutomationSummary[]): QueryClient {
+function renderScreenWithRail(rail: Record<string, unknown>): QueryClient {
+  return renderScreen(false, undefined, rail);
+}
+
+function renderScreen(participant = false, cachedOwnedSidekicks?: WorkstreamAutomationSummary[], rail?: Record<string, unknown>): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
@@ -127,6 +131,7 @@ function renderScreen(participant = false, cachedOwnedSidekicks?: WorkstreamAuto
   queryClient.setQueryData(workstreamDetailQueryKey(workstreamId, childId), detail);
   queryClient.setQueryData(orderedTranscriptQueryKey(workstreamId, childId), transcript);
   if (cachedOwnedSidekicks) queryClient.setQueryData(['workstream-sidekicks', workstreamId], cachedOwnedSidekicks);
+  if (rail) queryClient.setQueryData(['channel-rail', workstreamId], { railWaterline: 1, rail });
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
@@ -259,6 +264,24 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
     expect(await screen.findByRole('button', { name: 'Child recommendation' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Main recommendation' })).not.toBeInTheDocument();
     expect(api.getRecommendedSidekicks).toHaveBeenCalledWith(workstreamId, expect.any(AbortSignal), childId);
+  });
+
+  it('takes Main\u2019s Sidekicks from the Channel rail without the REST reads', async () => {
+    const rail = {
+      workstreamId, railWaterline: 1, participantUserIds: [],
+      sidekicks: {
+        owned: [],
+        recommended: [{ id: 'recommended-1', name: 'Rail guide', description: '', available: true }],
+        attached: [{ id: 'attached-2', name: 'Rail attachment', description: '', available: true }],
+      },
+      resources: [],
+    };
+    renderScreenWithRail(rail);
+    expect(await screen.findByRole('button', { name: 'Rail guide' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Rail attachment' })).toBeVisible();
+    expect(api.getWorkstreamSidekicks).not.toHaveBeenCalled();
+    expect(api.getRecommendedSidekicks).not.toHaveBeenCalled();
+    expect(api.getAttachedSidekicks).not.toHaveBeenCalled();
   });
 
   it('uses scoped summaries for guests without opening the member authoring directory', async () => {

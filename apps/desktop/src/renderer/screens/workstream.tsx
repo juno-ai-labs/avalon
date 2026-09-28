@@ -30,6 +30,8 @@ import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
 import { holdCachedWorkstreamArchive, patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import { WorkstreamSidebar, type ConversationRowTarget } from '../components/workstream-sidebar';
 import { SidekickPicker } from '../components/sidekick-picker';
+import { workstreamSidekickRows } from '../components/sidekick-section';
+import { useChannelRail } from '../lib/channel-rails';
 import { PENDING_SUBSTREAM_DRAFT_ID, type LaunchingSubstream, type SubstreamLaunchProps } from '../components/substream-launch';
 import { ConversationSurface, workspaceMemberFromSession } from './conversation-surface';
 
@@ -58,7 +60,7 @@ export {
 } from './conversation-surface';
 
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
-import { normalizeHarnessStatus } from '../lib/api';
+import { normalizeHarnessStatus, mapWorkstreamAutomationSummary } from '../lib/api';
 
 type RailAttentionProjection = {
   harnessStatus?: HarnessStatus;
@@ -569,9 +571,27 @@ export function WorkstreamScreen(): React.JSX.Element {
     }
   };
   // One rail for both states. Before the snapshot, everything it lists comes
-  // from the directory; only the people and the Sidekicks wait, and hold their
-  // places until the context arrives. Without a breakout list the placeholder
-  // rail stands in, since Main alone would read as a Channel with no breakouts.
+  // from the workspace socket: the row, the breakout list and the Channel's
+  // rail. What the rail cannot say yet holds its place until the context
+  // arrives. Without a breakout list the placeholder rail stands in, since
+  // Main alone would read as a Channel with no breakouts.
+  const channelRail = useChannelRail(id);
+  const members = useQuery({
+    queryKey: ['workspace-members'],
+    queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
+    enabled: Boolean(api && !guest),
+    staleTime: 60_000,
+  });
+  const railParticipants = channelRail && members.data
+    ? channelRail.participantUserIds.flatMap((userId) => members.data.filter((member) => member.id === userId))
+    : undefined;
+  const railSidekicks = channelRail && channelRail.sidekicks.attached
+    ? workstreamSidekickRows({
+      owned: channelRail.sidekicks.owned.map(mapWorkstreamAutomationSummary),
+      recommended: channelRail.sidekicks.recommended,
+      attached: channelRail.sidekicks.attached,
+    })
+    : undefined;
   const railTitle = parent.data?.title ?? row?.title ?? sharedParent?.title ?? undefined;
   const renderRail = (context: RailContext | undefined): React.JSX.Element => (
     <WorkstreamSidebar
@@ -580,11 +600,16 @@ export function WorkstreamScreen(): React.JSX.Element {
       onSidekickMenuOpen={context?.loadSidekickOptions}
       onRefreshSidekicks={context?.refreshSidekicks}
       addSidekick={context && <SidekickPicker workstreamId={id} substreamId={selectedSubstreamId} />}
-      sidekicks={context?.sidekicks}
+      sidekicks={context ? context.sidekicks : railSidekicks}
       sidekickFailure={context?.sidekickFailure}
-      participantsPending={context === undefined}
+      participantsPending={context === undefined && railParticipants === undefined}
       workstream={{
-        ...(context?.detail ?? { id, participants: [], resources: [], scope: row?.scope ?? sharedParent?.scope }),
+        ...(context?.detail ?? {
+          id,
+          participants: railParticipants ?? [],
+          resources: channelRail?.resources ?? [],
+          scope: row?.scope ?? sharedParent?.scope,
+        }),
         title: railTitle ?? context?.detail.title ?? '',
         appearance: rowAppearance ?? parent.data?.appearance ?? sharedParent?.appearance,
         needsAttention: selectedSubstreamId === '0' ? (context ? conversationNeedsViewer(context.detail) : undefined) : parent.data ? conversationNeedsViewer(parent.data) : sharedParent?.conversations.find((child) => child.substreamId === '0')?.needsAttention,
