@@ -5,6 +5,7 @@ import type {
   WorkstreamStateVersion,
 } from '@rally/contracts';
 import type { QueryClient } from '@tanstack/react-query';
+import { noteRailWaterline } from './channel-rails';
 import { retainConversationChildren } from './conversation-cache';
 import type { WorkstreamDetail } from './types';
 import { workstreamDetailQueryKey } from './workstreams-cache';
@@ -20,6 +21,8 @@ import { workstreamDetailQueryKey } from './workstreams-cache';
  * `docs/realtime-sockets.md` owns the protocol.
  */
 export const workstreamChildrenQueryKey = (workstreamId: string) => ['workstream-children', workstreamId] as const;
+export const isWorkstreamChildrenQueryKey = (queryKey: readonly unknown[]): boolean =>
+  queryKey[0] === workstreamChildrenQueryKey('')[0];
 export const workstreamBackgroundAgentsQueryKey = (workstreamId: string) =>
   ['workstream-background-agents', workstreamId] as const;
 
@@ -29,7 +32,8 @@ interface BreakoutAppearanceOverlay {
 }
 
 export type WorkstreamChildDirectory = Pick<Workstream, 'privateChildren' | 'privateChildrenWaterline'> & {
-  stateVersion: WorkstreamStateVersion;
+  /** Absent on a list seeded from the device; see `seedChannelBreakouts`. */
+  stateVersion?: WorkstreamStateVersion;
   /** Receipt-backed rows waiting for the parent's authoritative projection. */
   appearanceOverlays?: Record<string, BreakoutAppearanceOverlay>;
 };
@@ -138,16 +142,49 @@ function pinChannelViewerState(queryClient: QueryClient): void {
   queryClient.setQueryDefaults(['workstream-background-agents'], { gcTime: Number.POSITIVE_INFINITY });
 }
 
+/** A Channel's breakout list as the device keeps it, by Channel id. */
+export type ChannelBreakoutLists = Record<string, NonNullable<Workstream['privateChildren']>>;
+
+/**
+ * The breakout lists held for these Channels, for the directory row on disk.
+ * Only what a live row said: a Channel whose list is still a seed has one only
+ * because a live row once said it, and a Channel with no list is left out.
+ */
+export function heldChannelBreakouts(queryClient: QueryClient, workstreamIds: readonly string[]): ChannelBreakoutLists {
+  const lists: ChannelBreakoutLists = {};
+  for (const workstreamId of workstreamIds) {
+    const held = queryClient.getQueryData<WorkstreamChildDirectory>(workstreamChildrenQueryKey(workstreamId));
+    if (held?.privateChildren) lists[workstreamId] = held.privateChildren;
+  }
+  return lists;
+}
+
+/**
+ * Put breakout lists restored from the device into Channels that hold none.
+ * No version and no waterline go with them, so the first live row for each
+ * Channel replaces its list whatever it says, and nothing is pruned: a seed
+ * says nothing about what may be removed from the disk.
+ */
+export function seedChannelBreakouts(queryClient: QueryClient, lists: ChannelBreakoutLists): void {
+  pinChannelViewerState(queryClient);
+  for (const [workstreamId, privateChildren] of Object.entries(lists)) {
+    const key = workstreamChildrenQueryKey(workstreamId);
+    if (queryClient.getQueryData(key) !== undefined) continue;
+    queryClient.setQueryData<WorkstreamChildDirectory>(key, { privateChildren });
+  }
+}
+
 /**
  * Write one Channel row's per-viewer state. A row that does not carry a field
  * leaves what is held alone: absence means "not said", never "none".
  */
 export function applyChannelViewerState(
   queryClient: QueryClient,
-  row: Pick<Workstream, 'id' | 'privateChildren' | 'privateChildrenWaterline' | 'backgroundAgentCounts'>,
+  row: Pick<Workstream, 'id' | 'privateChildren' | 'privateChildrenWaterline' | 'backgroundAgentCounts' | 'railWaterline'>,
   stateVersion: WorkstreamStateVersion,
   localCacheScope: string | null,
 ): void {
+  if (row.railWaterline !== undefined) noteRailWaterline(queryClient, row.id, row.railWaterline);
   if (row.privateChildren === undefined && row.backgroundAgentCounts === undefined) return;
   pinChannelViewerState(queryClient);
   if (row.backgroundAgentCounts !== undefined) {

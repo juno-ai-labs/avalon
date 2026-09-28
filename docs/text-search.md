@@ -550,7 +550,7 @@ the index returns only what a reader's groups admit, including after revocation;
 `test/scoped-memory.test.ts` proves memory search checks each run canonically,
 and asks the WorkspaceDO for each scope once per isolate while deciding
 writability per call; `test-workers/workspace-memory-search-key-purge-migration.test.ts`
-proves WorkspaceDO migration 83 removes memory search's keys and nothing else.
+proves WorkspaceDO migration 84 removes memory search's keys and nothing else.
 The executor's group is proved in `automation-directory.test.ts` and
 `automation-do.test.ts`. The old store's suites remain until phase 4 deletes it.
 A disposable live namespace in gcp-us-west1 verified on 2026-09-28 that
@@ -602,7 +602,7 @@ missing it is invisible until its object migrates: force the migrations before
 that deploy, and re-count afterwards. The old search-authorization store is no
 longer pushed or read; its tables and triggers stay until phase 4 drops them, so
 a Worker rollback finds the recorded targets and must be followed by a full push
-(migration 48's pass). WorkspaceDO migration 83 has already deleted the keys
+(migration 48's pass). WorkspaceDO migration 84 has already deleted the keys
 memory search registered per run; a rollback past it re-registers them on the
 next memory search, as before. Their Global `AUTHORIZATION_CACHE` copies were
 written without a TTL and stay, unread, until phase 4 retires the namespace.
@@ -720,7 +720,7 @@ of `resourceSearchText` and `resourceSearchCategory` bumps
 `resource_search_versions`; and a namespace not written since fan-out has no
 `generation`, which the count must read as zero rather than fail.
 
-**Memory search.** WorkspaceDO migration 83 deletes every search-authorization
+**Memory search.** WorkspaceDO migration 84 deletes every search-authorization
 key whose delegation starts with `memory-search:v1:`, with its snapshot, its
 dependency rows, and the push row of a scope no other key names; the rest of the
 old store waits for phase 4. `ensureScope` caches each scope row per isolate, so

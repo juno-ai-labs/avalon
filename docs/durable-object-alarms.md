@@ -471,7 +471,7 @@ a failing target a free immediate attempt.
   lane that is due and arms for the one it skipped, and that
   `registerAuthorizationChildren` re-arms only when it queued a delivery.
 - `apps/api/test-workers/workspace-authorization-delivery-index-migration.test.ts`
-  upgrades a populated v81 object through migration 82 and counts the
+  upgrades a populated v82 object through migration 83 and counts the
   `authorization_delivery` due read's `rowsRead`.
 - `apps/api/test/workspace-alarm-stall-alert.test.ts` drives `WorkspaceDO`'s
   failure and stall hooks in the Node suite: which attempt warns, which logs at
@@ -559,7 +559,7 @@ wake. Each lane — parent outbox, parent breakouts, directory follow-ups,
 authorization deliveries, resource search, Space default publication, Space
 bootstrap, activity and connector-event retention, Space intent resume — runs
 only when its own due time is at or before the wake's `now`, read from the same
-`derivedAlarmLanes()` list the alarm is armed from. Migration 82 indexes
+`derivedAlarmLanes()` list the alarm is armed from. Migration 83 indexes
 `authorization_delivery(not_before)`, the one lane whose due read scanned its
 table. `registerAuthorizationChildren` and `beginAuthorizationBackfill` re-arm
 only when a delivery row came back from the write, and

@@ -27,7 +27,12 @@ import {
 } from "@rally/contracts";
 import { z } from "zod";
 
-import { EffectQueueMessageSchema } from "@rally/contracts/conversation-effects";
+import {
+  ConversationEffectEnvelopeSchema,
+  EffectQueueMessageSchema,
+  ParentEffectEnvelopeSchema,
+} from "@rally/contracts/conversation-effects";
+import { codeShaped, zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import {
   SpaceBootstrapQueueMessageSchema,
   SpaceDefaultQueueMessageSchema,
@@ -1006,6 +1011,21 @@ async function consumeOne(message: Message<unknown>, env: Env,
   // than left to redeliver forever. Reading the frozen D1 source row behind it
   // would reintroduce a second connector-event authority.
   const legacyActivity = ActivityQueueMessageSchema.safeParse(message.body);
+  const unreadableEffect = legacyActivity.success ? null : effectRejection(message.body, effect.error);
+  if (unreadableEffect !== null) {
+    // An effect this consumer's contract refuses — a writer that shipped
+    // ahead of its reader, most likely. Acked as before, but named: the
+    // parent never hears it, and the log is the only place that says why.
+    logWarn(env, "effect_queue_message_invalid", {
+      workspace_id: unreadableEffect.workspaceId,
+      message_id: unreadableEffect.messageId,
+      outcome: "skipped",
+      code: unreadableEffect.code,
+      queue_attempts: message.attempts,
+    });
+    message.ack();
+    return;
+  }
   logInfo(env, "connector_event_queue_terminal", {
     workspace_id: legacyActivity.success ? legacyActivity.data.workspaceId : null,
     connector_event_id: legacyActivity.success ? legacyActivity.data.activityId : null,
@@ -1014,6 +1034,32 @@ async function consumeOne(message: Message<unknown>, env: Env,
     queue_attempts: message.attempts,
   });
   message.ack();
+}
+
+/**
+ * The named rejection of a body that says it is an effect envelope, or `null`
+ * for anything else. Only our own objects write effects to this Queue, so the
+ * unknown key names are the whole diagnosis of a version skew and may be
+ * named (docs/naming-a-schema-failure.md).
+ */
+function effectRejection(
+  body: unknown,
+  error: z.ZodError,
+): { code: string; workspaceId: string | null; messageId: string | null } | null {
+  if (typeof body !== "object" || body === null) return null;
+  const envelope = body as Record<string, unknown>;
+  const schema = envelope.kind === "conversation_effect" ? ConversationEffectEnvelopeSchema
+    : envelope.kind === "parent_effect" ? ParentEffectEnvelopeSchema
+      : null;
+  if (schema === null) return null;
+  const rejected = schema.safeParse(body);
+  const text = (value: unknown) => typeof value === "string" ? codeShaped(value) : null;
+  return {
+    code: zodDiagnosticCode(rejected.success ? error : rejected.error, "effect_queue_message", { namesUnknownKeys: true })
+      ?? "effect_queue_message_invalid",
+    workspaceId: text(envelope.workspaceId),
+    messageId: text(envelope.messageId),
+  };
 }
 
 /**
