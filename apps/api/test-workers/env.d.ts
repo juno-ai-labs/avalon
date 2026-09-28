@@ -49,6 +49,8 @@ declare global {
       MIGRATION_PROBE_DO?: DurableObjectNamespace<MigrationProbeDO>;
       TELEMETRY_RPC_TEST?: TelemetryDeliveryRpcBinding;
       TERMINAL_RPC_TEST?: TerminalRpcTestBinding;
+      QUEUE_PROBE?: Queue;
+      QUEUE_PROBE_TEST?: { received(): Promise<unknown[]> };
     }
   }
 }

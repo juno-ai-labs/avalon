@@ -2398,6 +2398,12 @@ will not redeliver it, so the dead-letter queue holds the only copy.
   keeps its object under `global/github-ingress/<delivery id>/`, and a failed
   cleanup logs `github_delivery_staged_body_cleanup_failed`. Delete the object
   once its message is redriven or abandoned; nothing expires that prefix yet.
+- **A message that fails its own parse cannot be redriven.**
+  `github_delivery_message_invalid` names the field. The ones logged between the
+  Queue's first deploy and the `v8` fix on 2026-09-28 lost their body in
+  transit: their `body.bytes` is `{}`. The only copy left is GitHub's. Redeliver
+  those deliveries from the GitHub App's advanced settings; GitHub keeps them for
+  three days.
 - **`unrouted` is not an incident.** It is logged at `info` whenever no
   deployment has connected the installation — every new installation's
   `installation.created` beats the setup redirect. Look only if an installation

@@ -352,7 +352,9 @@ export class GitHubRoutingService {
       body,
     };
     try {
-      await this.env.ACTIVITY_QUEUE.send(GitHubDeliveryQueueMessageSchema.parse(message));
+      // `v8`, not the Queue's default `json`: JSON turns the inline body's
+      // ArrayBuffer into `{}`, and the consumer rejects every such message.
+      await this.env.ACTIVITY_QUEUE.send(GitHubDeliveryQueueMessageSchema.parse(message), { contentType: "v8" });
     } catch (error) {
       // GitHub is answered with a failure and nothing will consume this
       // message, so a staged body would otherwise sit in Global's bucket.

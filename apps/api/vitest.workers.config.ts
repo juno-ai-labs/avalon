@@ -9,6 +9,7 @@ export default defineConfig({
         serviceBindings: {
           TELEMETRY_RPC_TEST: { name: "telemetry-rpc-test-service" },
           TERMINAL_RPC_TEST: { name: "terminal-rpc-test-service" },
+          QUEUE_PROBE_TEST: { name: "queue-probe-test-service" },
         },
         workers: [
           {
@@ -20,6 +21,12 @@ export default defineConfig({
             name: "terminal-rpc-test-service",
             scriptPath: "./test-workers/fixtures/terminal-rpc-service.mjs",
             modules: true,
+          },
+          {
+            name: "queue-probe-test-service",
+            scriptPath: "./test-workers/fixtures/queue-probe-service.mjs",
+            modules: true,
+            queueConsumers: { "avalon-do-runtime-test-queue-probe": { maxBatchTimeout: 0 } },
           },
         ],
       },
