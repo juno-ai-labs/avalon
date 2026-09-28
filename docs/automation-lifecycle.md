@@ -182,6 +182,24 @@ belongs only to the picker and never changes the list's state. Those states and
 the picker’s load/attach failures are stable Rally-owned copy; raw API,
 transport and provider messages never become sidebar text.
 
+Main's three Sidekick lists also reach the desktop on the Organization socket,
+as part of each Channel's rail (`channel_rails`,
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-channels-rail-and-its-waterline)),
+from the Organization object's own rows: `owned` from `automation_directory`
+by owning room, `recommended` from `parent_sidekicks` then the owned ids, and
+`attached` from the ids Main reports on its `directory_common` effect
+(`sidekickAttachmentIds`, written on every attach and removal). Names,
+descriptions and availability come from the directory row (`title`, or
+**New Sidekick**; available when `active` and loadable), and each is shown
+under `readSkillSummary`'s audience, a personal Sidekick's people being its
+author and its `run_as_user_id` (the directory's, null until the Sidekick next
+publishes, when the author stands alone). The desktop keeps the REST attachment read while a rail has no `attached`
+(Main has not reported since this shipped), and all three REST reads for a
+breakout and while no rail has arrived. The directory row cannot see the Sidekick's
+accepted revision or its owning room's archive, so a rail can call available
+a Sidekick whose REST summary would not; loading it still goes through
+`readSkillSource`, which refuses.
+
 The Sidekicks library opens in its own window from the account popup, immediately
 above Settings. It lists accessible personal, workspace, and room Sidekicks.
 The library uses the normal desktop session and workspace boundary. The center
@@ -612,8 +630,11 @@ lifecycle, scope, owning work stream, title, description, next run. It travels
 the parent outbox and the Queue like a work stream's aggregate and lands in
 `WorkspaceDO.applyAutomationDirectory`, which accepts a strictly newer
 `sourceVersion`, ignores an older one, refuses an equal one with a different
-hash, bumps the `automations` sidebar waterline, and republishes the list. The
-row is content-free by design; `GET /automations/:id` reads the object.
+hash, bumps the `automations` sidebar waterline, and republishes the list. An
+applied row also advances the rail waterline of the Channel that owns it and
+of every Channel recommending or attaching it, and pushes those Channels'
+rows. The row is content-free by design; `GET /automations/:id` reads the
+object.
 
 ### Memory
 
@@ -940,6 +961,32 @@ Desktop and browser request management options only when their controls open, no
 on every transcript update.
 
 ## Changelog
+
+### 2026-09-28 — A Channel's Sidekicks ride its rail on the Organization socket
+
+**What changed:** A conversation's `directory_common` effect carries its
+attached Sidekick ids, emitted with each attach and removal, and the
+Organization object answers a Channel's owned, recommended and attached
+Sidekicks from its own rows as part of the Channel's rail. A directory row
+change advances the rail waterline of every Channel that lists it.
+
+**Why:** Each open of a Channel read its Sidekicks with three REST calls: the
+owned list from the Organization object, recommendations from the parent, and
+attachments from Main, each summary then read from its `SidekickDO`. All but
+the attachments were already in one object, and the attachments are small
+enough to travel on an effect Main already sends.
+
+**Considered and rejected:** Reading each summary from its `SidekickDO` for the
+rail, as REST does. It is a network hop per Sidekick per Channel, which a
+Space prefetch would multiply; the directory row carries what the rail shows.
+The cost is the approximation above (no accepted revision or owning-room
+archive, and a personal Sidekick's `run_as` only once its row has republished),
+which errs toward hiding or toward a load that `readSkillSource` refuses, never
+toward running something the viewer may not.
+
+**Consequences:** A Sidekick field shown in the rail must be on the directory
+row and in the rail triggers' column lists, or the rail will not notice it
+changed. The REST reads stay the authority and the fallback.
 
 ### 2026-09-25 — The setup chat chooses a Sidekick's icon and color
 

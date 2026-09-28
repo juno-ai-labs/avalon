@@ -23,6 +23,7 @@ keeps its own parent object ([`automation-lifecycle.md`](automation-lifecycle.md
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/durable-objects/hosted-parent.ts` | `HostedParent`: one Channel's or Space's parent authority, scoped to a `parent_id` inside `WorkspaceDO`'s SQLite. The port of what `WorkstreamDO` and `ConversationParentDurableObject` did for one object. Also the batch readers for what a Channel row adds per viewer (`visiblePrivateChildren`, `runningBackgroundAgents`, `channelViewerStates`). |
+| `apps/api/src/durable-objects/channel-rails.ts` | A Channel's rail: the set reads a `channel_rails` answer is built from, the frame packer, and migration 82 (the rail tables, `rail_waterline` and its triggers). |
 | `apps/api/src/durable-objects/hosted-parent-schema.ts` | `WorkspaceDO` migration 72: the `parent_*` tables and the directory renames. |
 | `apps/api/src/durable-objects/workspace-do.ts` | The RPC facade: every conversation-parent method now answers here, dispatching to `HostedParent` for its `parentId`. Also the Channel rows on the workspace socket (with each viewer's breakouts and running background agents), the retired Channel control socket kept for older clients, the in-transaction apply of what a parent publishes, the outbox drain, and the workspace relationship table. |
 | `apps/api/src/durable-objects/scope-grant-storage.ts`, `scope-invitation-storage.ts`, `scope-invitation-service.ts`, `workstream-access-storage.ts` | The grant, invitation and Space-provenance repositories, now scoped by `parent_id`. |
@@ -204,6 +205,47 @@ still works for desktops released before this and for the iOS client, and its
 revocation paths (`revokeNarrowedAudienceAccess`, `revokeSocketAccess`) still
 close it. No current desktop opens one.
 
+### A Channel's rail and its waterline
+
+A Channel's rail lists Main's participants, its Sidekicks and Main's
+resources. `channelRails` builds any number of them from this object's SQLite
+with set reads over `json_each`, and the workspace socket answers
+`channel_rails` with it ([`realtime-sockets.md`](realtime-sockets.md)):
+
+- **Visible** is the row's rule and nothing else: hosted, not archived, and
+  Organization-wide or the viewer a participant at the Channel's generation.
+  Anything else asked for is `unavailable`.
+- **Participants** are `channel_viewers` at that generation, newest first, the
+  same read the facepile uses.
+- **Sidekicks**: `owned` is the room's automations, and only for a member who
+  is a participant, as the REST read answers everyone else with 403.
+  `recommended` is `parent_sidekicks` then the owned ids. `attached` is what
+  Main last reported, from `channel_sidekick_attachments`, and absent until
+  Main has reported (`channels.sidekick_attachments_reported`). Each is shown
+  under `SidekickDO`'s summary audience, read from `automation_directory`
+  ([`automation-lifecycle.md`](automation-lifecycle.md)).
+- **Resources** are Main's links in `workspace_workstream_resource_links`
+  rowid order (the table is replaced whole, so rowid is display order),
+  joined to `resources`, without notes or unlisted resources, as the
+  conversation detail enumerates them.
+
+`channels.rail_waterline` advances whenever any of that moves, and rides the
+row as `railWaterline` (`channelViewerStates`). Triggers from migration 82
+advance it for a participant joining, leaving or moving generation, the
+Channel's scope or generation, a recommendation, a Sidekick's directory row
+(the owning Channel, and the Channels recommending or attaching it), and a
+linked resource's title, type, MIME type, version or listing. The Main link
+list and attachment list are compared in `applyDirectoryEnvelope` instead
+(`mainResourceLinksChanged`, `applyReportedSidekickAttachments`): every Main
+effect rewrites the link table, so a trigger there would fire on each one.
+
+Every advance also notes the Channel in `channel_rail_changes`. A drain takes
+the whole table and owes each Channel its row to all of its readers: after a
+directory follow-up pass, a parent write, a recommendation, a Space's
+Sidekick defaults, a Sidekick directory apply, a runtime SQL batch and the
+typed resource writes. A write with no drain of its own leaves rows there, and
+the alarm arms while any remain.
+
 ### Workspace relationships are local
 
 `workspace_member_status` holds each person's workspace relationship
@@ -303,6 +345,11 @@ receipt ledger, `parent_child_receipts`, with the legacy 180-day retention; see
 - **A per-viewer Channel fact rides the Channel's row.** A second socket or
   subscription per Channel would bring back the second copy of the row, and its
   second authorization path, that retiring the control socket removed.
+- **Anything a rail lists advances `rail_waterline` in the write that changes
+  it.** A client holds a rail until the row's waterline passes it, so a change
+  that moves neither a trigger nor an explicit bump is invisible until
+  something unrelated moves it. A new rail source adds its trigger or bump in
+  the same change.
 - **Parent-kind is carried, never probed.** A lookup that tries a namespace to
   see whether something is there creates the object it asked about.
 
@@ -328,6 +375,8 @@ directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
 | A directory row is found in `parent_outbox` | It is kept as `failed` with `parent_outbox_directory_row` and not applied. Directory rows apply in the parent's own transaction, so nothing writes one there. |
 | One alarm phase throws | `workspace_alarm_phase_failed` names the phase; the other phases still run, and the alarm then fails and retries. |
 | An Organization held below schema 58 by the meeting-notes cleanup | Migration 72 has not run, so there are no `channels` or `parent_*` tables and every Channel request fails with `no such table`. The object itself still starts and its alarm skips the hosted-parent phases, so the operator retirement RPCs can finish it. Every production object was at schema 70 before this change, so none should be held; the error is loud if one is. |
+| A rail larger than a socket frame | It is named in its frame's `oversized` list with its waterline, logged `channel_rail_oversized` with its size, and the client paints that Channel from its snapshot. |
+| A rail change is drained but its row push fails | Nothing retries it: rows are best effort, and a reconnect reads the current waterline. The change is not lost, only the prompt to ask for it. |
 | The Organization object is unavailable | Channels and Spaces cannot be opened, listed or changed. That was already true of the sidebar; it is now true of a Channel's viewer check too. |
 
 ## Testing
@@ -361,6 +410,12 @@ write, learning an unknown person before the transaction and by retry, and the
 follow-up rows. The
 conversation-parent contract tests (`conversation-parent-contract.test.ts` and
 its neighbours) run against the hosted parent.
+`channel-rails.test.ts` proves `channel_rails` answers on a real socket and
+the row pushed with a higher waterline for a join, a Main link change, an
+attachment report, a recommendation, a Sidekick rename and a resource rename,
+and no advance for a preview-only effect; `channel-rail-migration.test.ts`
+upgrades a populated v81 object and proves migration 82's defaults and a live
+trigger.
 `workspace-member-status.test.ts` proves which writer may replace a
 relationship row (a removed incarnation never returns, a new one replaces it,
 an older event does not move a newer revision back) and that the consumer
@@ -419,6 +474,40 @@ Space in an Organization now shares one SQLite database and one socket set.
   deleting those objects is its own decision.
 
 ## Changelog
+
+### 2026-09-28 — A Channel's rail is answered here, and its row says when it moved
+
+**What changed:** `WorkspaceDO` migration 82 adds `channels.rail_waterline`,
+`channels.sidekick_attachments_reported`, `channel_sidekick_attachments` (the
+list Main reports on its common effect) and `channel_rail_changes`, with
+triggers that advance the waterline for every rail source whose writers are
+not already Channel-row writers. `channelRails` answers the socket's
+`channel_rails` from local reads.
+
+**Why:** The desktop now paints a Channel's rail from the Organization socket
+before the conversation opens, and needs to know when a rail it holds is stale
+without polling. The rail's sources are scattered over five tables with
+different writers, several of which (a recommendation, a Sidekick's directory
+row, a resource rename) never republished a Channel row. A trigger per source
+is the one place such a write cannot forget.
+
+**Considered and rejected:** A trigger on `workspace_workstream_resource_links`:
+it is deleted and rewritten on every Main effect, so it would advance the
+waterline on every message. It is compared in the apply instead. Hashing the
+rail on each read: it would need the whole rail read to learn it had not
+changed, which is the cost the waterline avoids. Reading attachments from
+Main on request: that is a network call per Channel, where the common effect
+already reaches this object.
+
+**Consequences:** A new rail source must advance the waterline in the write
+that changes it (see Invariants). The personal-Sidekick audience reads the
+directory's `run_as_user_id`, which is null until the Sidekick next publishes;
+until then only the author counts, so such a Sidekick can be missing from a
+rail it would appear in over REST. Channels
+upgraded by this migration start at waterline 0 with `attached` unreported
+until Main next projects: an ordinary effect, or the one report a conversation
+makes the first time it wakes after its own migration 71
+([`workstream-durable-object.md`](workstream-durable-object.md)).
 
 ### 2026-09-26 — `parent_metadata` holds identity only
 

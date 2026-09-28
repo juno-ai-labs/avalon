@@ -3839,6 +3839,24 @@ export class WorkspaceSpaceStorage {
     return listable;
   }
 
+  /**
+   * One page of a Space's active Channels in id order, after `after`, with no
+   * visibility decided: the caller answers only what the viewer may see, and
+   * has already asked {@link reach} whether they may see the Space at all.
+   * Rides `space_channel_memberships(space_id, state, workstream_id)`.
+   */
+  activeChannelIdsAfter(spaceId: string, after: string | null, limit: number): string[] {
+    if (!this.ready()) return [];
+    return this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT workstream_id FROM space_channel_memberships
+        WHERE space_id = ? AND state = 'active' AND workstream_id > ?
+        ORDER BY workstream_id LIMIT ?`,
+      spaceId,
+      after ?? "",
+      limit,
+    ).toArray().map((row) => row.workstream_id);
+  }
+
   private memberWorkstreamIdsUnchecked(spaceId: string): string[] {
     return this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
       `SELECT workstream_id FROM space_channel_memberships
