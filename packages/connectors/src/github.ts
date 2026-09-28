@@ -237,14 +237,18 @@ export const GitHubWebhookResourceLimits = {
   repositories: WEBHOOK_REPOSITORY_LIMIT,
 } as const;
 
-export interface VerifyGitHubWebhookInput {
+export interface VerifyGitHubWebhookInput extends ParseGitHubWebhookInput {
   secret: string;
-  rawBody: string;
   signatureHeader: string | null;
+  maxBytes?: number;
+}
+
+/** What {@link parseGitHubWebhook} reads: the body and headers, with no signature. */
+export interface ParseGitHubWebhookInput {
+  rawBody: string;
   eventHeader: string | null;
   deliveryHeader: string | null;
   receivedAt?: string;
-  maxBytes?: number;
 }
 
 /**
@@ -2617,6 +2621,19 @@ export async function verifyGitHubWebhook(input: VerifyGitHubWebhookInput): Prom
     throw new ConnectorError("payload_too_large", "The GitHub webhook exceeded the configured size limit");
   }
   await verifyGitHubWebhookSignature(input.secret, input.rawBody, input.signatureHeader);
+  return parseGitHubWebhook(input);
+}
+
+/**
+ * Reads a GitHub delivery whose signature has already been verified.
+ *
+ * A delivery's signature is checked once, at the edge that received the
+ * request (`verifyGitHubWebhook`, or the Global receiver's exact-byte HMAC).
+ * Everything downstream of that edge — the Queue consumer, the regional bridge
+ * — parses the same bytes with this and does not verify them again. Never call
+ * it on bytes that did not come through such an edge.
+ */
+export async function parseGitHubWebhook(input: ParseGitHubWebhookInput): Promise<GitHubWebhookDelivery> {
   const event = safeWebhookHeader(input.eventHeader, "event", /^[a-z0-9_]+$/u, 100);
   const deliveryId = safeWebhookHeader(input.deliveryHeader, "delivery ID", /^[a-z0-9-]+$/iu, 200);
   let payload: unknown;

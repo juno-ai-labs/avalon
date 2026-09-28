@@ -691,8 +691,38 @@ an administrator can change the default or select individual repositories on
 the GitHub Settings child page. A present but malformed policy does not receive
 that compatibility default and fails closed.
 
-GitHub delivery signatures are verified against the exact raw body before
-installation-aware normalization and queueing. Webhooks also discover durable
+**A GitHub delivery is answered before it is routed.** The Global receiver
+(`GitHubRoutingService.ingestGitHub`) verifies the signature once, over the
+exact request bytes, drops `ping` and what `isDiscardedGitHubDelivery`
+discards, enqueues a `github_webhook_delivery_v1` message on the Global
+`ACTIVITY_QUEUE`, and answers `202` — with no D1 read, R2 write or GitHub call
+for a body that fits in a message. The body rides inline when it fits under
+`MAX_CONNECTOR_EVENT_QUEUE_BYTES` (the Queue's 128 KB limit less the envelope)
+and is staged in `PAYLOADS` under
+`<region>/github-ingress/<delivery id>/<body hash>.json` otherwise, because
+GitHub sends payloads of up to 25 MB; a staged body whose message could not be
+sent is deleted again before the receiver fails. The consumer
+(`GitHubRoutingService.consumeDelivery`) looks up the installation's regions in
+`github_installation_routes`, hands each region the verified bytes —
+`ProviderWebhookService.ingestVerifiedGitHub` in-process, or the bridge's
+`ingestVerifiedGitHub` — disables the routes after `installation.deleted`,
+and deletes a staged body. Connection matching, the personal-connection GitHub
+calls, and every regional write happen there. Nothing after the receiver
+verifies the signature again (see [Invariants](#invariants)). The delivery id
+is the idempotency key: a region's processed `provider_webhook_receipts` row
+answers a redelivery, from the Queue or from GitHub, as a duplicate, and a
+pending one — an earlier attempt threw after the receipt committed — re-runs
+the delivery's effects, each keyed to it: resource upserts, connector events
+whose ids derive from the delivery and connection, and lifecycle updates
+ordered by `connector_ingress_routes.lifecycle_at` so a retried older
+`installation` event cannot overwrite a newer one. A throw retries the message
+with the activity consumer's backoff, or a GitHub rate limit's Retry-After when
+longer, and `max_retries` sends it to the dead-letter queue; an installation no
+region has connected — every `installation.created` that beats the setup
+redirect — is acknowledged and logged as `unrouted`, not retried. The
+non-shared host's `/ingest/github` still ingests synchronously through
+`ProviderWebhookService.ingestGitHub`, which verifies once and shares the
+same verified path. Webhooks also discover durable
 repository, commit, file, issue, pull-request, release, workflow-run, and
 check-run resources so people and agents can attach provider objects directly
 to work streams without copying their content into Rally. Issue-dependency and
@@ -1273,6 +1303,8 @@ materialized, all matching its name and all fresher than it; the drafting agent
 searched, found no repository, and saved a pull-request Sidekick with no event
 trigger at all.*
 
+**A GitHub signature is verified once, at the receiver, and nothing downstream verifies it.** The Global receiver's HMAC over the exact request bytes is the only check; the `github_webhook_delivery_v1` Queue message and the regional bridge's `ingestVerifiedGitHub` are the only two ways verified bytes travel on, neither carries a signature, and `parseGitHubWebhook` is the parse without a check. Anything that can put bytes on that Queue or call that bridge is therefore inside the trust boundary, and a new path that hands on GitHub bytes must go through one of the two, not add a third. *Verifying at the receiver and again in the region cost two more passes over bodies of up to 25 MB while GitHub waited, and bought nothing: nothing could reach the region without passing the first.*
+
 ## Boundary
 
 This document owns the connector registry and the contract every adapter meets:
@@ -1386,6 +1418,15 @@ whichever object makes the mistake next.
   delivery already known. Senders retry network failures and `5xx` with exponential
   backoff using the same identity and exact body, and must not reuse an identity or
   dedupe key with changed content.
+- **A GitHub delivery that fails in the consumer is not redelivered by GitHub.**
+  The receiver already answered `202`, so the Queue's retries — backed off by
+  attempt, or by a rate limit's Retry-After — are the only ones, and after them
+  the message is in the dead-letter queue carrying the verified bytes or a
+  `payloadRef`. A retry re-runs a pending receipt's effects; each is keyed to
+  the delivery, and a lifecycle update older than the connection's watermark
+  is skipped. The runbook's
+  [GitHub delivery dead letters](runbook.md#github-delivery-dead-letters)
+  covers replaying one.
 - **X remains an on-demand read connector.** A connection does not yet select a
   monitored user, list, or stream rule from which a safe feed could be constructed.
 
@@ -1408,7 +1449,8 @@ independent change condition, mixed batches, and URL/metadata merge behavior.
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Real-workerd WorkspaceDO schema, Queue/provider replay dedupe, Queue claim fencing and recovery, terminal settlement, and the alarm aging processed events out at 90 days while keeping every event still in flight. |
 | `apps/api/test-workers/workspace-connections.test.ts` | The typed OAuth attempt lifecycle across the real RPC boundary — settlement witnesses, replay convergence, the member-scoped lazy expiry, the succeeded-over-expiry override — plus webhook receipt claims, their same-transaction expired-receipt sweep, and the generic port's refusal of `webhook_receipts`. |
 | `apps/api/test/connector-oauth-handoff.test.ts`, `apps/api/test/connector-outcome-telemetry.test.ts`, `apps/api/test/granola-connector.test.ts` | The connection service over a real `WorkspaceDO` via `test/helpers/workspace-object-rpcs.ts` — attempt expiry/reconciliation through the service, single-emission outcome telemetry, and that no plaintext credential crosses the recorded RPC boundary during webhook ingestion. |
-| `apps/api/test/connection-tool-count.test.ts` | `GET /connections` tool counts over the migrated regional database and a real `WorkspaceDO` schema, through the service and through the route: a fixed surface counted from grants with its generated page tools and no provider call, `connector_unavailable` for a connector the region does not register, a discovered count stored by creation, a policy save, the custom-MCP tools read and the released per-row endpoint, `null` (never zero) with its reason and a named log when discovery has not succeeded, the list's failed discovery attempted once across two lists, two concurrent lists starting one discovery, a failed discovery (a 5xx, a name collision) clearing the stored count and publishing it, and a discovery that finishes after a policy change or a reconnect dropped by the write fence. Background work is awaited with `drainWaitUntil` from the Node `cloudflare:workers` stand-in rather than slept on. `apps/api/test/tool-pagination.test.ts` pins that `paginatedToolNames` and the expansion name the same tools. |
+| `apps/api/test/connection-tool-count.test.ts` | `GET /connections` tool counts over the migrated regional database and a real `WorkspaceDO` schema, through the service and through the route: a fixed surface counted from grants with its generated page tools and no provider call, `connector_unavailable` for a connector the region does not register, a discovered count stored by creation, a policy save, the custom-MCP tools read and the released per-row endpoint, `null` (never zero) with its reason and a named log when discovery has not succeeded, the list's failed discovery attempted once across two lists, two concurrent lists starting one discovery, a failed discovery (a 5xx, a name collision) clearing the stored count and publishing it, and a discovery that finishes after a policy change or a reconnect dropped by the write fence. It also pins that the list reads owner names and the Slack identity links for `userDelivery` concurrently rather than one after the other, and lists both. Background work is awaited with `drainWaitUntil` from the Node `cloudflare:workers` stand-in rather than slept on. `apps/api/test/tool-pagination.test.ts` pins that `paginatedToolNames` and the expansion name the same tools. |
+| `apps/api/test/github-routing.test.ts` | The GitHub receiver and its Queue consumer: one signature check across both, no D1 read before the reply, staging and removing a large body (including when the enqueue fails), the retry backoff and a rate limit's Retry-After, and `unrouted` acknowledged. Its regional-data-plane block runs the consumer into a real `ProviderWebhookService` over the migrated regional database and a real `WorkspaceDO` — a delivery whose first attempt failed after its receipt committed finishes on redelivery, a retried older lifecycle event does not overwrite a newer one — and once across the real `GitHubRegionalBridge`, with the argument structured-cloned as a service binding would. Nothing in it verifies a signature downstream of the receiver, because nothing in production does. |
 | `packages/connectors/src/digestibility-doc.test.ts` | That every declared activity type has a row in [`connector-digestibility.md`](connector-digestibility.md). |
 | `packages/connectors/src/agent-plugin.test.ts` | That each descriptor's provider type and tool order match its manifest. |
 | `packages/connectors/src/observability.test.ts` | The shared adapter and provider-request log layers, level selection, identifier retention, content exclusion, and fail-open observer contract. |
@@ -1431,6 +1473,16 @@ active workspace guest is insufficient after the addressed share is revoked.
 Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
+
+### 2026-09-28: GitHub deliveries are answered first and routed from the Queue
+
+**What changed:** The Global GitHub receiver now verifies the signature, applies the discard checks, enqueues the delivery on the Global `ACTIVITY_QUEUE` and answers `202`. Route lookup, regional connection matching, GitHub API calls and every regional write moved to the consumer. The signature is checked once, over the exact bytes at the receiver; the receiver's second check (`verifyGitHubWebhook` after the exact-byte HMAC) and the region's third are gone, and the regional bridge's `ingestGitHub(rawBody, headers)` became `ingestVerifiedGitHub`, which takes no signature. The three per-delivery D1 statements against `github_ingress_pending_deliveries` — the expired-row sweep, the replay read and the `dispatched_at` update — and the replay on setup were removed. A delivery for an installation with no route is now acknowledged and logged rather than answered `503`. Because the Queue's retries are now the only ones a delivery gets, they back off and honour a rate limit's Retry-After, a pending receipt re-runs its keyed effects instead of reading the dropped D1 `activities` table, and migration 116 adds `connector_ingress_routes.lifecycle_at` so a retried older lifecycle event cannot overwrite a newer one.
+
+**Why:** Measured in production on 2026-09-27, a GitHub delivery took a median of 3 s and a p95 of 7 s to answer, against GitHub's 10 s timeout, and was the most CPU-hungry route: every regional write and the personal-connection GitHub calls ran while GitHub waited. The pending table was never written outside a test double — its replay machinery had no producer — so its reads were pure latency. The repeated HMACs were three passes over bodies of up to 25 MB. A `503` for an unrouted installation was never retried by anything: GitHub does not redeliver on its own, and nothing wrote the pending row the replay would have read.
+
+**Rejected:** Keeping the route lookup at the edge and enqueueing to each region's own queue would cost one D1 read before the reply and was not needed while Global is the only deployment. Retrying an unrouted delivery into the dead-letter queue would put every new installation's `installation.created` there and bury real failures. Always staging the body in R2 would add a write before every reply; it is paid only when the body exceeds a Queue message. Ordering lifecycle updates by the WorkspaceDO's own `updated_at` would drop a real suspension whenever a credential refresh or poll touched the row after the delivery arrived; a column on the connection needed a WorkspaceDO schema migration, so the watermark sits on the regional route row, at the cost of the claim and the write being in two stores. The pending table is not dropped here: the Worker before this one reads it on every delivery, so the drop must deploy Worker-first, and the deploy allows only a Worker-first migration pending alone — it follows in its own change.
+
+**What a future change must respect:** Nothing downstream of the receiver may verify a GitHub signature or be reachable with bytes that did not pass it — the Queue message and the bridge are the only ways in, and neither carries a signature. The delivery id stays the idempotency key, so every regional side effect must be safe to re-run for a pending receipt — keyed to the delivery, or ordered by the lifecycle watermark. While Global is the only deployment the Queue and staged bodies are in-region; adding a deployment puts that deployment's delivery bytes in Global's queue until the consumer routes them, which [`regionalization.md`](regionalization.md) has to allow before that ships.
 
 ### 2026-09-27: Ingest drops CI noise and events that repeat themselves
 

@@ -1,5 +1,4 @@
 import { runtimeDeferral } from "../lib/defer";
-import { refreshTerminalProviderObservation } from "./terminal/observation";
 /**
  * What a workspace's alarm actually runs.
  *
@@ -580,16 +579,11 @@ async function reconcileConversationTerminalSandbox(
   now: Date,
 ): Promise<ScheduledAlarmOutcome> {
   const executionEnv = ctx.workspaceEnv;
+  // Provider observation is not this pass's: each conversation's object runs
+  // its own on its own alarm. This pass is lifecycle only, and it reads the
+  // row once, inside `reconcileDueTerminalSandbox`.
   const port = createTerminalPortFactory(executionEnv, undefined, substreamId);
   const terminal = port(ctx.workspaceId, workstreamId);
-  const sandbox = await terminal.sandbox();
-  const observation = await terminal.providerObservation();
-  const observationDue = Boolean(sandbox?.sandboxId && (!observation || observation.nextObserveAt <= now.getTime()));
-  if (observationDue && sandbox?.sandboxId) {
-    await refreshTerminalProviderObservation(terminal, provider, {
-      sandboxId: sandbox.sandboxId, generation: sandbox.generation,
-    });
-  }
   const result = await reconcileDueTerminalSandbox(
     createHarnessRunPortFactory(executionEnv),
     port,
@@ -618,10 +612,18 @@ async function reconcileConversationTerminalSandbox(
       transition: result.transition,
     });
   }
-  if (result.transition !== "expired") {
-    if (observationDue && result.transition === "none") return { waitMs: TERMINAL_DIRECTORY_CATCHUP_MS };
+  if (result.transition === "none") {
+    // The entry came due with nothing due behind it, so the deadline the
+    // directory holds is stale: one left by the version that projected the
+    // observation deadline. Nothing else would move it, so republish it; the
+    // object skips a projection whose hash has not moved. Rollout scaffolding,
+    // removable with `republishDeadline` (see when there). The pass still
+    // reports as a stall, deliberately: a deadline this cannot correct keeps
+    // backing off and keeps being reported rather than polling quietly.
+    await terminal.republishDeadline();
     return terminalReconcileOutcome(result.transition);
   }
+  if (result.transition !== "expired") return terminalReconcileOutcome(result.transition);
   const repository = await terminal.selectedRepository();
   emitProductUsageTelemetry(ctx.env, {
     workspaceId: asWorkspaceId(ctx.workspaceId),

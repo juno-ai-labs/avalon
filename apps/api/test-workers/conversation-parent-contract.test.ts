@@ -60,7 +60,7 @@ import {
 } from "../src/services/workstream-runtime-database";
 import { consumeEffectBodies, pendingChildEffects, deliverChildEffects, deliverEffectsToWorkspace, deliverParentEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { hostedParentStub } from "./helpers/hosted-parent";
+import { hostedParentStub, listVisiblePrivateChildren, readSharedWorkstream } from "./helpers/hosted-parent";
 import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 /** Its own workspace: object names are shared across files, storage is not. */
@@ -707,7 +707,7 @@ describe("conversation parent contract", () => {
     expect(await parent.authorizeViewer({
       ...viewer(PERSONAL_ROOM_ID, AUTHOR_ID), substreamId: reserved.substreamId,
     })).toEqual({ authorized: false, archived: false, childStatus: "reserved", membershipVersion: 1 });
-    expect(await parent.listVisiblePrivateChildren({
+    expect(await listVisiblePrivateChildren(parent, {
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, userId: AUTHOR_ID,
     })).toEqual({ children: [] });
 
@@ -873,10 +873,10 @@ describe("conversation parent contract", () => {
     expect(await parent.authorizeViewer({
       ...viewer(PERSONAL_ROOM_ID, AUTHOR_ID), substreamId: reserved.substreamId,
     })).toEqual({ authorized: true, archived: false, childStatus: "ready", membershipVersion: 1 });
-    expect((await parent.listVisiblePrivateChildren({
+    expect((await listVisiblePrivateChildren(parent, {
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, userId: AUTHOR_ID,
     })).children).toEqual([expect.objectContaining({ substreamId: reserved.substreamId, title: "Private branch" })]);
-    expect((await parent.listVisiblePrivateChildren({
+    expect((await listVisiblePrivateChildren(parent, {
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, userId: PARTICIPANT_ID,
     })).children).toEqual([]);
     expect(await parent.authorizeViewer(viewer(PERSONAL_ROOM_ID, PARTICIPANT_ID)))
@@ -939,7 +939,7 @@ describe("conversation parent contract", () => {
     expect(await parent.authorizeViewer({
       ...viewer(PERSONAL_ROOM_ID, PARTICIPANT_ID), substreamId: reserved.substreamId,
     })).toMatchObject({ authorized: false });
-    expect((await parent.listVisiblePrivateChildren({
+    expect((await listVisiblePrivateChildren(parent, {
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, userId: PARTICIPANT_ID,
     })).children).toEqual([]);
 
@@ -961,7 +961,7 @@ describe("conversation parent contract", () => {
     const address = {
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, substreamId: asSubstreamId(substreamId),
     };
-    const listed = async (userId: UserId): Promise<number> => (await parent.listVisiblePrivateChildren({
+    const listed = async (userId: UserId): Promise<number> => (await listVisiblePrivateChildren(parent, {
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, userId,
     })).children.length;
     expect(await listed(AUTHOR_ID)).toBe(1);
@@ -1071,7 +1071,7 @@ describe("conversation parent contract", () => {
     expect(await viewer()).toMatchObject({ authorized: false });
     expect(await viewer(siblingId)).toMatchObject({ authorized: false });
     const relationship = await readWorkspaceRelationship(env.DB, WORKSPACE_ID, MEMBER_ID);
-    const listed = await parent.readSharedWorkstream({ workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID,
+    const listed = await readSharedWorkstream(parent, { workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID,
       userId: MEMBER_ID, membershipIncarnation: relationship!.incarnation });
     expect(listed?.conversations.map((conversation) => conversation.substreamId)).toEqual([substreamId]);
     // Search, artifacts and attachments ask the same question through the
@@ -1125,7 +1125,7 @@ describe("conversation parent contract", () => {
     for (const envelope of effects.sort((left, right) => right.sourceVersion - left.sourceVersion)) {
       expect(await consumeEffectBodies(TEST_ENV, [envelope])).toMatchObject({ retried: 0 });
     }
-    expect((await parent.listVisiblePrivateChildren({
+    expect((await listVisiblePrivateChildren(parent, {
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, userId: AUTHOR_ID,
     })).children).toEqual([expect.objectContaining({ substreamId, title: "Renamed branch" })]);
     // And the parent's own title is untouched by its child's rename.
@@ -1147,7 +1147,7 @@ describe("conversation parent contract", () => {
     await deliverChildEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID, substreamId));
 
     expect(await latestStateWaterline(PERSONAL_ROOM_ID, `children:${AUTHOR_ID}`)).toBeGreaterThan(waterlineBeforeAppearance);
-    expect((await parent.listVisiblePrivateChildren({
+    expect((await listVisiblePrivateChildren(parent, {
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, userId: AUTHOR_ID,
     })).children).toEqual([expect.objectContaining({
       substreamId,

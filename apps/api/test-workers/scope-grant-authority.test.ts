@@ -10,7 +10,8 @@ import { AuthorizationService } from "../src/services/authorization-service";
 import type { Env } from "../src/env";
 import { pendingParentEffects } from "./helpers/conversation-effects";
 import { conversationObjectName } from "../src/durable-objects/names";
-import { hostedParentStub, insertChannelRow, withHostedParent } from "./helpers/hosted-parent";
+import { countingEnv } from "./helpers/counting-namespace";
+import { hostedParentStub, insertChannelRow, readSharedWorkstream, withHostedParent } from "./helpers/hosted-parent";
 import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
 import { changeRelationships } from "./helpers/workspace-relationship-events";
 
@@ -309,7 +310,7 @@ it("applies committed grants to the grant directory in the same object even when
   expect(await listSharedNavigationDirectory(env, workspaceId, recipientId)).toEqual({ spaces: [], workstreams: [] });
 });
 
-it("shows every containing Space when a guest has shared Breakouts", async () => {
+it("shows every containing Space when a guest has shared Breakouts, reading every Channel in one round trip", async () => {
   await initializeSecondRoom();
   await parkEffectQueue(room());
   await seedActorGrant(child);
@@ -349,7 +350,8 @@ it("shows every containing Space when a guest has shared Breakouts", async () =>
       VALUES (?, ?, 'active', 1, 1, 1, NULL)`, privateSpaceId, parentId);
   });
 
-  expect(await listSharedNavigationDirectory(env, workspaceId, recipientId)).toEqual({
+  const calls: string[] = [];
+  expect(await listSharedNavigationDirectory(countingEnv(calls), workspaceId, recipientId)).toEqual({
     spaces: [
       { id: firstSpaceId, name: "Product", iconKey: "rocket", colorKey: "violet", scope: "workspace", workstreamIds: [parentId] },
       { id: secondSpaceId, name: "Research", iconKey: "lightbulb", colorKey: "teal", scope: "workspace", workstreamIds: [secondParentId] },
@@ -362,6 +364,20 @@ it("shows every containing Space when a guest has shared Breakouts", async () =>
         conversations: [{ substreamId: secondChildId, title: "Research breakout", scope: "personal", archived: false }] },
     ],
   });
+  // Two shared Channels, one read for both of them: the round trips do not
+  // grow with the number of Channels shared.
+  expect(calls.filter((call) => call === "readSharedWorkstreams")).toHaveLength(1);
+});
+
+it("answers a batch read Channel by Channel, withholding one while releasing the other", async () => {
+  await initializeSecondRoom();
+  expect(await secondRoom().mutateScopeGrant(mutation(secondChild))).toMatchObject({ status: "committed" });
+  expect(await room().readSharedWorkstreams({ workspaceId, parentIds: [parentId, secondParentId],
+    userId: recipientId, membershipIncarnation: recipientId })).toEqual([
+    null,
+    { parentId: secondParentId, title: "Research channel", scope: "personal", archived: false,
+      conversations: [{ substreamId: secondChildId, title: "Research breakout", scope: "personal", archived: false }] },
+  ]);
 });
 
 
@@ -389,21 +405,21 @@ it("releases canonical Channel and shared conversation labels without granting M
     }
   });
   const request = { workspaceId, parentId, userId: recipientId, membershipIncarnation: recipientId };
-  expect(await room().readSharedWorkstream(request)).toBeNull();
+  expect(await readSharedWorkstream(room(), request)).toBeNull();
   await room().mutateScopeGrant(mutation());
-  expect(await room().readSharedWorkstream(request)).toEqual({ parentId, title: "Private parent", scope: "personal", archived: false,
+  expect(await readSharedWorkstream(room(), request)).toEqual({ parentId, title: "Private parent", scope: "personal", archived: false,
     appearance: { icon: "briefcase", color: "blue" },
     conversations: [{ substreamId: childId, title: "Visible child", scope: "personal", archived: false,
       appearance: { icon: "star", color: "red" } }] });
-  expect(await room().readSharedWorkstream({ ...request, membershipIncarnation: "replacement" })).toBeNull();
+  expect(await readSharedWorkstream(room(), { ...request, membershipIncarnation: "replacement" })).toBeNull();
   await room().mutateScopeGrant(mutation(main));
-  expect(await room().readSharedWorkstream(request)).toEqual({ parentId, title: "Private parent", scope: "personal", archived: false,
+  expect(await readSharedWorkstream(room(), request)).toEqual({ parentId, title: "Private parent", scope: "personal", archived: false,
     appearance: { icon: "briefcase", color: "blue" },
     conversations: [{ substreamId: "0", title: "Main", scope: "personal", archived: false,
       appearance: { icon: "briefcase", color: "blue" } }, { substreamId: childId, title: "Visible child", scope: "personal", archived: false,
       appearance: { icon: "star", color: "red" } }] });
   await changeRelationships(env, workspaceId, [recipientId], env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(recipientId));
-  expect(await room().readSharedWorkstream(request)).toBeNull();
+  expect(await readSharedWorkstream(room(), request)).toBeNull();
 });
 
 it("opts guest navigation into attention for each granted Breakout without releasing Main", async () => {
@@ -425,11 +441,11 @@ it("opts guest navigation into attention for each granted Breakout without relea
   expect(await room().mutateScopeGrant(mutation())).toMatchObject({ status: "committed" });
   expect(await room().mutateScopeGrant(mutation(sibling))).toMatchObject({ status: "committed" });
   const request = { workspaceId, parentId, userId: recipientId, membershipIncarnation: recipientId };
-  expect((await room().readSharedWorkstream(request))?.conversations).toEqual([
+  expect((await readSharedWorkstream(room(), request))?.conversations).toEqual([
     { substreamId: childId, title: "Shared breakout", scope: "personal", archived: false },
     { substreamId: siblingId, title: "Second shared breakout", scope: "personal", archived: false },
   ]);
-  expect((await room().readSharedWorkstream({ ...request, includeAttention: true }))?.conversations).toEqual([
+  expect((await readSharedWorkstream(room(), { ...request, includeAttention: true }))?.conversations).toEqual([
     { substreamId: childId, title: "Shared breakout", scope: "personal", archived: false, needsAttention: false },
     { substreamId: siblingId, title: "Second shared breakout", scope: "personal", archived: false, needsAttention: true },
   ]);
@@ -439,19 +455,19 @@ it("lists inherited and archived readable children but omits restricted and unre
   await seedActorGrant(parent);
   await room().mutateScopeGrant(mutation(parent));
   const request = { workspaceId, parentId, userId: recipientId, membershipIncarnation: recipientId };
-  expect((await room().readSharedWorkstream(request))?.conversations).toEqual([{ substreamId: "0", title: "Main", scope: "personal", archived: false }]);
+  expect((await readSharedWorkstream(room(), request))?.conversations).toEqual([{ substreamId: "0", title: "Main", scope: "personal", archived: false }]);
   await exec("UPDATE parent_children SET audience='inherits_workstream' WHERE parent_id=? AND substream_id=?", parentId, childId);
-  expect((await room().readSharedWorkstream(request))?.conversations).toHaveLength(2);
+  expect((await readSharedWorkstream(room(), request))?.conversations).toHaveLength(2);
   for (const status of ["reserved", "failed"]) {
     await exec("UPDATE parent_children SET status=? WHERE parent_id=? AND substream_id=?", status, parentId, childId);
-    expect((await room().readSharedWorkstream(request))?.conversations).toEqual([{ substreamId: "0", title: "Main", scope: "personal", archived: false }]);
+    expect((await readSharedWorkstream(room(), request))?.conversations).toEqual([{ substreamId: "0", title: "Main", scope: "personal", archived: false }]);
   }
   await exec("UPDATE parent_children SET status='ready', archived_at=1 WHERE parent_id=? AND substream_id=?", parentId, childId);
-  expect((await room().readSharedWorkstream(request))?.conversations).toHaveLength(2);
-  expect((await room().readSharedWorkstream(request))?.archived).toBe(false);
+  expect((await readSharedWorkstream(room(), request))?.conversations).toHaveLength(2);
+  expect((await readSharedWorkstream(room(), request))?.archived).toBe(false);
   await exec("UPDATE channels SET archived_at=1 WHERE workstream_id=?", parentId);
-  expect((await room().readSharedWorkstream(request))?.archived).toBe(true);
-  expect((await room().readSharedWorkstream(request))?.conversations).toHaveLength(2);
+  expect((await readSharedWorkstream(room(), request))?.archived).toBe(true);
+  expect((await readSharedWorkstream(room(), request))?.conversations).toHaveLength(2);
 });
 
 

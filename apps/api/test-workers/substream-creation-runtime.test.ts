@@ -18,7 +18,7 @@ import {
 } from "../src/services/workstream-runtime-database";
 import { consumeEffectBodies, deliverEffectsToWorkspace, deliverChildEffects, pendingChildEffects, pendingParentEffects, deliverParentEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
+import { hostedParentStub, listVisiblePrivateChildren, withHostedParent } from "./helpers/hosted-parent";
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { post, seedParticipantMessage, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
@@ -166,7 +166,7 @@ describe("substream preparation on workerd", () => {
       )).toString(),
       authority_mode: "unclaimed",
     });
-    expect((await parent().listVisiblePrivateChildren({
+    expect((await listVisiblePrivateChildren(parent(), {
       workspaceId: WORKSPACE_ID,
       parentId: WORKSTREAM_ID,
       userId: CREATOR_ID,
@@ -331,7 +331,7 @@ describe("substream preparation on workerd", () => {
       state.storage.sql.exec(`UPDATE parent_breakout_member_effects SET not_before = ? WHERE parent_id = ?`, Date.now() + 60_000, WORKSTREAM_ID);
     });
     await expect(service.confirm(WORKSTREAM_ID, operationId)).rejects.toThrow("private_child_membership_delivery_pending");
-    expect((await parent().listVisiblePrivateChildren({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, userId: CREATOR_ID })).children).toEqual([]);
+    expect((await listVisiblePrivateChildren(parent(), { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, userId: CREATOR_ID })).children).toEqual([]);
     await runInDurableObject(parent(), (_instance, state) => { state.storage.sql.exec(`UPDATE parent_breakout_member_effects SET not_before = 0 WHERE parent_id = ?`, WORKSTREAM_ID); });
     await expect(service.confirm(WORKSTREAM_ID, operationId)).resolves.toHaveProperty("substreamId");
   });
@@ -425,7 +425,7 @@ describe("substream preparation on workerd", () => {
     // queued.
     expect(mention?.requiredProjectionVersion).toBeGreaterThan(0);
     expect(await childWaterline()).toBeGreaterThan(childWaterlineBeforeMention);
-    expect((await parent().listVisiblePrivateChildren({
+    expect((await listVisiblePrivateChildren(parent(), {
       workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, userId: OTHER_ID,
     })).children).toContainEqual(expect.objectContaining({
       substreamId,
@@ -693,7 +693,7 @@ describe("substream preparation on workerd", () => {
     });
     // The row every member's sidebar reads carries the same title as the child
     // itself, in the write that made it visible.
-    expect((await parent().listVisiblePrivateChildren({
+    expect((await listVisiblePrivateChildren(parent(), {
       workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, userId: CREATOR_ID,
     })).children.find((child) => child.substreamId === created.substreamId))
       .toMatchObject({ title: "Compare the pricing page" });
@@ -784,7 +784,7 @@ describe("substream preparation on workerd", () => {
       .rejects.toMatchObject({ code: "workspace_member_not_found" });
     // The refusal costs nothing: it lands before the child is provisioned, so
     // there is no substream, no turn and no summary spent on one.
-    expect((await parent().listVisiblePrivateChildren({
+    expect((await listVisiblePrivateChildren(parent(), {
       workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, userId: CREATOR_ID,
     })).children).toEqual([]);
     await runInDurableObject(conversation(), (_instance, state) => {
@@ -812,7 +812,7 @@ describe("substream preparation on workerd", () => {
     // Nothing in anybody's sidebar: readiness is the publication fence, so a
     // creation that failed to write its message leaves no empty substream
     // behind for somebody to find and wonder about.
-    expect((await parent().listVisiblePrivateChildren({
+    expect((await listVisiblePrivateChildren(parent(), {
       workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, userId: CREATOR_ID,
     })).children).toEqual([]);
 
@@ -826,7 +826,7 @@ describe("substream preparation on workerd", () => {
       attachmentIds: [],
       confirmedParticipantUserIds: [],
     });
-    expect((await parent().listVisiblePrivateChildren({
+    expect((await listVisiblePrivateChildren(parent(), {
       workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, userId: CREATOR_ID,
     })).children.map((child) => child.substreamId)).toEqual([created.substreamId]);
     await runInDurableObject(conversation(created.substreamId), (_instance, state) => {
