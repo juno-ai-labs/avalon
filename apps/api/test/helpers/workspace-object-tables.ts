@@ -105,7 +105,19 @@ export function applyWorkspaceResourceSchema(database: DatabaseSync, workspaceId
       // trigger and every read whose source exists.
       const triggerTable = /^\s*CREATE TRIGGER\s+\S+[\s\S]*?\bON\s+(\w+)/u.exec(statement)?.[1];
       if (triggerTable && !exists(triggerTable)) continue;
+      // An altered or indexed table must exist too, and a trigger whose body
+      // writes or reads a DO-only table would fail on the first resource write.
+      const target = /^\s*(?:ALTER TABLE|CREATE (?:UNIQUE )?INDEX\s+\S+\s+ON)\s+(\w+)/u.exec(statement)?.[1];
+      if (target && !exists(target)) continue;
+      // A trigger skipped above is not there to drop.
+      const dropped = /^\s*DROP TRIGGER\s+(\w+)/u.exec(statement)?.[1];
+      if (dropped && !database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?").get(dropped)) continue;
       const sources = [...statement.matchAll(/\b(?:FROM|JOIN)\s+(\w+)\b(?!\s*\()/gu)].map((match) => match[1]!);
+      if (triggerTable) {
+        const body = statement.slice(statement.search(/\bBEGIN\b/u));
+        const named = [...body.matchAll(/\b(?:UPDATE|INTO|FROM|JOIN)\s+(\w+)\b(?!\s*\()/gu)].map((match) => match[1]!);
+        if (named.some((table) => !exists(table))) continue;
+      }
       if (!/^\s*CREATE\s/u.test(statement) && sources.some((table) => !exists(table))) continue;
       database.exec(statement);
     }

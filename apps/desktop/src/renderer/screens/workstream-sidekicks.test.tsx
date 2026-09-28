@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -117,7 +117,11 @@ function boot(participant = false): WorkstreamBoot {
   };
 }
 
-function renderScreen(participant = false, cachedOwnedSidekicks?: WorkstreamAutomationSummary[]): QueryClient {
+function renderScreenWithRail(rail: Record<string, unknown>): QueryClient {
+  return renderScreen(false, undefined, rail);
+}
+
+function renderScreen(participant = false, cachedOwnedSidekicks?: WorkstreamAutomationSummary[], rail?: Record<string, unknown>): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
@@ -127,6 +131,7 @@ function renderScreen(participant = false, cachedOwnedSidekicks?: WorkstreamAuto
   queryClient.setQueryData(workstreamDetailQueryKey(workstreamId, childId), detail);
   queryClient.setQueryData(orderedTranscriptQueryKey(workstreamId, childId), transcript);
   if (cachedOwnedSidekicks) queryClient.setQueryData(['workstream-sidekicks', workstreamId], cachedOwnedSidekicks);
+  if (rail) queryClient.setQueryData(['channel-rail', workstreamId], { railWaterline: 1, rail });
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
@@ -259,6 +264,56 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
     expect(await screen.findByRole('button', { name: 'Child recommendation' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Main recommendation' })).not.toBeInTheDocument();
     expect(api.getRecommendedSidekicks).toHaveBeenCalledWith(workstreamId, expect.any(AbortSignal), childId);
+  });
+
+  it('takes Main\u2019s Sidekicks from the Channel rail without the REST reads', async () => {
+    const rail = {
+      workstreamId, railWaterline: 1, participantUserIds: [],
+      sidekicks: {
+        owned: [],
+        recommended: [{ id: 'recommended-1', name: 'Rail guide', description: '', available: true }],
+        attached: [{ id: 'attached-2', name: 'Rail attachment', description: '', available: true }],
+      },
+      resources: [],
+    };
+    renderScreenWithRail(rail);
+    expect(await screen.findByRole('button', { name: 'Rail guide' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Rail attachment' })).toBeVisible();
+    expect(api.getWorkstreamSidekicks).not.toHaveBeenCalled();
+    expect(api.getRecommendedSidekicks).not.toHaveBeenCalled();
+    expect(api.getAttachedSidekicks).not.toHaveBeenCalled();
+  });
+
+  it('reads only the attachments over REST while Main has not reported them to the rail', async () => {
+    renderScreenWithRail({
+      workstreamId, railWaterline: 1, participantUserIds: [],
+      sidekicks: { owned: [], recommended: [{ id: 'recommended-1', name: 'Rail guide', description: '', available: true }] },
+      resources: [],
+    });
+    expect(await screen.findByRole('button', { name: 'Editorial guidance' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Rail guide' })).toBeVisible();
+    expect(api.getAttachedSidekicks).toHaveBeenCalled();
+    expect(api.getWorkstreamSidekicks).not.toHaveBeenCalled();
+    expect(api.getRecommendedSidekicks).not.toHaveBeenCalled();
+  });
+
+  it('reads all three over REST when the rail was answered without data', async () => {
+    const queryClient = renderScreen();
+    act(() => queryClient.setQueryData(['channel-rail', workstreamId], { railWaterline: 1, rail: null }));
+    expect(await screen.findByRole('button', { name: 'Editorial guidance' })).toBeVisible();
+    await waitFor(() => expect(api.getRecommendedSidekicks).toHaveBeenCalled());
+    expect(api.getWorkstreamSidekicks).toHaveBeenCalled();
+  });
+
+  it('reads a breakout\u2019s Sidekicks over REST even with Main\u2019s rail held', async () => {
+    renderScreenWithRail({
+      workstreamId, railWaterline: 1, participantUserIds: [],
+      sidekicks: { owned: [], recommended: [], attached: [] },
+      resources: [],
+    });
+    fireEvent.click(screen.getByRole('link', { name: 'Switch child' }));
+    await waitFor(() => expect(api.getAttachedSidekicks).toHaveBeenCalledWith(workstreamId, expect.anything(), childId));
+    await waitFor(() => expect(api.getRecommendedSidekicks).toHaveBeenCalledWith(workstreamId, expect.anything(), childId));
   });
 
   it('uses scoped summaries for guests without opening the member authoring directory', async () => {

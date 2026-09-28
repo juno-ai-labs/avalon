@@ -26,7 +26,7 @@ export function SidekickSection(props: React.ComponentProps<typeof SharedSidekic
  * that the room has no Sidekicks.
  */
 export function workstreamSidekickRows({ owned, attached, recommended, onRemoveAttachment, recommendationOptions, managementOptionsPending = !recommendationOptions, onChangeRecommendation }: {
-  owned: WorkstreamAutomationSummary[] | undefined;
+  owned: Pick<WorkstreamAutomationSummary, 'id' | 'name' | 'description' | 'appearance' | 'status'>[] | undefined;
   attached: SidekickAttachment[] | undefined;
   recommended: SidekickAttachment[] | undefined;
   onRemoveAttachment?: ((id: string) => void) | undefined;
