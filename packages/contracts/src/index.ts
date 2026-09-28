@@ -2349,9 +2349,7 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
   /**
    * Sent before `subscribe` by a client that loads Channel rows a Space at a
    * time. The sidebar it is then sent carries no Channel rows and says
-   * `channelsBySpace`. A separate event rather than a `subscribe` field: an
-   * older server ignores an unknown event type, but closes the socket on an
-   * unknown key.
+   * `channelsBySpace`.
    */
   z.strictObject({
     type: z.literal("channels_by_space"),
