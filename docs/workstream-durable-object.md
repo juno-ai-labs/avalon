@@ -73,7 +73,17 @@ catalog descriptions while retaining the assigned tool name.
 Substream migration 43 adds `sidekick_attachments` (conversation-owned, deduplicated
 by Sidekick) and `sidekick_execution_skills` (admitted snapshots and activation
 refs pinned to an execution). Loading attaches within the current substream; removal
-affects future executions. Future runs reauthorize attachments and pin the latest
+affects future executions. The conversation's `directory_common` effect carries
+the list as `sidekickAttachmentIds` (attach order), and an attach or a removal
+that changes a row commits that effect with it
+(`WorkstreamObjectProductService.commitWithCommonEffect`); Main's list is its
+Channel rail's ([`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-channels-rail-and-its-waterline)).
+Substream migration 71 seeds a one-row `sidekick_attachment_projection_pending`:
+the first construction as an authoritative work-stream conversation deletes it
+and commits one common effect, so a conversation that attached Sidekicks before
+the field existed reports them without waiting for other activity. Any other
+kind of conversation deletes it; an object not yet authoritative, or retired,
+leaves it for a later construction. Future runs reauthorize attachments and pin the latest
 accepted revisions. Workspace migration 35 projects the owner stored `loadable`
 policy output; unknown legacy values exclude discovery. Workspace migration 36
 adds `external_registration_generations` for ordered registration replacements
@@ -1554,7 +1564,8 @@ already have committed across the object boundary.
 | `channels` | One authoritative common row per work stream, fenced by authority generation, per-common `waterline`, UUIDv7 `source_event_id`, and hash. Supplies title, description/preview, scope/state, attention, recency, archive, wakeup, and Terminal scheduling fields. `origin_type`, `origin_label`, `automation_subscription_id`, `automation_run_id`, `planned_for`, and `automation_exposed` are dead columns: they sit inside CHECK constraints in released migration text, migration 32 deleted every row that used them, and nothing reads or writes them. |
 | `channel_viewers` | One authoritative viewer overlay per work stream/user, independently fenced by generation, viewer `waterline`, UUIDv7 source event, and hash. It supplies participation, listability, unread/mention state, and read fences and cascades from the common row. |
 | `workspace_workstream_pins` | Per-user, per-Space Channel pins referencing both directory rows; all pin writes and reorder operations execute in this object. Migration 66 clears the former Organization-wide rows. |
-| `workspace_workstream_resource_links` | Inverted resource-to-work-stream/watch index derived from authoritative child relationships, enabling connector and authorization lookup without cross-object SQL. |
+| `workspace_workstream_resource_links` | Inverted resource-to-work-stream/watch index derived from authoritative child relationships, enabling connector and authorization lookup without cross-object SQL. Holds Main's links only, replaced whole on each Main effect, so rowid is Main's display order; the Channel rail reads it in that order. |
+| `channel_sidekick_attachments`, `channel_rail_changes` | Main's reported Sidekick attachments per Channel (`channels.sidekick_attachments_reported` says whether Main has reported), and the Channels whose `channels.rail_waterline` moved since the last row push. Migration 81; see [`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-channels-rail-and-its-waterline). |
 | `workspace_workstream_effect_receipts` | Message/hash receipts making parent-to-WorkspaceDO effect retries idempotent — directory effects and the regional activity/mention effects alike; each receipt commits in the same transaction as the row it acknowledges, and inserts age receipts out after 30 days. |
 | `workspace_batch_dispatches`, `workspace_batch_dispatch_targets`, `workspace_batch_dispatch_note_targets` | Frozen generic mass-update intent and one dispatch receipt per selected work stream. The operation/request hash prevents intent reuse; pending rows resume Queue publication after partial failure, while child inbox receipts cover the send-succeeded/progress-write-failed window. The Worker publishes 50 messages per Queue call, below Cloudflare's 100-message platform maximum. WorkspaceDO records the whole chunk atomically through one JSON binding, independent of object SQLite's 100-parameter ceiling. The note half is frozen alongside them in `workspace_batch_dispatch_note_targets` — same transaction, same reason: re-selecting at archive time would take whatever entered the range while the Queue chunks were publishing, which under an open-ended heading is any note touched since the reader confirmed. Notes are rows in this object rather than separate authorities, so `archive` applies the frozen set here in one statement and stores `archived_note_count` as its receipt. `NULL` means no note archive has run for the operation, which is the permanent state of a `mark_read` operation; migration 26 backfills every row that predates it to `0`, because those operations were confirmed as work-streams-only and a cross-deploy retry must not give them a note half. |
 | `workspace_activity_events` | Append-only first-party event log with a local AUTOINCREMENT cursor, audience rule, derived title/body, digestibility decision, dedupe key, and source reference. |
@@ -1662,6 +1673,7 @@ onto `runs.state` forward only.
 | `workstream_resource_links`, `resource_inventory_revision` | Links to workspace resources with a CHECK-constrained relationship (`attachment`, `message_attachment`, `origin`, `generated`, `inbound_email`, or `context`) and the authorization revision every relationship change advances. `generated` derives artifact direction; every other value derives source direction. |
 | `terminal_workspace`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Rally state for the Daytona-backed Terminal plugin. |
 | `resident_context_blocks`, `resident_context_compactions` | The context-residency ledger: blocks delivered to this conversation, their residency and remaining prompt lifetime, pending deliveries, and the compaction events already applied. |
+| `sidekick_attachments`, `sidekick_attachment_projection_pending` | The Sidekicks this conversation has loaded, reported to its parent on every common effect, and migration 71's one-time marker that the list has not been reported yet. |
 | `projection_keys`, `durable_outbox`, `durable_inbox_receipts` | Versioned child-to-parent `conversation_effect` envelopes awaiting the alarm's `sendBatch` (deleted once the Queue accepts them), and inbound dedupe such as feed tickets. |
 
 `participant_transcript_turns.transcript_sequence` is canonical transcript
@@ -1791,6 +1803,26 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-09-28 — A conversation reports its Sidekick attachments on its directory effect
+
+**What changed:** `directory_common` always carries `sidekickAttachmentIds`.
+Attaching a Sidekick on skill load and removing one from the rail commit that
+effect with the row change, and substream migration 71 makes every existing
+work-stream conversation report its list once on its next authoritative wake.
+
+**Why:** The Channel rail on the Organization socket lists Main's attachments,
+and the only other way to learn them was a call into each Main.
+
+**Considered and rejected:** A separate effect kind for attachments. The
+common effect is already the conversation's whole projection, deduplicated by
+payload hash, and the parent already stores it; a new kind would need its own
+outbox ordering and receipts for one list. Backfilling from the parent side:
+the parent cannot enumerate an idle conversation's rows.
+
+**Consequences:** `activateSidekickSkill` is now asynchronous (it awaits the
+commit's alarm). An effect from a Worker before this one omits the field, and
+the Organization treats that as "not reported" rather than "none".
 
 ### 2026-09-26 — Processed connector events age out at 90 days, on the alarm
 
