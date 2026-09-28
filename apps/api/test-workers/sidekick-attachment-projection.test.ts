@@ -4,15 +4,14 @@
  * A conversation's Sidekick attachments reach its parent on the
  * `directory_common` effect, which is how a Channel rail learns Main's list.
  *
- * Driven on a real SubstreamAgent: the attach a Sidekick skill load makes, the
- * removal the REST rail makes, and migration 71's one report for an object
- * that attached Sidekicks before the effect carried them. The effects stay in
+ * Driven on a real SubstreamAgent: the attach a Sidekick skill load makes and
+ * the removal the REST rail makes. The effects stay in
  * the outbox (`useHeldEffectQueue`) and are read from there.
  * `docs/workstream-durable-object.md` owns the effect.
  */
 
 import { env } from "cloudflare:workers";
-import { evictDurableObject, runInDurableObject } from "cloudflare:test";
+import { runInDurableObject } from "cloudflare:test";
 import { asSubstreamId, type ConversationEffectEnvelope, type WorkstreamWorkflowInput } from "@rally/contracts";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -112,28 +111,5 @@ describe("a conversation's Sidekick attachments on its directory effect", () => 
     // Removing one that is not attached is not a change.
     await remote.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, removeId: SIDEKICK_A });
     expect(await reportedLists(stub)).toEqual([[SIDEKICK_B]]);
-  });
-
-  it("reports an older conversation's list once, the first time it wakes as an authority", async () => {
-    const stub = conversation();
-    await boot(stub);
-    // An object that attached a Sidekick before the effect carried the list,
-    // and has had nothing to project since.
-    await runInDurableObject(stub, (_instance, state) => {
-      seedWorkstreamRoot(state);
-      state.storage.sql.exec(`INSERT INTO sidekick_attachments (sidekick_id, attached_at) VALUES (?, 1)`, SIDEKICK_A);
-    });
-    expect(await reportedLists(stub)).toEqual([]);
-
-    await evictDurableObject(stub);
-    await boot(stub);
-    expect(await reportedLists(stub)).toEqual([[SIDEKICK_A]]);
-    await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec(`SELECT id FROM sidekick_attachment_projection_pending`).toArray()).toEqual([]);
-    });
-
-    await evictDurableObject(stub);
-    await boot(stub);
-    expect(await reportedLists(stub)).toEqual([[SIDEKICK_A]]);
   });
 });

@@ -187,6 +187,11 @@ describe("search audience: an Organization held below the parent schema", () => 
         "SELECT name FROM sqlite_schema WHERE type = 'table' AND name LIKE 'parent\\_%' ESCAPE '\\'").toArray()) {
         sql.exec(`DROP TABLE ${name}`);
       }
+      // Nor the Channel-rail triggers of a later migration, which read them.
+      for (const { name } of sql.exec<{ name: string }>(
+        "SELECT name FROM sqlite_schema WHERE type = 'trigger' AND name LIKE 'channel\\_rail\\_%' ESCAPE '\\'").toArray()) {
+        sql.exec(`DROP TRIGGER ${name}`);
+      }
       sql.exec(`INSERT INTO automation_directory (automation_id, workspace_id, author_user_id, run_as_user_id, source_version,
           payload_hash, lifecycle, scope, owning_workstream_id, title, description, projected_at)
         VALUES (?, ?, ?, ?, 1, 'hash', 'active', 'workstream', ?, 'Sidekick', '', 1)`,

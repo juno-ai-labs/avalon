@@ -24,7 +24,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 71;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 70;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3391,19 +3391,6 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     version: 70,
     description: "requeue every committed turn so its search rows carry an audience",
     statements: CONVERSATION_SEARCH_AUDIENCE_MIGRATION_STATEMENTS,
-  },
-  {
-    version: 71,
-    description: "report this conversation's Sidekick attachments to its parent once",
-    statements: [
-      // The directory effect carries `sidekickAttachmentIds` from this
-      // version on, and the parent has never heard an older conversation's
-      // list. The row is taken, with one effect, the first time the object
-      // is constructed as an authoritative work-stream conversation; see
-      // `SubstreamAgent.reportSidekickAttachmentsOnce`.
-      `CREATE TABLE sidekick_attachment_projection_pending (id INTEGER PRIMARY KEY CHECK (id = 1)) STRICT`,
-      `INSERT INTO sidekick_attachment_projection_pending (id) VALUES (1)`,
-    ],
   },
 ];
 
