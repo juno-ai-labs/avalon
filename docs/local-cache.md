@@ -29,6 +29,7 @@ socket hooks' first frame.
 | `apps/desktop/src/renderer/lib/workspace-directory-cache.ts` | The `directory` slice: one row per workspace holding the Channel list, the automation and note lists, and both Space directories; `hydrateWorkspaceDirectory`, `mirrorWorkspaceDirectory`. |
 | `apps/desktop/src/renderer/lib/transcript.ts` (`openingTranscriptSnapshot`) | The shape a transcript is persisted in: its opening ranges only. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Hydrates a conversation at effect start, mirrors it while mounted, and treats a seed as neither a completed opening nor a snapshot fence. |
+| `apps/desktop/src/renderer/lib/channel-rails.ts` | Holds each Channel's rail at the waterline it was answered at, decides which rails are stale and what to ask for next, and reads and seeds the rails the directory row keeps. |
 | `apps/desktop/src/renderer/lib/channel-viewer-state.ts` | Prunes cached children that left the parent's private-child roster, from the breakout list each Channel row carries on the workspace socket; reads those lists for the directory row and seeds them back from it. |
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Hydrates the directory before connecting, mirrors it after the first subscribe answer, and prunes conversations whose parent that answer no longer lists. |
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | `evictCachedWorkstream` and `evictCachedSubstream` forget the disk along with the memory. |

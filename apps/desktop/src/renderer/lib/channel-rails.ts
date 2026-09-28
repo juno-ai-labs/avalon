@@ -119,6 +119,7 @@ export function useChannelRail(workstreamId: string | null): ChannelRail | undef
     queryKey: channelRailQueryKey(workstreamId ?? ''),
     queryFn: async () => undefined,
     enabled: false,
+    subscribed: workstreamId !== null,
     select: (held) => held?.rail ?? undefined,
   }).data;
 }

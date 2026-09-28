@@ -11,6 +11,8 @@ import {
   WorkspaceReachChangedEventSchema,
   WorkspaceSocketSyncEventSchema,
   WorkspaceChannelRailsEventSchema,
+  WorkspaceSocketClientEventSchema,
+  CHANNEL_RAILS_NAMED_LIMIT,
   WorkspaceWorkstreamPageEventSchema,
   WorkspaceWorkstreamStateEventSchema,
   WorkstreamIdSchema,
@@ -116,12 +118,18 @@ function reportSocketContractSkew(
 }
 
 type ListWorkstreamsCommand = Extract<WorkspaceSocketClientEvent, { type: 'list_workstreams' }>;
-type ChannelRailsCommand = Extract<WorkspaceSocketClientEvent, { type: 'channel_rails' }>;
+
+interface RailAnswer {
+  nextAfter: string | null;
+  /** Every Channel a frame of the answer named, in any of its three lists. */
+  named: Set<string>;
+}
 
 interface PendingRailRequest {
-  resolve: (nextAfter: string | null) => void;
+  resolve: (answer: RailAnswer) => void;
   reject: (error: Error) => void;
   timeout: number;
+  named: Set<string>;
 }
 type WorkspaceSocketApi = Pick<RallyApi, 'getWorkspaceSocketTicket'>;
 export type WorkspaceSocketState = WorkspaceSyncConnectionState;
@@ -205,9 +213,10 @@ interface WorkspaceSocketContextValue {
   sidebarConnect: SidebarConnect | null;
   /**
    * Ask again for these Channels' rails now, whatever the rows say: after a
-   * change this window made, before the row that reports it arrives.
+   * change this window made, before the row that reports it arrives. Rejects
+   * while the organization is not connected.
    */
-  refreshChannelRails(workstreamIds: readonly string[]): void;
+  refreshChannelRails(workstreamIds: readonly string[]): Promise<void>;
   /**
    * Abandon the backoff and try the organization connection now.
    *
@@ -359,7 +368,9 @@ export function WorkspaceSocketProvider({
   const reportPresenceRef = useRef<() => void>(() => undefined);
   const reconnectRef = useRef<() => void>(() => undefined);
   const scheduleRailPrefetchRef = useRef<() => void>(() => undefined);
-  const refreshChannelRailsRef = useRef<(workstreamIds: readonly string[]) => void>(() => undefined);
+  const refreshChannelRailsRef = useRef<(workstreamIds: readonly string[]) => Promise<void>>(
+    () => Promise.reject(new ApiError('The organization is not connected.', 409, 'workspace_socket_unavailable')),
+  );
   const listWorkstreamsRef = useRef<WorkspaceSocketContextValue['listWorkstreams']>(
     () => Promise.reject(new ApiError(
       'The organization is not connected.',
@@ -558,7 +569,7 @@ export function WorkspaceSocketProvider({
       }
       pendingRailRequests.clear();
     };
-    const requestRails = (target: { spaceId: string; after?: string } | { workstreamIds: string[] }): Promise<string | null> =>
+    const requestRails = (target: { spaceId: string; after?: string } | { workstreamIds: string[] }): Promise<RailAnswer> =>
       new Promise((resolve, reject) => {
         if (!subscribed || socket?.readyState !== WebSocket.OPEN) {
           reject(new ApiError('The organization is not connected.', 409, 'workspace_socket_unavailable'));
@@ -569,20 +580,27 @@ export function WorkspaceSocketProvider({
           pendingRailRequests.delete(requestId);
           reject(new ApiError('Channel details could not be loaded.', 0, 'workspace_channel_rails_timeout'));
         }, COMMAND_TIMEOUT_MS);
-        pendingRailRequests.set(requestId, { resolve, reject, timeout });
-        socket.send(JSON.stringify({ type: 'channel_rails', requestId, ...target } as ChannelRailsCommand));
+        pendingRailRequests.set(requestId, { resolve, reject, timeout, named: new Set() });
+        const command = WorkspaceSocketClientEventSchema.parse({ type: 'channel_rails', requestId, ...target });
+        socket.send(JSON.stringify(command));
       });
+    // Settle only Channels no frame named: a named one was answered, and a
+    // row that raised its waterline mid-request makes it stale again rather
+    // than settled without its rail.
     const runRailTarget = async (target: ChannelRailTarget): Promise<void> => {
       if ('workstreamIds' in target) {
-        await requestRails({ workstreamIds: target.workstreamIds });
-        settleUnanswered(queryClient, target.workstreamIds);
+        const { named } = await requestRails({ workstreamIds: target.workstreamIds });
+        settleUnanswered(queryClient, target.workstreamIds.filter((id) => !named.has(id)));
         return;
       }
+      const named = new Set<string>();
       let after: string | null = null;
       do {
-        after = await requestRails({ spaceId: target.spaceId, ...(after ? { after } : {}) });
+        const answer: RailAnswer = await requestRails({ spaceId: target.spaceId, ...(after ? { after } : {}) });
+        for (const id of answer.named) named.add(id);
+        after = answer.nextAfter;
       } while (after !== null && !stopped);
-      settleUnanswered(queryClient, target.expected);
+      settleUnanswered(queryClient, target.expected.filter((id) => !named.has(id)));
     };
     /**
      * One request in flight at a time, until every rail a row has said is
@@ -618,10 +636,10 @@ export function WorkspaceSocketProvider({
       });
     };
     scheduleRailPrefetchRef.current = scheduleRailPrefetch;
-    refreshChannelRailsRef.current = (workstreamIds) => {
-      const served = workstreamIds.filter((id) => hasRailWaterline(queryClient, id));
+    refreshChannelRailsRef.current = async (workstreamIds) => {
+      const served = workstreamIds.filter((id) => hasRailWaterline(queryClient, id)).slice(0, CHANNEL_RAILS_NAMED_LIMIT);
       if (served.length === 0) return;
-      void requestRails({ workstreamIds: served }).catch(() => undefined);
+      await requestRails({ workstreamIds: served });
     };
     const scheduleReconnect = (): void => {
       if (stopped || permanentlyClosed || reconnectTimer !== null) return;
@@ -789,10 +807,15 @@ export function WorkspaceSocketProvider({
           if (channelRails.success) {
             applyChannelRails(queryClient, channelRails.data);
             const entry = pendingRailRequests.get(channelRails.data.requestId);
+            if (entry) {
+              for (const rail of channelRails.data.rails) entry.named.add(rail.workstreamId);
+              for (const oversized of channelRails.data.oversized) entry.named.add(oversized.workstreamId);
+              for (const id of channelRails.data.unavailable) entry.named.add(id);
+            }
             if (entry && channelRails.data.final) {
               pendingRailRequests.delete(channelRails.data.requestId);
               window.clearTimeout(entry.timeout);
-              entry.resolve(channelRails.data.nextAfter);
+              entry.resolve({ nextAfter: channelRails.data.nextAfter, named: entry.named });
             }
             return;
           }
@@ -1116,7 +1139,7 @@ export function WorkspaceSocketProvider({
       ));
       rejectPendingRailRequests(new ApiError('The organization closed.', 409, 'workspace_socket_closed'));
       scheduleRailPrefetchRef.current = () => undefined;
-      refreshChannelRailsRef.current = () => undefined;
+      refreshChannelRailsRef.current = () => Promise.reject(new ApiError('The organization closed.', 409, 'workspace_socket_closed'));
       window.removeEventListener('online', online);
       window.removeEventListener('offline', offline);
       window.removeEventListener('focus', observeWindowFocus);
@@ -1215,12 +1238,11 @@ export function WorkspaceSocketProvider({
     // canonical socket frame is in flight.
     setPresenceUserIdsByWorkstream({});
     reportPresenceRef.current();
-    // The Channel in front always has its rail asked for again: the one
-    // backstop for a row push that never arrived.
-    if (validatedWorkstreamId) refreshChannelRailsRef.current([validatedWorkstreamId]);
+    // The prefetch asks for the Channel in front first when its rail is stale.
+    scheduleRailPrefetchRef.current();
   }, []);
   const refreshChannelRails = useCallback(
-    (workstreamIds: readonly string[]): void => refreshChannelRailsRef.current(workstreamIds),
+    (workstreamIds: readonly string[]): Promise<void> => refreshChannelRailsRef.current(workstreamIds),
     [],
   );
   const exposedState: WorkspaceSocketState = ownSocket ? state : relayedState;
