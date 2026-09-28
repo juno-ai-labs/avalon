@@ -269,16 +269,25 @@ export class TextSearchIndex {
     }
   }
 
-  /** Persisted batch IDs make duplicate deliveries receipts, without a separate ledger. */
+  /**
+   * Persisted chunk rows make duplicate deliveries receipts, without a separate
+   * ledger. A chunk's id hashes its document, revision, generation, range and
+   * text, and a generation is the hash of the whole text its range slices, so
+   * (document, revision, generation, start, end) names exactly one id: counting
+   * those attributes is counting the ids, without the text needed to form them.
+   */
   async countSemanticChunks(document: Pick<TextSearchDocument, "source" | "scopeId" | "sourceId" | "revision">,
-    ids: string[]): Promise<number> {
+    generation: string, spans: ReadonlyArray<{ start: number; end: number }>): Promise<number> {
     const result = await this.namespace.query({
       aggregate_by: { count: ["Count"] },
       filters: ["And", [
         ["source", "Eq", document.source], ["scope_id", "Eq", document.scopeId],
         ["source_id", "Eq", document.sourceId], ["revision", "Eq", document.revision],
+        ["generation", "Eq", generation],
         ["record_type", "Eq", "chunk"], ["deleted", "Eq", false],
-        ["id", "In", ids],
+        // Pairs, not two `In` lists: a recursive passage and a sliding window
+        // can share a start, and a cross pair would count another batch's row.
+        ["Or", spans.map((span): Filter => ["And", [["chunk_start", "Eq", span.start], ["chunk_end", "Eq", span.end]]])],
       ]],
       consistency: { level: "strong" },
     }).catch((error: unknown) => {

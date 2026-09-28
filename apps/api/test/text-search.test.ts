@@ -223,9 +223,26 @@ describe("semantic indexing", () => {
     const [job] = await searchEmbeddingJobs(reference, document, policy);
     provider.query.mockResolvedValueOnce({ aggregations: { count: job!.spans.length } });
     const embed = vi.fn();
-    await indexSemanticBatch(index, job!, load, embed);
+    const source = vi.fn(load);
+    expect(await indexSemanticBatch(index, job!, source, embed)).toBe("indexed");
+    expect(source).not.toHaveBeenCalled();
     expect(embed).not.toHaveBeenCalled();
     expect(provider.write).not.toHaveBeenCalled();
+    // The receipt is the batch's exact ranges in this generation, not its ids.
+    expect(provider.query.mock.calls[0]?.[0].filters[1]).toEqual(expect.arrayContaining([
+      ["generation", "Eq", job!.generation],
+      ["Or", job!.spans.map((span) => ["And", [["chunk_start", "Eq", span.start], ["chunk_end", "Eq", span.end]]])],
+    ]));
+  });
+
+  it("confirms a written batch with the source's revision instead of a second load", async () => {
+    const [job] = await searchEmbeddingJobs(reference, document, policy);
+    const source = vi.fn(load);
+    expect(await indexSemanticBatch(index, job!, source, async (texts) => ({ model: "Qwen/Qwen3-Embedding-8B",
+      vectors: vectors(texts) }), async () => document.revision + 1)).toBe("stale");
+    expect(source).toHaveBeenCalledTimes(1);
+    expect(provider.write).toHaveBeenLastCalledWith(expect.objectContaining({ delete_by_filter:
+      ["And", expect.arrayContaining([["generation", "Eq", job!.generation]])] }));
   });
 
   it("rejects equal-revision content changes before embedding", async () => {
