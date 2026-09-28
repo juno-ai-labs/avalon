@@ -128,7 +128,10 @@ import {
   UpsertImpersonationRelationshipsRequestSchema,
 } from "@rally/contracts";
 import { WorkspaceImpersonationStorage } from "./workspace-impersonation-storage";
-import { AuthorizationSnapshotSchema, AuthorizationSubjectSchema, AuthorizationResourceSchema } from '../services/authorization-policy';
+import {
+  AuthorizationSnapshotSchema, AuthorizationSubjectSchema, AuthorizationResourceSchema,
+  connectionAdmits, owningChannelAdmitsMember, sidekickAdmitsMember,
+} from '../services/authorization-policy';
 import { SearchAuthorizationSnapshotSchema, SearchAuthorizationTargetSchema, searchAuthorizationKey, searchDecisionFingerprint } from '../services/search-authorization';
 import { flushAuthorizationDeliveries, type AuthorizationProjectionJob } from './authorization-projection';
 import { AuthorizationStorage, AUTHORIZATION_STORAGE_MIGRATION, AUTHORIZATION_STORAGE_TABLES, AuthorizationLocationSchema } from './authorization-storage';
@@ -13439,7 +13442,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ).toArray()[0];
       if (!row) return { connectionId, exists: false as const, validatedAt: Date.now() };
       return { connectionId, exists: true as const, validatedAt: Date.now(), revision: row.updated_at,
-        allowed: row.status !== 'disabled' && (row.scope === 'workspace' || row.owner_user_id === request.userId) };
+        allowed: connectionAdmits({ status: row.status, scope: row.scope, ownerUserId: row.owner_user_id }, request.userId) };
     });
   }
 
@@ -13451,8 +13454,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    *
    * Everything is read from this object's own tables. A conversation is
    * decided by its parent's own `readableSubstreams`, the rule its canonical
-   * reads apply, and a connection by the same predicate as
-   * `authorizationConnectionFacts`, so no second copy of a rule exists. A person
+   * reads apply; a Sidekick and a connection by the predicates canonical
+   * authorization shares (`sidekickAdmitsMember`, `owningChannelAdmitsMember`,
+   * `connectionAdmits`). Two narrowings are search's own, from the PRD: a guest
+   * never holds a workspace connection, and reaches a Channel-owned Sidekick
+   * only through management access on that Channel. Archived Channels and
+   * Spaces are skipped: member search never returns an archived row. A person
    * who is not an active member of the Organization holds no groups.
    */
   async readSearchAudience(input: unknown): Promise<string[]> {
@@ -13474,8 +13481,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       parents.set(parentId, loaded);
       return loaded;
     };
-    if (this.hostedParentSchemaPresent()) {
-      for (const { parent_id: parentId } of sql.exec<{ parent_id: string }>("SELECT parent_id FROM parent_metadata").toArray()) {
+    // An Organization held below the parent schema (meeting-notes retirement)
+    // hosts no parents yet, so it has no conversations or Channel-owned Sidekicks to read.
+    const hosted = this.hostedParentSchemaPresent();
+    if (hosted) {
+      for (const { parent_id: parentId } of sql.exec<{ parent_id: string }>(
+        `SELECT m.parent_id FROM parent_metadata m
+           LEFT JOIN channels c ON c.workstream_id = m.parent_id
+           LEFT JOIN spaces s ON s.space_id = m.parent_id
+          WHERE c.archived_at IS NULL AND s.archived_at IS NULL`).toArray()) {
         for (const substreamId of (await parent(parentId)).readableSubstreams(request.userId, relationship)) {
           groups.push(searchAudienceGroup.conversation(parentId, substreamId));
         }
@@ -13488,23 +13502,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // A guest reads a Sidekick only through management access on the Channel
       // that owns it; a member through its scope, authorship, execution, or
       // participation in that Channel while it is not archived.
-      let readable = member && (sidekick.scope === "workspace" || sidekick.author_user_id === request.userId
-        || sidekick.run_as_user_id === request.userId);
-      if (!readable && sidekick.scope === "workstream" && sidekick.owning_workstream_id) {
+      let readable = member && sidekickAdmitsMember({ scope: sidekick.scope,
+        author: sidekick.author_user_id === request.userId, executor: sidekick.run_as_user_id === request.userId });
+      if (!readable && hosted && sidekick.scope === "workstream" && sidekick.owning_workstream_id) {
         const owner = await parent(sidekick.owning_workstream_id);
-        readable = member
-          ? owner.metadataRow()?.archived_at === null && owner.isParticipant(request.userId)
+        const metadata = owner.metadataRow();
+        readable = metadata !== null && (member
+          ? owningChannelAdmitsMember({ archived: metadata.archived_at !== null, participant: owner.isParticipant(request.userId) })
           : owner.managementAccess({ workspaceId: request.workspaceId, parentId: sidekick.owning_workstream_id,
-            userId: request.userId }, relationship).allowed;
+            userId: request.userId }, relationship).allowed);
       }
       if (readable) groups.push(searchAudienceGroup.sidekick(sidekick.automation_id));
     }
     // A guest never gets a workspace connection (the PRD's decision 7); every
     // other reader is who `authorizationConnectionFacts` allows.
-    for (const connection of sql.exec<{ id: string; scope: string; owner_user_id: string | null }>(
-      "SELECT id, scope, owner_user_id FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'",
+    for (const connection of sql.exec<{ id: string; scope: string; owner_user_id: string | null; status: string }>(
+      "SELECT id, scope, owner_user_id, status FROM connector_connections WHERE workspace_id = ?",
       request.workspaceId).toArray()) {
-      if (connection.owner_user_id === request.userId || (member && connection.scope === "workspace")) {
+      if (connectionAdmits({ status: connection.status, scope: connection.scope, ownerUserId: connection.owner_user_id }, request.userId)
+        && (member || connection.scope !== "workspace")) {
         groups.push(searchAudienceGroup.connection(connection.id));
       }
     }

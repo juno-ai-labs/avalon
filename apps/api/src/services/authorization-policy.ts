@@ -50,6 +50,25 @@ export const AuthorizationDecisionSchema = z.discriminatedUnion('status', [
 ]);
 export type AuthorizationDecision = z.infer<typeof AuthorizationDecisionSchema>;
 
+/**
+ * A member reads a Sidekick's conversations through the Sidekick itself: its
+ * scope, having written it, or running it. The one copy of this rule;
+ * canonical reads and search both apply it.
+ */
+export function sidekickAdmitsMember(sidekick: { scope: string; author: boolean; executor: boolean }): boolean {
+  return sidekick.scope === 'workspace' || sidekick.author || sidekick.executor;
+}
+
+/** A member reads a Channel-owned Sidekick as a participant of that Channel while it is not archived. */
+export function owningChannelAdmitsMember(owner: { archived: boolean; participant: boolean }): boolean {
+  return !owner.archived && owner.participant;
+}
+
+/** Who reads a connection's resources: its owner, or anyone for a workspace connection, while it is enabled. */
+export function connectionAdmits(connection: { status: string; scope: string; ownerUserId: string | null }, userId: string): boolean {
+  return connection.status !== 'disabled' && (connection.scope === 'workspace' || connection.ownerUserId === userId);
+}
+
 /** A small explicit policy algebra, not a user-programmable graph language. */
 export type ReadPolicy =
   | { kind: 'fact'; granted: boolean; reason: z.infer<typeof AuthorizationDenialReasonSchema>; evidence: AuthorizationEvidence }
