@@ -136,7 +136,6 @@ const EXPECTED_TABLES = [
   "run_plugin_activations",
   "run_scopes",
   "runs",
-  "sidekick_attachment_projection_pending",
   "sidekick_attachments",
   "sidekick_execution_skills",
   "sidekick_skill_names",

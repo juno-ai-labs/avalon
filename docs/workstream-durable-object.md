@@ -78,12 +78,8 @@ the list as `sidekickAttachmentIds` (attach order), and an attach or a removal
 that changes a row commits that effect with it
 (`WorkstreamObjectProductService.commitWithCommonEffect`); Main's list is its
 Channel rail's ([`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-channels-rail-and-its-waterline)).
-Substream migration 71 seeds a one-row `sidekick_attachment_projection_pending`:
-the first construction as an authoritative work-stream conversation deletes it
-and commits one common effect, so a conversation that attached Sidekicks before
-the field existed reports them without waiting for other activity. Any other
-kind of conversation deletes it; an object not yet authoritative, or retired,
-leaves it for a later construction. Future runs reauthorize attachments and pin the latest
+A conversation that attached Sidekicks before the field existed reports them
+with its next common effect, which any message or state change commits. Future runs reauthorize attachments and pin the latest
 accepted revisions. Workspace migration 35 projects the owner stored `loadable`
 policy output; unknown legacy values exclude discovery. Workspace migration 36
 adds `external_registration_generations` for ordered registration replacements
@@ -1673,7 +1669,7 @@ onto `runs.state` forward only.
 | `workstream_resource_links`, `resource_inventory_revision` | Links to workspace resources with a CHECK-constrained relationship (`attachment`, `message_attachment`, `origin`, `generated`, `inbound_email`, or `context`) and the authorization revision every relationship change advances. `generated` derives artifact direction; every other value derives source direction. |
 | `terminal_workspace`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Rally state for the Daytona-backed Terminal plugin. |
 | `resident_context_blocks`, `resident_context_compactions` | The context-residency ledger: blocks delivered to this conversation, their residency and remaining prompt lifetime, pending deliveries, and the compaction events already applied. |
-| `sidekick_attachments`, `sidekick_attachment_projection_pending` | The Sidekicks this conversation has loaded, reported to its parent on every common effect, and migration 71's one-time marker that the list has not been reported yet. |
+| `sidekick_attachments` | The Sidekicks this conversation has loaded, reported to its parent on every common effect. |
 | `projection_keys`, `durable_outbox`, `durable_inbox_receipts` | Versioned child-to-parent `conversation_effect` envelopes awaiting the alarm's `sendBatch` (deleted once the Queue accepts them), and inbound dedupe such as feed tickets. |
 
 `participant_transcript_turns.transcript_sequence` is canonical transcript
@@ -1808,8 +1804,8 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 **What changed:** `directory_common` always carries `sidekickAttachmentIds`.
 Attaching a Sidekick on skill load and removing one from the rail commit that
-effect with the row change, and substream migration 71 makes every existing
-work-stream conversation report its list once on its next authoritative wake.
+effect with the row change. An existing conversation reports its list with its
+next common effect.
 
 **Why:** The Channel rail on the Organization socket lists Main's attachments,
 and the only other way to learn them was a call into each Main.
@@ -1818,7 +1814,11 @@ and the only other way to learn them was a call into each Main.
 common effect is already the conversation's whole projection, deduplicated by
 payload hash, and the parent already stores it; a new kind would need its own
 outbox ordering and receipts for one list. Backfilling from the parent side:
-the parent cannot enumerate an idle conversation's rows.
+the parent cannot enumerate an idle conversation's rows. A one-time report on
+the object's first wake after deploy: committing an effect during construction
+set the alarm to now and cost a recovering loop its re-derived wake, and a quiet
+Channel loses nothing by waiting, since its rail keeps the REST read for
+attachments until Main reports.
 
 **Consequences:** `activateSidekickSkill` is now asynchronous (it awaits the
 commit's alarm). An effect from a Worker before this one omits the field, and

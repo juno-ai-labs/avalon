@@ -723,6 +723,12 @@ describe("AutomationDO", () => {
     // Both objects as they shipped before this change: the directory has no
     // executor column, and the Sidekick has not run migration 10.
     await runInDurableObject(workspaceStub(), (_instance, state) => {
+      // The Channel-rail triggers of a later migration name the column; an
+      // object from before it had none of them.
+      for (const { name } of state.storage.sql.exec<{ name: string }>(
+        "SELECT name FROM sqlite_schema WHERE type = 'trigger' AND sql LIKE '%run_as_user_id%'").toArray()) {
+        state.storage.sql.exec(`DROP TRIGGER ${name}`);
+      }
       state.storage.sql.exec(`ALTER TABLE automation_directory DROP COLUMN run_as_user_id`);
       state.storage.sql.exec(`DELETE FROM _sql_schema_migrations WHERE version = 81`);
     });

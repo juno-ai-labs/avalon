@@ -505,8 +505,7 @@ directory's `run_as_user_id`, which is null until the Sidekick next publishes;
 until then only the author counts, so such a Sidekick can be missing from a
 rail it would appear in over REST. Channels
 upgraded by this migration start at waterline 0 with `attached` unreported
-until Main next projects: an ordinary effect, or the one report a conversation
-makes the first time it wakes after its own migration 71
+until Main's next common effect, which any activity in it commits
 ([`workstream-durable-object.md`](workstream-durable-object.md)).
 
 ### 2026-09-26 — `parent_metadata` holds identity only
