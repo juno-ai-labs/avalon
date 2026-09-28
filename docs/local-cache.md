@@ -206,21 +206,10 @@ observes and writes nothing, so the seed never persists itself.
 
 ### What a Channel's rail paints before its conversation answers
 
-The Channel rail is the directory's, not the conversation's. Its title, mark and
-scope are on the Channel's sidebar row, and its breakouts on the list that row
-carries, all from the workspace socket. So while `ConversationSurface` has no
-detail for the route, it asks the host for `renderOpeningSidebar()` and draws
-that in place of the placeholder rail, with only the feed, header and composer
-still waiting. The people and the Sidekicks are the conversation's own answer:
-the participants row shows a facepile's shape and does not open, and the
-Sidekick section holds its pending state, until the snapshot lands and the
-ordinary rail replaces this one.
-
-The host returns null, and the placeholder rail stands in, while it holds no
-breakout list for the Channel. Main alone would read as a Channel with no
-breakouts, and they would then appear under the reader a moment later. The
-status role moves from the whole layout onto the feed when a real rail is
-drawn, so a screen reader is not read the rail as the opening's status.
+The Channel rail lists only what the workspace socket carries, so it draws from
+the directory row and the breakout list above while the conversation's snapshot
+is in flight (`renderOpeningSidebar` in `screens/workstream.tsx`). Only the
+people and the Sidekicks wait for the snapshot.
 
 ### What opening a conversation paints
 
