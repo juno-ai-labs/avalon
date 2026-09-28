@@ -2087,9 +2087,11 @@ describe('a Channel\'s breakouts and background agents on the organization socke
       return { socket, api: () => current! };
     }
 
-    it('walks the Space on screen first, follows its pages, and takes rows and rails from each answer', async () => {
+    it('asks the Space on screen alone, then every other Space at once, and takes rows and rails from each answer', async () => {
+      const archive = '00000000-0000-4000-8000-000000000033';
       const queryClient = new QueryClient();
       queryClient.setQueryData(['spaces'], { waterline: 1, items: [{ id: general }, { id: design }] });
+      queryClient.setQueryData(['spaces-inactive'], { waterline: 1, items: [{ id: archive }] });
       const { socket, api } = await connectWithProbe(queryClient);
       act(() => socket.message(bySpaceSidebar()));
       await flushPromises();
@@ -2099,6 +2101,8 @@ describe('a Channel\'s breakouts and background agents on the organization socke
       let walked!: Promise<Set<string> | null>;
       act(() => { walked = api().walkSpaceChannels(); });
       await flushPromises();
+      // Alone until its first page is in.
+      expect(spaceSent(socket)).toHaveLength(1);
       const [first] = spaceSent(socket);
       expect(first).toMatchObject({ spaceId: design, rails: true });
       expect(first).not.toHaveProperty('after');
@@ -2111,22 +2115,25 @@ describe('a Channel\'s breakouts and background agents on the organization socke
       // Painted as it lands, before the walk is over.
       expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.map((item) => item.id))
         .toEqual([workstreamId]);
-      const [, second] = spaceSent(socket);
-      expect(second).toMatchObject({ spaceId: design, after: workstreamId });
-      act(() => socket.message(spaceAnswer(second!['requestId'], [], null)));
-      await flushPromises();
-
-      const [, , third] = spaceSent(socket);
-      expect(third).toMatchObject({ spaceId: general });
-      act(() => socket.message(spaceAnswer(third!['requestId'], [row({ id: other, spaceIds: [general] })], null)));
+      // Its next page, and every other Space, all in flight together.
+      const inFlight = spaceSent(socket).slice(1);
+      expect(inFlight.map((frame) => [frame['spaceId'], frame['after'] ?? null])).toEqual([
+        [design, workstreamId], [general, null], [archive, null],
+      ]);
+      const [designNext, generalFirst, archiveFirst] = inFlight;
+      // Answered out of order: each Space follows only its own pages.
+      act(() => socket.message(spaceAnswer(archiveFirst!['requestId'], [], null)));
+      act(() => socket.message(spaceAnswer(generalFirst!['requestId'], [row({ id: other, spaceIds: [general] })], null)));
+      act(() => socket.message(spaceAnswer(designNext!['requestId'], [], null)));
       await expect(walked).resolves.toEqual(new Set([workstreamId, other]));
       await flushPromises();
+      expect(spaceSent(socket)).toHaveLength(4);
 
       expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.map((item) => item.id).sort())
         .toEqual([workstreamId, other].sort());
       expect(queryClient.getQueryData(['channel-rail', workstreamId]))
         .toMatchObject({ railWaterline: 2, rail: { participantUserIds: [creator] } });
-      expect(api().loadedSpaceIds).toEqual(new Set([design, general]));
+      expect(api().loadedSpaceIds).toEqual(new Set([design, general, archive]));
       // The rail came with its row, so nothing is asked for by name.
       expect(railsSent(socket)).toEqual([]);
     });

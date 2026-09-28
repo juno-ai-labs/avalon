@@ -222,15 +222,15 @@ interface WorkspaceSocketContextValue {
   /**
    * Ask every Space for its Channel rows, and their rails, a page at a time,
    * writing each page into the directory as it lands. The Space given to
-   * `prioritizeSpace` goes first, then the Channel in front's Spaces, then the
-   * rest in the Space list's order, archived Spaces last.
+   * `prioritizeSpace` (else the Channel in front's) is asked alone; once its
+   * first page is in, every other Space is asked at once.
    *
    * Resolves with every Channel id the walk returned, or `null` when this
    * connection's sidebar carried Channel rows and there is nothing to walk.
    * Rejects once `signal` aborts, before asking for another page.
    */
   walkSpaceChannels(signal?: AbortSignal): Promise<Set<string> | null>;
-  /** Walk this Space next, ahead of the rest: the one on screen. */
+  /** Walk this Space first, ahead of the rest: the one on screen. */
   prioritizeSpace(spaceId: string | null): void;
   /** The Spaces a walk has returned whole. A Space missing here may still be loading. */
   loadedSpaceIds: ReadonlySet<string>;
@@ -672,11 +672,8 @@ export function WorkspaceSocketProvider({
         const command = WorkspaceSocketClientEventSchema.parse({ type: 'space_channels', requestId, ...target });
         socket.send(JSON.stringify(command));
       });
-    /**
-     * The next Space to walk, chosen after each one rather than up front, so
-     * a Space the reader opens mid-walk is the next one asked for.
-     */
-    const nextSpaceToWalk = (walked: ReadonlySet<string>): string | null => {
+    /** The Spaces not yet walked, the one on screen first. */
+    const spacesToWalk = (walked: ReadonlySet<string>): string[] => {
       const foreground = foregroundWorkstreamIdRef.current;
       const order = [
         prioritySpaceIdRef.current,
@@ -685,35 +682,65 @@ export function WorkspaceSocketProvider({
         ...(queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY)?.items ?? []).map((space) => space.id),
         ...(queryClient.getQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY)?.items ?? []).map((space) => space.id),
       ];
-      return order.find((spaceId): spaceId is string => spaceId !== null && !walked.has(spaceId)) ?? null;
+      return [...new Set(order.filter((spaceId): spaceId is string => spaceId !== null && !walked.has(spaceId)))];
+    };
+    /**
+     * One Space's pages, in order: each asks after the last. `onFirstPage`
+     * is called once the first page is written.
+     */
+    const walkSpace = async (
+      spaceId: string,
+      returned: Set<string>,
+      signal: AbortSignal | undefined,
+      onFirstPage: () => void = () => undefined,
+    ): Promise<void> => {
+      const held = (queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [])
+        .filter((row) => !row.pending && row.spaceIds.includes(spaceId));
+      // Rails ride along unless every Channel held here has one already;
+      // then the rows' waterlines say which moved, and those are asked for
+      // by name.
+      const rails = held.length === 0 || held.some((row) => !holdsChannelRail(queryClient, row.id));
+      let after: string | null = null;
+      do {
+        // A newer walk replaced this one: stop rather than ask twice.
+        signal?.throwIfAborted();
+        const answer: WorkspaceSpaceChannelsEvent = await requestSpaceChannels({ spaceId, ...(after ? { after } : {}), rails });
+        const page = applyDirectoryPage(queryClient, { ...answer, nextCursor: null }, localCacheScope);
+        mergeCachedWorkstreamPage(queryClient, page.items);
+        applyChannelRails(queryClient, { rails: answer.rails, oversized: [], unavailable: [] });
+        for (const item of answer.items) returned.add(item.id);
+        if (after === null) onFirstPage();
+        after = answer.nextAfter;
+      } while (after !== null && !stopped);
+      setLoadedSpaceIds((current) => current.has(spaceId) ? current : new Set([...current, spaceId]));
+      scheduleRailPrefetch();
     };
     walkSpaceChannelsRef.current = async (signal) => {
       if (!channelsBySpace) return null;
       const returned = new Set<string>();
       const walked = new Set<string>();
-      for (let spaceId = nextSpaceToWalk(walked); spaceId !== null && !stopped; spaceId = nextSpaceToWalk(walked)) {
-        walked.add(spaceId);
-        const held = (queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [])
-          .filter((row) => !row.pending && row.spaceIds.includes(spaceId!));
-        // Rails ride along unless every Channel held here has one already;
-        // then the rows' waterlines say which moved, and those are asked for
-        // by name.
-        const rails = held.length === 0 || held.some((row) => !holdsChannelRail(queryClient, row.id));
-        let after: string | null = null;
-        do {
-          // A newer walk replaced this one: stop rather than ask twice.
-          signal?.throwIfAborted();
-          const answer: WorkspaceSpaceChannelsEvent = await requestSpaceChannels({ spaceId, ...(after ? { after } : {}), rails });
-          const page = applyDirectoryPage(queryClient, { ...answer, nextCursor: null }, localCacheScope);
-          mergeCachedWorkstreamPage(queryClient, page.items);
-          applyChannelRails(queryClient, { rails: answer.rails, oversized: [], unavailable: [] });
-          for (const item of answer.items) returned.add(item.id);
-          after = answer.nextAfter;
-        } while (after !== null && !stopped);
-        const loaded = spaceId;
-        setLoadedSpaceIds((current) => current.has(loaded) ? current : new Set([...current, loaded]));
-        scheduleRailPrefetch();
+      // The Space on screen alone, until its first page is in; then every
+      // other Space at once. Pages within a Space still follow each other,
+      // since each asks after the last. The WorkspaceDO answers one at a time
+      // either way; asking together saves a round trip per Space.
+      const [first] = spacesToWalk(walked);
+      const walks: Promise<void>[] = [];
+      if (first !== undefined) {
+        walked.add(first);
+        let firstPageIn!: () => void;
+        const firstPage = new Promise<void>((resolve) => { firstPageIn = resolve; });
+        const firstWalk = walkSpace(first, returned, signal, () => firstPageIn());
+        walks.push(firstWalk);
+        await Promise.race([firstPage, firstWalk]);
       }
+      // Again until none is left: a Space can be listed while the walk runs.
+      for (let rest = spacesToWalk(walked); rest.length > 0 && !stopped; rest = spacesToWalk(walked)) {
+        for (const spaceId of rest) walked.add(spaceId);
+        signal?.throwIfAborted();
+        walks.push(...rest.map((spaceId) => walkSpace(spaceId, returned, signal)));
+        await Promise.all(walks);
+      }
+      await Promise.all(walks);
       // A finished walk is the whole directory, so it can bound the
       // conversation cache the way a whole connect page does.
       if (!stopped && localCacheScope !== null) {
