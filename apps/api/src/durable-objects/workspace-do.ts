@@ -211,6 +211,7 @@ import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   SCHEDULED_ALARM_SCHEMA_STATEMENTS,
   ScheduledDurableObject,
+  derivedAlarmLaneDue,
   scheduledAlarmRetryDelay,
   type ScheduledAlarm,
   type ScheduledAlarmOutcome,
@@ -1192,6 +1193,22 @@ const CONNECTOR_EVENT_BODY_RETENTION_MS = 90 * 24 * 60 * 60_000;
  */
 const CONNECTOR_EVENT_REAP_PAGE = 50;
 const ACTIVITY_EVENT_RETENTION_MS = 90 * 24 * 60 * 60_000;
+/**
+ * The alarm's derived lanes: work whose due time its own table holds, run by
+ * `runDueAlarmWork` only when due. Named for the phase that runs each one
+ * where it has a phase.
+ */
+type WorkspaceDerivedAlarmLane =
+  | "parent_outbox"
+  | "parent_breakouts"
+  | "directory_followup"
+  | "authorization_delivery"
+  | "resource_search"
+  | "space_default_publish"
+  | "space_bootstrap"
+  | "activity_reap"
+  | "connector_event_reap"
+  | "space_intent_resume";
 const PRODUCT_ALARM_BATCH = 6;
 /** How often a workspace rechecks a region that is closed for maintenance. */
 const MAINTENANCE_RECHECK_MS = 5 * 60_000;
@@ -3946,6 +3963,20 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // each SidekickDO. Null until the Sidekick next publishes its row; see
   // docs/PRDs/2026-09-26_search-audience-filtering/design.md.
   statements: ["ALTER TABLE automation_directory ADD COLUMN run_as_user_id TEXT"],
+}, {
+  version: 82,
+  description: "index when authorization deliveries come due",
+  // The alarm asks each lane when it is next due before running it, and arms
+  // from the same answers, so `MIN(not_before)` runs on every wake and every
+  // re-arm. This table had no index but its key, so that read scanned it: on
+  // workerd, 1,000 rows read for 1,000 rows held, and 1 with this index. The
+  // other polled outboxes (`parent_outbox`, `resource_search_versions`,
+  // `workspace_directory_followups`, `space_intents`) already answer it from
+  // an index in one to four rows, so they get none. See
+  // docs/durable-object-alarms.md.
+  statements: [
+    "CREATE INDEX authorization_delivery_due_idx ON authorization_delivery(not_before)",
+  ],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -6105,35 +6136,51 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * deadlines are stored entries with their own retry gates.
    */
   protected override nextDerivedAlarmCandidates(): readonly number[] {
-    const oldest = this.state.storage.sql.exec<{ created_at: number | null }>(
-      `SELECT MIN(created_at) AS created_at FROM workspace_activity_events`,
-    ).one().created_at;
-    const oldestProcessedEvent = this.state.storage.sql.exec<{ received_at: number | null }>(
-      `SELECT MIN(received_at) AS received_at FROM workspace_connector_events WHERE processing_status = 'processed'`,
-    ).one().received_at;
-    const spacePublication = this.spaceStorage().nextDefaultPublicationDueAt();
-    const spaceIntent = this.spaceStorage().nextIntentResumeDueAt();
-    const spaceBootstrap = this.spaceStorage().nextBootstrapDueAt();
-    const search = nextResourceSearchDueAt(this.state.storage.sql, this.env, this.resourceSearchPace);
-    const authorization = this.state.storage.sql.exec<{ due: number | null }>('SELECT MIN(not_before) AS due FROM authorization_delivery').one().due;
-    const firstFrame = nextFirstFrameDeadline(this.unheardSockets(), this.socketFirstFrameDeadlineMs);
-    const hosted = this.hostedParentSchemaPresent();
-    const parentOutbox = hosted ? this.nextParentOutboxDueAt() : null;
-    const parentBreakouts = hosted ? HostedParent.nextDueAt(this.state.storage.sql) : null;
-    const directoryFollowUp = hosted ? this.nextDirectoryFollowUpDueAt() : null;
+    const lanes = this.derivedAlarmLanes();
     return [
-      ...(parentOutbox === null ? [] : [parentOutbox]),
-      ...(directoryFollowUp === null ? [] : [directoryFollowUp]),
-      ...(parentBreakouts === null ? [] : [parentBreakouts]),
-      ...(oldest === null ? [] : [Number(oldest) + ACTIVITY_EVENT_RETENTION_MS]),
-      ...(oldestProcessedEvent === null ? [] : [Number(oldestProcessedEvent) + CONNECTOR_EVENT_BODY_RETENTION_MS]),
-      ...(spacePublication === null ? [] : [spacePublication]),
-      ...(spaceIntent === null ? [] : [spaceIntent]),
-      ...(spaceBootstrap === null ? [] : [spaceBootstrap]),
-      ...(search === null ? [] : [search]),
-      ...(authorization === null ? [] : [authorization]),
-      ...(firstFrame === null ? [] : [firstFrame]),
-    ];
+      ...Object.values(lanes).map((dueAt) => dueAt()),
+      nextFirstFrameDeadline(this.unheardSockets(), this.socketFirstFrameDeadlineMs),
+    ].filter((dueAt): dueAt is number => dueAt !== null);
+  }
+
+  /**
+   * When each derived lane of this object's alarm next has work, read on call.
+   *
+   * The one list both sides of the alarm read: `nextDerivedAlarmCandidates`
+   * arms from every lane, and `runDueAlarmWork` runs a lane only when its
+   * answer is at or before the wake's `now`. Read lazily, just before the lane
+   * would run, so rows an earlier lane of the same wake wrote are seen. A lane
+   * this wake skips is still a candidate for the final re-arm, so skipping can
+   * only delay work to the instant it was already armed for. The first-frame
+   * watch is not a lane: `scheduledAlarmDeferral` runs it before these.
+   */
+  private derivedAlarmLanes(): Record<WorkspaceDerivedAlarmLane, () => number | null> {
+    const sql = this.state.storage.sql;
+    // An Organization held below the parent schema has no `parent_*` tables.
+    const hosted = this.hostedParentSchemaPresent();
+    return {
+      parent_outbox: () => hosted ? this.nextParentOutboxDueAt() : null,
+      parent_breakouts: () => hosted ? HostedParent.nextDueAt(sql) : null,
+      directory_followup: () => hosted ? this.nextDirectoryFollowUpDueAt() : null,
+      authorization_delivery: () =>
+        sql.exec<{ due: number | null }>("SELECT MIN(not_before) AS due FROM authorization_delivery").one().due,
+      resource_search: () => nextResourceSearchDueAt(sql, this.env, this.resourceSearchPace),
+      space_default_publish: () => this.spaceStorage().nextDefaultPublicationDueAt(),
+      space_bootstrap: () => this.spaceStorage().nextBootstrapDueAt(),
+      activity_reap: () => {
+        const oldest = sql.exec<{ created_at: number | null }>(
+          "SELECT MIN(created_at) AS created_at FROM workspace_activity_events",
+        ).one().created_at;
+        return oldest === null ? null : Number(oldest) + ACTIVITY_EVENT_RETENTION_MS;
+      },
+      connector_event_reap: () => {
+        const oldest = sql.exec<{ received_at: number | null }>(
+          "SELECT MIN(received_at) AS received_at FROM workspace_connector_events WHERE processing_status = 'processed'",
+        ).one().received_at;
+        return oldest === null ? null : Number(oldest) + CONNECTOR_EVENT_BODY_RETENTION_MS;
+      },
+      space_intent_resume: () => this.spaceStorage().nextIntentResumeDueAt(),
+    };
   }
 
   /**
@@ -6202,11 +6249,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * The one thing this object's alarm does that no entry owns.
+   * Everything this object's alarm does that no stored entry owns.
    *
-   * Expired activity events are swept on every wake rather than through an
-   * entry: the sweep is idempotent, bounded to 500 rows, and its due time
-   * moves with every event this workspace records.
+   * Each derived lane runs only when its own due time, read from
+   * `derivedAlarmLanes` just before it would run, is at or before `now`: the
+   * object wakes for one lane, and the others' reads stay a single indexed
+   * `MIN` rather than their full pass. Expired activity events and processed
+   * connector bodies are lanes like any other — their due time is the oldest
+   * row plus retention. The schedule reconcile has no due time and runs on
+   * every wake, for the reason at the call.
    */
   protected override async runDueAlarmWork(now: number): Promise<void> {
     const workspaceId = this.workspaceId();
@@ -6224,22 +6275,29 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         });
       }
     };
+    const lanes = this.derivedAlarmLanes();
+    const due = (lane: WorkspaceDerivedAlarmLane) => derivedAlarmLaneDue(lanes[lane](), now);
     if (workspaceId) {
       // Hosted parents first: an outbox row is a directory update somebody is
-      // waiting to see.
-      if (this.hostedParentSchemaPresent()) {
-        await isolated("parent_outbox", () => this.drainParentOutbox());
-        await isolated("parent_breakouts", () => this.drainDueParentBreakouts(now));
+      // waiting to see. An Organization below the parent schema has no due
+      // time for any of the three.
+      if (due("parent_outbox")) await isolated("parent_outbox", () => this.drainParentOutbox());
+      if (due("parent_breakouts")) await isolated("parent_breakouts", () => this.drainDueParentBreakouts(now));
+      if (due("directory_followup")) {
         await isolated("directory_followup", () => this.runDirectoryFollowUps(this.dueDirectoryFollowUps(now)));
       }
       // The old search-authorization store is no longer pushed: search filters on
       // row audience (phase 3 of docs/PRDs/2026-09-26_search-audience-filtering).
       // Its triggers still record targets, one row each, which a rollback flushes.
-      try { await flushAuthorizationDeliveries(this.state.storage.sql, this.env.ACTIVITY_QUEUE, now); }
-      catch { logWarn(this.env, 'authorization_backfill_dispatch_deferred', { region: this.env.AVALON_REGION }); }
-      try { await publishResourceSearch(this.state.storage.sql, this.env, workspaceId, this.resourceSearchPace); }
-      catch { logWarn(this.env, "resource_search_dispatch_deferred", { workspace_id: workspaceId }); }
-      await this.instrumentWorkspaceAlarmPhase("space_default_publish", undefined, async () => {
+      if (due("authorization_delivery")) {
+        try { await flushAuthorizationDeliveries(this.state.storage.sql, this.env.ACTIVITY_QUEUE, now); }
+        catch { logWarn(this.env, 'authorization_backfill_dispatch_deferred', { region: this.env.AVALON_REGION }); }
+      }
+      if (due("resource_search")) {
+        try { await publishResourceSearch(this.state.storage.sql, this.env, workspaceId, this.resourceSearchPace); }
+        catch { logWarn(this.env, "resource_search_dispatch_deferred", { workspace_id: workspaceId }); }
+      }
+      if (due("space_default_publish")) await this.instrumentWorkspaceAlarmPhase("space_default_publish", undefined, async () => {
         try {
           await publishSpaceDefaultTargets({
             storage: this.spaceStorage(),
@@ -6261,7 +6319,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // signing in: the tracker's forced migration wakes every Organization,
       // the alarm armed by construction claims a page, and the Queue carries
       // it to a consumer that can act as one of the Channel's own people.
-      await this.instrumentWorkspaceAlarmPhase("space_bootstrap", undefined, async () => {
+      if (due("space_bootstrap")) await this.instrumentWorkspaceAlarmPhase("space_bootstrap", undefined, async () => {
         try {
           await publishSpaceBootstrapWork({
             storage: this.spaceStorage(),
@@ -6279,12 +6337,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         }
       });
     }
-    await isolated("activity_reap", async () => {
-      this.reapExpiredActivityEvents(now);
-    });
-    await isolated("connector_event_reap", async () => {
-      this.reapExpiredConnectorEvents(now);
-    });
+    if (due("activity_reap")) {
+      await isolated("activity_reap", async () => {
+        this.reapExpiredActivityEvents(now);
+      });
+    }
+    if (due("connector_event_reap")) {
+      await isolated("connector_event_reap", async () => {
+        this.reapExpiredConnectorEvents(now);
+      });
+    }
     // Re-derive the whole index before this alarm ends, exactly as the object
     // that used to own it did. A target that just fired has advanced its own
     // canonical row — `runSchedule` writes the next `next_run_at`,
@@ -6293,7 +6355,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // which does not pass the auto-refresh in `executeRuntimeSql`. Without
     // this, the drain settles the one-shot entry it just ran and nothing arms
     // the occurrence that replaced it: a recurring automation fires once and
-    // then never again until an unrelated mutation happens to reconcile.
+    // then never again until an unrelated mutation happens to reconcile. It
+    // is the one phase with no due time: what it repairs is a stored entry the
+    // drain just settled, which no table here dates.
     if (workspaceId) {
       await isolated("schedule_reconcile", async () => {
         await this.refreshSchedule(workspaceId);
@@ -6302,7 +6366,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // request that staged the intent is gone, and the Channel it was about to
       // reach was never told the operation existed. Last, because each step
       // waits on a Channel's conversation and the phases above do not.
-      await this.instrumentWorkspaceAlarmPhase("space_intent_resume", undefined, async () => {
+      if (due("space_intent_resume")) await this.instrumentWorkspaceAlarmPhase("space_intent_resume", undefined, async () => {
         try {
           const claimed = this.spaceStorage().claimIntentResumes(now, (attempt) => now + scheduledAlarmRetryDelay(attempt));
           await this.resumeSpaceIntentsInPlace(workspaceId, claimed);
@@ -13181,7 +13245,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (resource.kind === 'conversation') this.state.storage.sql.exec(`INSERT OR IGNORE INTO search_authorization_dependencies
         SELECT owning_workstream_id, ? FROM automation_directory WHERE automation_id = ? AND owning_workstream_id IS NOT NULL`, key, resource.parentId);
     }
-    await this.armNextAlarm();
+    // No re-arm: nothing written here is a lane of this object's alarm. The
+    // pending snapshot's trigger still records a `search_authorization_push`
+    // row, but that store has not been flushed or armed for since search
+    // began filtering on row audience (#1007).
     return generations;
   }
 
@@ -13316,7 +13383,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   async beginAuthorizationBackfill(input: { workspaceId: string; refresh?: boolean }) {
     await this.initialized;
     this.assertWorkspace(WorkspaceIdSchema.parse(input.workspaceId));
-    this.state.storage.transactionSync(() => {
+    const queued = this.state.storage.transactionSync(() => {
+      let queued = 0;
       const parents = this.state.storage.sql.exec<{ parent_id: string; parent_kind: 'workstream' | 'automation' }>(
         `SELECT workstream_id AS parent_id, 'workstream' AS parent_kind FROM channels
          UNION SELECT automation_id AS parent_id, 'automation' AS parent_kind FROM automation_directory`,
@@ -13327,7 +13395,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         if (input.refresh !== false) {
           this.state.storage.sql.exec(`INSERT INTO authorization_backfill(parent_id, parent_kind) VALUES (?, ?)
             ON CONFLICT(parent_id) DO UPDATE SET completed = 0`, parent.parent_id, parent.parent_kind);
-          this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
+          queued += this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
             workspaceId, parentId });
           continue;
         }
@@ -13341,7 +13409,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         }
         if (!tracked || !tracked.completed) {
           if (!this.authorizationDeliveryScheduled(parent.parent_id, null)) {
-            this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
+            queued += this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
               workspaceId, parentId });
           }
           continue;
@@ -13353,12 +13421,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           'SELECT substream_id FROM authorization_backfill_children WHERE parent_id = ? AND completed = 0',
           parent.parent_id).toArray()) {
           if (this.authorizationDeliveryScheduled(parent.parent_id, child.substream_id)) continue;
-          this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
+          queued += this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
             workspaceId, parentId, substreamId: SubstreamIdSchema.parse(child.substream_id) });
         }
       }
+      return queued;
     });
-    await this.armNextAlarm();
+    // A repair that found everything finished or already scheduled queued no
+    // delivery, and nothing else it writes is an alarm lane.
+    if (queued > 0) await this.armNextAlarm();
     return this.authorizationBackfillStatus(input);
   }
 
@@ -13377,8 +13448,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * that would call straight back into this object for the list and the
    * registration. A conversation job and a Sidekick parent (its children are
    * in AutomationDO) still go through the Queue.
+   *
+   * Returns how many `authorization_delivery` rows it wrote, from the rows the
+   * write returned: the caller's only reason to re-arm the alarm.
    */
-  private enqueueAuthorizationDiscovery(job: AuthorizationProjectionJob): void {
+  private enqueueAuthorizationDiscovery(job: AuthorizationProjectionJob): number {
     if (job.substreamId === undefined) {
       const hostedChannel = this.state.storage.sql.exec(
         `SELECT 1 FROM parent_metadata parent
@@ -13388,7 +13462,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (hostedChannel) {
         this.state.storage.sql.exec('DELETE FROM authorization_delivery WHERE job_key = ?',
           JSON.stringify([job.parentId, null]));
-        this.registerAuthorizationChildrenInPlace({
+        return this.registerAuthorizationChildrenInPlace({
           workspaceId: job.workspaceId, parentId: job.parentId,
           // The same rows `HostedParent.listAuthorizationChildren` answers.
           substreamIds: this.state.storage.sql.exec<{ substream_id: string }>(
@@ -13398,32 +13472,40 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           ).toArray().map((row) => SubstreamIdSchema.parse(row.substream_id)),
           ...(job.mutationAt === undefined ? {} : { mutationAt: job.mutationAt }),
         });
-        return;
       }
     }
-    this.state.storage.sql.exec(`INSERT INTO authorization_delivery(job_key, payload_json, not_before) VALUES (?, ?, 0)
+    return this.state.storage.sql.exec(`INSERT INTO authorization_delivery(job_key, payload_json, not_before) VALUES (?, ?, 0)
       ON CONFLICT(job_key) DO UPDATE SET payload_json = CASE
         WHEN json_extract(authorization_delivery.payload_json, '$.mutationAt') IS NULL THEN excluded.payload_json
         WHEN json_extract(excluded.payload_json, '$.mutationAt') IS NULL THEN json_set(excluded.payload_json, '$.mutationAt', json_extract(authorization_delivery.payload_json, '$.mutationAt'))
         ELSE json_set(excluded.payload_json, '$.mutationAt', MIN(json_extract(authorization_delivery.payload_json, '$.mutationAt'), json_extract(excluded.payload_json, '$.mutationAt'))) END,
-      revision = authorization_delivery.revision + 1`,
-    JSON.stringify([job.parentId, job.substreamId ?? null]), JSON.stringify(job));
+      revision = authorization_delivery.revision + 1
+      RETURNING job_key`,
+    JSON.stringify([job.parentId, job.substreamId ?? null]), JSON.stringify(job)).toArray().length;
   }
 
   async registerAuthorizationChildren(input: { workspaceId: string; parentId: string; substreamIds: string[]; refreshExisting?: boolean; mutationAt?: number }) {
     await this.initialized;
     const request = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamIds: z.array(SubstreamIdSchema), refreshExisting: z.boolean().optional(), mutationAt: z.number().int().nonnegative().optional() }).parse(input);
     this.assertWorkspace(request.workspaceId);
-    this.state.storage.transactionSync(() => this.registerAuthorizationChildrenInPlace(request));
-    await this.armNextAlarm();
+    const queued = this.state.storage.transactionSync(() => this.registerAuthorizationChildrenInPlace(request));
+    // Only a queued delivery moves this object's alarm. A registration that
+    // skipped every child already known (`refreshExisting: false`) or only
+    // dropped children queued nothing: a removed delivery can leave the alarm
+    // early, never late, and an early wake finds nothing due and re-arms.
+    if (queued > 0) await this.armNextAlarm();
   }
 
-  /** The registration itself, in the caller's transaction. */
+  /**
+   * The registration itself, in the caller's transaction. Returns how many
+   * deliveries it queued.
+   */
   private registerAuthorizationChildrenInPlace(request: {
     workspaceId: AuthorizationProjectionJob["workspaceId"]; parentId: string;
     substreamIds: NonNullable<AuthorizationProjectionJob["substreamId"]>[];
     refreshExisting?: boolean | undefined; mutationAt?: number | undefined;
-  }): void {
+  }): number {
+    let queued = 0;
     // Reconcile the exact registry: deleted/failed children must not leave immortal pending receipts.
     const expected = new Set(request.substreamIds);
     const old = this.state.storage.sql.exec<{ substream_id: string }>(
@@ -13442,7 +13524,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ).toArray().length) continue;
       this.state.storage.sql.exec(`INSERT INTO authorization_backfill_children(parent_id, substream_id) VALUES (?, ?)
         ON CONFLICT(parent_id, substream_id) DO UPDATE SET completed = 0`, request.parentId, substreamId);
-      this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
+      queued += this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
         workspaceId: request.workspaceId, parentId: request.parentId, substreamId,
         ...(request.mutationAt === undefined ? {} : { mutationAt: request.mutationAt }) });
     }
@@ -13450,6 +13532,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (request.mutationAt !== undefined) this.state.storage.sql.exec(
       "UPDATE search_authorization_push SET timing_origin = CASE WHEN first_mutated_at IS NULL OR ? <= first_mutated_at THEN 'source_mutation' ELSE timing_origin END, first_mutated_at = COALESCE(MIN(first_mutated_at, ?), ?) WHERE kind = 'parent' AND target_id = ?",
       request.mutationAt, request.mutationAt, request.mutationAt, request.parentId);
+    return queued;
   }
 
   async authorizationBackfillStatus(input: { workspaceId: string }) {

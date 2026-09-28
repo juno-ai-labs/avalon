@@ -94,6 +94,19 @@ export async function ensureStorageAlarmNoLaterThan(
 }
 
 /**
+ * Whether a derived lane's work is due at `now`.
+ *
+ * The run-side twin of `nextDerivedAlarmCandidates`: an object that reads a
+ * lane's due time to arm its alarm reads the same value through this to decide
+ * whether that lane runs on this wake. Arming and running from one answer is
+ * what keeps a skipped lane from being stranded — whatever it did not run is
+ * still a candidate for the re-arm.
+ */
+export function derivedAlarmLaneDue(dueAt: number | null, now: number): boolean {
+  return dueAt !== null && dueAt <= now;
+}
+
+/**
  * Entries drained in one wake.
  *
  * A Durable Object alarm is a single-threaded invocation with a wall-clock
