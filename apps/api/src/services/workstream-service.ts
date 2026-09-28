@@ -1,4 +1,5 @@
 import { conversationSidekickCandidateIds } from "./sidekick-skills";
+import type { ExternalBindingClaim } from "../durable-objects/workspace-external-binding-protocol";
 import { AutomationService } from "./automation-service";
 import { readWorkspaceRelationship } from "./workspace-relationship-service";
 import { ConversationService } from "./conversation-service";
@@ -156,12 +157,18 @@ async function externalMessageAgent(
   env: Env,
   workspaceId: WorkspaceId,
   workstreamId: WorkstreamId,
+  substreamId?: string,
 ) {
   return durableObjectStubForWorkspace(
     env,
     env.SUBSTREAM_AGENTS,
     workspaceId,
-    conversationObjectName(env.AVALON_REGION, workspaceId, workstreamId),
+    conversationObjectName(
+      env.AVALON_REGION,
+      workspaceId,
+      workstreamId,
+      substreamId === undefined ? "0" : asSubstreamId(substreamId),
+    ),
   );
 }
 
@@ -170,7 +177,7 @@ export async function admitExternalWorkstreamMessage(
   rawInput: AdmitExternalMessageInput,
 ): Promise<ExternalMessageAdmissionResult> {
   const input = AdmitExternalMessageInputSchema.parse(rawInput);
-  const agent = await externalMessageAgent(env, input.workspaceId, input.workstreamId);
+  const agent = await externalMessageAgent(env, input.workspaceId, input.workstreamId, input.substreamId);
   const response = await agent.admitExternalMessage(input);
   const body = rpcResultBody(response);
   if (response.status < 200 || response.status >= 300) {
@@ -561,6 +568,8 @@ export class WorkstreamService {
     input: CreateWorkstreamInput,
     slackOrigin?: SlackOriginContext,
     slackSearchAuthorization?: SlackSearchAuthorization,
+    /** The external thread this Channel is created for; see `CreateOptions.externalBinding`. */
+    externalBinding?: ExternalBindingClaim,
   ) {
     // `input.scope` travels with the rest of the input rather than being read
     // off and re-stated: the connector ingresses decide it from the conversation
@@ -572,6 +581,7 @@ export class WorkstreamService {
       ...(slackOrigin ? { slackOrigin } : {}),
       ...(slackSearchAuthorization ? { slackSearchAuthorization } : {}),
       ...(input.telemetryOperationId ? { telemetryOperationId: input.telemetryOperationId } : {}),
+      ...(externalBinding ? { externalBinding } : {}),
     });
     // The origin is a convenience on top of the work stream, never the reason
     // a create fails: the person's request has already produced a work stream

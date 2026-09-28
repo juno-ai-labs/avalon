@@ -645,9 +645,9 @@ Organization-opening card for an Organization that has nothing to open. It is
 best effort on purpose — a Space failure must not cost somebody the Organization
 they just created, and the alarm is the backstop running the same code.
 `placeConnectorChannelInGeneral` covers the two creation paths that do not go
-through the creation coordinator: the Slack agent, which opens a Channel for a
-Slack member with no Rally identity and provisions the conversation itself, and
-the local development seed route, which restores a captured fixture into objects
+through the creation coordinator: the Slack agent, when it opens a Channel for a
+Slack member with no Rally identity in a room that is not linked to a Space and
+provisions the conversation itself, and the local development seed route, which restores a captured fixture into objects
 it provisions under the ids the fixture chose. **A refusal there reopens the
 cutover** rather than only logging: a `complete` Organization is never walked
 again, so a Channel this step could not place would stay homeless for good. The
@@ -669,7 +669,18 @@ opening card until the walk catches up.
 
 The Slack path calls `reserveChild` first, as the coordinator's one call does
 before `initialize`, and defers the provisional directory delivery until after
-the placement so the Channel is never listed while it is in no Space. Nothing
+the placement so the Channel is never listed while it is in no Space. A Slack
+room linked to a Space is different on both counts: the Channel is reserved
+straight into that Space with `reserveChannelInSpaces`, acting as the Space's
+creator, and General is never involved.
+
+**A Slack room can create a Space.** Inviting the workspace bot to a room calls
+`linkExternalRoom`, which writes a Space for the room (Organization-wide for a
+public channel, private and seated with the room's mapped Rally members for a
+private one) and the room's binding in one transaction, under an id derived
+from the room so a racing invitation reads the same Space back.
+[`external-conversation-bindings.md`](external-conversation-bindings.md) owns
+the link. Nothing
 polls: a production ingest path must not wait for a projection to appear. The
 conversation's own effect arrives afterwards and finds the metadata already
 written, so it updates the row rather than creating it and nothing is

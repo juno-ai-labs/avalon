@@ -112,6 +112,15 @@ class IngressDatabase {
       threadTs,
       `workstream-${channelId}-${threadTs}`,
     );
+    // The thread's route, as migration 85 carries every session's thread key
+    // into a binding and as creating a session writes one beside it.
+    this.objectDatabase.prepare(
+      `INSERT INTO external_conversation_bindings
+         (installation_id, path_json, target_kind, space_id, parent_kind, parent_id, substream_id,
+          state, suspended_reason, claim_key, created_at, updated_at)
+       VALUES ('slack:T1', json_array(?, ?), 'conversation', NULL, 'workstream', ?, '0',
+               'active', NULL, NULL, '2026-01-01', '2026-01-01')`,
+    ).run(channelId, threadTs, `workstream-${channelId}-${threadTs}`);
   }
 
   seedPendingPrompt(channelId: string, threadTs: string, slackUserId: string): void {
@@ -165,6 +174,10 @@ describe("Slack Agent durable ingress", () => {
       "message.channels",
       "message.groups",
       "message.im",
+      "message.mpim",
+      "channel_id_changed",
+      "channel_archive",
+      "group_archive",
       "reaction_added",
       "reaction_removed",
     ]));
@@ -243,7 +256,7 @@ describe("Slack Agent durable ingress", () => {
       "xoxb-test",
       "CPRIVATE",
       "channel",
-    )).resolves.toEqual({ channelType: "private", channelName: "founders-boiler-room", failure: null });
+    )).resolves.toEqual({ channelType: "private", channelName: "founders-boiler-room", failure: null, threadable: true });
     expect(fetcher).toHaveBeenCalledOnce();
     expect(__slackAgentTesting.slackChannelType("CPRIVATE")).toBe("unknown");
   });
@@ -479,6 +492,42 @@ describe("Slack Agent durable ingress", () => {
       .resolves.toEqual({ ok: true });
     expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ jobId: "event:EvRetry" }));
     expect(database.jobCount()).toBe(3);
+  });
+
+  it("queues the bot's own room lifecycle whatever automations listen, and nobody else's membership", async () => {
+    // An invitation, a removal, an archive and a renumbered room each move a
+    // binding, so they reach the queue even with no automation subscribed and
+    // even though the bot is their actor. Another member joining moves none.
+    const database = new IngressDatabase();
+    const send = vi.fn(async () => undefined);
+    const service = new SlackAgentService(environment(database, send));
+    const lifecycle = (eventId: string, event: Record<string, unknown>) => ({
+      type: "event_callback",
+      api_app_id: "A1",
+      team_id: "T1",
+      event_id: eventId,
+      authorizations: [{ team_id: "T1", user_id: "UBOT", is_bot: true }],
+      event,
+    });
+
+    await service.processEvent(lifecycle("EvInvited", {
+      type: "member_joined_channel", user: "UBOT", channel: "C1", channel_type: "C", inviter: "U1",
+    }), "invited-hash");
+    await service.processEvent(lifecycle("EvRemoved", {
+      type: "member_left_channel", user: "UBOT", channel: "C1", channel_type: "C",
+    }), "removed-hash");
+    await service.processEvent(lifecycle("EvArchived", { type: "channel_archive", channel: "C1", user: "U1" }), "archived-hash");
+    await service.processEvent(lifecycle("EvMoved", {
+      type: "channel_id_changed", old_channel_id: "C1", new_channel_id: "C2",
+    }), "moved-hash");
+    await service.processEvent(lifecycle("EvOtherJoined", {
+      type: "member_joined_channel", user: "U2", channel: "C1", channel_type: "C",
+    }), "other-hash");
+
+    for (const jobId of ["event:EvInvited", "event:EvRemoved", "event:EvArchived", "event:EvMoved"]) {
+      expect(database.hasJob(jobId)).toBe(true);
+    }
+    expect(database.hasJob("event:EvOtherJoined")).toBe(false);
   });
 
   it("queues an otherwise unrelated channel message when an exact Slack activity trigger is listening", async () => {

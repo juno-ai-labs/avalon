@@ -18,6 +18,7 @@ import {
   WorkstreamIdSchema,
 } from "@rally/contracts";
 import { z } from "zod";
+import { ExternalBindingClaimSchema } from "./workspace-external-binding-protocol";
 
 /**
  * The wire contract for the Organization's Space authority.
@@ -229,6 +230,21 @@ export const WorkspaceChannelReservationRequestSchema = SpaceActorSchema.extend(
     scope: true,
     systemKind: true,
   }),
+  /**
+   * The external thread this Channel is being born for. Claimed `pending` in
+   * the reservation's own transaction, so the Channel's birth, its placement
+   * and its thread binding commit together; the coordinator activates it when
+   * the creation receipt completes. See docs/external-conversation-bindings.md.
+   */
+  externalBinding: ExternalBindingClaimSchema.optional(),
+  /**
+   * Who the Channel's parent row names as its creator, when that is not the
+   * member acting on the Spaces: a connector ingress placing a Channel for a
+   * provider sender with no Rally identity acts as the member who linked the
+   * room, and the Channel stays ownerless (`null`) or attributed to whoever
+   * the sender resolved to. Absent means the actor.
+   */
+  createdByUserId: UserIdSchema.nullable().optional(),
 }).strict();
 export type WorkspaceChannelReservationRequest = z.infer<typeof WorkspaceChannelReservationRequestSchema>;
 
@@ -251,6 +267,11 @@ export const WorkspaceChannelReservationResultSchema = z.discriminatedUnion("sta
     /** The Space refused, or null when the refusal is the caller's own membership. */
     spaceId: SpaceIdSchema.nullable(),
   }),
+  /**
+   * The external thread the request named is already bound, or another live
+   * attempt is creating its Channel. Nothing was written.
+   */
+  z.strictObject({ status: z.literal("binding_refused"), outcome: z.enum(["held", "bound"]) }),
 ]);
 export type WorkspaceChannelReservationResult = z.infer<typeof WorkspaceChannelReservationResultSchema>;
 

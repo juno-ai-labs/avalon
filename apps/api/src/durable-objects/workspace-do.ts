@@ -25,6 +25,7 @@ interface RetirementGraphNode {
   parentId: string;
 }
 import {
+  SlackIngressQueueMessageSchema,
   WorkspaceSocketClientEventTypeSchema,
   isUnknownSocketEvent,
   safeParseSocketEvent,
@@ -921,6 +922,7 @@ import {
   claimWorkspaceSlackThread,
   clearWorkspaceSlackPendingPrompt,
   completeWorkspaceSlackIngressJob,
+  enqueueSlackSourceJoins,
   enqueueWorkspaceSlackIngressJob,
   failWorkspaceSlackIngressJob,
   recoverableWorkspaceSlackIngressJobs,
@@ -943,6 +945,32 @@ import {
   workspaceSlackSessionByWorkstream,
   workspaceSlackSessionExists,
 } from "./workspace-slack-storage";
+import {
+  ExternalBindingActivateResultSchema,
+  ExternalConversationKeySchema,
+  ExternalBindingLatestOutboundRequestSchema,
+  ExternalBindingLatestOutboundResultSchema,
+  ExternalBindingMoveRequestSchema,
+  ExternalBindingMoveResultSchema,
+  ExternalBindingOutboundRequestSchema,
+  ExternalBindingOutboundResultSchema,
+  ExternalBindingReactivateRequestSchema,
+  ExternalBindingReadRequestSchema,
+  ExternalBindingReadResultSchema,
+  ExternalBindingReleaseResultSchema,
+  ExternalBindingResolutionSchema,
+  ExternalBindingResolveRequestSchema,
+  ExternalBindingSettleRequestSchema,
+  ExternalBindingSuspendRequestSchema,
+  ExternalBindingSuspendResultSchema,
+  ExternalRoomLinkRequestSchema,
+  type ExternalBindingResolution,
+  type ExternalRoomLinkResult,
+} from "./workspace-external-binding-protocol";
+import {
+  EXTERNAL_CONVERSATION_BINDINGS_MIGRATION,
+  ExternalConversationBindingStorage,
+} from "./workspace-external-binding-storage";
 import {
   WorkspaceTerminalNetworkSettingsRequestSchema,
   WorkspaceTerminalPolicyClaimRequestSchema,
@@ -982,6 +1010,27 @@ import {
   releaseWorkspaceTranscriptionSession,
   renewWorkspaceTranscriptionSession,
 } from "./workspace-transcription-storage";
+import {
+  SIDEKICK_CONVERSATION_ATTACHMENT_SCHEMA_STATEMENTS,
+  attachSidekickConversation,
+  conversationIdOf,
+  conversationsTitled,
+  describeConversation,
+  matchConversationReference,
+  parseConversationId,
+  scopeConversations,
+} from "./workspace-sidekick-conversation-storage";
+import {
+  ConversationToolAttachRequestSchema,
+  ConversationToolResolveRequestSchema,
+  ConversationToolScopeRequestSchema,
+  type ConversationToolAttachResult,
+  type ConversationToolEntry,
+  type ConversationToolRefusal,
+  type ConversationToolRefusalCode,
+  type ConversationToolResolveResult,
+  type ConversationToolScopeResult,
+} from "./workspace-conversation-tool-protocol";
 
 const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "scope_grant_directory",
@@ -998,6 +1047,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   // statement reaches this object and is told why, instead of executing
   // against storage nobody meant to reach generically.
   "automation_directory",
+  "sidekick_conversation_attachments",
   "realtime_transcription_sessions",
   "realtime_transcription_ticket_receipts",
   "workspace_impersonation_relationships",
@@ -1032,6 +1082,8 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "slack_agent_sessions",
   "slack_agent_contexts",
   "slack_agent_feedback",
+  // Bindings are typed methods from their first version.
+  "external_conversation_bindings",
 ] as const;
 
 function typedRpcOnlyWorkspaceTable(sql: string): string | null {
@@ -1299,6 +1351,13 @@ class UnknownMembersError extends Error {
 class ChannelReservationRefused extends Error {
   constructor(readonly code: SpaceErrorCode, readonly spaceId: string) {
     super(code);
+  }
+}
+
+/** The external thread a reservation named could not be claimed; it rolls back too. */
+class ChannelBindingRefused extends Error {
+  constructor(readonly outcome: "held" | "bound") {
+    super(`external_binding_${outcome}`);
   }
 }
 
@@ -3986,7 +4045,49 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 84,
   description: "purge the search-authorization keys memory search registered per run",
   statements: MEMORY_SEARCH_KEY_PURGE_MIGRATION,
+}, {
+  version: 85,
+  description: "bind external conversations to Rally addresses",
+  // One record for provider rooms and threads, keyed by installation and path;
+  // every Slack Agent session's thread key becomes an active thread binding.
+  // See docs/external-conversation-bindings.md.
+  statements: EXTERNAL_CONVERSATION_BINDINGS_MIGRATION,
+}, {
+  version: 86,
+  description: "a Sidekick's home Breakout, and the conversations attached to it",
+  // The home column sits beside `owning_workstream_id` so the directory's
+  // CHECK on that column needs no rebuild; "0" is a Channel's Main
+  // conversation, which is every existing Sidekick's home. The attachment
+  // table is not `parent_sidekicks`: that one means "may load this Sidekick as
+  // a skill". See docs/automation-lifecycle.md.
+  statements: [
+    `ALTER TABLE automation_directory ADD COLUMN owning_substream_id TEXT NOT NULL DEFAULT '0'`,
+    ...SIDEKICK_CONVERSATION_ATTACHMENT_SCHEMA_STATEMENTS,
+  ],
 }];
+
+function conversationToolEntry(conversation: {
+  conversationId: string; parentId: string; substreamId: string; kind: "channel" | "breakout";
+  title: string; isHome: boolean; isOwn: boolean;
+}): ConversationToolEntry {
+  return {
+    conversationId: conversation.conversationId,
+    parentId: conversation.parentId,
+    substreamId: asSubstreamId(conversation.substreamId),
+    kind: conversation.kind,
+    title: conversation.title,
+    isHome: conversation.isHome,
+    isOwn: conversation.isOwn,
+  };
+}
+
+function conversationToolRefusal(
+  code: ConversationToolRefusalCode,
+  available: readonly string[],
+  resourceId: string | null = null,
+): ConversationToolRefusal {
+  return { ok: false, code, available: [...available], resourceId };
+}
 
 function externalEventContext(
   metadata: Record<string, unknown>,
@@ -4494,6 +4595,12 @@ const DirectoryFollowUpSchema = z.strictObject({
   reopenBootstrap: z.boolean(),
   watchReconciliations: z.array(z.string()),
   archivalChanges: z.array(z.string()),
+  /**
+   * Breakouts (`<channelId>/<breakoutId>`) whose archive state this batch
+   * moved, so a Sidekick whose home is one of them hears of it. Absent from a
+   * follow-up recorded before the field existed.
+   */
+  breakoutArchivalChanges: z.array(z.string()).default([]),
   refreshTerminal: z.boolean(),
   refreshWatchKinds: z.boolean(),
   directoryChanged: z.boolean(),
@@ -5038,8 +5145,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return {
       workspaceId, publishSnapshotAll: false, snapshotUsers: [], reachChangedUsers: [], commonChanges: [],
       viewerChanges: [], breakoutChanges: [], breakoutViewerChanges: [], reopenBootstrap: false,
-      watchReconciliations: [], archivalChanges: [], refreshTerminal: false, refreshWatchKinds: false,
-      directoryChanged: false, syncTopics: [], refreshProductAlarm: false, channelLosses: [],
+      watchReconciliations: [], archivalChanges: [], breakoutArchivalChanges: [], refreshTerminal: false,
+      refreshWatchKinds: false, directoryChanged: false, syncTopics: [], refreshProductAlarm: false, channelLosses: [],
     };
   }
 
@@ -7171,9 +7278,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.state.storage.sql.exec(
         `INSERT INTO automation_directory
            (automation_id, workspace_id, author_user_id, run_as_user_id, source_version, payload_hash,
-            lifecycle, scope, owning_workstream_id, title, description, next_run_at, projected_at, loadable,
-            appearance_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            lifecycle, scope, owning_workstream_id, owning_substream_id, title, description, next_run_at,
+            projected_at, loadable, appearance_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(automation_id) DO UPDATE SET
            author_user_id = excluded.author_user_id,
            -- An effect queued before the field existed keeps what is known.
@@ -7183,6 +7290,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
            lifecycle = excluded.lifecycle,
            scope = excluded.scope,
            owning_workstream_id = excluded.owning_workstream_id,
+           owning_substream_id = excluded.owning_substream_id,
            title = excluded.title,
            description = excluded.description,
            next_run_at = excluded.next_run_at,
@@ -7198,6 +7306,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         effect.lifecycle,
         effect.scope,
         effect.owningWorkstreamId,
+        effect.owningSubstreamId ?? "0",
         effect.title,
         effect.description,
         epoch(effect.nextRunAt),
@@ -7210,6 +7319,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             SET waterline = waterline + 1
           WHERE list = 'automations'`,
       );
+      if (effect.lifecycle === "deleted") {
+        // A deleted Sidekick's runs take no more input, so the threads its
+        // sends opened stop routing to them. The rows stay, suspended, so a
+        // reply is logged as `binding_suspended` rather than read as a new
+        // conversation.
+        this.externalBindings().suspendDeletedSidekick(effect.automationId, new Date().toISOString());
+      }
       return { applied: true };
     });
     if (result.applied) this.publishSidebarList("automations");
@@ -7217,16 +7333,166 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return result;
   }
 
-  /** Which room owns an automation, for a caller that has to resolve participation. */
-  async automationOwner(input: unknown): Promise<{ owningWorkstreamId: string | null }> {
+  /** Which room owns an automation, and which of its conversations is home, for a caller resolving participation. */
+  async automationOwner(input: unknown): Promise<{ owningWorkstreamId: string | null; owningSubstreamId: string }> {
     await this.initialized;
     const request = z.strictObject({ workspaceId: WorkspaceIdSchema, automationId: IdSchema }).parse(input);
     this.assertWorkspace(request.workspaceId);
-    const row = this.state.storage.sql.exec<{ owning_workstream_id: string | null }>(
-      `SELECT owning_workstream_id FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
+    const row = this.state.storage.sql.exec<{ owning_workstream_id: string | null; owning_substream_id: string }>(
+      `SELECT owning_workstream_id, owning_substream_id FROM automation_directory
+        WHERE automation_id = ? AND lifecycle <> 'deleted'`,
       request.automationId,
     ).toArray()[0];
-    return { owningWorkstreamId: row?.owning_workstream_id ?? null };
+    return { owningWorkstreamId: row?.owning_workstream_id ?? null, owningSubstreamId: row?.owning_substream_id ?? "0" };
+  }
+
+  // ---------------------------------------------------------------------------
+  // The conversation tools' scope: `rally:conversations` asks here, in one call
+  // per tool call, which conversations a loop may reach and whether its acting
+  // person can open the one it named. See docs/conversation-tools.md.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The conversations in a scope this person can open now, archived ones
+   * omitted. Re-admits on every call from the directories, so a person who
+   * lost a Channel stops seeing it on the next list.
+   */
+  async conversationToolScope(input: unknown): Promise<ConversationToolScopeResult> {
+    await this.initialized;
+    const request = parseRpcInput(ConversationToolScopeRequestSchema, input, "conversation_tool_scope");
+    this.assertWorkspace(request.workspaceId);
+    const scoped = scopeConversations(this.state.storage.sql, request.scope, request.userId);
+    const conversations = await this.reachableConversations(request.workspaceId, scoped, request.userId);
+    return { conversations: conversations.map(conversationToolEntry) };
+  }
+
+  /**
+   * The unarchived conversations of a scope this person can read. A guest
+   * reads only what a grant gives them, which the directory's viewer rows do
+   * not record, so their `readable` flag says nothing: each candidate is
+   * admitted the way a read would be.
+   */
+  private async reachableConversations<T extends { parentId: string; substreamId: string; readable: boolean; archived: boolean }>(
+    workspaceId: string,
+    scoped: readonly T[],
+    userId: string,
+  ): Promise<T[]> {
+    const relationship = await this.readRelationship(workspaceId, userId);
+    if (relationship?.status !== "active") return [];
+    const guest = relationship.accessClass === "guest";
+    const listed = scoped.filter((conversation) => (guest || conversation.readable) && !conversation.archived);
+    if (!guest) return listed;
+    return (await Promise.all(listed.map(async (conversation) =>
+      (await this.conversationToolAdmission(workspaceId, conversation, userId)).authorized ? conversation : null)))
+      .filter((conversation) => conversation !== null);
+  }
+
+  /**
+   * One person's admission to one conversation, as its transport decides it:
+   * an active relationship, then the hosted parent's `authorizeViewer`, which
+   * for a guest consults only their grants (`ConversationService` does the
+   * same through the role it reads from the session).
+   */
+  private async conversationToolAdmission(
+    workspaceId: string,
+    address: { parentId: string; substreamId: string },
+    userId: string,
+  ): Promise<{ authorized: boolean; archived: boolean }> {
+    const relationship = await this.readRelationship(workspaceId, userId);
+    if (relationship?.status !== "active") return { authorized: false, archived: false };
+    return this.authorizeViewer({
+      workspaceId: asWorkspaceId(workspaceId),
+      parentId: address.parentId,
+      substreamId: asSubstreamId(address.substreamId),
+      userId: asUserId(userId),
+      ...(relationship.accessClass === "guest" ? { requireGrantAuthority: true } : {}),
+    });
+  }
+
+  /**
+   * One conversation a read or a post named, checked against the scope and
+   * then admitted through the hosted parent's `authorizeViewer`, which is what
+   * the conversation's own transport asks. The directory rows decide the
+   * scope; the parent decides the person.
+   */
+  async resolveConversationToolTarget(input: unknown): Promise<ConversationToolResolveResult> {
+    await this.initialized;
+    const request = parseRpcInput(ConversationToolResolveRequestSchema, input, "conversation_tool_resolve");
+    this.assertWorkspace(request.workspaceId);
+    const scoped = scopeConversations(this.state.storage.sql, request.scope, request.userId);
+    // Only a refusal lists what the person can reach, so only a refusal pays for it.
+    const available = async () => (await this.reachableConversations(request.workspaceId, scoped, request.userId))
+      .map((conversation) => conversation.conversationId);
+    let target;
+    if (request.reference === null) {
+      target = scoped.find((conversation) => conversation.isHome);
+      if (!target) return conversationToolRefusal("conversation_home_missing", await available());
+    } else {
+      const match = matchConversationReference(scoped, request.reference);
+      if (match.outcome === "missing") return conversationToolRefusal("conversation_not_in_scope", await available());
+      if (match.outcome === "ambiguous") {
+        return conversationToolRefusal("conversation_ambiguous", match.matches.map((conversation) => conversation.conversationId));
+      }
+      target = match.conversation;
+    }
+    const resourceId = target.substreamId === "0" ? target.parentId : target.substreamId;
+    if (target.archived) return conversationToolRefusal("conversation_archived", [], resourceId);
+    const admission = await this.conversationToolAdmission(request.workspaceId, target, request.userId);
+    if (!admission.authorized) return conversationToolRefusal("conversation_access_denied", [], resourceId);
+    if (admission.archived) return conversationToolRefusal("conversation_archived", [], resourceId);
+    const sidekickName = request.scope.kind !== "sidekick" ? null
+      : this.state.storage.sql.exec<{ title: string }>(
+        `SELECT title FROM automation_directory WHERE automation_id = ?`, request.scope.automationId,
+      ).toArray()[0]?.title || "New Sidekick";
+    return { ok: true, conversation: conversationToolEntry(target), sidekickName };
+  }
+
+  /**
+   * Attach a conversation to a Sidekick, from its configuration conversation.
+   *
+   * Attaching is the consent to publish there: whatever a run posts is read by
+   * that conversation's audience. So the person attaching must be able to post
+   * in it now, which is the parent's admission plus the conversation not being
+   * archived, the rule `ConversationService.writableClient` applies to a write.
+   */
+  async attachSidekickConversation(input: unknown): Promise<ConversationToolAttachResult> {
+    await this.initialized;
+    const request = parseRpcInput(ConversationToolAttachRequestSchema, input, "conversation_tool_attach");
+    this.assertWorkspace(request.workspaceId);
+    const sql = this.state.storage.sql;
+    let address = parseConversationId(request.reference);
+    if (!address) {
+      const titled = conversationsTitled(sql, request.reference, request.userId);
+      if (titled.length === 0) return conversationToolRefusal("conversation_not_found", []);
+      if (titled.length > 1) {
+        return conversationToolRefusal("conversation_ambiguous", titled.map((conversation) => conversation.conversationId));
+      }
+      address = titled[0]!;
+    }
+    const facts = describeConversation(sql, address, request.userId);
+    if (!facts) return conversationToolRefusal("conversation_not_found", []);
+    const resourceId = address.substreamId === "0" ? address.parentId : address.substreamId;
+    if (facts.archived) return conversationToolRefusal("conversation_archived", [], resourceId);
+    const admission = await this.conversationToolAdmission(request.workspaceId, address, request.userId);
+    if (!admission.authorized) return conversationToolRefusal("conversation_access_denied", [], resourceId);
+    if (admission.archived) return conversationToolRefusal("conversation_archived", [], resourceId);
+    const attached = this.state.storage.transactionSync(() => {
+      if (sql.exec(`SELECT 1 FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
+        request.automationId).toArray().length === 0) return null;
+      return attachSidekickConversation(sql, {
+        automationId: request.automationId, address: address!, userId: request.userId, now: Date.now(),
+      });
+    });
+    if (!attached) throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
+    const scoped = scopeConversations(sql, { kind: "sidekick", automationId: request.automationId }, request.userId)
+      .find((conversation) => conversation.parentId === address!.parentId && conversation.substreamId === address!.substreamId);
+    return {
+      ok: true,
+      alreadyAttached: attached.alreadyAttached,
+      conversation: conversationToolEntry(scoped ?? {
+        ...address, conversationId: conversationIdOf(address), kind: facts.kind, title: facts.title, isHome: false, isOwn: false,
+      }),
+    };
   }
 
   /**
@@ -7401,7 +7667,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         `SELECT source_generation, effective_after_event_sequence FROM external_registration_generations WHERE destination_key = ?`, destinationKey,
       ).toArray()[0];
       if (previous && (request.sourceGeneration === undefined || request.sourceGeneration <= previous.source_generation)) {
-        return { effectiveAfterEventSequence: previous.effective_after_event_sequence };
+        return { effectiveAfterEventSequence: previous.effective_after_event_sequence, applied: false };
       }
       const now = Date.now();
       const cutoff = this.latestConnectorEventSequence();
@@ -7480,10 +7746,64 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           WHERE state = 'removed' AND updated_at < ?`,
         now - 24 * 60 * 60_000,
       );
-      return { effectiveAfterEventSequence: cutoff };
+      return { effectiveAfterEventSequence: cutoff, applied: true };
     });
     await this.refreshScheduleKinds(request.workspaceId, ["schedule"]);
-    return result;
+    // A stale projection changed nothing, so it has nothing to join.
+    if (result.applied && request.destination.kind === "automation") {
+      await this.joinSlackSourceConversations(
+        request.workspaceId,
+        request.destination.automationId,
+        request.sourceGeneration,
+        request.evaluators,
+      );
+    }
+    return { effectiveAfterEventSequence: result.effectiveAfterEventSequence };
+  }
+
+  /**
+   * Queue the joins a Sidekick's saved Slack sources need (the Slack storage
+   * decides what they are; see `enqueueSlackSourceJoins`) and hand each to the
+   * ingress queue. Best effort: the registration has committed, and a join
+   * that failed to queue is logged and made again by the next save.
+   */
+  private async joinSlackSourceConversations(
+    workspaceId: string,
+    automationId: string,
+    sourceGeneration: number | undefined,
+    evaluators: readonly { source: { connectorType: string; connectionId: string }; when: unknown }[],
+  ): Promise<void> {
+    let jobs: Awaited<ReturnType<typeof enqueueSlackSourceJoins>>;
+    try {
+      jobs = await enqueueSlackSourceJoins(this.state.storage, {
+        workspaceId, automationId, sourceGeneration, evaluators, appId: this.env.SLACK_APP_ID ?? null,
+      });
+    } catch (error) {
+      logWarn(this.env, "slack_sidekick_source_join_enqueue_failed", {
+        workspace_id: workspaceId,
+        automation_id: automationId,
+        reason: diagnosticErrorCode(error, "slack_sidekick_source_join_enqueue_failed"),
+      });
+      return;
+    }
+    if (jobs.length > 0) this.refreshScheduleAfterSlackWrite(workspaceId);
+    for (const job of jobs) {
+      try {
+        await this.env.ACTIVITY_QUEUE.send(SlackIngressQueueMessageSchema.parse({
+          kind: "slack_ingress",
+          region: this.env.AVALON_REGION,
+          workspaceId,
+          jobId: job.jobId,
+        }));
+      } catch (error) {
+        logWarn(this.env, "slack_sidekick_source_join_enqueue_failed", {
+          workspace_id: workspaceId,
+          automation_id: automationId,
+          connection_id: job.connectionId,
+          reason: diagnosticErrorCode(error, "slack_sidekick_source_join_enqueue_failed"),
+        });
+      }
+    }
   }
 
   /** Cheap connector-ingress admission check; matching still happens after normalization. */
@@ -7588,8 +7908,30 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         ? "workspace" as const
         : "restricted" as const,
     };
+    // A message in a bound external conversation is claimed by its binding,
+    // as a matched watch claims one, so a bound reply never also becomes
+    // Suggested Work. The adapter wrote the binding key beside the provider
+    // metadata; any connector that writes one is resolved the same way.
+    const boundKey = ExternalConversationKeySchema.safeParse({
+      installationId: metadata.externalConversationInstallationId,
+      path: metadata.externalConversationPath,
+    });
+    const binding = !boundKey.success ? null : this.externalBindings().resolve({
+      installationId: boundKey.data.installationId,
+      path: boundKey.data.path,
+      addressed: false,
+      claimKey: null,
+      pendingStaleBefore: new Date(0).toISOString(),
+    });
+    // A reply bound to a Sidekick's run continues that run through the
+    // binding. The same message is not also a new trigger for that Sidekick,
+    // or one answer would start a second run beside the one it answers.
+    const boundSidekickId = binding?.outcome === "deliver" && binding.target.parentKind === "automation"
+      ? binding.target.parentId
+      : null;
     const deliveries = registrations.flatMap((registration) => {
       if (registration.resource_id && !resourceIds.includes(registration.resource_id)) return [];
+      if (boundSidekickId !== null && registration.automation_id === boundSidekickId) return [];
       if (restrictedUserIds !== null && registration.destination_kind === "automation") {
         // A workspace automation is readable by every member, so a restricted
         // activity can never reach one. A personal automation may see it only
@@ -7634,7 +7976,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       destinations: deliveries.map((delivery) => `${delivery.destination.kind}:${delivery.registrationId}`).slice(0, 20),
     });
     return WorkspaceExternalEventMatchResultSchema.parse({
-      matched: deliveries.length > 0,
+      matched: deliveries.length > 0 || binding?.outcome === "deliver",
       deliveries,
     });
   }
@@ -8311,7 +8653,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           parentId: workstreamId,
           substreamId: asSubstreamId("0"),
           kind: "main",
-          createdByUserId: request.userId,
+          createdByUserId: request.createdByUserId === undefined ? request.userId : request.createdByUserId,
           authorityGeneration: request.authorityGeneration,
           directory: { ...request.directory, scope: start.scope, systemKind: null },
         });
@@ -8341,6 +8683,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             sourceId: entry.space.id, scope: entry.space.scope, participantUserIds: participants,
           }, applied.plan.seatUserIds);
         }
+        if (request.externalBinding) {
+          const claimed = this.externalBindings().claim(request.externalBinding, {
+            kind: "conversation", parentKind: "workstream", parentId: workstreamId, substreamId: "0",
+          }, new Date().toISOString());
+          if (claimed.outcome !== "claimed") throw new ChannelBindingRefused(claimed.outcome);
+        }
         return { authorityGeneration: child.authorityGeneration, spaces };
       }));
     } catch (error) {
@@ -8348,6 +8696,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // with it; forget their ids so nothing runs a row that never committed.
       this.pendingParentFollowUps.splice(followUpMark);
       if (error instanceof ChannelReservationRefused) return refused(error.code, error.spaceId);
+      if (error instanceof ChannelBindingRefused) return { status: "binding_refused", outcome: error.outcome };
       throw error;
     }
     // After the commit, what the staged calls did after theirs: the Space
@@ -10317,6 +10666,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // reconciliation, none of which a breakout has or wants.
     const breakoutChanges = new Set<string>();
     const breakoutViewerChanges = new Map<string, Set<string>>();
+    const breakoutArchivalChanges = new Set<string>();
     // Everyone who joined or left a Channel or a Breakout in this batch. Wider
     // than `reachViewers`, which is Channels only because a breakout moves no
     // Space; this set feeds `publishReachChanged`, which is about the person.
@@ -10339,7 +10689,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // existing incomplete-acceptance path keeps it retryable until migration
       // 63 creates the destination.
       if (!breakoutDirectoryReady) continue;
+      // Read before and after, because a Sidekick whose home is this breakout
+      // is told only when its archive state actually moves: every message
+      // moves a breakout's row, and a call per message to each homed
+      // Sidekick would buy nothing.
+      const archivedBefore = envelope.effect.kind === "directory_common" && envelope.substreamId !== undefined
+        ? this.breakoutArchivedAt(envelope.parentId, envelope.substreamId) : undefined;
       const breakout = this.applyBreakoutDirectoryEnvelope(envelope, activeUsers);
+      if (breakout.moved && envelope.substreamId !== undefined && archivedBefore !== undefined
+        && this.breakoutArchivedAt(envelope.parentId, envelope.substreamId) !== archivedBefore) {
+        breakoutArchivalChanges.add(`${envelope.parentId}/${envelope.substreamId}`);
+      }
       if (breakout.moved) {
         if (envelope.effect.kind === "directory_common") breakoutChanges.add(envelope.parentId);
         else if (envelope.effect.kind === "directory_user") {
@@ -10452,6 +10812,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         reopenBootstrap,
         watchReconciliations: [...watchReconciliations],
         archivalChanges: [...archivalChanges],
+        breakoutArchivalChanges: [...breakoutArchivalChanges],
         // Replays repair an arm lost after the directory commit, so any common
         // effect re-derives the Terminal schedule from current rows.
         refreshTerminal: commonChanges.size > 0 || channelEnvelopes.some(common),
@@ -10473,6 +10834,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       && followUp.viewerChanges.length === 0 && followUp.breakoutChanges.length === 0
       && followUp.breakoutViewerChanges.length === 0 && !followUp.reopenBootstrap
       && followUp.watchReconciliations.length === 0 && followUp.archivalChanges.length === 0
+      && followUp.breakoutArchivalChanges.length === 0
       && !followUp.refreshTerminal && !followUp.refreshWatchKinds && !followUp.directoryChanged
       && followUp.syncTopics.length === 0 && !followUp.refreshProductAlarm
       && followUp.channelLosses.length === 0;
@@ -10622,8 +10984,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     )));
     // Archiving a room is a decision about the room, and the automations it
     // owns follow it. Each is its own object and is told on its own.
-    if (followUp.archivalChanges.length > 0) {
-      await this.notifyOwningRoomArchival(followUp.workspaceId, followUp.archivalChanges);
+    if (followUp.archivalChanges.length > 0 || followUp.breakoutArchivalChanges.length > 0) {
+      await this.notifyOwningRoomArchival(followUp.workspaceId, followUp.archivalChanges,
+        followUp.breakoutArchivalChanges);
     }
     // A `directory_common` effect is the only writer of
     // `next_terminal_action_at`, so a deadline created or moved here would
@@ -10875,21 +11238,38 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    *
    * Read from the directory rather than assumed from the effect: a replayed
    * common effect reaches here too, and the row is what the archive is now.
+   * A Sidekick whose home is a Breakout counts as archived when the Breakout
+   * or its Channel is, so archiving either one tells it; `breakoutKeys` names
+   * the Breakouts (`<channelId>/<breakoutId>`) whose own archive moved.
    */
-  private async notifyOwningRoomArchival(workspaceId: string, workstreamIds: readonly string[]): Promise<void> {
+  private async notifyOwningRoomArchival(
+    workspaceId: string,
+    workstreamIds: readonly string[],
+    breakoutKeys: readonly string[] = [],
+  ): Promise<void> {
     const owned = this.state.storage.sql.exec<{
       automation_id: string;
       workstream_id: string;
       archived_at: number | null;
+      breakout_archived_at: number | null;
     }>(
-      `SELECT automation.automation_id, directory.workstream_id, directory.archived_at
+      `SELECT automation.automation_id, directory.workstream_id, directory.archived_at,
+              breakout.archived_at AS breakout_archived_at
          FROM automation_directory automation
          JOIN channels directory
            ON directory.workstream_id = automation.owning_workstream_id
+         LEFT JOIN breakouts breakout
+           ON automation.owning_substream_id <> '0'
+          AND breakout.workstream_id = automation.owning_workstream_id
+          AND breakout.substream_id = automation.owning_substream_id
         WHERE automation.lifecycle <> 'deleted'
-          AND automation.owning_workstream_id IN (SELECT value FROM json_each(?))
+          AND (automation.owning_workstream_id IN (SELECT value FROM json_each(?1))
+            OR (automation.owning_substream_id <> '0'
+              AND automation.owning_workstream_id || '/' || automation.owning_substream_id
+                IN (SELECT value FROM json_each(?2))))
         ORDER BY automation.automation_id`,
       JSON.stringify(workstreamIds),
+      JSON.stringify(breakoutKeys),
     ).toArray();
     if (owned.length === 0) return;
     const settled = await Promise.allSettled(owned.map(async (row) => {
@@ -10903,7 +11283,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         workspaceId: asWorkspaceId(workspaceId),
         automationId: row.automation_id,
         workstreamId: row.workstream_id,
-        archived: row.archived_at !== null,
+        archived: row.archived_at !== null || row.breakout_archived_at !== null,
       });
     }));
     for (const [index, outcome] of settled.entries()) {
@@ -12403,6 +12783,208 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return recordWorkspaceSlackFeedback(this.state.storage, request);
   }
 
+  private externalBindings(): ExternalConversationBindingStorage {
+    return new ExternalConversationBindingStorage(this.state.storage);
+  }
+
+  /**
+   * Resolve one verified external message's path, in one read: deliver to a
+   * bound conversation, hold behind a creation in flight, spawn a Channel in
+   * the room's Space, stop at a suspended binding, or do nothing. See
+   * `docs/external-conversation-bindings.md`.
+   */
+  async resolveExternalConversation(input: unknown): Promise<ExternalBindingResolution> {
+    await this.initialized;
+    const request = parseRpcInput(ExternalBindingResolveRequestSchema, input, "resolve_external_conversation");
+    this.assertWorkspace(request.workspaceId);
+    const resolution = this.externalBindings().resolve(request);
+    if (resolution.outcome !== "spawn") return ExternalBindingResolutionSchema.parse(resolution);
+    // Only a spawn reads further, and only this object's own Space row.
+    const space = this.state.storage.sql.exec<{
+      scope: "personal" | "workspace"; created_by_user_id: string | null; archived_at: number | null;
+    }>(
+      "SELECT scope, created_by_user_id, archived_at FROM spaces WHERE space_id = ?",
+      resolution.spaceId,
+    ).toArray()[0];
+    return ExternalBindingResolutionSchema.parse({
+      ...resolution,
+      ...(space ? {
+        space: {
+          scope: space.scope,
+          createdByUserId: space.created_by_user_id,
+          archived: space.archived_at !== null,
+        },
+      } : {}),
+    });
+  }
+
+  /** One binding by its key, whatever its state. */
+  async externalConversationBinding(input: unknown) {
+    await this.initialized;
+    const request = parseRpcInput(ExternalBindingReadRequestSchema, input, "external_conversation_binding");
+    this.assertWorkspace(request.workspaceId);
+    return ExternalBindingReadResultSchema.parse({
+      binding: this.externalBindings().read(request.installationId, request.path),
+    });
+  }
+
+  /** A creation finished: its pending thread binding becomes the thread's route. */
+  async activateExternalConversationBinding(input: unknown) {
+    await this.initialized;
+    const request = parseRpcInput(ExternalBindingSettleRequestSchema, input, "activate_external_conversation_binding");
+    this.assertWorkspace(request.workspaceId);
+    return ExternalBindingActivateResultSchema.parse({
+      outcome: this.externalBindings().activate(request.installationId, request.path, request.target, request.at),
+    });
+  }
+
+  /** A creation failed: its pending claim goes, and nothing names the absent Channel. */
+  async releaseExternalConversationBinding(input: unknown) {
+    await this.initialized;
+    const request = parseRpcInput(ExternalBindingSettleRequestSchema, input, "release_external_conversation_binding");
+    this.assertWorkspace(request.workspaceId);
+    return ExternalBindingReleaseResultSchema.parse({
+      outcome: this.externalBindings().release(request.installationId, request.path, request.target)
+        ? "released"
+        : "absent",
+    });
+  }
+
+  /**
+   * Bind the reply thread of a message a Sidekick run sent to that run's child.
+   * Delivered from the child's outbox, where it was committed with the tool
+   * receipt; a redelivery is `already_bound`.
+   */
+  async recordOutboundExternalConversationBinding(input: unknown) {
+    await this.initialized;
+    const request = parseRpcInput(ExternalBindingOutboundRequestSchema, input, "record_outbound_external_conversation_binding");
+    this.assertWorkspace(request.workspaceId);
+    const outcome = this.externalBindings().recordOutbound(
+      request.installationId, request.path, request.target, request.at,
+    );
+    if (outcome === "conflict") {
+      logWarn(this.env, "external_binding_outbound_conflict", {
+        workspace_id: request.workspaceId,
+        installation_id: request.installationId,
+        parent_kind: request.target.parentKind,
+        parent_id: request.target.parentId,
+        substream_id: request.target.substreamId,
+      });
+    }
+    return ExternalBindingOutboundResultSchema.parse({ outcome });
+  }
+
+  /** The most recent active outbound binding under a room, for the one-to-one DM policy. */
+  async latestOutboundExternalConversation(input: unknown) {
+    await this.initialized;
+    const request = parseRpcInput(ExternalBindingLatestOutboundRequestSchema, input, "latest_outbound_external_conversation");
+    this.assertWorkspace(request.workspaceId);
+    return ExternalBindingLatestOutboundResultSchema.parse({
+      latest: this.externalBindings().latestOutboundUnder(request.installationId, request.prefix),
+    });
+  }
+
+  /**
+   * Suspend one binding (the bot left the room, the room was archived), or
+   * every active binding of an installation (it disconnected). Rows and
+   * targets stay, so a re-invitation or a reconnect brings them back.
+   */
+  async suspendExternalConversationBindings(input: unknown) {
+    await this.initialized;
+    const request = parseRpcInput(ExternalBindingSuspendRequestSchema, input, "suspend_external_conversation_bindings");
+    this.assertWorkspace(request.workspaceId);
+    return ExternalBindingSuspendResultSchema.parse({ suspended: this.externalBindings().suspend(request) });
+  }
+
+  /** Bring back the bindings a disconnect suspended, and only those. */
+  async reactivateExternalConversationBindings(input: unknown) {
+    await this.initialized;
+    const request = parseRpcInput(ExternalBindingReactivateRequestSchema, input, "reactivate_external_conversation_bindings");
+    this.assertWorkspace(request.workspaceId);
+    return ExternalBindingSuspendResultSchema.parse({
+      suspended: this.externalBindings().reactivate(request.installationId, request.at, request.path),
+    });
+  }
+
+  /** A provider room changed its identifier: move it and every path beneath it. */
+  async moveExternalConversationBindings(input: unknown) {
+    await this.initialized;
+    const request = parseRpcInput(ExternalBindingMoveRequestSchema, input, "move_external_conversation_bindings");
+    this.assertWorkspace(request.workspaceId);
+    return ExternalBindingMoveResultSchema.parse(
+      this.externalBindings().move(request.installationId, request.from, request.to, request.at),
+    );
+  }
+
+  /**
+   * Link a shared provider room: its Space and its room binding in one
+   * transaction, or the Space an existing binding already names.
+   *
+   * `reserveSpace`'s steps, with the binding decided inside the transaction
+   * that would write the Space, so an invitation and a first mention racing
+   * each other cannot make two Spaces: the second finds the first's binding.
+   * A suspended room binding is reactivated with its Space, which is what a
+   * re-invitation after the bot was removed means. A private room's Space is
+   * `personal` and seats the room's known Rally members; nothing here widens
+   * it by member count.
+   *
+   * There is no pending state for a room: a Space has no conversation to
+   * provision since Spaces stopped opening one, so the reservation is the
+   * whole Space and the binding is written active beside it.
+   */
+  async linkExternalRoom(input: unknown): Promise<ExternalRoomLinkResult> {
+    await this.initialized;
+    const request = parseRpcInput(ExternalRoomLinkRequestSchema, input, "link_external_room");
+    this.assertWorkspace(request.workspaceId);
+    const bindings = this.externalBindings();
+    const known = bindings.read(request.installationId, request.path);
+    if (known && known.target.kind !== "space") {
+      return { ok: false, code: "external_room_path_bound_to_conversation" };
+    }
+    if (known) {
+      const existing = bindings.linkRoom(request.installationId, request.path, request.at, () => null);
+      return existing
+        ? { ok: true, outcome: existing.outcome, spaceId: existing.spaceId }
+        : { ok: false, code: "external_room_link_failed" };
+    }
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    if (refusal) return { ok: false, code: refusal };
+    const parent = await this.spaceParentReservation(request.spaceId);
+    if (!parent.ok) return { ok: false, code: parent.code };
+    const storage = this.spaceStorage();
+    const reservation: WorkspaceSpaceReserveRequest = {
+      workspaceId: asWorkspaceId(request.workspaceId),
+      userId: asUserId(request.userId),
+      spaceId: asSpaceId(request.spaceId),
+      space: { name: request.space.name, iconKey: "users", colorKey: "blue", scope: request.space.scope },
+    };
+    const participants = [...new Set([request.userId, ...request.participantUserIds])];
+    const linked = await this.withMembersLearned(() => this.state.storage.transactionSync(() => (
+      bindings.linkRoom(request.installationId, request.path, request.at, () => {
+        const reserved = storage.reserveForCreation(reservation, request.spaceId);
+        if (!reserved.space) return null;
+        if (reserved.created) parent.reserve(request.userId, reserved.space);
+        if (request.space.scope === "personal" && participants.length > 1) {
+          const seated = storage.applyAudience({
+            workspaceId: asWorkspaceId(request.workspaceId),
+            userId: asUserId(request.userId),
+            spaceId: asSpaceId(request.spaceId),
+            operationId: uuidV7(),
+            audience: { scope: "personal", participantUserIds: participants.map(asUserId) },
+          });
+          if (seated === false || seated === "self_excluded") throw new Error("external_room_audience_refused");
+        }
+        return request.spaceId;
+      })
+    )));
+    if (!linked) return { ok: false, code: "space_not_found" };
+    if (linked.outcome === "linked") {
+      this.publishSpaceSnapshot();
+      await this.afterParentWrite();
+    }
+    return { ok: true, outcome: linked.outcome, spaceId: linked.spaceId };
+  }
+
   /**
    * Re-derive the workspace alarm after a typed write to an alarm-source
    * Slack table, exactly as `executeRuntimeSql` does for a generic statement
@@ -13707,18 +14289,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     for (const sidekick of sql.exec<{
-      automation_id: string; scope: string; author_user_id: string; run_as_user_id: string | null; owning_workstream_id: string | null;
-    }>(`SELECT automation_id, scope, author_user_id, run_as_user_id, owning_workstream_id
+      automation_id: string; scope: string; author_user_id: string; run_as_user_id: string | null;
+      owning_workstream_id: string | null; owning_substream_id: string;
+    }>(`SELECT automation_id, scope, author_user_id, run_as_user_id, owning_workstream_id, owning_substream_id
           FROM automation_directory WHERE lifecycle <> 'deleted'`).toArray()) {
       // A guest reads a Sidekick only through management access on the Channel
       // that owns it; a member through its scope, authorship, execution, or
-      // participation in that Channel while it is not archived.
+      // participation in that Channel while it is not archived. A Breakout home
+      // narrows both to whoever reads that Breakout, as viewer admission does.
       let readable = member && sidekickAdmitsMember({ scope: sidekick.scope,
         author: sidekick.author_user_id === request.userId, executor: sidekick.run_as_user_id === request.userId });
       if (!readable && hosted && sidekick.scope === "workstream" && sidekick.owning_workstream_id) {
         const owner = await parent(sidekick.owning_workstream_id);
         const metadata = owner.metadataRow();
-        readable = metadata !== null && (member
+        const home = sidekick.owning_substream_id;
+        readable = metadata !== null && (home !== "0"
+          ? metadata.archived_at === null && owner.readableSubstreams(request.userId, relationship).includes(asSubstreamId(home))
+          : member
           ? owningChannelAdmitsMember({ archived: metadata.archived_at !== null, participant: owner.isParticipant(request.userId) })
           : owner.managementAccess({ workspaceId: request.workspaceId, parentId: sidekick.owning_workstream_id,
             userId: request.userId }, relationship).allowed);
@@ -13943,6 +14530,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * written outside the receipt's own transaction — there is no durable
    * dashboard signal at all.
    */
+  /** A breakout row's archive time; null when unarchived or when the Organization holds no row for it. */
+  private breakoutArchivedAt(workstreamId: string, substreamId: string): number | null {
+    return this.state.storage.sql.exec<{ archived_at: number | null }>(
+      `SELECT archived_at FROM breakouts WHERE workstream_id = ? AND substream_id = ?`,
+      workstreamId, substreamId,
+    ).toArray()[0]?.archived_at ?? null;
+  }
+
   private applyBreakoutDirectoryEnvelope(
     envelope: ParentEffectEnvelope,
     activeUsers: ReadonlySet<string>,

@@ -213,6 +213,13 @@ export interface ConnectorToolResult {
   output: unknown;
   summary: string;
   providerOperationId?: string;
+  /**
+   * The external conversation path whose replies can reach Rally's ingress,
+   * when this call sent a message there (a Slack workspace-bot send). The host
+   * binds it to the run that sent it; an adapter sets it only for a send whose
+   * replies its ingress actually receives. Not model-visible.
+   */
+  externalConversation?: { installationId: string; path: string[] };
 }
 
 export interface ConnectorPollResult {

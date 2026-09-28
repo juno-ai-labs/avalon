@@ -1,5 +1,6 @@
 import { type StructuredFailureDetail, type WorkstreamWorkflowInput } from "@rally/contracts";
 
+import type { OutboundExternalBinding } from "../durable-objects/external-binding-outbox";
 import { uuidV7 } from "../lib/uuid-v7";
 import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness-run-protocol";
 import {
@@ -622,9 +623,12 @@ export async function completeToolInvocation(
     allowAmbiguousReconciliation?: boolean;
     /** Close an already-started receipt even when the parent has a member stop request. */
     allowCancellationRequested?: boolean;
+    /** The reply thread the call sent into, committed with the completion. */
+    externalBinding?: OutboundExternalBinding;
   },
 ): Promise<"persisted" | "already_persisted"> {
   return settlementOrThrow(await receipts.complete({
+    ...(input.externalBinding ? { externalBinding: input.externalBinding } : {}),
     effectIntentId: input.invocationId,
     checkpointIndex: input.checkpointIndex,
     outputRef: input.outputRef,

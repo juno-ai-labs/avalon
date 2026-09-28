@@ -245,12 +245,15 @@ class AuthorizationBatch {
     const policies = [fact(sidekickAdmitsMember(facts), 'not_participant', evidence)];
     if (facts.scope === 'workstream' && facts.owningWorkstreamId) {
       const owningWorkstreamId = facts.owningWorkstreamId;
+      // A Breakout home narrows the Sidekick's audience to that Breakout's
+      // members: its own conversation object holds its participants.
+      const owningSubstreamId = facts.owningSubstreamId ?? '0';
       const userId = subject.userId;
-      const owner = await ownerEvidence(this.identities, JSON.stringify([subject, owningWorkstreamId]),
-        () => createIdentityObjectPort(this.env, subject.workspaceId, owningWorkstreamId)
+      const owner = await ownerEvidence(this.identities, JSON.stringify([subject, owningWorkstreamId, owningSubstreamId]),
+        () => createIdentityObjectPort(this.env, subject.workspaceId, owningWorkstreamId, undefined, owningSubstreamId)
           .readAuthorizationFacts({ userId }));
       policies.push(fact(owner.exists && owningChannelAdmitsMember(owner), 'not_participant', {
-        owner: `${facts.owningWorkstreamId}/0`, revision: owner.revision, validatedAt: owner.validatedAt,
+        owner: `${owningWorkstreamId}/${owningSubstreamId}`, revision: owner.revision, validatedAt: owner.validatedAt,
       }));
     }
     // Automation existence/scope must remain evidence even when another relationship grants access.

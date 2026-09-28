@@ -1,5 +1,6 @@
 import {
   asAutomationId,
+  asSubstreamId,
   asUserId,
   asWorkspaceId,
   type AutomationDetail,
@@ -40,6 +41,8 @@ export async function createAutomation(env: Env, input: {
   authorUserId: string;
   scope: AutomationScope;
   owningWorkstreamId: string | null;
+  /** The home conversation under the owning Channel: its Main ("0", the default) or a Breakout. */
+  owningSubstreamId?: string;
   automationId?: string;
 }): Promise<{ automationId: string; created: boolean }> {
   const workspaceId = asWorkspaceId(input.workspaceId);
@@ -57,6 +60,7 @@ export async function createAutomation(env: Env, input: {
     authorUserId: asUserId(input.authorUserId),
     scope: input.scope,
     owningWorkstreamId: input.owningWorkstreamId,
+    owningSubstreamId: asSubstreamId(input.owningSubstreamId ?? "0"),
     authorityGeneration: authority.generation,
   });
   // Both steps run on a replay too. The object's row commits first, and a
