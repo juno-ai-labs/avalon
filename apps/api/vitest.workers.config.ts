@@ -27,6 +27,7 @@ export default defineConfig({
   ],
   test: {
     include: ["test-workers/**/*.test.ts"],
+    setupFiles: ["./test/setup.ts"],
     // The budget here covers the platform, not product latency: the first call
     // into the Worker in a file instantiates its whole module graph (about 14
     // seconds — `docs/testing.md`), eviction and alarm delivery are real, and

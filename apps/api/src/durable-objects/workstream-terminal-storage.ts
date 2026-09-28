@@ -54,8 +54,24 @@ const TERMINAL_YIELDED_RUN_STATUSES =
 /** Existing Terminal operation-authority window, shared by cleanup claims. */
 export const TERMINAL_OPERATION_LEASE_MS = 16 * 60_000;
 
-/** Polling bounds observation staleness even when no retention action is due. */
+/**
+ * How often a live sandbox is asked what Daytona thinks it is.
+ *
+ * Applies to every lifecycle state except `stopped` and `archived`: a sandbox
+ * that is running, or on its way somewhere, is the one whose provider state can
+ * move without Rally having asked it to.
+ */
 export const TERMINAL_PROVIDER_OBSERVATION_INTERVAL_MS = 60_000;
+
+/**
+ * How often a stopped or archived sandbox is asked the same thing.
+ *
+ * It bounds how stale that sandbox's observation can get when a Daytona
+ * webhook is missed; the webhook carries a change as it happens. The number is
+ * the team's to move — why it is ten minutes is in the changelog of
+ * docs/terminal-workspaces.md.
+ */
+export const TERMINAL_STOPPED_SANDBOX_OBSERVATION_INTERVAL_MS = 10 * 60_000;
 
 export interface TerminalProviderObservation {
   sandboxId: string;
@@ -386,6 +402,9 @@ export class WorkstreamTerminalStorage {
     if (!row || row.sandboxId !== input.sandboxId || row.generation !== input.generation) return null;
     const requestId = uuidV7();
     const now = Date.now();
+    const interval = row.lifecycleState === "stopped" || row.lifecycleState === "archived"
+      ? TERMINAL_STOPPED_SANDBOX_OBSERVATION_INTERVAL_MS
+      : TERMINAL_PROVIDER_OBSERVATION_INTERVAL_MS;
     this.sql.exec(`INSERT INTO terminal_provider_observation
         (id, sandbox_id, generation, request_id, requested_at, next_observe_at)
       VALUES (1, ?, ?, ?, ?, ?)
@@ -399,8 +418,46 @@ export class WorkstreamTerminalStorage {
         error_code = NULL, sandbox_id = excluded.sandbox_id, generation = excluded.generation,
         request_id = excluded.request_id, requested_at = excluded.requested_at,
         next_observe_at = excluded.next_observe_at`,
-      input.sandboxId, input.generation, requestId, now, now + TERMINAL_PROVIDER_OBSERVATION_INTERVAL_MS);
+      input.sandboxId, input.generation, requestId, now, now + interval);
     return requestId;
+  }
+
+  /**
+   * When this conversation's sandbox is next due a provider observation;
+   * `null` when it has none to observe.
+   *
+   * This is the owning object's own alarm input, and deliberately not the
+   * directory's: the observation deadline moves on every check, and projecting
+   * it made every check a directory write. A sandbox never observed is due now.
+   */
+  nextProviderObservationAt(): number | null {
+    const row = first<{ next_observe_at: number | null }>(this.sql.exec<{ next_observe_at: number | null }>(
+      `SELECT o.next_observe_at
+         FROM terminal_workspace w
+         LEFT JOIN terminal_provider_observation o
+           ON o.id = w.id AND o.sandbox_id = w.sandbox_id AND o.generation = w.generation
+        WHERE w.id = 1 AND w.sandbox_id IS NOT NULL AND w.lifecycle_state <> 'expired'`,
+    ));
+    return row ? row.next_observe_at ?? 0 : null;
+  }
+
+  /**
+   * Change nothing, so the endpoint's commit republishes this sandbox's
+   * lifecycle deadline to the directory.
+   *
+   * Rollout scaffolding. The lifecycle sweep calls it when a due directory
+   * entry had nothing due behind it, which is what an entry stamped by the
+   * version that projected the one-minute observation deadline looks like;
+   * nothing else would move it. A projection whose hash has not moved is not
+   * re-enqueued, so it costs nothing when the directory is already right.
+   *
+   * Remove it, its protocol entry and the sweep's call once this version has
+   * run in every region for a day: every such entry came due within a minute
+   * of its last check, so each has been swept and corrected by then. Without
+   * it a stale entry is not silent — it keeps reporting as a Terminal stall.
+   */
+  republishDeadline(): null {
+    return null;
   }
 
   /** Late reads cannot overwrite a newer read or a replacement generation. */

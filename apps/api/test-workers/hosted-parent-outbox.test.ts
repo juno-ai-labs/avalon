@@ -320,7 +320,11 @@ describe("the Organization's parent outbox drain", () => {
     const workspace = workspaceStub();
     await recordQueue(workspace);
     await runInDurableObject(workspace, async (instance, state) => {
-      (instance as unknown as { drainParentOutbox(): Promise<void> }).drainParentOutbox = async () => {
+      // The alarm runs a lane only when it is due, so the outbox has to
+      // report due work for its throwing drain to run at all.
+      const stubbed = instance as unknown as { drainParentOutbox(): Promise<void>; nextParentOutboxDueAt(): number | null };
+      stubbed.nextParentOutboxDueAt = () => 0;
+      stubbed.drainParentOutbox = async () => {
         throw new Error("parent_outbox_failed_by_test");
       };
       // A follow-up due now, which the phase after the outbox runs.

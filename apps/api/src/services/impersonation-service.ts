@@ -1,5 +1,4 @@
 import {
-  asWorkspaceId,
   type SidelineCatalog,
   SidelineCatalogSchema,
   type SidelineSendRequest,
@@ -116,31 +115,29 @@ export class ImpersonationService {
         cursor = page.nextCursor ?? undefined;
       } while (cursor);
 
-      const destinations = (await Promise.all(workstreams.map(async (workstream) => {
-        const root = {
+      // Every Channel is hosted in the Organization object, so one RPC per
+      // person answers for all of their Channels' Breakouts at once.
+      const { parents } = workstreams.length === 0 ? { parents: [] } : await (await this.workspace())
+        .listVisiblePrivateChildrenForParents({
+          workspaceId: this.operator.workspaceId,
+          parentIds: workstreams.map((workstream) => workstream.id),
+          userId: member.userId,
+        });
+      const childrenByParent = new Map(parents.map((parent) => [parent.parentId, parent.children]));
+      const destinations = workstreams.flatMap((workstream) => [
+        {
           workstreamId: workstream.id,
           substreamId: "0" as const,
           label: workstream.title,
           workstreamLabel: workstream.title,
-        };
-        const parent = await durableObjectStubForWorkspace(
-          this.env,
-          this.env.WORKSPACE_DOS,
-          this.operator.workspaceId,
-          workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.operator.workspaceId)),
-        );
-        const children = await parent.listVisiblePrivateChildren({
-          workspaceId: this.operator.workspaceId,
-          parentId: workstream.id,
-          userId: member.userId,
-        });
-        return [root, ...children.children.map((child) => ({
+        },
+        ...(childrenByParent.get(workstream.id) ?? []).map((child) => ({
           workstreamId: workstream.id,
           substreamId: child.substreamId,
           label: child.title,
           workstreamLabel: workstream.title,
-        }))];
-      }))).flat();
+        })),
+      ]);
       return { userId: member.userId, name: member.name, avatarUrl: member.avatarUrl, destinations };
     };
     const [operatorParticipant, representedCandidates] = await Promise.all([
