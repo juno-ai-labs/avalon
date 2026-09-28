@@ -73,7 +73,12 @@ catalog descriptions while retaining the assigned tool name.
 Substream migration 43 adds `sidekick_attachments` (conversation-owned, deduplicated
 by Sidekick) and `sidekick_execution_skills` (admitted snapshots and activation
 refs pinned to an execution). Loading attaches within the current substream; removal
-affects future executions. Future runs reauthorize attachments and pin the latest
+affects future executions. `directory_common` has an optional
+`sidekickAttachmentIds` that WorkspaceDO applies as Main's Channel-rail list
+([`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-channels-rail-and-its-waterline)),
+but the conversation does not send it yet: emission follows in a later deploy,
+once every Queue consumer parses the field, and until then every Main's rail
+omits `attached` and the desktop keeps the REST attachment read. Future runs reauthorize attachments and pin the latest
 accepted revisions. Workspace migration 35 projects the owner stored `loadable`
 policy output; unknown legacy values exclude discovery. Workspace migration 36
 adds `external_registration_generations` for ordered registration replacements
@@ -1436,7 +1441,7 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | Participant removal targets the final active participant | The object returns `409 workstream_participant_required` and leaves the participant active. The desktop disables the action when its current snapshot already shows only one participant, but that is not the authority fence. |
 | Somebody loses access while holding sockets | A queue message per object closes their sockets; a failed hop retries and then dead-letters. Nothing else closes them, so a message that is never published leaves the socket open until the client reconnects. See [`access-revocation.md`](access-revocation.md). |
 | Queue duplicates/reorders effects | Stable IDs/hashes deduplicate immutable effects; the parent's receipt table and WorkspaceDO's receipt table answer a replay without applying it; generation/version orders mutable state. |
-| An effect envelope exceeds `EFFECT_QUEUE_MESSAGE_MAX_BYTES` (120,000 bytes, under Cloudflare's 128 KB per-message limit) | The sender deletes the row and logs `conversation_effect_oversized` or `parent_effect_oversized` with the byte count; it is never retried, because nothing in the object can shrink it and the Queue would refuse it on every attempt. Every field is schema-bounded except `resourceLinks`, capped at `WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT` (10,000), which is the one field that can cross the guard. The guard is written open and the number is the team's to set. |
+| An effect envelope exceeds `EFFECT_QUEUE_MESSAGE_MAX_BYTES` (120,000 bytes, under Cloudflare's 128 KB per-message limit) | The sender deletes the row and logs `conversation_effect_oversized` or `parent_effect_oversized` with the byte count; it is never retried, because nothing in the object can shrink it and the Queue would refuse it on every attempt. Two fields are unbounded enough to cross the guard: `resourceLinks`, capped at `WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT` (10,000), and `sidekickAttachmentIds` (not sent yet; see above). A `directory_common` envelope that fits without its attachment list is sent without it (`outcome: "attachments_omitted"`), so the parent keeps its last list rather than losing every other directory field; only one that still does not fit is dropped. The guard is written open and the number is the team's to set. |
 | A reader opens a conversation whose parent is archived | Admitted for reading; every write on that socket and every REST write answers `409 conversation_parent_archived`. |
 | A synchronous transaction callback returns a Promise | The callback finishes before the Promise continuation, so SQLite can commit an incomplete state transition and later writes can escape the transaction. Prepare all yielding work first; the commit callback performs only synchronous SQLite and revalidates its fences. |
 | The Queue refuses a send | The batch is deferred five seconds in the source outbox and the alarm tries again; user transcript commits are not rolled back. |
@@ -1554,7 +1559,8 @@ already have committed across the object boundary.
 | `channels` | One authoritative common row per work stream, fenced by authority generation, per-common `waterline`, UUIDv7 `source_event_id`, and hash. Supplies title, description/preview, scope/state, attention, recency, archive, wakeup, and Terminal scheduling fields. `origin_type`, `origin_label`, `automation_subscription_id`, `automation_run_id`, `planned_for`, and `automation_exposed` are dead columns: they sit inside CHECK constraints in released migration text, migration 32 deleted every row that used them, and nothing reads or writes them. |
 | `channel_viewers` | One authoritative viewer overlay per work stream/user, independently fenced by generation, viewer `waterline`, UUIDv7 source event, and hash. It supplies participation, listability, unread/mention state, and read fences and cascades from the common row. |
 | `workspace_workstream_pins` | Per-user, per-Space Channel pins referencing both directory rows; all pin writes and reorder operations execute in this object. Migration 66 clears the former Organization-wide rows. |
-| `workspace_workstream_resource_links` | Inverted resource-to-work-stream/watch index derived from authoritative child relationships, enabling connector and authorization lookup without cross-object SQL. |
+| `workspace_workstream_resource_links` | Inverted resource-to-work-stream/watch index derived from authoritative child relationships, enabling connector and authorization lookup without cross-object SQL. Holds Main's links only, replaced whole on each Main effect, so rowid is Main's display order; the Channel rail reads it in that order. |
+| `channel_sidekick_attachments`, `channel_rail_changes` | Main's reported Sidekick attachments per Channel (`channels.sidekick_attachments_reported` says whether Main has reported), and the Channels whose `channels.rail_waterline` moved since the last row push. Migration 82; see [`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-channels-rail-and-its-waterline). |
 | `workspace_workstream_effect_receipts` | Message/hash receipts making parent-to-WorkspaceDO effect retries idempotent — directory effects and the regional activity/mention effects alike; each receipt commits in the same transaction as the row it acknowledges, and inserts age receipts out after 30 days. |
 | `workspace_batch_dispatches`, `workspace_batch_dispatch_targets`, `workspace_batch_dispatch_note_targets` | Frozen generic mass-update intent and one dispatch receipt per selected work stream. The operation/request hash prevents intent reuse; pending rows resume Queue publication after partial failure, while child inbox receipts cover the send-succeeded/progress-write-failed window. The Worker publishes 50 messages per Queue call, below Cloudflare's 100-message platform maximum. WorkspaceDO records the whole chunk atomically through one JSON binding, independent of object SQLite's 100-parameter ceiling. The note half is frozen alongside them in `workspace_batch_dispatch_note_targets` — same transaction, same reason: re-selecting at archive time would take whatever entered the range while the Queue chunks were publishing, which under an open-ended heading is any note touched since the reader confirmed. Notes are rows in this object rather than separate authorities, so `archive` applies the frozen set here in one statement and stores `archived_note_count` as its receipt. `NULL` means no note archive has run for the operation, which is the permanent state of a `mark_read` operation; migration 26 backfills every row that predates it to `0`, because those operations were confirmed as work-streams-only and a cross-deploy retry must not give them a note half. |
 | `workspace_activity_events` | Append-only first-party event log with a local AUTOINCREMENT cursor, audience rule, derived title/body, digestibility decision, dedupe key, and source reference. |
@@ -1662,6 +1668,7 @@ onto `runs.state` forward only.
 | `workstream_resource_links`, `resource_inventory_revision` | Links to workspace resources with a CHECK-constrained relationship (`attachment`, `message_attachment`, `origin`, `generated`, `inbound_email`, or `context`) and the authorization revision every relationship change advances. `generated` derives artifact direction; every other value derives source direction. |
 | `terminal_workspace`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Rally state for the Daytona-backed Terminal plugin. |
 | `resident_context_blocks`, `resident_context_compactions` | The context-residency ledger: blocks delivered to this conversation, their residency and remaining prompt lifetime, pending deliveries, and the compaction events already applied. |
+| `sidekick_attachments` | The Sidekicks this conversation has loaded. Not yet reported to its parent (see the Sidekick attachment paragraph above). |
 | `projection_keys`, `durable_outbox`, `durable_inbox_receipts` | Versioned child-to-parent `conversation_effect` envelopes awaiting the alarm's `sendBatch` (deleted once the Queue accepts them), and inbound dedupe such as feed tickets. |
 
 `participant_transcript_turns.transcript_sequence` is canonical transcript
@@ -1791,6 +1798,30 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-09-28 — An oversized directory effect is sent without its Sidekick attachments
+
+**What changed:** `drainRegionalEffects` sends a `directory_common` envelope
+that is too large for one Queue message only because of
+`sidekickAttachmentIds` without that list, rather than dropping it. The field is
+defined, and WorkspaceDO reads it, but no conversation sends it in this deploy.
+
+**Why:** `directory_common` is a strict schema, so an effect carrying a new
+field is refused and acked by a consumer one deploy behind, losing the whole
+directory projection. The reader ships first
+([`hosted-conversation-parents.md`](hosted-conversation-parents.md#changelog)
+owns the rail it serves); the emission and its tests follow once every consumer
+parses the field. The drain rule is generic and ships now so the list, once
+sent, cannot take every other directory field down with it.
+
+**Considered and rejected:** Emitting in the same deploy: the skew window loses
+projections. A separate effect kind for attachments: it would need its own
+ordering and receipts for one list the common effect already fits.
+
+**Consequences:** Every Main's rail omits `attached` until the emission ships.
+When it does, an existing conversation reports its list with its next common
+effect; the emitting change must also restore attach and removal committing
+that effect.
 
 ### 2026-09-26 — Processed connector events age out at 90 days, on the alarm
 

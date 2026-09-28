@@ -122,6 +122,7 @@ import {
 } from "./conversation-parent-object";
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
 import { automationDOName, substreamLoopId, workspaceDOName } from "./names";
+import { sidekickAudienceAllows } from "./sidekick-audience";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   SCHEDULED_ALARM_SCHEMA_STATEMENTS,
@@ -1160,13 +1161,12 @@ export class SidekickDO extends ConversationParentDurableObject {
 
   /** Instruction-use audience is independent of authoring/history admission. */
   private skillAudienceAllows(row: AutomationRow, request: SidekickSkillReadRequest): boolean {
-    if (row.scope === "personal") {
-      const allowed = new Set([row.author_user_id,row.run_as_user_id]);
-      if (request.principalUserId === null || !allowed.has(request.principalUserId)
-        || request.audienceScope === "workspace" || request.audienceUserIds.length === 0
-        || request.audienceUserIds.some((id) => !allowed.has(id))) return false;
-    }
-    return row.scope !== "workstream" || request.conversationParentId === row.owning_workstream_id;
+    return sidekickAudienceAllows({
+      scope: row.scope,
+      authorUserId: row.author_user_id,
+      runAsUserId: row.run_as_user_id,
+      owningWorkstreamId: row.owning_workstream_id,
+    }, request);
   }
 
   /** Minimal rail metadata for an already admitted receiving conversation. */

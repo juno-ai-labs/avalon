@@ -153,6 +153,7 @@ import {
   readWorkstreamAuthorityControl,
 } from "../services/workstream-authority";
 import {
+  conversationEffectHash,
   EFFECT_QUEUE_MESSAGE_MAX_BYTES,
   type ConversationEffectEnvelope,
 } from "@rally/contracts/conversation-effects";
@@ -6892,17 +6893,45 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * redelivery a no-op: nothing loads an effect back from here and nothing
    * acknowledges one to it. A batch the Queue refused is deferred and the
    * alarm tries again. An effect too large for one message is dropped with a
-   * warning, because it would be refused on every attempt and nothing here can
-   * shrink it; only `resourceLinks` can push one that far.
+   * warning, because it would be refused on every attempt. The one exception
+   * is a directory effect that fits without its Sidekick attachment list: it
+   * is sent without the list, which the parent reads as "not said", rather
+   * than losing every other directory field with it.
    */
   private async drainRegionalEffects(): Promise<void> {
     const due = this.objectStore.dueRegionalEffects(Date.now(), 100);
     if (due.length === 0) return;
     const encoder = new TextEncoder();
     const sendable: ConversationEffectEnvelope[] = [];
+    // The outbox row each sent body stands for: a trimmed body carries its own
+    // hash, and the row is found by the one it was stored under.
+    const rows = new Map<ConversationEffectEnvelope, ConversationEffectEnvelope>();
     let batchBytes = 0;
-    for (const effect of due) {
-      const bytes = encoder.encode(JSON.stringify(effect)).byteLength;
+    for (const stored of due) {
+      let effect = stored;
+      let bytes = encoder.encode(JSON.stringify(effect)).byteLength;
+      if (bytes > EFFECT_QUEUE_MESSAGE_MAX_BYTES && effect.effect.kind === "directory_common"
+        && effect.effect.sidekickAttachmentIds !== undefined) {
+        const { sidekickAttachmentIds, ...withoutAttachments } = effect.effect;
+        const trimmed = { ...effect, effect: withoutAttachments, payloadHash: conversationEffectHash(withoutAttachments) };
+        const trimmedBytes = encoder.encode(JSON.stringify(trimmed)).byteLength;
+        if (trimmedBytes <= EFFECT_QUEUE_MESSAGE_MAX_BYTES) {
+          logWarn(this.env, "conversation_effect_oversized", {
+            workspace_id: effect.workspaceId,
+            workstream_id: effect.parentId,
+            parent_kind: effect.parentKind,
+            substream_id: effect.substreamId,
+            message_id: effect.messageId,
+            effect_kind: effect.effect.kind,
+            bytes,
+            limit_bytes: EFFECT_QUEUE_MESSAGE_MAX_BYTES,
+            attachment_count: sidekickAttachmentIds.length,
+            outcome: "attachments_omitted",
+          });
+          effect = trimmed;
+          bytes = trimmedBytes;
+        }
+      }
       if (bytes > EFFECT_QUEUE_MESSAGE_MAX_BYTES) {
         this.objectStore.deleteRegionalEffect(effect.messageId, effect.payloadHash);
         logWarn(this.env, "conversation_effect_oversized", {
@@ -6922,6 +6951,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // does not fit stays due and the next alarm takes it.
       if (sendable.length >= 100 || batchBytes + bytes > 250_000) break;
       sendable.push(effect);
+      rows.set(effect, stored);
       batchBytes += bytes;
     }
     if (sendable.length === 0) return;
@@ -6930,7 +6960,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       await this.env.ACTIVITY_QUEUE.sendBatch(sendable.map((body) => ({ body })));
       let removed = 0;
       for (const effect of sendable) {
-        if (this.objectStore.deleteRegionalEffect(effect.messageId, effect.payloadHash)) removed += 1;
+        const row = rows.get(effect) ?? effect;
+        if (this.objectStore.deleteRegionalEffect(row.messageId, row.payloadHash)) removed += 1;
       }
       logInfo(this.env, "substream_outbox_batch_enqueued", {
         workspace_id: identity.workspaceId,
@@ -6945,7 +6976,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       });
     } catch (error) {
       const retryAt = Date.now() + 5_000;
-      this.objectStore.deferRegionalEffects(sendable, retryAt);
+      this.objectStore.deferRegionalEffects(sendable.map((effect) => rows.get(effect) ?? effect), retryAt);
       logWarn(this.env, "substream_outbox_batch_deferred", {
         workspace_id: identity.workspaceId,
         workstream_id: identity.parentId,

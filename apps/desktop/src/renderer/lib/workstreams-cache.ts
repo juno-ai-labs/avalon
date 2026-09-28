@@ -329,6 +329,7 @@ function evictCachedWorkstreamContent(
   const queryPrefixes = [
     ['workstream', workstreamId],
     ['workstream-children', workstreamId],
+    ['channel-rail', workstreamId],
     ['workstream-background-agents', workstreamId],
     ['ordered-transcript', workstreamId],
     ['transcript-overlays', workstreamId],

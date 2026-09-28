@@ -86,7 +86,7 @@ import { ConversationOpeningSkeleton, ConversationSurface } from './conversation
 import { workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
 import { WorkstreamScreen } from './workstream';
-import type { HarnessRunMetadata, HarnessStatus, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { HarnessRunMetadata, HarnessStatus, WorkstreamBoot, WorkstreamDetail, WorkstreamResource, WorkstreamSummary } from '../lib/types';
 
 const workstreamId = '00000000-0000-7000-8000-000000000650';
 
@@ -135,6 +135,10 @@ function recoveryBoot(overrides: Partial<WorkstreamBoot> = {}): WorkstreamBoot {
 
 let navigateInTest: ReturnType<typeof useNavigate>;
 let locationInTest: ReturnType<typeof useLocation>;
+async function flushMicrotasks(): Promise<void> {
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+}
+
 function NavigationProbe(): null { navigateInTest = useNavigate(); locationInTest = useLocation(); return null; }
 
 function renderScreen(seed?: (queryClient: QueryClient) => void, substreamId?: string, restored = false): QueryClient {
@@ -1018,6 +1022,107 @@ describe('socket-first channel open', () => {
     const sidebar = document.querySelector<HTMLElement>('.conversation-opening-sidebar');
     expect(sidebar).toHaveClass('is-compact');
     expect(sidebar).toHaveStyle({ flexBasis: '88px' });
+  });
+
+  it('draws the channel rail from the directory while the snapshot is pending', async () => {
+    const childId = '00000000-0000-7000-8000-00000000067a';
+    const directoryRow = { id: workstreamId, title: 'Launch plan', scope: 'workspace' };
+    renderScreen((cache) => {
+      setCachedWorkstreams(cache, [directoryRow as WorkstreamSummary]);
+      cache.setQueryData(['workstream-children', workstreamId], { privateChildren: [
+        { substreamId: childId, title: 'Pricing', createdByUserId: null, createdAt: '2026-08-17T19:00:00.000Z', updatedAt: '2026-08-17T19:00:00.000Z' },
+      ] });
+    });
+
+    // The feed still waits and says so; the rail does not.
+    expect(screen.getByRole('status', { name: 'Opening channel…' })).toBeVisible();
+    expect(document.querySelector('.conversation-opening-sidebar')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Go to conversation: Launch plan' })).toBeVisible();
+    // Only the snapshot knows who is in the Channel.
+    expect(screen.getByRole('button', { name: 'Manage channel participants' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Go to breakout: Pricing' }));
+    await waitFor(() => expect(locationInTest.search).toBe(`?substream=${childId}`));
+  });
+
+  it('paints the channel\'s people, resources and Sidekicks from its rail before the snapshot', async () => {
+    const member = { id: '00000000-0000-7000-8000-000000000681', name: 'Rail person', email: 'rail@example.test', timezone: 'UTC' };
+    api.getWorkspaceMembers.mockResolvedValue([member]);
+    session.current = { user: member, workspace: { id: '00000000-0000-7000-8000-000000000672', region: 'global', role: 'member' } };
+    renderScreen((cache) => {
+      setCachedWorkstreams(cache, [{ id: workstreamId, title: 'Launch plan', scope: 'workspace' } as WorkstreamSummary]);
+      cache.setQueryData(['workstream-children', workstreamId], { privateChildren: [] });
+      cache.setQueryData(['channel-rail', workstreamId], { railWaterline: 1, rail: {
+        workstreamId, railWaterline: 1, participantUserIds: [member.id],
+        sidekicks: {
+          owned: [],
+          recommended: [{ id: '00000000-0000-7000-8000-000000000682', name: 'Weekly brief', description: 'Every Monday', available: true }],
+          attached: [],
+        },
+        resources: [{ id: '00000000-0000-7000-8000-000000000683', title: 'Pricing sheet', resourceType: 'spreadsheet', mimeType: null, direction: 'artifact', currentVersion: 1 }],
+      } });
+    });
+
+    expect(screen.getByRole('status', { name: 'Opening channel…' })).toBeVisible();
+    // Named from the rail, but only the snapshot's surface can manage them or
+    // open a resource, so neither control offers what it cannot do yet.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Manage channel participants' }))
+      .toHaveAccessibleDescription('Rail person'));
+    expect(screen.getByRole('button', { name: 'Manage channel participants' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Open Pricing sheet' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Open Pricing sheet' })).toBeDisabled();
+    expect(screen.getByText('Weekly brief')).toBeVisible();
+    // The row the live rail ends with is there already, so nothing shifts.
+    expect(screen.getByRole('button', { name: 'Add Sidekick' })).toBeVisible();
+  });
+
+  it('keeps the facepile pending while a rail participant cannot be named yet', async () => {
+    const member = { id: '00000000-0000-7000-8000-000000000684', name: 'Known person', email: 'known@example.test', timezone: 'UTC' };
+    api.getWorkspaceMembers.mockResolvedValue([member]);
+    renderScreen((cache) => {
+      setCachedWorkstreams(cache, [{ id: workstreamId, title: 'Launch plan', scope: 'workspace' } as WorkstreamSummary]);
+      cache.setQueryData(['workstream-children', workstreamId], { privateChildren: [] });
+      cache.setQueryData(['channel-rail', workstreamId], { railWaterline: 1, rail: {
+        workstreamId, railWaterline: 1, participantUserIds: [member.id, '00000000-0000-7000-8000-000000000685'],
+        sidekicks: { owned: [], recommended: [], attached: [] }, resources: [],
+      } });
+    });
+
+    await waitFor(() => expect(api.getWorkspaceMembers).toHaveBeenCalled());
+    await flushMicrotasks();
+    // Naming one of two would draw a facepile that grows when the snapshot lands.
+    expect(document.querySelector('.skeleton-avatar-stack')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Manage channel participants' })).not.toHaveAccessibleDescription('Known person');
+  });
+
+  it('keeps the opening rail, and its focus, when the snapshot lands', async () => {
+    const childId = '00000000-0000-7000-8000-00000000067b';
+    const parent = recoveryBoot();
+    const queryClient = renderScreen((cache) => {
+      setCachedWorkstreams(cache, [{ id: workstreamId, title: parent.title, scope: 'workspace' } as WorkstreamSummary]);
+      cache.setQueryData(['workstream-children', workstreamId], { privateChildren: [
+        { substreamId: childId, title: 'Pricing', createdByUserId: null, createdAt: '2026-08-17T19:00:00.000Z', updatedAt: '2026-08-17T19:00:00.000Z' },
+      ] });
+    });
+    const row = screen.getByRole('button', { name: 'Go to breakout: Pricing' });
+    row.focus();
+
+    act(() => {
+      queryClient.setQueryData(['workstream', workstreamId], parent);
+      queryClient.setQueryData(['ordered-transcript', workstreamId], parent.transcript);
+    });
+
+    await screen.findByRole('textbox', { name: /message/iu });
+    expect(screen.getByRole('button', { name: 'Go to breakout: Pricing' })).toBe(row);
+    expect(row).toHaveFocus();
+  });
+
+  it('keeps the placeholder rail while the directory has no breakout list for the channel', () => {
+    renderScreen((cache) => {
+      setCachedWorkstreams(cache, [{ id: workstreamId, title: 'Launch plan', scope: 'workspace' } as WorkstreamSummary]);
+    });
+
+    expect(document.querySelector('.conversation-opening-sidebar')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Go to conversation: Launch plan' })).toBeNull();
   });
 
   it('uses the Sidekick header geometry for a Sidekick conversation wait', () => {

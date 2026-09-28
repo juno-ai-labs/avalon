@@ -688,6 +688,12 @@ export const WorkstreamSchema = z.object({
   privateChildrenWaterline: z.number().int().nonnegative().optional(),
   /** See {@link WorkstreamBackgroundAgentCountsSchema}; workspace-socket rows only. */
   backgroundAgentCounts: WorkstreamBackgroundAgentCountsSchema.optional(),
+  /**
+   * Advances whenever this Channel's rail data (participants, Sidekicks,
+   * Channel resources) changes; a client holding an older rail asks again
+   * with `channel_rails`. Workspace-socket rows only; absent means not said.
+   */
+  railWaterline: z.number().int().nonnegative().optional(),
 });
 
 export const ExternalActorSchema = z.object({
@@ -2300,6 +2306,13 @@ export const WorkspaceWorkstreamCursorSchema = z.string()
   .regex(/^\d{1,16}:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu)
   .max(53);
 
+/**
+ * How many Channels one `channel_rails` request may name: `list_workstreams`'
+ * page bound, reused rather than chosen. The server also reads a Space's
+ * Channels in batches of this size.
+ */
+export const CHANNEL_RAILS_NAMED_LIMIT = 250;
+
 export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("subscribe"),
@@ -2319,7 +2332,28 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
     before: WorkspaceWorkstreamCursorSchema.optional(),
     includeSystem: z.boolean(),
   }),
+  /**
+   * The Channel rail data for one Space's Channels, a page at a time, or for
+   * named Channels whose `railWaterline` moved. Exactly one target.
+   */
+  z.strictObject({
+    type: z.literal("channel_rails"),
+    requestId: IdSchema,
+    spaceId: SpaceIdSchema.optional(),
+    /** The `nextAfter` of the previous answer for this Space. */
+    after: WorkstreamIdSchema.optional(),
+    workstreamIds: z.array(WorkstreamIdSchema).min(1).max(CHANNEL_RAILS_NAMED_LIMIT)
+      .refine((ids) => new Set(ids).size === ids.length, "must be unique")
+      .optional(),
+  }),
 ]).superRefine((event, context) => {
+  if (event.type === "channel_rails"
+    && (event.spaceId === undefined) === (event.workstreamIds === undefined)) {
+    context.addIssue({ code: "custom", path: ["spaceId"], message: "exactly one of spaceId or workstreamIds" });
+  }
+  if (event.type === "channel_rails" && event.after !== undefined && event.spaceId === undefined) {
+    context.addIssue({ code: "custom", path: ["after"], message: "only pages a Space" });
+  }
   if (event.type === "set_presence"
     && event.applicationState === "background"
     && event.foregroundWorkstreamId !== null) {
@@ -4183,6 +4217,63 @@ export const SidekickAttachmentSchema = z.object({
   id: IdSchema, name: z.string(), description: z.string(), available: z.boolean(),
 });
 export type SidekickAttachment = z.infer<typeof SidekickAttachmentSchema>;
+
+/** A resource attached to a Channel's Main conversation, as its rail lists it. */
+export const ChannelRailResourceSchema = z.strictObject({
+  id: IdSchema,
+  title: z.string().max(300),
+  resourceType: z.string().min(1).max(80),
+  mimeType: z.string().max(160).nullable(),
+  direction: ResourceDirectionSchema,
+  currentVersion: z.number().int().positive(),
+});
+export type ChannelRailResource = z.infer<typeof ChannelRailResourceSchema>;
+
+/**
+ * An owned Sidekick as the rail lists it: the summary without its run times
+ * and update time, which move on every scheduled run and which the rail does
+ * not show, so they do not advance the rail waterline.
+ */
+export const ChannelRailOwnedSidekickSchema = WorkstreamAutomationSummarySchema.omit({
+  nextRunAt: true,
+  lastRunAt: true,
+  updatedAt: true,
+});
+export type ChannelRailOwnedSidekick = z.infer<typeof ChannelRailOwnedSidekickSchema>;
+
+/** Everything a Channel's rail lists beyond its row, for one viewer. */
+export const ChannelRailSchema = z.strictObject({
+  workstreamId: WorkstreamIdSchema,
+  railWaterline: z.number().int().nonnegative(),
+  /** Main's participants, newest first. */
+  participantUserIds: z.array(UserIdSchema),
+  sidekicks: z.strictObject({
+    /** Empty unless the viewer is a member participant, as the REST read. */
+    owned: z.array(ChannelRailOwnedSidekickSchema),
+    recommended: z.array(SidekickAttachmentSchema),
+    /** Main's attachments; absent until Main has reported them. */
+    attached: z.array(SidekickAttachmentSchema).optional(),
+  }),
+  resources: z.array(ChannelRailResourceSchema),
+});
+export type ChannelRail = z.infer<typeof ChannelRailSchema>;
+
+/**
+ * One frame of a `channel_rails` answer. A long answer spans frames; the last
+ * says `final`. A Space answer that stopped before its end names `nextAfter`.
+ */
+export const WorkspaceChannelRailsEventSchema = z.strictObject({
+  type: z.literal("workspace_channel_rails"),
+  requestId: IdSchema,
+  rails: z.array(ChannelRailSchema),
+  /** Rails too large for one frame; the client paints these from the snapshot. */
+  oversized: z.array(z.strictObject({ workstreamId: WorkstreamIdSchema, railWaterline: z.number().int().nonnegative() })),
+  /** Named Channels this viewer may not see, or that have no rail yet. */
+  unavailable: z.array(WorkstreamIdSchema),
+  nextAfter: WorkstreamIdSchema.nullable(),
+  final: z.boolean(),
+});
+export type WorkspaceChannelRailsEvent = z.infer<typeof WorkspaceChannelRailsEventSchema>;
 export const SidekickAttachmentsSchema = z.object({ items: z.array(SidekickAttachmentSchema) });
 /** Sources eligible for an explicit workstream recommendation in this conversation. */
 export const SidekickRecommendationOptionsSchema = z.object({
