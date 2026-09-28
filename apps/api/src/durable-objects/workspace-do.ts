@@ -7292,20 +7292,30 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(ConversationToolScopeRequestSchema, input, "conversation_tool_scope");
     this.assertWorkspace(request.workspaceId);
-    const relationship = await this.readRelationship(request.workspaceId, request.userId);
-    if (relationship?.status !== "active") return { conversations: [] };
+    const scoped = scopeConversations(this.state.storage.sql, request.scope, request.userId);
+    const conversations = await this.reachableConversations(request.workspaceId, scoped, request.userId);
+    return { conversations: conversations.map(conversationToolEntry) };
+  }
+
+  /**
+   * The unarchived conversations of a scope this person can read. A guest
+   * reads only what a grant gives them, which the directory's viewer rows do
+   * not record, so their `readable` flag says nothing: each candidate is
+   * admitted the way a read would be.
+   */
+  private async reachableConversations<T extends { parentId: string; substreamId: string; readable: boolean; archived: boolean }>(
+    workspaceId: string,
+    scoped: readonly T[],
+    userId: string,
+  ): Promise<T[]> {
+    const relationship = await this.readRelationship(workspaceId, userId);
+    if (relationship?.status !== "active") return [];
     const guest = relationship.accessClass === "guest";
-    // A guest reads only what a grant gives them, which the directory's viewer
-    // rows do not record, so their `readable` flag says nothing: each unarchived
-    // candidate is admitted the way a read would be.
-    const listed = scopeConversations(this.state.storage.sql, request.scope, request.userId)
-      .filter((conversation) => (guest || conversation.readable) && !conversation.archived);
-    const admitted = guest
-      ? (await Promise.all(listed.map(async (conversation) => (await this.conversationToolAdmission(
-        request.workspaceId, conversation, request.userId)).authorized ? conversation : null)))
-        .filter((conversation) => conversation !== null)
-      : listed;
-    return { conversations: admitted.map(conversationToolEntry) };
+    const listed = scoped.filter((conversation) => (guest || conversation.readable) && !conversation.archived);
+    if (!guest) return listed;
+    return (await Promise.all(listed.map(async (conversation) =>
+      (await this.conversationToolAdmission(workspaceId, conversation, userId)).authorized ? conversation : null)))
+      .filter((conversation) => conversation !== null);
   }
 
   /**
@@ -7341,15 +7351,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(ConversationToolResolveRequestSchema, input, "conversation_tool_resolve");
     this.assertWorkspace(request.workspaceId);
     const scoped = scopeConversations(this.state.storage.sql, request.scope, request.userId);
-    const available = scoped.filter((conversation) => conversation.readable && !conversation.archived)
+    // Only a refusal lists what the person can reach, so only a refusal pays for it.
+    const available = async () => (await this.reachableConversations(request.workspaceId, scoped, request.userId))
       .map((conversation) => conversation.conversationId);
     let target;
     if (request.reference === null) {
       target = scoped.find((conversation) => conversation.isHome);
-      if (!target) return conversationToolRefusal("conversation_home_missing", available);
+      if (!target) return conversationToolRefusal("conversation_home_missing", await available());
     } else {
       const match = matchConversationReference(scoped, request.reference);
-      if (match.outcome === "missing") return conversationToolRefusal("conversation_not_in_scope", available);
+      if (match.outcome === "missing") return conversationToolRefusal("conversation_not_in_scope", await available());
       if (match.outcome === "ambiguous") {
         return conversationToolRefusal("conversation_ambiguous", match.matches.map((conversation) => conversation.conversationId));
       }

@@ -519,5 +519,9 @@ describe("a guest", () => {
       scope, reference: ROOM_ID })).toMatchObject({ ok: true, conversation: { conversationId: ROOM_ID } });
     expect((await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: GUEST_ID, scope }))
       .conversations.map((entry) => entry.conversationId)).toEqual([ROOM_ID]);
+    // A reference outside the scope is refused with the same list, not the
+    // directory's viewer rows, which record no grant.
+    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: GUEST_ID,
+      scope, reference: "Nowhere" })).toMatchObject({ ok: false, code: "conversation_not_in_scope", available: [ROOM_ID] });
   });
 });
