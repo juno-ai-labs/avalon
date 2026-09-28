@@ -60,6 +60,7 @@ const AUTOMATION_ID = asAutomationId("00000000-0000-7000-8000-000000000ba7");
 const AUTOMATION_RUN_ID = asSubstreamId("00000000-0000-7000-8000-000000000ba8");
 const OVERSIZED_WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-000000000ba9");
 const ACTIVITY_WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-000000000baa");
+const ATTACHMENTS_WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-000000000bab");
 
 /** The child outbox channel; `dueRegionalEffects` reads nothing else. */
 const REGIONAL_EFFECT_CHANNEL = "regional_effect_v1";
@@ -146,7 +147,10 @@ interface QueueCapture extends QueueGate {
  * handed instead of reaching the test Worker's Queue, so the test can read
  * exactly what the real drain sent.
  */
-async function captureEffectQueue(stub: DurableObjectStub): Promise<QueueCapture> {
+async function captureEffectQueue(
+  stub: DurableObjectStub,
+  options: { logLevel?: "warn" } = {},
+): Promise<QueueCapture> {
   const capture: QueueCapture = { parked: true, sent: [] };
   const refused = () => Promise.reject(new Error("effect_queue_parked_by_test"));
   const recorder = {
@@ -162,9 +166,11 @@ async function captureEffectQueue(stub: DurableObjectStub): Promise<QueueCapture
   await runInDurableObject(stub, (instance) => {
     const target = instance as unknown as { env: Env };
     target.env = new Proxy(target.env, {
-      get: (current, property, receiver) => property === "ACTIVITY_QUEUE"
-        ? recorder
-        : Reflect.get(current, property, receiver),
+      get: (current, property, receiver) => {
+        if (property === "ACTIVITY_QUEUE") return recorder;
+        if (property === "LOG_LEVEL" && options.logLevel) return options.logLevel;
+        return Reflect.get(current, property, receiver);
+      },
     });
   });
   return capture;
@@ -687,5 +693,73 @@ describe("an envelope the Queue would refuse", () => {
       limit_bytes: EFFECT_QUEUE_MESSAGE_MAX_BYTES,
       outcome: "dropped",
     });
+  });
+
+  it("sends a directory effect without its Sidekick attachments when only they push it past the limit", async () => {
+    const child = childStub(ATTACHMENTS_WORKSTREAM_ID);
+    const capture = await captureEffectQueue(child, { logLevel: "warn" });
+    expect((await child.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      parentKind: "workstream",
+      parentId: ATTACHMENTS_WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    const envelope = childEnvelope({
+      parentKind: "workstream",
+      parentId: ATTACHMENTS_WORKSTREAM_ID,
+      substreamId: "0",
+      sourceVersion: 1,
+      effect: {
+        kind: "directory_common",
+        title: "Too many Sidekicks",
+        description: "",
+        preview: "",
+        scope: "personal",
+        state: "idle",
+        systemKind: null,
+        lastActivityAt: "2026-09-01T12:00:00.000Z",
+        completedAt: null,
+        archivedAt: null,
+        sidekickAttachmentIds: Array.from({ length: 3_500 },
+          (_, index) => `00000000-0000-7000-8000-${String(index).padStart(12, "0")}`),
+      },
+    });
+    const payload = JSON.stringify(envelope);
+    expect(new TextEncoder().encode(payload).byteLength).toBeGreaterThan(EFFECT_QUEUE_MESSAGE_MAX_BYTES);
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await runInDurableObject(child, async (_instance, state) => {
+      state.storage.sql.exec(`DELETE FROM durable_outbox`);
+      const now = Date.now();
+      state.storage.sql.exec(
+        `INSERT INTO durable_outbox
+           (message_id, channel, destination_kind, destination_id, partition_key,
+            source_version, source_epoch, contract_version, payload_json, payload_ref,
+            payload_hash, state, attempts, not_before, created_at, acked_at)
+         VALUES (?, ?, 'queue', 'global', 'common', 1, 1, 1, ?, NULL, ?, 'pending', 0, ?, ?, NULL)`,
+        envelope.messageId,
+        REGIONAL_EFFECT_CHANNEL,
+        payload,
+        envelope.payloadHash,
+        now,
+        now,
+      );
+      await state.storage.setAlarm(now);
+    });
+    capture.parked = false;
+    await runDurableObjectAlarm(child);
+
+    // Every other directory field still reaches the parent, and the row the
+    // trimmed body stands for is gone rather than resent.
+    await expect.poll(() => outboxCount(child), { timeout: 10_000, interval: 100 }).toBe(0);
+    const sent = capture.sent as Array<{ messageId: string; effect: Record<string, unknown> }>;
+    const body = sent.find((item) => item.messageId === envelope.messageId);
+    expect(body?.effect).toMatchObject({ kind: "directory_common", title: "Too many Sidekicks" });
+    expect(body?.effect).not.toHaveProperty("sidekickAttachmentIds");
+    const omitted = warned.mock.calls
+      .map(([entry]) => entry as Record<string, unknown>)
+      .filter((entry) => entry?.event === "conversation_effect_oversized");
+    expect(omitted).toHaveLength(1);
+    expect(omitted[0]).toMatchObject({ message_id: envelope.messageId, attachment_count: 3_500, outcome: "attachments_omitted" });
   });
 });

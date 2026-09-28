@@ -261,7 +261,7 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "parent_space_sources",
   "parent_space_readers",
   "parent_access_operations",
-  // The Channel rail (WorkspaceDO migration 81): Main's reported attachments,
+  // The Channel rail (WorkspaceDO migration 82): Main's reported attachments,
   // written only by the directory apply, and the change ledger its triggers
   // fill and the object drains.
   "channel_sidekick_attachments",

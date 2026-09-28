@@ -1059,9 +1059,13 @@ describe('socket-first channel open', () => {
     });
 
     expect(screen.getByRole('status', { name: 'Opening channel…' })).toBeVisible();
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Manage channel participants' })).toBeEnabled());
-    expect(screen.getByRole('button', { name: 'Manage channel participants' })).toHaveAccessibleDescription('Rail person');
+    // Named from the rail, but only the snapshot's surface can manage them or
+    // open a resource, so neither control offers what it cannot do yet.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Manage channel participants' }))
+      .toHaveAccessibleDescription('Rail person'));
+    expect(screen.getByRole('button', { name: 'Manage channel participants' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Open Pricing sheet' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Open Pricing sheet' })).toBeDisabled();
     expect(screen.getByText('Weekly brief')).toBeVisible();
     // The row the live rail ends with is there already, so nothing shifts.
     expect(screen.getByRole('button', { name: 'Add Sidekick' })).toBeVisible();

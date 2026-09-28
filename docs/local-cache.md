@@ -575,9 +575,10 @@ no data the first one lacked. Bumping the slice version for the new key: an
 absent list has a correct reading, "wait as before", so the bump would have
 cost every device a cold sidebar to avoid one launch of old behavior.
 
-**Consequences:** The opening rail keeps the participants and Sidekicks in
-their pending states, so anything added to the rail that comes from the
-conversation detail needs a pending state of its own. A seeded list must stay
+**Consequences:** Anything added to the rail must have an opening source,
+the Channel's rail or the directory, or a pending state of its own until the
+conversation detail arrives; controls that need the detail stay disabled
+until then. A seeded list must stay
 unversioned, or a room rebuilt with lower numbers is refused for the session.
 
 ### 2026-09-19 — The directory slice goes to version 4 for a field it cannot absorb
