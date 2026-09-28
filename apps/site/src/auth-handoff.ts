@@ -61,6 +61,7 @@ function initializeHandoff(): void {
   if (!target) {
     reportDesktopHandoff('auth', 'presented', 'invalid');
     status.textContent = 'This sign-in response is incomplete or invalid.';
+    status.dataset.tone = 'error';
     help.textContent = 'Return to the Rally desktop app and start sign-in again.';
     link.removeAttribute('href');
     return;
@@ -82,9 +83,11 @@ function initializeHandoff(): void {
     status.textContent = `${connectorName[provider]} is connected. Opening the Rally desktop app…`;
   } else if (provider && error) {
     status.textContent = `${connectorName[provider]} could not be connected. Opening Rally…`;
+    status.dataset.tone = 'error';
     help.textContent = 'Rally will show the authorization result and let you try again.';
   } else if (error) {
     status.textContent = `Sign-in could not be completed. Opening ${appName}…`;
+    status.dataset.tone = 'error';
     help.textContent = `Return to ${appName} and try signing in again.`;
   } else {
     status.textContent = `Sign-in is complete. Opening ${appName}…`;

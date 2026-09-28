@@ -659,7 +659,7 @@ describe('public Rally site', () => {
 
     const page = readProjectFile('auth/desktop/index.html');
     const script = readProjectFile('src/auth-handoff.ts');
-    expect(page).toContain('Secure desktop handoff');
+    expect(page).toContain('id="auth-status"');
     expect(page).toContain('id="open-rally"');
     expect(page).toContain('noindex, nofollow');
     expect(script).toContain('window.location.hash');
