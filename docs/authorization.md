@@ -9,12 +9,12 @@ participants or become a new canonical owner of memberships.
 | File under `apps/api/src/` | Responsibility |
 | --- | --- |
 | `services/authorization-policy.ts` | Typed addresses, subject, four outcomes, proof composition, evidence validation, `AccessContext` |
-| `services/search-authorization.ts` | KV/regional search decisions, read-through misses and mutation-driven push |
-| `durable-objects/search-authorization-universe.ts` | The subjects and resources a push target reaches, read from the WorkspaceDO directories, so a decision is registered before the search that needs it |
+| `services/search-authorization.ts` | The old KV/regional search decision store. Unread and unpushed since member search filters on row audience ([text search](text-search.md#invariants)); deleted in the audience-filtering PRD's phase 4 |
+| `durable-objects/search-authorization-universe.ts` | The subjects and resources a push target reached; unused since phase 3, deleted in phase 4 |
 | `services/authorization-service.ts` | Member policy, batch-local owner observations and HTTP disclosure adapter |
 | `services/resource-read-rules.ts` | The draft and attachment rules for a resource, shared by the canonical check and the search audience its rows carry |
 | `durable-objects/authorization-storage.ts` | Exact attachment locations, inventory revision ordering and shipped migration tables |
-| `durable-objects/search-authorization-projection.ts` | Workspace mutation triggers, coalesced push outbox and Queue dispatch |
+| `durable-objects/search-authorization-projection.ts` | The old store's mutation triggers and push outbox; the outbox is no longer flushed, and phase 4 drops both |
 | `durable-objects/authorization-projection.ts` | Transactional child outbox and reference-only Queue contract |
 | `services/authorization-projection-service.ts` | Reloads attachment inventories from their owners when jobs execute |
 | `durable-objects/workspace-do.ts` | Legacy snapshot compatibility validation, resource facts, migration fan-out and discovery status |
@@ -326,11 +326,10 @@ not a switch controlling which authorization implementation serves the request.
   owner established absence; `unavailable` carries a retryable reason.
 - Only disclosure adapters collapse denial and absence into a concealed HTTP
   404. Direct reads with unavailable authority return HTTP 503. Member search
-  omits an unverified candidate and says nothing about it: the response carries
-  no completeness flag, and the desktop has no partial-results state. The design
-  goal is that the projection is complete before the search, through
-  mutation-side registration; what remains is eventual consistency within the
-  propagation bound, understood and not surfaced. Resource lists keep their own
+  returns only rows whose `audience` shares one of the searcher's groups, read
+  live per request (see [text search](text-search.md#invariants)); it says
+  nothing about what it left out, and the desktop has no partial-results state.
+  A failed group read fails the search with 503. Resource lists keep their own
   `complete` field and retry. No IDs, counts, or source metadata from omitted
   candidates are returned. Provider-wide retrieval errors, cancellation, and
   failed request authentication still fail the request. The request field

@@ -294,6 +294,16 @@ describe("a conversation object's outbox", () => {
     const gate = await parkEffectQueue(child);
     await openWorkstream(child, DRAIN_WORKSTREAM_ID, "Drained by the alarm");
 
+    // The opening turn keeps writing the Channel row until it settles (here it
+    // fails: there is no model), and each write is a new version. Wait it out,
+    // so the version read below is the one the drain alone must leave alone.
+    const SETTLED = ["needs_input", "completed", "cancelled", "failed", "budget_exhausted", "idle"];
+    await expect.poll(async () => {
+      const common = (await pendingChildEffects(child)).filter((envelope) => envelope.effect.kind === "directory_common");
+      const effect = common.at(-1)?.effect;
+      return effect?.kind === "directory_common" ? effect.state : null;
+    }, { timeout: 10_000, interval: 100 }).toBeOneOf(SETTLED);
+
     const pending = await pendingChildEffects(child);
     expect(pending.map((envelope) => envelope.effect.kind)).toContain("directory_common");
     for (const envelope of pending) {

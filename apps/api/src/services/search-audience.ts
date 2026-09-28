@@ -63,7 +63,23 @@ export function resourceSearchAudience(workspaceId: string, row: ResourceReadRow
  * bits of a namespaced SHA-256, marked as an RFC 9562 version 8 (custom) UUID.
  * The only place a group name becomes an ID.
  */
-export async function searchAudienceGroupId(group: string): Promise<string> {
+export function searchAudienceGroupId(group: string): Promise<string> {
+  let id = groupIds.get(group);
+  if (!id) {
+    id = computeGroupId(group);
+    groupIds.set(group, id);
+  }
+  return id;
+}
+
+/**
+ * Every search derives the searcher's whole list, so each isolate keeps the
+ * ids it has computed. The mapping never changes, so nothing here goes stale;
+ * it holds one entry per group this isolate has seen.
+ */
+const groupIds = new Map<string, Promise<string>>();
+
+async function computeGroupId(group: string): Promise<string> {
   const hex = (await sha256Hex(`rally-search-audience:v1:${group}`)).slice(0, 32).split('');
   hex[12] = '8';
   hex[16] = ((Number.parseInt(hex[16]!, 16) & 0x3) | 0x8).toString(16);

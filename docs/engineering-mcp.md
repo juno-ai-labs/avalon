@@ -50,14 +50,18 @@ The regional bridge uses D1 only for identity and routing:
 | `list_spaces` | Regional workspace identity at the open authority generation | `spaces` in WorkspaceDO, archived Spaces included |
 | `list_artifacts` | Regional workspace identity at the open authority generation | `artifact_registry` in WorkspaceDO |
 | `run_workspace_sql` | Resolve, select one region, then revalidate the open workspace authority generation | WorkspaceDO SQLite |
-| `run_substream_sql` | Resolve the active work-stream route and child directory membership, select one region, then revalidate | SubstreamAgent SQLite |
+| `run_substream_sql` | Resolve the active work-stream route and child membership (the Organization's hosted parent, or a Sidekick's own registry), select one region, then revalidate | SubstreamAgent SQLite |
 | `run_sidekick_sql` | Resolve the regional workspace identity and `automation_directory` membership, select one region, then revalidate | SidekickDO SQLite |
 | `run_artifact_sql` | Resolve the regional workspace identity and `artifact_registry` membership, select one region, then revalidate | ArtifactHostDO SQLite, the supervisor's own |
 
 `run_substream_sql` takes workspace, work-stream, and substream IDs. The parent
 IDs are not redundant: all three are part of the Durable Object's stable name.
 `list_substreams` returns the complete tuple so an MCP client can pass it to the
-SQL tool without reconstructing identity. `run_sidekick_sql` takes a workspace ID
+SQL tool without reconstructing identity. A Sidekick's conversations are
+reached the same way, with the Sidekick's ID as the work-stream ID: its Main
+through its route, and a run conversation through the Sidekick's own
+`conversation_children`, consulted only after its `automation_directory` row
+proves the Sidekick exists. `run_sidekick_sql` takes a workspace ID
 for the same reason, and `list_sidekicks` returns the pair.
 
 A Sidekick's ID is an `AutomationId`: the product renamed the concept, not the
@@ -263,6 +267,25 @@ configuration and administrator-added HTTPS redirect allowlist entries. It also
 ensures the supported Claude, ChatGPT, and Cursor hosted origins remain present.
 Changing that managed provider list remains an explicit Access administration
 decision.
+
+### 2026-09-28 — Reach a Sidekick's run conversations
+
+**What changed:** `run_substream_sql` accepts a child substream of a Sidekick
+when the Sidekick's own `conversation_children` registers it. Before, a child
+was accepted only when the Organization's hosted-parent tables listed it, and a
+Sidekick's children are never there.
+
+**Why:** Phase 3 of the search-audience work needed every conversation woken so
+its migration could re-project search rows. A Sidekick's run conversations
+could not be woken through the tools, so their rows stayed invisible to search.
+
+**Considered and rejected:** Reading every SidekickDO for every lookup. The
+Organization's tables are still asked first, and a SidekickDO is opened only for
+an ID the workspace directory already lists as a Sidekick, so no lookup can name
+an object that does not exist.
+
+**What a future change has to respect:** Keep the directory check before naming
+a SidekickDO, for the reason the 2026-09-18 entry gives.
 
 ### 2026-09-26 — Remove the legacy parent tools
 
