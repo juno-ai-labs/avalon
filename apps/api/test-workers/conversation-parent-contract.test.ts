@@ -1,4 +1,3 @@
-import { pushSearchAuthorization } from '../src/services/search-authorization';
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { WorkstreamDirectoryService } from '../src/services/workstream-directory-service';
 import { createResourceObjectPort } from '../src/runtime/resource-port';
@@ -10,6 +9,7 @@ import { WorkstreamResourceStorage } from '../src/durable-objects/workstream-res
 import { createAccessContext } from '../src/services/authorization-service';
 import { projectAuthorization } from '../src/services/authorization-projection-service';
 import { searchDocumentId } from '../src/services/text-search';
+import { searchAudienceGroup, searchAudienceGroupId } from '../src/services/search-audience';
 
 /**
  * The conversation-parent contract, answered by both parents.
@@ -433,22 +433,35 @@ describe("conversation parent contract", () => {
     // The objects hold none of this text: every rendered field comes back with the candidate.
     const display = { substream_id: '0', archived: false, occurred_at: Date.parse('2026-09-05T00:00:00Z'),
       transcript_sequence: 1, url: null, mime_type: null };
+    const audience = async (room: string) => [await searchAudienceGroupId(searchAudienceGroup.conversation(room, '0'))];
+    const [personal, open] = await Promise.all([audience(PERSONAL_ROOM_ID), audience(WORKSPACE_ROOM_ID)]);
     const message = (id: string, room: string, extra: Record<string, unknown> = {}) => ({ id, source: 'messages', scope_id: room,
       source_id: '0/search-turn', revision: 1, text: `needle from the index ${id}`, title: `Indexed ${id}`, source_label: `Indexed ${id}`,
-      ...display, ...extra });
-    const rows = [
+      ...display, audience: room === PERSONAL_ROOM_ID ? personal : open, ...extra });
+    const rows: Array<Record<string, unknown>> = [
       message('message-0', PERSONAL_ROOM_ID), message('message-1', WORKSPACE_ROOM_ID),
       ...linkIds.map((id, i) => ({ id, source: 'conversation_links', scope_id: PERSONAL_ROOM_ID, source_id: `0/search-turn/${id}`,
         revision: 1, text: `needle page ${i}`, title: `Page ${i}`, source_label: 'Indexed room', ...display,
-        occurred_at: null, transcript_sequence: null, url: urls[i]! })),
+        occurred_at: null, transcript_sequence: null, url: urls[i]!, audience: personal })),
       message('message-archived', WORKSPACE_ROOM_ID, { archived: true }),
-      // Indexed before the display attributes existed: omitted until its rewrite lands.
+      // Indexed before `audience` existed: no searcher's groups can match it.
       { id: 'message-legacy', source: 'messages', scope_id: WORKSPACE_ROOM_ID, source_id: '0/search-turn', revision: 1, text: 'needle legacy' },
     ];
+    // The searcher's groups as the query sent them; Turbopuffer applies the
+    // clause, so the double does too.
+    const audienceClause = (filter: unknown): string[] | null => {
+      if (!Array.isArray(filter)) return null;
+      if (filter[0] === 'audience' && filter[1] === 'ContainsAny') return filter[2] as string[];
+      for (const part of filter) { const found = audienceClause(part); if (found) return found; }
+      return null;
+    };
     const requests: Array<Record<string, unknown>> = [];
     externalFetch.mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
-      return Response.json({ rows });
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requests.push(body);
+      const groups = audienceClause(body.filters);
+      return Response.json({ rows: groups === null ? rows : rows.filter((row) =>
+        Array.isArray(row.audience) && (row.audience as string[]).some((group) => groups.includes(group))) });
     });
     const contentReads = vi.spyOn(SubstreamAgent.prototype, 'readAdmittedSearchContent');
     const resourceReads = vi.spyOn(WorkspaceDO.prototype, 'resourceSearchRecords');
@@ -464,20 +477,17 @@ describe("conversation parent contract", () => {
     expect(resourceReads).not.toHaveBeenCalled();
     expect(requests[0]?.include_attributes).toEqual(expect.arrayContaining(['text', 'title', 'archived', 'transcript_sequence']));
     expect(JSON.stringify(requests[0])).not.toContain(JSON.stringify(['scope_id', 'In', [PERSONAL_ROOM_ID, WORKSPACE_ROOM_ID]]));
-    // A member outside the personal room is admitted to the open room only, and a
-    // pair the projection has never decided is filled after the response, never inside it.
+    // The author reads both rooms, so both groups went into the query.
+    expect(audienceClause(requests[0]?.filters)).toEqual(expect.arrayContaining([...personal, ...open]));
+    // A member outside the personal room holds the open room's group and not
+    // the personal one's, so the first search already returns only what they read.
     const memberSession = crypto.randomUUID();
     await env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
       VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`).bind(memberSession, MEMBER_ID, WORKSPACE_ID).run();
     const memberAuth = { ...AUTH, userId: MEMBER_ID, sessionId: memberSession };
-    const deferred: Promise<unknown>[] = [];
-    const defer = (work: Promise<unknown>) => { deferred.push(work); };
-    const first = await searchWorkspacePage(searchEnv, memberAuth, { query: 'needle', category: 'all', pageSize: 7 }, undefined, defer);
-    expect(first.results).toEqual([]);
-    expect(deferred.length).toBeGreaterThan(0);
-    await Promise.all(deferred);
-    const filled = await searchWorkspacePage(searchEnv, memberAuth, { query: 'needle', category: 'all', pageSize: 7 }, undefined, defer);
-    expect(filled.results.map((row) => row.id)).toEqual(['message-1']);
+    const member = await searchWorkspacePage(searchEnv, memberAuth, { query: 'needle', category: 'all', pageSize: 7 });
+    expect(member.results.map((row) => row.id)).toEqual(['message-1']);
+    expect(audienceClause(requests.at(-1)?.filters)).not.toEqual(expect.arrayContaining(personal));
     // Archiving through the product commits the index's display intent with the change.
     await archiveRoom(WORKSPACE_ROOM_ID);
     await runInDurableObject(conversation(WORKSPACE_ROOM_ID), (_instance, state) => {
@@ -645,50 +655,30 @@ describe("conversation parent contract", () => {
     expect(identities).toHaveBeenCalledTimes(2);
   });
 
-  it("trusts projected search admission until the mutation push publishes revocation", async () => {
+  it("stops returning a private room's rows on the search after its reader is removed", async () => {
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
     const text = 'needle revocation boundary';
     await runInDurableObject(conversation(PERSONAL_ROOM_ID), async (_instance, state) => {
       await seedParticipantMessage(state, { id: 'hash-turn', sequence: 1, text });
     });
     const generation = await searchContentHash(text);
+    const room = await searchAudienceGroupId(searchAudienceGroup.conversation(PERSONAL_ROOM_ID, '0'));
     const row = { id: 'hash-candidate', source: 'messages', scope_id: PERSONAL_ROOM_ID, source_id: '0/hash-turn', revision: 1, generation,
       text, substream_id: '0', title: 'Private room', source_label: 'Private room', archived: false,
-      occurred_at: Date.parse('2026-09-05T00:00:00Z'), transcript_sequence: 1, url: null, mime_type: null };
-    externalFetch.mockImplementation(async () => Response.json({ rows: [row] }));
-    expect(await searchWorkspace({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' }, AUTH,
-      { query: 'needle', category: 'messages' })).toMatchObject([{ id: 'hash-candidate' }]);
-    // The revocation commits while the next search's index query is in flight. That
-    // request and the one after it still trust the projected decision.
-    let revoked = false;
-    externalFetch.mockImplementation(async () => {
-      if (!revoked) {
-        const removal = await post(conversation(PERSONAL_ROOM_ID), '/internal/product', {
-          operation: 'remove_participant', auth: AUTH, userId: AUTHOR_ID,
-        });
-        expect(removal.status).toBe(200);
-        await deliverChildEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID));
-        revoked = true;
-      }
-      return Response.json({ rows: [row] });
+      occurred_at: Date.parse('2026-09-05T00:00:00Z'), transcript_sequence: 1, url: null, mime_type: null, audience: [room] };
+    // Turbopuffer returns the row only when the query's groups include its audience.
+    externalFetch.mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) =>
+      Response.json({ rows: String(init?.body).includes(room) ? [row] : [] }));
+    const search = () => searchWorkspace({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' }, AUTH,
+      { query: 'needle', category: 'messages' });
+    expect(await search()).toMatchObject([{ id: 'hash-candidate' }]);
+    const removal = await post(conversation(PERSONAL_ROOM_ID), '/internal/product', {
+      operation: 'remove_participant', auth: AUTH, userId: AUTHOR_ID,
     });
-    expect(await searchWorkspace({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' }, AUTH,
-      { query: 'needle', category: 'messages' })).toMatchObject([{ id: 'hash-candidate' }]);
-    expect(revoked).toBe(true);
-    expect(await searchWorkspace({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' }, AUTH,
-      { query: 'needle', category: 'messages' })).toMatchObject([{ id: 'hash-candidate' }]);
-    const timingLog = vi.spyOn(console, 'info');
-    const mutationAt = Date.now() - 10_000;
-    await pushSearchAuthorization({ ...TEST_ENV, LOG_LEVEL: 'info' }, { type: 'search_authorization_push_v1', region: 'global', workspaceId: WORKSPACE_ID,
-      target: { kind: 'parent', id: PERSONAL_ROOM_ID }, timing: { mutationAt, enqueuedAt: mutationAt + 2_000 } });
-    expect(timingLog).toHaveBeenCalledWith(expect.objectContaining({ event: 'authz_push_timing', outcome: 'completed',
-      mutation_at: mutationAt, outbox_ms: 2_000, written_keys: expect.any(Number), store: 'kv' }));
-    const timing = timingLog.mock.calls.map(([entry]) => entry).find((entry) => entry.event === 'authz_push_timing');
-    expect(timing.mutation_to_write_ack_ms).toBeGreaterThanOrEqual(10_000);
-    expect(timing.written_keys).toBeGreaterThan(0);
-    timingLog.mockRestore();
-    expect(await searchWorkspace({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' }, AUTH,
-      { query: 'needle', category: 'messages' })).toEqual([]);
+    expect(removal.status).toBe(200);
+    await deliverChildEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID));
+    // No push, cache or row patch stands between the removal and the next search.
+    expect(await search()).toEqual([]);
   });
 
   it("publishes only ready private children to their exact roster and revokes them durably", async () => {
@@ -790,12 +780,15 @@ describe("conversation parent contract", () => {
           '{}', 'attached', 'ready', ?, ?)`, searchResourceId, WORKSPACE_ID, searchResourceId, NOW, NOW);
     });
     const searchEnv: Env = { ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' };
-    let resourceRevision = await workspaceStub().resourceSearchRevision({ workspaceId: WORKSPACE_ID, resourceId: searchResourceId });
+    const resourceRevision = await workspaceStub().resourceSearchRevision({ workspaceId: WORKSPACE_ID, resourceId: searchResourceId });
+    // What the producers write for this child: its own conversation's group,
+    // which the resource carries too once discovery places it there.
+    const child = [await searchAudienceGroupId(searchAudienceGroup.conversation(PERSONAL_ROOM_ID, reserved.substreamId))];
     let source = 'messages';
     let includeVerifiedMessage = false;
     let generation: string | undefined;
-    // Every rendered field travels with the candidate; the objects are read for admission only.
-    const display = { archived: false, occurred_at: Date.parse('2026-09-05T00:00:00Z'), url: null, mime_type: null };
+    // Every rendered field travels with the candidate; no object is read to render or admit it.
+    const display = { archived: false, occurred_at: Date.parse('2026-09-05T00:00:00Z'), url: null, mime_type: null, audience: child };
     const conversationRow = (id: string) => ({ id, source: 'messages', scope_id: PERSONAL_ROOM_ID, substream_id: reserved.substreamId,
       source_id: `${reserved.substreamId}/search-private-turn`, revision: 1, text: `private search phrase ${privateUrl}`,
       title: 'Private room', source_label: 'Private room', transcript_sequence: 1, ...display });
@@ -808,34 +801,36 @@ describe("conversation parent contract", () => {
         revision: resourceRevision, text: 'private search artifact', title: 'private search artifact',
         source_label: 'private search artifact', transcript_sequence: null, ...display, mime_type: 'text/plain' };
     };
-    externalFetch.mockImplementation(async () => Response.json({ rows: [candidate(),
-      ...(includeVerifiedMessage ? [conversationRow('verified-message')] : [])] }));
+    // Turbopuffer applies the query's audience clause; so does the double.
+    externalFetch.mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const holds = String(init?.body).includes(child[0]!);
+      return Response.json({ rows: holds ? [candidate(), ...(includeVerifiedMessage ? [conversationRow('verified-message')] : [])] : [] });
+    });
     try {
+      const participantSession = crypto.randomUUID();
+      await env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`).bind(participantSession, PARTICIPANT_ID, WORKSPACE_ID).run();
+      const participant = { ...AUTH, userId: PARTICIPANT_ID, sessionId: participantSession };
+      // The child's member reads it; a participant of Main who is not in the child does not.
       expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'messages' }))
         .toMatchObject([{ excerpt: expect.stringContaining('private search phrase') }]);
-      expect(await searchWorkspace(searchEnv, { ...AUTH, userId: PARTICIPANT_ID },
-        { query: 'private search', category: 'messages' })).toEqual([]);
+      expect(await searchWorkspace(searchEnv, participant, { query: 'private search', category: 'messages' })).toEqual([]);
       // Lexical rows carry no generation hash; one present is not re-validated on the read path.
       generation = await searchContentHash('different private search phrase');
       expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'messages' }))
         .toMatchObject([{ excerpt: expect.stringContaining('private search phrase') }]);
       generation = undefined;
       source = 'conversation_links';
-      const participantSession = crypto.randomUUID();
-      await env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
-        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`).bind(participantSession, PARTICIPANT_ID, WORKSPACE_ID).run();
       expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'links' }))
         .toMatchObject([{ excerpt: expect.stringContaining('private search page') }]);
-      expect(await searchWorkspace(searchEnv, { ...AUTH, userId: PARTICIPANT_ID, sessionId: participantSession },
-        { query: 'private search', category: 'links' })).toEqual([]);
+      expect(await searchWorkspace(searchEnv, participant, { query: 'private search', category: 'links' })).toEqual([]);
       source = 'artifacts';
-      // Deployment enables checks without activation; incomplete inventory is retryable, starts
-      // discovery, and simply omits the candidate from the page.
-      await expect(searchWorkspacePage(searchEnv, AUTH, { query: 'private search', category: 'artifacts' }))
-        .resolves.toEqual({ results: [] });
+      expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'artifacts' }))
+        .toMatchObject([{ title: 'private search artifact' }]);
+      expect(await searchWorkspace(searchEnv, participant, { query: 'private search', category: 'artifacts' })).toEqual([]);
       includeVerifiedMessage = true;
       const mixedPage = await searchWorkspacePage(searchEnv, AUTH, { query: 'private search', category: 'all' });
-      expect(mixedPage).toEqual({ results: [expect.objectContaining({ id: 'verified-message' })] });
+      expect(mixedPage.results.map((row) => row.id).sort()).toEqual(['search-candidate', 'verified-message']);
       includeVerifiedMessage = false;
       const visibleResourceId = crypto.randomUUID();
       await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec(`INSERT INTO resources
@@ -843,44 +838,19 @@ describe("conversation parent contract", () => {
         VALUES (?, ?, 'document', 'fixture', 'private search visible', '{}', 'attached', ?, ?)`, visibleResourceId, WORKSPACE_ID, NOW, NOW).toArray());
       const resourcePage = await new ResourceService(TEST_ENV, AUTH).list({ query: 'private search', limit: 10 });
       expect(resourcePage).toMatchObject({ complete: false, items: [{ id: visibleResourceId }] });
-      const initialProjection = { type: 'authorization_projection_v1' as const, region: 'global' as const,
-        workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID };
-      await projectAuthorization(TEST_ENV, initialProjection);
-      await projectAuthorization(TEST_ENV, { ...initialProjection, substreamId: asSubstreamId('0') });
-      const partial = await workspaceStub().authorizationBackfillStatus({ workspaceId: WORKSPACE_ID });
-      expect(partial).toMatchObject({ pendingParents: 0, pendingChildren: 1, complete: false });
-      await expect(searchWorkspacePage(searchEnv, AUTH, { query: 'private search', category: 'artifacts' }))
-        .resolves.toEqual({ results: [] });
-      expect(await workspaceStub().authorizationBackfillStatus({ workspaceId: WORKSPACE_ID })).toEqual(partial);
-      await projectAuthorization(TEST_ENV, { ...initialProjection, substreamId: reserved.substreamId });
-      // The queue publishes completed discovery; the next search never performs that owner walk.
-      await pushSearchAuthorization(TEST_ENV, { type: 'search_authorization_push_v1', region: 'global',
-        workspaceId: WORKSPACE_ID, target: { kind: 'resource', id: searchResourceId } });
-      resourceRevision = await workspaceStub().resourceSearchRevision({ workspaceId: WORKSPACE_ID, resourceId: searchResourceId });
-      expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'artifacts' }))
-        .toMatchObject([{ title: 'private search artifact' }]);
-      expect(await searchWorkspace(searchEnv, { ...AUTH, userId: PARTICIPANT_ID },
-        { query: 'private search', category: 'artifacts' })).toEqual([]);
-      generation = await searchContentHash('different private search artifact');
-      expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'artifacts' }))
-        .toMatchObject([{ title: 'private search artifact' }]);
-      // Run the actual reference-only backfill, then verify the exact-path reader.
-      await workspaceStub().beginAuthorizationBackfill({ workspaceId: WORKSPACE_ID });
+      // Run the actual reference-only discovery the canonical resource reads below depend on.
       const projection = { type: 'authorization_projection_v1' as const, region: 'global' as const,
         workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID };
+      await projectAuthorization(TEST_ENV, projection);
+      await projectAuthorization(TEST_ENV, { ...projection, substreamId: asSubstreamId('0') });
+      const partial = await workspaceStub().authorizationBackfillStatus({ workspaceId: WORKSPACE_ID });
+      expect(partial).toMatchObject({ pendingParents: 0, pendingChildren: 1, complete: false });
+      await projectAuthorization(TEST_ENV, { ...projection, substreamId: reserved.substreamId });
+      await workspaceStub().beginAuthorizationBackfill({ workspaceId: WORKSPACE_ID });
       await projectAuthorization(TEST_ENV, projection);
       for (const substreamId of [asSubstreamId('0'), reserved.substreamId]) {
         await projectAuthorization(TEST_ENV, { ...projection, substreamId });
       }
-      generation = undefined;
-      source = 'messages';
-      expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'messages' })).toHaveLength(1);
-      source = 'artifacts';
-      // Discovery may flush a pending source projection; model the external index catching up.
-      resourceRevision = await workspaceStub().resourceSearchRevision({ workspaceId: WORKSPACE_ID, resourceId: searchResourceId });
-      expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'artifacts' })).toHaveLength(1);
-      expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'artifacts' })).toHaveLength(1);
-      expect(await searchWorkspace(searchEnv, { ...AUTH, userId: PARTICIPANT_ID }, { query: 'private search', category: 'artifacts' })).toEqual([]);
     } finally { vi.unstubAllGlobals(); }
 
     // The same exact-child grant must survive provider-specific email loading.
