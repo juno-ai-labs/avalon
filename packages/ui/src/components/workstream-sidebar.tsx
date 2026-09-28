@@ -151,8 +151,8 @@ function ConversationRowMenu({ actions, children, icon, target }: {
 export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSidekickMenuOpen, onRefreshSidekicks, onOpenResource, workstream, creatingSubstream = null, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekickFailure, addSidekick, substreamActions, mainActions, scrollRef, footerLeading, participantsPending = false }: {
   workstream: SidebarPresentation;
   /**
-   * The rail is drawn from the directory while the Channel's own snapshot is
-   * on its way, and only that snapshot knows who is in it. The row keeps its
+   * Who is in the Channel is not known yet: neither the Channel's rail nor
+   * its snapshot has said, or their ids cannot be named yet. The row keeps its
    * place and shows the shape of a facepile rather than the empty state, which
    * would say the Channel has nobody in it.
    */
@@ -187,8 +187,10 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
   selectedSubstreamId?: string;
   onSelectSubstream?: (substreamId: string) => void;
   onNewSubstream?: () => void;
-  onOpenArtifact: (id: string, returnFocus: HTMLElement) => void;
-  onParticipants: () => void;
+  /** Absent while nothing can open one yet; the rows are then disabled. */
+  onOpenArtifact?: ((id: string, returnFocus: HTMLElement) => void) | undefined;
+  /** Absent while the participants cannot be managed yet; the row is then disabled. */
+  onParticipants?: (() => void) | undefined;
   onFocusTranscript: () => void;
   substreamActions?: ConversationRowActions | undefined;
   mainActions?: ConversationRowActions | undefined;
@@ -363,7 +365,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
           <SidebarHorizontalLine />
           <h2>Channel participants</h2>
           <Tip describesTrigger={false} label="Channel participants" side="right">
-            <SidebarRow className="workstream-context-row" aria-label="Manage channel participants" aria-description={workstream.participants.map((person) => person.name).join(', ')} type="button" disabled={participantsPending} onClick={onParticipants}>
+            <SidebarRow className="workstream-context-row" aria-label="Manage channel participants" aria-description={workstream.participants.map((person) => person.name).join(', ')} type="button" disabled={participantsPending || !onParticipants} onClick={onParticipants}>
               {participantsPending ? <span aria-hidden="true" className="skeleton-avatar-stack"><span className="skeleton-bar" /><span className="skeleton-bar" /><span className="skeleton-bar" /></span> : workstream.participants.length ? <AvatarStack members={workstream.participants} limit={compact ? 2 : 4} presentUserIds={presentUserIds} showTooltip={false} /> : <UserPlus aria-hidden="true" size={18} />}
             </SidebarRow>
           </Tip>
@@ -386,13 +388,13 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
   );
 }
 
-function ResourceSection({ label, resources, onOpen }: { label: string; resources: SidebarPresentation['resources']; onOpen: (id: string, returnFocus: HTMLElement) => void }): React.JSX.Element | null {
+function ResourceSection({ label, resources, onOpen }: { label: string; resources: SidebarPresentation['resources']; onOpen: ((id: string, returnFocus: HTMLElement) => void) | undefined }): React.JSX.Element | null {
   if (!resources.length) return null;
   return <section aria-label={label} className="workstream-context-section"><SidebarHorizontalLine /><h2>{label}</h2>
     {/* The rail owns its tooltip: native title uses a different delay and
         never appears for someone reaching the row with the keyboard. */}
     {resources.map((resource) => <Tip key={resource.id} label={resource.title} side="right">
-      <SidebarRow className="workstream-context-row" data-layout-id={`resource:${resource.id}`} aria-label={`Open ${resource.title}`} type="button" onClick={(event) => onOpen(resource.id, event.currentTarget)}>
+      <SidebarRow className="workstream-context-row" data-layout-id={`resource:${resource.id}`} aria-label={`Open ${resource.title}`} type="button" disabled={!onOpen} onClick={(event) => onOpen?.(resource.id, event.currentTarget)}>
         <SidebarNavigationRowContent
           activity={`${resource.resourceType.replaceAll('_', ' ')} · v${resource.currentVersion}`}
           icon={<ResourceIcon resource={resource} />}

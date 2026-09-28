@@ -4660,7 +4660,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   private unheardLedger = false;
   /**
-   * Whether this object has the rail change ledger (migration 81). An object
+   * Whether this object has the rail change ledger (migration 82). An object
    * held at schema 57 has no Channels, and so no rails to push.
    */
   private railLedger = false;
