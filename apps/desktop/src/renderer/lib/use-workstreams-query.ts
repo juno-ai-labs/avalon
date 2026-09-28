@@ -75,6 +75,12 @@ export type WorkstreamsQuery = UseQueryResult<WorkstreamSummary[]> & {
  * query exists for what a person's own action asks for afterwards: scrolling
  * past page one, turning Debug enabled on, and reloading after a pin.
  *
+ * When the connect payload says `channelsBySpace` it carried no Channel rows,
+ * and this query's fetch is the walk of every Space instead
+ * (`walkSpaceChannels`): the provider writes each page as it lands, and the
+ * fetch ends by dropping a row it held before the walk that no Space returned.
+ * There is no page beyond, so `hasMore` is false.
+ *
  * ## Why this pages by hand rather than with `useInfiniteQuery`
  *
  * `useInfiniteQuery` stores `{ pages, pageParams }` under its key. Eight call
@@ -98,7 +104,7 @@ export type WorkstreamsQuery = UseQueryResult<WorkstreamSummary[]> & {
  *   re-reading everything above it.
  */
 export function useWorkstreamsQuery(): WorkstreamsQuery {
-  const { listWorkstreams, sidebarConnect } = useWorkspaceSocket();
+  const { listWorkstreams, sidebarConnect, walkSpaceChannels } = useWorkspaceSocket();
   const queryClient = useQueryClient();
   const debugEnabled = useDebugEnabled();
   const pagesLoaded = useRef(1);
@@ -108,7 +114,37 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
 
   const query = useQuery({
     queryKey: WORKSTREAMS_QUERY_KEY,
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
+      const before = new Set((queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [])
+        .filter((workstream) => !workstream.pending)
+        .map((workstream) => workstream.id));
+      const returned = await walkSpaceChannels(signal);
+      if (returned !== null) {
+        // System work streams sit in no Space; Debug adds the directory's.
+        const system = debugEnabled
+          ? (await listWorkstreams({ limit: WORKSTREAM_PAGE_SIZE, includeSystem: true })).items
+            .filter((workstream) => workstream.systemKind !== undefined)
+          : [];
+        pagesLoaded.current = 1;
+        nextCursor.current = null;
+        setHasMore(false);
+        const listed = new Set([...returned, ...system.map((workstream) => workstream.id)]);
+        const current = queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [];
+        const visibility = queryClient.getQueryData<Record<string, { visible: boolean }>>(
+          WORKSTREAM_STATE_WATERLINES_KEY,
+        ) ?? {};
+        // The walk wrote every page as it landed. What is left is to drop a
+        // row held before it that no Space returned: gone, or no longer
+        // visible to this viewer. A row that arrived during the walk stays;
+        // it was pushed after its Space was read.
+        const kept = current.filter((workstream) => visibility[workstream.id]?.visible !== false
+          && (workstream.pending || listed.has(workstream.id) || !before.has(workstream.id)));
+        const keptIds = new Set(kept.map((workstream) => workstream.id));
+        return keepPendingWorkstreams(current, [
+          ...kept,
+          ...system.filter((workstream) => !keptIds.has(workstream.id)),
+        ])!;
+      }
       const items: WorkstreamSummary[] = [];
       let cursor: string | undefined;
       let walked = 0;

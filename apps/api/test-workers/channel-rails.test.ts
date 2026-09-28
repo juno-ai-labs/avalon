@@ -206,7 +206,8 @@ function frames(socket: WebSocket) {
 }
 
 let ticketSeq = 0;
-async function connect(userId: UserId) {
+let requestSeq = 0;
+async function connect(userId: UserId, options: { channelsBySpace?: boolean } = {}) {
   ticketSeq += 1;
   const response = await organization().fetch("https://workspace.test/socket", {
     headers: {
@@ -226,12 +227,37 @@ async function connect(userId: UserId) {
   socket.accept();
   const stream = frames(socket);
   const sync = stream.next((frame) => frame.type === "workspace_sync", "subscribe answer");
+  if (options.channelsBySpace) socket.send(JSON.stringify({ type: "channels_by_space" }));
   socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
-  await sync;
-  return { socket, stream };
+  return { socket, stream, sync: await sync };
 }
 
-let requestSeq = 0;
+type SpaceChannelsFrame = Frame & {
+  items: Array<{ id: string; privateChildren?: Array<{ substreamId: string }> }>;
+  stateVersions: Array<{ workstreamId: string }>;
+  rails: Rail[];
+  nextAfter: string | null;
+};
+
+/** The one frame answering a `space_channels` request. */
+async function askSpace(
+  connection: Awaited<ReturnType<typeof connect>>,
+  target: { spaceId: string; after?: string; rails: boolean },
+): Promise<SpaceChannelsFrame> {
+  requestSeq += 1;
+  const requestId = `00000000-0000-7000-8002-${String(requestSeq).padStart(12, "0")}`;
+  const answer = connection.stream.next(
+    (frame) => frame.type === "workspace_space_channels" && frame.requestId === requestId,
+    "space channels",
+  );
+  connection.socket.send(JSON.stringify({ type: "space_channels", requestId, ...target }));
+  return await answer as SpaceChannelsFrame;
+}
+
+function completeSpaceBootstrap(state: DurableObjectState) {
+  state.storage.sql.exec(`UPDATE space_bootstrap SET phase = 'complete' WHERE id = 1`);
+}
+
 /** Every frame of one `channel_rails` answer, once its final frame has arrived. */
 async function askRails(
   connection: Awaited<ReturnType<typeof connect>>,
@@ -294,7 +320,7 @@ function insertChannel(state: DurableObjectState, workstreamId: string, scope: "
     latest_attention_ordinal, unread_tracking_start_ordinal, last_activity_at,
     source_created_at, source_updated_at, projected_at
   ) VALUES (?, 1, 1, ?, 'hash', 'Channel', '', '', ?, 'idle', 'ad_hoc', 'settled', 0, 0, 100, 100, 100, 100)`,
-  workstreamId, `event-${workstreamId}`, scope);
+  workstreamId, `00000000-0000-7000-8000-${workstreamId.slice(-12)}`, scope);
 }
 
 function insertResource(state: DurableObjectState, id: string, title: string, extra: { metadata?: string } = {}) {
@@ -555,6 +581,105 @@ describe("channel_rails for a guest, a large Space, and a row that no longer par
       .toEqual([expect.objectContaining({ workstream_id: channelC, code: expect.stringMatching(/^channel_rail_invalid:participantUserIds\.\d+:/u) })]);
     logged.mockRestore();
     connection.socket.close(1000, "done");
+  });
+});
+
+describe("space_channels and the sidebar without Channel rows", () => {
+  it("answers a Space with the Channel rows the viewer may see, their breakouts, and their rails", async () => {
+    await runInDurableObject(organization(), (_instance, state) => insertSpace(state, [channelA, channelB, channelC]));
+    const connection = await connect(member);
+    const answer = await askSpace(connection, { spaceId, rails: true });
+    // Channel C is Organization-wide; B is the member's own.
+    expect(answer.items.map((item) => item.id)).toEqual([channelA, channelB, channelC]);
+    expect(answer.stateVersions.map((version) => version.workstreamId)).toEqual([channelA, channelB, channelC]);
+    expect(answer.items[0]!.privateChildren?.map((child) => child.substreamId)).toEqual([breakoutA]);
+    expect(answer.rails.map((rail) => rail.workstreamId)).toEqual([channelA, channelB, channelC]);
+    expect(answer.nextAfter).toBeNull();
+
+    const bare = await askSpace(connection, { spaceId, rails: false });
+    expect(bare.items).toHaveLength(3);
+    expect(bare.rails).toEqual([]);
+    connection.socket.close(1000, "done");
+
+    const ownerConnection = await connect(owner);
+    const owners = await askSpace(ownerConnection, { spaceId, rails: true });
+    expect(owners.items.map((item) => item.id)).toEqual([channelA, channelC]);
+    ownerConnection.socket.close(1000, "done");
+
+    const guestConnection = await connect(guest);
+    expect(await askSpace(guestConnection, { spaceId, rails: true }))
+      .toMatchObject({ items: [], stateVersions: [], rails: [], nextAfter: null });
+    guestConnection.socket.close(1000, "done");
+  });
+
+  it("keeps every row and leaves out the rails that do not fit beside them", async () => {
+    await runInDurableObject(organization(), (_instance, state) => insertSpace(state, [channelA, channelB, channelC]));
+    const connection = await connect(member);
+    const bare = await askSpace(connection, { spaceId, rails: false });
+    const [railA] = (await askRails(connection, { workstreamIds: [channelA] }))[0]!.rails;
+    // Room for the rows and Channel A's rail, not for the next one.
+    await setFrameLimit(frameBytes(bare) + frameBytes(railA) + 1);
+    const answer = await askSpace(connection, { spaceId, rails: true });
+    expect(answer.items).toHaveLength(3);
+    expect(answer.rails.map((rail) => rail.workstreamId)).toEqual([channelA]);
+    expect(frameBytes(answer)).toBeLessThanOrEqual(frameBytes(bare) + frameBytes(railA) + 1);
+    connection.socket.close(1000, "done");
+  });
+
+  it("pages a Space by id, naming as `nextAfter` only a Channel it answered", async () => {
+    const hex = (prefix: string, index: number) =>
+      `00000000-0000-4000-8000-0000000${prefix}${index.toString(16).padStart(4, "0")}`;
+    const hidden = Array.from({ length: 260 }, (_, index) => hex("c", index));
+    const shown = Array.from({ length: 260 }, (_, index) => hex("e", index));
+    const connection = await connect(owner);
+    await runInDurableObject(organization(), (_instance, state) => {
+      for (const id of hidden) insertChannel(state, id, "personal");
+      for (const id of shown) insertChannel(state, id, "workspace");
+      insertSpace(state, [...hidden, channelA, channelB, channelC, ...shown]);
+    });
+    const visible = [channelA, channelC, ...shown];
+
+    const first = await askSpace(connection, { spaceId, rails: false });
+    expect(first.items.map((item) => item.id)).toEqual(visible.slice(0, 250));
+    expect(first.nextAfter).toBe(visible[249]);
+    const second = await askSpace(connection, { spaceId, after: first.nextAfter!, rails: false });
+    expect(second.items.map((item) => item.id)).toEqual(visible.slice(250));
+    expect(second.nextAfter).toBeNull();
+    connection.socket.close(1000, "done");
+  });
+
+  it("sends a socket that asked for it the Spaces and no Channel rows, once the Space hierarchy is whole", async () => {
+    await runInDurableObject(organization(), (_instance, state) => insertSpace(state, [channelA, channelB, channelC]));
+    // Still opening: a Channel may sit in no Space, so the page is sent as before.
+    const opening = await connect(member, { channelsBySpace: true });
+    const openingSidebar = opening.sync.sidebar as { workstreams: { items: unknown[] }; channelsBySpace?: true };
+    expect(openingSidebar.channelsBySpace).toBeUndefined();
+    expect(openingSidebar.workstreams.items.length).toBeGreaterThan(0);
+    opening.socket.close(1000, "done");
+
+    await runInDurableObject(organization(), (_instance, state) => completeSpaceBootstrap(state));
+    const connection = await connect(member, { channelsBySpace: true });
+    const sidebar = connection.sync.sidebar as {
+      workstreams: { items: unknown[]; nextCursor: string | null };
+      spaces?: { active: { items: Array<{ id: string }> } };
+      channelsBySpace?: true;
+    };
+    expect(sidebar.channelsBySpace).toBe(true);
+    expect(sidebar.workstreams).toMatchObject({ items: [], nextCursor: null });
+    expect(sidebar.spaces?.active.items.map((space) => space.id)).toContain(spaceId);
+    connection.socket.close(1000, "done");
+
+    // A client that did not ask gets the page it always has.
+    const legacy = await connect(member);
+    const legacySidebar = legacy.sync.sidebar as { workstreams: { items: unknown[] }; channelsBySpace?: true };
+    expect(legacySidebar.channelsBySpace).toBeUndefined();
+    expect(legacySidebar.workstreams.items.length).toBeGreaterThan(0);
+    legacy.socket.close(1000, "done");
+
+    // A guest is sent no Spaces, so the page stays theirs.
+    const guestConnection = await connect(guest, { channelsBySpace: true });
+    expect((guestConnection.sync.sidebar as { channelsBySpace?: true }).channelsBySpace).toBeUndefined();
+    guestConnection.socket.close(1000, "done");
   });
 });
 

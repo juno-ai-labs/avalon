@@ -9,6 +9,7 @@ import { holdCachedWorkstreamArchive, setCachedWorkstreams } from './workstreams
 import { WORKSTREAM_STATE_WATERLINES_KEY } from './workstream-state-store';
 
 const listWorkstreams = vi.hoisted(() => vi.fn());
+const walkSpaceChannels = vi.hoisted(() => vi.fn());
 const socket = vi.hoisted(() => ({
   sidebarConnect: null as { generation: number; nextCursor: string | null } | null,
 }));
@@ -16,7 +17,7 @@ const getApplicationSettings = vi.hoisted(() => vi.fn());
 const settingsListeners = vi.hoisted(() => new Set<(settings: unknown) => void>());
 
 vi.mock('./workspace-socket', () => ({
-  useWorkspaceSocket: () => ({ listWorkstreams, sidebarConnect: socket.sidebarConnect }),
+  useWorkspaceSocket: () => ({ listWorkstreams, walkSpaceChannels, sidebarConnect: socket.sidebarConnect }),
 }));
 vi.mock('./platform', () => ({
   desktopBridge: () => ({
@@ -91,6 +92,9 @@ describe('useWorkstreamsQuery', () => {
       items: [summary('workstream-1', 'Launch brief')],
       nextCursor: null,
     });
+    // A connection whose sidebar carried Channel rows: nothing to walk.
+    walkSpaceChannels.mockReset();
+    walkSpaceChannels.mockResolvedValue(null);
     getApplicationSettings.mockReset();
     getApplicationSettings.mockResolvedValue({
       lockdownMode: false,
@@ -408,6 +412,46 @@ describe('useWorkstreamsQuery', () => {
       await waitFor(() => expect(listWorkstreams).toHaveBeenCalledTimes(1));
       expect(listWorkstreams.mock.calls[0]?.[0]).toMatchObject({ includeSystem: true });
       expect(listWorkstreams.mock.calls[0]?.[0]).not.toHaveProperty('before');
+    });
+  });
+
+  describe('loading a Space at a time', () => {
+    // The walk itself writes each page as it lands (the provider's job); what
+    // the query adds is dropping what no Space returned.
+    it('drops a row no Space returned, and keeps pending rows and rows that arrived during the walk', async () => {
+      const { result, rerender } = renderHook(() => useWorkstreamsQuery(), { wrapper });
+      landConnectPayload(rerender, { items: [summary('kept', 'Kept'), summary('gone', 'Gone')] });
+      await waitFor(() => expect(result.current.data).toHaveLength(2));
+      act(() => setCachedWorkstreams(queryClient, (rows) => [
+        { ...summary('creating', ''), pending: true },
+        ...rows ?? [],
+      ]));
+      walkSpaceChannels.mockImplementation(async () => {
+        setCachedWorkstreams(queryClient, (rows) => [...rows ?? [], summary('pushed', 'Pushed mid-walk')]);
+        return new Set(['kept']);
+      });
+
+      await act(async () => { await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }); });
+
+      await waitFor(() => expect(result.current.data?.map((row) => row.id).sort())
+        .toEqual(['creating', 'kept', 'pushed']));
+      expect(listWorkstreams).not.toHaveBeenCalled();
+      expect(result.current.hasMore).toBe(false);
+    });
+
+    it('adds the directory\'s system rows while debugging, since they sit in no Space', async () => {
+      getApplicationSettings.mockResolvedValue({
+        lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true,
+      });
+      walkSpaceChannels.mockResolvedValue(new Set(['workstream-1']));
+      listWorkstreams.mockResolvedValue({
+        items: [summary('workstream-1', 'Launch brief'), { ...summary('digest', 'Digest'), systemKind: 'digest' }],
+        nextCursor: null,
+      });
+      const { result, rerender } = renderHook(() => useWorkstreamsQuery(), { wrapper });
+      landConnectPayload(rerender);
+      await waitFor(() => expect(result.current.data?.map((row) => row.id)).toEqual(['workstream-1', 'digest']));
+      expect(listWorkstreams.mock.calls.at(-1)?.[0]).toMatchObject({ includeSystem: true });
     });
   });
 });

@@ -38,7 +38,7 @@ connection lifecycle around that admission protocol.
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Keeps the workspace socket alive across navigation, correlates/retries directory-page requests, resumes its waterline, applies current work-stream rows, and invalidates workspace query surfaces. |
 | `apps/api/src/services/sidebar-reads.ts` | The automation and note statements plus row mappings the sidebar opens with, shared by WorkspaceDO's batch and the REST services so the two readings of one table cannot drift. |
 | `apps/desktop/src/renderer/lib/sidebar-list-store.ts` | The one receiver for the sidebar's two pushed lists: the opening batch and every push compare against its per-list waterline ledger rather than writing the caches directly. |
-| `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | Pages the work-stream directory beyond the first, which the connect payload delivers; it does not fetch page one and widens the list only when Debug enabled asks for system rows. |
+| `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | The directory query. When the connect payload says `channelsBySpace`, it walks the Spaces for their Channel rows and drops what no Space returned; otherwise it pages the directory beyond the first page the payload delivered. It widens the list only when Debug enabled asks for system rows. |
 | `apps/desktop/src/renderer/lib/channel-viewer-state.ts` | Writes a Channel row's breakouts (waterlined per viewer) and running background agents into the caches the Channel rail and composer read, and reconciles receipt-backed breakout appearance. |
 | `apps/desktop/src/renderer/lib/workstream-state-store.ts` | Shared common/viewer and WorkspaceDO-directory waterline ledgers; independently rejects stale state fields and older pin/page fields. |
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The typed write boundary for the shared work-stream list, the detail query key for Main and for a private child, and `patchCachedWorkstream`, the one write for an unversioned fact (a rename or scope event, a REST response, a command receipt) that the list row and the open detail entry must take together. |
@@ -348,14 +348,48 @@ and reject only when the provider is disposed or the user/session changes. A
 `workstream_directory` sync invalidation refetches these pages; it never asks a
 REST/D1 list endpoint to reconstruct them.
 
+A member's desktop loads its Channel rows a Space at a time. It sends
+`channels_by_space` before `subscribe`, and WorkspaceDO records that on the
+socket's attachment. The sidebar that answers `subscribe` then carries every
+Space the viewer can see and no Channel rows, and says `channelsBySpace: true`.
+The desktop asks each Space with `space_channels`: a stable request ID, the
+`spaceId`, optionally `after` (the previous answer's `nextAfter`), and `rails`,
+whether to send rails with the rows. WorkspaceDO answers with one
+`workspace_space_channels` frame. It holds a page of up to 250 of the Space's
+Channels this viewer may see, in id order, as directory rows with their state
+versions. Each row carries its breakouts (`privateChildren`), so one answer is
+the Space's children and grandchildren. It also holds as many of those
+Channels' rails as fit the frame beside the rows. `nextAfter` is the page's
+last Channel when the page is full, and `null` when the Space ends there. A
+guest, or a Space the viewer cannot see, gets an empty page. System Channels
+are left off, as the connect page leaves them off.
+
+The desktop walks every Space, choosing the next one after each: the Space on
+screen first, then the Spaces of the Channel in front, then the rest in the
+Space list's order, archived Spaces last. It asks for rails unless it already
+holds one for every Channel it knows in that Space. Each page is written as it
+lands, so the Space on screen paints before the walk is over. When the walk
+ends, a row held before it that no Space returned is dropped. A reconnect or a
+`workstream_directory` invalidation walks again.
+
+The sidebar keeps the first page, and the desktop keeps `list_workstreams`
+paging, in three cases:
+- **An older server.** It ignores the unknown `channels_by_space`. An unknown
+  `subscribe` key would close the socket instead, which is why the request is
+  its own event.
+- **A guest.** A guest is sent no Spaces.
+- **An Organization still opening** (`spacesReady` false). A Channel can sit in
+  no Space there, and the page is the only way it reaches the sidebar.
+
 Electron asks for Channel rails with `channel_rails`: a stable request ID and
 exactly one target, a Space (`spaceId`, optionally `after`, the previous
 answer's `nextAfter`) or up to 250 named Channels (`workstreamIds`). Each
 Channel row carries `railWaterline`; a held rail is stale once a row's passes
-it. The desktop asks for stale rails in order — the Channel in front, then its
-Spaces, then the other Spaces, then Channels in no Space — asking for a Space
-by `spaceId` when every Channel it knows there is stale and by ids otherwise,
-so one moved rail never resends a Space.
+it. The desktop asks for stale rails by name, in order: the Channel in front,
+then its Spaces, then the other Spaces, then Channels in no Space. Rails
+mostly arrive with their Space's rows, so what is left is the rails that moved
+since, or did not fit beside their rows. The Space target stays for desktops
+that predate `space_channels`.
 
 WorkspaceDO answers with `workspace_channel_rails` frames, each at most
 `WORKSTREAM_REALTIME_MAX_FRAME_BYTES` by encoded length, the last one `final`:
@@ -441,6 +475,9 @@ lite browser client ([`browser-client.md`](browser-client.md)) — hold one
 through `watchWorkspaceReach` in `@rally/contracts/workspace-reach-watch`, which
 subscribes, discards the sidebar, and reports only this event and subscribe
 answers, with a diagnostic hook the host logs when it cannot connect.
+
+With `channelsBySpace`, that page is empty and the directory comes from the
+Space walk above.
 
 The directory page in that payload deliberately excludes system work streams.
 Debug enabled is rare and engineers only, and the server does not hold the
@@ -872,7 +909,7 @@ receipt.
 | `apps/api/test-workers/workspace-socket-fanout.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-socket-fanout.test.ts` | Sync topic audiences on real sockets, live and on replay, and the Channel row's; the full list is in [`websocket-architecture.md`](websocket-architecture.md#testing). |
 | `apps/api/test/workspace-realtime-service.test.ts` | `pnpm --filter @rally/api exec vitest run test/workspace-realtime-service.test.ts` | The mutation map: each write's topics and audience. |
 | `apps/api/test-workers/channel-viewer-state.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Each viewer's own breakouts on the connect sidebar, per Channel; a roster change pushed to that breakout's members only; running background agents pushed to every reader and counted only where each can look; a lost Channel tombstoned without closing the socket; the current list after a resubscribe; nothing said for a parent still waiting for its import; foregrounding a Channel warms its Main. |
-| `apps/api/test-workers/channel-rails.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/channel-rails.test.ts` | `channel_rails` answers on a real socket: rail contents, `unavailable`, `attached` absent until reported, frames within a lowered frame limit and `oversized`, a guest's answer, a Space paged by visible Channels with `nextAfter`, a corrupt stored row that still ends in `final`; and the row pushed with a higher `railWaterline` for each kind of rail change. |
+| `apps/api/test-workers/channel-rails.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/channel-rails.test.ts` | `channel_rails` answers on a real socket: rail contents, `unavailable`, `attached` absent until reported, frames within a lowered frame limit and `oversized`, a guest's answer, a Space paged by visible Channels with `nextAfter`, a corrupt stored row that still ends in `final`; and the row pushed with a higher `railWaterline` for each kind of rail change. `space_channels` on the same fixture: a Space's rows with their breakouts and rails for each viewer, rails that do not fit left out, paging by visible Channels, and the Spaces-only sidebar for a socket that asked, only once the hierarchy is whole. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` (breakouts block) | `pnpm --filter @rally/desktop test` | The breakout list and running agents taken from sidebar and pushed rows and kept with no screen observing them, waterline order, silence on an absent field, eviction on a tombstone, receipt-backed appearance, and pruning the disk cache to the roster. |
 | `apps/desktop/src/main/realtime-socket-broker.test.ts`, `realtime-socket-ipc.test.ts`, `apps/desktop/src/common/realtime-socket-validation.test.ts` | `pnpm --filter @rally/desktop test` | Ordered PAC fallback, shared frame ceiling, normal-close removal, renderer-owner isolation, shared IPC channels, main-window authorization, and strict main-to-preload events. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx`, `use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @rally/desktop test` | Initial admission for the pooled SubstreamAgent feed and that no Channel control ticket is ever requested, exact-feed reuse for five minutes after switching streams, background/recent overlap, expiry and backward-clock recovery, in-place route reconciliation, direct SubstreamAgent command/feed reconnect, private message receipts, streaming, explicit compaction lifecycle/reconciliation, range merging, oversized-turn placeholder rendering, and scroll thresholds/anchor preservation. |
@@ -911,6 +948,43 @@ what that leaves exposed.
 Child archive admission uses the same `parent_archived` ticket field as parent archive. Already-open private-child sockets additionally check the versioned local archive mirror; there is no per-command parent RPC. See [work-stream durable objects](workstream-durable-object.md) for lifecycle delivery.
 
 ## Changelog
+
+### 2026-09-28 — The connect payload carries Spaces, and each Space is asked for its Channels
+
+**What changed:** A member's desktop sends `channels_by_space` before
+`subscribe`. Its sidebar then carries every visible Space and no Channel rows.
+The desktop walks the Spaces with `space_channels`, which answers a page of a
+Space's Channel rows, with their breakouts and as many rails as fit. The rail
+prefetch now asks only by name.
+
+**Why:** The connect page was the viewer's 250 most recently opened Channels
+across every Space. The sidebar shows one Space's Channels. A Space whose
+Channels were all older than that page drew nothing until the sidebar paged the
+global list, 250 rows at a time, until it had the Space's `channelCount` rows.
+Rail prefetch only reached Channels whose rows were held. Asking by Space loads
+the Space on screen first, whatever its Channels' age, and one walk loads every
+Channel and its rail ahead of need.
+
+**Considered and rejected:**
+- *Keeping the 250 rows on connect beside the walk.* That is two paths for the
+  same rows, and the one the sidebar needs is the Space's.
+- *A `subscribe` field instead of a separate event.* `subscribe` is a strict
+  schema, and a server one deploy behind would close the socket on the unknown
+  key. It ignores an unknown event type.
+- *Rows and rails as two walks.* One answer carries both. A rail that does not
+  fit beside its rows is asked for by name, so frame packing needs no second
+  page cursor.
+
+**Consequences:**
+- A reconnect walks every Space again, where it used to resend 250 rows. That
+  is one request per 250 Channels, and it asks for rails only where none are
+  held.
+- The walk is the whole directory, so it bounds the conversation cache on disk
+  the way a whole connect page did.
+- The disk mirror still keeps 250 rows, so a cold launch paints those and the
+  rest arrive with the walk.
+- The `channel_rails` Space target and `list_workstreams` paging stay for older
+  desktops, guests, and an Organization still opening.
 
 ### 2026-09-28 — Channel rails over the workspace socket
 

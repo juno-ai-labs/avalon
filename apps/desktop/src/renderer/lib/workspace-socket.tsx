@@ -11,6 +11,7 @@ import {
   WorkspaceReachChangedEventSchema,
   WorkspaceSocketSyncEventSchema,
   WorkspaceChannelRailsEventSchema,
+  WorkspaceSpaceChannelsEventSchema,
   WorkspaceSocketClientEventSchema,
   CHANNEL_RAILS_NAMED_LIMIT,
   WorkspaceWorkstreamPageEventSchema,
@@ -23,6 +24,7 @@ import {
   type WorkspaceSocketClientEvent,
   type WorkspaceSyncTopic,
   type WorkspaceWorkstreamPageEvent,
+  type WorkspaceSpaceChannelsEvent,
   safeParseSocketEvent,
 } from "@rally/contracts";
 import type { TelemetryEventProperties } from '@rally/contracts/telemetry';
@@ -45,7 +47,7 @@ import {
 import { ApiError, mapAutomationSummary, mapWorkstreamSummary, type RallyApi } from './api';
 import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
 import { applyChannelViewerState } from './channel-viewer-state';
-import { applyChannelRails, hasRailWaterline, nextChannelRailRequest, settleUnanswered, type ChannelRailTarget } from './channel-rails';
+import { applyChannelRails, hasRailWaterline, holdsChannelRail, nextChannelRailRequest, settleUnanswered } from './channel-rails';
 import { retainConversationParents } from './conversation-cache';
 import { useLocalCacheScope } from './local-cache-scope';
 import { desktopBridge } from './platform';
@@ -119,17 +121,18 @@ function reportSocketContractSkew(
 
 type ListWorkstreamsCommand = Extract<WorkspaceSocketClientEvent, { type: 'list_workstreams' }>;
 
-interface RailAnswer {
-  nextAfter: string | null;
+interface PendingRailRequest {
+  resolve: (named: Set<string>) => void;
+  reject: (error: Error) => void;
+  timeout: number;
   /** Every Channel a frame of the answer named, in any of its three lists. */
   named: Set<string>;
 }
 
-interface PendingRailRequest {
-  resolve: (answer: RailAnswer) => void;
+interface PendingSpaceRequest {
+  resolve: (answer: WorkspaceSpaceChannelsEvent) => void;
   reject: (error: Error) => void;
   timeout: number;
-  named: Set<string>;
 }
 type WorkspaceSocketApi = Pick<RallyApi, 'getWorkspaceSocketTicket'>;
 export type WorkspaceSocketState = WorkspaceSyncConnectionState;
@@ -183,6 +186,11 @@ export interface SidebarConnect {
   nextCursor: string | null;
   /** This connection has delivered Space authority, not only the compatible sidebar fields. */
   spacesLive: boolean;
+  /**
+   * The payload carried no Channel rows: the directory is loaded by walking
+   * the Spaces (`walkSpaceChannels`), not by paging `list_workstreams`.
+   */
+  channelsBySpace?: boolean;
 }
 
 /**
@@ -211,6 +219,21 @@ interface WorkspaceSocketContextValue {
   }): Promise<WorkstreamPage>;
   /** The last sidebar the server sent unasked, or null before the first one. */
   sidebarConnect: SidebarConnect | null;
+  /**
+   * Ask every Space for its Channel rows, and their rails, a page at a time,
+   * writing each page into the directory as it lands. The Space given to
+   * `prioritizeSpace` goes first, then the Channel in front's Spaces, then the
+   * rest in the Space list's order, archived Spaces last.
+   *
+   * Resolves with every Channel id the walk returned, or `null` when this
+   * connection's sidebar carried Channel rows and there is nothing to walk.
+   * Rejects once `signal` aborts, before asking for another page.
+   */
+  walkSpaceChannels(signal?: AbortSignal): Promise<Set<string> | null>;
+  /** Walk this Space next, ahead of the rest: the one on screen. */
+  prioritizeSpace(spaceId: string | null): void;
+  /** The Spaces a walk has returned whole. A Space missing here may still be loading. */
+  loadedSpaceIds: ReadonlySet<string>;
   /**
    * Ask again for these Channels' rails now, whatever the rows say: after a
    * change this window made, before the row that reports it arrives. Rejects
@@ -378,6 +401,9 @@ export function WorkspaceSocketProvider({
       'workspace_socket_unavailable',
     )),
   );
+  const walkSpaceChannelsRef = useRef<(signal?: AbortSignal) => Promise<Set<string> | null>>(() => Promise.resolve(null));
+  const prioritySpaceIdRef = useRef<string | null>(null);
+  const [loadedSpaceIds, setLoadedSpaceIds] = useState<ReadonlySet<string>>(() => new Set());
 
   useEffect(() => {
     if (!ownSocket) return;
@@ -408,6 +434,9 @@ export function WorkspaceSocketProvider({
     let presenceRevision = 0;
     const pendingDirectoryRequests = new Map<string, PendingDirectoryRequest>();
     const pendingRailRequests = new Map<string, PendingRailRequest>();
+    const pendingSpaceRequests = new Map<string, PendingSpaceRequest>();
+    /** This connection's sidebar said `channelsBySpace`. */
+    let channelsBySpace = false;
     let railPrefetchRunning = false;
     let railPrefetchScheduled = false;
     let subscribed = false;
@@ -503,6 +532,29 @@ export function WorkspaceSocketProvider({
      * that is the round trip this payload exists to remove.
      */
     const applyConnectedSidebar = (sidebar: WorkspaceSidebar): boolean => {
+      channelsBySpace = sidebar.channelsBySpace === true;
+      if (channelsBySpace) {
+        applyVersionedSidebarList(
+          queryClient,
+          'automations',
+          sidebar.automations.waterline,
+          sidebar.automations.items.map(mapAutomationSummary),
+        );
+        if (sidebar.spaces) {
+          applyVersionedSpaceSnapshot(queryClient, sidebar.spaces, sidebar.ordering ?? [], sidebar.spacesReady ?? true);
+        }
+        directoryLive = true;
+        setSidebarConnect((current) => ({
+          generation: (current?.generation ?? 0) + 1,
+          nextCursor: null,
+          spacesLive: sidebar.spaces !== undefined,
+          channelsBySpace: true,
+        }));
+        // The payload carried Spaces and no Channels: the directory's own
+        // query walks them, and reconciles what it held against the walk.
+        void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
+        return false;
+      }
       const page = applyDirectoryPage(queryClient, sidebar.workstreams, localCacheScope);
       const returned = new Set(page.items.map((workstream) => workstream.id));
       const unaccountedFor = (queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [])
@@ -548,6 +600,7 @@ export function WorkspaceSocketProvider({
         generation: (current?.generation ?? 0) + 1,
         nextCursor: page.nextCursor,
         spacesLive: sidebar.spaces !== undefined,
+        channelsBySpace: false,
       }));
       return unaccountedFor && !wholeDirectory;
     };
@@ -569,7 +622,14 @@ export function WorkspaceSocketProvider({
       }
       pendingRailRequests.clear();
     };
-    const requestRails = (target: { spaceId: string; after?: string } | { workstreamIds: string[] }): Promise<RailAnswer> =>
+    const rejectPendingSpaceRequests = (error: Error): void => {
+      for (const entry of pendingSpaceRequests.values()) {
+        window.clearTimeout(entry.timeout);
+        entry.reject(error);
+      }
+      pendingSpaceRequests.clear();
+    };
+    const requestRails = (workstreamIds: string[]): Promise<Set<string>> =>
       new Promise((resolve, reject) => {
         if (!subscribed || socket?.readyState !== WebSocket.OPEN) {
           reject(new ApiError('The organization is not connected.', 409, 'workspace_socket_unavailable'));
@@ -581,26 +641,89 @@ export function WorkspaceSocketProvider({
           reject(new ApiError('Channel details could not be loaded.', 0, 'workspace_channel_rails_timeout'));
         }, COMMAND_TIMEOUT_MS);
         pendingRailRequests.set(requestId, { resolve, reject, timeout, named: new Set() });
-        const command = WorkspaceSocketClientEventSchema.parse({ type: 'channel_rails', requestId, ...target });
+        const command = WorkspaceSocketClientEventSchema.parse({ type: 'channel_rails', requestId, workstreamIds });
         socket.send(JSON.stringify(command));
       });
     // Settle only Channels no frame named: a named one was answered, and a
     // row that raised its waterline mid-request makes it stale again rather
     // than settled without its rail.
-    const runRailTarget = async (target: ChannelRailTarget): Promise<void> => {
-      if ('workstreamIds' in target) {
-        const { named } = await requestRails({ workstreamIds: target.workstreamIds });
-        settleUnanswered(queryClient, target.workstreamIds.filter((id) => !named.has(id)));
-        return;
+    const runRailTarget = async (workstreamIds: string[]): Promise<void> => {
+      const named = await requestRails(workstreamIds);
+      settleUnanswered(queryClient, workstreamIds.filter((id) => !named.has(id)));
+    };
+    const requestSpaceChannels = (
+      target: { spaceId: string; after?: string; rails: boolean },
+    ): Promise<WorkspaceSpaceChannelsEvent> =>
+      new Promise((resolve, reject) => {
+        if (!subscribed || socket?.readyState !== WebSocket.OPEN) {
+          reject(new ApiError('The organization is not connected.', 409, 'workspace_socket_unavailable'));
+          return;
+        }
+        const requestId = uuidV7();
+        const timeout = window.setTimeout(() => {
+          pendingSpaceRequests.delete(requestId);
+          reject(new ApiError(
+            'The channel directory could not be loaded. Try again.',
+            0,
+            'workspace_space_channels_timeout',
+          ));
+        }, COMMAND_TIMEOUT_MS);
+        pendingSpaceRequests.set(requestId, { resolve, reject, timeout });
+        const command = WorkspaceSocketClientEventSchema.parse({ type: 'space_channels', requestId, ...target });
+        socket.send(JSON.stringify(command));
+      });
+    /**
+     * The next Space to walk, chosen after each one rather than up front, so
+     * a Space the reader opens mid-walk is the next one asked for.
+     */
+    const nextSpaceToWalk = (walked: ReadonlySet<string>): string | null => {
+      const foreground = foregroundWorkstreamIdRef.current;
+      const order = [
+        prioritySpaceIdRef.current,
+        ...(foreground === null ? [] : queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)
+          ?.find((row) => row.id === foreground)?.spaceIds ?? []),
+        ...(queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY)?.items ?? []).map((space) => space.id),
+        ...(queryClient.getQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY)?.items ?? []).map((space) => space.id),
+      ];
+      return order.find((spaceId): spaceId is string => spaceId !== null && !walked.has(spaceId)) ?? null;
+    };
+    walkSpaceChannelsRef.current = async (signal) => {
+      if (!channelsBySpace) return null;
+      const returned = new Set<string>();
+      const walked = new Set<string>();
+      for (let spaceId = nextSpaceToWalk(walked); spaceId !== null && !stopped; spaceId = nextSpaceToWalk(walked)) {
+        walked.add(spaceId);
+        const held = (queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [])
+          .filter((row) => !row.pending && row.spaceIds.includes(spaceId!));
+        // Rails ride along unless every Channel held here has one already;
+        // then the rows' waterlines say which moved, and those are asked for
+        // by name.
+        const rails = held.length === 0 || held.some((row) => !holdsChannelRail(queryClient, row.id));
+        let after: string | null = null;
+        do {
+          // A newer walk replaced this one: stop rather than ask twice.
+          signal?.throwIfAborted();
+          const answer: WorkspaceSpaceChannelsEvent = await requestSpaceChannels({ spaceId, ...(after ? { after } : {}), rails });
+          const page = applyDirectoryPage(queryClient, { ...answer, nextCursor: null }, localCacheScope);
+          mergeCachedWorkstreamPage(queryClient, page.items);
+          applyChannelRails(queryClient, { rails: answer.rails, oversized: [], unavailable: [] });
+          for (const item of answer.items) returned.add(item.id);
+          after = answer.nextAfter;
+        } while (after !== null && !stopped);
+        const loaded = spaceId;
+        setLoadedSpaceIds((current) => current.has(loaded) ? current : new Set([...current, loaded]));
+        scheduleRailPrefetch();
       }
-      const named = new Set<string>();
-      let after: string | null = null;
-      do {
-        const answer: RailAnswer = await requestRails({ spaceId: target.spaceId, ...(after ? { after } : {}) });
-        for (const id of answer.named) named.add(id);
-        after = answer.nextAfter;
-      } while (after !== null && !stopped);
-      settleUnanswered(queryClient, target.expected.filter((id) => !named.has(id)));
+      // A finished walk is the whole directory, so it can bound the
+      // conversation cache the way a whole connect page does.
+      if (!stopped && localCacheScope !== null) {
+        void retainConversationParents(localCacheScope, new Set([
+          ...returned,
+          ...(queryClient.getQueryData<{ id: string }[]>(SIDEBAR_LIST_QUERY_KEYS.automations) ?? [])
+            .map((automation) => automation.id),
+        ]));
+      }
+      return returned;
     };
     /**
      * One request in flight at a time, until every rail a row has said is
@@ -639,7 +762,7 @@ export function WorkspaceSocketProvider({
     refreshChannelRailsRef.current = async (workstreamIds) => {
       const served = workstreamIds.filter((id) => hasRailWaterline(queryClient, id)).slice(0, CHANNEL_RAILS_NAMED_LIMIT);
       if (served.length === 0) return;
-      await requestRails({ workstreamIds: served });
+      await requestRails(served);
     };
     const scheduleReconnect = (): void => {
       if (stopped || permanentlyClosed || reconnectTimer !== null) return;
@@ -698,6 +821,10 @@ export function WorkspaceSocketProvider({
           // response (or a later Space push) establishes current authority.
           setSidebarConnect((current) => current ? { ...current, spacesLive: false } : current);
           setState('connected');
+          // Ahead of `subscribe`, so the sidebar it answers with carries
+          // Spaces and no Channel rows. A server that predates it ignores it
+          // and sends the directory's first page as before.
+          next.send(JSON.stringify(WorkspaceSocketClientEventSchema.parse({ type: 'channels_by_space' })));
           next.send(JSON.stringify({
             type: 'subscribe',
             afterWaterline: Math.max(0, lastWaterline),
@@ -815,8 +942,17 @@ export function WorkspaceSocketProvider({
             if (entry && channelRails.data.final) {
               pendingRailRequests.delete(channelRails.data.requestId);
               window.clearTimeout(entry.timeout);
-              entry.resolve({ nextAfter: channelRails.data.nextAfter, named: entry.named });
+              entry.resolve(entry.named);
             }
+            return;
+          }
+          const spaceChannels = safeParseSocketEvent(WorkspaceSpaceChannelsEventSchema, decoded);
+          if (spaceChannels.success) {
+            const entry = pendingSpaceRequests.get(spaceChannels.data.requestId);
+            if (!entry) return;
+            pendingSpaceRequests.delete(spaceChannels.data.requestId);
+            window.clearTimeout(entry.timeout);
+            entry.resolve(spaceChannels.data);
             return;
           }
           const workstreamPage = safeParseSocketEvent(WorkspaceWorkstreamPageEventSchema, decoded);
@@ -987,6 +1123,7 @@ export function WorkspaceSocketProvider({
               ['workspace_workstream_recency', 'channel recency', recency],
               ['workspace_workstream_page', 'channel page', workstreamPage],
               ['workspace_channel_rails', 'channel rails', channelRails],
+              ['workspace_space_channels', 'space channels', spaceChannels],
               ['workspace_workstream_state', 'channel state', workstreamState],
               ['workspace_sidebar_list', 'sidebar list', sidebarList],
               ['workspace_space_snapshot', 'space snapshot', spaceSnapshot],
@@ -1002,6 +1139,7 @@ export function WorkspaceSocketProvider({
           socket = null;
           setPresenceUserIdsByWorkstream({});
           rejectPendingRailRequests(new ApiError('The organization connection closed.', 0, 'workspace_socket_closed'));
+          rejectPendingSpaceRequests(new ApiError('The organization connection closed.', 0, 'workspace_socket_closed'));
           const accessRevoked = event.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE;
           const permanentError = accessRevoked
             ? new ApiError(
@@ -1111,6 +1249,11 @@ export function WorkspaceSocketProvider({
         'workspace_directory_offline',
       ));
       rejectPendingRailRequests(new ApiError('Channel details cannot be loaded while offline.', 0, 'workspace_directory_offline'));
+      rejectPendingSpaceRequests(new ApiError(
+        'The channel directory cannot be loaded while offline.',
+        0,
+        'workspace_directory_offline',
+      ));
       socket?.close();
     };
     window.addEventListener('online', online);
@@ -1138,6 +1281,8 @@ export function WorkspaceSocketProvider({
         'workspace_socket_closed',
       ));
       rejectPendingRailRequests(new ApiError('The organization closed.', 409, 'workspace_socket_closed'));
+      rejectPendingSpaceRequests(new ApiError('The organization closed.', 409, 'workspace_socket_closed'));
+      walkSpaceChannelsRef.current = () => Promise.resolve(null);
       scheduleRailPrefetchRef.current = () => undefined;
       refreshChannelRailsRef.current = () => Promise.reject(new ApiError('The organization closed.', 409, 'workspace_socket_closed'));
       window.removeEventListener('online', online);
@@ -1245,6 +1390,13 @@ export function WorkspaceSocketProvider({
     (workstreamIds: readonly string[]): Promise<void> => refreshChannelRailsRef.current(workstreamIds),
     [],
   );
+  const walkSpaceChannels = useCallback(
+    (signal?: AbortSignal): Promise<Set<string> | null> => walkSpaceChannelsRef.current(signal),
+    [],
+  );
+  const prioritizeSpace = useCallback((spaceId: string | null): void => {
+    prioritySpaceIdRef.current = spaceId;
+  }, []);
   const exposedState: WorkspaceSocketState = ownSocket ? state : relayedState;
   const value = useMemo(
     () => ({
@@ -1254,11 +1406,17 @@ export function WorkspaceSocketProvider({
       setForegroundWorkstreamId,
       listWorkstreams,
       sidebarConnect,
+      walkSpaceChannels,
+      prioritizeSpace,
+      loadedSpaceIds,
       reconnect,
       refreshChannelRails,
     }),
     [
       listWorkstreams,
+      loadedSpaceIds,
+      prioritizeSpace,
+      walkSpaceChannels,
       refreshChannelRails,
       presenceUserIdsByWorkstream,
       reconnect,
