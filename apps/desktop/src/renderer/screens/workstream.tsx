@@ -599,7 +599,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       mainVisible={!conversationScoped || selectedSubstreamId === '0'}
       onSidekickMenuOpen={context?.loadSidekickOptions}
       onRefreshSidekicks={context?.refreshSidekicks}
-      addSidekick={context && <SidekickPicker workstreamId={id} substreamId={selectedSubstreamId} />}
+      addSidekick={(context || railSidekicks) && <SidekickPicker workstreamId={id} substreamId={selectedSubstreamId} />}
       sidekicks={context ? context.sidekicks : railSidekicks}
       sidekickFailure={context?.sidekickFailure}
       participantsPending={context === undefined && railParticipants === undefined}
