@@ -2,7 +2,7 @@ import { publishAccessRevocation } from "../services/access-revocation";
 import type { Region } from "@rally/contracts/regions";
 import { ConnectorMaintenanceQueueSchema, runConnectorMaintenance } from "../services/connector-maintenance-service";
 import { ConnectorInstallationQueueSchema, runConnectorInstallation } from "../services/connector-installation-service";
-import { SearchAuthorizationPushJobSchema, pushSearchAuthorization } from '../services/search-authorization';
+import { SearchAuthorizationPushJobSchema } from '../services/search-authorization';
 import { SearchDocumentJobSchema, publishSearchIndexingJobs, SearchEmbeddingBatchSchema, type SearchSourceReference } from '../services/search-indexing-jobs';
 import { embedSearchDocuments } from '../services/search-embedding';
 import { workspaceSearchIndex, searchChunkIdentity } from '../services/text-search';
@@ -240,8 +240,10 @@ async function consumeOne(message: Message<unknown>, env: Env,
   indexSearch: ReturnType<typeof createSearchIndexingPipeline>): Promise<void> {
   const searchAuthorizationJob = SearchAuthorizationPushJobSchema.safeParse(message.body);
   if (searchAuthorizationJob.success) {
-    try { await pushSearchAuthorization(env, searchAuthorizationJob.data, message.attempts); message.ack(); }
-    catch { message.retry(); } // The push logs its outcome; isolate failure to this message.
+    // Search no longer reads this store (phase 3 of
+    // docs/PRDs/2026-09-26_search-audience-filtering); a push still in the
+    // Queue from before the deploy is dropped rather than written.
+    message.ack();
     return;
   }
   const authorizationJob = AuthorizationProjectionJobSchema.safeParse(message.body);

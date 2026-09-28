@@ -3,9 +3,7 @@ import { env } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { asSubstreamId, asUserId, asWorkspaceId } from '@rally/contracts';
-import { createCloudflareTestBinding } from '../test/helpers/cloudflare-test';
 import { workspaceDOName } from '../src/durable-objects/names';
-import { flushSearchAuthorizationPush } from '../src/durable-objects/search-authorization-projection';
 import { AuthorizationService } from '../src/services/authorization-service';
 import { pushSearchAuthorization } from '../src/services/search-authorization';
 import type { AuthorizationResource } from '../src/services/authorization-policy';
@@ -144,16 +142,12 @@ describe('search projection universe', () => {
       .toHaveLength(2);
   });
 
-  it('projects a membership change for the member it names', async () => {
+  it('records a membership change for the member it names', async () => {
     const stub = await seededWorkspace('search-universe-membership');
     await runInDurableObject(stub, async (instance, state) => {
       await instance.publishSync(['member_directory'], WORKSPACE_ID, 'wnam', { memberUserIds: [MEMBER] });
       expect(state.storage.sql.exec("SELECT target_id FROM search_authorization_push WHERE kind = 'member'").toArray())
         .toEqual([{ target_id: MEMBER }]);
-      const jobs: unknown[] = [];
-      const queue = createCloudflareTestBinding<Queue>({ sendBatch: async (messages) => { jobs.push(...Array.from(messages, (message) => message.body)); } });
-      await flushSearchAuthorizationPush(state.storage.sql, { ...env, ACTIVITY_QUEUE: queue }, WORKSPACE_ID);
-      expect(jobs).toContainEqual(expect.objectContaining({ target: { kind: 'member', id: MEMBER } }));
     });
   });
 });

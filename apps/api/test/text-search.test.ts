@@ -12,6 +12,9 @@ import { createTestEnv } from "./helpers/cloudflare-test";
 import { indexSemanticBatch, searchEmbeddingJobs } from "../src/services/search-indexing-pipeline";
 import { literalSubstringPattern, searchContentHash, TextSearchIndex, TextSearchModeSchema, workspaceSearchIndex } from "../src/services/text-search";
 
+/** A searcher's groups; the query carries them, and the provider double decides nothing from them. */
+const AUDIENCE = ["00000000-0000-8000-8000-000000000001"];
+
 // Turbopuffer is an external service. Its query semantics are checked separately
 // with a disposable live namespace; these tests prove our authority boundary.
 describe("text search authority boundary", () => {
@@ -22,7 +25,7 @@ describe("text search authority boundary", () => {
   });
 
   it("does not query without an authorized source", async () => {
-    expect(await index.query([], { query: "secret", mode: "text", limit: 10 })).toEqual([]);
+    expect(await index.query([], { query: "secret", mode: "text", limit: 10, audience: AUDIENCE })).toEqual([]);
     expect(provider.query).not.toHaveBeenCalled();
   });
 
@@ -35,7 +38,7 @@ describe("text search authority boundary", () => {
     ] });
     const load = vi.fn(async () => new Map([["allowed", "canonical text"]]));
     expect(await index.query([{ source: "memory", scopeIds: ["personal"], load }], {
-      query: "text", mode: "text", limit: 10,
+      query: "text", mode: "text", limit: 10, audience: AUDIENCE,
     })).toEqual(["canonical text"]);
     expect(load).toHaveBeenCalledWith([valid]);
   });
@@ -46,7 +49,7 @@ describe("text search authority boundary", () => {
     ] });
     expect(await index.query([{
       source: "message", scopeIds: ["room"], load: async () => new Map(),
-    }], { query: "text", mode: "text", limit: 10 })).toEqual([]);
+    }], { query: "text", mode: "text", limit: 10, audience: AUDIENCE })).toEqual([]);
   });
 
   it("does not refill nonpaginated requests behind the caller", async () => {
@@ -55,7 +58,7 @@ describe("text search authority boundary", () => {
       .mockResolvedValueOnce({ rows: [{ ...row, id: "c" }, { ...row, id: "d" }] });
     const result = await index.query([{ source: "message", scopeIds: ["room"], load: async (candidates) =>
       new Map(candidates.filter((candidate) => candidate.id >= "c").map((candidate) => [candidate.id, candidate.id])),
-    }], { query: "needle", mode: "substring", limit: 2 });
+    }], { query: "needle", mode: "substring", limit: 2, audience: AUDIENCE });
     expect(result).toEqual([]);
     expect(provider.query).toHaveBeenCalledTimes(1);
   });
@@ -67,7 +70,7 @@ describe("text search authority boundary", () => {
   it("requires an embedding for semantic retrieval", async () => {
     await expect(index.query([{
       source: "message", scopeIds: ["room"], load: async () => new Map(),
-    }], { query: "text", mode: "semantic", limit: 10 })).rejects.toThrow("search_embedding_required");
+    }], { query: "text", mode: "semantic", limit: 10, audience: AUDIENCE })).rejects.toThrow("search_embedding_required");
     expect(provider.query).not.toHaveBeenCalled();
   });
 
@@ -75,10 +78,10 @@ describe("text search authority boundary", () => {
     const missing = Object.assign(new Error('attribute "generation" not found in schema'), { status: 400 });
     provider.query.mockRejectedValueOnce(missing).mockResolvedValueOnce({ rows: [] });
     const sources = [{ source: "note", scopeIds: ["private"], load: async () => new Map() }];
-    expect(await index.query(sources, { query: "topic", mode: "semantic", limit: 10, vector: [1, 0] })).toEqual([]);
+    expect(await index.query(sources, { query: "topic", mode: "semantic", limit: 10, audience: AUDIENCE, vector: [1, 0] })).toEqual([]);
     expect(provider.query.mock.calls[1]![0].include_attributes).not.toContain("generation");
     provider.query.mockRejectedValueOnce(Object.assign(new Error("unrelated bad request"), { status: 400 }));
-    await expect(index.query(sources, { query: "topic", mode: "semantic", limit: 10, vector: [1, 0] }))
+    await expect(index.query(sources, { query: "topic", mode: "semantic", limit: 10, audience: AUDIENCE, vector: [1, 0] }))
       .rejects.toThrow("search_index_query_failed");
     expect(provider.query).toHaveBeenCalledTimes(3);
   });
@@ -86,20 +89,20 @@ describe("text search authority boundary", () => {
   it("keeps archived and pre-rewrite rows from consuming a member candidate page", async () => {
     provider.query.mockResolvedValueOnce({ rows: [] });
     const sources = [{ source: "messages", scopeIds: ["room"], load: async () => new Map() }];
-    await index.queryPage(sources, { query: "needle", mode: "substring", limit: 7 });
+    await index.queryPage(sources, { query: "needle", mode: "substring", limit: 7, audience: AUDIENCE });
     expect(provider.query.mock.calls[0]![0].filters[1][0][1]).toContainEqual(["archived", "Eq", false]);
     // Semantic chunks carry no display and no `archived` attribute.
     provider.query.mockResolvedValueOnce({ rows: [] });
-    await index.query(sources, { query: "needle", mode: "semantic", limit: 7, vector: [1, 0] });
+    await index.query(sources, { query: "needle", mode: "semantic", limit: 7, audience: AUDIENCE, vector: [1, 0] });
     expect(JSON.stringify(provider.query.mock.calls[1]![0].filters)).not.toContain('"archived"');
     // A namespace written only before the display attributes shipped has nothing renderable.
     // Both provider refusals were observed live against an old-schema namespace.
     provider.query.mockRejectedValueOnce(Object.assign(new Error('400 {"error":"filter error in key `archived`: attribute not found"}'), { status: 400 }));
-    expect(await index.queryPage(sources, { query: "needle", mode: "substring", limit: 7 })).toEqual({ results: [], nextCursor: null });
+    expect(await index.queryPage(sources, { query: "needle", mode: "substring", limit: 7, audience: AUDIENCE })).toEqual({ results: [], nextCursor: null });
     provider.query.mockRejectedValueOnce(Object.assign(new Error('400 {"error":"attribute \u0022title\u0022 not found in schema, cannot be part of `include_attributes`"}'), { status: 400 }));
-    expect(await index.queryPage(sources, { query: "needle", mode: "substring", limit: 7 })).toEqual({ results: [], nextCursor: null });
+    expect(await index.queryPage(sources, { query: "needle", mode: "substring", limit: 7, audience: AUDIENCE })).toEqual({ results: [], nextCursor: null });
     provider.query.mockRejectedValueOnce(Object.assign(new Error("unrelated bad request"), { status: 400 }));
-    await expect(index.queryPage(sources, { query: "needle", mode: "substring", limit: 7 })).rejects.toThrow("search_index_query_failed");
+    await expect(index.queryPage(sources, { query: "needle", mode: "substring", limit: 7, audience: AUDIENCE })).rejects.toThrow("search_index_query_failed");
     expect(provider.query).toHaveBeenCalledTimes(5);
   });
 
@@ -108,10 +111,10 @@ describe("text search authority boundary", () => {
     provider.query.mockResolvedValueOnce({ rows: [row] }).mockResolvedValueOnce({ rows: [] });
     const load = vi.fn(async () => new Map<string, string>());
     const sources = [{ source: "messages", scopeIds: ["room"], load }];
-    const first = await index.queryPage(sources, { query: "needle", mode: "substring", limit: 1 });
+    const first = await index.queryPage(sources, { query: "needle", mode: "substring", limit: 1, audience: AUDIENCE });
     expect(first).toEqual({ results: [], nextCursor: "first" });
     expect(provider.query).toHaveBeenCalledTimes(1);
-    expect(await index.queryPage(sources, { query: "needle", mode: "substring", limit: 1 }, first.nextCursor!))
+    expect(await index.queryPage(sources, { query: "needle", mode: "substring", limit: 1, audience: AUDIENCE }, first.nextCursor!))
       .toEqual({ results: [], nextCursor: null });
     expect(provider.query).toHaveBeenCalledTimes(2);
     expect(provider.query.mock.calls[1]?.[0].filters[1]).toContainEqual(["id", "Gt", "first"]);
@@ -121,7 +124,7 @@ describe("text search authority boundary", () => {
     const rows = ['authorized', 'private'].map((id) => ({ id, source: 'messages', source_id: '0/turn', scope_id: 'room', revision: 1 }));
     provider.query.mockResolvedValueOnce({ rows });
     const sources = [{ source: 'messages', scopeIds: ['room'], load: async () => new Map([['authorized', 'visible']]) }];
-    expect(await index.queryPage(sources, { query: 'needle', mode: 'substring', limit: 2 }))
+    expect(await index.queryPage(sources, { query: 'needle', mode: 'substring', limit: 2, audience: AUDIENCE }))
       .toEqual({ results: ['visible'], nextCursor: 'private' });
   });
 
@@ -241,9 +244,9 @@ describe("semantic indexing", () => {
   it("issues only ANN for semantic search and only BM25 for full-text search", async () => {
     provider.query.mockResolvedValue({ rows: [] });
     const sources = [{ source: "note", scopeIds: ["private"], load: async () => new Map() }];
-    await index.query(sources, { query: "topic", mode: "semantic", limit: 10, vector: [1, 0] });
+    await index.query(sources, { query: "topic", mode: "semantic", limit: 10, audience: AUDIENCE, vector: [1, 0] });
     expect(provider.query).toHaveBeenLastCalledWith(expect.objectContaining({ rank_by: ["vector", "ANN", [1, 0]] }));
-    await index.query(sources, { query: "topic", mode: "text", limit: 10 });
+    await index.query(sources, { query: "topic", mode: "text", limit: 10, audience: AUDIENCE });
     expect(provider.query).toHaveBeenLastCalledWith(expect.objectContaining({ rank_by: ["text", "BM25", "topic"] }));
     expect(provider.query).toHaveBeenCalledTimes(2);
   });
@@ -286,13 +289,13 @@ describe("index-served display", () => {
     await index.upsert([{ id: "t", source: "files", sourceId: "r", scopeId: "ws", revision: 1, text: "" }]);
     expect(provider.write.mock.calls[1]![0].upsert_rows[0]).toMatchObject({ substream_id: null, title: null, archived: null });
     provider.query.mockResolvedValue({ rows: [] });
-    await index.queryPage([{ source: "messages", scopeIds: null, load: async () => new Map() }], { query: "needle", mode: "substring", limit: 7 });
+    await index.queryPage([{ source: "messages", scopeIds: null, load: async () => new Map() }], { query: "needle", mode: "substring", limit: 7, audience: AUDIENCE });
     await index.upsert([{ id: "c", source: "files", sourceId: "r2", scopeId: "ws", connectionId: "conn", revision: 1, text: "synced" }]);
     expect(provider.write.mock.calls[2]![0].upsert_rows[0]).toMatchObject({ connection_id: "conn" });
     expect(provider.query.mock.calls[0]![0].include_attributes).toEqual(expect.arrayContaining([
       "text", "title", "source_label", "archived", "occurred_at", "transcript_sequence", "url", "mime_type", "substream_id", "connection_id"]));
     // Chunks carry no display, and a semantic namespace's schema never gains one.
-    await index.query([{ source: "note", scopeIds: ["private"], load: async () => new Map() }], { query: "needle", mode: "semantic", limit: 7, vector: [1, 0] });
+    await index.query([{ source: "note", scopeIds: ["private"], load: async () => new Map() }], { query: "needle", mode: "semantic", limit: 7, audience: AUDIENCE, vector: [1, 0] });
     expect(provider.query.mock.calls[1]![0].include_attributes).toEqual(["source", "source_id", "scope_id", "revision", "chunk_start", "chunk_end", "generation"]);
   });
 

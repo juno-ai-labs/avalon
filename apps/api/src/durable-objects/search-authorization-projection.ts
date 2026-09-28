@@ -1,5 +1,3 @@
-import type { Env } from '../env';
-import { logInfo, logWarn } from '../observability/logger';
 
 const changedColumns: Record<string, string[]> = {
   resources: ['provider', 'resource_type', 'uploaded_by_user_id', 'attachment_status', 'connection_id'],
@@ -41,30 +39,3 @@ export const SEARCH_AUTHORIZATION_PUSH_MIGRATION = [
        first_mutated_at = COALESCE(first_mutated_at, excluded.first_mutated_at); END`;
   })),
 ];
-
-export function nextSearchAuthorizationPush(sql: SqlStorage): number | null {
-  return sql.exec<{ due: number | null }>('SELECT MIN(not_before) AS due FROM search_authorization_push').one().due;
-}
-
-export async function flushSearchAuthorizationPush(sql: SqlStorage, env: Env, workspaceId: string) {
-  // Queue sendBatch accepts at most 100 messages; remaining intents stay durable.
-  const rows = sql.exec<{ kind: string; target_id: string; revision: number; first_mutated_at: number | null; timing_origin: string }>(
-    'SELECT kind, target_id, revision, first_mutated_at, timing_origin FROM search_authorization_push WHERE not_before <= ? LIMIT 100', Date.now()).toArray();
-  if (!rows.length) return;
-  const enqueuedAt = Date.now();
-  try {
-    await env.ACTIVITY_QUEUE.sendBatch(rows.map((row) => ({ body: { type: 'search_authorization_push_v1',
-      region: env.AVALON_REGION, workspaceId, target: { kind: row.kind, id: row.target_id }, ...(row.first_mutated_at === null ? {} : { timing: { mutationAt: row.first_mutated_at, origin: row.timing_origin, enqueuedAt } }) } })));
-    for (const row of rows) logInfo(env, 'authz_push_enqueued', { workspace_id: workspaceId, target_kind: row.kind, target_id: row.target_id,
-      mutation_at: row.first_mutated_at, enqueued_at: enqueuedAt, outbox_ms: row.first_mutated_at === null ? null : enqueuedAt - row.first_mutated_at });
-    for (const row of rows) sql.exec('DELETE FROM search_authorization_push WHERE kind = ? AND target_id = ? AND revision = ?',
-      row.kind, row.target_id, row.revision);
-  } catch (error) {
-    logWarn(env, 'authz_push_enqueue_failed', { workspace_id: workspaceId, pending_targets: rows.length,
-      oldest_pending_ms: rows.some((row) => row.first_mutated_at !== null) ? Date.now() - Math.min(...rows.flatMap((row) => row.first_mutated_at === null ? [] : [row.first_mutated_at])) : null });
-    // Existing authorization outbox transport retry; this never expires a decision.
-    for (const row of rows) sql.exec('UPDATE search_authorization_push SET not_before = ? WHERE kind = ? AND target_id = ?',
-      Date.now() + 5_000, row.kind, row.target_id);
-    throw error;
-  }
-}

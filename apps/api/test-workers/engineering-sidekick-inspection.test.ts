@@ -154,6 +154,28 @@ describe("engineering inspection of a Sidekick's own object", () => {
     });
   });
 
+  it("reaches a Sidekick's run conversation through its own registry, and nothing it has not registered", async () => {
+    await createSidekick();
+    const runId = asSubstreamId("00000000-0000-7000-8000-00000000ef16");
+    await sidekickStub(SIDEKICK_ID).reserveChild({
+      workspaceId: WORKSPACE_ID, parentId: SIDEKICK_ID, substreamId: runId, kind: "child",
+      createdByUserId: AUTHOR_ID, authorityGeneration: 1,
+    });
+    const inspection = bridge();
+    const query = { sql: "SELECT 1 AS one", bindings: [] };
+
+    expect(await inspection.runSubstreamSql({
+      workspaceId: WORKSPACE_ID, workstreamId: SIDEKICK_ID, substreamId: runId, authorityGeneration: 1, query,
+    })).toMatchObject({ found: true, value: { workstreamId: SIDEKICK_ID, substreamId: runId, result: { rows: [{ one: 1 }] } } });
+    expect(await inspection.runSubstreamSql({
+      workspaceId: WORKSPACE_ID, workstreamId: SIDEKICK_ID, substreamId: "00000000-0000-7000-8000-00000000ef17", authorityGeneration: 1, query,
+    })).toEqual({ found: false });
+    // A room's unregistered conversation is not looked up as a Sidekick's.
+    expect(await inspection.runSubstreamSql({
+      workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, substreamId: runId, authorityGeneration: 1, query,
+    })).toEqual({ found: false });
+  });
+
   it("refuses a work stream that holds an active route but no directory row", async () => {
     await createSidekick();
     const inspection = bridge();
