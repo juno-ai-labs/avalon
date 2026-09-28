@@ -1,8 +1,5 @@
-import { applyWorkspaceRelationshipChange } from '../src/queues/access-revocation-consumer';
-import { WorkspaceRelationshipChangeMessageSchema } from '../src/services/workspace-relationship-delivery';
 import { WorkspaceService } from '../src/services/workspace-service';
 import { readFileSync } from 'node:fs';
-import { pushSearchAuthorization } from '../src/services/search-authorization';
 import { asAutomationId, asHarnessRunId, asSubstreamId, asUserId, asWorkstreamId } from "@rally/contracts";
 import { asWorkspaceId } from "@rally/contracts";
 import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
@@ -624,28 +621,17 @@ describe("scoped agent memory", () => {
     });
   });
 
-  it('publishes membership removal to projected memory grants', async () => {
+  it('stops recalling a removed member\'s memory on their next search, storing no decision', async () => {
     const { objectDatabase, env } = fixture();
     const runInput = input('member');
     await memoryTool(env, runInput, 'add').execute(
       { scopeKind: 'user', text: 'Projected crimson memory', rationale: 'Recall fixture' },
       toolContext(runInput, 'projected-add'));
     expect((await memorySearch(env, runInput, 'crimson')).results).toHaveLength(1);
-    objectDatabase.exec('DELETE FROM search_authorization_push');
-    const sent = vi.spyOn(env.ACCESS_REVOCATION_QUEUE, 'send');
+    // Each search checks the run canonically; no key per run is kept.
+    expect(objectDatabase.prepare('SELECT COUNT(*) AS n FROM search_authorization_keys').get()).toEqual({ n: 0 });
     await new WorkspaceService(env, { sessionId: 'test', userId: OWNER_ID, workspaceId: WORKSPACE_ID,
       region: 'global', role: 'owner' }).removeMember(MEMBER_ID);
-    expect((await memorySearch(env, runInput, 'crimson')).results).toHaveLength(1);
-    // Membership publication now crosses the durable delivery queue. Consume
-    // the real producer's messages before inspecting its projection work.
-    expect(sent).toHaveBeenCalled();
-    for (const [body] of [...sent.mock.calls]) {
-      await applyWorkspaceRelationshipChange(env, WorkspaceRelationshipChangeMessageSchema.parse(body));
-    }
-    const jobs = objectDatabase.prepare('SELECT kind, target_id FROM search_authorization_push').all();
-    expect(jobs.length).toBeGreaterThan(0);
-    for (const job of jobs) await pushSearchAuthorization(env, { type: 'search_authorization_push_v1', region: 'global',
-      workspaceId: WORKSPACE_ID, target: { kind: 'resource', id: String(job.target_id) } });
     expect((await memorySearch(env, runInput, 'crimson')).results).toEqual([]);
   });
 

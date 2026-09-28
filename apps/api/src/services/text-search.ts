@@ -152,6 +152,12 @@ export interface TextSearchOptions {
   mode: TextSearchMode;
   limit: number;
   vector?: number[];
+  /**
+   * The searcher's audience group UUIDs (`readSearchAudience`). Given, a row is
+   * a candidate only when its `audience` shares one of them, and an empty list
+   * returns nothing. See docs/PRDs/2026-09-26_search-audience-filtering.
+   */
+  audience?: readonly string[];
   signal?: AbortSignal;
   onTiming?: (phase: "retrieval" | "hydration", durationMs: number) => void;
 }
@@ -359,7 +365,7 @@ export class TextSearchIndex {
   private async readPage<T>(sources: readonly AuthorizedSearchSource<T>[], options: TextSearchOptions,
     cursor?: string): Promise<{ results: T[]; nextCursor: string | null }> {
     const authorized = sources.filter((source) => source.scopeIds === null || source.scopeIds.length > 0);
-    if (authorized.length === 0) return { results: [], nextCursor: null };
+    if (authorized.length === 0 || options.audience?.length === 0) return { results: [], nextCursor: null };
     const filters: Filter = ["And", [["deleted", "Eq", false],
       ["record_type", "Eq", options.mode === "semantic" ? "chunk" : "document"],
       // Member search renders from the row, and an archived row or one written
@@ -367,6 +373,9 @@ export class TextSearchIndex {
       // here keeps them from consuming the candidate page; a null `archived`
       // does not match `Eq false`, so pre-rewrite rows are excluded too.
       ...(options.mode === "substring" ? [["archived", "Eq", false] as Filter] : []),
+      // Retrieve only rows the searcher may read. A row with no audience, or
+      // written before the attribute existed, never matches.
+      ...(options.audience ? [["audience", "ContainsAny", [...options.audience]] as Filter] : []),
       ["Or", authorized.map((source): Filter => ["And", [
       ["source", "Eq", source.source],
       ...(source.scopeIds === null ? [] : [["scope_id", "In", [...source.scopeIds]] as Filter]),

@@ -97,6 +97,11 @@ export const AutomationDirectoryEffectSchema = z.strictObject({
   appearance: WorkstreamAppearanceSchema.optional(),
   automationId: IdSchema,
   authorUserId: IdSchema,
+  /**
+   * Who the Sidekick runs as, which search's person side needs beside the
+   * author. Optional because effects queued before it existed lack it.
+   */
+  runAsUserId: IdSchema.optional(),
   lifecycle: z.enum(["draft", "active", "paused", "deleted"]),
   scope: z.enum(["personal", "workspace", "workstream"]),
   owningWorkstreamId: IdSchema.nullable(),

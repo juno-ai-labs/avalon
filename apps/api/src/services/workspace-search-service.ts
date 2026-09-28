@@ -1,8 +1,8 @@
-import { createSearchAccessContext, type DeferredWork } from './search-authorization';
+import { authorizationWorkspace } from './authorization-service';
 import { logInfo } from '../observability/logger';
 import type { SearchRequest, SearchResult } from '@rally/contracts/search';
 import type { AuthContext, Env } from '../env';
-import { IdSchema, SubstreamIdSchema, asSubstreamId } from '@rally/contracts';
+import { IdSchema, SubstreamIdSchema } from '@rally/contracts';
 import { HttpUrlSchema } from '@rally/contracts/url-schemas';
 import { workspaceSearchIndex, type TextSearchCandidate, type AuthorizedSearchSource } from './text-search';
 import { literalMatchRanges, matchingPassage } from './search-passages';
@@ -14,32 +14,24 @@ const PREVIEW_CONTEXT_CHARACTERS = 60;
 
 interface ConversationGroup { parentId: string; substreamId: string; candidates: TextSearchCandidate[] }
 
-export async function searchWorkspace(env: Env, auth: AuthContext, request: SearchRequest, signal?: AbortSignal,
-  defer?: DeferredWork): Promise<SearchResult[]> {
-  return (await searchWorkspacePage(env, auth, request, signal, defer)).results;
+export async function searchWorkspace(env: Env, auth: AuthContext, request: SearchRequest, signal?: AbortSignal): Promise<SearchResult[]> {
+  return (await searchWorkspacePage(env, auth, request, signal)).results;
 }
 
 /**
- * One candidate page, admitted through the projected search decisions and
- * rendered from the index's own attributes. Nothing here reads a content
- * owner (SubstreamAgent) or R2; admission reads KV in Global and
- * the WorkspaceDO snapshot table in regional, one warm object. The projection is
- * registered from the mutation side, so a decision exists before the search
- * that needs it; one the projection still lacks is omitted and filled after
- * the response (`defer`), and a row indexed before the display attributes
- * existed is omitted until its queued rewrite lands. Not finding something is
- * the safe failure; the page never reports which candidates it left out.
+ * One candidate page of rows the searcher may read, rendered from the index's
+ * own attributes. The searcher's audience groups are read once from the
+ * WorkspaceDO (`readSearchAudience`), and the index returns only rows whose
+ * `audience` shares one, so nothing here admits candidates one by one and
+ * nothing reads a content owner (SubstreamAgent) or R2. A failed group read
+ * fails the search; it never returns an unfiltered page. Not finding something
+ * is the safe failure; the page never reports which rows it left out.
  */
-export async function searchWorkspacePage(env: Env, auth: AuthContext, request: SearchRequest, signal?: AbortSignal,
-  defer?: DeferredWork) {
+export async function searchWorkspacePage(env: Env, auth: AuthContext, request: SearchRequest, signal?: AbortSignal) {
   signal?.throwIfAborted();
   const started = performance.now();
-  const access = createSearchAccessContext(env, auth, defer);
-  const readableGroups = async (groups: ConversationGroup[]) => {
-    const decisions = await access.checkMany(groups.map((group) => ({ kind: 'conversation' as const,
-      workspaceId: auth.workspaceId, parentId: IdSchema.parse(group.parentId), substreamId: asSubstreamId(group.substreamId) })));
-    return groups.filter((_, index) => decisions[index]!.status === 'allowed');
-  };
+  const audience = await (await authorizationWorkspace(env, auth.workspaceId))
+    .readSearchAudience({ workspaceId: auth.workspaceId, userId: auth.userId });
   const scopeMs = performance.now() - started;
   let retrievalMs = 0;
   let hydrationMs = 0;
@@ -70,7 +62,7 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
       excerpt: passage.excerpt, excerptStart: passage.excerptStart, highlights: passage.highlights,
       location: { kind: 'link', url: url.data, range: passage.range } };
   };
-  // Messages and links are admitted per conversation; the decision is the projected one.
+  // The index admitted every candidate through its audience; loaders only render.
   const conversationSource = (source: 'messages' | 'conversation_links'): AuthorizedSearchSource<SearchResult> => ({
     source, scopeIds: null, load: async (candidates) => {
       const results = new Map<string, SearchResult>();
@@ -85,7 +77,7 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
         group.candidates.push(candidate);
         groups.set(key, group);
       }
-      for (const group of await readableGroups([...groups.values()])) {
+      for (const group of groups.values()) {
         for (const candidate of group.candidates) {
           const result = source === 'messages' ? messageResult(group, candidate) : linkResult(candidate);
           if (result) results.set(candidate.id, result);
@@ -101,31 +93,24 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
     if (request.category !== 'all' && request.category !== category) continue;
     sources.push({ source: category, scopeIds: [auth.workspaceId], load: async (candidates) => {
       const results = new Map<string, SearchResult>();
-      const admitted = candidates.filter((candidate) => IdSchema.safeParse(candidate.source_id).success
-        && (candidate.connection_id == null || IdSchema.safeParse(candidate.connection_id).success));
-      // A connector's rows share one decision, read once; an attachment or note has its own.
-      const addresses = admitted.map((candidate) => candidate.connection_id != null
-        ? { kind: 'connection' as const, workspaceId: auth.workspaceId, connectionId: IdSchema.parse(candidate.connection_id) }
-        : { kind: 'resource' as const, workspaceId: auth.workspaceId, resourceId: IdSchema.parse(candidate.source_id) });
-      const unique = [...new Map(addresses.map((address) => [JSON.stringify(address), address])).values()];
-      const decisions = new Map((await access.checkMany(unique)).map((decision, index) => [JSON.stringify(unique[index]), decision]));
-      admitted.forEach((candidate, index) => {
+      for (const candidate of candidates) {
         signal?.throwIfAborted();
-        if (decisions.get(JSON.stringify(addresses[index]))?.status !== 'allowed' || typeof candidate.text !== 'string' || typeof candidate.title !== 'string') return;
+        if (!IdSchema.safeParse(candidate.source_id).success || typeof candidate.text !== 'string'
+          || typeof candidate.title !== 'string') continue;
         const passage = passageOf(candidate.text);
-        if (!passage) return;
+        if (!passage) continue;
         results.set(candidate.id, {
           id: candidate.id, category, title: candidate.title, sourceLabel: candidate.source_label ?? candidate.title,
           occurredAt: displayTime(candidate.occurred_at), revision: String(candidate.revision),
           excerpt: passage.excerpt, excerptStart: passage.excerptStart, highlights: passage.highlights,
           location: { kind: 'resource', resourceId: candidate.source_id, mimeType: candidate.mime_type ?? null, range: passage.range },
         });
-      });
+      }
       return results;
     } });
   }
   const index = await workspaceSearchIndex(env, auth.workspaceId);
-  const options = { query: request.query, mode: 'substring' as const, limit: request.pageSize ?? SEARCH_PAGE_SIZE,
+  const options = { query: request.query, mode: 'substring' as const, limit: request.pageSize ?? SEARCH_PAGE_SIZE, audience,
     ...(signal ? { signal } : {}), onTiming: (phase: 'retrieval' | 'hydration', ms: number) => {
       if (phase === 'retrieval') retrievalMs += ms;
       else hydrationMs += ms;

@@ -408,6 +408,14 @@ export const AUTOMATION_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     `ALTER TABLE automation ADD COLUMN chat_appearance_json TEXT
        CHECK (chat_appearance_json IS NULL OR json_valid(chat_appearance_json))`,
   ],
+}, {
+  version: 10,
+  description: "republish the directory row with who the Sidekick runs as",
+  // The WorkspaceDO's directory learned `run_as_user_id` (its migration 81)
+  // for search's person side. A row only carries it once this Sidekick
+  // publishes again, so `afterMigrations` republishes once, as it did for 3.
+  // The statement changes nothing; a migration must run at least one.
+  statements: ["UPDATE automation SET updated_at = updated_at WHERE id = 1"],
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -455,7 +463,7 @@ export class SidekickDO extends ConversationParentDurableObject {
         component: MIGRATION_COMPONENT,
         workerVersionId: env.APP_VERSION ?? "unknown",
         afterMigrations: (_sql, versions) => {
-          if (versions.includes(3) && this.row()) this.enqueueDirectory(Date.now());
+          if ((versions.includes(3) || versions.includes(10)) && this.row()) this.enqueueDirectory(Date.now());
         },
       }));
       await this.armNextAlarm();
@@ -2234,6 +2242,7 @@ export class SidekickDO extends ConversationParentDurableObject {
         : {}),
       automationId: row.automation_id,
       authorUserId: row.author_user_id,
+      runAsUserId: row.run_as_user_id,
       lifecycle: row.lifecycle,
       scope: row.scope,
       owningWorkstreamId: row.owning_workstream_id,
