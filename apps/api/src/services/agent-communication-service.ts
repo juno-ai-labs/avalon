@@ -274,17 +274,38 @@ export class AgentCommunicationService {
     return owner.owningWorkstreamId;
   }
 
+  /**
+   * Which conversation under the owning Channel a room-scoped Sidekick created
+   * here calls home: the Breakout this loop runs in, or the Channel's Main
+   * conversation. A background agent is not a Breakout anyone reads, so its
+   * Sidekicks live in Main; a Sidekick's own conversation passes on its home.
+   */
+  private async owningSubstream(): Promise<string> {
+    if (this.input.parentKind === "workstream") {
+      return this.input.backgroundAgent ? "0" : this.input.substreamId ?? "0";
+    }
+    const owner = await (await this.workspace()).automationOwner({ workspaceId: this.input.workspaceId,
+      automationId: this.input.parentId });
+    return owner.owningSubstreamId;
+  }
+
   async createSidekick(scope: "personal" | "workspace" | "workstream", context: HarnessToolContext) {
     if (this.input.executionPrincipal.type !== "user") throw new AgentCommunicationError("sidekick_author_unavailable");
     const owningWorkstreamId = scope === "workstream" ? await this.owningWorkstream() : null;
     if (scope === "workstream" && !owningWorkstreamId) throw new AgentCommunicationError("sidekick_owning_workstream_unavailable");
+    const owningSubstreamId = owningWorkstreamId ? await this.owningSubstream() : "0";
     if (owningWorkstreamId) {
-      const membership = await (await this.workspace()).workstreamParticipant({ workspaceId: this.input.workspaceId,
-        workstreamId: owningWorkstreamId, userId: this.input.executionPrincipal.userId });
-      if (!membership.participant) throw new AgentCommunicationError("sidekick_owning_workstream_forbidden");
+      const workspace = await this.workspace();
+      const userId = this.input.executionPrincipal.userId;
+      const member = owningSubstreamId === "0"
+        ? (await workspace.workstreamParticipant({ workspaceId: this.input.workspaceId,
+          workstreamId: owningWorkstreamId, userId })).participant
+        : (await workspace.authorizeViewer({ workspaceId: this.input.workspaceId, parentId: owningWorkstreamId,
+          substreamId: asSubstreamId(owningSubstreamId), userId })).authorized;
+      if (!member) throw new AgentCommunicationError("sidekick_owning_workstream_forbidden");
     }
     const created = await createAutomation(this.env, { workspaceId: this.input.workspaceId,
-      authorUserId: this.input.executionPrincipal.userId, scope, owningWorkstreamId,
+      authorUserId: this.input.executionPrincipal.userId, scope, owningWorkstreamId, owningSubstreamId,
       automationId: await this.messageId(context) });
     return { sidekickId: created.automationId, agentId: agentIdForAddress({ parentKind: "automation",
       parentId: created.automationId, substreamId: asSubstreamId("0") }) };

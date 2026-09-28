@@ -47,7 +47,7 @@ type AuthorityState = {
    * consents to the run it admitted. `null` is a run the automation does not
    * know.
    */
-  run: { state: RunState; lifecycle: Lifecycle } | null;
+  run: { state: RunState; lifecycle: Lifecycle; stopGeneration?: number } | null;
 };
 
 /** The connector event the WorkspaceDO answers a trigger lookup with. */
@@ -307,6 +307,48 @@ describe("durable run authority revalidation", () => {
     database.state.run = { state: runState, lifecycle: "active" };
     await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input(), snapshot))
       .rejects.toThrow(/no longer running/i);
+  });
+
+  describe("a continued run, whose row reopens only when its child's projection lands", () => {
+    const STOP_GENERATION = 3;
+    function continued(): WorkstreamWorkflowInput {
+      return {
+        ...input(),
+        automationContinuation: { stopGeneration: STOP_GENERATION, senderName: "Adam", source: { kind: "run" } },
+      };
+    }
+
+    it.each(["completed", "failed"] as const)("acts through a %s row: the child's own finish, never a revocation", async (runState) => {
+      const database = new AuthorityDatabase(state({
+        run: { state: runState, lifecycle: "active", stopGeneration: STOP_GENERATION + 1 },
+      }));
+      await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, continued()))
+        .resolves.toMatchObject({ automationRunId: RUN_ID });
+    });
+
+    it("acts through a row stopped before the continuation was approved", async () => {
+      const database = new AuthorityDatabase(state({
+        run: { state: "stopped", lifecycle: "active", stopGeneration: STOP_GENERATION },
+      }));
+      await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, continued()))
+        .resolves.toMatchObject({ automationRunId: RUN_ID });
+    });
+
+    it("stops when a pause stopped the row after the approval, even once the Sidekick is resumed", async () => {
+      const database = new AuthorityDatabase(state({
+        run: { state: "stopped", lifecycle: "active", stopGeneration: STOP_GENERATION + 1 },
+      }));
+      await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, continued()))
+        .rejects.toThrow(/no longer running/i);
+    });
+
+    it("stops when the Sidekick is paused, whatever the row says", async () => {
+      const database = new AuthorityDatabase(state({
+        run: { state: "completed", lifecycle: "paused", stopGeneration: STOP_GENERATION },
+      }));
+      await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, continued()))
+        .rejects.toThrow(/no longer running/i);
+    });
   });
 
   it("stops a run its automation no longer knows", async () => {

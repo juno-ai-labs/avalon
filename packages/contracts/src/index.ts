@@ -28,7 +28,7 @@ import {
   ResourceDirectionSchema,
   WireResourceRelationshipTypeSchema,
 } from "./resource-relationships";
-import { HttpsUrlSchema, HttpUrlSchema, httpUrlSchema, WebSocketUrlSchema } from "./url-schemas";
+import { HttpsUrlSchema, httpsUrlSchema, HttpUrlSchema, httpUrlSchema, WebSocketUrlSchema } from "./url-schemas";
 import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, WorkstreamIconKeySchema } from "./workstream-appearance";
 import {
   TranscriptActivitySchema,
@@ -1600,8 +1600,14 @@ export const AutomationRunDefinitionV1Schema = z.strictObject({
   activitySourcePluginIds: ActivitySourcePluginIdsSchema,
   connectorBindings: z.record(z.string(), z.string()),
   scope: AutomationScopeSchema,
-  /** The room that owns a `workstream`-scoped automation: the one place a run may post its result. */
+  /** The Channel that owns a `workstream`-scoped automation; null for the other two scopes. */
   owningWorkstreamId: IdSchema.nullable(),
+  /**
+   * The home conversation under `owningWorkstreamId`: `"0"` for the Channel's
+   * Main conversation, a Breakout id otherwise. The home is where a run posts
+   * by default with `conversation_post`.
+   */
+  owningSubstreamId: SubstreamIdSchema.default("0" as SubstreamId),
   runAsUserId: IdSchema,
   modelOverride: z.string().min(1).nullable(),
   trigger: AutomationRunTriggerV1Schema,
@@ -3275,6 +3281,10 @@ export const SlackOriginContextSchema = z.strictObject({
   channelId: z.string().min(1).max(255).nullable(),
   channelName: z.string().min(1).max(255).nullable(),
   threadTs: z.string().min(1).max(80).nullable(),
+  /** The message itself, when it reached Rally through a bound thread. */
+  messageTs: z.string().min(1).max(80).optional(),
+  /** A link back to that message, built from the team, channel and timestamp. */
+  permalink: httpsUrlSchema(2000).optional(),
   invocationType: z.enum(["app_mention", "direct_message", "slash_command", "shortcut"]),
   channelType: z.enum(["public", "private", "im", "unknown"]),
   matchedAvalonUserId: IdSchema.nullable(),
@@ -3342,6 +3352,26 @@ export const WorkstreamWorkflowInputSchema = z.object({
    * its definition from the automation by revision when it starts.
    */
   automationRun: AutomationRunReferenceV1Schema.optional(),
+  /**
+   * Set beside `automationRun` when input to a Sidekick run child continued
+   * that run, rather than the Sidekick's schedule or trigger starting it.
+   * Optional so every existing producer keeps parsing unchanged;
+   * `docs/automation-lifecycle.md` owns it.
+   *
+   * `stopGeneration` is the Sidekick's stop counter when `continueRun`
+   * approved the continuation, which the run authority check fences a
+   * `stopped` run row against. `senderName` and `source` are what the host-rendered continuation
+   * note tells the model: who replied, and whether in a bound provider thread
+   * or in the run itself.
+   */
+  automationContinuation: z.strictObject({
+    stopGeneration: z.number().int().nonnegative(),
+    senderName: z.string().min(1).max(200),
+    source: z.discriminatedUnion("kind", [
+      z.strictObject({ kind: z.literal("run") }),
+      z.strictObject({ kind: z.literal("provider_thread"), provider: z.string().min(1).max(100) }),
+    ]),
+  }).optional(),
   /** The received agent exchange supplies discovery scope and the ordinary reply reference. */
   agentExchange: AgentExchangeSchema.optional(),
   /** Host-derived conversation kind; not a model-selectable execution option. */

@@ -17,7 +17,8 @@ export interface SearchAuthorizationPair { subject: AuthorizationSubject; resour
 
 interface DirectoryRow extends Record<string, SqlStorageValue> { workstream_id: string; scope: string; archived_at: number | null }
 interface AutomationRow extends Record<string, SqlStorageValue> {
-  automation_id: string; scope: string; author_user_id: string; owning_workstream_id: string | null; lifecycle: string;
+  automation_id: string; scope: string; author_user_id: string; owning_workstream_id: string | null;
+  owning_substream_id: string; lifecycle: string;
 }
 
 export function enumerateSearchAuthorizationUniverse(sql: SqlStorage, workspaceId: string, members: readonly string[],
@@ -33,10 +34,13 @@ export function enumerateSearchAuthorizationUniverse(sql: SqlStorage, workspaceI
   const directory = (parentId: string) => sql.exec<DirectoryRow>(
     'SELECT workstream_id, scope, archived_at FROM channels WHERE workstream_id = ?', parentId).toArray()[0];
   const automation = (parentId: string) => sql.exec<AutomationRow>(
-    'SELECT automation_id, scope, author_user_id, owning_workstream_id, lifecycle FROM automation_directory WHERE automation_id = ?', parentId).toArray()[0];
+    'SELECT automation_id, scope, author_user_id, owning_workstream_id, owning_substream_id, lifecycle FROM automation_directory WHERE automation_id = ?', parentId).toArray()[0];
   const participants = (parentId: string) => sql.exec<{ user_id: string }>(
     'SELECT user_id FROM channel_viewers WHERE workstream_id = ? AND is_participant = 1', parentId).toArray()
     .map((row) => row.user_id).filter((userId) => active.has(userId));
+  const breakoutMembers = (parentId: string, substreamId: string) => sql.exec<{ user_id: string }>(
+    'SELECT user_id FROM breakout_viewers WHERE workstream_id = ? AND substream_id = ? AND is_participant = 1',
+    parentId, substreamId).toArray().map((row) => row.user_id).filter((userId) => active.has(userId));
   /** Who could read a parent, before its canonical owner decides. Unknown parents reach nobody. */
   const parentSubjects = (parentId: string): string[] => {
     const room = directory(parentId);
@@ -44,7 +48,10 @@ export function enumerateSearchAuthorizationUniverse(sql: SqlStorage, workspaceI
     const auto = automation(parentId);
     if (!auto || auto.lifecycle === 'deleted') return [];
     if (auto.scope === 'workspace') return [...active];
-    const inherited = auto.scope === 'workstream' && auto.owning_workstream_id ? parentSubjects(auto.owning_workstream_id) : [];
+    // A Breakout home narrows the room to the Breakout's own members.
+    const inherited = auto.scope !== 'workstream' || !auto.owning_workstream_id ? []
+      : auto.owning_substream_id === '0' ? parentSubjects(auto.owning_workstream_id)
+        : breakoutMembers(auto.owning_workstream_id, auto.owning_substream_id);
     return [...new Set([auto.author_user_id, ...inherited].filter((userId) => active.has(userId)))];
   };
   /** Every conversation the WorkspaceDO knows under a parent: the main feed and the delivered or registered children. */
@@ -84,7 +91,7 @@ export function enumerateSearchAuthorizationUniverse(sql: SqlStorage, workspaceI
         if (room.scope !== 'workspace' && !participants(room.workstream_id).includes(target.id)) continue;
         resources.push(...parentConversations(room.workstream_id), ...parentResources(room.workstream_id));
       }
-      for (const auto of sql.exec<AutomationRow>("SELECT automation_id, scope, author_user_id, owning_workstream_id, lifecycle FROM automation_directory WHERE lifecycle <> 'deleted'").toArray()) {
+      for (const auto of sql.exec<AutomationRow>("SELECT automation_id, scope, author_user_id, owning_workstream_id, owning_substream_id, lifecycle FROM automation_directory WHERE lifecycle <> 'deleted'").toArray()) {
         if (!parentSubjects(auto.automation_id).includes(target.id)) continue;
         resources.push(...parentConversations(auto.automation_id), ...parentResources(auto.automation_id));
       }

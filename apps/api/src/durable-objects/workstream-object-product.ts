@@ -118,7 +118,6 @@ import { WorkstreamHarnessRunStorage } from "./workstream-harness-run-storage";
 import {
   AdmitExternalMessageInputSchema,
   AnswerExternalElicitationInputSchema,
-  type AdmitAutomationActivationInput,
   AdmitSystemActivationInputSchema,
   type AdmitSystemActivationInput,
   type AdmitExternalMessageInput,
@@ -3894,6 +3893,7 @@ export class WorkstreamObjectProductService {
     });
     const bindMessage = await projectParticipantModelMessage(this.env, {
       author: { type: "external", actor: input.actor },
+      externalFraming: this.transcript.externalInputFraming(),
       messageType: input.messageType,
       text: input.text,
       structuredContent: input.structuredContentJson === null
@@ -3958,22 +3958,6 @@ export class WorkstreamObjectProductService {
       mentionsJson: "[]",
       now: input.now,
     });
-  }
-
-  /**
-   * Admit an automation activation as loop input, so the room wakes on it.
-   *
-   * The whole reason this goes through the mailbox rather than straight into the
-   * transcript: a canonical append lands a row nobody acts on, and an automation
-   * whose result reaches a work stream that never runs on it has delivered
-   * nothing anybody asked for. This is the same admission an external message
-   * gets — reserved, prepared, completed, then activated by the caller — with
-   * the author being the automation rather than a provider account.
-   */
-  async admitAutomationActivation(
-    rawInput: AdmitAutomationActivationInput,
-  ): Promise<WorkstreamObjectExternalMessageResult> {
-    return this.admitSystemActivation(rawInput);
   }
 
   /** Shared durable admission for non-human conversation inputs. */

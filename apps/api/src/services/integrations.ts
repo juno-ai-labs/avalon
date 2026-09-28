@@ -1,5 +1,6 @@
 import { readCanvaReference } from "./canva-resource-access";
 
+import type { OutboundExternalBinding } from "../durable-objects/external-binding-outbox";
 import { runtimeDeferral } from "../lib/defer";
 import { Preparation, ToolSurfacePreparations } from "./harness-preparation";
 import { AGENT_MESSAGE_CONTENT_KIND, ImportedMessageProvenanceSchema } from "@rally/contracts";
@@ -106,7 +107,6 @@ import {
   ConnectorConnectionCardInputSchema,
   ConnectorConnectionStateResultSchema,
   connectorConnectionCardSummary,
-  MESSAGE_MAX_CHARACTERS,
   type AutomationRunDefinitionV1,
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
@@ -203,11 +203,13 @@ import {
   type ModelAttachmentSource,
 } from "./attachment-model-content";
 import {
+  externalInputFraming,
   participantModelMessageContent,
   projectElicitationResponseMessage,
   projectImportedSourceMessage,
   projectParticipantModelMessage,
   renderElicitationResponseMessage,
+  renderRunContinuationNote,
 } from "./workstream-participant-model-message";
 import {
   createWorkstreamAttachmentTools,
@@ -280,6 +282,12 @@ import { automationScopeMemoryTables, createMemoryTableTools } from "./memory-ta
 import type { MaterializedMemoryTable } from "./memory-table-service";
 import { workstreamRunLimits } from "./workstream-run-policy";
 import { TERMINAL_PLUGIN_ID } from "./terminal/contract";
+import {
+  CONVERSATIONS_WIRE_PREFIX,
+  conversationToolPorts,
+  createConversationsPlugin,
+} from "./conversation-tools";
+import { conversationIdOf } from "../durable-objects/workspace-sidekick-conversation-storage";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
 import type { WorkstreamRuntimeResourceAttacher } from "./workstream-object-client";
 
@@ -1175,9 +1183,13 @@ function automationActivationName(structuredContent: unknown): string {
 async function projectModelProtocolTranscript(
   env: Env,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "triggerMessageId" | "substreamId">
-    & Partial<Pick<WorkstreamWorkflowInput, "executionPrincipal">>,
+    & Partial<Pick<WorkstreamWorkflowInput, "executionPrincipal" | "parentKind">>,
   storedMessages: Message[],
 ): Promise<{ messages: ModelMessage[]; issues: ModelTranscriptProjectionIssue[] }> {
+  const externalFraming = externalInputFraming({
+    parentKind: input.parentKind ?? "workstream",
+    substreamId: input.substreamId ?? "0",
+  });
   const attachmentSources = await loadModelAttachmentSources(env, input.workspaceId, storedMessages);
   const toolMessageIds = storedMessages
     .filter((message) => message.messageType === "tool")
@@ -1476,6 +1488,7 @@ async function projectModelProtocolTranscript(
     const participantMessage = message.author.type === "external"
       ? await projectParticipantModelMessage(env, {
           author: { type: "external", actor: message.author.actor },
+          externalFraming,
           messageType: message.messageType,
           text: message.textContent,
           structuredContent: message.structuredContent,
@@ -2067,6 +2080,9 @@ function createAvalonAutomationsPlugin(
             authorUserId,
             scope: "workstream",
             owningWorkstreamId: input.parentId,
+            // Home is the Breakout this was drafted in, or Main. A background
+            // agent is not a Breakout anyone reads, so its drafts live in Main.
+            owningSubstreamId: input.backgroundAgent ? "0" : input.substreamId ?? "0",
             automationId: authoredAutomationId,
           });
         }
@@ -4224,6 +4240,7 @@ export async function runWorkstreamHarness(
               ? { providerOperationId: event.result.providerOperationId }
               : {}),
             memberSafePayload: { toolName: event.toolName },
+            ...outboundExternalBinding(input, event.result.externalConversation),
           });
           // The durable replay payload and fenced completed receipt now exist;
           // only after this awaited boundary may Bind observe the tool result.
@@ -4695,11 +4712,9 @@ async function loadRunPromptContext(
   memoryContextMs: number;
   memoryRecallRequired: boolean;
 }> {
-  // An automation the room does not own sends its own result outward, so its
-  // result is read wherever it sent it, not in Rally, and nothing sends its
-  // final message for it. Decided from the owning room directly rather than
-  // from the shape of `resultDelivery`, which now names only that room and so
-  // would answer this exactly backwards.
+  // An automation no room owns has no home conversation, so its result is read
+  // wherever it sent it, not in Rally, and nothing sends its final message for
+  // it. One with a home posts there with `conversation_post`.
   let automationSendsOutward = false;
   let automationContext:
     | {
@@ -4707,10 +4722,7 @@ async function loadRunPromptContext(
         versionNumber: number;
         instructions: string;
         expectedOutputs: string[];
-        resultDelivery: Array<{
-          channel: "workstream";
-          destination: string;
-        }>;
+        homeConversationId: string | null;
         defaultBehavior: Record<string, unknown>;
         overrides: Record<string, unknown>;
         durableTables: MaterializedMemoryTable[];
@@ -4721,20 +4733,17 @@ async function loadRunPromptContext(
     // immutable, so nothing is frozen into the loop input beyond the reference.
     const definition = await runDefinitionPreparation.get();
     if (!definition) throw new Error("sidekick_run_reference_missing");
-    // What Rally delivers on the run's behalf, which is only the room a
-    // work-stream automation belongs to, through the tool the run holds.
-    // Naming the room tells the run its result has one place to go; naming
-    // nothing tells it nobody will send this for it.
-    const resultDelivery: Array<{ channel: "workstream"; destination: string }> = definition.owningWorkstreamId !== null
-      ? [{ channel: "workstream", destination: definition.owningWorkstreamId }]
-      : [];
+    // The home, as the conversation tools name it: the Channel's Main
+    // conversation or a Breakout. Null tells the run nobody reads it in Rally.
+    const homeConversationId = definition.owningWorkstreamId === null ? null
+      : conversationIdOf({ parentId: definition.owningWorkstreamId, substreamId: definition.owningSubstreamId });
     automationSendsOutward = definition.owningWorkstreamId === null;
     automationContext = {
       name: definition.definition.name,
       versionNumber: definition.definitionRevision,
       instructions: definition.definition.instructions,
       expectedOutputs: definition.definition.expectedOutputs,
-      resultDelivery,
+      homeConversationId,
       defaultBehavior: definition.definition.defaultBehavior,
       overrides: {},
       // What lives in the automation's memory scope: the tables its
@@ -4780,7 +4789,7 @@ async function loadRunPromptContext(
     // Everything but the delivery destination: an address is control-plane
     // configuration, and embedding it shifts recall for every automation that
     // has a target while retrieving nothing anybody wants back.
-    const recallable = { ...automationContext, resultDelivery: undefined };
+    const recallable = { ...automationContext, homeConversationId: undefined };
     memoryQueryParts.push(JSON.stringify(recallable));
   }
   if (input.triggerMessageId && recallsMemoryAtAdmission) {
@@ -4896,6 +4905,16 @@ async function loadRunPromptContext(
     }, "memory_context", frozenMemory.memoryContextHash));
   }
   if (triggerMessage) additionalMessages.push(triggerMessage);
+  if (input.automationRun && input.automationContinuation) {
+    // After the input that continued the run, which is already in the
+    // transcript above. Keyed on that input, so a recovered execution reuses
+    // the same activation input rather than adding a second note.
+    additionalMessages.push(modelDerivative(
+      renderRunContinuationNote(input.automationContinuation),
+      "run_continuation",
+      input.triggerMessageId ?? input.harnessRunId,
+    ));
+  }
   return {
     // The prompt prefix is intentionally pure with respect to a saved task.
     // Volatile execution metadata stays in the durable host and does not become
@@ -4906,14 +4925,21 @@ async function loadRunPromptContext(
       title: workstream.title,
       objective: workstream.objective,
       executionAuthority: input.executionPrincipal.type,
-      outputSurface: input.reason === "inbound_email"
+      // A Sidekick run's surface is the run's: its definition and how the run
+      // started decide it, never what woke this activation. A reply through a
+      // bound Slack thread carries a Slack origin, and a continued run must not
+      // be told its final message goes to Slack when nothing sends it there,
+      // nor read a different system prefix than the one it started with.
+      outputSurface: input.automationRun
+        ? input.automationRun.trigger.kind === "inbound_email"
+          ? "external_delivery"
+          : automationSendsOutward ? "self_delivery" : "workstream"
+        : input.reason === "inbound_email"
           || Boolean(input.digestDeliveryId)
           || Boolean(input.slackOrigin)
           ? "external_delivery"
-          : automationSendsOutward
-            ? "self_delivery"
-            : "workstream",
-      ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
+          : "workstream",
+      ...(input.slackOrigin && !input.automationRun ? { slackOrigin: input.slackOrigin } : {}),
       ...(automationContext ? { sidekick: automationContext } : {}),
     }) + (input.backgroundAgent || input.parentKind === "automation"
       ? "\nFor requests from another agent, send results and questions back to that agent. Ask that agent for missing information instead of asking participants. Your final response stays here; it is not forwarded."
@@ -4983,6 +5009,7 @@ async function persistSuccessfulToolResult(
     memberSafePayload?: Record<string, unknown>;
     allowAmbiguousReconciliation?: boolean;
     allowCancellationRequested?: boolean;
+    externalBinding?: OutboundExternalBinding;
   },
   ownershipGuard?: () => Promise<void>,
   /**
@@ -5048,6 +5075,7 @@ async function persistSuccessfulToolResult(
     ...(result.allowCancellationRequested
       ? { allowCancellationRequested: true }
       : {}),
+    ...(result.externalBinding ? { externalBinding: result.externalBinding } : {}),
   });
   await ownershipGuard?.();
   return outputRef;
@@ -5066,6 +5094,7 @@ async function settleRootHarnessToolCompletion(
     outputSummary: string;
     providerOperationId?: string;
     memberSafePayload?: Record<string, unknown>;
+    externalBinding?: OutboundExternalBinding;
   },
   /** Injectable for the same reason `persistSuccessfulToolResult`'s is. */
   receipts: ToolReceiptObjectPort
@@ -5088,6 +5117,7 @@ async function settleRootHarnessToolCompletion(
     // requires this exact live attempt and rejects parent terminalization while
     // any receipt from any attempt remains pending or started.
     allowCancellationRequested: true,
+    ...(result.externalBinding ? { externalBinding: result.externalBinding } : {}),
   }, undefined, receipts, runs);
   // The invocation completion is the authority for this dependency. If the
   // Worker disappears between these writes, replay finds no dependency,
@@ -5365,12 +5395,15 @@ async function loadHarnessTools(
       tools: sidekickPlugin.tools.filter((tool) => ["sidekicks_list", "attach", "detach"].includes(tool.definition.name)),
     }
     : sidekickPlugin;
-  // The one way a run reaches the room that owns its automation. Offered only
-  // to a run of a room's automation, so a personal or workspace automation
-  // cannot post into a room at all.
-  const postResultPlugin = runDefinition?.owningWorkstreamId
-    ? createAutomationPostResultPlugin(env, input, runDefinition)
-    : null;
+  // List, read and post to Rally conversations, scoped by the loop: a
+  // Breakout loop reaches its own conversation and its Channel's Main; a
+  // Sidekick's configuration conversation and runs reach its home and
+  // attachments. The only way a Sidekick run reaches a room. A run knows from
+  // its definition whether the Sidekick has a home; the configuration
+  // conversation does not read one.
+  const conversationsPlugin = createConversationsPlugin(input, conversationToolPorts(env, input),
+    (tool) => expandPages(tool, CONVERSATIONS_WIRE_PREFIX, null),
+    { home: runDefinition ? runDefinition.owningWorkstreamId !== null : null });
   // `tools` retains the historical flattened view for API diagnostics and
   // tests. Bind receives stable always-active core plugins plus loadable
   // built-in and credential-scoped plugins.
@@ -5382,7 +5415,7 @@ async function loadHarnessTools(
     terminalPlugin,
     multimodalGenerationPlugin,
     automationsPlugin,
-    postResultPlugin,
+    conversationsPlugin,
   ].filter(
     (plugin): plugin is HarnessPlugin => plugin !== null,
   );
@@ -6386,7 +6419,8 @@ async function readRunAuthority(
     runId: run.runId,
   });
   recordOptionalTiming(onTiming, "automation", startedAt);
-  if (!live || live.lifecycle !== "active" || (live.state !== "running" && live.state !== "needs_input")) {
+  if (!live || live.lifecycle !== "active"
+    || (live.state !== "running" && live.state !== "needs_input" && !continuedAfterFinish(input, live))) {
     throw new ConnectorError("unauthorized", "This automation run is no longer running");
   }
   const snapshot: RunAuthoritySnapshot = {
@@ -6400,6 +6434,33 @@ async function readRunAuthority(
     expected.triggerType !== snapshot.triggerType
   )) throw new ConnectorError("unauthorized", "The immutable run authority changed");
   return { ...snapshot, principalIsGuest: guest };
+}
+
+/**
+ * Whether a finished run row still belongs to a continuation of it.
+ *
+ * A continued run's row reopens only when the child's `running` projection
+ * reaches the Sidekick through the Queue, which is after this execution has
+ * started and possibly after its first provider write. Until then the row
+ * reads a finish from an earlier activation.
+ *
+ * `completed` and `failed` are only ever the child's own reports of an
+ * activation that ended, never a revocation, so a continuation acts through
+ * them. `stopped` can be the Sidekick's: a pause stops every open run, and a
+ * resume does not reopen it. A continuation acts through a `stopped` row only
+ * while the Sidekick's stop counter is where `continueRun` read it, so a pause
+ * that lands after the approval refuses even once the Sidekick is resumed,
+ * exactly as it would for a scheduled run. A counter, not a timestamp: a
+ * pause on the approval's own millisecond still moves it.
+ */
+function continuedAfterFinish(
+  input: WorkstreamWorkflowInput,
+  live: { state: string; stopGeneration: number },
+): boolean {
+  const continuation = input.automationContinuation;
+  if (!continuation) return false;
+  if (live.state === "completed" || live.state === "failed") return true;
+  return live.state === "stopped" && live.stopGeneration === continuation.stopGeneration;
 }
 
 /** A run's definition, read from its parent by revision; one call per loop start. */
@@ -6419,106 +6480,13 @@ async function readAutomationRunDefinition(
     workspaceId: asWorkspaceId(input.workspaceId),
     automationId: run.automationId,
     runId: run.runId,
+    // A continued run reads the revision accepted when it continued, not the
+    // run row's own. Only a continuation names it: every other read keeps the
+    // request shape an older SidekickDO's strict schema accepts, so a
+    // mixed-version rollout refuses continuations at worst, never scheduled
+    // runs.
+    ...(input.automationContinuation ? { definitionRevision: run.definitionRevision } : {}),
   }));
-}
-
-const SIDEKICK_RESULT_PLUGIN_ID = "rally:sidekick-result";
-
-/**
- * The one tool through which a run reaches the room that owns its automation.
- *
- * Deliberately a tool the model calls with the text it wants the room to see,
- * not a classifier deciding after the fact whether a result was worth posting:
- * the instructions say what the room should hear, and the run follows them.
- * Refused for an archived room, which the run reports as the tool's error.
- */
-function createAutomationPostResultPlugin(
-  env: Env,
-  input: WorkstreamWorkflowInput,
-  definition: AutomationRunDefinitionV1,
-): HarnessPlugin {
-  const owningWorkstreamId = definition.owningWorkstreamId;
-  if (!owningWorkstreamId || !input.automationRun) throw new Error("sidekick_post_result_requires_owning_room");
-  const run = input.automationRun;
-  const tool: HarnessTool = {
-    definition: {
-      name: "post_result",
-      description: [
-        "Post this run's result into the work stream that owns this Sidekick.",
-        "Call it once, with the complete result the people in that work stream should read.",
-        "Nothing else delivers a result there: a run that does not call this leaves the work stream unchanged.",
-      ].join(" "),
-      capability: "rally.sidekick.result.post",
-      mode: "write",
-      idempotency: "safe",
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          text: { type: "string", minLength: 1, maxLength: MESSAGE_MAX_CHARACTERS, description: "The result, as the work stream should read it." },
-        },
-        required: ["text"],
-      },
-    },
-    execute: async (raw) => {
-      const args = z.object({ text: z.string().min(1).max(MESSAGE_MAX_CHARACTERS) }).parse(raw);
-      const workspaceId = asWorkspaceId(input.workspaceId);
-      const room = await durableObjectStubForWorkspace(
-        env,
-        env.WORKSPACE_DOS,
-        workspaceId,
-        workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
-      );
-      const authority = await room.authority({ workspaceId, parentId: owningWorkstreamId });
-      if (!authority.exists) throw new Error("sidekick_owning_room_missing");
-      if (authority.archived) throw new Error("sidekick_owning_room_archived");
-      const main = await durableObjectStubForWorkspace(
-        env,
-        env.SUBSTREAM_AGENTS,
-        workspaceId,
-        conversationObjectName(env.AVALON_REGION, workspaceId, owningWorkstreamId),
-      );
-      const result = await main.appendAutomationActivation({
-        schemaVersion: 1,
-        workspaceId: input.workspaceId,
-        workstreamId: owningWorkstreamId,
-        authorityGeneration: authority.authorityGeneration,
-        deliveryId: run.runId,
-        text: args.text,
-        executionPrincipal: input.executionPrincipal,
-        activation: {
-          type: "automation_activation",
-          schemaVersion: 1,
-          automationId: run.automationId,
-          automationName: definition.definition.name,
-          runId: run.runId,
-          deliveryId: run.runId,
-          trigger: { kind: run.trigger.kind },
-          occurredAt: Date.now(),
-        },
-      });
-      if (result.outcome === "refused") throw new Error(`sidekick_post_result_refused:${result.code}`);
-      const summary = result.outcome === "replayed"
-        ? "The result was already posted to the work stream."
-        : "Posted the result to the work stream.";
-      return { output: summary, summary };
-    },
-  };
-  return {
-    canonicalId: SIDEKICK_RESULT_PLUGIN_ID,
-    modelId: "rally_sidekick_result",
-    // No wire prefix: this plugin is preloaded only on a run of a room's
-    // Sidekick, where there is exactly one result to post and nothing to
-    // namespace it against.
-    shortWireName: "",
-    displayName: "Sidekick result",
-    searchAliases: [],
-    description: "Post this run's result into the work stream that owns the Sidekick.",
-    systemMessage: "When the instructions say the work stream should hear the result, post it with post_result, once, in full.",
-    tools: [tool],
-    preload: true,
-    explicit: false,
-  };
 }
 
 async function raceWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -6547,7 +6515,6 @@ async function raceWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Prom
  */
 const LEGACY_PLUGIN_IDS: ReadonlyMap<string, string> = new Map([
   ["rally:automations", AUTOMATIONS_PLUGIN_ID],
-  ["rally:automation-result", SIDEKICK_RESULT_PLUGIN_ID],
 ]);
 
 async function loadAuthorizedActivationHints(
@@ -8520,6 +8487,23 @@ function wireTimestamp(at: number | null): string | null {
  * terminal event that closes it said `workstream`, so no automation's tool
  * outcomes could be counted from the pair.
  */
+/**
+ * The reply thread a Sidekick run's send opened, bound to that run's child.
+ *
+ * Only a run child binds: a Channel or config loop that sends a message has
+ * no run for a reply to continue. The adapter reports the path only for a
+ * send whose replies reach Rally's ingress (a workspace-bot send); a personal
+ * connection's send reports none. See docs/external-conversation-bindings.md.
+ */
+function outboundExternalBinding(
+  input: Pick<WorkstreamWorkflowInput, "automationRun" | "parentKind" | "parentId" | "substreamId">,
+  conversation: { installationId: string; path: string[] } | undefined,
+): { externalBinding: OutboundExternalBinding } | Record<string, never> {
+  if (!conversation || !input.automationRun || input.parentKind !== "automation"
+    || !input.substreamId || input.substreamId === "0") return {};
+  return { externalBinding: { installationId: conversation.installationId, path: conversation.path } };
+}
+
 function automationRunProvenance(
   input: WorkstreamWorkflowInput,
 ): { automationId: string; automationRunId: string } | Record<string, never> {
@@ -8656,7 +8640,6 @@ export const __integrationTesting = {
   transcriptPluginPresentation,
   installDynamicPluginTools,
   createWorkstreamCorePlugins,
-  createAutomationPostResultPlugin,
   loadHarnessTools,
   validateDynamicConnectorTools,
   loadToolInvocation,

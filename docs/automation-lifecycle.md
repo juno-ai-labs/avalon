@@ -225,12 +225,16 @@ not export a Cloudflare class from the Worker entrypoint.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/src/durable-objects/sidekick-do.ts` | The object: its v1 schema, `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setAppearance`, `setOwningRoomArchived`, `runNow`, `runSeeded`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, the parent contract, the schedule and run-provisioning alarms, and the sidebar row it enqueues. |
+| `apps/api/src/durable-objects/sidekick-do.ts` | The object: its v1 schema, `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setAppearance`, `setOwningRoomArchived`, `runNow`, `runSeeded`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `continueRun`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, the parent contract (`onChildCommonProjection` moves the run row), the schedule and run-provisioning alarms, and the sidebar row it enqueues. |
+| `apps/api/src/services/sidekick-run-continuation.ts` | `continueSidekickRun`, the run child's call to `continueRun`; `continuationSource`, who continued the run and where; and the refusal text the run's transcript records. |
+| `apps/api/src/durable-objects/substream-agent.ts` | `claimPersistentLoopExecution`, which continues a run from a run child's pending input, and `refuseSidekickRunInput`, which settles one the Sidekick refused. |
+| `apps/api/src/services/workstream-participant-model-message.ts` | `renderRunContinuationNote`, and `externalInputFraming`, which renders outside text in a run child as evidence. |
 | `apps/api/src/durable-objects/automation-do-protocol.ts` | The request schemas the Worker and the Queue consumer send it, and the two alarm kinds `automation_schedule` and `automation_run`. |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | The parent half it inherits: child registry, projections, receipts, aggregation, the outbox and its drain. See [`workstream-durable-object.md`](workstream-durable-object.md). |
 | `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by a room's first draft; and `AutomationService`, the Worker-side access every route goes through, which resolves whether the caller is in the owning room before asking the object. |
 | `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /workstream/:workstreamId`, `GET /:id`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/pause`, `POST /:id/resume`, `POST /:id/archive`, legacy `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
-| `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; `createAutomationPostResultPlugin`, the `post_result` tool; and the run prompt context built from the definition. |
+| `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; the run prompt context built from the definition, which names the home conversation; and the loading of `rally:conversations` ([`conversation-tools.md`](conversation-tools.md)), the one way a run reaches a room. |
+| `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | The home read, `sidekick_conversation_attachments` (WorkspaceDO migration 86), and the conversation scope a Sidekick or a Channel or Breakout loop reaches. |
 | `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:sidekicks` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
 | `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), and `AutomationDraftProposedV1` (the card). |
 | `packages/contracts/src/index.ts` | `AutomationDraftSchema`, `AutomationRunDefinitionV1Schema` (the `readRunDefinition` answer), `AutomationSummarySchema`, `WorkstreamAutomationSummarySchema`, `AutomationRunSchema`, `AutomationDetailSchema`. |
@@ -574,8 +578,9 @@ Before every provider write, `assertRunAuthorityStillValid` asks the parent
 `readRunState`; a run the automation no longer knows, whose automation is not
 `active`, or whose own row is no longer `running` or `needs_input`, refuses
 with `ConnectorError("unauthorized")`, so a run that outlives a pause or a
-delete stops rather than finishing on stale consent. The
-`rally:sidekicks` drafting plugin is withheld from a run.
+delete stops rather than finishing on stale consent. The one exception is a
+continued run, below. The `rally:sidekicks` drafting plugin is withheld from a
+run.
 
 A run that loads Terminal gets a sandbox of its own, provisioned fresh under
 the run's conversation and never reopened. The automation projects no Terminal
@@ -585,28 +590,131 @@ auto-delete set and is retired by the provider alone;
 
 The run reports its state the way every conversation does: its
 `directory_common` effect reaches the parent through the child effect leg, and
-`AutomationDO.onChildCommonAggregate` maps the conversation state onto
-`runs.state` forward only (`RUN_STATE_FROM_CONVERSATION_STATE`: `completed`,
+`AutomationDO.onChildCommonProjection` maps the accepted conversation state
+onto `runs.state`, as [continuing a run](#continuing-a-run) describes. Nothing
+a run says leaves the object: `forwardsChildEffect` is false, so a run produces
+no sidebar row, no activity, and no notification.
+
+### Continuing a run
+
+Input to a run child continues the run. The Sidekick's alarm starts a run's
+first activation; every later one starts from input somebody sent the child:
+an answer to a question the run asked, a member's message, or a reply that a
+bound provider thread delivers as an external attributed message. A run keeps
+one identity and one history, and can complete more than once.
+
+1. `SubstreamAgent.claimPersistentLoopExecution` takes the next pending input.
+   When the object's parent kind is `automation` and its substream is not
+   `"0"`, it calls `SidekickDO.continueRun(runId)` before building the loop
+   input (`continueSidekickRun` in `services/sidekick-run-continuation.ts`).
+2. `continueRun` is a read with no side effects. It answers a refusal code, or
+   the `automationRun` block and run-as `executionPrincipal` the scheduled
+   start builds, with `definitionRevision` the Sidekick's **currently
+   accepted** revision and the run's original trigger, plus `stopGeneration`, its
+   stop counter. Continuing a run acts on today's consent, so a run started under
+   revision 1 continues under revision 3. It does not continue as somebody
+   else: a run records its run-as user when it is provisioned
+   (`runs.run_as_user_id`, migration 13), and a Sidekick claimed by someone
+   else since refuses with `run_principal_changed` rather than put the old
+   principal's transcript in front of the new one's connectors. It does not
+   ask who sent the input: anyone who can reach a run may continue it.
+3. The loop input carries `automationRun`, the run-as principal, and
+   `automationContinuation: {stopGeneration, senderName, source}`; the sender stays
+   the author of their own message. `readRunDefinition` reads the revision the
+   reference names rather than the run row's own, so the instructions, tools
+   and plugins are the accepted revision's.
+4. The prompt gains one host-rendered, user-role message after the new input
+   (`renderRunContinuationNote`): "This run is continuing because a new
+   message arrived in Slack, in the thread you started" (a `provider_thread`
+   source, named for the provider) or "in this run" (everything else), the
+   sender's display name as a quoted JSON string labelled as data, then "The
+   work you already did is above; handle the new message only as the
+   Sidekick's instructions direct." Without it the re-rendered instructions
+   read as a fresh task, and a model sends its requests again. The name is
+   quoted rather than written into the sentence because anyone in a bound
+   thread chooses their own. The note is an activation input keyed on the triggering
+   turn, so a recovered execution does not add a second one.
+
+**Refusals.** `continueRun` answers `sidekick_deleted` for an archived
+Sidekick, `sidekick_paused` for one a person or a room archive paused, `run_not_found`
+when the Sidekick object holds no row or no such run, and `run_principal_changed`
+when the Sidekick runs as somebody other than the run did. The
+child then lands the input as a delivered turn and appends a `system` row after
+it (`clientMessageId` `sidekick-run-refused:<inputId>`, structured content
+`{kind: "sidekick_run_refused", code, turnId}`) in one transaction
+(`WorkstreamTranscriptStorage.deliverRefusedInputInTransaction`), logs
+`sidekick_run_continuation_refused` with the code, and claims again, so the
+input behind it is not held. Nothing touches Bind: the refused words reach the
+model through the gap-fill of whatever run comes next, as said to the room.
+
+**Reopening the run row.** The row moves back to `running` through the
+child's own `directory_common` projection, not through `continueRun`.
+`onChildCommonProjection` runs only for a projection the parent accepted, one
+with a newer `sourceVersion` than it holds, and maps the conversation state
+onto `runs.state` (`RUN_STATE_FROM_CONVERSATION_STATE`: `completed`,
 `failed`/`error`/`budget_exhausted` to `failed`, `needs_input`,
-`stopped`/`cancelled` to `stopped`, every live state to `running`) and copies
-the preview onto `summary`; a terminal run keeps its state. Nothing a run says
-leaves the object: `forwardsChildEffect` is false, so a run produces no sidebar
-row, no activity, and no notification.
+`stopped`/`cancelled` to `stopped`, every live state to `running`), copying the
+preview onto `summary`. A finished row (`completed`, `failed`, `stopped`)
+reopens only to a live state, never to `idle` (an unarchive or bootstrap
+reports it), and only while the Sidekick is `active`. One finished state never
+replaces another, so a run a pause stopped stays stopped when its last
+activation later reports `completed`. Because only an accepted projection
+moves the row, a late `completed` from an earlier activation carries an older
+version and cannot close a continued run.
 
-### Posting a result
+**The run authority check before the row reopens.** The reopening projection
+travels the Queue and lands after the continued execution has started, which
+reads its authority at run start. `readRunState` therefore also answers
+`stopGeneration`, a counter on the `automation` row (migration 12) that every
+Sidekick-side stop of open runs (`stopOpenRuns`, from pause and archive) moves
+in the same transaction. `continuedAfterFinish` in `integrations.ts` lets a
+continuation act through a finished row: through `completed` or `failed`
+always, because those are only ever the child's own report of an activation
+that ended; through `stopped` only while the counter is where `continueRun`
+read it, because a pause stops open runs and a resume does not reopen them. A
+pause that lands after the approval therefore still refuses, even once the
+Sidekick is resumed and even on the approval's own millisecond, which is why
+the fence is a counter and not a time. The lifecycle check is unchanged: a
+Sidekick that is not `active` refuses every write.
 
-A run of a room's automation holds one extra plugin, `rally:sidekick-result`
-(`rally_sidekick_result` to the model), preloaded, with the tool
-`post_result`. It is offered only when
-`readRunDefinition().owningWorkstreamId` is not null, so a personal or
-workspace automation cannot post into a room at all. The tool asks
-`WorkspaceDO.authority` (the room's hosted parent) for its generation and archive state, refuses an
-archived or missing room as the tool's error, and calls the room's substream
-`0` `appendAutomationActivation` with `deliveryId = runId`, which appends one
-`automation_activation` message authored by "Automation" (or answers
-`replayed` for a second call). The run's `# Result delivery` prompt section
-names that room as the one destination; every other destination the
-instructions name is the run's own work with its connector tools.
+**Completing more than once.** The `runs` row has no constraint on its finish;
+`completed_at` is the latest finish. Run-outcome telemetry is keyed per
+harness run, so each activation emits its own `run_terminal`, now carrying the
+run's `automation_run_id`; a count of completions per run is a count of
+activations. A Sidekick run child forwards no effects (`forwardsChildEffect`
+is false), so a second completion sends no notification, and the Slack
+`notify_automation_completed` preference has no sender today.
+
+### Home conversation and attachments
+
+A room's Sidekick has a **home conversation**: `owning_workstream_id` names the
+Channel and `owning_substream_id` the conversation in it, `"0"` for its Main
+conversation or a Breakout id. Both are on SidekickDO's `automation` row and
+projected onto WorkspaceDO's `automation_directory` through the
+`directory_automation` effect. A Sidekick created in a Breakout (a room agent's
+first `submit_draft`, or `create_sidekick`) takes that Breakout as its home; one
+created by a background agent takes Main, because a background agent's
+conversation is not one anybody reads. The creator must be able to open the
+home: a participant of the Channel for Main, a member of the Breakout
+otherwise. Personal and workspace Sidekicks have no home and keep `"0"`.
+
+The home narrows who counts as the room. `authorizeViewer`, the resource
+authorization owner (`<channel>/<home>` in `authorization-service.ts`) and search
+discovery all read the Breakout's members for a Breakout home and the Channel's
+participants for a Main one. Archiving the home Breakout, or the Channel that
+holds it, pauses the Sidekick through `setOwningRoomArchived`; see Lifecycle.
+
+A Sidekick reads and posts through the `rally:conversations` plugin
+([`conversation-tools.md`](conversation-tools.md)), whose scope for a Sidekick is
+its home plus the conversations attached to it in WorkspaceDO's
+`sidekick_conversation_attachments`. The home is always attached and never a
+row. Only the Sidekick's configuration conversation attaches (the
+`conversation_attach` tool), and only a conversation the attaching person can
+post in, since attaching is the consent to publish there. A run posts with
+`conversation_post`, which defaults to the home; nothing posts a run's result
+for it. That table is not `parent_sidekicks` or a conversation's
+`sidekick_attachments`: those record that a conversation may load the Sidekick
+as a skill, and loading writes them automatically.
 
 ### Lifecycle
 
@@ -718,11 +826,18 @@ Sidekick's id.
   Apply changes a lifecycle column in place and records which revision runs.
   Anything that mints a second id, or a second conversation, breaks every run,
   receipt, and email claim keyed on the first.
-- **A definition revision is immutable and a run is pinned to one.** A run
-  reads its definition from the parent by revision rather than carrying a copy,
-  which is why the loop input can be a four-field reference and why a later
-  field change never has to migrate stored run contexts. Editing a revision in
-  place would change what a run in flight was authorized to do.
+- **A definition revision is immutable and an activation is pinned to one.** A
+  run reads its definition from the parent by the revision its loop input
+  names rather than carrying a copy, which is why the loop input can be a
+  four-field reference and why a later field change never has to migrate stored
+  run contexts. Editing a revision in place would change what a run in flight
+  was authorized to do. A continued run names the revision accepted when it
+  continued, so one run's activations may read different revisions; each one
+  reads one.
+- **Only an accepted child projection moves a run row, and only a live state
+  reopens a finished one.** `continueRun` writes nothing. A run hook that acted
+  on a projection the parent did not accept would let a late completion from
+  an earlier activation close a run that has since continued.
 - **`occurrence_key` is the only admission fence.** Every trigger converges on
   it with `INSERT OR IGNORE`, so a Queue redelivery, a provider retry, and a
   repeated **Run now** each answer with the run they already made. A trigger
@@ -738,10 +853,20 @@ Sidekick's id.
 - **`AutomationDO` forwards nothing its children say.** The workspace hears the
   automation's row and nothing else; forwarding a run's aggregate would put
   every run in the work-stream directory, which is the design this replaced.
-- **The one way a result reaches a room is `post_result`.** Rally
-  posts nothing after a run; the run posts, once, when its instructions say the
-  room should hear it. A second delivery path is a duplicate the room reads
-  twice.
+- **The one way a result reaches a room is `conversation_post`.** Rally
+  posts nothing after a run; the run posts, once per result, when its
+  instructions say the room should hear it, and a retried receipt lands once. A
+  second delivery path is a duplicate the room reads twice.
+- **The home is always `owning_workstream_id` plus `owning_substream_id`.**
+  Every place that asks who the room is (viewer admission, the authorization
+  owner, search discovery, the archive fan-out) reads both. One that read the
+  Channel alone would hand a Breakout-homed Sidekick, and every post it made,
+  to Channel members outside the Breakout.
+- **A conversation attachment is not a skill attachment.** Only
+  `sidekick_conversation_attachments` widens what a Sidekick may read and post
+  to, and only an attach from its configuration conversation writes it. Reading
+  `parent_sidekicks` as reach would grant every conversation that ever loaded
+  the Sidekick.
 - **Bindings are derived from the definition, never taken from a request.**
   `apply` carries an id and nothing else; a request field restating what the
   draft settled is a second source of truth for it.
@@ -759,7 +884,9 @@ Sidekick's id.
 
 This module owns the automation: creation, drafting, revisions, apply,
 lifecycle, schedules, occurrence admission, run provisioning, run state, the
-result tool, and the sidebar row.
+home conversation and its attachments, and the sidebar row. The conversation
+tools that read and post through that scope are
+[`conversation-tools.md`](conversation-tools.md)'s.
 
 It depends on the conversation hierarchy for its conversations and its runs
 (`SubstreamAgent`, the shared parent base, the effect legs;
@@ -803,14 +930,24 @@ or the memory store the automation scope lives in.
   when its alarm fires.
 - **The Queue redelivers a matched event.** `admitExternalEvent` answers
   `sidekick_occurrence_replayed`; the consumer logs it and acks.
-- **A result cannot be posted.** `post_result` throws
-  `sidekick_owning_room_archived`, `sidekick_owning_room_missing`, or
-  `sidekick_post_result_refused:<code>` (a stale generation or an archived
-  room decided inside the room's object); the run sees the tool error and says
-  so in its result.
+- **A result cannot be posted.** `conversation_post` refuses with
+  `conversation_archived` or `conversation_access_denied`, or
+  `invalid_arguments` when a Sidekick with no home leaves the conversation out;
+  the run sees the tool error and says so in its result.
 - **A run's parent is unreachable** when `readRunDefinition` or `readRunState`
   is asked. The loop fails that turn and the harness's own retry applies; a run
   never proceeds on a definition it could not read.
+- **The Sidekick is unreachable when a run child asks `continueRun`.** The
+  drain fails before anything is activated, logs
+  `substream_loop_drain_failed`, and the child's alarm claims the input again;
+  the input stays at the head of the queue until the Sidekick answers.
+- **Input the Sidekick refuses** (`sidekick_paused`, `sidekick_deleted`,
+  `run_not_found`, `run_principal_changed`) lands as a delivered turn with a `sidekick_run_refused`
+  system row naming the code, and logs `sidekick_run_continuation_refused`.
+  What a sender outside Rally sees is the bound thread's to decide. A refused
+  answer to a question the run asked lands the same way, as a turn with no
+  Bind append; what a later continuation of that run makes of the answered
+  question is not covered by a test yet.
 - **The sidebar row lags.** The row travels two Queue legs; a person who just
   submitted a draft sees the title update when the row lands, not when the
   tool returned. `GET /automations/:id` reads the object and is never stale.
@@ -841,7 +978,9 @@ substreams. Harness `skills.test.ts` proves recommendations do not load bodies.
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and watched work streams; a redelivery admits once. |
 | `apps/api/test-workers/conversation-parent-contract.test.ts`, `conversation-effect-queue.test.ts` | `pnpm --filter @rally/api test:workers` | The parent contract through the real ticket route, and the effect legs an automation's children use, including a child effect producing no `parent_effect` row. Owned by [`workstream-durable-object.md`](workstream-durable-object.md#testing). |
 | `apps/api/test/external-event-evaluator.test.ts` | `pnpm --filter @rally/api test` | The pure predicate: legal and illegal documents, missing-field semantics, the connector vocabulary an authoring rule is held to — and the boundary between the two predicate spellings, which is where a change that let the model's `matching` reach a stored column would fail. |
-| `apps/api/test/run-authority-validity.test.ts` | `pnpm --filter @rally/api test` | A running run admitted, a paused or unknown one stopped, connector evidence not re-read after admission, and a run with no automation reference asking no automation. |
+| `apps/api/test-workers/sidekick-run-continuation.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd with the effect queue held, so the run row still reads finished while the continuation runs: input to a completed run continuing it with `automationRun`, the run-as principal (changed since the run started) and the revision accepted since, with the continuation note last; paused, archived and unknown runs refused with their codes, both inputs landed, and the run continuing after a resume; two concurrent replies both reaching the model as the continued run; a finished row reopened only by a newer projection, a stale completion not closing it, repeated complete and reopen cycles, `idle` not reopening, and a paused Sidekick not reopening; an elicitation answer keeping the run's context. |
+| `apps/api/test/run-authority-validity.test.ts` | `pnpm --filter @rally/api test` | A running run admitted, a paused or unknown one stopped, connector evidence not re-read after admission, and a run with no automation reference asking no automation; a continuation acting through a `completed` or `failed` row and a `stopped` one that stopped before the approval, and refused for a stop after it or a paused Sidekick. |
+| `apps/api/test/model-protocol-transcript.test.ts` | `pnpm --filter @rally/api test` | Among the transcript projection cases: a bound-thread reply in a run child rendered as labelled evidence and never as a member request, in the transcript and in the live admission projection, and the continuation note's wording. |
 | `apps/api/test/scoped-memory.test.ts` | `pnpm --filter @rally/api test` | A Sidekick's conversation resolving the workspace scope and its own `sidekick` scope. |
 | `apps/api/test/resend-inbound-email.test.ts`, `workstream-email-routing.test.ts`, `workstream-email-address.test.ts` | `pnpm --filter @rally/api test` | The single admission call, its receipts, and the address claim. |
 | `apps/api/test/access-revocation.test.ts` | `pnpm --filter @rally/api test` | The workspace fan-out naming an automation and the consumer walking its children. |
@@ -876,7 +1015,9 @@ above. `run_id` is the child substream id, and `harness_run_id` is unique per
 run. Migration 6 adds `runs.seed_json`, null on every run but one a demo
 seeded; migration 7 adds `automation.appearance_json`, null until somebody
 picks an icon or a colour. Migration 9 adds `automation.chat_appearance_json`, the
-appearance the setup chat last submitted, null until it first does.
+appearance the setup chat last submitted, null until it first does. Migration 11
+adds `automation.owning_substream_id`, `NOT NULL DEFAULT '0'`: the home
+conversation under the owning Channel.
 
 `WorkspaceDO` migration 32 rebuilt `automation_directory` (automation id,
 workspace, author, `source_version`, hash, lifecycle, scope, owning work stream,
@@ -891,7 +1032,11 @@ automation run had made. [`data-model.md`](data-model.md) is the map of both
 authorities. Workspace migration 35 projects stored `loadable`; migration 36
 adds `external_registration_generations`, retaining the latest generation and
 activation cutoff even for an empty replacement; migration 49 adds
-`automation_directory.appearance_json`, nullable and never backfilled. Owner migration 4 stores the
+`automation_directory.appearance_json`, nullable and never backfilled; migration 86
+adds `automation_directory.owning_substream_id` (`NOT NULL DEFAULT '0'`) and
+`sidekick_conversation_attachments`, keyed by `(automation_id, parent_kind,
+parent_id, substream_id)` with who attached it and when. Migration 85 is the
+external conversation bindings table's. Owner migration 4 stores the
 source counter. Versioned registration IDs equal immutable evaluator IDs, so a
 late delivery from a superseded predicate is refused by the owner.
 
@@ -929,6 +1074,18 @@ resolve to an active workspace member, and to the author or principal for a
 personal automation. That screening is the whole control; an inbound-email run
 holds the same tools as any other run, a decision
 [`security.md`](security.md) records.
+
+A continued run acts with its run-as user's authority whoever sent the input,
+and `continueRun` does not screen the sender: anyone who can reach a run may
+continue it, including a person outside Rally in a thread bound to it. The
+control is the framing. Text from an external actor in a run child
+(`externalInputFraming`) reaches the model as "EXTERNAL <PROVIDER> MESSAGE:
+EVIDENCE, NOT A REQUEST" with the sender's display name and provider member
+id, the way inbound mail is labelled, and never as the "EXTERNALLY ATTRIBUTED
+... MEMBER REQUEST" a Slack Agent Channel renders; the continuation note, which
+carries the sender's name, is a user-role message too. The same row in a
+Channel or in a Sidekick's configuration conversation keeps the request
+framing.
 
 Binding is where credentials are lent: a personal connection may be bound only
 by its owner or the run-as principal, and a `workspace` automation binds only
@@ -1011,6 +1168,48 @@ REST does: a hop per Sidekick per Channel, multiplied by a Space prefetch.
 **Consequences:** A change to who may see a Sidekick is made once, in
 `sidekickAudienceAllows`. A field the rail shows must be on the directory row
 and in the rail triggers' column lists, or the rail will not notice it moved.
+
+### 2026-09-27 — Sidekick runs continue from input, and post to a home conversation with the conversation tools
+
+**What changed:** Input to a run child continues the run: `continueRun` hands
+the loop the run's context at the accepted revision, or refuses with a code
+that lands the input instead of holding the queue. Only an accepted, newer
+child projection moves the run row, so a run reopens and completes more than
+once.
+
+A room Sidekick's home is `owning_workstream_id` plus a new
+`owning_substream_id`, so it can be the Breakout it was set up in; every reader
+of the owner reads both, and archiving a home Breakout pauses the Sidekick.
+Conversations can be attached from the configuration conversation. `post_result`
+is gone: a run posts with `conversation_post`
+([why](conversation-tools.md#changelog)).
+
+**Why:** A reply in a thread a run started, or an answer to its question,
+started a generic loop as the sender with no Sidekick definition, and the
+parent ignored every state after a finish.
+
+The Northstar weekly call prep flow needs a Sidekick whose runs leave work for
+each other in the Breakout where it was set up.
+
+**Considered and rejected:** Reopening the row in `continueRun`; it stays a
+read, and the child's projection stays the row's one writer. That projection
+lands after the continued run checks its authority, so the check accepts the
+finished row, fencing a pause on a stop counter; a wall-clock fence was
+rejected in review because a pause on the approval's millisecond passed it.
+
+Replacing `owning_workstream_id` with a conversation address, which would
+rebuild two tables whose `CHECK` constraints name it. Reusing
+`parent_sidekicks` or `sidekick_attachments` for attachments: loading a
+Sidekick as a skill writes those, which would grant it every conversation that
+ever used it.
+
+**Consequences:** A run's activations may read different revisions but never
+run as a different person (`run_principal_changed`). A parent-side write of
+`completed` or `failed` to a run row must be fenced as `stopped` is.
+
+Anything that asks "who is this Sidekick's room" must read the substream too.
+
+Shipped in #1006. Design: [`docs/PRDs/2026-09-23_external-conversation-bindings/design.md`](PRDs/2026-09-23_external-conversation-bindings/design.md).
 
 ### 2026-09-25 — The setup chat chooses a Sidekick's icon and color
 

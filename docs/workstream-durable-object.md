@@ -1204,6 +1204,7 @@ complete relationship map is:
 | WorkspaceDO/Worker | SubstreamAgent | typed RPC | idempotent child product transaction, pending loop input, or subordinate execution receipt |
 | Worker | WorkspaceDO (hosted Channel or Space parent) / AutomationDO | typed RPC | the conversation-parent contract: the caller needs the answer (a viewer decision, the generation and archive state, a child reservation at creation) |
 | SubstreamAgent | regional Queue | Cloudflare Queue | child `durable_outbox` row, sent with the `conversation_effect` envelope inline and deleted when the Queue accepts it |
+| SubstreamAgent (a Sidekick run child) | WorkspaceDO | typed RPC | child `durable_outbox` row on channel `external_conversation_binding_v1`, written in the tool receipt's `complete` transaction when a send reports where its replies arrive; the alarm delivers it with `recordOutboundExternalConversationBinding`, naming the child as the target, and deletes it once WorkspaceDO has it. A row that does not parse is parked `dead`. See [`external-conversation-bindings.md`](external-conversation-bindings.md) |
 | regional Queue Worker | WorkspaceDO (hosted parent) / AutomationDO | typed RPC | `receiveChildEffects`: parent receipt, child projection, aggregate, state row, and outbox row in one transaction; a replay is answered from the receipt. A hosted parent's directory rows are applied inside that same transaction, never through `parent_outbox` |
 | WorkspaceDO (hosted parent) / AutomationDO | regional Queue | Cloudflare Queue | activity and notification rows of the parent outbox (`parent_outbox` for a hosted parent, `durable_outbox` for a Sidekick), sent with the `parent_effect` envelope inline and deleted when the Queue accepts it |
 | regional Queue Worker | WorkspaceDO | typed RPC | `applyAutomationDirectory`: one automation's sidebar row, fenced on the automation's own `sourceVersion` |
@@ -1212,7 +1213,8 @@ complete relationship map is:
 | (none) | | local | the provisional directory row a `reserveChild("0")` at creation writes is applied by `WorkspaceDO` to its own directory before `reserveChild` answers; there is no longer an object boundary to cross |
 | WorkspaceDO | AutomationDO | typed RPC | `setOwningRoomArchived`, fanned out with `Promise.allSettled` when a directory effect archives or unarchives a room that owns automations; a failed call is logged and the next archival change retries it |
 | a run's loop | AutomationDO | typed RPC | `readRunDefinition` at loop start (the definition revision is immutable, so a reference rather than a copy travels in the loop input) and `readRunState` before every provider write |
-| a run's loop | WorkspaceDO (the room's hosted parent), then the room's SubstreamAgent `0` | typed RPC | the `post_result` tool: `authority` for the room's generation and archive state, then `appendAutomationActivation` keyed on the run id |
+| a Sidekick run child's `claimPersistentLoopExecution` | AutomationDO | typed RPC | `continueRun` before a pending input activates the loop: the run's context and run-as principal at the accepted revision, or a refusal code the child settles the input with ([continuing a run](automation-lifecycle.md#continuing-a-run)) |
+| a loop with a conversation scope | WorkspaceDO, then the target Channel or Breakout SubstreamAgent | typed RPC | the conversation tools: `conversationToolScope` and `resolveConversationToolTarget` (scope, then `authorizeViewer`), then the target's `readableMessagesBefore` or `appendConversationPost`, keyed on the harness run and receipt; see [`conversation-tools.md`](conversation-tools.md) |
 | regional Worker | regional Queue | Cloudflare Queue | a generic member-visible work-stream filter is resolved once in WorkspaceDO, then one bounded update event is published per selected work stream |
 | regional Queue Worker | SubstreamAgent("0") | typed RPC | an idempotent, receipt-backed mark-read or archive transaction against that work stream's authoritative SQLite state; membership is rechecked at delivery |
 | connector ingress Worker | regional Queue | Cloudflare Queue | one bounded normalized event plus region/workspace/ingress UUID/content hash per workspace target; raw bytes remain in R2 |
@@ -1647,8 +1649,10 @@ shared parent statements `conversation-parent-object.ts` exports (the same
 
 [`automation-lifecycle.md`](automation-lifecycle.md) owns what these rows mean.
 The shared parent tables carry the automation's conversation (`"0"`) and its
-runs as children; `onChildCommonAggregate` maps a run child's conversation state
-onto `runs.state` forward only.
+runs as children; `onChildCommonProjection` maps a run child's accepted
+conversation state onto `runs.state`, and only a newer projection with a live
+state reopens a finished run (see
+[continuing a run](automation-lifecycle.md#continuing-a-run)).
 
 ### `SubstreamAgent`
 
@@ -1669,7 +1673,7 @@ onto `runs.state` forward only.
 | `terminal_workspace`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Rally state for the Daytona-backed Terminal plugin. |
 | `resident_context_blocks`, `resident_context_compactions` | The context-residency ledger: blocks delivered to this conversation, their residency and remaining prompt lifetime, pending deliveries, and the compaction events already applied. |
 | `sidekick_attachments` | The Sidekicks this conversation has loaded. Not yet reported to its parent (see the Sidekick attachment paragraph above). |
-| `projection_keys`, `durable_outbox`, `durable_inbox_receipts` | Versioned child-to-parent `conversation_effect` envelopes awaiting the alarm's `sendBatch` (deleted once the Queue accepts them), and inbound dedupe such as feed tickets. |
+| `projection_keys`, `durable_outbox`, `durable_inbox_receipts` | Versioned child-to-parent `conversation_effect` envelopes awaiting the alarm's `sendBatch` (deleted once the Queue accepts them), a run child's outbound bindings on `external_conversation_binding_v1` awaiting delivery to WorkspaceDO, and inbound dedupe such as feed tickets. |
 
 `participant_transcript_turns.transcript_sequence` is canonical transcript
 order, including tool and safe status turns.

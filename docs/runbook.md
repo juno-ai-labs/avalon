@@ -1110,10 +1110,12 @@ where to look when one misbehaves.
   `deleted` is a pause or delete after admission, and the run's provider writes
   were refused with "This automation run is no longer running". A run that
   never left `pending` has an `automation_run` alarm entry behind its gate.
-- **A result never reached the room.** Only a run of a room's Sidekick holds
-  `post_result`, and only the run posts; look for
-  `sidekick_post_result_refused:<code>` or `sidekick_owning_room_archived`
-  in the run's tool results. Nothing posts after the run.
+- **A result never reached the room.** Only the run posts, with
+  `conversation_post`; look for `conversation_archived`,
+  `conversation_access_denied`, `conversation_not_in_scope` or
+  `conversation_post_refused:<code>` in the run's tool results, and check the
+  Sidekick's home (`automation_directory.owning_substream_id`). Nothing posts
+  after the run.
 
 Inspect the object through the engineering MCP's raw SQL per
 [`engineering-mcp.md`](engineering-mcp.md); the automation's tables are listed
@@ -1775,7 +1777,7 @@ Connector polls have a 20-second adapter cancellation deadline inside a 25-secon
 
 That deadline must be a **cancellable** one — `createDeadline`/`withDeadline` from `apps/api/src/lib/deadline.ts`, disposed in a `finally`. `AbortSignal.timeout()` cannot be cancelled, so a poll that finished in a second still held its Workflow invocation open for the remaining nineteen. The runtime eventually cancelled each one as a hang and counted it as an uncaught exception, which is what put a steady ~560 errors a day on `avalon-api-global` while every workflow instance reported `complete`. The same rule applies to any deadline created inside a Workflow step, queue consumer, or Durable Object alarm: those invocations end when the handler returns, so an armed timer outlives the work it guarded. Inside a request handler the timer dies with the response and either form is safe.
 
-The deadlines long enough to matter have been converted: the connector poll (20s), the Slack public-channel sync in the activity queue consumer (3 minutes), and the two inside the bind loop's Workflow step — per-tool-call (`TOOL_DEFAULT_TIMEOUT_MS`, 30s) and plugin reauthorization (30s). Not yet converted are the fixed 5–10 second `slackApi` calls in `slack-agent-service.ts`, which hold a queue invocation open for at most ten seconds each; they are the same class and are tracked as follow-up work rather than fixed here. Any new deadline in one of these contexts uses the cancellable form.
+The deadlines long enough to matter have been converted: the connector poll (20s) and the two inside the bind loop's Workflow step — per-tool-call (`TOOL_DEFAULT_TIMEOUT_MS`, 30s) and plugin reauthorization (30s). Not yet converted are the fixed 5–10 second `slackApi` calls in `slack-agent-service.ts`, which hold a queue invocation open for at most ten seconds each; they are the same class and are tracked as follow-up work rather than fixed here. Any new deadline in one of these contexts uses the cancellable form.
 
 Background agents run independent work-stream Bind loops and inherit the source
 conversation's model override and execution principal. They use normal tool

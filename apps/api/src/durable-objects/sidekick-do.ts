@@ -24,6 +24,7 @@ import {
   asSubstreamId,
   asUserId,
   asWorkspaceId,
+  SubstreamIdSchema,
   isExternalEventTrigger,
   semanticConditionsForEventType,
   type AutomationDetail,
@@ -96,9 +97,11 @@ import {
   AutomationExternalEventAdmissionSchema,
   AutomationInboundEmailAdmissionSchema,
   AutomationOwningRoomArchivedRequestSchema,
+  AutomationRunDefinitionRequestSchema,
   AutomationRunNowRequestSchema,
   AutomationRunRequestSchema,
   AutomationRunSeededRequestSchema,
+  SidekickRunContinuationSchema,
   AutomationSetAppearanceRequestSchema,
   AutomationSubmitDefinitionRequestSchema,
   type AutomationActor,
@@ -108,9 +111,11 @@ import {
   type AutomationExternalEventPlan,
   type AutomationInboundEmailAdmission,
   type AutomationOwningRoomArchivedRequest,
+  type AutomationRunDefinitionRequest,
   type AutomationRunNowRequest,
   type AutomationRunRequest,
   type AutomationRunSeededRequest,
+  type SidekickRunContinuation,
   type AutomationSetAppearanceRequest,
   type AutomationSubmitDefinitionRequest,
 } from "./automation-do-protocol";
@@ -184,6 +189,8 @@ type Lifecycle = "draft" | "active" | "paused" | "deleted";
 
 interface AutomationRow extends Record<string, SqlStorageValue> {
   registration_generation: number;
+  /** Moved by every Sidekick-side stop of open runs; see `continueRun`. */
+  stop_generation: number;
   automation_id: string;
   workspace_id: string;
   region: Region;
@@ -193,6 +200,8 @@ interface AutomationRow extends Record<string, SqlStorageValue> {
   paused_by: "person" | "room_archive" | null;
   scope: AutomationScope;
   owning_workstream_id: string | null;
+  /** The home under `owning_workstream_id`: `"0"` for its Main conversation, else a Breakout id. */
+  owning_substream_id: string;
   owning_room_archived_at: number | null;
   title: string;
   description: string;
@@ -249,6 +258,8 @@ interface RunRow extends Record<string, SqlStorageValue> {
   opening_json: string | null;
   /** A demo seed's script for this run's model bytes; null for every other run. */
   seed_json: string | null;
+  /** Who the run runs as, recorded when it is provisioned; null while pending. */
+  run_as_user_id: string | null;
   created_at: number;
   started_at: number | null;
   completed_at: number | null;
@@ -417,6 +428,38 @@ export const AUTOMATION_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
   // publishes again, so `afterMigrations` republishes once, as it did for 3.
   // The statement changes nothing; a migration must run at least one.
   statements: ["UPDATE automation SET updated_at = updated_at WHERE id = 1"],
+}, {
+  version: 11,
+  description: "a home conversation that can be a Breakout",
+  statements: [
+    // Beside `owning_workstream_id` rather than in place of it: replacing that
+    // column would rebuild a table whose CHECK names it. A Channel's Main
+    // conversation is substream "0", so every existing Sidekick keeps its home
+    // with no backfill. See docs/automation-lifecycle.md.
+    `ALTER TABLE automation ADD COLUMN owning_substream_id TEXT NOT NULL DEFAULT '0'`,
+  ],
+}, {
+  version: 12,
+  description: "a counter every Sidekick-side stop of open runs moves",
+  statements: [
+    // The fence a continued run's authority check compares instead of a
+    // wall-clock time: a pause that stops runs after `continueRun` approved a
+    // continuation moves it, however close together the two land. Zero on
+    // every existing Sidekick; only its movement is compared, never its value.
+    `ALTER TABLE automation ADD COLUMN stop_generation INTEGER NOT NULL DEFAULT 0 CHECK (stop_generation >= 0)`,
+  ],
+}, {
+  version: 13,
+  description: "who each run runs as",
+  statements: [
+    // A run's transcript is its run-as user's: their connectors read it and
+    // wrote it. `continueRun` refuses a continuation whose Sidekick now runs
+    // as somebody else rather than handing that history to them. Existing
+    // runs take the Sidekick's current run-as user, which is who they ran as
+    // unless a claim moved it since; no earlier value was recorded anywhere.
+    `ALTER TABLE runs ADD COLUMN run_as_user_id TEXT`,
+    `UPDATE runs SET run_as_user_id = (SELECT run_as_user_id FROM automation WHERE id = 1)`,
+  ],
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -529,12 +572,12 @@ export class SidekickDO extends ConversationParentDurableObject {
       this.state.storage.sql.exec(
         `INSERT INTO automation
            (id, automation_id, workspace_id, region, author_user_id, run_as_user_id, lifecycle,
-            paused_by, scope, owning_workstream_id, owning_room_archived_at, title, description,
-            current_definition_revision, accepted_definition_revision, connector_bindings_json,
+            paused_by, scope, owning_workstream_id, owning_substream_id, owning_room_archived_at, title,
+            description, current_definition_revision, accepted_definition_revision, connector_bindings_json,
             default_plugin_ids_json, activity_source_plugin_ids_json, evaluator_projection_json,
             model_override, email_address, effective_after_event_sequence, authority_generation,
             created_at, updated_at)
-         VALUES (1, ?, ?, ?, ?, ?, 'draft', NULL, ?, ?, NULL, '', '', 0, NULL, '{}', '[]', '{}', '[]',
+         VALUES (1, ?, ?, ?, ?, ?, 'draft', NULL, ?, ?, ?, NULL, '', '', 0, NULL, '{}', '[]', '{}', '[]',
                  NULL, NULL, NULL, ?, ?, ?)`,
         request.automationId,
         request.workspaceId,
@@ -543,6 +586,7 @@ export class SidekickDO extends ConversationParentDurableObject {
         request.authorUserId,
         request.scope,
         request.owningWorkstreamId,
+        request.owningSubstreamId,
         request.authorityGeneration,
         now,
         now,
@@ -1201,20 +1245,23 @@ export class SidekickDO extends ConversationParentDurableObject {
     });
   }
 
-  async readRunDefinition(input: AutomationRunRequest): Promise<AutomationRunDefinitionV1> {
+  async readRunDefinition(input: AutomationRunDefinitionRequest): Promise<AutomationRunDefinitionV1> {
     await this.initialized;
-    const request = parseRpcInput(AutomationRunRequestSchema, input, "read_run_definition");
+    const request = parseRpcInput(AutomationRunDefinitionRequestSchema, input, "read_run_definition");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     const run = this.run(request.runId);
     if (!run) throw new ApiError(404, "sidekick_run_not_found", "This run does not exist");
-    const revision = this.revision(run.definition_revision);
+    // A continued run names the revision it continued under; a scheduled start
+    // names the one it was admitted under, which is the run row's own.
+    const definitionRevision = request.definitionRevision ?? run.definition_revision;
+    const revision = this.revision(definitionRevision);
     if (!revision) throw new ApiError(404, "sidekick_definition_not_found", "The run's definition revision is missing");
     const definition = AutomationDraftSchema.parse(JSON.parse(revision.definition_json));
     return AutomationRunDefinitionV1Schema.parse({
       schemaVersion: 1,
       automationId: row.automation_id,
       runId: run.run_id,
-      definitionRevision: run.definition_revision,
+      definitionRevision,
       definition: {
         name: definition.name,
         description: definition.description,
@@ -1231,6 +1278,7 @@ export class SidekickDO extends ConversationParentDurableObject {
       connectorBindings: JSON.parse(row.connector_bindings_json),
       scope: row.scope,
       owningWorkstreamId: row.owning_workstream_id,
+      owningSubstreamId: row.owning_substream_id,
       runAsUserId: row.run_as_user_id,
       modelOverride: row.model_override,
       trigger: JSON.parse(run.trigger_json),
@@ -1239,13 +1287,76 @@ export class SidekickDO extends ConversationParentDurableObject {
     });
   }
 
-  /** Whether a run may still act: its own state, and the automation's. */
-  async readRunState(input: AutomationRunRequest): Promise<{ state: RunState; lifecycle: Lifecycle } | null> {
+  /**
+   * Whether a run may still act: its own state, and the automation's.
+   *
+   * `stopGeneration` is how many times this Sidekick has stopped its open
+   * runs, so a continued run can tell a stop it was approved after from one
+   * that landed since. See `continueRun`. `completedAt` is when the row last
+   * finished, for display.
+   */
+  async readRunState(input: AutomationRunRequest): Promise<{
+    state: RunState;
+    lifecycle: Lifecycle;
+    completedAt: number | null;
+    stopGeneration: number;
+  } | null> {
     await this.initialized;
     const request = parseRpcInput(AutomationRunRequestSchema, input, "read_run_state");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     const run = this.run(request.runId);
-    return run ? { state: run.state, lifecycle: row.lifecycle } : null;
+    return run
+      ? { state: run.state, lifecycle: row.lifecycle, completedAt: run.completed_at, stopGeneration: row.stop_generation }
+      : null;
+  }
+
+  /**
+   * Whether input that reached a run child may continue the run, and with
+   * what: the `automationRun` block and run-as principal the scheduled start
+   * builds, against the Sidekick's **currently accepted** revision. A
+   * continued run acts on today's consent, not on the consent it started
+   * with.
+   *
+   * A read with no side effects. The run row moves back to `running` through
+   * the child's own `directory_common` projection (`onChildCommonProjection`),
+   * so a caller that fails between this answer and its activation leaves
+   * nothing here to undo. Who sent the input is not asked: anyone who can
+   * reach a run may continue it.
+   */
+  async continueRun(input: AutomationRunRequest): Promise<SidekickRunContinuation> {
+    await this.initialized;
+    const request = parseRpcInput(AutomationRunRequestSchema, input, "continue_run");
+    const row = this.row();
+    // A Sidekick object that never held a row has no run to continue.
+    if (!row) return { outcome: "refused", code: "run_not_found" };
+    this.assertAutomation(request.workspaceId, request.automationId);
+    if (row.lifecycle === "deleted") return { outcome: "refused", code: "sidekick_deleted" };
+    // A room archive pauses the Sidekick with `paused_by = 'room_archive'`,
+    // so it refuses here under the same code as a person's pause.
+    if (row.lifecycle === "paused") return { outcome: "refused", code: "sidekick_paused" };
+    const run = this.run(request.runId);
+    if (!run || row.lifecycle !== "active" || row.accepted_definition_revision === null) {
+      return { outcome: "refused", code: "run_not_found" };
+    }
+    // The transcript the continuation would read is the run-as user's it was
+    // provisioned for. A claim since then moves who the Sidekick runs as, and
+    // continuing would put that history in front of the new principal's
+    // connectors, so it refuses instead.
+    if (run.run_as_user_id !== null && run.run_as_user_id !== row.run_as_user_id) {
+      return { outcome: "refused", code: "run_principal_changed" };
+    }
+    return SidekickRunContinuationSchema.parse({
+      outcome: "continue",
+      automationRun: {
+        schemaVersion: 1,
+        automationId: asAutomationId(row.automation_id),
+        runId: run.run_id,
+        definitionRevision: row.accepted_definition_revision,
+        trigger: JSON.parse(run.trigger_json),
+      },
+      executionPrincipal: { type: "user", userId: asUserId(row.run_as_user_id) },
+      stopGeneration: row.stop_generation,
+    });
   }
 
   async readDetail(input: AutomationActorRequest): Promise<AutomationDetail> {
@@ -1350,6 +1461,15 @@ export class SidekickDO extends ConversationParentDurableObject {
       }
       const owner = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, row.workspace_id,
         workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(row.workspace_id)));
+      // A Breakout home is reached through the Breakout's own grants, as a
+      // guest opening that Breakout is: a Channel grant does not reach it.
+      if (row.owning_substream_id !== "0") {
+        const home = await owner.authorizeViewer({ workspaceId: asWorkspaceId(row.workspace_id),
+          parentId: row.owning_workstream_id, substreamId: asSubstreamId(row.owning_substream_id),
+          userId: request.userId, requireGrantAuthority: true });
+        return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: home.authorized,
+          archived: row.owning_room_archived_at !== null || home.archived });
+      }
       const access = await owner.readManagementAccess({ workspaceId: row.workspace_id,
         parentId: row.owning_workstream_id, userId: request.userId });
       return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: access.allowed,
@@ -1365,11 +1485,20 @@ export class SidekickDO extends ConversationParentDurableObject {
         row.workspace_id,
         workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(row.workspace_id)),
       );
-      authorized = (await workspace.workstreamParticipant({
-        workspaceId: row.workspace_id,
-        workstreamId: row.owning_workstream_id,
-        userId: request.userId,
-      })).participant;
+      // A Breakout home narrows the room to the Breakout's own members, through
+      // the same admission the Breakout's conversation uses.
+      authorized = row.owning_substream_id === "0"
+        ? (await workspace.workstreamParticipant({
+          workspaceId: row.workspace_id,
+          workstreamId: row.owning_workstream_id,
+          userId: request.userId,
+        })).participant
+        : (await workspace.authorizeViewer({
+          workspaceId: asWorkspaceId(row.workspace_id),
+          parentId: row.owning_workstream_id,
+          substreamId: asSubstreamId(row.owning_substream_id),
+          userId: request.userId,
+        })).authorized;
     }
     return ConversationParentAuthorizeViewerResultSchema.parse({
       authorized,
@@ -1396,6 +1525,7 @@ export class SidekickDO extends ConversationParentDurableObject {
     if (!row || row.lifecycle === 'deleted') return { exists: false as const, validatedAt: Date.now() };
     this.assertAutomation(request.workspaceId, request.parentId);
     return { exists: true as const, scope: row.scope, owningWorkstreamId: row.owning_workstream_id,
+      owningSubstreamId: row.owning_substream_id,
       author: row.author_user_id === request.userId, executor: row.run_as_user_id === request.userId,
       children: this.childRegistry().map((child) => child.substreamId),
       revision: JSON.stringify([row.authority_generation, row.updated_at]), validatedAt: Date.now() };
@@ -1474,22 +1604,50 @@ export class SidekickDO extends ConversationParentDurableObject {
     };
   }
 
-  /** A run's conversation moved; the run row follows it, forward only. */
-  protected override onChildCommonAggregate(
+  /**
+   * A run's conversation moved; the run row follows it.
+   *
+   * Driven by the *accepted* projection only: the parent calls this hook when
+   * the child's envelope carried a newer `sourceVersion` than the one it
+   * holds, and never for a stale one. That is what lets a finished run reopen
+   * safely. Input that continues a run (`continueRun`) moves its child back to
+   * a live state, and the child's next projection is the only thing that
+   * reopens the row; a `completed` projection from an earlier activation that
+   * arrives after it carries an older version, is not accepted, and cannot
+   * close the continued run.
+   *
+   * A live state is the only thing that moves a finished row, and it reopens
+   * one only while the Sidekick is active: a
+   * paused or deleted Sidekick keeps its runs finished whatever a child that
+   * was already continuing reports, and the run authority check refuses that
+   * child's writes on the lifecycle alone. `idle` does not reopen either; it
+   * is what an unarchive or a runtime bootstrap reports, not a sign the run
+   * is working again.
+   *
+   * A run completes once per activation, so `completed_at` is its latest
+   * finish, not its first.
+   */
+  protected override onChildCommonProjection(
     substreamId: string,
-    _aggregate: DirectoryCommonEffect,
-    envelope: ConversationEffectEnvelope,
+    effect: DirectoryCommonEffect,
     now: number,
   ): void {
-    if (substreamId === "0" || envelope.effect.kind !== "directory_common") return;
-    const next = RUN_STATE_FROM_CONVERSATION_STATE[envelope.effect.state] ?? null;
+    if (substreamId === "0") return;
+    const next = RUN_STATE_FROM_CONVERSATION_STATE[effect.state] ?? null;
     if (next === null) return;
     const run = this.run(substreamId);
-    if (!run || TERMINAL_RUN_STATES.has(run.state) || run.state === next) {
-      if (run && !TERMINAL_RUN_STATES.has(run.state)) {
+    if (!run) return;
+    const summary = effect.preview || null;
+    const finished = TERMINAL_RUN_STATES.has(run.state);
+    const live = !TERMINAL_RUN_STATES.has(next);
+    const reopens = finished && live && effect.state !== "idle" && this.row()?.lifecycle === "active";
+    // One finished state never replaces another: a run a pause stopped stays
+    // stopped when its child's last activation later reports `completed`.
+    if (run.state === next || (finished && !reopens)) {
+      if (!finished) {
         this.state.storage.sql.exec(
           `UPDATE runs SET summary = ?, updated_at = ? WHERE run_id = ?`,
-          envelope.effect.preview || null,
+          summary,
           now,
           substreamId,
         );
@@ -1502,8 +1660,8 @@ export class SidekickDO extends ConversationParentDurableObject {
               updated_at = ?
         WHERE run_id = ?`,
       next,
-      envelope.effect.preview || null,
-      TERMINAL_RUN_STATES.has(next) ? 1 : 0,
+      summary,
+      live ? 0 : 1,
       now,
       now,
       substreamId,
@@ -1689,6 +1847,14 @@ export class SidekickDO extends ConversationParentDurableObject {
       runId,
     });
     const now = Date.now();
+    // Whose transcript this run will hold, recorded before anything is seated
+    // or run as them and kept across a retried provision, so a continuation
+    // can refuse to hand this history to somebody else (`continueRun`).
+    const runAs = this.state.storage.sql.exec<{ run_as_user_id: string }>(
+      `UPDATE runs SET run_as_user_id = COALESCE(run_as_user_id, ?) WHERE run_id = ? RETURNING run_as_user_id`,
+      row.run_as_user_id,
+      runId,
+    ).one().run_as_user_id;
     this.registerChild(runId, "child", null, now);
     await bootstrapConversationChildRuntime(this.env, row.workspace_id, "automation", row.automation_id, runId);
     await provisionWorkstreamObject(this.env, {
@@ -1700,8 +1866,8 @@ export class SidekickDO extends ConversationParentDurableObject {
       // A run is nested implementation detail, not a room: it admits only the
       // person it runs as.
       scope: "personal",
-      createdByUserId: row.run_as_user_id,
-      participantUserIds: [row.run_as_user_id],
+      createdByUserId: runAs,
+      participantUserIds: [runAs],
       harnessStatus: "scheduled",
       emailAddress: null,
       emailRouteStatus: null,
@@ -1746,7 +1912,7 @@ export class SidekickDO extends ConversationParentDurableObject {
       workstreamId: row.automation_id,
     });
     const runs = createHarnessRunObjectPort(this.env, row.workspace_id, row.automation_id, undefined, runId);
-    const executionPrincipal = { type: "user" as const, userId: asUserId(row.run_as_user_id) };
+    const executionPrincipal = { type: "user" as const, userId: asUserId(runAs) };
     if (!await runs.run({ runId: run.harness_run_id })) {
       await runs.admitRun({
         runId: run.harness_run_id,
@@ -1855,6 +2021,9 @@ export class SidekickDO extends ConversationParentDurableObject {
       now,
       now,
     );
+    // In the same transaction as the stop, so no continuation can be approved
+    // between the two and read the old count with the new stop.
+    this.state.storage.sql.exec(`UPDATE automation SET stop_generation = stop_generation + 1 WHERE id = 1`);
   }
 
   /** The workspace's registrations for this automation, replaced whole. */
@@ -2253,6 +2422,7 @@ export class SidekickDO extends ConversationParentDurableObject {
       lifecycle: row.lifecycle,
       scope: row.scope,
       owningWorkstreamId: row.owning_workstream_id,
+      owningSubstreamId: SubstreamIdSchema.parse(row.owning_substream_id),
       title: row.title,
       description: row.description,
       nextRunAt: iso(this.nextRunAt(row)),

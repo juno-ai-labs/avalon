@@ -44,7 +44,12 @@ import {
   type PendingBindToolBatch,
 } from "@rally/agent-harness";
 import { uuidV7 } from "../lib/uuid-v7";
-import { projectImportedSourceMessage, projectParticipantTextMessage } from "../services/workstream-participant-model-message";
+import {
+  externalInputFraming,
+  projectImportedSourceMessage,
+  projectParticipantTextMessage,
+  type ExternalInputFraming,
+} from "../services/workstream-participant-model-message";
 import { boundParameterChunks } from "./bound-parameters";
 import {
   SubstreamLoopStorage,
@@ -498,6 +503,26 @@ export class WorkstreamTranscriptStorage {
 
   private get sql(): SqlStorage {
     return this.storage.sql;
+  }
+
+  /**
+   * How this conversation renders a turn from outside Rally: as evidence in a
+   * Sidekick run child, as a request everywhere else. See
+   * {@link externalInputFraming}.
+   */
+  externalInputFraming(): ExternalInputFraming {
+    const conversation = this.sql.exec<{
+      parent_kind: string;
+      external_substream_id: string | null;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT workstream.parent_kind, identity.external_substream_id
+         FROM workstream LEFT JOIN substream_agent_identity AS identity ON identity.id = 1
+        WHERE workstream.id = 1`,
+    ).toArray()[0];
+    return externalInputFraming({
+      parentKind: conversation?.parent_kind ?? "workstream",
+      substreamId: conversation?.external_substream_id ?? "0",
+    });
   }
 
   /**
@@ -4073,6 +4098,44 @@ export class WorkstreamTranscriptStorage {
     });
   }
 
+  /**
+   * Land the input at the head of the queue as a canonical turn and start no
+   * run for it, because this conversation refused to act on it: input to a
+   * Sidekick run the Sidekick no longer continues.
+   *
+   * Delivered rather than left pending, because a pending input at the head
+   * holds every input behind it, and delivered rather than deleted, because
+   * the sender's words are still what they said. Nothing touches Bind: like a
+   * message that started no run, the turn reaches the model through the
+   * gap-fill of whatever run comes next, as said to the room.
+   *
+   * Fenced on the idle loop at the revision the caller read and on the input
+   * still being the next one Bind would take, so a concurrent activation or a
+   * reorder is refused rather than overtaken. The caller owns the transaction
+   * and enqueues the returned delivery effects in it.
+   */
+  deliverRefusedInputInTransaction(input: {
+    loopId: string;
+    inputId: string;
+    expectedLoopRevision: number;
+    now: number;
+  }): PendingInputDeliveryEffectInput[] {
+    const loop = new SubstreamLoopStorage(this.storage).loop();
+    if (!loop || loop.loop_id !== input.loopId) throw new Error("substream_loop_not_found");
+    if (loop.status !== "idle" || loop.revision !== input.expectedLoopRevision) {
+      throw new Error("substream_loop_refusal_fenced");
+    }
+    const pending = this.nextActivationInput(input.loopId);
+    if (pending?.input_id !== input.inputId) throw new Error("substream_loop_refusal_fenced");
+    const delivered = this.promotePendingInputInTransaction(
+      pending,
+      parsePendingInputMaterial(pending),
+      input.now,
+    );
+    this.markPendingDeliveredDirect(pending, delivered.attentionOrdinal, input.now);
+    return [delivered.deliveryEffect];
+  }
+
   private oldestActivationInput(
     projection: BindLoopProjectionState | null,
   ): PendingLoopInputRow | undefined {
@@ -4396,6 +4459,9 @@ export class WorkstreamTranscriptStorage {
     ));
     const steps: PreparedPendingBindStep[] = [];
     let projection = previous;
+    const externalFraming = candidates.some(({ turn }) => turn.actor === "external")
+      ? this.externalInputFraming()
+      : "request";
     for (const { turn, text, provenance, key } of candidates) {
       if (appendedInThisPass.has(key) || alreadyProjected.has(key)) continue;
       const imported = ImportedMessageProvenanceSchema.safeParse(text.structuredContent);
@@ -4419,6 +4485,7 @@ export class WorkstreamTranscriptStorage {
               userId: turn.authorUserId,
               displayName: turn.authorSnapshot?.displayName ?? null,
             },
+        externalFraming,
         text: text.text,
         mentions: (text.mentions ?? []).map((mention) => ({
           type: mention.type,

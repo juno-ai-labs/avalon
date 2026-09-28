@@ -32,6 +32,10 @@ type LocalOnlyTranscriptOperation =
   // Lands queued messages that start no run; same authority as activation.
   | "hasLeadingInputWithoutRun"
   | "deliverLeadingInputsWithoutRun"
+  // Lands refused input inside the caller's transaction; same authority.
+  | "deliverRefusedInputInTransaction"
+  // Read while the object prepares a projection of its own turns.
+  | "externalInputFraming"
   // Says whether the loop still owes Bind tool results, and so whether it may
   // be released to `idle`. Answered against the live projection for the two
   // release paths that hold the loop; nothing off-object may ask it.

@@ -24,7 +24,6 @@ import {
 } from "./slack-reactions";
 import {
   assertPrincipalAccess,
-  connectorRetryAfterMs,
   ConnectorError,
   connectorCapabilityRefused,
   defineConnectorActivityTriggers,
@@ -466,6 +465,83 @@ export function slackActivityEventType(envelope: SlackIngressEnvelope): string |
   return null;
 }
 
+/**
+ * The external installation a Slack workspace bot's events arrive under: the
+ * team, not the connection row, so a binding survives a disconnect and
+ * reconnect that mints a new connection. See
+ * docs/external-conversation-bindings.md.
+ */
+export function slackInstallationId(teamId: string): string {
+  return `slack:${teamId}`;
+}
+
+/**
+ * The external path of one Slack message: `[channel, thread root]`.
+ *
+ * A reply's root is its `thread_ts`; a top-level message is its own root. In a
+ * conversation where Slack disallows threads the same formula yields the
+ * synthetic `[channel, message_ts]`, so each message addressed to Rally has
+ * its own key under the room and an unaddressed one resolves nothing.
+ */
+export function slackMessagePath(input: {
+  channelId: string;
+  threadTs: string | null | undefined;
+  messageTs: string;
+}): string[] {
+  return [input.channelId, input.threadTs || input.messageTs];
+}
+
+export interface SlackExternalRoom {
+  /** `shared` for a channel, private channel, or group DM; `direct` for a one-to-one DM. */
+  kind: "shared" | "direct";
+  visibility: "public" | "private";
+  threadable: boolean;
+  archived: boolean;
+  /** A product title for the room, never Slack's synthetic group-DM name. */
+  displayName: string;
+}
+
+/**
+ * What a Slack conversation is, from `conversations.info`.
+ *
+ * `is_mpim` is checked before anything else: a group DM's ID can start with
+ * `G` like an old private channel, and it is private and shared whatever its
+ * prefix. Only an explicit `is_private: false` classifies a room as public.
+ * An unnamed group DM's Slack name is `mpdm-alice--bob-1`; the title is the
+ * participant handles it encodes, which is readable where the provider name
+ * is not.
+ */
+export function slackExternalRoom(channel: {
+  id: string;
+  name?: string | undefined;
+  is_im?: boolean | undefined;
+  is_mpim?: boolean | undefined;
+  is_private?: boolean | undefined;
+  is_archived?: boolean | undefined;
+  is_non_threadable?: boolean | undefined;
+}): SlackExternalRoom {
+  const direct = channel.is_im === true;
+  const mpim = channel.is_mpim === true;
+  const name = channel.name?.trim() ?? "";
+  const displayName = mpim
+    ? slackGroupDmLabel(name)
+    : name || channel.id;
+  return {
+    kind: direct ? "direct" : "shared",
+    visibility: !direct && !mpim && channel.is_private === false ? "public" : "private",
+    threadable: channel.is_non_threadable !== true,
+    archived: channel.is_archived === true,
+    displayName,
+  };
+}
+
+function slackGroupDmLabel(name: string): string {
+  const handles = name.startsWith("mpdm-")
+    ? name.slice("mpdm-".length).replace(/-\d+$/u, "").split("--").filter(Boolean)
+    : [];
+  return handles.length > 0 ? `Group DM: ${handles.join(", ")}` : "Group DM";
+}
+
 export function normalizeSlackActivity(
   connection: ConnectorConnectionContext,
   envelope: SlackIngressEnvelope,
@@ -500,6 +576,10 @@ export function normalizeSlackActivity(
     event.ts,
   );
   const threadTs = firstSlackString(message.thread_ts, event.thread_ts);
+  const externalConversationPath = eventType.startsWith("slack.message.") || eventType === "slack.direct_message.received"
+    || eventType === "slack.app_mention.received"
+    ? channelId && messageTs ? slackMessagePath({ channelId, threadTs, messageTs }) : null
+    : null;
   const file = isRecord(event.file) ? event.file : {};
   const itemType = firstSlackString(item.type);
   const fileId = firstSlackString(event.file_id, file.id, item.file);
@@ -579,6 +659,11 @@ export function normalizeSlackActivity(
       ...(userId ? { userId } : {}),
       ...(messageTs ? { messageTs } : {}),
       ...(threadTs ? { threadTs, isThread: true } : { isThread: false }),
+      // The binding key a message resolves under, spelled by the adapter so
+      // the host resolves it without knowing Slack's installation scheme.
+      ...(externalConversationPath
+        ? { externalConversationPath, externalConversationInstallationId: slackInstallationId(teamId) }
+        : {}),
       ...(reaction ? { reaction } : {}),
       ...(typeof event.item_user === "string" ? { itemUserId: event.item_user } : {}),
       ...(itemType ? { itemType } : {}),
@@ -874,6 +959,11 @@ const SlackConversationSchema = SlackChannelSchema.extend({
   // alike, so a reader in the conversation may work for another company.
   is_ext_shared: z.boolean().optional(),
   is_pending_ext_shared: z.boolean().optional(),
+  is_channel: z.boolean().optional(),
+  is_group: z.boolean().optional(),
+  is_archived: z.boolean().optional(),
+  // A conversation where Slack disallows threads. Absent reads as threadable.
+  is_non_threadable: z.boolean().optional(),
 });
 const SlackListedPublicChannelSchema = SlackChannelSchema.extend({
   name: z.string().optional(),
@@ -1427,14 +1517,6 @@ async function slackApiResponse<M extends SlackWebApiMethod>(
 
 export type SlackPublicChannelJoinResult = "joined" | "already_member" | "skipped";
 
-export interface SlackPublicChannelSyncResult {
-  joined: number;
-  alreadyMember: number;
-  skipped: number;
-  complete: boolean;
-  retryAfterMs?: number;
-}
-
 const SlackUnjoinablePublicChannelErrors = new Set([
   "access_denied",
   "channel_not_found",
@@ -1456,12 +1538,6 @@ function slackProviderErrorCode(error: unknown): string | null {
     : null;
 }
 
-function slackRateLimitRetryAfterMs(error: unknown): number | null {
-  if (!(error instanceof ConnectorError) || !error.details || typeof error.details !== "object") return null;
-  const status = (error.details as { status?: unknown }).status;
-  if (status !== 429 && slackProviderErrorCode(error) !== "ratelimited") return null;
-  return connectorRetryAfterMs(error) ?? 60_000;
-}
 
 /** Join one public channel, while treating channel-specific policy failures as terminal. */
 export async function joinSlackPublicChannel(
@@ -1499,60 +1575,6 @@ export async function joinSlackPublicChannel(
 function slackSearchPage(results: Record<string, unknown>): Record<string, unknown> {
   const cursor = results.next_cursor;
   return { ...results, next_cursor: (typeof cursor === "string" ? cursor : "") || null };
-}
-
-/** Enumerate and join every visible, active public channel with cursor-safe retries. */
-export async function joinAllSlackPublicChannels(
-  token: string,
-  signal: AbortSignal,
-  fetcher: FetchLike = fetch,
-): Promise<SlackPublicChannelSyncResult> {
-  const summary = { joined: 0, alreadyMember: 0, skipped: 0 };
-  const seenCursors = new Set<string>();
-  let cursor: string | undefined;
-  do {
-    let page: SlackApiResponse<"conversations.list">;
-    try {
-      page = await slackApi(token, "conversations.list", {
-        exclude_archived: true,
-        limit: 200,
-        types: "public_channel",
-        ...(cursor ? { cursor } : {}),
-      }, signal, fetcher);
-    } catch (error) {
-      const retryAfterMs = slackRateLimitRetryAfterMs(error);
-      if (retryAfterMs != null) return { ...summary, complete: false, retryAfterMs };
-      throw error;
-    }
-    for (const channel of page.channels) {
-      if (channel.is_archived || channel.is_private) {
-        summary.skipped += 1;
-        continue;
-      }
-      if (channel.is_member) {
-        summary.alreadyMember += 1;
-        continue;
-      }
-      let result: SlackPublicChannelJoinResult;
-      try {
-        result = await joinSlackPublicChannel(token, channel.id, signal, fetcher);
-      } catch (error) {
-        const retryAfterMs = slackRateLimitRetryAfterMs(error);
-        if (retryAfterMs != null) return { ...summary, complete: false, retryAfterMs };
-        throw error;
-      }
-      if (result === "joined") summary.joined += 1;
-      else if (result === "already_member") summary.alreadyMember += 1;
-      else summary.skipped += 1;
-    }
-    const nextCursor = page.response_metadata?.next_cursor?.trim() || undefined;
-    if (nextCursor && seenCursors.has(nextCursor)) {
-      throw new ConnectorError("provider_error", "Slack returned a repeated public-channel cursor");
-    }
-    if (nextCursor) seenCursors.add(nextCursor);
-    cursor = nextCursor;
-  } while (cursor);
-  return { ...summary, complete: true };
 }
 
 function parseSlackSuccess<T extends z.ZodType>(
@@ -1747,6 +1769,19 @@ async function executeSlackDirectTool(
         output: { channel_id: result.channel, timestamp: result.ts },
         summary: `Sent a Slack message to ${result.channel}`,
         providerOperationId: `${result.channel}:${result.ts}`,
+        // Only the workspace bot's conversations reach ingress, so only a bot
+        // send has a reply thread Rally can route. A send into an existing
+        // thread binds that thread's root, not the new message.
+        ...(context.connection.scope === "workspace" && slackConnectionTeamId(context.connection)
+          ? { externalConversation: {
+              installationId: slackInstallationId(slackConnectionTeamId(context.connection)!),
+              path: slackMessagePath({
+                channelId: result.channel,
+                threadTs: args.thread_ts ?? null,
+                messageTs: result.ts,
+              }),
+            } }
+          : {}),
       };
     }
     case "create_conversation": {
@@ -2542,6 +2577,13 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
     },
   };
   return adapter;
+}
+
+/** The Slack team a workspace installation belongs to, from its credentials or config. */
+function slackConnectionTeamId(connection: ConnectorConnectionContext): string | null {
+  return stringValue(connection.credentials, "teamId")
+    ?? stringValue(connection.config, "providerAccountId")
+    ?? stringValue(connection.config, "teamId");
 }
 
 function botToken(connection: ConnectorConnectionContext): string {

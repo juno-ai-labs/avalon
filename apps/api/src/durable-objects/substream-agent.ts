@@ -16,6 +16,10 @@ import { sidekickSkillCatalog, sidekickSkillRef } from "../services/sidekick-ski
 import { flushAuthorizationProjection, nextAuthorizationProjectionAt } from './authorization-projection';
 import { searchIndexingConfigured } from '../services/search-embedding';
 import { conversationSearchDocumentIds, prepareConversationLinks, readConversationSearchLink, type ConversationDisplay } from './conversation-link-search';
+import {
+  drainExternalBindingOutbox,
+  nextExternalBindingDueAt,
+} from "./external-binding-outbox";
 import { drainSearchProjectionOutbox, nextSearchProjectionDueAt, SearchConversationProjectionMessageSchema, SearchProjectionMessageSchema } from './search-projection-outbox';
 import { searchDocumentId } from '../services/text-search';
 import { conversationSearchAudience } from '../services/search-audience';
@@ -29,7 +33,6 @@ import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
   AnswerElicitationRequestSchema,
-  AutomationActivationV1Schema,
   AutomationDraftProposedV1Schema,
   ExecutionPrincipalSchema,
   ClientSocketEventSchema,
@@ -72,6 +75,7 @@ import {
 } from "@rally/contracts";
 import { z } from "zod";
 
+import { ConversationPostRequestSchema } from "./workspace-conversation-tool-protocol";
 import {
   revocationClosesSession,
   SocketAccessRevocationSchema,
@@ -175,7 +179,18 @@ import {
   UnsettledToolBatchError,
   isUnsettledToolBatchError,
 } from "./workstream-transcript-storage";
-import { LOOP_EXECUTION_LEASE_MS, SubstreamLoopStorage } from "./substream-loop-storage";
+import {
+  LOOP_EXECUTION_LEASE_MS,
+  SubstreamLoopStorage,
+  type PendingLoopInputRow,
+  type SubstreamLoopRow,
+} from "./substream-loop-storage";
+import type { SidekickRunContinuation, SidekickRunContinuationRefusalCode } from "./automation-do-protocol";
+import {
+  continuationSource,
+  continueSidekickRun,
+  SIDEKICK_RUN_REFUSAL_TEXT,
+} from "../services/sidekick-run-continuation";
 import {
   TranscriptOperationRequestSchema,
   type TranscriptOperationRequest,
@@ -2106,88 +2121,62 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * An automation's result, delivered into the work stream that owns it.
+   * A Sidekick's `conversation_post`, appended to this conversation as a
+   * message from the Sidekick, and nothing else.
    *
-   * Delivery here means a run, not a row. The result is admitted as loop input
-   * exactly as an external message is — the mailbox is what turns an arrival
-   * into an `activate_substream_loop` request — because a room that receives
-   * something nobody acts on has received nothing. A canonical append would
-   * have landed text that sits unread until something unrelated happens to
-   * start a run, which for a room nobody is watching is never.
-   *
-   * The idempotent client message ID derived from the delivery, the
-   * authority-generation fence every provider write respects, and the archive
-   * check are unchanged from `appendWatchedResourceEvent`: a retry after a
-   * crash wakes the room once, and a run that outlived its automation's pause
-   * or its room's archive wakes it not at all.
+   * It accepts any conversation, a Breakout as well as Main, and it does not
+   * wake this conversation's agent: a post is something people here read, not
+   * a request to the agent here.
+   * The row is keyed by the caller's host-derived client message id, so a
+   * retried receipt lands once and answers with the message it already wrote.
+   * Who may post here was decided by the caller against WorkspaceDO's
+   * admission and the Sidekick's attachments; this object decides only that
+   * it is the addressed conversation and that it is not archived.
    */
-  async appendAutomationActivation(input: unknown): Promise<{
+  async appendConversationPost(input: unknown): Promise<{
     outcome: "appended" | "replayed" | "refused";
     code: string;
+    messageId: string | null;
   }> {
     await this.initialized;
-    const request = z.strictObject({
-      schemaVersion: z.literal(1),
-      workspaceId: z.string().min(1),
-      workstreamId: z.string().min(1),
-      authorityGeneration: z.number().int().positive(),
-      deliveryId: z.string().min(1),
-      text: z.string().min(1),
-      executionPrincipal: ExecutionPrincipalSchema,
-      activation: AutomationActivationV1Schema,
-    }).parse(input);
+    const request = parseRpcInput(ConversationPostRequestSchema, input, "append_conversation_post");
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== request.workspaceId
+      || identity.parentKind !== "workstream"
       || identity.parentId !== request.workstreamId
-      || this.externalSubstreamId() !== "0") {
-      return { outcome: "refused", code: "workstream_destination_mismatch" };
+      || this.externalSubstreamId() !== request.substreamId) {
+      return { outcome: "refused", code: "workstream_destination_mismatch", messageId: null };
     }
-    // Checked here rather than inside the admission: an automation whose room
-    // was archived or re-authorized between the decision to deliver and the
-    // delivery itself must not wake it, and the mailbox has no opinion about
-    // either fact.
-    const authority = this.ctx.storage.sql.exec<{
-      authority_generation: number;
-      archived_at: number | null;
-    }>(`SELECT authority_generation, archived_at FROM workstream WHERE id = 1`).toArray()[0];
-    if (!authority || authority.authority_generation !== request.authorityGeneration) {
-      return { outcome: "refused", code: "workstream_authority_generation_stale" };
-    }
-    if (authority.archived_at !== null) {
-      return { outcome: "refused", code: "workstream_archived" };
-    }
-    try {
-      const result = await this.product.admitAutomationActivation({
-        workspaceId: asWorkspaceId(request.workspaceId),
-        workstreamId: asWorkstreamId(request.workstreamId),
-        messageId: uuidV7(request.activation.occurredAt),
-        clientMessageId: `automation-activation:${request.deliveryId}`,
-        text: request.text,
-        activation: request.activation,
-        executionPrincipal: request.executionPrincipal,
-        origin: "automation_activation",
-        now: request.activation.occurredAt,
-      });
-      // The activation request is the wake: without it the row sits in the
-      // mailbox until something else happens to start a run, which for a room
-      // nobody is looking at is never.
-      if (result.activationRequest) {
-        await this.requestPersistentLoopActivation(result.activationRequest);
-      }
-      if (result.inserted) await this.flushSemanticRealtimeOutboxBestEffort();
-      return {
-        outcome: result.inserted ? "appended" : "replayed",
-        code: result.inserted
-          ? "sidekick_activation_appended"
-          : "sidekick_activation_replayed",
-      };
-    } catch (error) {
-      return {
-        outcome: "refused",
-        code: error instanceof Error ? error.message : "sidekick_activation_failed",
-      };
-    }
+    const existing = this.messages.messageByClientId({ clientMessageId: request.clientMessageId });
+    if (existing) return { outcome: "replayed", code: "conversation_post_replayed", messageId: existing.id };
+    const prepared = await this.messages.prepareMessage({
+      messageId: uuidV7(request.post.occurredAt),
+      clientMessageId: request.clientMessageId,
+      authorType: "system",
+      authorUserId: null,
+      externalActorJson: null,
+      // The activation vocabulary is what renders a row under the Sidekick's
+      // own name, in the client and in a later model's transcript.
+      messageType: "automation_activation",
+      text: request.text,
+      structuredContentJson: JSON.stringify(request.post),
+      producedByRunId: null,
+      now: request.post.occurredAt,
+    });
+    const result = await this.product.commitRuntimeMutation(() => {
+      const authority = this.ctx.storage.sql.exec<{ archived_at: number | null }>(
+        `SELECT archived_at FROM workstream WHERE id = 1`,
+      ).toArray()[0];
+      if (!authority) return { outcome: "refused" as const, code: "workstream_not_found", messageId: null };
+      if (authority.archived_at !== null) return { outcome: "refused" as const, code: "workstream_archived", messageId: null };
+      const appended = this.messages.appendPreparedMessage(prepared);
+      return appended.outcome === "replayed"
+        ? { outcome: "replayed" as const, code: "conversation_post_replayed", messageId: appended.messageId }
+        : { outcome: "appended" as const, code: "conversation_post_appended", messageId: appended.messageId };
+    }, true);
+    if (result.outcome === "appended") await this.flushSemanticRealtimeOutboxBestEffort();
+    return result;
   }
 
   /** Internal runtime metadata, never a transcript or a participant-facing inspection API. */
@@ -2561,7 +2550,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const identity = this.objectStore.identity();
     if (!identity || identity.workspaceId !== parsed.data.workspaceId
       || identity.parentId !== parsed.data.workstreamId
-      || this.externalSubstreamId() !== "0") {
+      || this.externalSubstreamId() !== (parsed.data.substreamId ?? "0")) {
       return responseToRpcResult(jsonResponse({ error: "external_message_identity_mismatch" }, 409));
     }
     try {
@@ -2700,6 +2689,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const method = this.toolReceipts[parsed.data.operation] as (...args: unknown[]) => unknown;
     try {
       const value = await method.apply(this.toolReceipts, parsed.data.args);
+      if (parsed.data.operation === "complete") {
+        // A completion may have committed an outbound binding beside it.
+        const bindingDueAt = nextExternalBindingDueAt(this.state.storage.sql);
+        if (bindingDueAt !== null) await this.ensureAlarmNoLaterThan(bindingDueAt);
+      }
       return { status: 200, payload: { ok: true, value: value ?? null } };
     } catch (error) {
       if (error instanceof ToolPageError) return { status: 400, payload: { ok: false, error: error.message } };
@@ -3957,7 +3951,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const pending = this.transcript.nextActivationInput(loop.loop_id);
     if (pending) {
       const identity = this.objectStore.identity();
-      const projection = this.transcript.readBindProjection(loop.loop_id);
       if (!identity) throw new Error("substream_loop_identity_unavailable");
       const authorization = z.looseObject({
         executionPrincipal: z.unknown(),
@@ -3970,23 +3963,70 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         seed: DemoSeedSchema.nullable().optional(),
         agentExchange: AgentExchangeSchema.optional(),
       }).parse(JSON.parse(pending.authorization_json));
+      // Input to a Sidekick run child continues that run: its instructions,
+      // tools and run-as authority, against the Sidekick's accepted revision
+      // today. Asked before anything is activated, so a refusal leaves the
+      // loop idle, and the refused input is landed rather than left at the
+      // head of the queue holding everything behind it.
+      let continuation: Extract<SidekickRunContinuation, { outcome: "continue" }> | null = null;
+      const externalSubstreamId = this.externalSubstreamId();
+      if (identity.parentKind === "automation" && externalSubstreamId !== "0") {
+        const decided = await continueSidekickRun(this.env, {
+          region: this.env.AVALON_REGION,
+          workspaceId: identity.workspaceId,
+          automationId: identity.parentId,
+          runId: externalSubstreamId,
+        });
+        // The answer took an RPC, and the loop may have moved meanwhile: a
+        // second input admitted behind this one bumps its revision. Acting on
+        // the loop read before the call would trip the activation's revision
+        // fence, fail the drain, and leave every queued input waiting for the
+        // recovery alarm, so claim again from what is current instead.
+        const current = this.loop.loop();
+        if (!current || current.status !== "idle" || current.revision !== loop.revision
+          || this.transcript.nextActivationInput(loop.loop_id)?.input_id !== pending.input_id) {
+          return this.claimPersistentLoopExecution();
+        }
+        if (decided.outcome === "refused") {
+          await this.refuseSidekickRunInput(loop, pending, decided.code);
+          return this.claimPersistentLoopExecution();
+        }
+        continuation = decided;
+      }
+      // Read after any continuation call, so the Bind fences the activation
+      // carries are the ones current when it commits.
+      const projection = this.transcript.readBindProjection(loop.loop_id);
+      const executionPrincipal = continuation?.executionPrincipal ?? authorization.executionPrincipal;
       const runId = asHarnessRunId(uuidV7(now));
       const input = WorkstreamWorkflowInputSchema.parse({
         region: this.env.AVALON_REGION,
         workspaceId: asWorkspaceId(identity.workspaceId),
         parentKind: identity.parentKind,
         parentId: identity.parentId,
-        substreamId: asSubstreamId(this.externalSubstreamId()),
+        substreamId: asSubstreamId(externalSubstreamId),
         loopId: loop.loop_id,
         harnessRunId: runId,
         triggerMessageId: pending.prepared_turn_id,
         activityId: null,
-        executionPrincipal: authorization.executionPrincipal,
+        // A continued run acts as the Sidekick's run-as user whoever sent the
+        // input; the sender stays the author of their message.
+        executionPrincipal,
+        ...(continuation
+          ? {
+              automationRun: continuation.automationRun,
+              automationContinuation: {
+                stopGeneration: continuation.stopGeneration,
+                ...continuationSource(pending),
+              },
+            }
+          : {}),
         ...(authorization.agentExchange ? { agentExchange: authorization.agentExchange } : {}),
         backgroundAgent: this.state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM background_agent").one().n > 0,
         ...(authorization.telemetryOperationId
           ? {
               telemetryOperationId: authorization.telemetryOperationId,
+              // The journey is the sender's, even when the run acts as
+              // somebody else.
               ...(typeof authorization.executionPrincipal === "object"
                 && authorization.executionPrincipal !== null
                 && "type" in authorization.executionPrincipal
@@ -4082,6 +4122,56 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         executionEpoch: loop.active_execution_epoch!,
       },
     };
+  }
+
+  /**
+   * Settle input the Sidekick would not continue its run for.
+   *
+   * The input lands as the sender wrote it, and a system row after it says
+   * why nothing answered, under the refusal's own code. Both in one
+   * transaction, keyed on the input, so a retried drain neither duplicates
+   * the note nor lands the input without it.
+   */
+  private async refuseSidekickRunInput(
+    loop: SubstreamLoopRow,
+    pending: PendingLoopInputRow,
+    code: SidekickRunContinuationRefusalCode,
+  ): Promise<void> {
+    const now = Date.now();
+    const prepared = await this.messages.prepareMessage({
+      messageId: uuidV7(now),
+      clientMessageId: `sidekick-run-refused:${pending.input_id}`,
+      authorType: "system",
+      authorUserId: null,
+      externalActorJson: null,
+      messageType: "system",
+      text: SIDEKICK_RUN_REFUSAL_TEXT[code],
+      structuredContentJson: JSON.stringify({
+        kind: "sidekick_run_refused",
+        code,
+        turnId: pending.prepared_turn_id,
+      }),
+      producedByRunId: null,
+      now,
+    });
+    await this.product.commitRuntimeMutation(() => {
+      this.product.enqueueRegionalEffectsInTransaction(this.transcript.deliverRefusedInputInTransaction({
+        loopId: loop.loop_id,
+        inputId: pending.input_id,
+        expectedLoopRevision: loop.revision,
+        now,
+      }));
+      this.messages.appendPreparedMessage(prepared);
+    }, true);
+    const identity = this.objectStore.identity();
+    logInfo(this.env, "sidekick_run_continuation_refused", {
+      workspace_id: identity?.workspaceId ?? null,
+      automation_id: identity?.parentId ?? null,
+      run_id: this.externalSubstreamId(),
+      input_id: pending.input_id,
+      code,
+    });
+    await this.flushSemanticRealtimeOutboxBestEffort();
   }
 
   private nextUnsettledExecutionReceipt(now: number): {
@@ -5719,6 +5809,59 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return links;
   }
 
+  /**
+   * Deliver the outbound bindings this run child's sends committed, to the
+   * WorkspaceDO that routes their replies. WorkspaceDO's write is idempotent,
+   * so a row delivered twice is `already_bound`.
+   */
+  private async flushExternalBindingOutbox(): Promise<void> {
+    const identity = this.objectStore.identity();
+    if (!identity) return;
+    try {
+      const workspace = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
+        identity.workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)));
+      // The thread routes to this run child: the conversation whose receipt
+      // committed the row.
+      const target = {
+        kind: "conversation" as const,
+        parentKind: identity.parentKind,
+        parentId: identity.parentId,
+        substreamId: this.externalSubstreamId(),
+      };
+      const report = await drainExternalBindingOutbox(this.state.storage.sql, (binding) =>
+        workspace.recordOutboundExternalConversationBinding({
+          workspaceId: identity.workspaceId,
+          installationId: binding.installationId,
+          path: binding.path,
+          target,
+          at: binding.at,
+        }));
+      for (const [event, rows] of [
+        ["external_binding_delivery_dead", report.dead],
+        ["external_binding_delivery_deferred", report.deferred],
+      ] as const) {
+        for (const row of rows) {
+          logWarn(this.env, event, {
+            workspace_id: identity.workspaceId,
+            workstream_id: identity.parentId,
+            substream_id: this.externalSubstreamId(),
+            message_id: row.messageId,
+            reason: row.code,
+          });
+        }
+      }
+    } catch (error) {
+      logWarn(this.env, "external_binding_delivery_deferred", {
+        workspace_id: identity.workspaceId,
+        workstream_id: identity.parentId,
+        substream_id: this.externalSubstreamId(),
+        reason: diagnosticErrorCode(error, "external_binding_delivery_failed"),
+      });
+    }
+    const next = nextExternalBindingDueAt(this.state.storage.sql);
+    if (next !== null) await this.ensureAlarmNoLaterThan(next);
+  }
+
   private async flushSearchProjectionOutbox(): Promise<void> {
     if (!searchIndexingConfigured(this.env)) return;
     const identity = this.objectStore.identity();
@@ -6722,6 +6865,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   private hasDueAlarmWork(now: number): boolean {
     return this.objectStore.nextRegionalEffectDueAt() !== null
+      || nextExternalBindingDueAt(this.state.storage.sql) !== null
       || this.objectStore.nextSemanticRealtimeDueAt() !== null
       || this.nextLoopWorkAt(now) !== null
       || this.nextExternalSettlementAt() !== null
@@ -6862,6 +7006,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const nextSemanticRealtimeAt = this.objectStore.nextSemanticRealtimeDueAt();
     const nextSearchProjectionAt = nextSearchProjectionDueAt(this.state.storage.sql, this.env);
     const nextAuthorizationProjectionDueAt = nextAuthorizationProjectionAt(this.state.storage.sql);
+    const nextExternalBindingAt = nextExternalBindingDueAt(this.state.storage.sql);
     const nextLoopAt = this.nextLoopWorkAt(now);
     const nextExternalSettlementAt = this.nextExternalSettlementAt();
     // A timer that fired above may have left the index behind the table.
@@ -6875,7 +7020,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     try {
       await this.runDueAlarmLanes(now, {
         nextRegionalEffectAt, nextSemanticRealtimeAt, nextSearchProjectionAt,
-        nextAuthorizationProjectionDueAt, nextLoopAt, nextExternalSettlementAt,
+        nextAuthorizationProjectionDueAt, nextExternalBindingAt, nextLoopAt, nextExternalSettlementAt,
       });
     } finally {
       if (terminalObservation) await terminalObservation;
@@ -6887,16 +7032,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     nextSemanticRealtimeAt: number | null;
     nextSearchProjectionAt: number | null;
     nextAuthorizationProjectionDueAt: number | null;
+    nextExternalBindingAt: number | null;
     nextLoopAt: number | null;
     nextExternalSettlementAt: number | null;
   }): Promise<void> {
     const {
       nextRegionalEffectAt, nextSemanticRealtimeAt, nextSearchProjectionAt,
-      nextAuthorizationProjectionDueAt, nextLoopAt, nextExternalSettlementAt,
+      nextAuthorizationProjectionDueAt, nextExternalBindingAt, nextLoopAt, nextExternalSettlementAt,
     } = due;
     const projectionDue = (nextRegionalEffectAt !== null && nextRegionalEffectAt <= now)
       || (nextSearchProjectionAt !== null && nextSearchProjectionAt <= now)
-      || (nextAuthorizationProjectionDueAt !== null && nextAuthorizationProjectionDueAt <= now);
+      || (nextAuthorizationProjectionDueAt !== null && nextAuthorizationProjectionDueAt <= now)
+      || (nextExternalBindingAt !== null && nextExternalBindingAt <= now);
     const loopDue = nextLoopAt !== null && nextLoopAt <= now;
     if (!projectionDue
       && !loopDue
@@ -6970,6 +7117,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       } catch { logWarn(this.env, 'authorization_projection_dispatch_deferred', { region: this.env.AVALON_REGION }); }
     }
     await this.flushSearchProjectionOutbox();
+    await this.flushExternalBindingOutbox();
     const nextEffectAt = this.objectStore.nextRegionalEffectDueAt();
     if (nextEffectAt !== null && nextEffectAt <= Date.now()) {
       await this.drainRegionalEffects();
