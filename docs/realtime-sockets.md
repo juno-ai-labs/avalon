@@ -348,6 +348,27 @@ and reject only when the provider is disposed or the user/session changes. A
 `workstream_directory` sync invalidation refetches these pages; it never asks a
 REST/D1 list endpoint to reconstruct them.
 
+Electron asks for Channel rails with `channel_rails`: a stable request ID and
+exactly one target, a Space (`spaceId`, optionally `after`, the previous
+answer's `nextAfter`) or up to 250 named Channels (`workstreamIds`). Each
+Channel row carries `railWaterline`; a held rail is stale once a row's passes
+it. The desktop asks for stale rails in order — the Channel in front, then its
+Spaces, then the other Spaces, then Channels in no Space — asking for a Space
+by `spaceId` when every Channel it knows there is stale and by ids otherwise,
+so one moved rail never resends a Space.
+
+WorkspaceDO answers with `workspace_channel_rails` frames, each at most
+`WORKSTREAM_REALTIME_MAX_FRAME_BYTES` by encoded length, the last one `final`:
+the rails that fit, `oversized` for a rail that fits no frame or fails its
+schema (the client paints that Channel from its snapshot), and `unavailable`
+for a named Channel the viewer is not sent a row for. Named Channels span as
+many frames as they need. A Space is answered in one frame from one page of up
+to 250 of its Channels this viewer may see, in id order; `nextAfter` names the
+last Channel answered when the page or the frame filled, so it never names one
+the viewer cannot see. A guest, or a Space the viewer cannot see, gets one
+empty final frame. The rail itself is
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-channels-rail-and-its-waterline)'s.
+
 A validated foreground visit persists this user's access time and sends
 `workspace_workstream_recency` only to their subscribed sessions. This contains
 one workstream, its state version, and the directory waterline; system rows are
@@ -851,6 +872,7 @@ receipt.
 | `apps/api/test-workers/workspace-socket-fanout.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-socket-fanout.test.ts` | Sync topic audiences on real sockets, live and on replay, and the Channel row's; the full list is in [`websocket-architecture.md`](websocket-architecture.md#testing). |
 | `apps/api/test/workspace-realtime-service.test.ts` | `pnpm --filter @rally/api exec vitest run test/workspace-realtime-service.test.ts` | The mutation map: each write's topics and audience. |
 | `apps/api/test-workers/channel-viewer-state.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Each viewer's own breakouts on the connect sidebar, per Channel; a roster change pushed to that breakout's members only; running background agents pushed to every reader and counted only where each can look; a lost Channel tombstoned without closing the socket; the current list after a resubscribe; nothing said for a parent still waiting for its import; foregrounding a Channel warms its Main. |
+| `apps/api/test-workers/channel-rails.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/channel-rails.test.ts` | `channel_rails` answers on a real socket: rail contents, `unavailable`, `attached` absent until reported, frames within a lowered frame limit and `oversized`, a guest's answer, a Space paged by visible Channels with `nextAfter`, a corrupt stored row that still ends in `final`; and the row pushed with a higher `railWaterline` for each kind of rail change. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` (breakouts block) | `pnpm --filter @rally/desktop test` | The breakout list and running agents taken from sidebar and pushed rows and kept with no screen observing them, waterline order, silence on an absent field, eviction on a tombstone, receipt-backed appearance, and pruning the disk cache to the roster. |
 | `apps/desktop/src/main/realtime-socket-broker.test.ts`, `realtime-socket-ipc.test.ts`, `apps/desktop/src/common/realtime-socket-validation.test.ts` | `pnpm --filter @rally/desktop test` | Ordered PAC fallback, shared frame ceiling, normal-close removal, renderer-owner isolation, shared IPC channels, main-window authorization, and strict main-to-preload events. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx`, `use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @rally/desktop test` | Initial admission for the pooled SubstreamAgent feed and that no Channel control ticket is ever requested, exact-feed reuse for five minutes after switching streams, background/recent overlap, expiry and backward-clock recovery, in-place route reconciliation, direct SubstreamAgent command/feed reconnect, private message receipts, streaming, explicit compaction lifecycle/reconciliation, range merging, oversized-turn placeholder rendering, and scroll thresholds/anchor preservation. |
@@ -889,6 +911,21 @@ what that leaves exposed.
 Child archive admission uses the same `parent_archived` ticket field as parent archive. Already-open private-child sockets additionally check the versioned local archive mirror; there is no per-command parent RPC. See [work-stream durable objects](workstream-durable-object.md) for lifecycle delivery.
 
 ## Changelog
+
+### 2026-09-28 — Channel rails over the workspace socket
+
+**What changed:** The workspace socket answers `channel_rails` with
+`workspace_channel_rails` frames, and Channel rows carry `railWaterline`.
+
+**Why, and what was rejected:** In
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md#changelog),
+which owns the rail. Pushing whole rails on every change was rejected here: most
+changes reach people not looking at that Channel, so only the waterline rides
+the row and the client asks.
+
+**Consequences:** A Space answer never names a Channel the viewer cannot see,
+including in `nextAfter`. No new cap: the frame limit is the socket's, and 250
+is the named-request limit. A client that ignores `railWaterline` never asks.
 
 ### 2026-09-26 — Provider webhooks tell their connections' audience
 

@@ -92,6 +92,11 @@ import {
   WorkspaceWorkstreamRecencyEventSchema,
   WorkspaceSidebarSchema,
   WorkspaceWorkstreamPageEventSchema,
+  ChannelRailSchema,
+  type ChannelRail,
+  WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
+  CHANNEL_RAILS_NAMED_LIMIT,
+  type WorkspaceSocketClientEvent,
   WorkspaceWorkstreamStateEventSchema,
   WorkspaceSocketClientEventSchema,
   WorkspaceFeatureFlagsEventSchema,
@@ -141,6 +146,22 @@ import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, RESOURCE_SEARCH_CONTENT_UPDATE_MI
 import { isDraftUpload, requiresAttachment } from '../services/resource-read-rules';
 import { searchAudienceGroup, searchAudienceGroupIds } from '../services/search-audience';
 import { MEMORY_SEARCH_KEY_PURGE_MIGRATION, SEARCH_AUTHORIZATION_PUSH_MIGRATION } from './search-authorization-projection';
+import {
+  applyReportedSidekickAttachments,
+  automationSummary,
+  bumpChannelRail,
+  CHANNEL_RAIL_MIGRATION,
+  channelParticipantIds,
+  ChannelRailFrames,
+  channelRails,
+  drainChannelRailChanges,
+  mainResourceLinksChanged,
+  ownedAutomationSummaries,
+  visibleSpaceChannelIdsAfter,
+  type AutomationDirectoryRow,
+  type InvalidAppearanceReport,
+} from './channel-rails';
+import { observeSqlWrites } from './sql-write-observer';
 import { enumerateSearchAuthorizationUniverse, type SearchAuthorizationTarget } from './search-authorization-universe';
 import { resolveWorkspaceEventResources } from "./workspace-event-resources";
 
@@ -200,6 +221,7 @@ import {
   OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
   applyRetirementGate,
   droppedEnvelopeReceipts,
+  isRetirementRefusal,
   readObjectRetirement,
   retiredObjectResponse,
 } from "./object-retirement";
@@ -3949,48 +3971,22 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   statements: ["ALTER TABLE automation_directory ADD COLUMN run_as_user_id TEXT"],
 }, {
   version: 82,
+  description: "advance a Channel's rail waterline when anything its rail lists moves",
+  // The socket's `channel_rails` answer and the waterline on each Channel row
+  // that says when to ask again. See docs/hosted-conversation-parents.md.
+  statements: CHANNEL_RAIL_MIGRATION,
+}, {
+  version: 83,
   description: "index when authorization deliveries come due",
   // The alarm reads `MIN(not_before)` on every wake; see docs/durable-object-alarms.md.
   statements: [
     "CREATE INDEX authorization_delivery_due_idx ON authorization_delivery(not_before)",
   ],
 }, {
-  version: 83,
+  version: 84,
   description: "purge the search-authorization keys memory search registered per run",
   statements: MEMORY_SEARCH_KEY_PURGE_MIGRATION,
 }];
-
-interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
-  loadable: number | null;
-  appearance_json: string | null;
-  automation_id: string;
-  lifecycle: "draft" | "active" | "paused";
-  scope: "personal" | "workspace" | "workstream";
-  owning_workstream_id: string | null;
-  title: string;
-  description: string;
-  next_run_at: number | null;
-  projected_at: number;
-}
-
-function automationSummary(row: AutomationDirectoryRow): AutomationSummary {
-  return {
-    id: row.automation_id,
-    loadable: row.loadable === 1,
-    ...(row.appearance_json
-      ? { appearance: WorkstreamAppearanceSchema.parse(JSON.parse(row.appearance_json)) }
-      : {}),
-    name: row.title || "New Sidekick",
-    description: row.description,
-    emailAddress: null,
-    scope: row.scope,
-    owningWorkstreamId: row.owning_workstream_id,
-    status: row.lifecycle,
-    nextRunAt: row.next_run_at === null ? null : new Date(row.next_run_at).toISOString(),
-    lastRunAt: null,
-    updatedAt: new Date(row.projected_at).toISOString(),
-  };
-}
 
 function externalEventContext(
   metadata: Record<string, unknown>,
@@ -4083,7 +4079,8 @@ type WorkspaceSocketOperation =
   | "validate"
   | "subscribe"
   | "presence"
-  | "list_workstreams";
+  | "list_workstreams"
+  | "channel_rails";
 
 interface WorkspaceSocketCloseInput {
   code: number;
@@ -4199,29 +4196,7 @@ function loadParticipantPreviews(
   workstreamIds: readonly string[],
 ): Map<string, ReturnType<typeof workstreamParticipantPreview>> {
   const previews = new Map<string, ReturnType<typeof workstreamParticipantPreview>>();
-  if (workstreamIds.length === 0) return previews;
-  const rows: { workstream_id: string; user_id: string }[] = [];
-  for (const chunk of boundParameterChunks(workstreamIds)) {
-    const placeholders = chunk.map(() => "?").join(", ");
-    rows.push(...sql.exec<{ workstream_id: string; user_id: string }>(
-      `SELECT viewer.workstream_id, viewer.user_id
-         FROM channel_viewers viewer
-         JOIN channels directory
-           ON directory.workstream_id = viewer.workstream_id
-          AND directory.authority_generation = viewer.authority_generation
-        WHERE viewer.workstream_id IN (${placeholders})
-          AND viewer.is_participant = 1
-        ORDER BY viewer.workstream_id, viewer.participant_added_at DESC, viewer.user_id`,
-      ...chunk,
-    ).toArray());
-  }
-  const grouped = new Map<string, string[]>();
-  for (const row of rows) {
-    const list = grouped.get(row.workstream_id);
-    if (list) list.push(row.user_id);
-    else grouped.set(row.workstream_id, [row.user_id]);
-  }
-  for (const [workstreamId, userIds] of grouped) {
+  for (const [workstreamId, userIds] of channelParticipantIds(sql, workstreamIds)) {
     previews.set(workstreamId, workstreamParticipantPreview(userIds));
   }
   return previews;
@@ -4690,11 +4665,28 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   private socketFirstFrameDeadlineMs = WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS;
   /**
+   * `WORKSTREAM_REALTIME_MAX_FRAME_BYTES` for `channel_rails` answers, held
+   * per instance so a runtime test can pack frames without megabytes of rows.
+   */
+  private channelRailFrameBytes = WORKSTREAM_REALTIME_MAX_FRAME_BYTES;
+  /**
    * Whether this object has the first-frame ledger (migration 71). An object
    * held at schema 57 for meeting-notes retirement does not, and the watch
    * stays off there until the operator finalizes it.
    */
   private unheardLedger = false;
+  /**
+   * Whether this object has the rail change ledger (migration 82). An object
+   * held at schema 57 has no Channels, and so no rails to push.
+   */
+  private railLedger = false;
+  /**
+   * Channels a directory batch drained from the rail ledger for its own
+   * follow-up pass to send (`applyDirectoryBatch`). In memory: a pass that
+   * never gets there leaves them for the next pass, and a reconnect reads the
+   * waterline regardless.
+   */
+  private readonly railRowsHeld = new Set<string>();
   /** Content-free phase timings for the alarm invocation currently running. */
   private workspaceAlarmInstrumentation: WorkspaceAlarmInstrumentation | null = null;
 
@@ -4704,7 +4696,37 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   ) {
     super(state, env);
     assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
-    this.state = state;
+    // Every write, from any entry point, is followed by one drain of the
+    // Channel rail ledger its triggers may have filled, as a microtask: once
+    // the synchronous code that wrote, and any transaction around it, has
+    // finished. A writer that builds its own row plan in that same run
+    // (`collectRailChanges`) takes its Channels first, and the drain's own
+    // writes find it already scheduled. A closure rather than a method,
+    // because methods sit behind the retirement gate and a write made by a
+    // permitted retirement call must not be refused on its way out; the drain
+    // itself is refused once the workspace is retired, which is right.
+    let railDrainScheduled = false;
+    this.state = observeSqlWrites(state, () => {
+      if (!this.railLedger || railDrainScheduled) return;
+      railDrainScheduled = true;
+      queueMicrotask(() => {
+        try {
+          // The ledger only: what a directory batch holds is its pass's to send.
+          const rows = new ChannelRowPlan();
+          for (const workstreamId of drainChannelRailChanges(this.state.storage.sql)) rows.readers(workstreamId);
+          this.publishChannelRows(rows);
+        } catch (error) {
+          // Nothing here may throw: this runs outside every entry point.
+          if (!isRetirementRefusal(error)) {
+            logWarn(this.env, "channel_rail_drain_failed", {
+              code: diagnosticErrorCode(error, "channel_rail_drain_failed"),
+            });
+          }
+        } finally {
+          railDrainScheduled = false;
+        }
+      });
+    });
     // Everything downstream is handed this environment or one derived from it,
     // so a helper that addresses "the WorkspaceDO for this workspace" reaches
     // the object it is already running in rather than the namespace. See
@@ -5088,7 +5110,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       await this.runDirectoryFollowUps(followUps, rows);
       return;
     }
-    if (rows) this.publishChannelRows(rows);
+    this.publishChannelRows(this.collectRailChanges(rows ?? new ChannelRowPlan()));
     await this.armNextAlarm();
   }
 
@@ -5948,6 +5970,116 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       })));
       return;
     }
+    if (parsed.data.type === "channel_rails") {
+      const auth = await this.sessionAuth(attachment);
+      if (!auth) {
+        this.closeSocket(socket, attachment, {
+          code: WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
+          reason: "Session no longer active",
+          cause: "session_inactive",
+          operation: "channel_rails",
+        });
+        return;
+      }
+      this.answerChannelRails(socket, {
+        workspaceId: attachment.workspaceId, userId: attachment.userId, accessClass: auth.accessClass ?? "member",
+      }, parsed.data);
+      return;
+    }
+  }
+
+  /**
+   * Answer `channel_rails` from local reads, as `workspace_channel_rails`
+   * frames; the answer always ends with a `final` one.
+   *
+   * Named Channels are answered whole, over as many frames as they take. A
+   * Space is answered from one page of the Channels in it this viewer may see,
+   * in id order after `after`, until the page or the frame runs out, with
+   * `nextAfter` naming the last Channel answered; a client wanting the rest
+   * asks again. A guest is told nothing about a Space (see `spacesFor`), and a
+   * Space the viewer cannot see is answered the same way: one empty final frame.
+   *
+   * A rail that fails its schema is sent as `oversized`, so the client paints
+   * that Channel from its snapshot, and the log names the field.
+   */
+  private answerChannelRails(
+    socket: WebSocket,
+    identity: { workspaceId: string; userId: string; accessClass: "member" | "guest" },
+    request: Extract<WorkspaceSocketClientEvent, { type: "channel_rails" }>,
+  ): void {
+    const sql = this.state.storage.sql;
+    const frames = new ChannelRailFrames(request.requestId, this.channelRailFrameBytes);
+    const rails = (workstreamIds: readonly string[]) => channelRails(sql, {
+      userId: identity.userId,
+      accessClass: identity.accessClass,
+      workspaceId: identity.workspaceId,
+      workstreamIds,
+      onInvalidAppearance: this.invalidAppearanceReporter(identity.workspaceId),
+    });
+    const pack = (rail: ChannelRail) => {
+      const parsed = ChannelRailSchema.safeParse(rail);
+      if (parsed.success) return frames.add(parsed.data);
+      logError(this.env, "channel_rail_invalid", {
+        workspace_id: identity.workspaceId,
+        workstream_id: rail.workstreamId,
+        code: zodDiagnosticCode(parsed.error, "channel_rail") ?? "channel_rail_invalid",
+      });
+      return frames.addOversized(rail);
+    };
+    let nextAfter: string | null = null;
+    if (!this.railLedger) {
+      frames.addUnavailable(request.workstreamIds ?? []);
+    } else if (request.workstreamIds) {
+      const answer = rails(request.workstreamIds);
+      frames.addUnavailable(answer.unavailable);
+      for (const rail of answer.rails) {
+        if (pack(rail) !== "full") continue;
+        frames.roll();
+        pack(rail);
+      }
+    } else if (request.spaceId && identity.accessClass === "member"
+      && this.spaceStorage().reach(identity.userId, request.spaceId) !== null) {
+      const page = visibleSpaceChannelIdsAfter(sql, {
+        spaceId: request.spaceId,
+        userId: identity.userId,
+        after: request.after ?? null,
+        limit: CHANNEL_RAILS_NAMED_LIMIT,
+      });
+      let lastAnswered: string | null = null;
+      let filled = page.length === CHANNEL_RAILS_NAMED_LIMIT;
+      for (const rail of rails(page).rails) {
+        if (pack(rail) === "full") {
+          filled = true;
+          break;
+        }
+        lastAnswered = rail.workstreamId;
+      }
+      if (filled) nextAfter = lastAnswered;
+    }
+    for (const oversized of frames.oversizedRails) {
+      logWarn(this.env, "channel_rail_oversized", {
+        workspace_id: identity.workspaceId,
+        workstream_id: oversized.workstreamId,
+        bytes: oversized.bytes,
+      });
+    }
+    for (const frame of frames.finish(nextAfter)) {
+      try {
+        socket.send(JSON.stringify(frame));
+      } catch {
+        // A closed socket asks again when it reconnects.
+        return;
+      }
+    }
+  }
+
+  /** A Sidekick directory row whose stored appearance no longer parses is listed without one. */
+  private invalidAppearanceReporter(workspaceId: string): InvalidAppearanceReport {
+    return (automationId, code) => logWarn(this.env, "automation_directory_appearance_invalid", {
+      workspace_id: workspaceId,
+      automation_id: automationId,
+      code,
+    });
   }
 
   override webSocketClose(socket: WebSocket): void {
@@ -6167,6 +6299,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private detectUnheardLedger(): void {
     this.unheardLedger = this.state.storage.sql.exec(
       `SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_socket_unheard'`,
+    ).toArray().length > 0;
+    this.railLedger = this.state.storage.sql.exec(
+      `SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'channel_rail_changes'`,
     ).toArray().length > 0;
   }
 
@@ -7154,7 +7289,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         || (row.owning_workstream_id !== null && (await this.workstreamParticipant({
           workspaceId: request.workspaceId, workstreamId: row.owning_workstream_id, userId: request.userId,
         })).participant);
-      if (accessible) items.push(automationSummary(row));
+      if (accessible) items.push(automationSummary(row, this.invalidAppearanceReporter(request.workspaceId)));
     }
     return { items };
   }
@@ -7185,31 +7320,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!this.isWorkstreamParticipant(request.workstreamId, request.userId, { includeArchived: true })) {
       throw new ApiError(403, "sidekick_directory_access_denied", "You cannot list this room's Sidekicks");
     }
-    const rows = this.state.storage.sql.exec<AutomationDirectoryRow>(
-      `SELECT automation_id, loadable, appearance_json, lifecycle, scope, owning_workstream_id, title,
-              description, next_run_at, projected_at
-         FROM automation_directory
-        WHERE owning_workstream_id = ? AND lifecycle <> 'deleted'
-        ORDER BY projected_at DESC, automation_id
-        LIMIT 250`,
-      request.workstreamId,
-    ).toArray();
     return {
-      items: rows.map((row) => {
-        const summary = automationSummary(row);
-        return {
-          id: summary.id,
-          loadable: summary.loadable,
-          ...(summary.appearance ? { appearance: summary.appearance } : {}),
-          name: summary.name,
-          description: summary.description,
-          emailAddress: summary.emailAddress,
-          status: summary.status,
-          nextRunAt: summary.nextRunAt,
-          lastRunAt: summary.lastRunAt,
-          updatedAt: summary.updatedAt,
-        };
-      }),
+      items: ownedAutomationSummaries(this.state.storage.sql, [request.workstreamId],
+        this.invalidAppearanceReporter(request.workspaceId)).get(request.workstreamId) ?? [],
     };
   }
 
@@ -10319,6 +10432,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const reopenBootstrap = settledChannelIds.length > 0
       && spaceStorage.unplacedChannelExists(settledChannelIds);
     const common = (envelope: ParentEffectEnvelope) => envelope.effect.kind === "directory_common";
+    // The follow-up pass sends these Channels' rows once it has run; taken
+    // from the ledger now, so the drain after this write does not send them
+    // first and the pass again.
+    if (this.railLedger) {
+      for (const workstreamId of drainChannelRailChanges(this.state.storage.sql)) this.railRowsHeld.add(workstreamId);
+    }
     return {
       accepted,
       followUp: {
@@ -10438,7 +10557,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         });
       }
     }
-    this.publishChannelRows(rows);
+    this.publishChannelRows(this.collectRailChanges(rows));
     if (topicsWorkspaceId !== null) {
       try {
         await this.publishSync([...topics], topicsWorkspaceId,
@@ -13983,6 +14102,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             now,
           );
           this.state.storage.sql.exec(`UPDATE channels SET appearance_json = ? WHERE workstream_id = ?`, effect.appearance ? JSON.stringify(effect.appearance) : null, envelope.parentId);
+          // The rail lists Main's links and attachments. Both are compared
+          // here rather than watched by a trigger, because every Main effect
+          // rewrites them and most say what the last one said.
+          if (mainResourceLinksChanged(this.state.storage.sql, envelope.parentId, effect.resourceLinks ?? [])) {
+            bumpChannelRail(this.state.storage.sql, envelope.parentId);
+          }
+          // Absent is an envelope from before the field: nothing reported.
+          if (effect.sidekickAttachmentIds !== undefined) {
+            applyReportedSidekickAttachments(this.state.storage.sql, envelope.parentId, effect.sidekickAttachmentIds);
+          }
           this.state.storage.sql.exec(
             `DELETE FROM workspace_workstream_resource_links WHERE workstream_id = ?`,
             envelope.parentId,
@@ -14232,7 +14361,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       workspaceId,
       userId,
       limit,
-    ).toArray().map(automationSummary);
+    ).toArray().map((row) => automationSummary(row, this.invalidAppearanceReporter(workspaceId)));
   }
 
   private pinnedDirectoryRows(userId: string, includeSystem: boolean, spaceId?: string): WorkspaceDirectoryRow[] {
@@ -14327,6 +14456,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       `UPDATE workspace_directory_state SET waterline = waterline + 1, updated_at = ? WHERE id = 1`,
       now,
     );
+  }
+
+  /**
+   * Owe every Channel whose rail moved since the last drain its row, to all
+   * of its readers: the row carries the new `railWaterline`, which is how a
+   * client holding the rail learns to ask for it again. The ledger is emptied
+   * in the same call, so a drain that never reaches a socket is not retried:
+   * rows are best effort, and a reconnect reads the current waterline.
+   */
+  private collectRailChanges(rows: ChannelRowPlan): ChannelRowPlan {
+    if (!this.railLedger) return rows;
+    for (const workstreamId of drainChannelRailChanges(this.state.storage.sql)) rows.readers(workstreamId);
+    for (const workstreamId of this.railRowsHeld) rows.readers(workstreamId);
+    this.railRowsHeld.clear();
+    return rows;
   }
 
   /** Send one Channel's current row to everybody who can see it now. */

@@ -357,6 +357,8 @@ export interface ChannelViewerState {
     & { createdAt: string; updatedAt: string }>;
   privateChildrenWaterline: number;
   backgroundAgentCounts: Record<string, number>;
+  /** `channels.rail_waterline`: when it passes the rail a client holds, it asks again. */
+  railWaterline: number;
 }
 
 /**
@@ -371,11 +373,14 @@ export function channelViewerStates(
 ): Map<string, ChannelViewerState> {
   const result = new Map<string, ChannelViewerState>();
   if (parentIds.length === 0) return result;
-  const hosted = sql.exec<{ parent_id: string }>(
-    `SELECT metadata.parent_id FROM parent_metadata metadata
+  const hostedRows = sql.exec<{ parent_id: string; rail_waterline: number | null }>(
+    `SELECT metadata.parent_id, channel.rail_waterline FROM parent_metadata metadata
+       LEFT JOIN channels channel ON channel.workstream_id = metadata.parent_id
       WHERE metadata.parent_id IN (SELECT value FROM json_each(?)) AND metadata.parent_kind = 'workstream'`,
     JSON.stringify(parentIds),
-  ).toArray().map((row) => row.parent_id);
+  ).toArray();
+  const hosted = hostedRows.map((row) => row.parent_id);
+  const railWaterlines = new Map(hostedRows.map((row) => [row.parent_id, row.rail_waterline ?? 0]));
   if (hosted.length === 0) return result;
   const children = visiblePrivateChildren(sql, userId, hosted);
   const waterlines = new Map(sql.exec<{ parent_id: string; waterline: number }>(
@@ -394,6 +399,7 @@ export function channelViewerStates(
       privateChildrenWaterline: waterlines.get(parentId) ?? 0,
       backgroundAgentCounts: visibleBackgroundAgentCounts(agents.get(parentId) ?? new Map(),
         new Set(["0", ...listed.map((child) => child.substreamId)])),
+      railWaterline: railWaterlines.get(parentId) ?? 0,
     });
   }
   return result;

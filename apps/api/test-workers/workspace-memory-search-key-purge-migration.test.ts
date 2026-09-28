@@ -1,7 +1,7 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
- * WorkspaceDO migration 83 deletes the search-authorization keys memory search
+ * WorkspaceDO migration 84 deletes the search-authorization keys memory search
  * registered once per agent run, and the rows hanging off them, from an object
  * that still holds every other key of the old store. The store is found only
  * through the delegation inside each snapshot's JSON, so this runs a populated
@@ -16,7 +16,7 @@ import { describe, expect, it } from "vitest";
 import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 
-const PURGE_MIGRATION = 83;
+const PURGE_MIGRATION = 84;
 const COMPONENT = "workspace_do";
 const WORKSPACE_ID = "00000000-0000-7000-8000-000000000a83";
 const USER_ID = "00000000-0000-7000-8000-000000000a84";
@@ -60,7 +60,7 @@ const KEYS: SeedKey[] = [
 const SURVIVORS = KEYS.filter((seed) => !seed.delegation?.startsWith("memory-search:v1:")).map((seed) => seed.key).sort();
 
 describe("the WorkspaceDO memory-search key purge on workerd", () => {
-  it("given a populated old search store, when 83 applies, then only memory search's keys and the rows keyed by them are gone", async () => {
+  it("given a populated old search store, when 84 applies, then only memory search's keys and the rows keyed by them are gone", async () => {
     const stub = env.MIGRATION_PROBE_DO!.getByName("workspace-memory-search-key-purge");
     await stub.ping();
 
