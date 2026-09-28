@@ -2,9 +2,7 @@ import { z } from 'zod';
 import { ExecutionPrincipalSchema, HarnessRunIdSchema, IdSchema, WorkspaceIdSchema, type WorkstreamWorkflowInput } from '@rally/contracts';
 import type { Env } from '../env';
 import type { AuthorizationDecision, AuthorizationResource, AuthorizationSubject } from './authorization-policy';
-import { SearchAuthorizationResolver } from './search-authorization';
-import { ensureScope, resolveMemoryAccess, type MemoryScope } from './memory-service';
-import { requireAuthorizedRead } from './authorization-service';
+import { resolveMemoryAccess, type MemoryScope } from './memory-service';
 
 const ContextSchema = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema,
   // No `space` arm: memory search runs inside an agent loop, and a Space never
@@ -13,29 +11,25 @@ const ContextSchema = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId:
   // silently searching a Channel's memory scope.
   parentKind: z.enum(['workstream', 'automation']), harnessRunId: HarnessRunIdSchema, executionPrincipal: ExecutionPrincipalSchema });
 const PREFIX = 'memory-search:v1:';
+/** What `resolveMemoryAccess` throws for a run that may read no memory. */
+const MEMORY_ACCESS_DENIALS = ['memory_user_not_active_workspace_member', 'memory_run_context_not_found',
+  'memory_run_principal_mismatch', 'memory_workspace_principal_mismatch'];
 
-/** Scope selection is host-owned metadata; only misses and mutation jobs resolve run authority. */
+/**
+ * The memory scopes a run may search: the canonical run check,
+ * `resolveMemoryAccess`, once per search. Nothing is cached across runs and no
+ * decision is stored; a run-keyed decision would never be reused (see
+ * docs/PRDs/2026-09-26_search-audience-filtering/design.md#memory-search).
+ * A run that no longer matches its principal or Organization searches nothing.
+ */
 export async function resolveMemorySearchAccess(env: Env, input: WorkstreamWorkflowInput): Promise<MemoryScope[]> {
   const context = ContextSchema.parse({ workspaceId: input.workspaceId, parentId: input.parentId,
     parentKind: input.parentKind, harnessRunId: input.harnessRunId, executionPrincipal: input.executionPrincipal });
-  const subject: AuthorizationSubject = { workspaceId: context.workspaceId,
-    userId: context.executionPrincipal.type === 'user' ? context.executionPrincipal.userId : null,
-    delegation: PREFIX + JSON.stringify(context) };
-  const selected: Array<Promise<MemoryScope>> = [ensureScope(env, input.workspaceId, 'workspace', input.workspaceId, false)];
-  if (input.parentKind === 'automation') selected.push(ensureScope(env, input.workspaceId, 'sidekick', input.parentId, false));
-  else {
-    if (input.executionPrincipal.type === 'user') selected.push(ensureScope(env, input.workspaceId, 'user', input.executionPrincipal.userId, false));
-    selected.push(ensureScope(env, input.workspaceId, 'workstream', input.parentId, false));
+  try { return await resolveMemoryAccess(env, context); }
+  catch (error) {
+    if (error instanceof Error && MEMORY_ACCESS_DENIALS.includes(error.message)) return [];
+    throw error;
   }
-  const scopes = await Promise.all(selected);
-  const decisions = await new SearchAuthorizationResolver(env).checkMany(subject, scopes.map((scope) => ({
-    kind: 'memory', workspaceId: context.workspaceId, parentId: context.parentId, scopeId: IdSchema.parse(scope.memoryScopeId),
-  })));
-  return scopes.filter((_, index) => {
-    const decision = decisions[index]!;
-    if (decision.status === 'unavailable') requireAuthorizedRead(decision);
-    return decision.status === 'allowed';
-  });
 }
 
 /** The same resolver runs for first fills and pushed mutations. */
@@ -50,8 +44,7 @@ export async function projectMemorySearchAccess(env: Env, subject: Authorization
   let scopes: MemoryScope[];
   try { scopes = await resolveMemoryAccess(env, context); }
   catch (error) {
-    if (error instanceof Error && ['memory_user_not_active_workspace_member', 'memory_run_context_not_found',
-      'memory_run_principal_mismatch', 'memory_workspace_principal_mismatch'].includes(error.message)) return resources.map(() => ({ status: 'denied', reason: 'memory_scope_not_accessible', evidence }));
+    if (error instanceof Error && MEMORY_ACCESS_DENIALS.includes(error.message)) return resources.map(() => ({ status: 'denied', reason: 'memory_scope_not_accessible', evidence }));
     throw error;
   }
   const ids = new Set(scopes.map((scope) => scope.memoryScopeId));

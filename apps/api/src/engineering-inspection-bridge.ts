@@ -1,5 +1,5 @@
 import { RegionSchema } from "@rally/contracts/regions";
-import { asArtifactId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
+import { asArtifactId, asAutomationId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import {
   ArtifactInspectionInputSchema,
   ArtifactSqlInspectionInputSchema,
@@ -138,7 +138,19 @@ async function resolveInspectionSubstreamRoute(
     return route;
   }
   const known = await inspectionSubstreamIds(env, route);
-  return known.includes(input.substreamId) ? route : null;
+  if (known.includes(input.substreamId)) return route;
+  // A Sidekick's run conversations are registered in its own object, not the
+  // Organization's. Its directory row is checked first, for the reason
+  // `resolveInspectionSidekickRoute` gives: naming a SidekickDO for a work
+  // stream's id would create one that never existed.
+  if (!await resolveInspectionSidekickRoute(env, { workspaceId: input.workspaceId, sidekickId: input.workstreamId })) return null;
+  const sidekick = await durableObjectStubForWorkspace(env, env.AUTOMATION_DOS, input.workspaceId,
+    automationDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId), asAutomationId(input.workstreamId)));
+  const registered = await sidekick.runInspectionSql({
+    sql: "SELECT 1 AS one FROM conversation_children WHERE substream_id = ?",
+    bindings: [input.substreamId],
+  });
+  return registered.rows.length > 0 ? route : null;
 }
 
 /** Every conversation a Channel's parent, hosted by the Organization object, has heard from. */
