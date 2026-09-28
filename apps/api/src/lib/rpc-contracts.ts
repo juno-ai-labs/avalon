@@ -36,17 +36,26 @@ const rawBody = z.custom<ArrayBuffer>(
 export const RegionalWebhookInputSchema = z.object({ rawBody, headers: headerBag });
 
 /**
+ * What names a GitHub delivery apart from its bytes: the two headers the parser
+ * reads and when the Global receiver took it. The Queue message
+ * (`GitHubDeliveryQueueMessageSchema`) and the bridge input below both spread
+ * it, so the two hand-offs cannot drift apart.
+ */
+export const GitHubDeliveryIdentitySchema = z.object({
+  deliveryId: z.string().min(1).max(200),
+  event: z.string().min(1).max(100),
+  receivedAt: z.string().datetime({ offset: true }),
+});
+
+/**
  * A GitHub delivery the Global receiver has already verified, on its way from
  * the Global Queue consumer to a regional data plane. It carries no signature:
  * the edge checked it once, and the region parses the same bytes without
  * checking it again.
  */
-export const GitHubVerifiedDeliveryInputSchema = z.object({
-  rawBody,
-  deliveryId: z.string().min(1).max(200),
-  event: z.string().min(1).max(100),
-  receivedAt: z.string().datetime({ offset: true }),
-});
+export const GitHubVerifiedDeliveryInputSchema = GitHubDeliveryIdentitySchema.extend({ rawBody });
+
+export type GitHubVerifiedDeliveryInput = z.infer<typeof GitHubVerifiedDeliveryInputSchema>;
 
 export const GitHubRegionalSetupInputSchema = z.object({
   installationId: providerId,

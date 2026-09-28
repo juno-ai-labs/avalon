@@ -2,6 +2,7 @@ import { regionalBindings } from "../lib/regional-bindings";
 import { isConfiguredRegion, configuredRegions } from "@rally/contracts/regions";
 import {
   ConnectorError,
+  connectorRetryAfterMs,
   isDiscardedGitHubDelivery,
   parseGitHubWebhook,
   type GitHubWebhookDelivery,
@@ -11,6 +12,10 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { githubRegionFromInstallState } from "../lib/github-install-state";
+import {
+  GitHubDeliveryIdentitySchema,
+  type GitHubVerifiedDeliveryInput,
+} from "../lib/rpc-contracts";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import {
   ConnectionService,
@@ -20,19 +25,10 @@ import {
   GITHUB_WEBHOOK_MAX_BYTES,
   ProviderWebhookService,
   type ProviderWebhookIngestionResult,
-  type VerifiedGitHubDelivery,
 } from "./provider-webhook-service";
 import { MAX_CONNECTOR_EVENT_QUEUE_BYTES } from "./workspace-connector-event-ingress";
 
 export const DEFAULT_GITHUB_INGRESS_BASE_URL = "https://github.rallywith.ai";
-
-/** The verified delivery as it crosses the regional bridge: bytes, not a view. */
-export interface GitHubRegionalVerifiedDeliveryInput {
-  rawBody: ArrayBuffer;
-  deliveryId: string;
-  event: string;
-  receivedAt: string;
-}
 
 export interface GitHubRegionalSetupInput {
   installationId: string;
@@ -59,7 +55,7 @@ export interface GitHubRegionalBridgeRpcBinding {
   setupGitHub(input: GitHubRegionalSetupInput): Promise<GitHubRegionalRpcResult<GitHubSetupResult>>;
   failGitHubSetup(input: GitHubRegionalSetupFailureInput): Promise<GitHubRegionalRpcResult<string>>;
   ingestVerifiedGitHub(
-    input: GitHubRegionalVerifiedDeliveryInput,
+    input: GitHubVerifiedDeliveryInput,
   ): Promise<GitHubRegionalRpcResult<ProviderWebhookIngestionResult>>;
 }
 
@@ -69,7 +65,13 @@ export type GitHubRegionalRpcResult<T> =
   | { ok: true; value: T }
   | {
       ok: false;
-      error: { status: GitHubRegionalErrorStatus; code: string; message: string };
+      error: {
+        status: GitHubRegionalErrorStatus;
+        code: string;
+        message: string;
+        /** A provider's Retry-After, carried so the Global consumer can honour it. */
+        retryAfterMs?: number;
+      };
     };
 
 export async function serializeGitHubRegionalRpcResult<T>(
@@ -85,12 +87,14 @@ export async function serializeGitHubRegionalRpcResult<T>(
       };
     }
     if (error instanceof ConnectorError) {
+      const retryAfterMs = connectorRetryAfterMs(error);
       return {
         ok: false,
         error: {
           status: connectorErrorStatus(error),
           code: error.code,
           message: error.message,
+          ...(retryAfterMs === null ? {} : { retryAfterMs }),
         },
       };
     }
@@ -115,9 +119,7 @@ const GITHUB_DELIVERY_QUEUE_KIND = "github_webhook_delivery_v1";
  */
 export const GitHubDeliveryQueueMessageSchema = z.strictObject({
   kind: z.literal(GITHUB_DELIVERY_QUEUE_KIND),
-  deliveryId: z.string().min(1).max(200),
-  event: z.string().min(1).max(100),
-  receivedAt: z.string().datetime({ offset: true }),
+  ...GitHubDeliveryIdentitySchema.shape,
   body: z.discriminatedUnion("kind", [
     z.strictObject({
       kind: z.literal("inline"),
@@ -156,7 +158,7 @@ interface GitHubRoutingServiceOptions {
   ) => Promise<string>;
   ingestInRegion?: (
     region: Region,
-    delivery: VerifiedGitHubDelivery & { rawBody: Uint8Array },
+    delivery: GitHubVerifiedDeliveryInput,
   ) => Promise<ProviderWebhookIngestionResult>;
 }
 
@@ -294,12 +296,12 @@ export class GitHubRoutingService {
       return "already_processed";
     }
     const delivery = await parseGitHubWebhook({
-      rawBody: decodeUtf8(rawBody),
+      rawBody: decodeUtf8(new Uint8Array(rawBody)),
       eventHeader: message.event,
       deliveryHeader: message.deliveryId,
       receivedAt: message.receivedAt,
     });
-    const verified = {
+    const verified: GitHubVerifiedDeliveryInput = {
       rawBody,
       deliveryId: message.deliveryId,
       event: message.event,
@@ -342,19 +344,27 @@ export class GitHubRoutingService {
         httpMetadata: { contentType: "application/json" },
       });
     }
-    await this.env.ACTIVITY_QUEUE.send(GitHubDeliveryQueueMessageSchema.parse({
+    const message: GitHubDeliveryQueueMessage = {
       kind: GITHUB_DELIVERY_QUEUE_KIND,
       deliveryId: delivery.deliveryId,
       event: delivery.event,
       receivedAt: delivery.receivedAt,
       body,
-    } satisfies GitHubDeliveryQueueMessage));
+    };
+    try {
+      await this.env.ACTIVITY_QUEUE.send(GitHubDeliveryQueueMessageSchema.parse(message));
+    } catch (error) {
+      // GitHub is answered with a failure and nothing will consume this
+      // message, so a staged body would otherwise sit in Global's bucket.
+      await this.deleteStagedBody(message);
+      throw error;
+    }
   }
 
-  private async loadBody(message: GitHubDeliveryQueueMessage): Promise<Uint8Array | null> {
-    if (message.body.kind === "inline") return new Uint8Array(message.body.bytes);
+  private async loadBody(message: GitHubDeliveryQueueMessage): Promise<ArrayBuffer | null> {
+    if (message.body.kind === "inline") return message.body.bytes;
     const object = await this.env.PAYLOADS.get(message.body.payloadRef);
-    return object ? new Uint8Array(await object.arrayBuffer()) : null;
+    return object ? object.arrayBuffer() : null;
   }
 
   private async deleteStagedBody(message: GitHubDeliveryQueueMessage): Promise<void> {
@@ -407,17 +417,14 @@ export class GitHubRoutingService {
 
   private async defaultIngestInRegion(
     region: Region,
-    delivery: VerifiedGitHubDelivery & { rawBody: Uint8Array },
+    delivery: GitHubVerifiedDeliveryInput,
   ): Promise<ProviderWebhookIngestionResult> {
     if (region === this.env.AVALON_REGION) {
       return new ProviderWebhookService(this.env).ingestVerifiedGitHub(delivery);
     }
     const bridge = regionalBindings(this.env, region).github;
     if (this.env.AVALON_REGION === "global" && bridge) {
-      return unwrapRegionalResult(await bridge.ingestVerifiedGitHub({
-        ...delivery,
-        rawBody: exactArrayBuffer(delivery.rawBody),
-      }));
+      return unwrapRegionalResult(await bridge.ingestVerifiedGitHub(delivery));
     }
     throw new ApiError(503, "github_region_unavailable", `The ${region} GitHub webhook service is unavailable`);
   }
@@ -488,7 +495,7 @@ export async function consumeGitHubDeliveryMessage(
       queue_attempts: message.attempts,
       error_code: diagnosticErrorCode(parsed.error, "github_delivery_message"),
     });
-    message.retry();
+    message.retry({ delaySeconds: githubDeliveryRetryDelaySeconds(message.attempts) });
     return;
   }
   try {
@@ -509,8 +516,21 @@ export async function consumeGitHubDeliveryMessage(
         ? error.code
         : diagnosticErrorCode(error, "github_delivery_failed"),
     });
-    message.retry();
+    message.retry({ delaySeconds: githubDeliveryRetryDelaySeconds(message.attempts, error) });
   }
+}
+
+/**
+ * The backoff every lane of the activity consumer uses
+ * (`queues/activity-consumer.ts`), with a GitHub rate limit's Retry-After
+ * honoured the way its Slack ingress lane honours a provider's. The outer
+ * bound is the Queue's own ceiling on a retry delay.
+ */
+function githubDeliveryRetryDelaySeconds(queueAttempts: number, error?: unknown): number {
+  const attempts = Math.max(1, queueAttempts);
+  const exponentialDelay = Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6));
+  const providerDelay = Math.ceil((connectorRetryAfterMs(error) ?? 0) / 1_000);
+  return Math.min(43_200, Math.max(exponentialDelay, providerDelay));
 }
 
 function stagedPayloadRef(region: string, delivery: GitHubWebhookDelivery): string {
@@ -610,6 +630,7 @@ function unwrapRegionalResult<T>(result: GitHubRegionalRpcResult<T>): T {
     result.error.status,
     result.error.code,
     result.error.message,
+    result.error.retryAfterMs === undefined ? undefined : { retryAfterMs: result.error.retryAfterMs },
   );
 }
 
