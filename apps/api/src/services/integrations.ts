@@ -2540,7 +2540,7 @@ export async function runWorkstreamHarness(
       assignSidekickSkillNames(sources: SidekickSkillSnapshot["sources"]): Map<string, string>;
       attachedSidekickIds(): string[];
       saveSidekickSkills(snapshot: SidekickSkillSnapshot): void;
-      activateSidekickSkill(ref: string): void | Promise<void>;
+      activateSidekickSkill(ref: string): void;
       projection: BindLoopProjectionState | null;
       modelIterationsUsed: number;
       transcriptThrough: number;
@@ -3435,7 +3435,7 @@ export async function runWorkstreamHarness(
           if (!allowed.some((entry) => entry.id === source.id)) throw new ApiError(403, "sidekick_access_changed", "This Sidekick is no longer available");
         }
         if (!sidekickSnapshot.activeRefs.includes(ref)) sidekickSnapshot.activeRefs.push(ref);
-        await runtime?.persistentLoop?.activateSidekickSkill(ref);
+        runtime?.persistentLoop?.activateSidekickSkill(ref);
       },
       compaction: {
           contextWindowTokensByModel: await contextWindowPreparation.get(),

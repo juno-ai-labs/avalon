@@ -2322,13 +2322,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         }
       }
     }
-    const removeId = request.removeId;
-    if (removeId) {
-      // The parent hears the new list, so a Channel rail drops it too.
-      await this.product.commitWithCommonEffect((sql) => sql.exec<{ sidekick_id: string }>(
-        `DELETE FROM sidekick_attachments WHERE sidekick_id = ? RETURNING sidekick_id`, removeId,
-      ).toArray().length > 0);
-    }
+    if (request.removeId) this.state.storage.sql.exec(`DELETE FROM sidekick_attachments WHERE sidekick_id = ?`, request.removeId);
     return this.state.storage.sql.exec<{ sidekick_id: string }>(`SELECT sidekick_id FROM sidekick_attachments ORDER BY attached_at, sidekick_id`).toArray().map((row) => row.sidekick_id);
   }
 
@@ -5013,22 +5007,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         this.state.storage.sql.exec(`INSERT OR IGNORE INTO sidekick_execution_skills (execution_id, snapshot_json) VALUES (?, ?)`,
           execution.runId, JSON.stringify(SidekickSkillSnapshotSchema.parse(snapshot)));
       },
-      activateSidekickSkill: async (ref) => {
+      activateSidekickSkill: (ref) => {
         fence();
-        // A new attachment is part of this conversation's directory
-        // projection, so it commits with the effect that tells the parent.
-        await this.product.commitWithCommonEffect((sql) => {
-          const row = sql.exec<{ snapshot_json: string }>(`SELECT snapshot_json FROM sidekick_execution_skills WHERE execution_id = ?`, execution.runId).one();
+        this.state.storage.transactionSync(() => {
+          const row = this.state.storage.sql.exec<{ snapshot_json: string }>(`SELECT snapshot_json FROM sidekick_execution_skills WHERE execution_id = ?`, execution.runId).one();
           const snapshot = SidekickSkillSnapshotSchema.parse(JSON.parse(row.snapshot_json));
           if (!snapshot.activeRefs.includes(ref)) snapshot.activeRefs.push(ref);
-          sql.exec(`UPDATE sidekick_execution_skills SET snapshot_json = ? WHERE execution_id = ?`, JSON.stringify(snapshot), execution.runId);
+          this.state.storage.sql.exec(`UPDATE sidekick_execution_skills SET snapshot_json = ? WHERE execution_id = ?`, JSON.stringify(snapshot), execution.runId);
           const source = snapshot.sources.find((entry) => sidekickSkillRef(entry.id) === ref);
-          if (!source || this.objectStore.identity()?.parentKind !== "workstream") return false;
-          return sql.exec<{ sidekick_id: string }>(
-            `INSERT INTO sidekick_attachments (sidekick_id, attached_at) VALUES (?, ?)
-             ON CONFLICT(sidekick_id) DO NOTHING RETURNING sidekick_id`,
-            source.id, Date.now(),
-          ).toArray().length > 0;
+          if (source && this.objectStore.identity()?.parentKind === "workstream") {
+            this.state.storage.sql.exec(`INSERT OR IGNORE INTO sidekick_attachments (sidekick_id, attached_at) VALUES (?, ?)`, source.id, Date.now());
+          }
         });
       },
       projection: this.transcript.readBindProjection(input.loopId),

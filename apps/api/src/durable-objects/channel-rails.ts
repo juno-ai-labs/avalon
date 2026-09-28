@@ -2,11 +2,10 @@
  * A Channel's rail, as the Organization socket delivers it: Main's
  * participants, the Sidekicks the rail lists, and Main's attached resources.
  *
- * Everything here is a set read over `json_each` against WorkspaceDO's own
- * SQLite, with no network, so one answer is one consistent snapshot. The
- * visibility rule is the Channel row's and nothing else: a Channel the viewer
- * could not be sent a row for is `unavailable`, never a second authorization
- * path. `docs/hosted-conversation-parents.md` owns the projection and its
+ * Set reads over `json_each` against WorkspaceDO's own SQLite, so one answer
+ * is one consistent snapshot. A Channel the viewer could not be sent a row for
+ * is `unavailable`, never a second authorization path.
+ * `docs/hosted-conversation-parents.md` owns the projection and its
  * `rail_waterline`; `docs/realtime-sockets.md` owns the `channel_rails` frame.
  */
 
@@ -16,17 +15,24 @@ import {
   WorkstreamAppearanceSchema,
   type AutomationSummary,
   type ChannelRail,
+  type ChannelRailOwnedSidekick,
   type ChannelRailResource,
   type SidekickAttachment,
   type WorkspaceChannelRailsEvent,
+  type WorkstreamAppearance,
   type WorkstreamAutomationSummary,
 } from "@rally/contracts";
 import { truncateUtf16Safe } from "@rally/contracts/text";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 
 import { listedResourceVisibilitySql } from "../services/resource-listing";
+import { sidekickAudienceAllows } from "./sidekick-audience";
 import { channelVisibleToViewerSql } from "./workspace-space-storage";
 
 type Sql = SqlStorage;
+
+/** Told which Sidekick's stored appearance no longer parses, and why; it is left out. */
+export type InvalidAppearanceReport = (automationId: string, code: string) => void;
 
 export interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
   loadable: number | null;
@@ -41,13 +47,28 @@ export interface AutomationDirectoryRow extends Record<string, SqlStorageValue> 
   projected_at: number;
 }
 
-export function automationSummary(row: AutomationDirectoryRow): AutomationSummary {
+function storedAppearance(row: AutomationDirectoryRow, report: InvalidAppearanceReport): WorkstreamAppearance | undefined {
+  if (!row.appearance_json) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(row.appearance_json);
+  } catch {
+    report(row.automation_id, "automation_appearance_invalid:-root-:invalid_json");
+    return undefined;
+  }
+  const parsed = WorkstreamAppearanceSchema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  report(row.automation_id, zodDiagnosticCode(parsed.error, "automation_appearance") ?? "automation_appearance_invalid");
+  return undefined;
+}
+
+/** A directory row as a summary; an appearance that no longer parses is left out and reported. */
+export function automationSummary(row: AutomationDirectoryRow, report: InvalidAppearanceReport): AutomationSummary {
+  const appearance = storedAppearance(row, report);
   return {
     id: row.automation_id,
     loadable: row.loadable === 1,
-    ...(row.appearance_json
-      ? { appearance: WorkstreamAppearanceSchema.parse(JSON.parse(row.appearance_json)) }
-      : {}),
+    ...(appearance ? { appearance } : {}),
     name: row.title || "New Sidekick",
     description: row.description,
     emailAddress: null,
@@ -60,23 +81,6 @@ export function automationSummary(row: AutomationDirectoryRow): AutomationSummar
   };
 }
 
-/** A room's automation as its own rail lists it: the summary without scope and owner. */
-function workstreamAutomationSummary(row: AutomationDirectoryRow): WorkstreamAutomationSummary {
-  const summary = automationSummary(row);
-  return {
-    id: summary.id,
-    loadable: summary.loadable,
-    ...(summary.appearance ? { appearance: summary.appearance } : {}),
-    name: summary.name,
-    description: summary.description,
-    emailAddress: summary.emailAddress,
-    status: summary.status,
-    nextRunAt: summary.nextRunAt,
-    lastRunAt: summary.lastRunAt,
-    updatedAt: summary.updatedAt,
-  };
-}
-
 /**
  * The automations each of these rooms owns, newest projection first, as the
  * REST rail read lists them. 250 per room is that read's existing bound.
@@ -84,6 +88,7 @@ function workstreamAutomationSummary(row: AutomationDirectoryRow): WorkstreamAut
 export function ownedAutomationSummaries(
   sql: Sql,
   workstreamIds: readonly string[],
+  report: InvalidAppearanceReport,
 ): Map<string, WorkstreamAutomationSummary[]> {
   const result = new Map<string, WorkstreamAutomationSummary[]>();
   if (workstreamIds.length === 0) return result;
@@ -101,17 +106,39 @@ export function ownedAutomationSummaries(
       ORDER BY owning_workstream_id, projected_at DESC, automation_id`,
     JSON.stringify(workstreamIds),
   ).toArray()) {
+    const summary = automationSummary(row, report);
     const list = result.get(row.owning_workstream_id!) ?? [];
-    list.push(workstreamAutomationSummary(row));
+    list.push({
+      id: summary.id,
+      loadable: summary.loadable,
+      ...(summary.appearance ? { appearance: summary.appearance } : {}),
+      name: summary.name,
+      description: summary.description,
+      emailAddress: summary.emailAddress,
+      status: summary.status,
+      nextRunAt: summary.nextRunAt,
+      lastRunAt: summary.lastRunAt,
+      updatedAt: summary.updatedAt,
+    });
     result.set(row.owning_workstream_id!, list);
   }
   return result;
 }
 
-/**
- * Each Channel's Main participants, newest first: the viewer rows at the
- * Channel's own authority generation, the facepile's order.
- */
+/** What the rail shows of an owned Sidekick: no run times, which move on every run. */
+function railOwnedSidekick(summary: WorkstreamAutomationSummary): ChannelRailOwnedSidekick {
+  return {
+    id: summary.id,
+    loadable: summary.loadable,
+    ...(summary.appearance ? { appearance: summary.appearance } : {}),
+    name: summary.name,
+    description: summary.description,
+    emailAddress: summary.emailAddress,
+    status: summary.status,
+  };
+}
+
+/** Each Channel's Main participants at the Channel's generation, newest first. */
 export function channelParticipantIds(sql: Sql, workstreamIds: readonly string[]): Map<string, string[]> {
   const result = new Map<string, string[]>();
   if (workstreamIds.length === 0) return result;
@@ -136,7 +163,6 @@ export function channelParticipantIds(sql: Sql, workstreamIds: readonly string[]
 interface SidekickRow extends Record<string, SqlStorageValue> {
   automation_id: string;
   author_user_id: string;
-  /** Null until the Sidekick next publishes its row after migration 81. */
   run_as_user_id: string | null;
   lifecycle: string;
   scope: string;
@@ -153,32 +179,30 @@ interface RailChannel {
   reported: boolean;
 }
 
-/**
- * Whether a Sidekick is shown in this Channel's rail for this viewer: the
- * audience `SidekickDO.skillAudienceAllows` applies to a summary read, with
- * the viewer as principal and Main's participants as the audience. A personal
- * Sidekick's people are its author and whoever it runs as.
- */
+/** `SidekickDO.readSkillSummary`'s answer, with the viewer as principal and Main's participants as the audience. */
 function sidekickShown(row: SidekickRow, channel: RailChannel, participants: readonly string[], viewerId: string): boolean {
-  if (row.lifecycle === "deleted") return false;
-  if (row.scope === "personal") {
-    const people = new Set([row.author_user_id, row.run_as_user_id ?? row.author_user_id]);
-    if (!people.has(viewerId) || channel.scope === "workspace" || participants.length === 0
-      || participants.some((id) => !people.has(id))) return false;
-  }
-  return row.scope !== "workstream" || row.owning_workstream_id === channel.workstreamId;
+  return row.lifecycle !== "deleted" && sidekickAudienceAllows({
+    scope: row.scope,
+    authorUserId: row.author_user_id,
+    runAsUserId: row.run_as_user_id,
+    owningWorkstreamId: row.owning_workstream_id,
+  }, {
+    principalUserId: viewerId,
+    conversationParentId: channel.workstreamId,
+    audienceScope: channel.scope === "workspace" ? "workspace" : "personal",
+    audienceUserIds: participants,
+  });
 }
 
 function sidekickAttachment(row: SidekickRow): SidekickAttachment {
   return {
     id: row.automation_id,
-    name: row.title || "New Sidekick",
+    name: row.title,
     description: row.description,
     available: row.lifecycle === "active" && row.loadable === 1,
   };
 }
 
-/** Ids per Channel from a `(workstream_id, sidekick_id)` read, in the read's order. */
 function groupIds(rows: readonly { workstream_id: string; sidekick_id: string }[]): Map<string, string[]> {
   const result = new Map<string, string[]>();
   for (const row of rows) {
@@ -194,6 +218,7 @@ export interface ChannelRailsRequest {
   accessClass: "member" | "guest";
   workspaceId: string;
   workstreamIds: readonly string[];
+  onInvalidAppearance: InvalidAppearanceReport;
 }
 
 export interface ChannelRailsAnswer {
@@ -204,12 +229,8 @@ export interface ChannelRailsAnswer {
 }
 
 /**
- * The rails of these Channels for one viewer.
- *
- * Visible means what the Channel row's audience means (`channelRowPayloads`):
- * hosted, not archived, and Organization-wide or this viewer a participant at
- * the Channel's generation. A guest is admitted by the same predicate, as
- * rows admit them.
+ * The rails of these Channels for one viewer. Visible means what the Channel
+ * row's audience means (`channelRowPayloads`), for a guest too.
  */
 export function channelRails(sql: Sql, request: ChannelRailsRequest): ChannelRailsAnswer {
   const asked = [...new Set(request.workstreamIds)];
@@ -243,15 +264,14 @@ export function channelRails(sql: Sql, request: ChannelRailsRequest): ChannelRai
   const visibleJson = JSON.stringify(visibleIds);
 
   const participants = channelParticipantIds(sql, visibleIds);
-  // Owned is the REST rail read's list, which answers only a member who is a
-  // participant of the room; everyone else is told it is empty.
+  // The REST read answers only a member who is a participant of the room.
   const ownedFor = request.accessClass === "member"
     ? visibleIds.filter((id) => participants.get(id)?.includes(request.userId) === true)
     : [];
-  const owned = ownedAutomationSummaries(sql, ownedFor);
+  const owned = ownedAutomationSummaries(sql, ownedFor, request.onInvalidAppearance);
 
-  // Recommended is the Channel's explicit recommendations, then everything
-  // the room owns, as `WorkstreamService.recommendedSidekicks` builds it.
+  // Recommended is the explicit recommendations, then everything the room
+  // owns, as `WorkstreamService.recommendedSidekicks` builds it.
   const explicit = groupIds(sql.exec<{ workstream_id: string; sidekick_id: string }>(
     `SELECT parent_id AS workstream_id, sidekick_id FROM parent_sidekicks
       WHERE parent_id IN (SELECT value FROM json_each(?))
@@ -286,10 +306,8 @@ export function channelRails(sql: Sql, request: ChannelRailsRequest): ChannelRai
     workstream_id: string; id: string; title: string; resource_type: string; mime_type: string | null;
     relationship_type: string; current_version: number | null;
   }>(
-    // Main's links in the order its conversation projected them (the link
-    // table is replaced whole, so rowid is display order), with the detail's
-    // enumeration rule: notes are not resources here, and an unlisted
-    // resource is reachable but not advertised.
+    // The link table is replaced whole, so rowid is Main's display order.
+    // Notes are not resources here, and an unlisted resource is not advertised.
     `SELECT link.workstream_id, r.id, r.title, r.resource_type, r.mime_type, link.relationship_type,
             r.current_version
        FROM workspace_workstream_resource_links link
@@ -333,7 +351,7 @@ export function channelRails(sql: Sql, request: ChannelRailsRequest): ChannelRai
       railWaterline: channel.railWaterline,
       participantUserIds: people as ChannelRail["participantUserIds"],
       sidekicks: {
-        owned: owned.get(workstreamId) ?? [],
+        owned: (owned.get(workstreamId) ?? []).map(railOwnedSidekick),
         recommended: summaries([...explicit.get(workstreamId) ?? [], ...ownedIds.get(workstreamId) ?? []]),
         ...(channel.reported ? { attached: summaries(attachedIds.get(workstreamId) ?? []) } : {}),
       },
@@ -341,6 +359,39 @@ export function channelRails(sql: Sql, request: ChannelRailsRequest): ChannelRai
     };
   });
   return { rails, unavailable };
+}
+
+/**
+ * One page of a Space's active Channels this viewer may see, in id order after
+ * `after`. Visibility is decided in the page query, so a page never holds a
+ * Channel the viewer cannot be told about and one request reads one page, however
+ * many of the Space's Channels are hidden from them. The caller has already
+ * asked whether they may see the Space at all.
+ */
+export function visibleSpaceChannelIdsAfter(
+  sql: Sql,
+  request: { spaceId: string; userId: string; after: string | null; limit: number },
+): string[] {
+  return sql.exec<{ workstream_id: string }>(
+    `SELECT membership.workstream_id
+       FROM space_channel_memberships membership
+       JOIN channels directory ON directory.workstream_id = membership.workstream_id
+       JOIN parent_metadata parent
+         ON parent.parent_id = directory.workstream_id AND parent.parent_kind = 'workstream'
+       LEFT JOIN channel_viewers viewer
+         ON viewer.workstream_id = directory.workstream_id
+        AND viewer.user_id = ?
+        AND viewer.authority_generation = directory.authority_generation
+      WHERE membership.space_id = ? AND membership.state = 'active' AND membership.workstream_id > ?
+        AND directory.archived_at IS NULL
+        AND ${channelVisibleToViewerSql("directory", "viewer")}
+      ORDER BY membership.workstream_id
+      LIMIT ?`,
+    request.userId,
+    request.spaceId,
+    request.after ?? "",
+    request.limit,
+  ).toArray().map((row) => row.workstream_id);
 }
 
 // ---------------------------------------------------------------------------
@@ -356,11 +407,10 @@ type FrameDraft = Omit<WorkspaceChannelRailsEvent, "nextAfter" | "final">;
  * Packs one answer's rails into `workspace_channel_rails` frames no larger
  * than the socket's frame limit, by encoded byte length.
  *
- * `add` answers `full` when the rail does not fit what is left of the current
- * frame; the caller either starts another (`roll`) or stops there. A rail that
- * would not fit even an empty frame is `oversized`: it is named in the frame's
- * `oversized` list with its waterline, and the client paints that Channel from
- * its snapshot instead.
+ * `full` means the entry does not fit what is left of the current frame; the
+ * caller either `roll`s to another or stops there. A rail too large for even
+ * an empty frame is named in `oversized` instead, and the client paints that
+ * Channel from its snapshot.
  */
 export class ChannelRailFrames {
   private readonly closed: FrameDraft[] = [];
@@ -373,8 +423,8 @@ export class ChannelRailFrames {
 
   constructor(private readonly requestId: string, private readonly limit: number) {
     this.draft = this.blank();
-    // `final: false` and `nextAfter: null` are the longer and the shorter of
-    // their spellings; `reserve` covers the difference for `nextAfter`.
+    // The longer spellings of `final` and the shorter of `nextAfter`; `reserve`
+    // covers the difference for `nextAfter`.
     this.empty = jsonBytes({ ...this.draft, nextAfter: null, final: false });
     this.used = this.empty;
   }
@@ -382,6 +432,10 @@ export class ChannelRailFrames {
   private blank(): FrameDraft {
     return { type: "workspace_channel_rails", requestId: this.requestId as FrameDraft["requestId"],
       rails: [], oversized: [], unavailable: [] };
+  }
+
+  private reserveFor(workstreamId: string): number {
+    return Math.max(this.reserve, jsonBytes(workstreamId) - jsonBytes(null));
   }
 
   /** Named Channels this viewer may not be told about; they ride the current frame. */
@@ -393,17 +447,12 @@ export class ChannelRailFrames {
   }
 
   add(rail: ChannelRail): "added" | "oversized" | "full" {
-    const reserve = Math.max(this.reserve, jsonBytes(rail.workstreamId) - jsonBytes(null));
+    const reserve = this.reserveFor(rail.workstreamId);
     const railBytes = jsonBytes(rail);
     if (this.empty + reserve + railBytes > this.limit) {
-      const entry = { workstreamId: rail.workstreamId, railWaterline: rail.railWaterline };
-      const cost = jsonBytes(entry) + (this.draft.oversized.length > 0 ? 1 : 0);
-      if (this.used + cost + reserve > this.limit) return "full";
-      this.draft.oversized.push(entry);
-      this.used += cost;
-      this.reserve = reserve;
-      this.oversizedRails.push({ workstreamId: rail.workstreamId, bytes: railBytes });
-      return "oversized";
+      const outcome = this.addOversized(rail);
+      if (outcome === "oversized") this.oversizedRails.push({ workstreamId: rail.workstreamId, bytes: railBytes });
+      return outcome;
     }
     const cost = railBytes + (this.draft.rails.length > 0 ? 1 : 0);
     if (this.used + cost + reserve > this.limit) return "full";
@@ -411,6 +460,18 @@ export class ChannelRailFrames {
     this.used += cost;
     this.reserve = reserve;
     return "added";
+  }
+
+  /** Name a Channel the client paints from its snapshot rather than from a rail. */
+  addOversized(rail: Pick<ChannelRail, "workstreamId" | "railWaterline">): "oversized" | "full" {
+    const reserve = this.reserveFor(rail.workstreamId);
+    const entry = { workstreamId: rail.workstreamId, railWaterline: rail.railWaterline };
+    const cost = jsonBytes(entry) + (this.draft.oversized.length > 0 ? 1 : 0);
+    if (this.used + cost + reserve > this.limit) return "full";
+    this.draft.oversized.push(entry);
+    this.used += cost;
+    this.reserve = reserve;
+    return "oversized";
   }
 
   /** Close the current frame and start an empty one. */
@@ -439,9 +500,8 @@ export class ChannelRailFrames {
 // ---------------------------------------------------------------------------
 
 /**
- * Advance these Channels' rail waterlines and note them for a row push. The
- * id set is SQL over the trigger's `NEW`/`OLD` row; an id that is not a
- * Channel (a Space parent, an unlinked resource) matches nothing.
+ * Advance these Channels' rail waterlines and note them in the ledger. An id
+ * that is not a Channel (a Space parent, an unlinked resource) matches nothing.
  */
 function bumpRailsSql(channelIds: string): string {
   return `UPDATE channels SET rail_waterline = rail_waterline + 1 WHERE workstream_id IN (${channelIds});
@@ -454,10 +514,12 @@ function changed(columns: readonly string[]): string {
   return columns.map((column) => `OLD.${column} IS NOT NEW.${column}`).join(" OR ");
 }
 
-/** The columns an owned rail entry shows, audience included. */
+/**
+ * What an owned entry shows, and which room owns it. Not the run times or
+ * `projected_at`, which move on every scheduled run and are not shown.
+ */
 const OWNED_AUTOMATION_COLUMNS = [
-  "title", "description", "lifecycle", "loadable", "appearance_json", "next_run_at", "projected_at",
-  "scope", "owning_workstream_id", "author_user_id", "run_as_user_id",
+  "title", "description", "lifecycle", "loadable", "appearance_json", "scope", "owning_workstream_id",
 ] as const;
 /** What a recommended or attached entry shows, and who it is shown to. */
 const LISTED_SIDEKICK_COLUMNS = [
@@ -472,15 +534,11 @@ const resourceLinkers = (row: "NEW" | "OLD") =>
   `SELECT workstream_id FROM workspace_workstream_resource_links WHERE resource_id = ${row}.id`;
 
 /**
- * WorkspaceDO migration 82.
- *
- * The rail's own state (the attachments Main reported) and the waterline that
- * says it moved. Triggers advance the waterline for every table a rail reads
- * whose writers are not already Channel-row writers: participants, scope and
- * generation, recommendations, the Sidekick directory, and resource
- * presentation. The Main link list and the attachment list are compared and
- * bumped in `applyDirectoryEnvelope` instead, because that table is replaced
- * wholesale on every Main effect and a trigger there would fire on each one.
+ * WorkspaceDO migration 82: Main's reported attachments, the waterline, the
+ * change ledger, and a trigger on every table a rail reads whose writers are
+ * not already Channel-row writers. Main's link and attachment lists are
+ * compared in `applyDirectoryEnvelope` instead: every Main effect rewrites
+ * them, and a trigger there would fire on each one.
  */
 export const CHANNEL_RAIL_MIGRATION: readonly string[] = [
   `ALTER TABLE channels ADD COLUMN rail_waterline INTEGER NOT NULL DEFAULT 0 CHECK (rail_waterline >= 0)`,
@@ -494,7 +552,6 @@ export const CHANNEL_RAIL_MIGRATION: readonly string[] = [
   ) STRICT`,
   `CREATE INDEX channel_sidekick_attachments_sidekick_idx ON channel_sidekick_attachments(sidekick_id, workstream_id)`,
   `CREATE INDEX parent_sidekicks_sidekick_idx ON parent_sidekicks(sidekick_id, parent_id)`,
-  // Channels whose rail moved since their rows were last pushed for it.
   `CREATE TABLE channel_rail_changes (workstream_id TEXT PRIMARY KEY) STRICT`,
 
   `CREATE TRIGGER channel_rail_viewer_insert AFTER INSERT ON channel_viewers
@@ -508,8 +565,7 @@ export const CHANNEL_RAIL_MIGRATION: readonly string[] = [
   `CREATE TRIGGER channel_rail_viewer_delete AFTER DELETE ON channel_viewers
      WHEN OLD.is_participant = 1
      BEGIN ${bumpRailsSql("SELECT OLD.workstream_id")} END`,
-  // `UPDATE OF` two named columns, so the bump's own write to
-  // `rail_waterline` cannot fire it again.
+  // `UPDATE OF` names two columns, so the bump's own write cannot fire it again.
   `CREATE TRIGGER channel_rail_channel_update AFTER UPDATE OF scope, authority_generation ON channels
      WHEN ${changed(["scope", "authority_generation"])}
      BEGIN ${bumpRailsSql("SELECT NEW.workstream_id")} END`,
@@ -557,15 +613,10 @@ export function drainChannelRailChanges(sql: Sql): string[] {
     .toArray().map((row) => row.workstream_id);
 }
 
-/** Whether a drain has anything to take: the alarm arms on it. */
-export function channelRailChangesPending(sql: Sql): boolean {
-  return sql.exec(`SELECT 1 FROM channel_rail_changes LIMIT 1`).toArray().length > 0;
-}
-
 /**
- * Replace a Channel's reported Main attachments when the list moved, and
- * advance its rail waterline if it did. The first report always moves it:
- * before it the rail had no `attached` at all.
+ * Replace a Channel's reported Main attachments, and advance its rail
+ * waterline, when the list moved. The first report always moves it: before it
+ * the rail had no `attached` at all.
  */
 export function applyReportedSidekickAttachments(sql: Sql, workstreamId: string, sidekickIds: readonly string[]): void {
   const reported = sql.exec<{ sidekick_attachments_reported: number }>(
@@ -585,10 +636,7 @@ export function applyReportedSidekickAttachments(sql: Sql, workstreamId: string,
   bumpChannelRail(sql, workstreamId);
 }
 
-/**
- * Advance a Channel's rail waterline when Main's link list moved: same
- * resources, same relationships, same order. Read before the list is replaced.
- */
+/** Whether Main's link list moved: same resources, relationships and order. Read before it is replaced. */
 export function mainResourceLinksChanged(
   sql: Sql,
   workstreamId: string,

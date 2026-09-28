@@ -78,10 +78,11 @@ in all substreams; `sidekick_attachments` remains local to each SubstreamAgent.
 Execution snapshots optionally contain `recommendedRefs` for compatibility with
 previously admitted executions.
 
-Each conversation reports its `sidekick_attachments` to its parent as
-`sidekickAttachmentIds` on its directory effect (an existing conversation with
-its next one), and `WorkspaceDO` keeps Main's copy per
-Channel in `channel_sidekick_attachments` (migration 82) for the Channel rail.
+`WorkspaceDO` keeps Main's reported `sidekick_attachments` per Channel in
+`channel_sidekick_attachments` (migration 82) for the Channel rail, applied
+from `sidekickAttachmentIds` on a directory effect. No conversation sends that
+field yet; emission follows in a later deploy, and the table stays empty until
+then.
 
 SidekickDO migration 3 adds automation.loadable, atomically maintained with the accepted revision. WorkspaceDO migration 35 projects this value, using null for unresolved legacy eligibility. Substream migration 43 adds sidekick_attachments and sidekick_execution_skills for conversation ownership and retry-stable instruction snapshots. Existing namespace lookup keys remain unchanged.
 
