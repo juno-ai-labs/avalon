@@ -1,6 +1,6 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { SpaceSummarySchema, WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
-import { act, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -3977,6 +3977,20 @@ describe('the sidebar without a recency list', () => {
   it('given a member with no channels at all, when the sidebar is drawn, then it says so', () => {
     renderSidebar({ spaces: [space()], workstreams: [] });
 
+    expect(screen.getByText('No channels yet')).toBeVisible();
+  });
+
+  it('given Channels loaded a Space at a time, when the Space on screen has not answered, then it waits rather than saying it is empty', () => {
+    const hiring = space();
+    const onViewSpace = vi.fn();
+    renderSidebar({ spaces: [hiring], workstreams: [], loadedSpaceIds: new Set(), onViewSpace });
+
+    expect(onViewSpace).toHaveBeenLastCalledWith(hiring.id);
+    expect(screen.queryByText('No channels yet')).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Loading your spaces and channels');
+
+    cleanup();
+    renderSidebar({ spaces: [hiring], workstreams: [], loadedSpaceIds: new Set([hiring.id]), onViewSpace });
     expect(screen.getByText('No channels yet')).toBeVisible();
   });
 

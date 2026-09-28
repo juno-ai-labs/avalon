@@ -214,7 +214,10 @@ Connecting a workspace socket should deliver, without being asked:
   count), retained for wire compatibility even though current navigation no
   longer renders participant facepiles, plus the
   pinned section, and the automation and note sections the sidebar renders. A
-  cursor for the rest.
+  cursor for the rest. A member's desktop that asks for `channels_by_space`
+  is sent every visible Space instead of Channel rows, and asks each Space for
+  its Channels (`space_channels`) straight after
+  ([`realtime-sockets.md`](realtime-sockets.md)).
 - **The initial suggested actions** — the current suggestion set for this viewer.
   It is computed in the background by the scheduler and already resident in
   WorkspaceDO; the home screen should never be the thing that asks for it.
@@ -777,7 +780,7 @@ describes behaviour to replace, not a pattern to copy into something new.**
 | --- | --- | --- |
 | Work-stream directory pages (membership, order, pins) | First page carried on the `workspace_sync` answer to `subscribe`; later pages requested with `list_workstreams`; a `workstream_directory` sync event invalidates them and the client asks again | **Partly.** The first page is pushed and later ones are a scroll the reader asked for, but a pin or a reorder still arrives as news rather than as the changed row. |
 | Work-stream common/viewer state, breakout list, running background agents | Pushed as the Channel's row on the workspace socket, per viewer, waterlined (the breakout list on its own waterline) | Yes. |
-| A Channel's rail (Main participants, Sidekicks, Main resources) | Requested with `channel_rails` on the workspace socket, a Space at a time or by named Channels; the row's `railWaterline` says when a held rail is stale. REST remains for a breakout's Sidekicks and for Main's attachments, which no conversation reports to the Organization yet | **Mostly.** The data comes from the object holding the socket and the change arrives on the row, but the rail itself is pulled on the waterline rather than pushed. |
+| A Channel's rail (Main participants, Sidekicks, Main resources) | Sent with each Space's Channel rows (`space_channels`) on the workspace socket, and requested by named Channels (`channel_rails`) when a rail moves; the row's `railWaterline` says when a held rail is stale. REST remains for a breakout's Sidekicks and for Main's attachments, which no conversation reports to the Organization yet | **Mostly.** The data comes from the object holding the socket and the change arrives on the row, but the rail itself is pulled on the waterline rather than pushed. |
 | Transcript parts, tool blocks, token frames, presence | SubstreamAgent socket, snapshot on subscribe | Yes. |
 | Transcript range loading | Correlated, snapshot-fenced half-open range request on the SubstreamAgent socket | Yes — a pull the reader asked for, answered by the authority with explicit inspected coverage. |
 | Opening a conversation | Selecting it immediately subscribes the addressed SubstreamAgent feed; its first `snapshot` carries metadata, the unread-centered 5 + anchor + 5 range, the latest-five range, active turns, and reconnect timing baselines; the Channel's own metadata is already on the client as its workspace-socket row | Yes. Main and child conversations both recover by abandoning stale connection state and reconnecting from cursor zero; Retry restarts that same socket path. |

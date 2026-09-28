@@ -791,7 +791,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     switchingWorkspaceKey !== null ? 'is-switching-workspace' : '',
     enteringWorkspaceKey === workspaceKey ? 'is-entering-workspace' : '',
   ].filter(Boolean).join(' ');
-  const { reconnect, setForegroundWorkstreamId, sidebarConnect, state: workspaceSocketState } = useWorkspaceSocket();
+  const {
+    loadedSpaceIds, prioritizeSpace, reconnect, setForegroundWorkstreamId, sidebarConnect, state: workspaceSocketState,
+  } = useWorkspaceSocket();
 
   const activeWorkstreamId = openWorkstreamId(location.pathname);
   useEffect(() => {
@@ -1059,6 +1061,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         hasMoreWorkstreams={workstreams.hasMore}
         loadingMoreWorkstreams={workstreams.isFetchingMore}
         onLoadMoreWorkstreams={workstreams.fetchMore}
+        loadedSpaceIds={sidebarConnect?.channelsBySpace ? loadedSpaceIds : undefined}
+        onViewSpace={prioritizeSpace}
         workspace={workspace}
         workstreams={sidebarWorkstreams}
       />
