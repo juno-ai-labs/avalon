@@ -2014,6 +2014,24 @@ describe('a Channel\'s breakouts and background agents on the organization socke
     expect(railsSent(socket)).toHaveLength(2);
   });
 
+  it('keeps a rail it was just answered when a row raises the waterline mid-request, and asks again', async () => {
+    const queryClient = new QueryClient();
+    const socket = await connect(queryClient);
+    act(() => socket.message(sidebarFrame({ railWaterline: 5 })));
+    await flushPromises();
+    const [first] = railsSent(socket);
+
+    // The attach that moved the rail lands before the answer does.
+    act(() => socket.message(stateFrame(8, { railWaterline: 6 })));
+    act(() => socket.message(railAnswer(first!['requestId'], 5)));
+    await flushPromises();
+
+    expect(queryClient.getQueryData(['channel-rail', workstreamId]))
+      .toMatchObject({ railWaterline: 5, rail: { participantUserIds: [creator] } });
+    const [, second] = railsSent(socket);
+    expect(second).toMatchObject({ workstreamIds: [workstreamId] });
+  });
+
   it('asks a wholly stale Space by Space and follows its pages', async () => {
     const spaceId = '00000000-0000-4000-8000-000000000031';
     const queryClient = new QueryClient();

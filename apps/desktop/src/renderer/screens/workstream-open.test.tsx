@@ -135,6 +135,10 @@ function recoveryBoot(overrides: Partial<WorkstreamBoot> = {}): WorkstreamBoot {
 
 let navigateInTest: ReturnType<typeof useNavigate>;
 let locationInTest: ReturnType<typeof useLocation>;
+async function flushMicrotasks(): Promise<void> {
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+}
+
 function NavigationProbe(): null { navigateInTest = useNavigate(); locationInTest = useLocation(); return null; }
 
 function renderScreen(seed?: (queryClient: QueryClient) => void, substreamId?: string, restored = false): QueryClient {
@@ -1069,6 +1073,25 @@ describe('socket-first channel open', () => {
     expect(screen.getByText('Weekly brief')).toBeVisible();
     // The row the live rail ends with is there already, so nothing shifts.
     expect(screen.getByRole('button', { name: 'Add Sidekick' })).toBeVisible();
+  });
+
+  it('keeps the facepile pending while a rail participant cannot be named yet', async () => {
+    const member = { id: '00000000-0000-7000-8000-000000000684', name: 'Known person', email: 'known@example.test', timezone: 'UTC' };
+    api.getWorkspaceMembers.mockResolvedValue([member]);
+    renderScreen((cache) => {
+      setCachedWorkstreams(cache, [{ id: workstreamId, title: 'Launch plan', scope: 'workspace' } as WorkstreamSummary]);
+      cache.setQueryData(['workstream-children', workstreamId], { privateChildren: [] });
+      cache.setQueryData(['channel-rail', workstreamId], { railWaterline: 1, rail: {
+        workstreamId, railWaterline: 1, participantUserIds: [member.id, '00000000-0000-7000-8000-000000000685'],
+        sidekicks: { owned: [], recommended: [], attached: [] }, resources: [],
+      } });
+    });
+
+    await waitFor(() => expect(api.getWorkspaceMembers).toHaveBeenCalled());
+    await flushMicrotasks();
+    // Naming one of two would draw a facepile that grows when the snapshot lands.
+    expect(document.querySelector('.skeleton-avatar-stack')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Manage channel participants' })).not.toHaveAccessibleDescription('Known person');
   });
 
   it('keeps the opening rail, and its focus, when the snapshot lands', async () => {

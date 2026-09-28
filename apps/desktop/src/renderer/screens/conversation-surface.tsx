@@ -31,7 +31,7 @@ import type { ClientSession } from '@rally/contracts/client-session';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { useCitations } from '../lib/use-citations';
 import { breakoutResourceActions } from '../lib/breakout-resource-actions';
-import { ApiError, mapWorkstreamAutomationSummary, type MentionIdentity } from '../lib/api';
+import { ApiError, type MentionIdentity } from '../lib/api';
 import { useChannelRail } from '../lib/channel-rails';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { useBrowserRailLinks } from '../lib/browser-rail-links';
@@ -1983,6 +1983,10 @@ export function ConversationSurface({
   // Main's three lists ride its Channel rail on the workspace socket; REST
   // stays for a breakout, an older server, and a Main not yet reported.
   const railSidekicks = useChannelRail(parentKind === 'workstream' && substreamId === '0' ? id ?? null : null)?.sidekicks;
+  // A refresh of a rail-backed list that could not reach the organization;
+  // the section says so rather than leaving the reader's click unanswered.
+  const [railRefreshFailedFor, setRailRefreshFailedFor] = useState<string | null>(null);
+  const railRefreshFailed = railRefreshFailedFor !== null && railRefreshFailedFor === id;
   const attachedSidekicks = useQuery({
     queryKey: ['attached-sidekicks', id, substreamId],
     queryFn: ({ signal }) => api!.getAttachedSidekicks(id!, signal, substreamId),
@@ -2021,7 +2025,7 @@ export function ConversationSurface({
       } else await api!.removeAttachedSidekick(workstreamId, sidekickId, targetSubstreamId);
     },
     onSettled: (_result, _error, { workstreamId }) => {
-      workspaceSocket?.refreshChannelRails([workstreamId]);
+      void workspaceSocket?.refreshChannelRails([workstreamId]).catch(() => undefined);
       void queryClient.invalidateQueries({ queryKey: ['sidekick-recommendation-options', workstreamId] });
       void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks', workstreamId] });
       void queryClient.invalidateQueries({ queryKey: ['recommended-sidekicks', workstreamId] });
@@ -2511,7 +2515,7 @@ export function ConversationSurface({
     // hiding them because the other half failed takes down a list that worked.
     // The error still travels beside the rows that did arrive.
     owned: railSidekicks
-      ? railSidekicks.owned.map(mapWorkstreamAutomationSummary)
+      ? railSidekicks.owned
       : readOwnedSidekickDetails ? ownedSidekicks.data ?? (ownedSidekicks.isError ? [] : undefined) : [],
     attached: railSidekicks?.attached ?? attachedSidekicks.data ?? (attachedSidekicks.isError ? [] : undefined),
     recommended: railSidekicks?.recommended ?? recommendedSidekicks.data ?? (recommendedSidekicks.isError ? [] : undefined),
@@ -2534,6 +2538,7 @@ export function ConversationSurface({
     : (readOwnedSidekickDetails && ownedSidekicks.error)
       || attachedSidekicks.error
       || recommendedSidekicks.error
+      || railRefreshFailed
       ? 'load'
       : undefined;
   const loadSidekickOptions = (): void => {
@@ -2545,7 +2550,12 @@ export function ConversationSurface({
     void recommendationOptions.refetch();
   };
   const refreshSidekicks = (): void => {
-    if (railSidekicks && id) workspaceSocket?.refreshChannelRails([id]);
+    if (railSidekicks && id) {
+      const refreshing = id;
+      setRailRefreshFailedFor(null);
+      void (workspaceSocket?.refreshChannelRails([refreshing]) ?? Promise.reject(new Error('no_organization_socket')))
+        .catch(() => setRailRefreshFailedFor(refreshing));
+    }
     if (readOwnedSidekickDetails && !railSidekicks) void ownedSidekicks.refetch();
     if (railSidekicks?.attached === undefined) void attachedSidekicks.refetch();
     if (!railSidekicks) void recommendedSidekicks.refetch();
