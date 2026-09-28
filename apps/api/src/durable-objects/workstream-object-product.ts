@@ -3478,6 +3478,20 @@ export class WorkstreamObjectProductService {
     return [...harness, ...tools].sort((left, right) => right.startedAt.localeCompare(left.startedAt));
   }
 
+  /**
+   * Commit `mutate`, and this conversation's `directory_common` projection
+   * with it when `mutate` says it changed something the projection carries.
+   * For a caller outside this service whose write the parent must hear about,
+   * such as a Sidekick attachment.
+   */
+  async commitWithCommonEffect(mutate: (sql: SqlStorage) => boolean): Promise<boolean> {
+    const { result } = await this.objectStore.commitWithRegionalEffects(
+      mutate,
+      (_sql, changed) => changed ? [{ partitionKey: "common", effect: this.commonEffect(this.root()) }] : [],
+    );
+    return result;
+  }
+
   private commonEffect(root: RootRow) {
     const wakeup = first(this.storage.sql.exec<{ due_at: number; prompt: string }>(
       `SELECT due_at, prompt FROM workstream_wakeups
@@ -3563,6 +3577,10 @@ export class WorkstreamObjectProductService {
     const background = this.storage.sql.exec<{ root_substream_id: string | null }>(
       "SELECT root_substream_id FROM background_agent WHERE id = 1",
     ).toArray()[0];
+    // Main's list is the Channel rail's; a breakout reports its own the same way.
+    const sidekickAttachmentIds = this.storage.sql.exec<{ sidekick_id: string }>(
+      `SELECT sidekick_id FROM sidekick_attachments ORDER BY attached_at, sidekick_id`,
+    ).toArray().map((row) => row.sidekick_id);
     return {
       kind: "directory_common" as const,
       backgroundAgent: background !== undefined,
@@ -3590,6 +3608,7 @@ export class WorkstreamObjectProductService {
         ? iso(Math.min(...terminalCandidates))
         : null,
       resourceLinks,
+      sidekickAttachmentIds,
       ...(attachmentReservationReleases.length > 0 ? { attachmentReservationReleases } : {}),
       createdAt: iso(root.created_at)!,
       updatedAt: iso(root.updated_at)!,
