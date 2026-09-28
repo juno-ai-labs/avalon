@@ -43,8 +43,10 @@ a Channel where this person may list a Breakout but cannot see the Channel
 itself is a candidate too, read from `breakout_viewers`. That is how
 a member seated in a legacy Breakout of a Channel they cannot read finds it;
 the parent's `canReadConversation` then admits the Breakout alone.
-Directory reads admit each candidate at its canonical parent concurrently and
-preserve ordering. A final relationship
+Directory reads admit every candidate at its canonical parent in one
+`WorkspaceDO.readSharedWorkstreams` call, which loops the hosted Channels
+locally and answers in candidate order; each Channel still makes its own
+admission decision. A final relationship
 incarnation/revision check fences the combined response. For hierarchical navigation,
 a child-only share names its Channel so the browser can place the authorized Breakout
 under the right container, while Main, sibling Breakouts, Main participants and Main
@@ -109,12 +111,41 @@ Negative controls remove the source handoff and stale-delivery guard separately;
 the corresponding tests must fail. Additional canonical tests prove that a stale
 candidate cannot expose revoked content, a child-only share releases its Channel
 label only through hierarchical navigation without releasing Main, two shared
-Breakouts in different Channels produce both visible containing Spaces, a private
+Breakouts in different Channels produce both visible containing Spaces in three
+Organization round trips whatever the number of Channels (a counted namespace
+from `test-workers/helpers/counting-namespace.ts` records them), a private
 Space invisible to the guest is withheld, and unready/restricted children are absent.
 Negative controls bypass canonical admission, truncate the admitted Channel set, or
 flatten the browser's Space filter; the corresponding tests fail.
 
 ## Changelog
+
+### 2026-09-28 — Admit every shared Channel in one Organization call
+
+**What changed:** `listSharedNavigationDirectory` and `listSharedDirectory`
+hand all of a person's candidate Channels to one
+`WorkspaceDO.readSharedWorkstreams` call instead of calling
+`readSharedWorkstream` once per Channel. The object loops its hosted parents
+and answers in candidate order; each Channel's own admission is unchanged.
+
+**Why:** Production measurements on 2026-09-27 showed `/sharing/navigation`
+making one Organization call per shared Channel. The fan-out has the shape of
+the time when each Channel was its own object (its reasoning is not otherwise
+recorded); every Channel is now a hosted parent of the one Organization
+object, so it was N round trips to the same place, and navigation latency grew
+with the number of Channels shared with a person. It is now three calls in
+total: candidates, admission, and Space marks — and no admission call when
+there are no candidates, which is most members.
+
+**Considered and rejected:** Folding the candidate lookup and the Space marks
+into the same call. That would make one RPC decide discovery, admission and
+containment together, where today each is a separately tested primitive; the
+two remaining hops are constant, not per Channel.
+
+**Consequences:** A candidate that fails `channelParent` (for example a Space
+id) still fails the whole read, as one of the concurrent calls failing did
+before. The batch reads its Channels one after another inside the object;
+each read is local SQLite, so that costs less than one round trip did.
 
 ### 2026-09-23 — Project guest Breakout attention in opt-in navigation
 

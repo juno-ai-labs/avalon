@@ -10,6 +10,7 @@ import { AuthorizationService } from "../src/services/authorization-service";
 import type { Env } from "../src/env";
 import { pendingParentEffects } from "./helpers/conversation-effects";
 import { conversationObjectName } from "../src/durable-objects/names";
+import { countingEnv } from "./helpers/counting-namespace";
 import { hostedParentStub, insertChannelRow, withHostedParent } from "./helpers/hosted-parent";
 import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
 import { changeRelationships } from "./helpers/workspace-relationship-events";
@@ -309,7 +310,7 @@ it("applies committed grants to the grant directory in the same object even when
   expect(await listSharedNavigationDirectory(env, workspaceId, recipientId)).toEqual({ spaces: [], workstreams: [] });
 });
 
-it("shows every containing Space when a guest has shared Breakouts", async () => {
+it("shows every containing Space when a guest has shared Breakouts, reading every Channel in one round trip", async () => {
   await initializeSecondRoom();
   await parkEffectQueue(room());
   await seedActorGrant(child);
@@ -349,7 +350,8 @@ it("shows every containing Space when a guest has shared Breakouts", async () =>
       VALUES (?, ?, 'active', 1, 1, 1, NULL)`, privateSpaceId, parentId);
   });
 
-  expect(await listSharedNavigationDirectory(env, workspaceId, recipientId)).toEqual({
+  const calls: string[] = [];
+  expect(await listSharedNavigationDirectory(countingEnv(calls), workspaceId, recipientId)).toEqual({
     spaces: [
       { id: firstSpaceId, name: "Product", iconKey: "rocket", colorKey: "violet", scope: "workspace", workstreamIds: [parentId] },
       { id: secondSpaceId, name: "Research", iconKey: "lightbulb", colorKey: "teal", scope: "workspace", workstreamIds: [secondParentId] },
@@ -362,6 +364,9 @@ it("shows every containing Space when a guest has shared Breakouts", async () =>
         conversations: [{ substreamId: secondChildId, title: "Research breakout", scope: "personal", archived: false }] },
     ],
   });
+  // Two shared Channels, one read for both of them: the round trips do not
+  // grow with the number of Channels shared.
+  expect(calls).toEqual(["listScopeGrantCandidates", "readSharedWorkstreams", "listSharedNavigationSpaces"]);
 });
 
 
