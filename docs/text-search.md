@@ -278,8 +278,9 @@ same-revision extraction results cannot overwrite each other's chunks. Hashing
 JSON-escaped text preserves exact UTF-16, including lone surrogates that raw UTF-8
 encoding would replace. A strongly
 consistent count of the batch's rows lets redelivery skip embeddings already
-stored successfully, and it runs before the source read, so a batch already
-written costs one index query and no Durable Object call. The count cannot use
+stored successfully, and it runs before the source read, so a resource batch
+already written costs one index query and one revision read, with no document
+load. The count cannot use
 the IDs, which hash the chunk text the child has not loaded; it counts rows
 matching the document, revision, generation and each span's exact
 `(chunk_start, chunk_end)` pair instead. That is the same set: a generation is
@@ -287,9 +288,10 @@ the hash of the whole text a span slices, so those attributes determine the
 text and therefore the ID. Spans are paired rather than matched as two `In`
 lists because a recursive passage and a sliding window can share a start. A
 missing or partial batch, or rows of another revision or generation, count
-short and the batch is embedded. Skipping needs no freshness check: whoever
-wrote the rows ran one after its write, and a later revision's source job
-reclaims them at planning. The source job removes older revisions and legacy
+short and the batch is embedded. Skipping still runs the post-write freshness
+check: a delivery cancelled between its upsert and that check leaves rows no one
+validated, and a later revision's source job may already have reclaimed that
+generation, so acknowledging unchecked would resurrect them. The source job removes older revisions and legacy
 same-revision rows before publishing the new plan. Those rows cannot pass current
 canonical validation, so retaining them until the last child succeeds would add
 strong queries and stale candidates without preserving usable results. Cleanup
@@ -526,8 +528,9 @@ drives the Queue consumer through real source RPC and R2 reads, verifies identic
 chunks across messages/files/artifacts/pages, and proves concurrent deletion causes
 generation cleanup and retry. Its only doubles are external APIs/model assets.
 It also records the WorkspaceDO RPCs an embedding delivery makes, through a
-proxy over the real namespace, proving a written batch makes none and a new
-revision makes one document read and one revision read. A resource's content
+proxy over the real namespace, proving a written batch makes only a revision
+read, and a new revision makes one document read and one revision read. A written
+batch whose revision has since moved on is reclaimed rather than acknowledged. A resource's content
 change is staged the way production makes it (a new `content_ref`, which bumps
 the revision), not by overwriting R2 in place.
 The pinned Qwen tokenizer was separately exercised in workerd with its actual
@@ -695,8 +698,8 @@ budgets require team policy; no arbitrary new caps are introduced here.
 This entry covers two independent changes in one pull request. Each keeps its own four parts.
 
 **What changed (embedding batches):** An embedding delivery counts its batch's rows in the index
-before reading the source, and acknowledges with no WorkspaceDO call when all
-are there. The count matches document, revision, generation and each span's
+before reading the source, and when all are there confirms them with the
+post-write freshness check instead of loading the document. The count matches document, revision, generation and each span's
 exact range instead of the chunk IDs, which need the text. A resource's
 post-write freshness check reads `resourceSearchRevision` instead of preparing
 the document again; a turn still re-reads in full.
@@ -707,8 +710,8 @@ and about 98% of those deliveries loaded the document twice and then embedded
 nothing because the rows already existed: the same-revision re-projections
 (migrations 47, 48 and 77) and redeliveries re-send batches already written. Each load
 extracts the text and reads R2 inside the object whose overload the 60-second
-backlog pacing exists to prevent. An already-written batch now costs no object
-call; a batch that is embedded costs one document read and one watermark read
+backlog pacing exists to prevent. An already-written resource batch now costs
+one revision read and no document load; a batch that is embedded costs one document read and one watermark read
 instead of two document reads.
 
 **Considered and rejected (embedding batches):** A ledger of completed batches in the object or
