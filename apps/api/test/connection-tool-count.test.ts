@@ -45,6 +45,61 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("the connection list's reads", () => {
+  it("reads owner names and personal delivery surfaces concurrently, and lists both", async () => {
+    // The two reads the list makes once it has its rows: owner names from the
+    // regional database, and the Slack identity links from the Organization
+    // object. Each start and finish is recorded; the owners' read finishes a
+    // turn of the event loop after it starts, so a list that waits for it
+    // before asking for the links records the links only after it.
+    const events: string[] = [];
+    const ownersRead = (database: D1Database): D1Database => new Proxy(database, {
+      get: (target, property) => property !== "prepare"
+        ? Reflect.get(target, property, target)
+        : (sql: string) => {
+          const statement = target.prepare(sql);
+          if (!sql.includes("FROM users WHERE id IN")) return statement;
+          return new Proxy(statement, {
+            get: (prepared, member) => member !== "bind"
+              ? Reflect.get(prepared, member, prepared)
+              : (...values: unknown[]) => {
+                const bound = prepared.bind(...values);
+                return new Proxy(bound, {
+                  get: (read, method) => method !== "all" ? Reflect.get(read, method, read) : async () => {
+                    events.push("owners:start");
+                    const result = await bound.all();
+                    await new Promise((resolve) => setImmediate(resolve));
+                    events.push("owners:end");
+                    return result;
+                  },
+                });
+              },
+          });
+        },
+    });
+    const { env, auth, object } = fixture({
+      slack: true,
+      regional: ownersRead,
+      onRuntimeSql: (input) => { if (JSON.stringify(input).includes("slack_user_links")) events.push("links:start"); },
+    });
+    const connectionId = "00000000-0000-7000-8000-000000000501";
+    insertConnection(object, { id: connectionId, connectorType: "slack", grants: [] });
+    object.prepare(`INSERT INTO slack_user_links
+      (id, workspace_id, connection_id, user_id, slack_team_id, slack_user_id, status, created_at, updated_at)
+      VALUES ('link', ?, ?, ?, 'T1', 'U1', 'active', '2026-09-26T00:00:00.000Z', '2026-09-26T00:00:00.000Z')`)
+      .run(WORKSPACE_ID, connectionId, USER_ID);
+
+    const listed = await new ConnectionService(env, auth).list();
+
+    expect(listed.map((connection) => [connection.id, connection.ownerName, connection.userDelivery])).toEqual([[
+      connectionId,
+      "Workspace Owner",
+      { targetType: "slack_agent_dm", label: "Slack DM", description: "Rally Agent DM in this Slack workspace." },
+    ]]);
+    expect(events).toEqual(["owners:start", "links:start", "owners:end"]);
+  });
+});
+
 describe("connection tool counts in the connection list", () => {
   it("counts a fixed tool surface from the row's grants, with the page tools activation adds, without calling the provider", async () => {
     const { env, auth, object, providerRequests } = fixture();
@@ -399,7 +454,15 @@ function holdNextToolList(server: StubMcpServer): { arrived: Promise<void>; rele
   return { arrived: arrival, release };
 }
 
-function fixture(options: { devAuth?: boolean } = {}): {
+function fixture(options: {
+  devAuth?: boolean;
+  /** Registers Slack, whose delivery surface needs a personal identity link. */
+  slack?: boolean;
+  /** Stands between the service and the regional database. */
+  regional?: (database: D1Database) => D1Database;
+  /** Sees every statement the service routes to the Organization object. */
+  onRuntimeSql?: (input: unknown) => void;
+} = {}): {
   env: Env;
   auth: AuthContext;
   object: DatabaseSync;
@@ -423,8 +486,14 @@ function fixture(options: { devAuth?: boolean } = {}): {
   });
   const published: string[][] = [];
   const publishedConnectionIds: Array<string | null> = [];
+  const rpcs = workspaceObjectRpcs(workspace.instance, ["executeRuntimeSql"]);
+  const executeRuntimeSql = rpcs.executeRuntimeSql as (...args: unknown[]) => unknown;
   const stub = {
-    ...workspaceObjectRpcs(workspace.instance, ["executeRuntimeSql"]),
+    ...rpcs,
+    executeRuntimeSql: (...args: unknown[]) => {
+      options.onRuntimeSql?.(args[0]);
+      return executeRuntimeSql(...args);
+    },
     publishSync: async (topics: string[], _workspaceId: string, _placement: unknown, detail?: { connectionId?: string }) => {
       published.push([...topics]);
       publishedConnectionIds.push(detail?.connectionId ?? null);
@@ -442,8 +511,11 @@ function fixture(options: { devAuth?: boolean } = {}): {
     published,
     publishedConnectionIds,
     env: createTestEnv({
-      DB: sqliteD1(regional),
+      DB: options.regional ? options.regional(sqliteD1(regional)) : sqliteD1(regional),
       AVALON_REGION: "global",
+      ...(options.slack
+        ? { SLACK_CLIENT_ID: "slack-client", SLACK_CLIENT_SECRET: "slack-secret", SLACK_SIGNING_SECRET: "slack-signing" }
+        : {}),
       ...(options.devAuth
         ? { APP_ENV: "development", RALLY_DEV_AUTH: "true" }
         : { APP_ENV: "test" }),

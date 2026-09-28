@@ -5507,6 +5507,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return (await this.channelParent(input.parentId, input.workspaceId)).readSharedWorkstream(input);
   }
 
+  /**
+   * `readSharedWorkstream` for every named Channel in one round trip, in the
+   * order named, each Channel still deciding for itself what it releases. The
+   * Channels are hosted here, so the fan-out a caller would otherwise make one
+   * RPC per Channel is a loop over local parents.
+   */
+  async readSharedWorkstreams(
+    input: Omit<Parameters<HostedParent["readSharedWorkstream"]>[0], "parentId"> & { parentIds: string[] },
+  ) {
+    const { parentIds, ...request } = input;
+    const items = [];
+    for (const parentId of parentIds) {
+      items.push(await (await this.channelParent(parentId, request.workspaceId)).readSharedWorkstream({ ...request, parentId }));
+    }
+    return items;
+  }
+
   async mutateScopeGrant(input: Parameters<HostedParent["mutateScopeGrant"]>[0]) {
     return this.parentWrite(async () => (await this.channelParent(input.target.parentId, input.target.workspaceId)).mutateScopeGrant(input));
   }
@@ -5564,6 +5581,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   async listVisiblePrivateChildren(input: Parameters<HostedParent["listVisiblePrivateChildren"]>[0]) {
     return (await this.hostedParent(input.parentId, input.workspaceId)).listVisiblePrivateChildren(input);
+  }
+
+  /**
+   * `listVisiblePrivateChildren` for one person across many hosted parents in
+   * one round trip, answered in the order the parents were named.
+   */
+  async listVisiblePrivateChildrenForParents(
+    input: Omit<Parameters<HostedParent["listVisiblePrivateChildren"]>[0], "parentId"> & { parentIds: string[] },
+  ) {
+    const { parentIds, ...request } = input;
+    const parents = [];
+    for (const parentId of parentIds) {
+      const { children } = (await this.hostedParent(parentId, request.workspaceId))
+        .listVisiblePrivateChildren({ ...request, parentId });
+      parents.push({ parentId, children });
+    }
+    return { parents };
   }
 
   async addPrivateChildParticipant(input: Parameters<HostedParent["addPrivateChildParticipant"]>[0]) {
@@ -7065,7 +7099,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.listSidekickDirectoryForAuthorizedMember(request);
   }
 
-  /** Internal host RPC: Bind checked active membership for this command. Scope filtering remains local. */
+  /**
+   * For a caller that already proved active membership: Bind for its command,
+   * and `AutomationService.listSidekicks` for an authenticated request. Scope
+   * filtering remains local.
+   */
   async listSidekickDirectoryForAuthorizedMember(input: { workspaceId: string; userId: string }): Promise<{ items: AutomationSummary[] }> {
     await this.initialized;
     const request = z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema }).parse(input);
