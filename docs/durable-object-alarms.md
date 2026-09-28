@@ -129,6 +129,13 @@ before a full re-arm.
    `executeRuntimeSql`. Without a reconcile here, the drain settles the entry it
    just ran and nothing arms the occurrence that replaced it: a recurring
    workspace schedule fires exactly once.
+   `WorkspaceDO` runs each of its derived lanes here **only when that lane is
+   due**: `derivedAlarmLanes()` is the one list of lane due-time reads, the
+   candidates arm from all of it, and `runDueAlarmWork` reads a lane just
+   before it would run and passes it through `derivedAlarmLaneDue(dueAt, now)`.
+   A lane skipped on this wake is still a candidate in step 7, so skipping can
+   only leave work for the instant it was already armed for. The schedule
+   reconcile is the one phase with no due time and runs on every wake.
 6. Gate whatever ran and **came back due at the same instant** — the stall
    check described below the settle rules.
 7. Re-arm through `armAlarmAfterDueWork()`.
@@ -457,7 +464,13 @@ a failing target a free immediate attempt.
   delaying an earlier future deadline, the agent-timer index, and the stall
   gate — an entry that ran and came back due at the same instant is deferred
   with its attempt carried across the settle-and-reinsert, while one that moved
-  itself, reported progress, or asked to wait is not.
+  itself, reported progress, or asked to wait is not. For `WorkspaceDO` it also
+  pins the phase order with every derived lane due, proves a wake runs only the
+  lane that is due and arms for the one it skipped, and that
+  `registerAuthorizationChildren` re-arms only when it queued a delivery.
+- `apps/api/test-workers/workspace-authorization-delivery-index-migration.test.ts`
+  upgrades a populated v81 object through migration 82 and counts the
+  `authorization_delivery` due read's `rowsRead`.
 - `apps/api/test/workspace-alarm-stall-alert.test.ts` drives `WorkspaceDO`'s
   failure and stall hooks in the Node suite: which attempt warns, which logs at
   `error`, that exactly one operator notification is posted, and that an
@@ -536,6 +549,44 @@ row to its own grant directory right after the write, and the outbox lane of the
 alarm retries a failed apply. See [scope grant directory](scope-grant-directory.md).
 
 ## Changelog
+
+### 2026-09-28 — A WorkspaceDO wake runs only the lanes that are due
+
+**What changed:** `runDueAlarmWork` no longer runs every derived phase on every
+wake. Each lane — parent outbox, parent breakouts, directory follow-ups,
+authorization deliveries, resource search, Space default publication, Space
+bootstrap, activity and connector-event retention, Space intent resume — runs
+only when its own due time is at or before the wake's `now`, read from the same
+`derivedAlarmLanes()` list the alarm is armed from. Migration 82 indexes
+`authorization_delivery(not_before)`, the one lane whose due read scanned its
+table. `registerAuthorizationChildren` and `beginAuthorizationBackfill` re-arm
+only when a delivery row came back from the write, and
+`registerSearchAuthorization` no longer re-arms at all.
+
+**Why:** Juno Labs' WorkspaceDO woke about 1,500 times an hour, and each wake
+ran every lane's full query — the parent-outbox drain's sort, the directory
+follow-up page, the resource-search page, both retention sweeps, both Space
+claims — whether or not anything in it was due. A wake is almost always for one
+lane. The re-arm on every register call is the likely source of most of those
+wakes (#1007); after #1007 nothing `registerSearchAuthorization` writes is a
+lane, and a child registration that skips every known child queues nothing.
+
+**Considered and rejected:** Computing every due time once at the top of the
+pass. A lane that runs early in the pass can write work for a later one, which
+the old code drained in the same wake; reading each lane just before it runs
+keeps that, at the same one indexed read per lane. Giving the schedule
+reconcile a due time: what it repairs is a stored entry the drain just
+settled, which no table dates, so it still runs every wake. Indexing
+`parent_outbox`, `resource_search_versions`, `workspace_directory_followups` or
+`space_intents` as well: on workerd their due reads already touch one to four
+rows from an existing index, and an index nothing needs is write cost on every
+row.
+
+**Consequences:** A new derived lane goes in `derivedAlarmLanes()` and is gated
+in `runDueAlarmWork` by the same entry; a lane armed from one read and run on
+another can strand work or run for nothing. A lane's due read runs on every
+wake and every re-arm, so it must be answered from an index. A write path that
+arms must arm on a returned witness of the row it queued, not unconditionally.
 
 ### 2026-09-17 — Persist invitation delivery beside its grant operation
 
