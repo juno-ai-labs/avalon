@@ -47,7 +47,7 @@ describe("GitHub delivery Queue", () => {
       `CREATE TABLE IF NOT EXISTS github_installation_routes (
          installation_id TEXT NOT NULL, region TEXT NOT NULL, workspace_id TEXT NOT NULL,
          status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, disabled_at TEXT,
-         PRIMARY KEY (installation_id, region))`,
+         PRIMARY KEY (installation_id, region, workspace_id))`,
     ).run();
     await env.DB.prepare(
       `INSERT INTO github_installation_routes VALUES ('4242', 'global', 'workspace-global', 'active', ?, ?, NULL)`,
@@ -68,9 +68,10 @@ describe("GitHub delivery Queue", () => {
 
     await service.ingestGitHub(delivery.bytes, delivery.headers);
     const bodies = await vi.waitFor(async () => {
-      const all = await received.received();
-      expect(all).toHaveLength(1);
-      return all;
+      const ours = (await received.received()).filter((body) =>
+        (body as { deliveryId?: unknown } | null)?.deliveryId === "queue-inline-delivery");
+      expect(ours).toHaveLength(1);
+      return ours;
     }, { timeout: 10_000, interval: 50 });
 
     const parsed = GitHubDeliveryQueueMessageSchema.safeParse(bodies[0]);
