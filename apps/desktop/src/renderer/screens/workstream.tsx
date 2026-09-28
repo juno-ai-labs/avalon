@@ -619,11 +619,11 @@ export function WorkstreamScreen(): React.JSX.Element {
         ? { reservedSubstreamId: reservedChildId }
         : null}
       presentUserIds={context?.presentUserIds ?? []}
-      onParticipants={context?.openParticipantDialog ?? (() => undefined)}
+      onParticipants={context?.openParticipantDialog}
       selectedSubstreamId={creation?.parentId === id ? PENDING_SUBSTREAM_DRAFT_ID : selectedSubstreamId}
       onSelectSubstream={selectSubstream}
       onNewSubstream={() => startCreation(null)}
-      onOpenArtifact={context?.openArtifact ?? (() => undefined)}
+      onOpenArtifact={context?.openArtifact}
       onFocusTranscript={context?.focusTranscript ?? (() => undefined)}
       mainActions={(conversationScoped ? selectedSubstreamId === '0' : parent.data) ? {
         onMakePublic: conversationScoped || parent.data?.systemKind ? undefined : makePublic,

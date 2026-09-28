@@ -1,4 +1,4 @@
-import type { ChannelRail, WorkspaceChannelRailsEvent } from '@rally/contracts';
+import { CHANNEL_RAILS_NAMED_LIMIT, type ChannelRail, type WorkspaceChannelRailsEvent } from '@rally/contracts';
 import { useQuery, type QueryClient } from '@tanstack/react-query';
 import type { WorkstreamSummary } from './types';
 
@@ -127,9 +127,6 @@ export type ChannelRailTarget =
   | { spaceId: string; expected: string[] }
   | { workstreamIds: string[] };
 
-/** The same bound `list_workstreams` carries; the contract's number. */
-const WORKSTREAM_IDS_PER_REQUEST = 250;
-
 /**
  * The next request the prefetch queue should send, or null when every rail it
  * knows of is current.
@@ -155,8 +152,8 @@ export function nextChannelRailRequest(
     const staleIds = members.filter((row) => stale(row.id)).map((row) => row.id);
     if (staleIds.length === 0) continue;
     if (staleIds.length === members.length) return { spaceId, expected: staleIds };
-    return { workstreamIds: staleIds.slice(0, WORKSTREAM_IDS_PER_REQUEST) };
+    return { workstreamIds: staleIds.slice(0, CHANNEL_RAILS_NAMED_LIMIT) };
   }
   const loose = live.filter((row) => stale(row.id)).map((row) => row.id);
-  return loose.length > 0 ? { workstreamIds: loose.slice(0, WORKSTREAM_IDS_PER_REQUEST) } : null;
+  return loose.length > 0 ? { workstreamIds: loose.slice(0, CHANNEL_RAILS_NAMED_LIMIT) } : null;
 }
