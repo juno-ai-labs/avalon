@@ -224,7 +224,11 @@ describe("semantic indexing", () => {
     provider.query.mockResolvedValueOnce({ aggregations: { count: job!.spans.length } });
     const embed = vi.fn();
     const source = vi.fn(load);
-    expect(await indexSemanticBatch(index, job!, source, embed)).toBe("indexed");
+    // Rows alone do not prove their writer ran its freshness check, so the
+    // skip still confirms the revision; it only saves the load and the embed.
+    const revision = vi.fn(async () => document.revision);
+    expect(await indexSemanticBatch(index, job!, source, embed, revision)).toBe("indexed");
+    expect(revision).toHaveBeenCalledTimes(1);
     expect(source).not.toHaveBeenCalled();
     expect(embed).not.toHaveBeenCalled();
     expect(provider.write).not.toHaveBeenCalled();
