@@ -191,6 +191,8 @@ describe("tool activity names", () => {
       .toBe("Posted the result to the work stream");
     expect(toolActivityName({ toolName: "sidekick_post_result", status: "completed" }))
       .toBe("Posted the result to the work stream");
+    expect(toolActivityName({ toolName: "conversation_post", status: "completed" }))
+      .toBe("Posted to a conversation");
     // `send_message` is the agent tool whose bare name still does not say who it
     // reaches, so the row says it for it.
     expect(toolActivityName({ toolName: "send_message", status: "completed" }))

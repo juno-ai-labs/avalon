@@ -23,12 +23,18 @@ import {
   WorkspaceChannelReservationResultSchema,
   type WorkspaceChannelReservationRequest,
 } from "../durable-objects/workspace-space-protocol";
+import type { ExternalBindingClaim } from "../durable-objects/workspace-external-binding-protocol";
 import { ApiError } from "../lib/api-error";
 import { resolveSpaceWorkstreamStart } from "../lib/channel-audience";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logWarn } from "../observability/logger";
 import { noFlowSpan, type FlowSpan } from "../observability/tracing";
 import { SpaceService, spaceRefusal } from "./space-service";
+import {
+  activateExternalBindingClaim,
+  externalBindingRefusal,
+  openUnderExternalBindingClaim,
+} from "./external-binding-claims";
 import { provisionalWorkstreamDescription } from "./workstream-description-service";
 import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-service";
 import {
@@ -96,6 +102,14 @@ interface CreateOptions {
    * quiet.
    */
   notifyParticipants?: boolean;
+  /**
+   * The external thread this Channel is created for (a Slack thread addressed
+   * to Rally under a linked room). Claimed `pending` inside
+   * `reserveChannelInSpaces`, activated once the creation receipt completes,
+   * and released if the create fails, so a thread never routes to a Channel
+   * that does not exist. See docs/external-conversation-bindings.md.
+   */
+  externalBinding?: ExternalBindingClaim;
   /**
    * The demo seed opening this work stream, when the demo seeder is the
    * caller. Carried to the object's `initialize` and from there onto the
@@ -293,6 +307,11 @@ export class WorkstreamObjectCreationService {
           spaceIds: body.spaceIds,
           workstreamId: asWorkstreamId(receipt.workstream_id),
         }));
+      if (options.externalBinding) {
+        await activateExternalBindingClaim(
+          this.env, workspace, this.auth.workspaceId, options.externalBinding, receipt.workstream_id,
+        );
+      }
       return {
         workstream,
         turnId: receipt.message_id,
@@ -329,6 +348,7 @@ export class WorkstreamObjectCreationService {
     // idempotent for it.
     const placement = await span.step("workstream.create.spaces.reserve", () =>
       this.reserveInSpaces(workspace, {
+        ...(options.externalBinding ? { externalBinding: options.externalBinding } : {}),
         workspaceId: this.auth.workspaceId,
         userId: asUserId(this.auth.userId),
         workstreamId,
@@ -355,6 +375,51 @@ export class WorkstreamObjectCreationService {
     const scope = start.scope;
     const participantUserIds = start.participantUserIds;
     const originResourceIds = start.originResourceIds;
+    if (!options.externalBinding) {
+      return this.openReserved(span, body, options, input, {
+        receipt, client, control, workstreamId, title, objective, email, scope,
+        participantUserIds, originResourceIds, requestHash, at,
+      });
+    }
+    // A failed creation must not leave a live binding to an absent
+    // destination; a completed one makes the claim the thread's route.
+    return openUnderExternalBindingClaim(
+      this.env, workspace, this.auth.workspaceId, options.externalBinding, workstreamId,
+      () => this.openReserved(span, body, options, input, {
+        receipt, client, control, workstreamId, title, objective, email, scope,
+        participantUserIds, originResourceIds, requestHash, at,
+      }),
+    );
+  }
+
+  /**
+   * Everything after the Organization-side reservation: the D1 anchors, the
+   * conversation's `initialize`, route activation and receipt completion.
+   */
+  private async openReserved(
+    span: FlowSpan,
+    body: ReturnType<typeof WorkstreamCreationFieldsSchema.parse>,
+    options: CreateOptions,
+    input: CreateInput,
+    reserved: {
+      receipt: ReceiptRow;
+      client: WorkstreamObjectClient;
+      control: WorkstreamAuthorityControl;
+      workstreamId: WorkstreamId;
+      title: string;
+      objective: string;
+      email: { emailAddress: string | null };
+      scope: Scope;
+      participantUserIds: string[];
+      originResourceIds: string[];
+      requestHash: string;
+      at: string;
+    },
+  ): Promise<{ workstream: Workstream; turnId: string; harnessRunId: string | null }> {
+    const {
+      receipt, client, control, title, objective, email, scope, participantUserIds,
+      originResourceIds, requestHash, at,
+    } = reserved;
 
     await span.step("workstream.create.d1_rows.write", () => writeRegionalWorkstreamAnchorBatch(
       this.env,
@@ -508,6 +573,7 @@ export class WorkstreamObjectCreationService {
     }
     if (result.status === "reserved") return result;
     if (result.status === "refused") throw spaceRefusal(result.code, "");
+    if (result.status === "binding_refused") throw externalBindingRefusal(result.outcome);
     // General was made above, so a second answer that it is missing is the
     // Organization contradicting itself rather than a state to wait out.
     throw new Error("workstream_create_general_space_missing");

@@ -201,6 +201,14 @@ and records which Space supplied which reader on the Channel's own authority
 than over RPC). It answers with the Spaces it read, and the
 coordinator derives the opening audience from them with the same
 `resolveSpaceWorkstreamStart` the object used for the directory row's scope.
+A creation started from a provider thread passes `externalBinding`, and the
+same transaction claims that thread's binding `pending`; a thread already
+bound or held answers `binding_refused`, which the coordinator returns as 409
+`external_binding_bound` or 503 `external_binding_held`. The coordinator
+activates the claim after the creation receipt completes and releases it if
+creation fails. A Slack room's Channel for a sender with no linked account passes
+`createdByUserId` to act as the Space's creator. See
+[`external-conversation-bindings.md`](external-conversation-bindings.md).
 
 It replaced a staged sequence that was shaped for a Space directory and a
 Channel parent in different objects: `ensureGeneral` (when no Space was named),

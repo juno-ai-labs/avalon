@@ -136,6 +136,18 @@ export const SLACK_WORKSPACE_OBJECT_METHODS = [
   "slackAppContext",
   "storeSlackAppContext",
   "recordSlackFeedback",
+  // External conversation bindings: the routing authority Slack ingress asks
+  // before it looks a session up or creates a Channel.
+  "resolveExternalConversation",
+  "externalConversationBinding",
+  "activateExternalConversationBinding",
+  "releaseExternalConversationBinding",
+  "latestOutboundExternalConversation",
+  "suspendExternalConversationBindings",
+  "reactivateExternalConversationBindings",
+  "moveExternalConversationBindings",
+  "linkExternalRoom",
+  "admitSpaceCreation",
 ] as const satisfies readonly (keyof WorkspaceDO)[];
 
 /**

@@ -3,12 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 import { neverAborts } from "./test-signals";
 import {
   createSlackConnector,
-  joinAllSlackPublicChannels,
   joinSlackPublicChannel,
   normalizeSlackActivity,
   parseSlackAgentInvocation,
   slackApi,
   slackActivityEventType,
+  slackExternalRoom,
+  slackInstallationId,
+  slackMessagePath,
   slackAgentActivationAcknowledgement,
   slackOriginSource,
   SlackActivityEventTypes,
@@ -111,6 +113,9 @@ describe("Slack connector", () => {
         userId: "UADA",
         threadTs: "1786031900.000100",
         isThread: true,
+        // The binding key the host resolves the reply under, spelled here.
+        externalConversationPath: ["CENG", "1786031900.000100"],
+        externalConversationInstallationId: "slack:TACME",
       },
       externalPeople: expect.arrayContaining([
         expect.objectContaining({ providerUserId: "UADA", role: "actor" }),
@@ -792,86 +797,32 @@ describe("Slack connector", () => {
     });
   });
 
-  it("paginates through and joins all active public Slack channels idempotently", async () => {
-    const requests: Array<{ method: string; body: Record<string, unknown> }> = [];
-    const fetcher: FetchLike = vi.fn(async (input, init) => {
-      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
-      const method = url.pathname.split("/").at(-1)!;
-      const body = method === "conversations.list"
-        ? Object.fromEntries(url.searchParams)
-        : JSON.parse(String(init?.body)) as Record<string, unknown>;
-      requests.push({ method, body });
-      if (method === "conversations.list" && !body.cursor) return json({
-        ok: true,
-        channels: [
-          { id: "CJOIN", is_private: false, is_archived: false, is_member: false },
-          { id: "CMEMBER", is_private: false, is_archived: false, is_member: true },
-          { id: "CARCHIVED", is_private: false, is_archived: true, is_member: false },
-        ],
-        response_metadata: { next_cursor: "next-page" },
-      });
-      if (method === "conversations.list") return json({
-        ok: true,
-        channels: [
-          { id: "CFULL", is_private: false, is_archived: false, is_member: false },
-          { id: "CALREADY", is_private: false, is_archived: false, is_member: false },
-        ],
-        response_metadata: { next_cursor: "" },
-      });
-      if (body.channel === "CJOIN") return json({ ok: true, channel: { id: "CJOIN" } });
-      if (body.channel === "CFULL") return json({ ok: false, error: "too_many_members" });
-      if (body.channel === "CALREADY") return json({
-        ok: true,
-        channel: { id: "CALREADY" },
-        warning: "already_in_channel",
-      });
-      throw new Error(`Unexpected Slack request ${method}`);
-    });
-
-    await expect(joinAllSlackPublicChannels(
-      "xoxb-test",
-      neverAborts(),
-      fetcher,
-    )).resolves.toEqual({ joined: 1, alreadyMember: 2, skipped: 2, complete: true });
-    expect(requests.filter(({ method }) => method === "conversations.list")).toEqual([
-      { method: "conversations.list", body: { exclude_archived: "true", limit: "200", types: "public_channel" } },
-      { method: "conversations.list", body: { exclude_archived: "true", limit: "200", types: "public_channel", cursor: "next-page" } },
-    ]);
-    expect(requests.filter(({ method }) => method === "conversations.join").map(({ body }) => body.channel))
-      .toEqual(["CJOIN", "CFULL", "CALREADY"]);
+  it("keys a Slack message by its thread root, and a top-level message by itself", () => {
+    expect(slackMessagePath({ channelId: "C1", threadTs: "10.1", messageTs: "10.5" })).toEqual(["C1", "10.1"]);
+    // A top-level message, and every message in a room that disallows threads,
+    // is its own root: two addressed messages there have two keys.
+    expect(slackMessagePath({ channelId: "G1", threadTs: null, messageTs: "10.5" })).toEqual(["G1", "10.5"]);
+    expect(slackMessagePath({ channelId: "G1", threadTs: undefined, messageTs: "10.6" })).toEqual(["G1", "10.6"]);
+    expect(slackInstallationId("T1")).toBe("slack:T1");
   });
 
-  it("returns a resumable partial sync when Slack rate-limits a channel join", async () => {
-    const fetcher: FetchLike = vi.fn(async (input) => {
-      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
-      if (url.pathname.endsWith("conversations.list")) return json({
-        ok: true,
-        channels: [{ id: "CNEW", is_private: false, is_archived: false, is_member: false }],
-        response_metadata: { next_cursor: "" },
+  it("classifies a group DM by is_mpim rather than its ID prefix, and never by its Slack name", () => {
+    expect(slackExternalRoom({ id: "G1", name: "mpdm-alice--bob--carol-1", is_mpim: true, is_private: true }))
+      .toEqual({
+        kind: "shared",
+        visibility: "private",
+        threadable: true,
+        archived: false,
+        displayName: "Group DM: alice, bob, carol",
       });
-      return json({ error: "ratelimited" }, { "retry-after": "9" }, 429);
+    expect(slackExternalRoom({ id: "C1", name: "launch", is_private: false })).toMatchObject({
+      kind: "shared", visibility: "public", displayName: "launch",
     });
-
-    await expect(joinAllSlackPublicChannels(
-      "xoxb-test",
-      neverAborts(),
-      fetcher,
-    )).resolves.toEqual({
-      joined: 0,
-      alreadyMember: 0,
-      skipped: 0,
-      complete: false,
-      retryAfterMs: 9_000,
-    });
-  });
-
-  it("uses a conservative continuation delay for Slack's API-level rate-limit error", async () => {
-    const fetcher: FetchLike = vi.fn(async () => json({ ok: false, error: "ratelimited" }));
-    await expect(joinAllSlackPublicChannels(
-      "xoxb-test",
-      neverAborts(),
-      fetcher,
-    )).resolves.toMatchObject({ complete: false, retryAfterMs: 60_000 });
+    // `is_private` is optional on the wire; only an explicit false is public.
+    expect(slackExternalRoom({ id: "G2", name: "secret" })).toMatchObject({ visibility: "private" });
+    expect(slackExternalRoom({ id: "D1", is_im: true })).toMatchObject({ kind: "direct" });
+    expect(slackExternalRoom({ id: "G3", is_mpim: true, is_non_threadable: true, is_archived: true }))
+      .toMatchObject({ threadable: false, archived: true, displayName: "Group DM" });
   });
 
   it("distinguishes a missing app scope from an unjoinable channel", async () => {
@@ -1138,6 +1089,56 @@ describe("Slack connector", () => {
       .toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/u);
     expect(requests.find((request) => request.method === "conversations.open")?.body)
       .toEqual({ users: "UALEX,UADA" });
+  });
+
+  it("reports a bot send's reply thread by its root, and a personal send's never", async () => {
+    // Only the workspace bot's conversations reach Rally's ingress, so only a
+    // bot send has a thread the host can route replies from. A reply in an
+    // existing thread keys on that thread's root, not on the new message.
+    const fetcher: FetchLike = vi.fn(async () => json({ ok: true, channel: "D1", ts: "1786130000.000200" }));
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+      fetch: fetcher,
+    });
+    const bot = authorizedConnection({
+      ...slackWorkspaceConnection(),
+      grantedScopes: [...SlackWorkspaceCapabilities],
+      credentials: { botAccessToken: "xoxb-test", teamId: "T1" },
+    });
+    const botContext = {
+      connection: bot,
+      principal: { type: "workspace" as const, workspaceId: asWorkspaceId(bot.workspaceId) },
+      signal: neverAborts(),
+    };
+    await expect(adapter.executeTool("send_message", { channel_id: "D1", text: "Updates?" }, botContext))
+      .resolves.toMatchObject({
+        externalConversation: { installationId: "slack:T1", path: ["D1", "1786130000.000200"] },
+      });
+    await expect(adapter.executeTool("send_message", {
+      channel_id: "D1", text: "Following up", thread_ts: "1786120000.000100",
+    }, botContext)).resolves.toMatchObject({
+      externalConversation: { installationId: "slack:T1", path: ["D1", "1786120000.000100"] },
+    });
+
+    const person = authorizedConnection({
+      id: "connection-slack-personal",
+      workspaceId: asWorkspaceId("8f7c6014-d46d-4285-8eb2-cac59f1b301c"),
+      scope: "personal",
+      ownerUserId: "8046c3d3-4e9c-458b-8edb-653be8b809c9",
+      grantedScopes: [SlackCapabilities.messagesWrite],
+      credentials: { userAccessToken: "xoxp-person", teamId: "T1" },
+      cursor: {},
+      config: {},
+    });
+    const sent = await adapter.executeTool("send_message", { channel_id: "D1", text: "Updates?" }, {
+      connection: person,
+      principal: { type: "user", userId: asUserId("8046c3d3-4e9c-458b-8edb-653be8b809c9") },
+      signal: neverAborts(),
+    });
+    expect(sent).not.toHaveProperty("externalConversation");
   });
 
   it("rejects free workspace plans and refreshes user-only MCP tokens", async () => {

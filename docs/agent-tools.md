@@ -73,8 +73,7 @@ gone. Two things make a name qualify, and either is enough:
 - **The plugin is always active**, so a prefix on it distinguishes nothing — the
   model cannot load it, cannot unload it, and has no second source of the same
   capability to tell it apart from. `rally_discovery`, `rally_skills`,
-  `rally_core`, `rally_workstream`, `rally_agents`, and `rally_sidekick_result`
-  are these.
+  `rally_core`, `rally_workstream`, and `rally_agents` are these.
 - **The canonical name is already the one the model knows.** `rally_terminal`
   and `rally_multimodal_generation` are loadable, but `read_file`, `edit_file`,
   `write_file`, `apply_patch`, `run_command`, `generate_image` and
@@ -88,7 +87,9 @@ local verbs (`search`, `query`, `create`, `add`, `update`), two of them
 identical, and bare verbs are the naming the rest of this document exists to
 prevent. `rally_web` keeps `web_` for the opposite reason: `web_search` and
 `web_fetch` *are* the pretrained names, and stripping the prefix would leave
-bare `search` and `fetch`. `rally_sidekicks` keeps `sidekick_` because
+bare `search` and `fetch`. `rally_conversations` keeps `conversation_` because
+its canonical names are the local verbs `list`, `read`, `post` and `attach`;
+[`conversation-tools.md`](conversation-tools.md) is its contract. `rally_sidekicks` keeps `sidekick_` because
 unprefixed its `plugins_list` and `plugins_search` would sit beside
 `rally_discovery`'s `list_plugins` and `search_plugins` — near-identical names
 for different tools, which is worse than either prefix. Connector plugins can
@@ -108,8 +109,8 @@ to reach for if `send_message` turns out to mislead a model in practice.
 iterates Bind's own `corePlugins` — discovery, skills, and whatever the host
 passes as `corePlugins`, which on the API side is `createWorkstreamCorePlugins`:
 `rally_core`, `rally_tables`, `rally_memory`, and nothing else. Every other
-plugin, including always-active ones like `rally_workstream`, `rally_agents`
-and `rally_sidekick_result`, is assembled into `plugins` and sits outside the
+plugin, including always-active ones like `rally_workstream` and `rally_agents`,
+is assembled into `plugins` and sits outside the
 guard. For those, two identical wire names resolve to whichever plugin sorts
 first by canonical id, silently.
 

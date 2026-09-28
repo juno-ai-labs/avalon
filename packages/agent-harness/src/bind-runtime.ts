@@ -3832,6 +3832,7 @@ function durableHarnessToolResult(result: HarnessToolResult): HarnessToolResult 
     output: result.output,
     summary: result.summary,
     ...(result.providerOperationId ? { providerOperationId: result.providerOperationId } : {}),
+    ...(result.externalConversation ? { externalConversation: result.externalConversation } : {}),
     ...(result.halt ? { halt: result.halt } : {}),
     ...(result.loadedPluginName ? { loadedPluginName: result.loadedPluginName } : {}),
     ...(result.loadedSkillRef ? { loadedSkillRef: result.loadedSkillRef } : {}),

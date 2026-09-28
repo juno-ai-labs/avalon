@@ -1,14 +1,17 @@
 import {
   AutomationDraftSchema,
+  AutomationRunReferenceV1Schema,
   AutomationScopeSchema,
   AutomationSetEvaluatorRulesInputV1Schema,
   DemoSeedSchema,
   IdSchema,
   PickedAppearanceSchema,
+  SubstreamIdSchema,
   UserIdSchema,
   WorkspaceExternalEventSchema,
   WorkspaceIdSchema,
   WorkstreamAppearancePatchSchema,
+  type SubstreamId,
 } from "@rally/contracts";
 import { z } from "zod";
 
@@ -39,6 +42,11 @@ export const AutomationCreateRequestSchema = z.strictObject({
   authorUserId: UserIdSchema,
   scope: AutomationScopeSchema,
   owningWorkstreamId: IdSchema.nullable(),
+  /**
+   * The home conversation under `owningWorkstreamId`: `"0"` for its Main
+   * conversation, a Breakout id when the Sidekick was set up from a Breakout.
+   */
+  owningSubstreamId: SubstreamIdSchema.default("0" as SubstreamId),
   authorityGeneration: z.number().int().positive(),
 }).superRefine((value, context) => {
   if ((value.scope === "workstream") !== (value.owningWorkstreamId !== null)) {
@@ -48,8 +56,15 @@ export const AutomationCreateRequestSchema = z.strictObject({
       message: "A room-scoped automation names its room, and no other scope may.",
     });
   }
+  if (value.owningWorkstreamId === null && value.owningSubstreamId !== "0") {
+    context.addIssue({
+      code: "custom",
+      path: ["owningSubstreamId"],
+      message: "Only a room-scoped automation has a home Breakout.",
+    });
+  }
 });
-export type AutomationCreateRequest = z.infer<typeof AutomationCreateRequestSchema>;
+export type AutomationCreateRequest = z.input<typeof AutomationCreateRequestSchema>;
 
 export const AutomationSubmitDefinitionRequestSchema = z.strictObject({
   ...Addressed,
@@ -193,6 +208,54 @@ export const AutomationRunRequestSchema = z.strictObject({
   runId: IdSchema,
 });
 export type AutomationRunRequest = z.infer<typeof AutomationRunRequestSchema>;
+
+/**
+ * A run's definition, read by the revision its loop input names.
+ *
+ * `definitionRevision` is optional so a caller that names only the run keeps
+ * reading the revision the run was admitted under. A continued run names the
+ * revision `continueRun` handed it, which is the Sidekick's accepted revision
+ * at the moment the run continued, not the one it started with.
+ */
+export const AutomationRunDefinitionRequestSchema = AutomationRunRequestSchema.extend({
+  definitionRevision: z.number().int().positive().optional(),
+});
+export type AutomationRunDefinitionRequest = z.infer<typeof AutomationRunDefinitionRequestSchema>;
+
+/** Why input to a Sidekick run child did not continue the run. */
+export const SidekickRunContinuationRefusalCodeSchema = z.enum([
+  "sidekick_paused",
+  "sidekick_deleted",
+  "run_not_found",
+  "run_principal_changed",
+]);
+export type SidekickRunContinuationRefusalCode = z.infer<typeof SidekickRunContinuationRefusalCodeSchema>;
+
+/**
+ * What `continueRun` answers: a refusal, or the run context the scheduled start
+ * builds, against the Sidekick's currently accepted revision.
+ *
+ * `stopGeneration` is the Sidekick's stop counter when it approved the
+ * continuation. The run row still reads finished until the child's own
+ * `running` projection reaches the parent through the Queue, so the run
+ * authority check lets a continuation act through a finished row; a `stopped`
+ * row only while the counter has not moved, so a pause that lands after the
+ * approval still refuses. A counter rather than a time: a pause on the
+ * approval's own millisecond is still after it.
+ */
+export const SidekickRunContinuationSchema = z.discriminatedUnion("outcome", [
+  z.strictObject({
+    outcome: z.literal("refused"),
+    code: SidekickRunContinuationRefusalCodeSchema,
+  }),
+  z.strictObject({
+    outcome: z.literal("continue"),
+    automationRun: AutomationRunReferenceV1Schema,
+    executionPrincipal: z.strictObject({ type: z.literal("user"), userId: UserIdSchema }),
+    stopGeneration: z.number().int().nonnegative(),
+  }),
+]);
+export type SidekickRunContinuation = z.infer<typeof SidekickRunContinuationSchema>;
 
 export const AUTOMATION_SCHEDULE_ALARM_KIND = "automation_schedule";
 export const AUTOMATION_RUN_ALARM_KIND = "automation_run";

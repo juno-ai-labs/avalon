@@ -73,6 +73,7 @@ export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from ".
 export { isAzureBoundModel } from "./bind-runtime";
 export {
   formatToolArgumentValidationError,
+  modelToolArgumentSchema,
   normalizeToolArguments,
   validateToolArguments,
 } from "./tool-arguments";
@@ -3095,6 +3096,12 @@ export interface HarnessToolResult {
    */
   contentParts?: ModelMessageContentPart[];
   providerOperationId?: string;
+  /**
+   * Host signal: the external conversation this call sent into, whose replies
+   * the host may route back to the run. Carried to the host's completion
+   * event, never to the model.
+   */
+  externalConversation?: { installationId: string; path: string[] };
   halt?: "needs_input" | "completed";
   /** Bind control signal used only by Avalon's discovery plugin loader. */
   loadedPluginName?: string;
