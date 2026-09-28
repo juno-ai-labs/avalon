@@ -27,11 +27,24 @@ export async function searchEmbeddingJobs(reference: SearchSourceReference,
   return jobs;
 }
 
-/** Each delivery validates and publishes only its batch. Source jobs reclaim old revisions. */
+/**
+ * Each delivery validates and publishes only its batch. Source jobs reclaim old revisions.
+ *
+ * `revision`, when a source has one, is its watermark read: equal to the job's
+ * revision means the text loaded before embedding is still current, because
+ * every input of that text bumps it. A source without one is re-read in full.
+ */
 export async function indexSemanticBatch(index: TextSearchIndex, job: SearchEmbeddingBatch,
   load: () => Promise<SearchDocumentBatch>,
   embed: (texts: string[]) => Promise<{ model: string; vectors: number[][] }>,
+  revision?: () => Promise<number | null>,
 ): Promise<'indexed' | 'stale'> {
+  // Persisted deterministic rows are the receipt, and they are read before the
+  // source: a same-revision re-projection finds nearly every batch already
+  // written, and a delivery that will write nothing need not read anything.
+  // Whoever wrote the rows ran the post-write check below, and a later
+  // revision's source job reclaims them, so skipping leaves nothing stale.
+  if (await index.countSemanticChunks(job.document, job.generation, job.spans) === job.spans.length) return 'indexed';
   const currentDocument = async () => {
     const current = SearchDocumentBatchSchema.parse(await load()).documents.find((document) => document.id === job.document.id);
     if (!current || current.text === null || current.revision !== job.document.revision
@@ -52,18 +65,16 @@ export async function indexSemanticBatch(index: TextSearchIndex, job: SearchEmbe
     'semantic-queue-chunks-v1', document.source, document.scopeId, document.sourceId,
     document.revision, job.generation, chunk.start, chunk.end, chunk.text,
   ]))));
-  // Persisted deterministic rows let retries skip already completed provider work.
-  if (await index.countSemanticChunks(document, ids) !== ids.length) {
-    const embedding = await embed(chunks.map((chunk) => chunk.text));
-    if (!isMemoryEmbeddingModel(embedding.model) || embedding.vectors.length !== chunks.length
-      || !embedding.vectors.every((vector) => vector.length === SEARCH_EMBEDDING_DIMENSIONS
-        && vector.every(Number.isFinite))) throw new Error('search_embedding_space_mismatch');
-    const rows: TextSearchDocument[] = chunks.map((chunk, offset) => ({ ...document, id: ids[offset]!,
-      text: chunk.text, vector: embedding.vectors[offset]!, generation: job.generation,
-      chunk: { start: chunk.start, end: chunk.end, strategies: chunk.strategies } }));
-    await index.upsert(rows);
-  }
-  if (!await currentDocument()) { await index.removeSemanticGeneration(job.document, job.generation); return 'stale'; }
+  const embedding = await embed(chunks.map((chunk) => chunk.text));
+  if (!isMemoryEmbeddingModel(embedding.model) || embedding.vectors.length !== chunks.length
+    || !embedding.vectors.every((vector) => vector.length === SEARCH_EMBEDDING_DIMENSIONS
+      && vector.every(Number.isFinite))) throw new Error('search_embedding_space_mismatch');
+  const rows: TextSearchDocument[] = chunks.map((chunk, offset) => ({ ...document, id: ids[offset]!,
+    text: chunk.text, vector: embedding.vectors[offset]!, generation: job.generation,
+    chunk: { start: chunk.start, end: chunk.end, strategies: chunk.strategies } }));
+  await index.upsert(rows);
+  const current = revision ? await revision() === job.document.revision : await currentDocument() !== null;
+  if (!current) { await index.removeSemanticGeneration(job.document, job.generation); return 'stale'; }
   return 'indexed';
 }
 

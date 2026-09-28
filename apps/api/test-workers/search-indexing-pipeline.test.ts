@@ -197,6 +197,30 @@ function publishedEmbeddingSends() {
     .filter((messages) => messages.length);
 }
 
+/**
+ * The real WorkspaceDO namespace, recording each RPC method a delivery calls on
+ * it. The object itself answers every call as usual.
+ */
+function recordingWorkspaceObjects(calls: string[]): Env['WORKSPACE_DOS'] {
+  return new Proxy(env.WORKSPACE_DOS, {
+    get(namespace, property) {
+      if (property === 'get') {
+        return (id: DurableObjectId, options?: DurableObjectNamespaceGetDurableObjectOptions) => new Proxy(
+          namespace.get(id, options), {
+            get: (stub, method) => {
+              const value: unknown = Reflect.get(stub, method);
+              if (typeof value !== 'function' || typeof method !== 'string') return value;
+              // An RPC method is itself a stub: calling `.apply` on it would be an RPC too.
+              return (...args: unknown[]) => { calls.push(method); return (value as (...input: unknown[]) => unknown)(...args); };
+            },
+          });
+      }
+      const value: unknown = Reflect.get(namespace, property);
+      return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(namespace) : value;
+    },
+  });
+}
+
 const RowsSchema = z.array(z.object({ source: z.string(), text: z.string(), record_type: z.string(),
   chunk_start: z.number().nullable(), chunk_end: z.number().nullable() }));
 function liveRows() {
@@ -354,11 +378,57 @@ describe('shared Queue indexing pipeline', () => {
     expect(publishedEmbeddingSends().flat()).toHaveLength(count);
   });
 
-  it('reclaims only the written generation when canonical text changes during the upsert', async () => {
+  it('makes no WorkspaceDO call and no embedding for a batch already indexed', async () => {
     await seedResource();
+    await consume([resourceMessage()]);
+    const job = publishedEmbeddingJobs()[0]!;
+    const chunks = [...indexed.values()].filter((row) => row.record_type === 'chunk').length;
+    expect(chunks).toBe(job.spans.length);
+    const embedded = embeddingInputs.length;
+    const calls: string[] = [];
+    // The same batch again, as a redelivery or a same-revision re-projection sends it.
+    expect((await consume([job], { WORKSPACE_DOS: recordingWorkspaceObjects(calls) })).explicitAcks).toEqual(['search-0']);
+    expect(calls).toEqual([]);
+    expect(embeddingInputs).toHaveLength(embedded);
+    expect([...indexed.values()].filter((row) => row.record_type === 'chunk')).toHaveLength(chunks);
+  });
+
+  it('embeds a new revision of unchanged text, loading it once and confirming by revision', async () => {
+    const workspace = await seedResource();
+    await consume([resourceMessage()]);
+    const previous = [...indexed].filter(([, row]) => row.record_type === 'chunk');
+    const [first] = publishedEmbeddingJobs();
+    // An audience input changes; the text, and so the generation and its ranges, do not.
+    await runInDurableObject(workspace, (_instance, state) => {
+      state.storage.sql.exec("UPDATE resources SET uploaded_by_user_id = 'someone-else' WHERE id = ?", resourceId);
+    });
+    publish.mockClear();
+    await consume([resourceMessage()], {}, false);
+    const jobs = publishedEmbeddingJobs();
+    expect(jobs.map((job) => [job.document.revision, job.generation, job.spans]))
+      .toEqual([[first!.document.revision + 1, first!.generation, first!.spans]]);
+    // The previous revision's rows, as a late child of it writes them after the reclaim.
+    for (const [key, row] of previous) indexed.set(key, row);
+    const embedded = embeddingInputs.length;
+    const calls: string[] = [];
+    expect((await consume(jobs, { WORKSPACE_DOS: recordingWorkspaceObjects(calls) })).explicitAcks).toEqual(['search-0']);
+    expect(calls).toEqual(['prepareResourceSearchDocument', 'resourceSearchRevision']);
+    expect(embeddingInputs.length - embedded).toBe(jobs[0]!.spans.length);
+    expect([...indexed.values()].filter((row) => row.record_type === 'chunk' && row.revision === jobs[0]!.document.revision))
+      .toHaveLength(jobs[0]!.spans.length);
+  });
+
+  it('reclaims only the written generation when canonical text changes during the upsert', async () => {
+    const workspace = await seedResource();
     await consume([resourceMessage()], {}, false);
     const job = publishedEmbeddingJobs()[0]!;
-    onWrite = async () => { await env.PAYLOADS.put('pipeline/body', 'changed after write'); };
+    // Production replaces a resource's body under a new reference, which bumps its revision.
+    onWrite = async () => {
+      await env.PAYLOADS.put('pipeline/body-2', 'changed after write');
+      await runInDurableObject(workspace, (_instance, state) => {
+        state.storage.sql.exec("UPDATE resources SET content_ref = 'pipeline/body-2' WHERE id = ?", resourceId);
+      });
+    };
     expect((await consume([job])).explicitAcks).toEqual(['search-0']);
     expect(liveRows().some((row) => row.record_type === 'chunk')).toBe(true);
     expect([...indexed.values()].filter((row) => row.record_type === 'chunk')).toEqual([]);
