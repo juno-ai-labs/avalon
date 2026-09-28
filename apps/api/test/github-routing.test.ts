@@ -75,12 +75,15 @@ class FakeQueue {
   readonly messages: unknown[] = [];
   failuresRemaining = 0;
 
-  async send(message: unknown): Promise<void> {
+  async send(message: unknown, options?: QueueSendOptions): Promise<void> {
     if (this.failuresRemaining > 0) {
       this.failuresRemaining -= 1;
       throw new Error("injected queue failure");
     }
-    this.messages.push(message);
+    // The Queue's default content type is `json`; only `v8` keeps an
+    // ArrayBuffer (`test-workers/github-delivery-queue.test.ts` proves it on
+    // a real Queue).
+    this.messages.push(options?.contentType === "v8" ? message : JSON.parse(JSON.stringify(message)));
   }
 }
 
@@ -468,6 +471,7 @@ describe("shared GitHub App routing", () => {
     expect(message.retry).toHaveBeenCalledTimes(1);
     expect(warning.mock.calls.map((call) => call[0])).toContainEqual(expect.objectContaining({
       event: "github_delivery_message_invalid",
+      delivery_id: "d",
       error_code: expect.stringContaining("receivedAt"),
     }));
   });
