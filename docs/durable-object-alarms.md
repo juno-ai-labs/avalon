@@ -61,7 +61,9 @@ takes the earliest of both:
   signing in ([`spaces.md`](spaces.md) owns it). SubstreamAgent includes both
   regional-effect delivery and semantic-realtime publication outboxes
   independently, plus separate candidates
-  for executable loop work and the oldest externally unsettled terminal run.
+  for executable loop work, the oldest externally unsettled terminal run, and
+  its own Terminal sandbox's next provider observation
+  ([`terminal-workspaces.md`](terminal-workspaces.md) owns it).
   Every independent lane is returned so an overdue one cannot
   hide a real future deadline during the pre-work recovery arm.
 

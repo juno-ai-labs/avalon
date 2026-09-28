@@ -20,7 +20,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { evictDurableObject, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { asSubstreamId } from "@rally/contracts";
@@ -1748,7 +1748,7 @@ describe("Terminal authority on real workerd", () => {
       });
 
       expect(published.length).toBeGreaterThan(0);
-      expect(published.at(-1)).toBe(new Date(0).toISOString());
+      expect(published.at(-1)).toBe(new Date(2_000_000).toISOString());
     });
 
     it.each([
@@ -2541,7 +2541,11 @@ describe("provider observations", () => {
     });
     await evictDurableObject(stub);
     expect((await terminal(stub, "sandbox")).value).toEqual(before);
-    expect((await terminal(stub, "providerObservation")).value).toBeNull();
+    // No observation survives the upgrade. The object's own alarm may already
+    // have attempted one, which this suite's unconfigured provider leaves
+    // without a state.
+    const observation = (await terminal(stub, "providerObservation")).value as { state: string | null } | null;
+    expect(observation?.state ?? null).toBeNull();
     expect((await terminal(stub, "beginProviderObservation", identity)).value).toEqual(expect.any(String));
   });
 
@@ -2554,16 +2558,63 @@ describe("provider observations", () => {
     expect((await terminal(stub, "settleProviderObservation", {
       ...identity, requestId, state: "absent", recoverable: null, errorCode: null,
     })).value).toBe(false);
-    expect((await terminal(stub, "providerObservation")).value).toBeNull();
+    // The object's own alarm may already have observed the replacement, which
+    // is due at once; what must never appear is the stale generation's answer.
+    const observation = (await terminal(stub, "providerObservation")).value as
+      { sandboxId: string; state: string | null } | null;
+    expect(observation?.state ?? null).not.toBe("absent");
+    expect([null, "replacement"]).toContain(observation?.sandboxId ?? null);
   });
-  it("publishes a refresh deadline for an archived sandbox with distant expiry", async () => {
+  it("keeps the observation deadline out of the directory, and a check publishes nothing", async () => {
     const stub = await setup();
-    const before = Date.now();
-    const effects = await terminalCommonEffects(stub, "beginProviderObservation", identity);
-    const deadline = Date.parse(effects.at(-1)!);
-    expect(deadline).toBeGreaterThanOrEqual(before + 60_000);
-    expect(deadline).toBeLessThanOrEqual(Date.now() + 60_000);
+    const expireDueAt = ((await terminal(stub, "sandbox")).value as { expireDueAt: number }).expireDueAt;
+    // Reserving and settling a read are the whole of a check. Neither moves
+    // anything the directory carries, so neither may enqueue a directory
+    // effect: each used to, and together they were 99% of directory updates.
+    const clearOutbox = () => runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(`DELETE FROM durable_outbox`);
+    });
+    await clearOutbox();
+    const begun = await terminalCommonEffects(stub, "beginProviderObservation", identity);
     const observation = (await terminal(stub, "providerObservation")).value as { nextObserveAt: number };
-    expect(observation.nextObserveAt).toBe(deadline);
+    const requestId = await runInDurableObject(stub, (_instance, state) => state.storage.sql
+      .exec<{ request_id: string }>("SELECT request_id FROM terminal_provider_observation WHERE id = 1")
+      .toArray()[0]!.request_id);
+    const settled = await terminalCommonEffects(stub, "settleProviderObservation", {
+      ...identity, requestId, state: "archived", recoverable: null, errorCode: null,
+    });
+    expect((await terminal(stub, "providerObservation")).value).toMatchObject({ state: "archived" });
+    expect([...begun, ...settled]).toEqual([]);
+    // What the directory does carry is the lifecycle deadline, here the
+    // thirty-day expiry, never the observation instant ten minutes out.
+    await clearOutbox();
+    // Forget the last published projection so the republish is not skipped
+    // as unchanged; what it projects is what is under test.
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(`UPDATE projection_keys SET last_payload_hash = 'forgotten'`);
+    });
+    const republished = await terminalCommonEffects(stub, "republishDeadline");
+    expect(republished).toEqual([new Date(expireDueAt).toISOString()]);
+    expect(observation.nextObserveAt).toBeLessThan(expireDueAt);
+  });
+
+  it("checks a stopped sandbox on the conversation's own alarm, every ten minutes", async () => {
+    // Never observed, so due at once: attaching the sandbox armed this
+    // object's own alarm for it, with no workspace sweep involved. The alarm
+    // may already have fired by the time this runs it; either way it is this
+    // object's alarm that made the check.
+    const stub = await setup();
+    await runDurableObjectAlarm(stub);
+    // This suite's region has no Terminal provider configured, so the read
+    // is recorded as unavailable — which is proof the check ran here.
+    const observation = (await terminal(stub, "providerObservation")).value as { errorCode: string | null } | null;
+    expect(observation?.errorCode).toBe("provider_unavailable");
+    // The interval is read off the two instants the object wrote together,
+    // never against this test's clock.
+    const row = await runInDurableObject(stub, (_instance, state) => state.storage.sql
+      .exec<{ requested_at: number; next_observe_at: number }>(
+        "SELECT requested_at, next_observe_at FROM terminal_provider_observation WHERE id = 1",
+      ).toArray()[0]!);
+    expect(row.next_observe_at - row.requested_at).toBe(10 * 60_000);
   });
 });
