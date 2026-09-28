@@ -1117,7 +1117,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         // nothing of the kind to recover.
         if (constructedIdentity.parentKind !== "space") this.ensurePersistentLoop();
       }
-      await this.reportSidekickAttachmentsOnce();
     });
     const initialRecovery = this.initialized;
     this.state.waitUntil(initialRecovery.catch((error) => {
@@ -1139,39 +1138,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // Exact text ping/pong frames are answered by the runtime without waking a
     // hibernated object, so keepalives do not accrue Durable Object duration.
     this.state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
-  }
-
-  /**
-   * Migration 71's one report of this conversation's Sidekick attachments to
-   * its parent, which never heard a list from a conversation older than the
-   * field. Taken with the effect in one commit by an authoritative work-stream
-   * conversation; dropped by any other kind, which has no list to report;
-   * left for a later construction by an object not yet authoritative. Never
-   * throws: this runs inside construction, where a throw breaks the object.
-   */
-  private async reportSidekickAttachmentsOnce(): Promise<void> {
-    const sql = this.state.storage.sql;
-    try {
-      if (sql.exec(`SELECT id FROM sidekick_attachment_projection_pending`).toArray().length === 0) return;
-      if (readObjectRetirement(sql) !== null) return;
-      const identity = this.objectStore.identity();
-      if (!identity) return;
-      if (identity.parentKind !== "workstream") {
-        sql.exec(`DELETE FROM sidekick_attachment_projection_pending`);
-        return;
-      }
-      const authority = sql.exec<{ authority_mode: string; authority_generation: number }>(
-        `SELECT authority_mode, authority_generation FROM workstream WHERE id = 1`,
-      ).toArray()[0];
-      if (authority?.authority_mode !== "authoritative" || authority.authority_generation <= 0) return;
-      await this.product.commitWithCommonEffect((tx) => tx.exec<{ id: number }>(
-        `DELETE FROM sidekick_attachment_projection_pending RETURNING id`,
-      ).toArray().length > 0);
-    } catch (error) {
-      logWarn(this.env, "sidekick_attachment_report_failed", {
-        code: diagnosticErrorCode(error, "sidekick_attachment_report_failed"),
-      });
-    }
   }
 
   /**

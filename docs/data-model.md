@@ -79,8 +79,8 @@ Execution snapshots optionally contain `recommendedRefs` for compatibility with
 previously admitted executions.
 
 Each conversation reports its `sidekick_attachments` to its parent as
-`sidekickAttachmentIds` on its directory effect (Substream migration 71 makes
-an existing conversation report once), and `WorkspaceDO` keeps Main's copy per
+`sidekickAttachmentIds` on its directory effect (an existing conversation with
+its next one), and `WorkspaceDO` keeps Main's copy per
 Channel in `channel_sidekick_attachments` (migration 82) for the Channel rail.
 
 SidekickDO migration 3 adds automation.loadable, atomically maintained with the accepted revision. WorkspaceDO migration 35 projects this value, using null for unresolved legacy eligibility. Substream migration 43 adds sidekick_attachments and sidekick_execution_skills for conversation ownership and retry-stable instruction snapshots. Existing namespace lookup keys remain unchanged.
