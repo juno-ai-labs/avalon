@@ -47,6 +47,7 @@ import type { AuthContext } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
 import { SlackAgentService } from "../services/slack-agent-service";
+import { consumeGitHubDeliveryMessage, isGitHubDeliveryQueueMessage } from "../services/github-routing-service";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 import { recordActivityEvent } from "../services/activity-event-service";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
@@ -253,6 +254,12 @@ function searchSourceRevision(env: Env, reference: SearchSourceReference): (() =
 
 async function consumeOne(message: Message<unknown>, env: Env,
   indexSearch: ReturnType<typeof createSearchIndexingPipeline>): Promise<void> {
+  if (isGitHubDeliveryQueueMessage(message.body)) {
+    // A GitHub delivery the Global receiver verified and answered; routing it
+    // to its regions happens here, off GitHub's ten-second clock.
+    await consumeGitHubDeliveryMessage(message, env);
+    return;
+  }
   const searchAuthorizationJob = SearchAuthorizationPushJobSchema.safeParse(message.body);
   if (searchAuthorizationJob.success) {
     // Search no longer reads this store (phase 3 of

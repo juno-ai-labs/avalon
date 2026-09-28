@@ -6,7 +6,7 @@ import { ProviderWebhookService } from "./services/provider-webhook-service";
 import {
   GitHubRegionalSetupFailureInputSchema,
   GitHubRegionalSetupInputSchema,
-  RegionalWebhookInputSchema,
+  GitHubVerifiedDeliveryInputSchema,
   parseRpcInput,
 } from "./lib/rpc-contracts";
 import { requireWorkstreamIngress } from "./services/workstream-authority";
@@ -33,11 +33,16 @@ export class GitHubRegionalBridge extends WorkerEntrypoint<Env> {
     });
   }
 
-  ingestGitHub(input: unknown) {
+  /**
+   * Takes a delivery the Global receiver already verified and does not verify
+   * it again: this entrypoint is reachable only over the account-internal
+   * service binding, and the Global Queue consumer is its only caller.
+   */
+  ingestVerifiedGitHub(input: unknown) {
     return serializeGitHubRegionalRpcResult(async () => {
       await requireWorkstreamIngress(this.env);
-      const parsed = parseRpcInput(RegionalWebhookInputSchema, input, "ingestGitHub");
-      return new ProviderWebhookService(this.env).ingestGitHub(new Uint8Array(parsed.rawBody), parsed.headers);
+      const parsed = parseRpcInput(GitHubVerifiedDeliveryInputSchema, input, "ingestVerifiedGitHub");
+      return new ProviderWebhookService(this.env).ingestVerifiedGitHub(parsed);
     });
   }
 }
