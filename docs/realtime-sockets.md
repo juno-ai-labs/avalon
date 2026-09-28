@@ -364,11 +364,14 @@ last Channel when the page is full, and `null` when the Space ends there. A
 guest, or a Space the viewer cannot see, gets an empty page. System Channels
 are left off, as the connect page leaves them off.
 
-The desktop walks every Space, choosing the next one after each: the Space on
-screen first, then the Spaces of the Channel in front, then the rest in the
-Space list's order, archived Spaces last. It asks for rails unless it already
-holds one for every Channel it knows in that Space. Each page is written as it
-lands, so the Space on screen paints before the walk is over. When the walk
+The desktop walks every Space. It asks the Space on screen alone (else the
+first Space of the Channel in front). Once that Space's first page is in, it
+asks every other Space at once: the rest of the Space list, then archived
+Spaces. Pages within one Space follow each other, since each asks after the
+last. WorkspaceDO answers one request at a time either way, so asking together
+saves a round trip per Space rather than server work. It asks for rails unless
+it already holds one for every Channel it knows in that Space. Each page is
+written as it lands, so the Space on screen paints before the walk is over. When the walk
 ends, a row held before it that no Space returned is dropped. A reconnect or a
 `workstream_directory` invalidation walks again.
 
@@ -978,7 +981,11 @@ Channel and its rail ahead of need.
 **Consequences:**
 - A reconnect walks every Space again, where it used to resend 250 rows. That
   is one request per 250 Channels, and it asks for rails only where none are
-  held.
+  held. After the Space on screen, every Space's first page is asked at once,
+  so a reconnect costs about two round trips plus one per page beyond a
+  Space's first, not one per Space. There is no cap on requests in flight: a
+  burst of large answers delays other frames on the socket, and a cap would be
+  a number for the team to set if that shows.
 - The walk is the whole directory, so it bounds the conversation cache on disk
   the way a whole connect page did.
 - The disk mirror still keeps 250 rows, so a cold launch paints those and the
