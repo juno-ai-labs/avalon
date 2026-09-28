@@ -26,13 +26,16 @@ const BREAKOUT_MEMBER = "00000000-0000-7000-8000-00000000a003";
 const EXECUTOR = "00000000-0000-7000-8000-00000000a004";
 const GUEST = "00000000-0000-7000-8000-00000000a005";
 const SUSPENDED = "00000000-0000-7000-8000-00000000a006";
+const REJOINED = "00000000-0000-7000-8000-00000000a007";
 const OPEN = "00000000-0000-7000-8000-00000000c001";
 const PRIVATE = "00000000-0000-7000-8000-00000000c002";
+const GRANTED = "00000000-0000-7000-8000-00000000c003";
 const BREAKOUT = "00000000-0000-7000-8000-00000000b001";
 const SIDEKICK_WORKSPACE = "00000000-0000-7000-8000-00000000d001";
 const SIDEKICK_PERSONAL = "00000000-0000-7000-8000-00000000d002";
 const SIDEKICK_OWNED = "00000000-0000-7000-8000-00000000d003";
 const SIDEKICK_DELETED = "00000000-0000-7000-8000-00000000d004";
+const SIDEKICK_GRANTED = "00000000-0000-7000-8000-00000000d006";
 const CONNECTION_WORKSPACE = "00000000-0000-7000-8000-00000000e001";
 const CONNECTION_PERSONAL = "00000000-0000-7000-8000-00000000e002";
 const CONNECTION_DISABLED = "00000000-0000-7000-8000-00000000e003";
@@ -58,6 +61,7 @@ async function seedOrganization() {
   await relate(EXECUTOR, "member");
   await relate(GUEST, "guest");
   await relate(SUSPENDED, "member", "suspended");
+  await relate(REJOINED, "member");
   await runInDurableObject(workspace(), (_instance, state) => {
     const sql = state.storage.sql;
     // Two legacy-roster Channels: one open to the Organization, one personal
@@ -74,6 +78,21 @@ async function seedOrganization() {
       VALUES (?, ?, 'child', ?, 2, 'ready', 2)`, PRIVATE, BREAKOUT, BREAKOUT_MEMBER);
     sql.exec(`INSERT INTO parent_breakout_members (parent_id, substream_id, user_id, active, version, added_by_user_id, added_at, updated_at)
       VALUES (?, ?, ?, 1, 1, ?, 2, 2)`, PRIVATE, BREAKOUT, BREAKOUT_MEMBER, BREAKOUT_MEMBER);
+    // A Channel whose Main has moved to grant authority: only a grant bound to
+    // the reader's current membership admits them. The guest holds one; the
+    // re-added member holds one from an earlier membership.
+    sql.exec(`INSERT INTO parent_metadata (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
+      VALUES (?, 'workstream', ?, 'global', 1, 1, 1)`, GRANTED, WORKSPACE_ID);
+    insertChannelRow(state, GRANTED, "Granted", "personal");
+    sql.exec(`INSERT INTO parent_children (parent_id, substream_id, kind, created_by_user_id, created_at, status, updated_at)
+      VALUES (?, '0', 'main', ?, 1, 'ready', 1)`, GRANTED, GUEST);
+    sql.exec(`INSERT INTO parent_participant_migrations (parent_id, substream_id, transfer_id, phase)
+      VALUES (?, '0', 'transfer-granted', 'complete')`, GRANTED);
+    for (const [userId, incarnation] of [[GUEST, `incarnation-${GUEST}`], [REJOINED, "incarnation-before-removal"]] as const) {
+      sql.exec(`INSERT INTO parent_grants (parent_id, user_id, scope_kind, substream_id, grant_json) VALUES (?, ?, 'workstream', '', ?)`,
+        GRANTED, userId, JSON.stringify({ id: userId === GUEST ? "00000000-0000-7000-8000-00000000f001" : "00000000-0000-7000-8000-00000000f002", userId, active: true, revision: 1, membershipIncarnation: incarnation,
+          target: { kind: "workstream", workspaceId: WORKSPACE_ID, parentId: GRANTED } }));
+    }
     const sidekick = (id: string, scope: string, author: string, runAs: string | null, owning: string | null, lifecycle = "active") =>
       sql.exec(`INSERT INTO automation_directory (automation_id, workspace_id, author_user_id, run_as_user_id, source_version,
           payload_hash, lifecycle, scope, owning_workstream_id, title, description, projected_at)
@@ -82,6 +101,7 @@ async function seedOrganization() {
     sidekick(SIDEKICK_PERSONAL, "personal", PARTICIPANT, EXECUTOR, null);
     sidekick(SIDEKICK_OWNED, "workstream", BREAKOUT_MEMBER, BREAKOUT_MEMBER, PRIVATE);
     sidekick(SIDEKICK_DELETED, "workspace", MEMBER, MEMBER, null, "deleted");
+    sidekick(SIDEKICK_GRANTED, "workstream", GUEST, GUEST, GRANTED);
     const connection = (id: string, scope: string, owner: string | null, status: string) =>
       sql.exec(`INSERT INTO connector_connections (id, workspace_id, connector_type, scope, owner_user_id, display_name, status,
           created_at, updated_at, model_plugin_id)
@@ -117,8 +137,14 @@ describe("search audience: the person side", () => {
     expect((await groups(EXECUTOR)).sort()).toEqual(await expected([user(EXECUTOR), members(WORKSPACE_ID),
       conversation(OPEN, "0"), sidekick(SIDEKICK_WORKSPACE), sidekick(SIDEKICK_PERSONAL), connection(CONNECTION_WORKSPACE)]));
     // A guest gets nothing workspace-wide: not the Organization's group, not a
-    // legacy open Channel, not a workspace Sidekick or connection.
-    expect(await groups(GUEST)).toEqual(await expected([user(GUEST)]));
+    // legacy open Channel, not a workspace Sidekick or connection. Their grant
+    // admits the granted Channel's Main, and management access on it the
+    // Sidekick it owns.
+    expect((await groups(GUEST)).sort()).toEqual(await expected([user(GUEST), conversation(GRANTED, "0"),
+      sidekick(SIDEKICK_GRANTED)]));
+    // A grant from an earlier membership admits nothing after being re-added.
+    expect((await groups(REJOINED)).sort()).toEqual(await expected([user(REJOINED), members(WORKSPACE_ID),
+      conversation(OPEN, "0"), sidekick(SIDEKICK_WORKSPACE), connection(CONNECTION_WORKSPACE)]));
     // Relationship status overrides everything; so does being unknown.
     expect(await groups(SUSPENDED)).toEqual([]);
   });
@@ -142,5 +168,31 @@ describe("search audience: the person side", () => {
     await apply(2);
     expect(await groups(EXECUTOR)).toContain(runsAs);
     expect(await groups(BREAKOUT_MEMBER)).not.toContain(runsAs);
+  });
+});
+
+describe("search audience: an Organization held below the parent schema", () => {
+  it("omits a Channel-owned Sidekick rather than failing every search", async () => {
+    // Meeting-notes retirement can hold an Organization below schema 58, which
+    // has no parent tables. Its own object, with those tables removed.
+    const heldId = "00000000-0000-7000-8000-00000000a0d2";
+    const held = env.WORKSPACE_DOS.getByName(workspaceDOName("global", asWorkspaceId(heldId)));
+    await held.initializeWorkspace(heldId, "wnam");
+    await held.applyMemberStatus({ workspaceId: heldId, sequence: 1, removed: false,
+      relationship: WorkspaceRelationshipSchema.parse({ workspaceId: heldId, userId: MEMBER, accessClass: "member",
+        role: "member", status: "active", incarnation: `incarnation-${MEMBER}`, revision: 1 }) });
+    await runInDurableObject(held, (_instance, state) => {
+      const sql = state.storage.sql;
+      for (const { name } of sql.exec<{ name: string }>(
+        "SELECT name FROM sqlite_schema WHERE type = 'table' AND name LIKE 'parent\\_%' ESCAPE '\\'").toArray()) {
+        sql.exec(`DROP TABLE ${name}`);
+      }
+      sql.exec(`INSERT INTO automation_directory (automation_id, workspace_id, author_user_id, run_as_user_id, source_version,
+          payload_hash, lifecycle, scope, owning_workstream_id, title, description, projected_at)
+        VALUES (?, ?, ?, ?, 1, 'hash', 'active', 'workstream', ?, 'Sidekick', '', 1)`,
+      SIDEKICK_OWNED, heldId, PARTICIPANT, PARTICIPANT, PRIVATE);
+    });
+    expect(await held.readSearchAudience({ workspaceId: heldId, userId: MEMBER }))
+      .toEqual(await expected([user(MEMBER), members(heldId)]));
   });
 });

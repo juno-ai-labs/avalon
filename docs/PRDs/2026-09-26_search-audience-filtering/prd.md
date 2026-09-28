@@ -229,7 +229,10 @@ that table itself. A guest reaches a workstream Sidekick only through
 management access on its owning Channel (`HostedParent.managementAccess`).
 The person's relationship is read from the object's own member table
 (`readRelationship`), which carries the incarnation grant checks bind to,
-rather than passed in from the route's membership observation.
+rather than passed in from the route's membership observation. A Sidekick and a
+connection are decided by predicates shared with canonical authorization
+(`sidekickAdmitsMember`, `owningChannelAdmitsMember`, `connectionAdmits` in
+`authorization-policy.ts`).
 
 **Why:** One implementation per rule, which the security model requires, and no
 new SQL that could drift from the parent's reads.
@@ -245,9 +248,10 @@ comparing with `AuthorizationService.checkMany` per pair.
 
 **Why:** Canonical legacy-Main and Sidekick decisions read the main
 SubstreamAgent and the SidekickDO, which a WorkspaceDO fixture does not host,
-so a per-pair comparison would compare against `unavailable`. Grant-authority
-substreams are decided by `resolveScopedAccess`, the function the person side
-calls, and are not re-derived by the test.
+so a per-pair comparison would compare against `unavailable`. The table covers
+legacy and grant-authority Channels, a guest admitted by a grant and by
+management access, and a re-added member whose grant is from an earlier
+membership.
 
 **Changes:** The differential test described in the design is narrowed to this.
 
