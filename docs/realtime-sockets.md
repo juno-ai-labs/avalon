@@ -393,9 +393,7 @@ query in error, and the sidebar stops waiting on the Spaces it did not reach.
 
 The sidebar keeps the first page, and the desktop keeps `list_workstreams`
 paging, in three cases:
-- **An older server.** It ignores the unknown `channels_by_space`. An unknown
-  `subscribe` key would close the socket instead, which is why the request is
-  its own event.
+- **An older server.** It ignores the unknown `channels_by_space`.
 - **A guest.** A guest is sent no Spaces.
 - **An Organization still opening** (`spacesReady` false). A Channel can sit in
   no Space there, and the page is the only way it reaches the sidebar.
@@ -970,11 +968,9 @@ Child archive admission uses the same `parent_archived` ticket field as parent a
 
 ### 2026-09-28 — The connect payload carries Spaces, and each Space is asked for its Channels
 
-**What changed:** A member's desktop sends `channels_by_space` before
-`subscribe`. Its sidebar then carries every visible Space and no Channel rows.
-The desktop walks the Spaces with `space_channels`, which answers a page of a
-Space's Channel rows, with their breakouts and as many rails as fit. The rail
-prefetch now asks only by name.
+**What changed:** The connect payload carries Spaces and no Channel rows for a
+desktop that asks, and the desktop walks the Spaces with `space_channels`
+(above). The rail prefetch now asks only by name.
 
 **Why:** The connect page was the viewer's 250 most recently opened Channels
 across every Space. The sidebar shows one Space's Channels. A Space whose
