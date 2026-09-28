@@ -1,5 +1,6 @@
 import { runInDurableObject } from "cloudflare:test";
 import { asWorkspaceId } from "@rally/contracts";
+import type { ListVisiblePrivateChildrenRequest } from "@rally/contracts/conversation-parent";
 import type { Env } from "../../src/env";
 import type { HostedParent } from "../../src/durable-objects/hosted-parent";
 import { workspaceDOName } from "../../src/durable-objects/names";
@@ -11,6 +12,23 @@ import { workspaceDOName } from "../../src/durable-objects/names";
  */
 export function hostedParentStub(env: Env, workspaceId: string, region: string = "global") {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName(region, asWorkspaceId(workspaceId))));
+}
+
+/** One Channel's shared directory, through the batch RPC production calls. */
+export async function readSharedWorkstream(
+  stub: ReturnType<typeof hostedParentStub>,
+  { parentId, ...request }: Parameters<HostedParent["readSharedWorkstream"]>[0],
+) {
+  return (await stub.readSharedWorkstreams({ ...request, parentIds: [parentId] }))[0] ?? null;
+}
+
+/** One parent's Breakouts a person may open, through the batch RPC production calls. */
+export async function listVisiblePrivateChildren(
+  stub: ReturnType<typeof hostedParentStub>,
+  { parentId, ...request }: ListVisiblePrivateChildrenRequest,
+) {
+  const { parents } = await stub.listVisiblePrivateChildrenForParents({ ...request, parentIds: [parentId] });
+  return { children: parents[0]!.children };
 }
 
 /**

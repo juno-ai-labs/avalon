@@ -111,9 +111,10 @@ Negative controls remove the source handoff and stale-delivery guard separately;
 the corresponding tests must fail. Additional canonical tests prove that a stale
 candidate cannot expose revoked content, a child-only share releases its Channel
 label only through hierarchical navigation without releasing Main, two shared
-Breakouts in different Channels produce both visible containing Spaces in three
-Organization round trips whatever the number of Channels (a counted namespace
-from `test-workers/helpers/counting-namespace.ts` records them), a private
+Breakouts in different Channels produce both visible containing Spaces with one
+admission call whatever the number of Channels (a counted namespace from
+`test-workers/helpers/counting-namespace.ts` records it), one batch withholds a
+Channel while releasing the next in candidate order, a private
 Space invisible to the guest is withheld, and unready/restricted children are absent.
 Negative controls bypass canonical admission, truncate the admitted Channel set, or
 flatten the browser's Space filter; the corresponding tests fail.
@@ -126,7 +127,8 @@ flatten the browser's Space filter; the corresponding tests fail.
 hand all of a person's candidate Channels to one
 `WorkspaceDO.readSharedWorkstreams` call instead of calling
 `readSharedWorkstream` once per Channel. The object loops its hosted parents
-and answers in candidate order; each Channel's own admission is unchanged.
+and answers in candidate order; each Channel's own admission is unchanged. The
+single-Channel RPC is gone.
 
 **Why:** Production measurements on 2026-09-27 showed `/sharing/navigation`
 making one Organization call per shared Channel. The fan-out has the shape of

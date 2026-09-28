@@ -239,6 +239,18 @@ describe("semantic indexing", () => {
     ]));
   });
 
+  it("embeds a batch into a namespace not written since generation fan-out", async () => {
+    const [job] = await searchEmbeddingJobs(reference, document, policy);
+    provider.query.mockRejectedValueOnce(Object.assign(
+      new Error('400 {"error":"filter error in key `generation`: attribute not found"}'), { status: 400 }));
+    const embed = vi.fn(async (texts: string[]) => ({ model: "Qwen/Qwen3-Embedding-8B", vectors: vectors(texts) }));
+    expect(await indexSemanticBatch(index, job!, load, embed)).toBe("indexed");
+    expect(embed).toHaveBeenCalledTimes(1);
+    expect(provider.write).toHaveBeenCalledWith(expect.objectContaining({ upsert_rows: expect.any(Array) }));
+    provider.query.mockRejectedValueOnce(Object.assign(new Error("unrelated bad request"), { status: 400 }));
+    await expect(indexSemanticBatch(index, job!, load, embed)).rejects.toThrow("search_index_query_failed");
+  });
+
   it("confirms a written batch with the source's revision instead of a second load", async () => {
     const [job] = await searchEmbeddingJobs(reference, document, policy);
     const source = vi.fn(load);

@@ -8,7 +8,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import type { Env } from "../src/env";
 import {
-  clearMemoryScopeCache,
   createMemoryTools,
   freezeRunMemoryContext,
   memorySearch,
@@ -169,9 +168,6 @@ const objectStores = new Map<string, DatabaseSync>();
 afterEach(() => {
   vi.unstubAllGlobals();
   objectStores.clear();
-  // Each fixture is a fresh WorkspaceDO under the same workspace id, so its
-  // scopes get new ids that the isolate's scope cache must not answer for.
-  clearMemoryScopeCache();
   for (const database of openDatabases.splice(0)) database.close();
 });
 
