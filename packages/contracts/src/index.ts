@@ -4229,6 +4229,18 @@ export const ChannelRailResourceSchema = z.strictObject({
 });
 export type ChannelRailResource = z.infer<typeof ChannelRailResourceSchema>;
 
+/**
+ * An owned Sidekick as the rail lists it: the summary without its run times
+ * and update time, which move on every scheduled run and which the rail does
+ * not show, so they do not advance the rail waterline.
+ */
+export const ChannelRailOwnedSidekickSchema = WorkstreamAutomationSummarySchema.omit({
+  nextRunAt: true,
+  lastRunAt: true,
+  updatedAt: true,
+});
+export type ChannelRailOwnedSidekick = z.infer<typeof ChannelRailOwnedSidekickSchema>;
+
 /** Everything a Channel's rail lists beyond its row, for one viewer. */
 export const ChannelRailSchema = z.strictObject({
   workstreamId: WorkstreamIdSchema,
@@ -4237,7 +4249,7 @@ export const ChannelRailSchema = z.strictObject({
   participantUserIds: z.array(UserIdSchema),
   sidekicks: z.strictObject({
     /** Empty unless the viewer is a member participant, as the REST read. */
-    owned: z.array(WorkstreamAutomationSummarySchema),
+    owned: z.array(ChannelRailOwnedSidekickSchema),
     recommended: z.array(SidekickAttachmentSchema),
     /** Main's attachments; absent until Main has reported them. */
     attached: z.array(SidekickAttachmentSchema).optional(),
