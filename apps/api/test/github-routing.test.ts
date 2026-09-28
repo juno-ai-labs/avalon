@@ -2,7 +2,18 @@ import "../../../tests/isolated-region";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Region } from "@rally/contracts";
+
+// The Node stand-in for `cloudflare:workers` has no entrypoint base class; the
+// bridge needs only the `env` the runtime hands it.
+vi.mock("cloudflare:workers", async (importOriginal) => ({
+  ...await importOriginal<Record<string, unknown>>(),
+  WorkerEntrypoint: class {
+    constructor(readonly ctx: unknown, readonly env: unknown) {}
+  },
+}));
+
 import type { Env } from "../src/env";
+import { GitHubRegionalBridge } from "../src/github-regional-bridge";
 import { consumeActivityQueue } from "../src/queues/activity-consumer";
 import { webhookIngestionRoutes } from "../src/routes/connections";
 import {
@@ -12,19 +23,27 @@ import {
   isAllowedGitHubIngressRoute,
   isSharedGitHubIngress,
   serializeGitHubRegionalRpcResult,
+  type GitHubRegionalBridgeRpcBinding,
 } from "../src/services/github-routing-service";
 import { ApiError } from "../src/lib/api-error";
+import { ConnectorError } from "@rally/connectors";
 import {
   createGitHubInstallState,
   githubRegionFromInstallState,
 } from "../src/lib/github-install-state";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestWorkspaceDO, testWorkspaceObjectBinding } from "./helpers/workspace-object-rpcs";
+import { openWorkstreamAuthorityForTest } from "./helpers/durable-authority";
+import { encryptString } from "../src/lib/crypto";
 
 // The route table is the real migrated schema. The Queue and R2 are doubles
-// because neither runs under Node; the regional ingest is a double because it
-// is `ProviderWebhookService`, which `provider-webhooks.test.ts` covers —
-// including that `ingestVerifiedGitHub` performs no signature check.
+// because neither runs under Node. Most tests double the regional ingest,
+// which `provider-webhooks.test.ts` covers — including that
+// `ingestVerifiedGitHub` performs no signature check. The "regional data
+// plane" block below does not: it runs the consumer into a real
+// `ProviderWebhookService` over a migrated regional database and a real
+// `WorkspaceDO`, in-process and across the real `GitHubRegionalBridge`.
 
 const SECRET = "shared-github-webhook-secret";
 const NOW = Date.parse("2026-08-01T18:00:00.000Z");
@@ -54,8 +73,13 @@ class FakeBucket {
 
 class FakeQueue {
   readonly messages: unknown[] = [];
+  failuresRemaining = 0;
 
   async send(message: unknown): Promise<void> {
+    if (this.failuresRemaining > 0) {
+      this.failuresRemaining -= 1;
+      throw new Error("injected queue failure");
+    }
     this.messages.push(message);
   }
 }
@@ -383,8 +407,50 @@ describe("shared GitHub App routing", () => {
     const message = queued(queue.messages[0]);
     await consumeGitHubDeliveryMessage(message, env, service);
     expect(message.retry).toHaveBeenCalledTimes(1);
+    expect(message.retry).toHaveBeenCalledWith({ delaySeconds: 5 });
     expect(message.ack).not.toHaveBeenCalled();
     expect(bucket.values.size).toBe(1);
+  });
+
+  it("backs a retry off by attempt, and waits out a GitHub rate limit's Retry-After", async () => {
+    const { env, sql, queue } = fixture();
+    addRoute(sql, "42", "global", "workspace-global");
+    let failure: Error = new ApiError(503, "github_region_unavailable", "The region is unavailable");
+    const service = new GitHubRoutingService(env, {
+      now: () => NOW,
+      ingestInRegion: async () => {
+        throw failure;
+      },
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const delivery = await signedDelivery("rate-limited", "issues", { action: "opened", installation: { id: 42 } });
+    await service.ingestGitHub(delivery.bytes, delivery.headers);
+
+    const third = { ...queued(queue.messages[0]), attempts: 3 };
+    await consumeGitHubDeliveryMessage(third, env, service);
+    expect(third.retry).toHaveBeenCalledWith({ delaySeconds: 20 });
+
+    failure = new ConnectorError("provider_error", "API rate limit exceeded", {
+      status: 403,
+      rateLimited: true,
+      retryAfterMs: 900_000,
+    });
+    const limited = queued(queue.messages[0]);
+    await consumeGitHubDeliveryMessage(limited, env, service);
+    expect(limited.retry).toHaveBeenCalledWith({ delaySeconds: 900 });
+  });
+
+  it("removes a staged body when the delivery cannot be enqueued", async () => {
+    const { env, bucket, queue } = fixture();
+    queue.failuresRemaining = 1;
+    const large = await signedDelivery("enqueue-failed", "push", {
+      installation: { id: 42 },
+      padding: "x".repeat(200_000),
+    });
+
+    await expect(routingService(env).ingestGitHub(large.bytes, large.headers)).rejects.toThrow("injected queue failure");
+    expect(bucket.deleted).toHaveLength(1);
+    expect(bucket.values.size).toBe(0);
   });
 
   it("names the field a malformed delivery message failed on", async () => {
@@ -444,6 +510,199 @@ describe("shared GitHub App routing", () => {
 
     await expect(service.failGitHubSetup(state, "github_setup_failed")).resolves.toContain("provider=github");
     expect(failSetupInRegion).toHaveBeenCalledWith("enterprise", state, "github_setup_failed");
+  });
+});
+
+const WORKSPACE = "00000000-0000-7000-8000-0000000000a1";
+const OWNER = "00000000-0000-7000-8000-0000000000a2";
+const CONNECTION = "00000000-0000-7000-8000-0000000000a3";
+const CREDENTIALS_KEY = "github-routing-test-credentials-key";
+
+interface RegionPlane {
+  env: Env;
+  regional: DatabaseSync;
+  object: DatabaseSync;
+  queue: FakeQueue;
+}
+
+/**
+ * One region's data plane as the consumer reaches it: the migrated regional
+ * database, a real `WorkspaceDO` holding one workspace-scoped GitHub connection
+ * for installation 42, and the connection's ingress route.
+ */
+async function regionPlane(region: Region, databases: DatabaseSync[]): Promise<RegionPlane> {
+  const regional = migratedSqliteDatabase();
+  databases.push(regional);
+  openWorkstreamAuthorityForTest(regional);
+  const at = new Date(NOW).toISOString();
+  const credentials = await encryptString(
+    JSON.stringify({ installationId: "42", tokenKind: "installation" }),
+    CREDENTIALS_KEY,
+    CONNECTION,
+  );
+  regional.prepare(
+    `INSERT INTO users(id, google_subject, email, name, created_at, updated_at)
+     VALUES (?, 'google-owner', 'owner@example.test', 'Owner', ?, ?)`,
+  ).run(OWNER, at, at);
+  regional.prepare(
+    `INSERT INTO workspaces(id, name, slug, region, created_by_user_id, created_at, updated_at, placement_affinity)
+     VALUES (?, 'Test', 'test', ?, ?, ?, ?, ?)`,
+  ).run(WORKSPACE, region, OWNER, at, at, region === "global" ? "wnam" : "weur");
+  regional.prepare(
+    `INSERT INTO connector_ingress_routes
+     (connection_id, workspace_id, region, connector_type, scope, provider_account_id,
+      provider_user_id, status, updated_at)
+     VALUES (?, ?, ?, 'github', 'workspace', '42', NULL, 'active', ?)`,
+  ).run(CONNECTION, WORKSPACE, region, at);
+  const { instance, objectDatabase } = createTestWorkspaceDO({
+    workspaceId: WORKSPACE,
+    regionalDatabase: regional,
+    region,
+    register: (database) => databases.push(database),
+  });
+  objectDatabase.prepare(
+    `INSERT INTO connector_connections
+     (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+      display_name, encrypted_credentials, credential_iv, credential_key_version,
+      status, created_at, updated_at, model_plugin_id)
+     VALUES (?, ?, 'github', 'workspace', NULL, '42', 'GitHub', ?, ?, 1, 'healthy', ?, ?, 'github-plugin')`,
+  ).run(CONNECTION, WORKSPACE, credentials.ciphertext, credentials.iv, at, at);
+  const queue = new FakeQueue();
+  const env = createTestEnv({
+    AVALON_REGION: region,
+    APP_ENV: "test",
+    CONNECTOR_CREDENTIALS_KEY: CREDENTIALS_KEY,
+    CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+    GITHUB_INGRESS_BASE_URL: "https://github.with-avalon.com",
+    GITHUB_WEBHOOK_SECRET: SECRET,
+    DB: sqliteD1(regional),
+    WORKSPACE_DOS: testWorkspaceObjectBinding(instance, ["executeRuntimeSql", "upsertDiscoveredResources", "publishSync"]),
+    PAYLOADS: createCloudflareTestBinding<R2Bucket>(new FakeBucket()),
+    ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>(queue),
+  });
+  return { env, regional, object: objectDatabase, queue };
+}
+
+function connectionStatus(plane: RegionPlane): string {
+  return (plane.object.prepare("SELECT status FROM connector_connections WHERE id = ?")
+    .get(CONNECTION) as { status: string }).status;
+}
+
+function receipt(plane: RegionPlane, deliveryId: string): { processed_at: string | null } | undefined {
+  return plane.regional.prepare(
+    "SELECT processed_at FROM provider_webhook_receipts WHERE provider = 'github' AND delivery_id = ?",
+  ).get(deliveryId) as { processed_at: string | null } | undefined;
+}
+
+/** A delivery message as the receiver enqueues it, received at `receivedAt`. */
+function deliveryMessage(
+  deliveryId: string,
+  event: string,
+  payload: Record<string, unknown>,
+  receivedAt = new Date(NOW).toISOString(),
+) {
+  const bytes = new TextEncoder().encode(JSON.stringify({
+    installation: { id: 42, account: { login: "acme" } },
+    sender: { login: "octocat" },
+    ...payload,
+  }));
+  return queued(GitHubDeliveryQueueMessageSchema.parse({
+    kind: "github_webhook_delivery_v1",
+    deliveryId,
+    event,
+    receivedAt,
+    body: { kind: "inline", bytes: bytes.buffer },
+  }));
+}
+
+/** An installation lifecycle delivery, received at `receivedAt`. */
+function lifecycleMessage(deliveryId: string, action: string, receivedAt?: string) {
+  return deliveryMessage(deliveryId, "installation", { action }, receivedAt);
+}
+
+const ISSUE_OPENED = {
+  action: "opened",
+  repository: { id: 10, full_name: "acme/app", html_url: "https://github.com/acme/app", owner: { login: "acme" } },
+  issue: { id: 20, number: 1, title: "Retried", html_url: "https://github.com/acme/app/issues/1" },
+};
+
+describe("the regional data plane behind the GitHub consumer", () => {
+  const databases: DatabaseSync[] = [];
+  afterEach(() => {
+    for (const database of databases.splice(0)) database.close();
+  });
+
+  it("finishes a delivery whose first attempt failed after its receipt committed", async () => {
+    const plane = await regionPlane("global", databases);
+    addRoute(plane.regional, "42", "global", WORKSPACE);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const service = new GitHubRoutingService(plane.env, { now: () => NOW });
+
+    // The receipt commits and then the connector event cannot be enqueued:
+    // the consumer retries the message.
+    plane.queue.failuresRemaining = 1;
+    const first = deliveryMessage("issue-retried", "issues", ISSUE_OPENED);
+    await consumeGitHubDeliveryMessage(first, plane.env, service);
+    expect(first.retry).toHaveBeenCalledTimes(1);
+    expect(receipt(plane, "issue-retried")).toEqual({ processed_at: null });
+    expect(plane.queue.messages).toHaveLength(0);
+
+    const again = deliveryMessage("issue-retried", "issues", ISSUE_OPENED);
+    await consumeGitHubDeliveryMessage(again, plane.env, service);
+    expect(again.retry).not.toHaveBeenCalled();
+    expect(again.ack).toHaveBeenCalledTimes(1);
+    expect(receipt(plane, "issue-retried")?.processed_at).not.toBeNull();
+    expect(plane.queue.messages).toEqual([
+      expect.objectContaining({ kind: "workspace_connector_event" }),
+    ]);
+  });
+
+  it("does not let a retried older lifecycle event overwrite a newer one", async () => {
+    const plane = await regionPlane("global", databases);
+    addRoute(plane.regional, "42", "global", WORKSPACE);
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const service = new GitHubRoutingService(plane.env, { now: () => NOW });
+    const at = (offsetMs: number) => new Date(NOW + offsetMs).toISOString();
+
+    // `unsuspend` was received first but its first attempt failed; `suspend`,
+    // received after it, applies; the retried `unsuspend` then arrives.
+    await consumeGitHubDeliveryMessage(lifecycleMessage("suspend-newer", "suspend", at(2_000)), plane.env, service);
+    expect(connectionStatus(plane)).toBe("error");
+    const older = lifecycleMessage("unsuspend-older", "unsuspend", at(1_000));
+    await consumeGitHubDeliveryMessage(older, plane.env, service);
+    expect(older.ack).toHaveBeenCalledTimes(1);
+    expect(connectionStatus(plane)).toBe("error");
+
+    // A lifecycle event received after the newest one applied still applies.
+    await consumeGitHubDeliveryMessage(lifecycleMessage("unsuspend-latest", "unsuspend", at(3_000)), plane.env, service);
+    expect(connectionStatus(plane)).toBe("healthy");
+  });
+
+  it("hands the verified bytes across the real regional bridge", async () => {
+    const global = fixture();
+    databases.push(global.sql);
+    addRoute(global.sql, "42", "enterprise", WORKSPACE);
+    const enterprise = await regionPlane("enterprise", databases);
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const bridge = new GitHubRegionalBridge({} as ExecutionContext, enterprise.env);
+    // A service binding copies its argument with structured clone; so does this.
+    const binding: Pick<GitHubRegionalBridgeRpcBinding, "ingestVerifiedGitHub"> = {
+      ingestVerifiedGitHub: async (input) => bridge.ingestVerifiedGitHub(structuredClone(input)),
+    };
+    const env = createTestEnv({
+      ...global.env,
+      REGION_ENTERPRISE_GITHUB_BRIDGE: binding as GitHubRegionalBridgeRpcBinding,
+    });
+    const service = new GitHubRoutingService(env, { now: () => NOW });
+
+    const message = lifecycleMessage("bridged-suspend", "suspend");
+    await consumeGitHubDeliveryMessage(message, env, service);
+    expect(message.retry).not.toHaveBeenCalled();
+    expect(message.ack).toHaveBeenCalledTimes(1);
+    expect(receipt(enterprise, "bridged-suspend")?.processed_at).not.toBeNull();
+    expect(connectionStatus(enterprise)).toBe("error");
   });
 });
 

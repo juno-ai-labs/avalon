@@ -182,7 +182,10 @@ The shared setup and webhook host, `github.rallywith.ai`, runs on Rally's
 Global ingress Worker. It verifies GitHub's signature once, before parsing,
 enqueues the delivery and answers; its Queue consumer maps the installation to
 every Rally region where it is connected and forwards the verified bytes over a
-Worker service binding, which does not verify them again.
+Worker service binding, which does not verify them again. GitHub sees `202`
+before any of that runs, so a later failure is retried by the Queue, never by
+GitHub; the [runbook](runbook.md#github-delivery-dead-letters) covers what is
+left when those retries run out.
 [`connectors.md`](connectors.md#github-app) owns that path. OAuth callbacks
 remain regional so user tokens never cross the selected boundary.
 

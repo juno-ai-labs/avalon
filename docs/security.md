@@ -874,7 +874,12 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   fewer scheme at the price of the boundary.
 
 - **A webhook is verified against its exact raw body before anything parses,
-  stores, or queues it.**
+  stores, or queues it.** A GitHub delivery is verified once, at the Global
+  receiver; its Queue message and the account-internal `GitHubRegionalBridge`
+  (`ingestVerifiedGitHub`) carry no signature and are trusted as verified, so
+  anything able to send on Global's activity Queue or call that bridge binding
+  is inside the GitHub webhook trust boundary
+  ([`connectors.md`](connectors.md#invariants)).
 
 - **A tool call is a proposal, never an instruction.** Name, schema, principal,
   capability, limits, and idempotency state are all checked before execution.

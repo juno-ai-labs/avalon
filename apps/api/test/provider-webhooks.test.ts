@@ -653,7 +653,7 @@ describe("provider-wide webhook ingestion", () => {
     const verify = vi.spyOn(crypto.subtle, "verify");
     const sign = vi.spyOn(crypto.subtle, "sign");
     const delivery = {
-      rawBody,
+      rawBody: rawBody.buffer,
       deliveryId: "github-verified-delivery-1",
       event: "issues",
       receivedAt: new Date(NOW).toISOString(),
