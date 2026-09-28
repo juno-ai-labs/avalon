@@ -2180,6 +2180,35 @@ describe('a Channel\'s breakouts and background agents on the organization socke
       expect(spaceSent(socket)).toHaveLength(1);
     });
 
+    it('asks for a Space put on screen that no walk has returned, such as one created since', async () => {
+      const queryClient = new QueryClient();
+      queryClient.setQueryData(['spaces'], { waterline: 1, items: [{ id: general }] });
+      const { socket, api } = await connectWithProbe(queryClient);
+      act(() => socket.message(bySpaceSidebar()));
+      await flushPromises();
+      let walked!: Promise<Set<string> | null>;
+      act(() => { walked = api().walkSpaceChannels(); });
+      await flushPromises();
+      const [first] = spaceSent(socket);
+      act(() => socket.message(spaceAnswer(first!['requestId'], [], null)));
+      await walked;
+
+      // Created after the walk, and opened.
+      queryClient.setQueryData(['spaces'], { waterline: 2, items: [{ id: general }, { id: design }] });
+      act(() => api().prioritizeSpace(design));
+      await flushPromises();
+      const [, created] = spaceSent(socket);
+      expect(created).toMatchObject({ spaceId: design });
+      act(() => socket.message(spaceAnswer(created!['requestId'], [], null)));
+      await flushPromises();
+      expect(api().loadedSpaceIds).toEqual(new Set([general, design]));
+      // Loaded now: putting it on screen again asks nothing.
+      act(() => api().prioritizeSpace(general));
+      act(() => api().prioritizeSpace(design));
+      await flushPromises();
+      expect(spaceSent(socket)).toHaveLength(2);
+    });
+
     it('walks nothing when the sidebar carried Channel rows', async () => {
       const queryClient = new QueryClient();
       queryClient.setQueryData(['spaces'], { waterline: 1, items: [{ id: general }] });
