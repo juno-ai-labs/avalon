@@ -19,10 +19,7 @@ this document is what exists.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/durable-objects/workspace-external-binding-protocol.ts` | Every typed request and result: paths, targets, suspension reasons, the resolution outcomes, claims, room links, outbound records, moves. |
-| `apps/api/src/durable-objects/workspace-external-binding-storage.ts` | `ExternalConversationBindingStorage`, the only code that reads or writes `external_conversation_bindings`, and migration 80 (`EXTERNAL_CONVERSATION_BINDINGS_MIGRATION`). `externalPathKey` builds every stored key. |
-| `apps/api/src/durable-objects/workspace-do.ts` | The binding RPCs (`resolveExternalConversation`, `linkExternalRoom`, `recordOutboundExternalConversationBinding`, `suspend…`, `reactivate…`, `close…`, `move…`, `latestOutboundExternalConversation`), the thread claim inside `reserveChannelInSpaces`, Sidekick deletion suspending its bindings, bound events claimed in `matchExternalEventDestinations`, and the Sidekick-source join job in `applyExternalEventRegistrations`. |
-
-| `apps/api/src/durable-objects/workspace-external-binding-storage.ts` | `ExternalConversationBindingStorage`, the only code that reads or writes `external_conversation_bindings`, and migration 81 (`EXTERNAL_CONVERSATION_BINDINGS_MIGRATION`). `externalPathKey` builds every stored key. |
+| `apps/api/src/durable-objects/workspace-external-binding-storage.ts` | `ExternalConversationBindingStorage`, the only code that reads or writes `external_conversation_bindings`, and migration 83 (`EXTERNAL_CONVERSATION_BINDINGS_MIGRATION`). `externalPathKey` builds every stored key. |
 | `apps/api/src/durable-objects/workspace-do.ts` | The binding RPCs (`resolveExternalConversation`, `linkExternalRoom`, `recordOutboundExternalConversationBinding`, `suspend…`, `reactivate…`, `move…`, `latestOutboundExternalConversation`), the thread claim inside `reserveChannelInSpaces`, Sidekick deletion suspending its bindings, and bound events claimed in `matchExternalEventDestinations`. |
 | `apps/api/src/durable-objects/workspace-slack-storage.ts` | `enqueueSlackSourceJoins`: the join jobs a saved Sidekick's Slack sources need, which WorkspaceDO dispatches from `applyExternalEventRegistrations`. |
 | `apps/api/src/durable-objects/external-binding-outbox.ts` | The SubstreamAgent `durable_outbox` channel `external_conversation_binding_v1` that carries a run's outbound binding from its tool receipt to WorkspaceDO. |
@@ -283,7 +280,7 @@ No new numeric limit is introduced.
 | --- | --- |
 | `apps/api/test-workers/external-conversation-bindings.test.ts` | On real workerd: link races and redelivery, private vs public Space, removal and re-invitation, two threads in one room, pending hold and resume, failed creation releasing its claim, claim refused on a bound thread, non-threadable rooms, blocked private placement, Sidekick deletion, disconnect/reconnect against a closed binding, `channel_id_changed` move and conflict, outbound first-wins, the latest outbound in a DM, a run send bound only after its receipt commits and the alarm drains, a lost receipt and a personal send writing nothing, a bound reply landing in the run child with its external actor, a bound event claimed and not also triggering the Sidekick it answers, the Sidekick-source join (again on every accepted save, never on a stale one), a lasting suspension surviving a reconnect, a retried spawn re-entering its own Channel, and a bad outbox row parked without holding up the rest. |
 | `apps/api/test-workers/external-bindings-mucker-flow.test.ts` | The whole flow on real workerd, with only OpenRouter and the Slack Web API doubled: a Sidekick run homed in a Breakout sends a Slack DM through the workspace bot and its thread binds once the outbox drains; the founder's reply arrives through `SlackAgentService` ingress and continues the finished run with its run context; the continued run's `conversation_post` with no conversation lands once in the home Breakout, marked as from Slack, without waking it, and neither a redelivered event nor a replayed receipt posts twice; a later top-level DM, after the run has finished, is not redirected and reaches no run; a later run reads the answer with `conversation_read`. |
-| `apps/api/test/external-conversation-binding-migration.test.ts` | Migration 80 carries each session's exact thread key and nothing else. |
+| `apps/api/test/external-conversation-binding-migration.test.ts` | Migration 83 carries each session's exact thread key and nothing else. |
 | `apps/api/test/slack-workspace-assignment.test.ts` ("routed by external conversation bindings", "Slack public channel membership") | The ingress: delivery to a run child with its reaction, a paused Sidekick's reaction, the DM prompt only while the run is open and again under the prompt, a plain DM keeping Agent behavior, the source join, a suspended reply creating nothing, a disconnect's suspension lifted by a delivered event, a suspended room brought back by a mention, a room turned private refused, a lost thread race retried, private and public room links and the stable Space id, the lifecycle events, non-threadable rooms and top-level delivery, and a routing notice posted once with its reason. |
 | `apps/api/test-workers/workspace-slack-ingress.test.ts` | `slackThreadRoutable` answered from bindings, and a thread's session moved to the connection a reconnect wrote. |
 | `packages/connectors/src/slack.test.ts` | Path and room classification, and `send_message` returning a binding only for the workspace installation. |
@@ -295,7 +292,7 @@ the object refuses the database as another workspace's.
 
 ## Data model
 
-`external_conversation_bindings` (WorkspaceDO, migration 80): `installation_id`,
+`external_conversation_bindings` (WorkspaceDO, migration 83): `installation_id`,
 `path_json`, `target_kind` (`space` | `conversation`), `space_id` or
 (`parent_kind`, `parent_id`, `substream_id`), `state` (`pending` | `active` |
 `suspended`), `suspended_reason`, `claim_key`, timestamps. CHECKs tie a target
@@ -316,7 +313,7 @@ source, so a run cannot widen what the bot joins.
 
 ### 2026-09-27 — Slack routing moves from session rows to bindings
 
-**What changed:** Added `external_conversation_bindings` (migration 80), which
+**What changed:** Added `external_conversation_bindings` (migration 83), which
 carries every existing session's thread key. A bot invitation links a room to a
 Space; an addressed thread in a linked room opens a Channel there with its
 binding claimed in the reservation transaction. A Sidekick run's bot-token send

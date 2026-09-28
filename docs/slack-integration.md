@@ -815,15 +815,6 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 
 ### 2026-09-27 — Bindings route Slack messages, and the bot joins only where it is wanted
 
-**What changed:** Routing moved from `slack_agent_sessions` and
-`slackThreadRoutable` to external conversation bindings (migration 80 carries
-every session's thread). Inviting the bot links a room to a Space. The
-public-channel join sweep and the `channel_created` join are gone; the bot joins
-only conversations a Sidekick's Slack source names. The manifest adds
-`message.mpim`, `channel_id_changed`, `channel_left`, `group_left`,
-`channel_archive` and `group_archive`. A reply in a thread a Sidekick run posted
-to reaches that run, under the run's authority.
-
 Routing moved from `slack_agent_sessions` to external conversation bindings, the
 bot stopped joining public channels on its own, and a reply to a Sidekick's
 request reaches its run. The why, the alternatives and the consequences are

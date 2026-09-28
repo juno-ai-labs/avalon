@@ -439,7 +439,7 @@ export const AUTOMATION_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     `ALTER TABLE automation ADD COLUMN owning_substream_id TEXT NOT NULL DEFAULT '0'`,
   ],
 }, {
-  version: 11,
+  version: 12,
   description: "a counter every Sidekick-side stop of open runs moves",
   statements: [
     // The fence a continued run's authority check compares instead of a
@@ -449,7 +449,7 @@ export const AUTOMATION_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     `ALTER TABLE automation ADD COLUMN stop_generation INTEGER NOT NULL DEFAULT 0 CHECK (stop_generation >= 0)`,
   ],
 }, {
-  version: 12,
+  version: 13,
   description: "who each run runs as",
   statements: [
     // A run's transcript is its run-as user's: their connectors read it and
