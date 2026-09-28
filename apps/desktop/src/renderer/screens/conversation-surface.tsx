@@ -32,6 +32,7 @@ import { useCollaborationSession } from '../lib/collaboration-session';
 import { useCitations } from '../lib/use-citations';
 import { breakoutResourceActions } from '../lib/breakout-resource-actions';
 import { ApiError, type MentionIdentity } from '../lib/api';
+import { useChannelRail } from '../lib/channel-rails';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { useBrowserRailLinks } from '../lib/browser-rail-links';
 import { desktopBridge } from '../lib/platform';
@@ -190,22 +191,21 @@ function ConversationOpeningSidebar(): React.JSX.Element {
   );
 }
 
-export function ConversationOpeningSkeleton({
-  label,
-  parentKind,
-  sidebar = false,
-}: {
-  label: string;
-  parentKind: ConversationParentKind;
-  sidebar?: boolean;
-}): React.JSX.Element {
+/**
+ * The feed, header and composer placeholders, and the status that says what is
+ * opening. The status lives here rather than on the layout so that a rail drawn
+ * beside it, placeholder or real, is never read out as part of it.
+ */
+function ConversationOpeningFeed({ label, parentKind }: { label: string; parentKind: ConversationParentKind }): React.JSX.Element {
   return (
-    <div aria-label={label} className="conversation-layout conversation-opening-skeleton" role="status">
-      {sidebar && <ConversationOpeningSidebar />}
-      <div aria-hidden="true" className={clsx(
+    <div
+      aria-label={label}
+      className={clsx(
         'workstream-screen conversation-opening-feed',
         parentKind === 'automation' && 'automation-screen',
-      )}>
+      )}
+      role="status"
+    >
         {parentKind === 'automation' ? (
           <header className="sidekick-conversation-heading window-drag conversation-opening-header">
             <span className="skeleton-bar conversation-opening-header-title" />
@@ -265,8 +265,24 @@ export function ConversationOpeningSkeleton({
         <div className="composer-dock conversation-opening-composer-dock">
           <div className="skeleton-bar conversation-opening-composer" />
         </div>
-      </div>
-      <span className="sr-only">{label}</span>
+        <span className="sr-only">{label}</span>
+    </div>
+  );
+}
+
+export function ConversationOpeningSkeleton({
+  label,
+  parentKind,
+  sidebar = false,
+}: {
+  label: string;
+  parentKind: ConversationParentKind;
+  sidebar?: boolean;
+}): React.JSX.Element {
+  return (
+    <div className="conversation-layout conversation-opening-skeleton">
+      {sidebar && <ConversationOpeningSidebar />}
+      <ConversationOpeningFeed label={label} parentKind={parentKind} />
     </div>
   );
 }
@@ -988,6 +1004,13 @@ export interface ConversationSurfaceProps {
    */
   substreamLaunch?: ConversationSubstreamLaunch | null;
   renderHeader?: (context: ConversationHeaderContext) => React.ReactNode;
+  /**
+   * The rail to draw while this conversation's first snapshot is in flight,
+   * from state the workspace socket already holds, or null when the host has
+   * nothing to draw it from yet and the placeholder rail should stand in.
+   * Called only while `renderSidebar`'s context does not exist.
+   */
+  renderOpeningSidebar?: () => React.ReactNode;
   renderSidebar?: (context: ConversationHeaderContext & {
     /** This room's Sidekicks; `undefined` until both lists behind it answer. */
     sidekicks: SidekickRow[] | undefined;
@@ -1014,6 +1037,7 @@ export function ConversationSurface({
   workstreamContext,
   sidebarScope = "workstream",
   renderHeader,
+  renderOpeningSidebar,
   renderSidebar,
   onStartSubstream,
   substreamLaunch,
@@ -1956,10 +1980,17 @@ export function ConversationSurface({
   // The two halves of what this room's rails show under **Sidekicks**: the
   // Sidekicks the room owns, and the ones its main conversation has loaded.
   // Both are the room's, so both are fetched here and folded into one list.
+  // Main's three lists ride its Channel rail on the workspace socket; REST
+  // stays for a breakout, an older server, and a Main not yet reported.
+  const railSidekicks = useChannelRail(parentKind === 'workstream' && substreamId === '0' ? id ?? null : null)?.sidekicks;
+  // A refresh of a rail-backed list that could not reach the organization;
+  // the section says so rather than leaving the reader's click unanswered.
+  const [railRefreshFailedFor, setRailRefreshFailedFor] = useState<string | null>(null);
+  const railRefreshFailed = railRefreshFailedFor !== null && railRefreshFailedFor === id;
   const attachedSidekicks = useQuery({
     queryKey: ['attached-sidekicks', id, substreamId],
     queryFn: ({ signal }) => api!.getAttachedSidekicks(id!, signal, substreamId),
-    enabled: Boolean(api && id && parentKind === 'workstream'),
+    enabled: Boolean(api && id && parentKind === 'workstream' && railSidekicks?.attached === undefined),
   });
   // Guest recommendations already include eligible owned sources as minimal
   // summaries. The member-only authoring directory is neither needed nor allowed.
@@ -1974,12 +2005,12 @@ export function ConversationSurface({
       if (error instanceof ApiError && error.status === 403) return [];
       throw error;
     }),
-    enabled: Boolean(api && id && parentKind === 'workstream' && readOwnedSidekickDetails),
+    enabled: Boolean(api && id && parentKind === 'workstream' && readOwnedSidekickDetails && !railSidekicks),
   });
   const recommendedSidekicks = useQuery({
     queryKey: ['recommended-sidekicks', id, substreamId],
     queryFn: ({ signal }) => api!.getRecommendedSidekicks(id!, signal, substreamId),
-    enabled: Boolean(api && id && parentKind === 'workstream'),
+    enabled: Boolean(api && id && parentKind === 'workstream' && !railSidekicks),
   });
   const recommendationOptions = useQuery({
     queryKey: ['sidekick-recommendation-options', id, substreamId],
@@ -1994,6 +2025,7 @@ export function ConversationSurface({
       } else await api!.removeAttachedSidekick(workstreamId, sidekickId, targetSubstreamId);
     },
     onSettled: (_result, _error, { workstreamId }) => {
+      void workspaceSocket?.refreshChannelRails([workstreamId]).catch(() => undefined);
       void queryClient.invalidateQueries({ queryKey: ['sidekick-recommendation-options', workstreamId] });
       void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks', workstreamId] });
       void queryClient.invalidateQueries({ queryKey: ['recommended-sidekicks', workstreamId] });
@@ -2404,9 +2436,24 @@ export function ConversationSurface({
         />
       );
     }
+    const openingLabel = `Opening ${parentKind === 'automation' ? 'Sidekick' : parentNoun}…`;
+    const openingRail = renderSidebar ? renderOpeningSidebar?.() : null;
+    if (openingRail) {
+      // The same tree as the live layout below, rail first, so the rail is
+      // kept rather than remounted when the snapshot lands: focus, an open
+      // tip and the scroll position survive. Only the feed changes.
+      return (
+        <ConnectorConnectionsProvider connections={visibleConnections}>
+          <div className="conversation-layout conversation-opening-skeleton">
+            {openingRail}
+            <ConversationOpeningFeed label={openingLabel} parentKind={parentKind} />
+          </div>
+        </ConnectorConnectionsProvider>
+      );
+    }
     return (
       <ConversationOpeningSkeleton
-        label={`Opening ${parentKind === 'automation' ? 'Sidekick' : parentNoun}…`}
+        label={openingLabel}
         parentKind={parentKind}
         sidebar={renderSidebar !== undefined}
       />
@@ -2467,9 +2514,11 @@ export function ConversationSurface({
     // A failed owned read is not a pending one: the attachments answered, and
     // hiding them because the other half failed takes down a list that worked.
     // The error still travels beside the rows that did arrive.
-    owned: readOwnedSidekickDetails ? ownedSidekicks.data ?? (ownedSidekicks.isError ? [] : undefined) : [],
-    attached: attachedSidekicks.data ?? (attachedSidekicks.isError ? [] : undefined),
-    recommended: recommendedSidekicks.data ?? (recommendedSidekicks.isError ? [] : undefined),
+    owned: railSidekicks
+      ? railSidekicks.owned
+      : readOwnedSidekickDetails ? ownedSidekicks.data ?? (ownedSidekicks.isError ? [] : undefined) : [],
+    attached: railSidekicks?.attached ?? attachedSidekicks.data ?? (attachedSidekicks.isError ? [] : undefined),
+    recommended: railSidekicks?.recommended ?? recommendedSidekicks.data ?? (recommendedSidekicks.isError ? [] : undefined),
     ...(detail.participants.some((person) => person.id === session?.user.id)
       ? { onRemoveAttachment: (sidekickId: string) => removeSidekick.mutate({ sidekickId, recommendation: false, workstreamId: id!, substreamId }) }
       : {}),
@@ -2489,6 +2538,7 @@ export function ConversationSurface({
     : (readOwnedSidekickDetails && ownedSidekicks.error)
       || attachedSidekicks.error
       || recommendedSidekicks.error
+      || railRefreshFailed
       ? 'load'
       : undefined;
   const loadSidekickOptions = (): void => {
@@ -2500,9 +2550,15 @@ export function ConversationSurface({
     void recommendationOptions.refetch();
   };
   const refreshSidekicks = (): void => {
-    if (readOwnedSidekickDetails) void ownedSidekicks.refetch();
-    void attachedSidekicks.refetch();
-    void recommendedSidekicks.refetch();
+    if (railSidekicks && id) {
+      const refreshing = id;
+      setRailRefreshFailedFor(null);
+      void (workspaceSocket?.refreshChannelRails([refreshing]) ?? Promise.reject(new Error('no_organization_socket')))
+        .catch(() => setRailRefreshFailedFor(refreshing));
+    }
+    if (readOwnedSidekickDetails && !railSidekicks) void ownedSidekicks.refetch();
+    if (railSidekicks?.attached === undefined) void attachedSidekicks.refetch();
+    if (!railSidekicks) void recommendedSidekicks.refetch();
   };
   const discoveredResources = [...new Map(
     (availableResources.data?.pages.flatMap((page) => page.items) ?? []).map((resource) => [resource.id, resource]),

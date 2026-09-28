@@ -254,6 +254,19 @@ export function useCachedWorkstreamAppearance(workstreamId: string): WorkstreamA
 }
 
 /**
+ * This Channel's directory row, as the sidebar holds it, or `undefined` when
+ * the directory does not list it. Never fetches, for the reason above.
+ */
+export function useCachedWorkstreamSummary(workstreamId: string): WorkstreamSummary | undefined {
+  return useQuery<WorkstreamSummary[] | undefined, Error, WorkstreamSummary | undefined>({
+    queryKey: WORKSTREAMS_QUERY_KEY,
+    queryFn: async () => undefined,
+    enabled: false,
+    select: (rows) => rows?.find((row) => row.id === workstreamId),
+  }).data;
+}
+
+/**
  * `existing` followed by whatever in `incoming` is not already in it.
  *
  * A row can arrive twice legitimately: it moved between two page requests, so
