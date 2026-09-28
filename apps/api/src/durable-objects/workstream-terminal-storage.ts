@@ -64,17 +64,12 @@ export const TERMINAL_OPERATION_LEASE_MS = 16 * 60_000;
 export const TERMINAL_PROVIDER_OBSERVATION_INTERVAL_MS = 60_000;
 
 /**
- * How often a stopped or archived sandbox is asked the same thing: ten minutes.
+ * How often a stopped or archived sandbox is asked the same thing.
  *
- * Adam set this number on 2026-09-27; it is the team's to move, not a
- * measurement's. The why: polling every sandbox every minute for its whole
- * thirty-day retention made the status check the most-called RPC in the system
- * — about 14,700 Terminal calls and 1,800 `receiveChildEffects` calls an hour,
- * roughly 285 s of CPU — when almost all of those sandboxes were stopped or
- * archived and nothing was going to change them. Between checks, Daytona's
- * signed `sandbox.state.updated` webhooks (`POST /ingest/daytona`) carry a
- * state change as it happens; this poll only bounds how stale the observation
- * can get when a webhook is missed.
+ * It bounds how stale that sandbox's observation can get when a Daytona
+ * webhook is missed; the webhook carries a change as it happens. The number is
+ * the team's to move — why it is ten minutes is in the changelog of
+ * docs/terminal-workspaces.md.
  */
 export const TERMINAL_STOPPED_SANDBOX_OBSERVATION_INTERVAL_MS = 10 * 60_000;
 
@@ -450,11 +445,16 @@ export class WorkstreamTerminalStorage {
    * Change nothing, so the endpoint's commit republishes this sandbox's
    * lifecycle deadline to the directory.
    *
-   * The lifecycle sweep calls it when a due directory entry had nothing due
-   * behind it: the published deadline is stale — left, for instance, by a
-   * version that projected the observation deadline — and nothing else would
-   * move it. A projection whose hash has not moved is not re-enqueued, so this
-   * costs nothing when the directory is already right.
+   * Rollout scaffolding. The lifecycle sweep calls it when a due directory
+   * entry had nothing due behind it, which is what an entry stamped by the
+   * version that projected the one-minute observation deadline looks like;
+   * nothing else would move it. A projection whose hash has not moved is not
+   * re-enqueued, so it costs nothing when the directory is already right.
+   *
+   * Remove it, its protocol entry and the sweep's call once this version has
+   * run in every region for a day: every such entry came due within a minute
+   * of its last check, so each has been swept and corrected by then. Without
+   * it a stale entry is not silent — it keeps reporting as a Terminal stall.
    */
   republishDeadline(): null {
     return null;
