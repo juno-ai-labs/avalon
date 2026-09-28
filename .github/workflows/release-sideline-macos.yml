@@ -127,6 +127,8 @@ jobs:
 
             # Every contract change matches deploy-api.yml's paths, so its run
             # exists and is not listed yet. The job's timeout bounds the wait.
+            # 30 s set by Adam (2026-09-28): about 90 GITHUB_TOKEN calls over a
+            # full 45-minute wait, against 1,000 an hour.
             if [[ -z "$run_id" ]]; then
               echo "No listed main-line API deployment contains contract commit ${SIDELINE_API_DEPLOYMENT_REF} yet; checking again" >&2
               sleep 30

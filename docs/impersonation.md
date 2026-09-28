@@ -253,7 +253,8 @@ retry count, which would be a second number on top of the job timeout.
 **Consequences:** Every contract change matches `deploy-api.yml`'s `packages/**`
 path, so a missing run means one not listed yet. A gate that truly finds none
 now fails at the job timeout, with a line per check in the log, rather than at
-once. The 30-second interval is a placeholder the team should confirm.
+once. Adam set the 30-second interval: about 90 `GITHUB_TOKEN` calls over a
+full 45-minute wait, against 1,000 an hour.
 
 ### 2026-09-24 — Sideline's catalog follows membership changes
 
