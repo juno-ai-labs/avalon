@@ -255,6 +255,21 @@ function ftsQuery(value: string): string | null {
     .join(" OR ");
 }
 
+/**
+ * Scope rows this isolate has already seen, keyed by (workspace, kind, owner).
+ * A row never changes once created: `memory_scopes_are_immutable` refuses an
+ * update, the table is typed-RPC-only and nothing deletes from it, and
+ * `ensureWorkspaceMemoryScope` answers the stored row for an existing key. So
+ * the id is safe to keep for the isolate's life. `writable` is not part of the
+ * row — it depends on the caller's role — and is applied per call.
+ */
+const scopeRows = new Map<string, Omit<MemoryScope, "writable">>();
+
+/** Drops every remembered scope. Exists for tests, whose fixtures re-create scopes under the same key. */
+export function clearMemoryScopeCache(): void {
+  scopeRows.clear();
+}
+
 export async function ensureScope(
   env: Env,
   workspaceId: string,
@@ -262,6 +277,9 @@ export async function ensureScope(
   ownerId: string,
   writable: boolean,
 ): Promise<MemoryScope> {
+  const key = JSON.stringify([workspaceId, kind, ownerId]);
+  const known = scopeRows.get(key);
+  if (known) return { ...known, writable };
   const workspace = await workspaceMemoryObject(env, workspaceId);
   const scope = WorkspaceMemoryScopeSchema.parse(await workspace.ensureMemoryScope({
     workspaceId,
@@ -270,13 +288,14 @@ export async function ensureScope(
     ownerId,
     at: nowIso(),
   }));
-  return {
+  const row = {
     memoryScopeId: scope.memoryScopeId,
     workspaceId: scope.workspaceId,
     kind: scope.kind,
     ownerId: scope.ownerId,
-    writable,
   };
+  scopeRows.set(key, row);
+  return { ...row, writable };
 }
 
 /** Resolve the complete memory scope union from host-owned run authority. */
