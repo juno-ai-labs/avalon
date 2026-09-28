@@ -230,7 +230,11 @@ interface WorkspaceSocketContextValue {
    * Rejects once `signal` aborts, before asking for another page.
    */
   walkSpaceChannels(signal?: AbortSignal): Promise<Set<string> | null>;
-  /** Walk this Space first, ahead of the rest: the one on screen. */
+  /**
+   * The Space on screen: walked first, ahead of the rest. One that no walk
+   * has returned or is walking, such as a Space created since, is asked for
+   * now on its own.
+   */
   prioritizeSpace(spaceId: string | null): void;
   /** The Spaces a walk has returned whole. A Space missing here may still be loading. */
   loadedSpaceIds: ReadonlySet<string>;
@@ -403,6 +407,7 @@ export function WorkspaceSocketProvider({
   );
   const walkSpaceChannelsRef = useRef<(signal?: AbortSignal) => Promise<Set<string> | null>>(() => Promise.resolve(null));
   const prioritySpaceIdRef = useRef<string | null>(null);
+  const walkSpaceNowRef = useRef<(spaceId: string) => void>(() => undefined);
   const [loadedSpaceIds, setLoadedSpaceIds] = useState<ReadonlySet<string>>(() => new Set());
 
   useEffect(() => {
@@ -688,11 +693,33 @@ export function WorkspaceSocketProvider({
      * One Space's pages, in order: each asks after the last. `onFirstPage`
      * is called once the first page is written.
      */
+    /** Spaces a walk has returned whole, and Spaces being walked now. */
+    const loadedSpaces = new Set<string>();
+    const walkingSpaces = new Set<string>();
+    /** Whole walks running now, and whether one has finished. */
+    let fullWalks = 0;
+    let fullWalkFinished = false;
     const walkSpace = async (
       spaceId: string,
       returned: Set<string>,
       signal: AbortSignal | undefined,
       onFirstPage: () => void = () => undefined,
+    ): Promise<void> => {
+      walkingSpaces.add(spaceId);
+      try {
+        await walkSpacePages(spaceId, returned, signal, onFirstPage);
+      } finally {
+        walkingSpaces.delete(spaceId);
+      }
+      loadedSpaces.add(spaceId);
+      setLoadedSpaceIds((current) => current.has(spaceId) ? current : new Set([...current, spaceId]));
+      scheduleRailPrefetch();
+    };
+    const walkSpacePages = async (
+      spaceId: string,
+      returned: Set<string>,
+      signal: AbortSignal | undefined,
+      onFirstPage: () => void,
     ): Promise<void> => {
       const held = (queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [])
         .filter((row) => !row.pending && row.spaceIds.includes(spaceId));
@@ -712,11 +739,29 @@ export function WorkspaceSocketProvider({
         if (after === null) onFirstPage();
         after = answer.nextAfter;
       } while (after !== null && !stopped);
-      setLoadedSpaceIds((current) => current.has(spaceId) ? current : new Set([...current, spaceId]));
-      scheduleRailPrefetch();
+    };
+    // A Space put on screen that no walk has returned: one listed since the
+    // last whole walk, such as a Space just created. A whole walk still to
+    // come or running reaches it itself. Its failure leaves it for the next.
+    walkSpaceNowRef.current = (spaceId) => {
+      if (!channelsBySpace || !subscribed || !fullWalkFinished || fullWalks > 0
+        || loadedSpaces.has(spaceId) || walkingSpaces.has(spaceId)) return;
+      void walkSpace(spaceId, new Set(), undefined).catch(() => undefined);
     };
     walkSpaceChannelsRef.current = async (signal) => {
       if (!channelsBySpace) return null;
+      fullWalks += 1;
+      try {
+        const returned = await walkEverySpace(signal);
+        fullWalkFinished = true;
+        return returned;
+      } finally {
+        fullWalks -= 1;
+        // A Space put on screen while the walk ran, and listed after it looked.
+        if (prioritySpaceIdRef.current !== null) walkSpaceNowRef.current(prioritySpaceIdRef.current);
+      }
+    };
+    const walkEverySpace = async (signal: AbortSignal | undefined): Promise<Set<string>> => {
       const returned = new Set<string>();
       const walked = new Set<string>();
       // The Space on screen alone, until its first page is in; then every
@@ -1310,6 +1355,7 @@ export function WorkspaceSocketProvider({
       rejectPendingRailRequests(new ApiError('The organization closed.', 409, 'workspace_socket_closed'));
       rejectPendingSpaceRequests(new ApiError('The organization closed.', 409, 'workspace_socket_closed'));
       walkSpaceChannelsRef.current = () => Promise.resolve(null);
+      walkSpaceNowRef.current = () => undefined;
       scheduleRailPrefetchRef.current = () => undefined;
       refreshChannelRailsRef.current = () => Promise.reject(new ApiError('The organization closed.', 409, 'workspace_socket_closed'));
       window.removeEventListener('online', online);
@@ -1423,6 +1469,7 @@ export function WorkspaceSocketProvider({
   );
   const prioritizeSpace = useCallback((spaceId: string | null): void => {
     prioritySpaceIdRef.current = spaceId;
+    if (spaceId !== null) walkSpaceNowRef.current(spaceId);
   }, []);
   const exposedState: WorkspaceSocketState = ownSocket ? state : relayedState;
   const value = useMemo(

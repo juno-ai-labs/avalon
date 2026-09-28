@@ -444,14 +444,14 @@ describe('useWorkstreamsQuery', () => {
         lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true,
       });
       walkSpaceChannels.mockResolvedValue(new Set(['workstream-1']));
-      listWorkstreams.mockResolvedValue({
-        items: [summary('workstream-1', 'Launch brief'), { ...summary('digest', 'Digest'), systemKind: 'digest' }],
-        nextCursor: null,
-      });
+      // The system row sits past a page of newer ordinary Channels.
+      listWorkstreams.mockImplementation(async (input: { before?: string }) => input.before === 'page-2'
+        ? { items: [{ ...summary('digest', 'Digest'), systemKind: 'digest' }], nextCursor: null }
+        : { items: [summary('workstream-1', 'Launch brief')], nextCursor: 'page-2' });
       const { result, rerender } = renderHook(() => useWorkstreamsQuery(), { wrapper });
       landConnectPayload(rerender);
       await waitFor(() => expect(result.current.data?.map((row) => row.id)).toEqual(['workstream-1', 'digest']));
-      expect(listWorkstreams.mock.calls.at(-1)?.[0]).toMatchObject({ includeSystem: true });
+      expect(listWorkstreams.mock.calls.at(-1)?.[0]).toMatchObject({ includeSystem: true, before: 'page-2' });
     });
   });
 });
