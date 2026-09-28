@@ -1,5 +1,5 @@
 import { PersonalOrderSchema, SpaceDirectorySchema, WorkstreamPrivateChildSchema, type PersonalOrder, type SpaceDirectory } from '@rally/contracts';
-import { heldChannelBreakouts, seedChannelBreakouts, type ChannelBreakoutLists } from './channel-viewer-state';
+import { heldChannelBreakouts, isWorkstreamChildrenQueryKey, seedChannelBreakouts, type ChannelBreakoutLists } from './channel-viewer-state';
 import { notifyManager, type QueryClient } from '@tanstack/react-query';
 import { defineLocalCacheSlice, localCacheEpoch } from './local-cache';
 import { mirrorQueriesToLocalCache, queryKeyIsOneOf, type QueryMirror } from './local-cache-mirror';
@@ -213,12 +213,6 @@ export async function hydrateWorkspaceDirectory(
   return true;
 }
 
-/**
- * Keep the workspace's directory row equal to the lists in the query cache,
- * once the socket has delivered them. `live` is the caller's word that the
- * lists are the socket's rather than a seed; until it says so, changes are
- * observed and nothing is written.
- */
 const directoryKey = queryKeyIsOneOf([
   WORKSTREAMS_QUERY_KEY,
   SIDEBAR_LIST_QUERY_KEYS.automations,
@@ -227,13 +221,19 @@ const directoryKey = queryKeyIsOneOf([
   PERSONAL_ORDER_QUERY_KEY,
 ]);
 
+/**
+ * Keep the workspace's directory row equal to the lists in the query cache,
+ * once the socket has delivered them. `live` is the caller's word that the
+ * lists are the socket's rather than a seed; until it says so, changes are
+ * observed and nothing is written.
+ */
 export function mirrorWorkspaceDirectory(
   queryClient: QueryClient,
   scope: string,
   options: { live: () => boolean },
 ): QueryMirror {
   return mirrorQueriesToLocalCache<CachedWorkspaceDirectory>(queryClient, {
-    matches: (queryKey) => directoryKey(queryKey) || queryKey[0] === 'workstream-children',
+    matches: (queryKey) => directoryKey(queryKey) || isWorkstreamChildrenQueryKey(queryKey),
     snapshot: () => {
       if (!options.live()) return null;
       const workstreams = queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY);
