@@ -121,10 +121,17 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
       const returned = await walkSpaceChannels(signal);
       if (returned !== null) {
         // System work streams sit in no Space; Debug adds the directory's.
-        const system = debugEnabled
-          ? (await listWorkstreams({ limit: WORKSTREAM_PAGE_SIZE, includeSystem: true })).items
-            .filter((workstream) => workstream.systemKind !== undefined)
-          : [];
+        // They can be anywhere in its recency order, so every page is read.
+        const system: WorkstreamSummary[] = [];
+        for (let cursor: string | null | undefined = debugEnabled ? undefined : null; cursor !== null;) {
+          const page = await listWorkstreams({
+            limit: WORKSTREAM_PAGE_SIZE,
+            ...(cursor ? { before: cursor } : {}),
+            includeSystem: true,
+          });
+          system.push(...page.items.filter((workstream) => workstream.systemKind !== undefined));
+          cursor = page.nextCursor;
+        }
         pagesLoaded.current = 1;
         nextCursor.current = null;
         setHasMore(false);

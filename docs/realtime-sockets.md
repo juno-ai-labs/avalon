@@ -371,7 +371,9 @@ Spaces. Pages within one Space follow each other, since each asks after the
 last. WorkspaceDO answers one request at a time either way, so asking together
 saves a round trip per Space rather than server work. It asks for rails unless
 it already holds one for every Channel it knows in that Space. Each page is
-written as it lands, so the Space on screen paints before the walk is over. When the walk
+written as it lands, so the Space on screen paints before the walk is over. A
+Space put on screen that no walk has returned, such as one created since the
+last walk, is asked for on its own; a walk running then reaches it itself. When the walk
 ends, a row held before it that no Space returned is dropped. A reconnect or a
 `workstream_directory` invalidation walks again.
 
