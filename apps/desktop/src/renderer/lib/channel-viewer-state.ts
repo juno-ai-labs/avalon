@@ -20,6 +20,8 @@ import { workstreamDetailQueryKey } from './workstreams-cache';
  * `docs/realtime-sockets.md` owns the protocol.
  */
 export const workstreamChildrenQueryKey = (workstreamId: string) => ['workstream-children', workstreamId] as const;
+export const isWorkstreamChildrenQueryKey = (queryKey: readonly unknown[]): boolean =>
+  queryKey[0] === workstreamChildrenQueryKey('')[0];
 export const workstreamBackgroundAgentsQueryKey = (workstreamId: string) =>
   ['workstream-background-agents', workstreamId] as const;
 
@@ -29,10 +31,7 @@ interface BreakoutAppearanceOverlay {
 }
 
 export type WorkstreamChildDirectory = Pick<Workstream, 'privateChildren' | 'privateChildrenWaterline'> & {
-  /**
-   * Absent on a list restored from the device, which has no version to hold
-   * against the socket: the first live row for the Channel replaces it.
-   */
+  /** Absent on a list seeded from the device; see `seedChannelBreakouts`. */
   stateVersion?: WorkstreamStateVersion;
   /** Receipt-backed rows waiting for the parent's authoritative projection. */
   appearanceOverlays?: Record<string, BreakoutAppearanceOverlay>;

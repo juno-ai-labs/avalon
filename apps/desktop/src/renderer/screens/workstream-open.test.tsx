@@ -1040,6 +1040,28 @@ describe('socket-first channel open', () => {
     await waitFor(() => expect(locationInTest.search).toBe(`?substream=${childId}`));
   });
 
+  it('keeps the opening rail, and its focus, when the snapshot lands', async () => {
+    const childId = '00000000-0000-7000-8000-00000000067b';
+    const parent = recoveryBoot();
+    const queryClient = renderScreen((cache) => {
+      setCachedWorkstreams(cache, [{ id: workstreamId, title: parent.title, scope: 'workspace' } as WorkstreamSummary]);
+      cache.setQueryData(['workstream-children', workstreamId], { privateChildren: [
+        { substreamId: childId, title: 'Pricing', createdByUserId: null, createdAt: '2026-08-17T19:00:00.000Z', updatedAt: '2026-08-17T19:00:00.000Z' },
+      ] });
+    });
+    const row = screen.getByRole('button', { name: 'Go to breakout: Pricing' });
+    row.focus();
+
+    act(() => {
+      queryClient.setQueryData(['workstream', workstreamId], parent);
+      queryClient.setQueryData(['ordered-transcript', workstreamId], parent.transcript);
+    });
+
+    await screen.findByRole('textbox', { name: /message/iu });
+    expect(screen.getByRole('button', { name: 'Go to breakout: Pricing' })).toBe(row);
+    expect(row).toHaveFocus();
+  });
+
   it('keeps the placeholder rail while the directory has no breakout list for the channel', () => {
     renderScreen((cache) => {
       setCachedWorkstreams(cache, [{ id: workstreamId, title: 'Launch plan', scope: 'workspace' } as WorkstreamSummary]);

@@ -144,6 +144,8 @@ export function WorkstreamHeader({ workspaceTarget, spaceId, onCopyLinkFailure, 
     onCopyId={() => copy(props.workstream.id, 'workstream_id')} />;
 }
 
+type RailContext = Parameters<NonNullable<React.ComponentProps<typeof ConversationSurface>['renderSidebar']>>[0];
+
 /** A work stream: the shared conversation surface under the work-stream header. */
 export function WorkstreamScreen(): React.JSX.Element {
   const { id = '' } = useParams();
@@ -566,6 +568,54 @@ export function WorkstreamScreen(): React.JSX.Element {
       throw error;
     }
   };
+  // One rail for both states. Before the snapshot, everything it lists comes
+  // from the directory; only the people and the Sidekicks wait, and hold their
+  // places until the context arrives. Without a breakout list the placeholder
+  // rail stands in, since Main alone would read as a Channel with no breakouts.
+  const railTitle = parent.data?.title ?? row?.title ?? sharedParent?.title ?? undefined;
+  const renderRail = (context: RailContext | undefined): React.JSX.Element => (
+    <WorkstreamSidebar
+      scrollStateKey={railScrollKey}
+      mainVisible={!conversationScoped || selectedSubstreamId === '0'}
+      onSidekickMenuOpen={context?.loadSidekickOptions}
+      onRefreshSidekicks={context?.refreshSidekicks}
+      addSidekick={context && <SidekickPicker workstreamId={id} substreamId={selectedSubstreamId} />}
+      sidekicks={context?.sidekicks}
+      sidekickFailure={context?.sidekickFailure}
+      participantsPending={context === undefined}
+      workstream={{
+        ...(context?.detail ?? { id, participants: [], resources: [], scope: row?.scope ?? sharedParent?.scope }),
+        title: railTitle ?? context?.detail.title ?? '',
+        appearance: rowAppearance ?? parent.data?.appearance ?? sharedParent?.appearance,
+        needsAttention: selectedSubstreamId === '0' ? (context ? conversationNeedsViewer(context.detail) : undefined) : parent.data ? conversationNeedsViewer(parent.data) : sharedParent?.conversations.find((child) => child.substreamId === '0')?.needsAttention,
+        privateChildren: railChildren,
+      }}
+      creatingSubstream={creation?.parentId === id && launching !== null
+        ? { reservedSubstreamId: reservedChildId }
+        : null}
+      presentUserIds={context?.presentUserIds ?? []}
+      onParticipants={context?.openParticipantDialog ?? (() => undefined)}
+      selectedSubstreamId={creation?.parentId === id ? PENDING_SUBSTREAM_DRAFT_ID : selectedSubstreamId}
+      onSelectSubstream={selectSubstream}
+      onNewSubstream={() => startCreation(null)}
+      onOpenArtifact={context?.openArtifact ?? (() => undefined)}
+      onFocusTranscript={context?.focusTranscript ?? (() => undefined)}
+      mainActions={(conversationScoped ? selectedSubstreamId === '0' : parent.data) ? {
+        onMakePublic: conversationScoped || parent.data?.systemKind ? undefined : makePublic,
+        publicDisabled: parent.data?.scope === 'workspace' || substreamPending,
+        onShare: (target) => setSharingSubstream(target.substreamId),
+        onCopyLink: session?.workspace ? copyRowLink : undefined,
+        onRename: (target) => { ++menuOperation.current; setRenameTarget({ ...target, parentId: id }); setRenameTitle(target.title); setSubstreamMenuFailure(null); },
+        onArchive: conversationScoped ? undefined : (target) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuFailure(null); },
+      } : undefined}
+      substreamActions={{
+        onShare: (target) => setSharingSubstream(target.substreamId),
+        onCopyLink: session?.workspace ? copyRowLink : undefined,
+        onRename: (child) => { ++menuOperation.current; setRenameTarget({ ...child, parentId: id }); setRenameTitle(child.title); setSubstreamMenuFailure(null); },
+        onArchive: (child) => { ++menuOperation.current; setArchiveTarget({ ...child, parentId: id }); setSubstreamMenuFailure(null); },
+      }}
+    />
+  );
   return (
     <>
     {api && session?.workspace && sharingSubstream !== null && <ShareConversationDialog api={api} workspaceId={session.workspace.id} parentId={id} substreamId={sharingSubstream} open onOpenChange={(open) => { if (!open) setSharingSubstream(null); }} />}
@@ -584,77 +634,8 @@ export function WorkstreamScreen(): React.JSX.Element {
         onCancel: resetCreation,
         onCreate: createSubstream,
       } : null}
-      renderOpeningSidebar={() => {
-        // The rail is the directory's, not the conversation's: its name, its
-        // mark and its breakouts all arrive on the workspace socket, so it
-        // need not wait for this conversation's snapshot. Only the people and
-        // the Sidekicks do, and they hold their places until it lands. With no
-        // breakout list yet, the placeholder rail stands in instead, because
-        // Main alone would read as a Channel with no breakouts.
-        const title = parent.data?.title ?? row?.title ?? sharedParent?.title;
-        if (title === undefined || title === null || railChildren === undefined) return null;
-        return (
-          <WorkstreamSidebar
-            scrollStateKey={railScrollKey}
-            mainVisible={!conversationScoped || selectedSubstreamId === '0'}
-            sidekicks={undefined}
-            participantsPending
-            presentUserIds={[]}
-            workstream={{
-              id,
-              title,
-              appearance: rowAppearance ?? parent.data?.appearance ?? sharedParent?.appearance,
-              scope: parent.data?.scope ?? row?.scope ?? sharedParent?.scope,
-              needsAttention: selectedSubstreamId === '0' ? undefined : parent.data ? conversationNeedsViewer(parent.data) : sharedParent?.conversations.find((child) => child.substreamId === '0')?.needsAttention,
-              participants: [],
-              resources: [],
-              privateChildren: railChildren,
-            }}
-            selectedSubstreamId={creation?.parentId === id ? PENDING_SUBSTREAM_DRAFT_ID : selectedSubstreamId}
-            onSelectSubstream={selectSubstream}
-            onNewSubstream={() => startCreation(null)}
-            onOpenArtifact={() => undefined}
-            onFocusTranscript={() => undefined}
-            onParticipants={() => undefined}
-          />
-        );
-      }}
-      renderSidebar={(context) => (
-        <WorkstreamSidebar
-          scrollStateKey={railScrollKey}
-          mainVisible={!conversationScoped || selectedSubstreamId === '0'}
-          onSidekickMenuOpen={context.loadSidekickOptions}
-          onRefreshSidekicks={context.refreshSidekicks}
-          addSidekick={<SidekickPicker workstreamId={context.detail.id} substreamId={selectedSubstreamId} />}
-          sidekicks={context.sidekicks}
-          sidekickFailure={context.sidekickFailure}
-          workstream={{ ...context.detail, title: parent.data?.title ?? context.detail.title, appearance: rowAppearance ?? parent.data?.appearance, needsAttention: selectedSubstreamId === '0' ? conversationNeedsViewer(context.detail) : parent.data ? conversationNeedsViewer(parent.data) : sharedParent?.conversations.find((child) => child.substreamId === '0')?.needsAttention, privateChildren: railChildren }}
-          creatingSubstream={creation?.parentId === id && launching !== null
-            ? { reservedSubstreamId: reservedChildId }
-            : null}
-          presentUserIds={context.presentUserIds}
-          onParticipants={context.openParticipantDialog}
-          selectedSubstreamId={creation?.parentId === id ? PENDING_SUBSTREAM_DRAFT_ID : selectedSubstreamId}
-          onSelectSubstream={selectSubstream}
-          onNewSubstream={() => startCreation(null)}
-          onOpenArtifact={context.openArtifact}
-          onFocusTranscript={context.focusTranscript}
-          mainActions={(conversationScoped ? selectedSubstreamId === '0' : parent.data) ? {
-            onMakePublic: conversationScoped || parent.data?.systemKind ? undefined : makePublic,
-            publicDisabled: parent.data?.scope === 'workspace' || substreamPending,
-            onShare: (target) => setSharingSubstream(target.substreamId),
-            onCopyLink: session?.workspace ? copyRowLink : undefined,
-            onRename: (target) => { ++menuOperation.current; setRenameTarget({ ...target, parentId: id }); setRenameTitle(target.title); setSubstreamMenuFailure(null); },
-            onArchive: conversationScoped ? undefined : (target) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuFailure(null); },
-          } : undefined}
-          substreamActions={{
-            onShare: (target) => setSharingSubstream(target.substreamId),
-            onCopyLink: session?.workspace ? copyRowLink : undefined,
-            onRename: (child) => { ++menuOperation.current; setRenameTarget({ ...child, parentId: id }); setRenameTitle(child.title); setSubstreamMenuFailure(null); },
-            onArchive: (child) => { ++menuOperation.current; setArchiveTarget({ ...child, parentId: id }); setSubstreamMenuFailure(null); },
-          }}
-        />
-      )}
+      renderOpeningSidebar={() => (railTitle === undefined || railChildren === undefined ? null : renderRail(undefined))}
+      renderSidebar={renderRail}
       renderHeader={(context) => (
         <WorkstreamHeader
           actions={api && session?.workspace ? <>

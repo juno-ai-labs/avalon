@@ -190,39 +190,21 @@ function ConversationOpeningSidebar(): React.JSX.Element {
   );
 }
 
-export function ConversationOpeningSkeleton({
-  label,
-  parentKind,
-  sidebar = false,
-  rail,
-}: {
-  label: string;
-  parentKind: ConversationParentKind;
-  sidebar?: boolean;
-  /**
-   * The host's real rail, drawn from what the workspace socket already holds.
-   * It stands in for the placeholder rail, and it is interactive, so the
-   * status role moves off the layout onto the feed: a live region around
-   * navigation would read the rail out as the opening's status.
-   */
-  rail?: React.ReactNode;
-}): React.JSX.Element {
-  const hasRail = rail !== undefined && rail !== null;
+/**
+ * The feed, header and composer placeholders, and the status that says what is
+ * opening. The status lives here rather than on the layout so that a rail drawn
+ * beside it, placeholder or real, is never read out as part of it.
+ */
+function ConversationOpeningFeed({ label, parentKind }: { label: string; parentKind: ConversationParentKind }): React.JSX.Element {
   return (
     <div
-      aria-label={hasRail ? undefined : label}
-      className="conversation-layout conversation-opening-skeleton"
-      role={hasRail ? undefined : 'status'}
-    >
-      {hasRail ? rail : sidebar && <ConversationOpeningSidebar />}
-      <div
-        aria-hidden={hasRail ? undefined : 'true'}
-        aria-label={hasRail ? label : undefined}
-        role={hasRail ? 'status' : undefined}
-        className={clsx(
+      aria-label={label}
+      className={clsx(
         'workstream-screen conversation-opening-feed',
         parentKind === 'automation' && 'automation-screen',
-      )}>
+      )}
+      role="status"
+    >
         {parentKind === 'automation' ? (
           <header className="sidekick-conversation-heading window-drag conversation-opening-header">
             <span className="skeleton-bar conversation-opening-header-title" />
@@ -282,9 +264,24 @@ export function ConversationOpeningSkeleton({
         <div className="composer-dock conversation-opening-composer-dock">
           <div className="skeleton-bar conversation-opening-composer" />
         </div>
-        {hasRail && <span className="sr-only">{label}</span>}
-      </div>
-      {!hasRail && <span className="sr-only">{label}</span>}
+        <span className="sr-only">{label}</span>
+    </div>
+  );
+}
+
+export function ConversationOpeningSkeleton({
+  label,
+  parentKind,
+  sidebar = false,
+}: {
+  label: string;
+  parentKind: ConversationParentKind;
+  sidebar?: boolean;
+}): React.JSX.Element {
+  return (
+    <div className="conversation-layout conversation-opening-skeleton">
+      {sidebar && <ConversationOpeningSidebar />}
+      <ConversationOpeningFeed label={label} parentKind={parentKind} />
     </div>
   );
 }
@@ -2430,11 +2427,25 @@ export function ConversationSurface({
         />
       );
     }
+    const openingLabel = `Opening ${parentKind === 'automation' ? 'Sidekick' : parentNoun}…`;
+    const openingRail = renderSidebar ? renderOpeningSidebar?.() : null;
+    if (openingRail) {
+      // The same tree as the live layout below, rail first, so the rail is
+      // kept rather than remounted when the snapshot lands: focus, an open
+      // tip and the scroll position survive. Only the feed changes.
+      return (
+        <ConnectorConnectionsProvider connections={visibleConnections}>
+          <div className="conversation-layout conversation-opening-skeleton">
+            {openingRail}
+            <ConversationOpeningFeed label={openingLabel} parentKind={parentKind} />
+          </div>
+        </ConnectorConnectionsProvider>
+      );
+    }
     return (
       <ConversationOpeningSkeleton
-        label={`Opening ${parentKind === 'automation' ? 'Sidekick' : parentNoun}…`}
+        label={openingLabel}
         parentKind={parentKind}
-        rail={renderSidebar ? renderOpeningSidebar?.() : undefined}
         sidebar={renderSidebar !== undefined}
       />
     );
