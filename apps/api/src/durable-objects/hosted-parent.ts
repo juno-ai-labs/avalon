@@ -1840,6 +1840,20 @@ export class HostedParent {
     }, relationship);
   }
 
+  /**
+   * Every conversation of this parent the person may read, each decided by
+   * {@link canReadConversation}, the rule this parent's own reads apply. Search
+   * lists them as the person's audience groups (`readSearchAudience`), so the
+   * index admits exactly what opening the conversation would.
+   */
+  readableSubstreams(userId: UserId, relationship: WorkspaceRelationship | null): SubstreamId[] {
+    const metadata = this.metadataRow();
+    if (!metadata) return [];
+    const address = { workspaceId: metadata.workspace_id, parentId: this.parentId, userId };
+    return this.childRegistry().map((child) => asSubstreamId(child.substreamId))
+      .filter((substreamId) => this.canReadConversation(address, substreamId, relationship));
+  }
+
   /** A union of the grant authority and the legacy roster; see the legacy object's comment. */
   private canReadConversation(
     address: { workspaceId: string; parentId: string; userId: UserId },

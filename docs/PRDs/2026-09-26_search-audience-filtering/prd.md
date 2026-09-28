@@ -218,6 +218,50 @@ need them. Rewriting every chunk would re-embed the whole fleet.
 backfill `audience` on chunk rows (for example with `patch_by_filter` per
 source), recorded in [text search](../../text-search.md#changelog).
 
+### 2026-09-28 — The person side reuses each parent's own conversation check
+
+**Decided:** `readSearchAudience` decides every conversation through
+`HostedParent.readableSubstreams`, which applies the parent's existing
+`canReadConversation` (grant authority where a substream has migrated, the
+legacy roster otherwise). The legacy Main roster is therefore the parent's own
+participant projection, the copy `channel_viewers` is built from, rather than
+that table itself. A guest reaches a workstream Sidekick only through
+management access on its owning Channel (`HostedParent.managementAccess`).
+The person's relationship is read from the object's own member table
+(`readRelationship`), which carries the incarnation grant checks bind to,
+rather than passed in from the route's membership observation.
+
+**Why:** One implementation per rule, which the security model requires, and no
+new SQL that could drift from the parent's reads.
+
+**Changes:** Refines "read classic Channel rosters from `channel_viewers`" to its
+source; same data, same lag.
+
+### 2026-09-28 — The phase 3 gate test is a rule table, not a comparison with `checkMany`
+
+**Decided:** `test-workers/search-audience-person.test.ts` asserts each person's
+exact groups against the rule table in [`design.md`](design.md) rather than
+comparing with `AuthorizationService.checkMany` per pair.
+
+**Why:** Canonical legacy-Main and Sidekick decisions read the main
+SubstreamAgent and the SidekickDO, which a WorkspaceDO fixture does not host,
+so a per-pair comparison would compare against `unavailable`. Grant-authority
+substreams are decided by `resolveScopedAccess`, the function the person side
+calls, and are not re-derived by the test.
+
+**Changes:** The differential test described in the design is narrowed to this.
+
+### 2026-09-28 — Existing Sidekicks publish their executor once
+
+**Decided:** SidekickDO migration 10 republishes each Sidekick's directory row,
+as migration 3 did, so `automation_directory.run_as_user_id` (WorkspaceDO
+migration 81) fills in as each Sidekick wakes. Until then an executor who is not
+also the author reads that Sidekick's conversations through the other rules only.
+
+**Why:** The directory is fed only by each Sidekick's own outbox.
+
+**Changes:** None to scope.
+
 ## Key design decisions
 
 1. **Rows carry where they live, not who can read them.** A row's audience is

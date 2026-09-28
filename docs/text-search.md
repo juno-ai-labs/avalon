@@ -330,17 +330,20 @@ existing projection publication obligation; semantic policy/namespace changes
 require a canonical-source backfill. Queue depth and chunk counts alone do not
 establish that all canonical documents have migrated.
 
-Sources provide server-resolved scope IDs and an admitting loader. Search filters
-by those grants, validates returned candidate metadata, then invokes each loader
-only for candidates belonging to its source and scopes. The loader admits through
-the projection and builds results from the candidate's own attributes; nothing is
+Member search first reads the searcher's audience groups from the WorkspaceDO
+(`readSearchAudience`, one RPC over tables the object already holds) and adds
+`audience ContainsAny <groups>` to the query, so the index returns only rows the
+searcher may read. Sources provide server-resolved scope IDs and a loader; search
+validates returned candidate metadata, then invokes each loader only for
+candidates belonging to its source and scopes. The loader builds results from the
+candidate's own attributes; nothing is admitted one by one and nothing is
 reloaded from a canonical source.
 
 ## Invariants
 
 - Search scope enumeration includes archived and system conversations and has its own complete-list contract. Sidebar visibility is not search readability.
-- Scope prefilters are an optimization, never authority. The projected search decision decides every returned result; an index attribute never grants access. `connection_id` names which decision admits a row; it grants nothing by itself.
-- The response never reports what it omitted. A projection miss is filled after the response, and the mutation-side registration is what keeps misses rare; there is no partial-results flag to carry one.
+- The searcher's audience groups decide which rows member search returns: a row is a candidate only when its `audience` shares one of them. This reverses the earlier rule that an index attribute never grants access, deliberately and only for search (see the 2026-09-28 changelog entry). The groups are computed live on every search by `readSearchAudience`, which decides each conversation through its parent's own `readableSubstreams` and each connection by the predicate `authorizationConnectionFacts` applies; no other code may compute a person's groups. The attribute still grants nothing beyond the excerpt: opening a row keeps its own canonical check. Scope prefilters remain an optimization, and `connection_id` grants nothing.
+- The response never reports what it omitted. A failed group read fails the search (the route's 503); it never returns an unfiltered page.
 - A row without its display attributes, or with `archived` set, is never returned. Member retrieval filters on `archived Eq false`, which a null attribute does not match, so neither kind consumes a candidate page; the read path checks the same value again on every row it renders. Omission is the safe failure; nothing falls back to a canonical reload.
 - Every writer of a conversation's display writes the current state it reads beside the text: the producer at upsert time, the patch job when it runs. A display job names the conversation and never carries a title, so a delayed or redelivered job cannot write an old one; the pipeline's post-write fence retries an upsert whose display changed underneath it, and the patch job re-reads the display after patching and retries when it changed, so two overlapping deliveries for one conversation converge on the newest state rather than the last to run.
 - A resource result's time is the resource's `updated_at` as of its last search-input change. Bookkeeping writes (processing state, webhook provenance, hydration stamps) bump `updated_at` without requeueing the row, on purpose, so the index shows when the content last changed rather than when the row was last touched.
@@ -352,7 +355,7 @@ reloaded from a canonical source.
   frozen. Input fragments must be cleared before every count returns or throws.
 - Chunk offsets use the sorted code-point boundary array directly; do not add
   a per-character Map and its transient construction pairs.
-- Source loaders admit each candidate batch before rendering it. A new request admits again; an admitted result may finish after a concurrent revocation, which reaches the projection within its push delay rather than before the next page. A repeat served from the desktop's 30-second window is not a new request and readmits nothing, so that window is added to the push delay for an excerpt already on screen. The window runs from the first page's admission, not from the last continuation, because the pages of one query share a single freshness stamp and paging would otherwise renew a page nobody had readmitted. For two of the three row kinds what it exposes is the excerpt, because opening the row is its own authorized read: a message row hydrates its canonical transcript, a file row goes through `/search/resources/:id/preview`. A **link** row is the exception, and the exception is not only about the excerpt. Opening one hands `location.url` straight to the browser and asks nobody, and that URL is never rendered — the row shows the excerpt and the source label — so it is content behind the row rather than something the reader had already seen. The window therefore extends by up to 30 seconds the period in which a revoked link can be opened without a check. Re-deriving a link on click, the way the other two kinds are, is the fix if that is not acceptable; it needs an endpoint that does not exist, and would change link-opening on every path rather than only the cached one. Signing out, surrendering the active workspace, or losing the stored credential all clear the client (`queryClient.clear()`), and changing workspace or member is a different key, so none of those carry the window across.
+- Each request reads the searcher's groups again, so a revocation takes effect on the next search; a request already past its group read may still finish with the old groups. A repeat served from the desktop's 30-second window is not a new request and readmits nothing, so that window is how long a revoked excerpt can stay on screen. The window runs from the first page's admission, not from the last continuation, because the pages of one query share a single freshness stamp and paging would otherwise renew a page nobody had readmitted. For two of the three row kinds what it exposes is the excerpt, because opening the row is its own authorized read: a message row hydrates its canonical transcript, a file row goes through `/search/resources/:id/preview`. A **link** row is the exception, and the exception is not only about the excerpt. Opening one hands `location.url` straight to the browser and asks nobody, and that URL is never rendered — the row shows the excerpt and the source label — so it is content behind the row rather than something the reader had already seen. The window therefore extends by up to 30 seconds the period in which a revoked link can be opened without a check. Re-deriving a link on click, the way the other two kinds are, is the fix if that is not acceptable; it needs an endpoint that does not exist, and would change link-opening on every path rather than only the cached one. Signing out, surrendering the active workspace, or losing the stored credential all clear the client (`queryClient.clear()`), and changing workspace or member is a different key, so none of those carry the window across.
 - Namespace identity includes the embedding model and dimensions. Mixing spaces
   makes vector distances meaningless.
 - A row's `audience` names where it lives (its conversation, Sidekick, connection, uploader and, for a resource, the conversations it is attached in), never the people who may read it. A person's access changes must never require rewriting rows; a row is rewritten only when its own location changes. An empty or absent audience admits nobody: organization-wide readability is the explicit `members` group. Every group becomes a UUID only through `searchAudienceGroupId`.
@@ -371,11 +374,10 @@ All, Messages, Links, Artifacts, and Files tabs use literal case-insensitive
 substring retrieval. BM25 and ANN are available at the shared boundary but are
 not yet exposed through this member endpoint.
 
-Conversation loaders admit the parent/private-child batch and resource loaders
-admit their batch through the projected decision; neither reads an owner. The
-route revalidates the workspace session before returning. The index returns
-candidate identifiers, the canonical text and the display attributes the owning
-object wrote beside it, trusted for the projection's staleness window. Excerpts
+The index admits every candidate through its `audience`; loaders only render,
+and neither reads an owner. The route revalidates the workspace session before
+returning. The index returns candidate identifiers, the canonical text and the
+display attributes the owning object wrote beside it. Excerpts
 contain UTF-16 source ranges and excerpt-relative highlight ranges; React renders
 matching spans as text. Selecting a message hydrates its canonical sequence and
 positions the transcript. Selecting a file opens `/search/resources/:id/preview`, which repeats attachment
@@ -514,11 +516,23 @@ covers the display trigger, its outbox channel, the migration-52 requeue and the
 migration-51 and migration-53 re-projections against a cleared watermark and a
 drained outbox row; `test/search-document.test.ts` covers the contract accepting
 a document from a build ahead of it and naming the keys it dropped;
-`test-workers/search-authorization.test.ts`, `test-workers/conversation-parent-contract.test.ts`
-and `test/search-route.test.ts` cover deferred fills, connection-admitted rows and index-served rendering;
-`test-workers/search-authorization-universe.test.ts` covers what each push target registers, the
-push registering before it reloads, the `member` push and the connection decision
-with no content RPC. A disposable live namespace in gcp-us-west1 verified on
+`test-workers/search-audience-person.test.ts` holds the person side against the
+design's rule table (members and guests, open and personal Channels, a Breakout's
+own roster, Sidekicks by scope, author, executor and owning Channel, connections
+by scope, owner and status, a suspended member), and the executor arriving on a
+Sidekick's directory row; `test-workers/conversation-parent-contract.test.ts`
+covers index-served rendering, a member seeing only what their groups admit, and
+a removed reader losing a room's rows on the next search, with the provider
+double applying the query's audience clause as Turbopuffer does;
+`test/search-route.test.ts` covers the HTTP boundary, including a failed group
+read answering 503 without querying the index; `test/scoped-memory.test.ts`
+covers memory search checking each run canonically and storing no decision. `test-workers/search-authorization.test.ts` and
+`test-workers/search-authorization-universe.test.ts` still cover the old store
+until phase 4 deletes it, including that a push left in the Queue is dropped.
+A disposable live namespace in gcp-us-west1 verified on 2026-09-28 that
+`ContainsAny` over a `[]uuid` attribute returns exactly the rows sharing a group,
+that a row with an empty or absent audience never matches, and that the clause
+composes with `IGlob` and the `id Gt` cursor. A disposable live namespace in gcp-us-west1 verified on
 2026-09-10 that the display attributes can be added to an existing namespace,
 that `text` returns with the row, that `patch_by_filter` reports `rows_patched`
 and matches nothing on its second pass, that a tombstone is untouched, and that
@@ -559,6 +573,12 @@ failed before is captured again, and one that still fails throws
 exhausts the activity Queue's retries (six Browser Run calls) and dead-letters.
 Those are expected and harmless; count them against the
 `search_link_capture_failed` logs, and treat any other dead letter as real.
+Since the 2026-09-28 change member search filters on `audience`, so a row still
+missing it is invisible until its object migrates: force the migrations before
+that deploy, and re-count afterwards. The old search-authorization store is no
+longer pushed or read; its tables and triggers stay until phase 4 drops them, so
+a Worker rollback finds the recorded targets and must be followed by a full push
+(migration 48's pass).
 
 A WorkspaceDO dispatches resource references 100 at a time. While more are due
 after a batch, the next waits `RESOURCE_SEARCH_BACKLOG_INTERVAL_MS` (60
@@ -628,13 +648,15 @@ explicitly continue; legacy clients receive only the first candidate page.
 
 ## Security and trust model
 
-Index content is never an access grant. Member routes revalidate workspace sessions
-before returning, and source loaders admit canonical parent/private-child or
-connector ownership once per candidate batch. Connector resources retain their existing connection scope
-and owner rules. Attachment access checks the exact owning child, including when
-the main-feed directory has no attachment hint. The workspace namespace permits
-candidate discovery without enumerating the directory; every candidate still
-passes canonical authorization.
+A row's `audience` decides whether member search returns it, against the
+searcher's groups read live from the WorkspaceDO; beyond the excerpt it grants
+nothing, and every way of opening a row keeps its own canonical check. A bug in
+either side now shows rows rather than hiding them, which is why each side has
+exactly one implementation and the person side is tested against the canonical
+rule table. Unknown or empty audiences admit nobody, and a failed group read is a
+503. Member routes revalidate workspace sessions before returning. Connector rows
+admit only their connection's readers, and guests never hold a workspace
+connection's group. Attachment access checks the exact owning child when opened.
 
 The public tokenizer commit is an identifier, not a secret. Production and
 development keys must have appropriately separate provider permissions; namespace
@@ -649,6 +671,41 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-28 — Member search filters on the searcher's audience groups
+
+**What changed:** Member search reads the searcher's audience groups once per
+request from the WorkspaceDO (`readSearchAudience`) and adds
+`audience ContainsAny <groups>` to its Turbopuffer query; loaders no longer
+admit candidates through the projected search-authorization store. Memory
+search checks each run with `resolveMemoryAccess` directly. The old store is no
+longer pushed (the alarm stops flushing, and the Queue drops push jobs) or read.
+`automation_directory` gains `run_as_user_id` (WorkspaceDO migration 81; each
+Sidekick republishes its row once through SidekickDO migration 10) so a
+Sidekick's executor holds its group.
+
+**Why:** Phase 3 of docs/PRDs/2026-09-26_search-audience-filtering. The store
+cost work proportional to people times documents on every change: at Juno Labs
+about 3,000 register and write calls an hour (58 s of CPU), most from memory
+search registering a new key per agent run that re-checked every earlier run's
+keys, plus one alarm wake per registration. Admission after retrieval also left
+pages empty and filled decisions after the response. Revocation now takes effect
+on the next search instead of within a push delay.
+
+**Considered and rejected:** Computing a person's groups from a cached list
+(KV or a per-person table), which adds a write pipeline and staleness for a read
+that is one object RPC over tables the object already holds. Recomputing access
+rules in a new module: the person side calls the parent's own
+`readableSubstreams` and the connection facts' predicate, so each rule has one
+implementation.
+
+**What a future change has to respect:** Search is only as correct as the
+coverage of `audience`: a live row without it is invisible, so a new producer
+must write it and a new row kind must have a group. Guests hold only their own
+group, conversations they are admitted to through grants or a Breakout, and
+Sidekicks reachable through management access on the owning Channel. Semantic
+chunk rows still carry no audience, so any semantic read path must backfill it
+first (2026-09-26 decision).
 
 ### 2026-09-27 — The resource backlog interval is 60 seconds
 

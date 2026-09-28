@@ -4,11 +4,11 @@ import { env } from 'cloudflare:workers';
 import type { Env } from '../src/env';
 import { consumeActivityQueue } from '../src/queues/activity-consumer';
 import { runInDurableObject } from 'cloudflare:test';
-import { flushSearchAuthorizationPush } from '../src/durable-objects/search-authorization-projection';
 import { createCloudflareTestBinding } from '../test/helpers/cloudflare-test';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { asSubstreamId, asUserId, asWorkspaceId } from '@rally/contracts';
 import { workspaceDOName } from '../src/durable-objects/names';
+import { WorkspaceDO } from '../src/durable-objects/workspace-do';
 import { AuthorizationService } from '../src/services/authorization-service';
 import { SearchAuthorizationResolver, pushSearchAuthorization, searchAuthorizationKey } from '../src/services/search-authorization';
 import type { AuthorizationDecision, AuthorizationResource, AuthorizationSubject } from '../src/services/authorization-policy';
@@ -179,19 +179,22 @@ describe('projected search authorization', () => {
     });
   });
 
-  it('retries a failed queue message without abandoning its sibling', async () => {
+  it('drops a push still in the Queue without writing the old store', async () => {
     const stub = env.WORKSPACE_DOS.getByName(workspaceDOName('global', subject.workspaceId));
     await stub.initializeWorkspace(subject.workspaceId, 'wnam');
-    const retry = vi.fn();
+    const register = vi.spyOn(WorkspaceDO.prototype, 'registerSearchAuthorization');
+    const listed = vi.spyOn(WorkspaceDO.prototype, 'listSearchAuthorizationSnapshots');
     const ack = vi.fn();
-    const body = { type: 'search_authorization_push_v1', workspaceId: subject.workspaceId, target: { kind: 'parent', id: 'unregistered-parent' } };
-    const messages: Message<unknown>[] = [
-      { id: 'bad', timestamp: new Date(), body: { ...body, region: 'enterprise' }, attempts: 1, ack: vi.fn(), retry },
-      { id: 'good', timestamp: new Date(), body: { ...body, region: 'global' }, attempts: 1, ack, retry: vi.fn() },
-    ];
-    await consumeActivityQueue({ queue: 'test', messages, metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } }, ackAll: vi.fn(), retryAll: vi.fn() }, env);
-    expect(retry).toHaveBeenCalledTimes(1);
-    expect(ack).toHaveBeenCalledTimes(1);
+    const retry = vi.fn();
+    const messages: Message<unknown>[] = [{ id: 'push', timestamp: new Date(), attempts: 1, ack, retry,
+      body: { type: 'search_authorization_push_v1', region: 'global', workspaceId: subject.workspaceId, target: { kind: 'parent', id: 'a-parent' } } }];
+    try {
+      await consumeActivityQueue({ queue: 'test', messages, metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } }, ackAll: vi.fn(), retryAll: vi.fn() }, env);
+      expect(ack).toHaveBeenCalledTimes(1);
+      expect(retry).not.toHaveBeenCalled();
+      expect(register).not.toHaveBeenCalled();
+      expect(listed).not.toHaveBeenCalled();
+    } finally { register.mockRestore(); listed.mockRestore(); }
   });
 
   it('preserves mutation timing on KV retry and excludes cache-fill retries', async () => {
@@ -256,25 +259,7 @@ describe('projected search authorization', () => {
     });
   });
 
-  it('carries source mutation time through the WorkspaceDO projection into the push job', async () => {
-    const stub = env.WORKSPACE_DOS.getByName('search-authorization-source-timing');
-    await stub.initializeWorkspace(subject.workspaceId, 'wnam');
-    await runInDurableObject(stub, async (instance, state) => {
-      const mutationAt = Date.now() - 20_000;
-      await instance.applyAuthorizationLocations({ workspaceId: subject.workspaceId, parentId: resource.resourceId,
-        parentKind: 'workstream', substreamId: '0', revision: 1, validatedAt: Date.now(), resourceIds: [], mutationAt });
-      const jobs: unknown[] = [];
-      const queue = createCloudflareTestBinding<Queue>({ sendBatch: async (messages) => {
-        jobs.push(...Array.from(messages, (message) => message.body));
-      } });
-      await flushSearchAuthorizationPush(state.storage.sql, { ...env, ACTIVITY_QUEUE: queue }, subject.workspaceId);
-      expect(jobs).toEqual([expect.objectContaining({ timing: {
-        mutationAt, origin: 'source_mutation', enqueuedAt: expect.any(Number),
-      } })]);
-    });
-  });
-
-  it('records source mutations durably and keeps a newer push pending during dispatch', async () => {
+  it('records source mutations durably', async () => {
     const stub = env.WORKSPACE_DOS.getByName('search-authorization-outbox');
     await stub.initializeWorkspace(subject.workspaceId, 'wnam');
     await runInDurableObject(stub, async (_instance, state) => {
@@ -282,16 +267,6 @@ describe('projected search authorization', () => {
         VALUES (?, ?, 'file', 'avalon_generated', 'Fixture', '{}', '2026-09-08', '2026-09-08')`, resource.resourceId, subject.workspaceId);
       const mutationAt = state.storage.sql.exec<{ first_mutated_at: number }>('SELECT first_mutated_at FROM search_authorization_push').one().first_mutated_at;
       expect(mutationAt).toBeGreaterThan(0);
-      const jobs: unknown[] = [];
-      const queue = createCloudflareTestBinding<Queue>({ sendBatch: async (messages) => {
-        jobs.push(...Array.from(messages, (message) => message.body));
-        state.storage.sql.exec("UPDATE resources SET uploaded_by_user_id = ? WHERE id = ?", subject.userId, resource.resourceId);
-      } });
-      await flushSearchAuthorizationPush(state.storage.sql, { ...env, ACTIVITY_QUEUE: queue }, subject.workspaceId);
-      expect(jobs).toEqual([{ type: 'search_authorization_push_v1', region: 'global', workspaceId: subject.workspaceId,
-        target: { kind: 'resource', id: resource.resourceId }, timing: { mutationAt, origin: 'workspace_mutation', enqueuedAt: expect.any(Number) } }]);
-      expect(state.storage.sql.exec('SELECT first_mutated_at FROM search_authorization_push').one()).toEqual({ first_mutated_at: mutationAt });
-      expect(state.storage.sql.exec('SELECT revision FROM search_authorization_push').toArray()).toEqual([{ revision: 2 }]);
     });
   });
 

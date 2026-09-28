@@ -136,7 +136,8 @@ import { ONBOARDING_JOURNEY_SQL, OnboardingJourneyStore } from './onboarding-jou
 import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION, RESOURCE_SEARCH_AUDIENCE_MIGRATION, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
   resourceSearchRevision, nextResourceSearchDueAt, publishResourceSearch, prepareResourceSearch, type ResourceSearchPace } from './resource-search-projection';
 import { isDraftUpload, requiresAttachment } from '../services/resource-read-rules';
-import { SEARCH_AUTHORIZATION_PUSH_MIGRATION, nextSearchAuthorizationPush, flushSearchAuthorizationPush } from './search-authorization-projection';
+import { searchAudienceGroup, searchAudienceGroupIds } from '../services/search-audience';
+import { SEARCH_AUTHORIZATION_PUSH_MIGRATION } from './search-authorization-projection';
 import { enumerateSearchAuthorizationUniverse, type SearchAuthorizationTarget } from './search-authorization-universe';
 import { resolveWorkspaceEventResources } from "./workspace-event-resources";
 
@@ -3934,6 +3935,14 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     // still wake the restored event's processing.
     "ALTER TABLE workspace_connector_event_ingress_receipts ADD COLUMN restored_event_id TEXT",
   ],
+}, {
+  version: 81,
+  description: "record who each Sidekick runs as",
+  // Search's person side lists a Sidekick's conversations for its executor as
+  // well as its author, as the canonical Sidekick check does, without reading
+  // each SidekickDO. Null until the Sidekick next publishes its row; see
+  // docs/PRDs/2026-09-26_search-audience-filtering/design.md.
+  statements: ["ALTER TABLE automation_directory ADD COLUMN run_as_user_id TEXT"],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -5684,10 +5693,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const request = WorkspaceRuntimeSqlRequestSchema.parse(input);
       this.assertWorkspace(request.workspaceId);
       const results = this.runWorkspaceSql(request);
-      if (nextSearchAuthorizationPush(this.state.storage.sql) !== null) this.state.waitUntil(this.armNextAlarm().catch((error: unknown) => {
-        logWarn(this.env, 'search_authorization_alarm_deferred', { workspace_id: request.workspaceId,
-          error_code: diagnosticErrorCode(error, 'alarm_arming_failed') });
-      }));
       const kinds = new Set<WorkspaceScheduleTargetKind>();
       for (const statement of request.statements) {
         const target = workspaceMutationTarget(statement.sql);
@@ -6073,7 +6078,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const spaceIntent = this.spaceStorage().nextIntentResumeDueAt();
     const spaceBootstrap = this.spaceStorage().nextBootstrapDueAt();
     const search = nextResourceSearchDueAt(this.state.storage.sql, this.env, this.resourceSearchPace);
-    const searchAuthorization = nextSearchAuthorizationPush(this.state.storage.sql);
     const authorization = this.state.storage.sql.exec<{ due: number | null }>('SELECT MIN(not_before) AS due FROM authorization_delivery').one().due;
     const firstFrame = nextFirstFrameDeadline(this.unheardSockets(), this.socketFirstFrameDeadlineMs);
     const hosted = this.hostedParentSchemaPresent();
@@ -6091,7 +6095,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ...(spaceBootstrap === null ? [] : [spaceBootstrap]),
       ...(search === null ? [] : [search]),
       ...(authorization === null ? [] : [authorization]),
-      ...(searchAuthorization === null ? [] : [searchAuthorization]),
       ...(firstFrame === null ? [] : [firstFrame]),
     ];
   }
@@ -6192,8 +6195,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         await isolated("parent_breakouts", () => this.drainDueParentBreakouts(now));
         await isolated("directory_followup", () => this.runDirectoryFollowUps(this.dueDirectoryFollowUps(now)));
       }
-      try { await flushSearchAuthorizationPush(this.state.storage.sql, this.env, workspaceId); }
-      catch { logWarn(this.env, 'search_authorization_push_deferred', { region: this.env.AVALON_REGION }); }
+      // The old search-authorization store is no longer pushed: search filters on
+      // row audience (phase 3 of docs/PRDs/2026-09-26_search-audience-filtering).
+      // Its triggers still record targets, one row each, which a rollback flushes.
       try { await flushAuthorizationDeliveries(this.state.storage.sql, this.env.ACTIVITY_QUEUE, now); }
       catch { logWarn(this.env, 'authorization_backfill_dispatch_deferred', { region: this.env.AVALON_REGION }); }
       try { await publishResourceSearch(this.state.storage.sql, this.env, workspaceId, this.resourceSearchPace); }
@@ -6959,12 +6963,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
       this.state.storage.sql.exec(
         `INSERT INTO automation_directory
-           (automation_id, workspace_id, author_user_id, source_version, payload_hash,
+           (automation_id, workspace_id, author_user_id, run_as_user_id, source_version, payload_hash,
             lifecycle, scope, owning_workstream_id, title, description, next_run_at, projected_at, loadable,
             appearance_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(automation_id) DO UPDATE SET
            author_user_id = excluded.author_user_id,
+           -- An effect queued before the field existed keeps what is known.
+           run_as_user_id = COALESCE(excluded.run_as_user_id, run_as_user_id),
            source_version = excluded.source_version,
            payload_hash = excluded.payload_hash,
            lifecycle = excluded.lifecycle,
@@ -6979,6 +6985,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         effect.automationId,
         request.workspaceId,
         effect.authorUserId,
+        effect.runAsUserId ?? null,
         envelope.sourceVersion,
         envelope.payloadHash,
         effect.lifecycle,
@@ -13224,7 +13231,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       try { await publication; }
       finally { if (this.searchPublications.get(key) === publication) this.searchPublications.delete(key); }
     }));
-    if (nextSearchAuthorizationPush(this.state.storage.sql) !== null) await this.armNextAlarm();
     const failure = results.find((result) => result.status === 'rejected');
     if (failure?.status === 'rejected') throw failure.reason;
     return stats;
@@ -13435,6 +13441,74 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return { connectionId, exists: true as const, validatedAt: Date.now(), revision: row.updated_at,
         allowed: row.status !== 'disabled' && (row.scope === 'workspace' || row.owner_user_id === request.userId) };
     });
+  }
+
+  /**
+   * The search audience groups a person holds, as group UUIDs: the person side
+   * of docs/PRDs/2026-09-26_search-audience-filtering/design.md, read on every
+   * search. A search returns a row only when its `audience` shares a group
+   * with this list.
+   *
+   * Everything is read from this object's own tables. A conversation is
+   * decided by its parent's own `readableSubstreams`, the rule its canonical
+   * reads apply, and a connection by the same predicate as
+   * `authorizationConnectionFacts`, so no second copy of a rule exists. A person
+   * who is not an active member of the Organization holds no groups.
+   */
+  async readSearchAudience(input: unknown): Promise<string[]> {
+    await this.initialized;
+    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema }),
+      input, "read_search_audience");
+    this.assertWorkspace(request.workspaceId);
+    const relationship = await this.readRelationship(request.workspaceId, request.userId);
+    if (relationship?.status !== "active") return [];
+    const member = relationship.accessClass === "member";
+    const sql = this.state.storage.sql;
+    const groups = [searchAudienceGroup.user(request.userId)];
+    if (member) groups.push(searchAudienceGroup.members(request.workspaceId));
+    const parents = new Map<string, HostedParent>();
+    const parent = async (parentId: string) => {
+      const known = parents.get(parentId);
+      if (known) return known;
+      const loaded = await this.hostedParent(parentId);
+      parents.set(parentId, loaded);
+      return loaded;
+    };
+    if (this.hostedParentSchemaPresent()) {
+      for (const { parent_id: parentId } of sql.exec<{ parent_id: string }>("SELECT parent_id FROM parent_metadata").toArray()) {
+        for (const substreamId of (await parent(parentId)).readableSubstreams(request.userId, relationship)) {
+          groups.push(searchAudienceGroup.conversation(parentId, substreamId));
+        }
+      }
+    }
+    for (const sidekick of sql.exec<{
+      automation_id: string; scope: string; author_user_id: string; run_as_user_id: string | null; owning_workstream_id: string | null;
+    }>(`SELECT automation_id, scope, author_user_id, run_as_user_id, owning_workstream_id
+          FROM automation_directory WHERE lifecycle <> 'deleted'`).toArray()) {
+      // A guest reads a Sidekick only through management access on the Channel
+      // that owns it; a member through its scope, authorship, execution, or
+      // participation in that Channel while it is not archived.
+      let readable = member && (sidekick.scope === "workspace" || sidekick.author_user_id === request.userId
+        || sidekick.run_as_user_id === request.userId);
+      if (!readable && sidekick.scope === "workstream" && sidekick.owning_workstream_id) {
+        const owner = await parent(sidekick.owning_workstream_id);
+        readable = member
+          ? owner.metadataRow()?.archived_at === null && owner.isParticipant(request.userId)
+          : owner.managementAccess({ workspaceId: request.workspaceId, parentId: sidekick.owning_workstream_id,
+            userId: request.userId }, relationship).allowed;
+      }
+      if (readable) groups.push(searchAudienceGroup.sidekick(sidekick.automation_id));
+    }
+    // A guest never gets a workspace connection (the PRD's decision 7); every
+    // other reader is who `authorizationConnectionFacts` allows.
+    for (const connection of sql.exec<{ id: string; scope: string; owner_user_id: string | null }>(
+      "SELECT id, scope, owner_user_id FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'",
+      request.workspaceId).toArray()) {
+      if (connection.owner_user_id === request.userId || (member && connection.scope === "workspace")) {
+        groups.push(searchAudienceGroup.connection(connection.id));
+      }
+    }
+    return searchAudienceGroupIds(groups);
   }
 
   /**
