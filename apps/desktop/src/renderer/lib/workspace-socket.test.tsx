@@ -2209,6 +2209,59 @@ describe('a Channel\'s breakouts and background agents on the organization socke
       expect(spaceSent(socket)).toHaveLength(2);
     });
 
+    it('asks only the Space on screen again when the directory moves, and the others when they come on screen', async () => {
+      const queryClient = new QueryClient();
+      queryClient.setQueryData(['spaces'], { waterline: 1, items: [{ id: general }, { id: design }] });
+      const { socket, api } = await connectWithProbe(queryClient);
+      act(() => socket.message(bySpaceSidebar()));
+      await flushPromises();
+      act(() => api().prioritizeSpace(general));
+      let walked!: Promise<Set<string> | null>;
+      act(() => { walked = api().walkSpaceChannels(); });
+      await flushPromises();
+      act(() => socket.message(spaceAnswer(spaceSent(socket)[0]!['requestId'], [], null)));
+      await flushPromises();
+      act(() => socket.message(spaceAnswer(spaceSent(socket)[1]!['requestId'], [], null)));
+      await walked;
+      await flushPromises();
+      expect(spaceSent(socket)).toHaveLength(2);
+
+      // Somebody else pinned something: the directory moved.
+      act(() => socket.message({
+        type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000018', waterline: 9,
+        occurredAt: '2026-08-17T20:01:00.000Z', topics: ['workstream_directory'], reason: 'change',
+      }));
+      await flushPromises();
+      expect(spaceSent(socket).slice(2).map((frame) => frame['spaceId'])).toEqual([general]);
+      act(() => socket.message(spaceAnswer(spaceSent(socket)[2]!['requestId'], [], null)));
+      await flushPromises();
+      // Every Space stays loaded: what is held keeps painting.
+      expect(api().loadedSpaceIds).toEqual(new Set([general, design]));
+
+      act(() => api().prioritizeSpace(design));
+      await flushPromises();
+      expect(spaceSent(socket).slice(3).map((frame) => frame['spaceId'])).toEqual([design]);
+    });
+
+    it('treats every Space as loading again when a reconnect\'s sidebar arrives', async () => {
+      const queryClient = new QueryClient();
+      queryClient.setQueryData(['spaces'], { waterline: 1, items: [{ id: general }] });
+      const { socket, api } = await connectWithProbe(queryClient);
+      act(() => socket.message(bySpaceSidebar()));
+      await flushPromises();
+      let walked!: Promise<Set<string> | null>;
+      act(() => { walked = api().walkSpaceChannels(); });
+      await flushPromises();
+      act(() => socket.message(spaceAnswer(spaceSent(socket)[0]!['requestId'], [], null)));
+      await walked;
+      await flushPromises();
+      expect(api().loadedSpaceIds).toEqual(new Set([general]));
+
+      act(() => socket.message(bySpaceSidebar()));
+      await flushPromises();
+      expect(api().loadedSpaceIds).toEqual(new Set());
+    });
+
     it('walks nothing when the sidebar carried Channel rows', async () => {
       const queryClient = new QueryClient();
       queryClient.setQueryData(['spaces'], { waterline: 1, items: [{ id: general }] });

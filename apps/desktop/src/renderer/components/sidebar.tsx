@@ -1292,7 +1292,8 @@ export function Sidebar({
   const channelsLoading = directoryLoading === true
     || (loadedSpaceIds !== undefined && selectedSpaceId !== null && !loadedSpaceIds.has(selectedSpaceId));
   const directoryIncomplete = directoryLoading === true
-    || (loadedSpaceIds !== undefined && (spaces ?? []).some((space) => !loadedSpaceIds.has(space.id)));
+    || (loadedSpaceIds !== undefined
+      && [...(spaces ?? []), ...inactiveSpaces].some((space) => !loadedSpaceIds.has(space.id)));
   const previousRouteWorkstreamId = useRef<string | null>(null);
   useEffect(() => {
     if (previousRouteWorkstreamId.current === routeWorkstreamId) return;

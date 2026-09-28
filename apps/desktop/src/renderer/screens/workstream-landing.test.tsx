@@ -9,7 +9,7 @@ vi.mock('../lib/app-session', () => ({ useAppSession: () => ({
   session: { user: { id: 'person' }, workspace: { id: 'org', accessClass: 'member' } },
 }) }));
 const spaces = vi.hoisted(() => ({ data: undefined as { items: { id: string; systemRole?: string | null }[] } | undefined }));
-vi.mock('../lib/use-space-directories', () => ({ useSpaceDirectories: () => ({ active: spaces }) }));
+vi.mock('../lib/use-space-directories', () => ({ useSpaceDirectories: () => ({ active: spaces, inactive: { data: undefined } }) }));
 
 const socket = vi.hoisted(() => ({ state: 'connecting', sidebarConnect: null as { spacesLive: boolean } | null }));
 vi.mock('../lib/workspace-socket', () => ({ useWorkspaceSocket: () => socket }));

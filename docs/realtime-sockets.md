@@ -374,8 +374,22 @@ it already holds one for every Channel it knows in that Space. Each page is
 written as it lands, so the Space on screen paints before the walk is over. A
 Space put on screen that no walk has returned, such as one created since the
 last walk, is asked for on its own; a walk running then reaches it itself. When the walk
-ends, a row held before it that no Space returned is dropped. A reconnect or a
-`workstream_directory` invalidation walks again.
+ends, a row held before it that no Space returned is dropped. A reconnect
+walks every Space again, and every Space counts as loading until the walk has
+returned it.
+
+A `workstream_directory` invalidation does not walk every Space. It is
+published to every socket in the Organization, for one person's pin as much as
+for a Channel moving between Spaces, so a whole walk there would make every
+desktop ask every Space at once. The desktop asks the Space on screen again,
+and marks every other loaded Space to be asked again when it next comes on
+screen. That re-read writes rows and drops none: a Channel that left a Space
+arrives as a pushed row, and the next reconnect's whole walk is what retires
+anything else.
+
+A Space whose request fails shows the rows held for it and is asked again
+when it next comes on screen. A whole walk that fails leaves the directory
+query in error, and the sidebar stops waiting on the Spaces it did not reach.
 
 The sidebar keeps the first page, and the desktop keeps `list_workstreams`
 paging, in three cases:
@@ -981,6 +995,8 @@ Channel and its rail ahead of need.
   page cursor.
 
 **Consequences:**
+- A `workstream_directory` invalidation re-reads only the Space on screen on
+  each desktop, where it used to refetch the directory's pages.
 - A reconnect walks every Space again, where it used to resend 250 rows. That
   is one request per 250 Channels, and it asks for rails only where none are
   held. After the Space on screen, every Space's first page is asked at once,
