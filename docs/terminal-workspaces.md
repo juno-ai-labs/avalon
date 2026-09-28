@@ -488,8 +488,8 @@ neither reserving nor settling a read is a directory-affecting operation.
 A running sandbox (and one in any state other than stopped or archived) is
 checked every sixty seconds (`TERMINAL_PROVIDER_OBSERVATION_INTERVAL_MS`). A
 stopped or archived one is checked every ten minutes
-(`TERMINAL_STOPPED_SANDBOX_OBSERVATION_INTERVAL_MS`), a number Adam set; the
-interval is chosen from Rally's lifecycle intent when the read is reserved.
+(`TERMINAL_STOPPED_SANDBOX_OBSERVATION_INTERVAL_MS`), a number the team set,
+recorded in the changelog; the interval is chosen from Rally's lifecycle intent when the read is reserved.
 Between checks, Daytona's signed webhooks below carry a state change as it
 happens, and each one resets the interval, so the poll only bounds how stale
 the view can get when a webhook is missed. This is an eventual view: provider
@@ -953,7 +953,10 @@ toward the stall report; a deadline the pass finds nothing to do for does, and
 the pass also republishes that conversation's deadline (`republishDeadline`),
 which the object skips when the projection has not changed. A deadline that
 stays stale therefore keeps backing off and reporting rather than polling
-quietly.
+quietly. The republish is rollout scaffolding for the observation deadlines an
+older version stamped into the directory; remove it once this version has run
+in every region for a day, by which time every such entry has come due and been
+corrected.
 
 
 See [`runbook.md`](runbook.md#terminal-provider-activation-and-recovery) for
@@ -1050,14 +1053,12 @@ holds the operator steps.
 ## Performance and cost
 
 **The status poll is the recurring cost that scales with retention, not with
-use.** Every sandbox is checked for up to thirty days whether anyone opens it.
-Measured in production on 2026-09-27, before the change recorded in the
-changelog, it was the most-called RPC in the system: about 14,700 Terminal
-calls and 1,800 `receiveChildEffects` calls an hour and about 285 s of CPU,
-from six object round trips and a directory update per check every minute.
-Since then a check is one Daytona `GET` made by the owning object, and a
-stopped or archived sandbox is checked a tenth as often. Webhooks cost two
-`GET`s each (routing, then the ordered read).
+use.** Every sandbox is checked for up to thirty days whether anyone opens it,
+so a check must stay one Daytona `GET` made by the owning object, with no RPC
+and no directory update, and a stopped or archived sandbox is checked a tenth
+as often as a running one. What it cost before that is in the 2026-09-28
+changelog entry. Webhooks cost two `GET`s each (routing, then the ordered
+read).
 
 An explicit Terminal `load_plugin` starts and initializes the sandbox because
 the next model action is overwhelmingly likely to use one of its tools — in
@@ -1205,63 +1206,44 @@ update lag before changing the default.
 
 ### 2026-09-28 — The sandbox status check moves into its conversation, stops publishing, and slows for stopped sandboxes
 
-**What changed:** A sandbox's periodic Daytona status check now runs on its
-own conversation object's alarm instead of inside the workspace's lifecycle
-sweep, and its deadline is no longer part of the conversation's
-`directory_common` projection, so `next_terminal_action_at` carries only
-lifecycle deadlines. Reserving and settling a read no longer republish the
-directory. The sweep no longer reads the sandbox row and the observation row
-before `reconcileDueTerminalSandbox` reads the row again. A stopped or archived
-sandbox is checked every ten minutes, a running one still every minute.
-Daytona's webhooks, unchanged, carry state changes between checks. When a due
-directory entry has nothing due behind it, the sweep republishes that
-conversation's deadline. That republish is how the observation deadlines older
-versions published get replaced.
+**What changed:** The periodic Daytona status check runs on the sandbox's own
+conversation object's alarm, not in the workspace's lifecycle sweep, and its
+deadline left the `directory_common` projection: `next_terminal_action_at`
+carries lifecycle deadlines only, and reserving or settling a read publishes
+nothing. A stopped or archived sandbox is checked every ten minutes, a running
+one every minute. A sweep that finds a due entry with nothing behind it
+republishes that conversation's deadline (`republishDeadline`), which is how
+the observation deadlines older versions published get replaced.
 
 **Why:** Measured in production on 2026-09-27, the check was the most-called
 RPC in the system: about 14,700 Terminal calls and 1,800
 `receiveChildEffects` calls an hour, about 285 s of CPU. Each check made six
-Terminal object calls: `sandbox` and `providerObservation` to decide whether
-it was due, then `beginProviderObservation` and `settleProviderObservation`
-around the Daytona read, then `sandbox` again and `hasLiveTask` in the
-lifecycle pass. The two reads before `beginProviderObservation` only
-duplicated reads made later in the pass. Both writes built and offered a
-directory update, because the observation deadline was projected. About 99% of
-the directory updates that reached the Organization changed nothing but that
-deadline. The workspace was polling on behalf of an object that owns both the
-row and the deadline, and it could learn the time only through the directory,
-so every check was also a directory write. The 2026-09-14 entry below accepted
-one metadata `GET` per retained sandbox per minute as a simple cost. That
-accounting left out the directory churn and the object round trips. It also
-charged a stopped or archived sandbox, which nothing will change except a
-Daytona event the webhook already delivers, at the running rate for thirty
-days. This reverses that entry's cadence decision. The ten minutes is Adam's
-number: the team's to move, not a measurement's. It is
-`TERMINAL_STOPPED_SANDBOX_OBSERVATION_INTERVAL_MS`.
+Terminal object calls, two of them duplicate reads, and both writes offered a
+directory update because the observation deadline was projected; about 99% of
+directory updates changed nothing else. The workspace could learn when to
+check only through the directory, so every check was a directory write. The
+2026-09-14 entry's "one `GET` per sandbox per minute" left out that churn and
+charged stopped sandboxes, which only a webhook-delivered event will change,
+at the running rate for thirty days; this reverses its cadence decision. Adam
+set the ten minutes on 2026-09-27; it is the team's number, not a measurement.
 
-**Considered and rejected:** Keeping the check in the workspace sweep and
-removing only the duplicate reads and the second publish. The first publish is
-the one that fed the sweep its next check time, so the directory churn would
-have stayed. Having the workspace hold its own per-sandbox check timer, from
-each check's result, was rejected too. The workspace sees only the earliest
-lifecycle deadline, which for an archived sandbox is its expiry weeks away. So
-it would need its own record of which sandboxes exist and what state they are
-in: a second copy of the state the conversation already holds. Dropping the
-poll entirely in favour of webhooks was rejected because a missed webhook
-would then leave the observation stale until the next tool call.
+**Considered and rejected:** Keeping the check in the sweep minus the duplicate
+reads — the first publish is what fed the sweep its next check, so the churn
+stays. A per-sandbox timer in the workspace — it would need its own copy of
+which sandboxes exist and in what state. Webhooks alone — a missed one would
+leave the observation stale until the next tool call. A one-time object
+migration instead of the sweep's republish — migrations are SQL, cannot build
+a projection, and run only when the object is next woken, which for a dormant
+sandbox is that same sweep.
 
-**Consequences:** A check now costs one Daytona `GET` and no RPC or directory
-update. The state API's view of a stopped or archived sandbox can be up to ten
-minutes stale when a webhook is missed, and a missed deletion is found that
-much later. Anything added to the `directory_common` projection must not move
-on every check, or the churn returns. A new conversation parent that owns a
-sandbox has to decide whether its object observes it, the way a Channel's does
-and a Sidekick's does not. At rollout, each retained sandbox's directory entry
-still holds the last observation deadline. The first sweep over it finds
-nothing due, republishes, and is reported once as a stall before the corrected
-deadline lands. That is expected, and it is one report per sandbox. A
-deadline that stays stale after the republish keeps backing off and reporting
-rather than polling quietly.
+**Consequences:** A missed webhook can leave a stopped sandbox's view, or a
+missed deletion, up to ten minutes stale. Nothing added to `directory_common`
+may move on every check, or the churn returns. A new conversation parent that
+owns a sandbox must decide whether its object observes it, as a Channel's does
+and a Sidekick's does not. At rollout each stale entry is swept once, reported
+once as a stall, and republished. `republishDeadline` is scaffolding for that:
+remove it with its protocol entry and the sweep's call once this version has
+run a day in every region.
 
 ### 2026-09-27 — An unrecoverable sandbox is retired, and a failing pass backs off
 

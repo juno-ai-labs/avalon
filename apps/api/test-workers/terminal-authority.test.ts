@@ -20,7 +20,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { asSubstreamId } from "@rally/contracts";
@@ -28,11 +28,13 @@ import { asSubstreamId } from "@rally/contracts";
 import { conversationObjectName } from "../src/durable-objects/names";
 import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import type { TerminalOperation } from "../src/durable-objects/workstream-terminal-protocol";
+import type { WorkstreamTerminalStorage } from "../src/durable-objects/workstream-terminal-storage";
 import { rpcResultBody } from "../src/durable-objects/rpc-result";
 import {
   createTerminalPortFactory,
   type TerminalPortFactory,
 } from "../src/services/terminal/object-port";
+import { runWorkspaceScheduleTarget } from "../src/services/workspace-schedule-execution";
 import type { Env } from "../src/env";
 import {
   WORKSPACE_ID,
@@ -2501,12 +2503,23 @@ describe("Terminal authority on real workerd", () => {
 
 
 describe("provider observations", () => {
+  /**
+   * An archived sandbox whose last check has just been made.
+   *
+   * The check's row goes in before the sandbox is attached: a sandbox never
+   * observed is due a check at once, so attaching it bare would arm this
+   * object's own alarm for an immediate check, and that check would race every
+   * assertion below. A test that needs a check due makes it due itself.
+   */
   async function setup() {
     const stub = agent();
     await boot(stub);
     await runInDurableObject(stub, (_instance, state) => {
       seedWorkstreamRoot(state);
       seedRunRow(state, RUN_A, "running");
+      state.storage.sql.exec(`INSERT INTO terminal_provider_observation
+          (id, sandbox_id, generation, request_id, requested_at, next_observe_at)
+        VALUES (1, 'daytona-observed', 1, 'seeded', ?, ?)`, Date.now(), Date.now() + 10 * 60_000);
     });
     await reserve(stub, RUN_A);
     await terminal(stub, "attachProviderSandbox", {
@@ -2517,6 +2530,9 @@ describe("provider observations", () => {
     return stub;
   }
   const identity = { sandboxId: "daytona-observed", generation: 1 };
+  /** The object's own storage, read inside an invocation nothing can interleave. */
+  const residentTerminal = (instance: object) =>
+    (instance as unknown as { terminal: WorkstreamTerminalStorage }).terminal;
   it("persists ordered observations across eviction without changing retention or active-run authority", async () => {
     const stub = await setup();
     const before = (await terminal(stub, "sandbox")).value;
@@ -2540,12 +2556,14 @@ describe("provider observations", () => {
       state.storage.sql.exec("UPDATE object_versions SET schema_version = 56 WHERE id = 1");
     });
     await evictDurableObject(stub);
-    expect((await terminal(stub, "sandbox")).value).toEqual(before);
-    // No observation survives the upgrade. The object's own alarm may already
-    // have attempted one, which this suite's unconfigured provider leaves
-    // without a state.
-    const observation = (await terminal(stub, "providerObservation")).value as { state: string | null } | null;
-    expect(observation?.state ?? null).toBeNull();
+    // No observation survives the upgrade. Read in one invocation, directly:
+    // every Terminal call re-arms this object's alarm, and a sandbox with no
+    // observation is due a check at once, which would race a second call.
+    const upgraded = await runInDurableObject(stub, (instance) => ({
+      sandbox: residentTerminal(instance).sandbox(),
+      observation: residentTerminal(instance).providerObservation(),
+    }));
+    expect(upgraded).toEqual({ sandbox: before, observation: null });
     expect((await terminal(stub, "beginProviderObservation", identity)).value).toEqual(expect.any(String));
   });
 
@@ -2555,15 +2573,22 @@ describe("provider observations", () => {
     await runInDurableObject(stub, (_instance, state) => {
       state.storage.sql.exec("UPDATE terminal_workspace SET generation = generation + 1, sandbox_id = 'replacement' WHERE id = 1");
     });
-    expect((await terminal(stub, "settleProviderObservation", {
-      ...identity, requestId, state: "absent", recoverable: null, errorCode: null,
-    })).value).toBe(false);
-    // The object's own alarm may already have observed the replacement, which
-    // is due at once; what must never appear is the stale generation's answer.
-    const observation = (await terminal(stub, "providerObservation")).value as
-      { sandboxId: string; state: string | null } | null;
-    expect(observation?.state ?? null).not.toBe("absent");
-    expect([null, "replacement"]).toContain(observation?.sandboxId ?? null);
+    // Settled and read in one invocation. The replacement has never been
+    // observed, so the settle's re-arm makes it due a check at once; that
+    // check is the object working, and must not be what this read sees.
+    const outcome = await runInDurableObject(stub, async (instance) => {
+      const settled = await (instance as SubstreamAgent).executeTerminalOperation({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        operation: "settleProviderObservation",
+        args: [{ ...identity, requestId, state: "absent", recoverable: null, errorCode: null }],
+      });
+      return {
+        settled: (rpcResultBody(settled) as { value: unknown }).value,
+        observation: residentTerminal(instance).providerObservation(),
+      };
+    });
+    expect(outcome).toEqual({ settled: false, observation: null });
   });
   it("keeps the observation deadline out of the directory, and a check publishes nothing", async () => {
     const stub = await setup();
@@ -2598,17 +2623,63 @@ describe("provider observations", () => {
     expect(observation.nextObserveAt).toBeLessThan(expireDueAt);
   });
 
-  it("checks a stopped sandbox on the conversation's own alarm, every ten minutes", async () => {
-    // Never observed, so due at once: attaching the sandbox armed this
-    // object's own alarm for it, with no workspace sweep involved. The alarm
-    // may already have fired by the time this runs it; either way it is this
-    // object's alarm that made the check.
+  it("republishes a stale directory deadline when the sweep finds nothing due behind it", async () => {
     const stub = await setup();
-    await runDurableObjectAlarm(stub);
-    // This suite's region has no Terminal provider configured, so the read
-    // is recorded as unavailable — which is proof the check ran here.
-    const observation = (await terminal(stub, "providerObservation")).value as { errorCode: string | null } | null;
-    expect(observation?.errorCode).toBe("provider_unavailable");
+    const unused = async (): Promise<never> => { throw new Error("unrelated scheduler operation"); };
+    // One invocation, so nothing but the sweep can publish in between. The
+    // sweep reaches this object through its resident endpoint, the same one
+    // that commits the directory projection with the row for a routed call.
+    const { outcome, published, republished } = await runInDurableObject(stub, async (instance, state) => {
+      const projections = () => state.storage.sql
+        .exec<{ projection_key: string; last_payload_hash: string }>(
+          `SELECT projection_key, last_payload_hash FROM projection_keys ORDER BY projection_key`,
+        ).toArray();
+      const published = projections();
+      // What an older version left behind: it projected the observation
+      // deadline, so the last payload it published is not the one this
+      // version would, and the directory holds a deadline a minute out.
+      state.storage.sql.exec(`UPDATE projection_keys SET last_payload_hash = 'observation-deadline'`);
+      const workspaceEnv = residentExecutionEnvironment(instance);
+      const outcome = await runWorkspaceScheduleTarget({
+        // A configured region, so the sweep runs; nothing here reaches Daytona.
+        env: {
+          ...workspaceEnv, DAYTONA_API_KEY: "test-key", DAYTONA_API_URL: "https://app.daytona.io/api",
+          DAYTONA_TARGET: "us", DAYTONA_TERMINAL_SNAPSHOT: "snapshot", TERMINAL_REGION_CAPABILITY: "supported",
+        },
+        workspaceEnv,
+        workspaceId: WORKSPACE_ID,
+        directory: { workstreamScheduleTargets: unused },
+        notificationIntents: {
+          notificationIntentMaintenanceTarget: unused, reapSettledWorkstreamNotificationIntents: unused,
+        },
+        dueTerminalSubstreams: async () => ["0"],
+      }, { kind: "terminal", id: WORKSTREAM_ID, dueAt: new Date(0).toISOString() }, new Date());
+      return { outcome, published, republished: projections() };
+    });
+    // Nothing was due on the row, so the pass reports no transition, and the
+    // directory is handed back exactly what attaching the sandbox published:
+    // its lifecycle deadline, with no observation instant in it.
+    expect(outcome).toBeUndefined();
+    expect(published.length).toBeGreaterThan(0);
+    expect(republished).toEqual(published);
+  });
+
+  it("checks a stopped sandbox on the conversation's own alarm, every ten minutes", async () => {
+    // Forget the check `setup` seeded: a sandbox never observed is due one at
+    // once, and the next Terminal call re-arms this object's own alarm for it,
+    // with no workspace sweep involved.
+    const stub = await setup();
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(`DELETE FROM terminal_provider_observation`);
+    });
+    await terminal(stub, "sandbox");
+    // Polled, not forced: the alarm is overdue, so `runDurableObjectAlarm`
+    // can find the slot already cleared by the automatic firing and run
+    // nothing (see "Writing a workerd test" in docs/testing.md). This
+    // suite's region has no Terminal provider configured, so the read is
+    // recorded as unavailable — which is proof the check ran here.
+    await expect.poll(async () => ((await terminal(stub, "providerObservation")).value as
+      { errorCode: string | null } | null)?.errorCode ?? null).toBe("provider_unavailable");
     // The interval is read off the two instants the object wrote together,
     // never against this test's clock.
     const row = await runInDurableObject(stub, (_instance, state) => state.storage.sql

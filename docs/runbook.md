@@ -225,13 +225,15 @@ to converge. Provisioning temporarily disables an existing endpoint while
 checking its credentials. Periodic reconciliation continues during this window.
 
 Finally, it walks all Daytona sandbox pages and submits signed refresh hints for
-existing labelled sandboxes, including archives. This wakes their observation
-schedule without waiting for the old expiry deadline. Sandboxes already deleted
-before rollout cannot be discovered from Daytona; those old rows are reconciled
-on acquisition or their existing retention alarm. Newly attached generations
-publish an immediate observation deadline. `providerObservation` on the Terminal
-state API exposes the last successful observation and its freshness/error; a
-successful setup probe proves receiver configuration, not lifecycle delivery.
+existing labelled sandboxes, including archives. Each hint records a fresh
+observation at once instead of waiting for the next periodic check. Sandboxes
+already deleted before rollout cannot be discovered from Daytona; those old
+rows are reconciled on acquisition or their existing retention alarm. A newly
+attached generation is due a check at once on its own conversation's alarm; the
+observation deadline is never published to the directory. `providerObservation`
+on the Terminal state API exposes the last successful observation and its
+freshness/error; a successful setup probe proves receiver configuration, not
+lifecycle delivery.
 Use a disposable sandbox to verify actual provider-generated events after rollout.
 
 The receiver accepts only the configured organization, and uses Daytona metadata

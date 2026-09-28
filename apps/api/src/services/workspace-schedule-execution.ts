@@ -614,12 +614,12 @@ async function reconcileConversationTerminalSandbox(
   }
   if (result.transition === "none") {
     // The entry came due with nothing due behind it, so the deadline the
-    // directory holds is stale — for instance one left by a version that
-    // projected the observation deadline. Nothing else would move it, so
-    // republish it; the object skips a projection whose hash has not moved.
-    // The pass still reports as a stall, deliberately: a deadline this cannot
-    // correct keeps backing off and keeps being reported rather than polling
-    // quietly.
+    // directory holds is stale: one left by the version that projected the
+    // observation deadline. Nothing else would move it, so republish it; the
+    // object skips a projection whose hash has not moved. Rollout scaffolding,
+    // removable with `republishDeadline` (see when there). The pass still
+    // reports as a stall, deliberately: a deadline this cannot correct keeps
+    // backing off and keeps being reported rather than polling quietly.
     await terminal.republishDeadline();
     return terminalReconcileOutcome(result.transition);
   }

@@ -106,8 +106,9 @@ describe("Daytona webhook reconciliation", () => {
       dueTerminalSubstreams: async () => [] };
     const target = { kind: "terminal" as const, id: S, dueAt: new Date(0).toISOString() };
     // Nothing is due on this row, so the entry that woke the sweep is stale:
-    // it republishes and reports no wait, and it asks Daytona nothing — the
-    // object's own alarm owns observation.
+    // it reports no wait and asks Daytona nothing — the object's own alarm
+    // owns observation. That it republishes the deadline needs the object's
+    // projection, so it is proved on workerd in `terminal-authority.test.ts`.
     expect(await runWorkspaceScheduleTarget(context, target, new Date())).toBeUndefined();
     expect(f.getSandbox).not.toHaveBeenCalled();
     expect(await f.terminal.providerObservation()).toBeNull();
