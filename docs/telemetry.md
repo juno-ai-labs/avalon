@@ -674,27 +674,6 @@ when matching artifacts exist. Operational snapshots and packaged fixtures provi
 the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
-### 2026-09-29 — An unreadable stored event no longer stalls PostHog delivery
-
-**What changed:** The PostHog outbox parses each selected row once with
-`safeParse`. A row the running contract rejects is parked on the retry backoff
-with its diagnostic code in `terminal_code`, logged as
-`telemetry_delivery_row_unparseable`, and counted as `unparseable`; the rest of
-the page is delivered. `TelemetryEnvelopeSchema` now reports each nested
-property failure at its own path (`properties.entrypoint`) rather than one issue
-on `properties`, so that code names the field.
-
-**Why:** The selection loop used `.parse`. After a rollback below a contract
-change, such as a widened enum, one stored row threw on every pass and blocked
-all delivery behind it. The lakehouse path already used `safeParse` and rejects
-such rows. PostHog parks rather than rejects because the rollback case is the
-common one: the row is valid under the contract it was accepted by, and a
-roll-forward should deliver it.
-
-**What to respect:** No row in the outbox may be able to throw out of the
-selection loop. A parked row keeps retrying until `delete_at`, so a genuinely
-corrupt row costs one read an hour, not a stall.
-
 ### 2026-09-14 — Configurable deployment isolation
 
 Configured deployments use the existing Global delivery policy. Public-site and pre-login telemetry use the Global identity endpoint, and workspace events keep their deployment identifier. Geographical routing and the separate internal telemetry sink are removed because deployment IDs now describe isolation, not a product residency promise. Existing preferences, schemas, receipts, and destination adapters remain responsible for delivery.
@@ -1963,6 +1942,27 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 
 ## Changelog
+
+### 2026-09-29 — An unreadable stored event no longer stalls PostHog delivery
+
+**What changed:** The PostHog outbox parses each selected row once with
+`safeParse`. A row the running contract rejects is parked on the retry backoff
+with its diagnostic code in `terminal_code`, logged as
+`telemetry_delivery_row_unparseable`, and counted as `unparseable`; the rest of
+the page is delivered. `TelemetryEnvelopeSchema` now reports each nested
+property failure at its own path (`properties.entrypoint`) rather than one issue
+on `properties`, so that code names the field.
+
+**Why:** The selection loop used `.parse`. After a rollback below a contract
+change, such as a widened enum, one stored row threw on every pass and blocked
+all delivery behind it. The lakehouse path already used `safeParse` and rejects
+such rows. PostHog parks rather than rejects because the rollback case is the
+common one: the row is valid under the contract it was accepted by, and a
+roll-forward should deliver it.
+
+**What to respect:** No row in the outbox may be able to throw out of the
+selection loop. A parked row keeps retrying until `delete_at`, so a genuinely
+corrupt row costs one read an hour, not a stall.
 
 ### 2026-09-23 — Correlate organization socket opening across desktop and room
 

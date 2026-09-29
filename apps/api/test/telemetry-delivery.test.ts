@@ -330,7 +330,14 @@ describe("Global telemetry delivery", () => {
     database.close();
   });
 
-  it("parks a row the running contract rejects and still delivers the rows behind it", async () => {
+  it.each([
+    // Accepted by a newer contract that widened the enum, then the API rolled back.
+    ["schema-skewed", (skewed: ReturnType<typeof envelope>) => JSON.stringify({
+      ...skewed,
+      properties: { ...skewed.properties, entrypoint: "moon" },
+    }), expect.stringMatching(/^stored_envelope_invalid:.*properties\.entrypoint/u)],
+    ["malformed", () => "{not json", "stored_envelope_invalid"],
+  ] as const)("parks a %s row and still delivers the rows behind it", async (_, storedJson, terminalCode) => {
     const database = migratedObservabilityFixture();
     const deliverTelemetryBatch = vi.fn(async () => ({
       postHog: { result: "delivered" as const, requestId: "posthog-request-3", retryAfterMs: null },
@@ -342,7 +349,6 @@ describe("Global telemetry delivery", () => {
       POSTHOG_PROJECT_TOKEN: "phc_test",
       TELEMETRY_DELIVERY: { deliverTelemetryBatch },
     });
-    // Accepted by a newer contract that widened the enum, then the API rolled back.
     const skewed = envelope("018f22f2-4c22-7abc-8def-0123456789aa");
     database.prepare(`
       INSERT INTO telemetry_accepted_events (
@@ -353,7 +359,7 @@ describe("Global telemetry delivery", () => {
                 '2026-08-12T19:59:00.000Z', ?, '2026-11-10T20:00:00.000Z', 'pending')
     `).run(
       skewed.eventId,
-      JSON.stringify({ ...skewed, properties: { ...skewed.properties, entrypoint: "moon" } }),
+      storedJson(skewed),
       now,
     );
     const validId = "018f22f2-4c22-7abc-8def-0123456789ab";
@@ -382,7 +388,7 @@ describe("Global telemetry delivery", () => {
         delivery_state: "retrying",
         attempt_count: 1,
         next_attempt_at: "2026-08-12T20:01:00.000Z",
-        terminal_code: expect.stringMatching(/^stored_envelope_invalid:.*properties\.entrypoint/u),
+        terminal_code: terminalCode,
       },
       {
         event_id: validId,
