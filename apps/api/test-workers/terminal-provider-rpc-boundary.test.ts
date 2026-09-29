@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createTerminalProviderRpcClient } from "../src/services/terminal/provider-rpc-client";
 import type { SupportedTerminalConfiguration } from "../src/services/terminal/provider-rpc-contract";
@@ -62,6 +62,35 @@ describe("Terminal provider Service Binding RPC protocol", () => {
     } finally {
       session[Symbol.dispose]();
     }
+  });
+
+  /**
+   * An undisposed session keeps its invocation open in the provider Worker,
+   * and a caller in a Durable Object never ends the context that would dispose
+   * it; that is what ran the provider Worker out of memory. Local workerd does
+   * not run the target's own disposer in this harness, so this pins the half
+   * that is ours: the real stub the client was handed is disposed.
+   */
+  it("disposes the real session stub when the client is disposed", async () => {
+    let session: Awaited<ReturnType<typeof binding.createSession>> | undefined;
+    const provider = createTerminalProviderRpcClient({
+      createSession: async (configuration, instrumentation) => {
+        session = await binding.createSession(configuration, instrumentation);
+        return session;
+      },
+    }, CONFIGURATION);
+
+    await provider.getSandbox("sandbox-a");
+    await provider.getSandbox("sandbox-b");
+    await expect(session?.sessionObservations()).resolves.toMatchObject({ installed: false });
+
+    provider[Symbol.dispose]();
+    await vi.waitFor(async () => {
+      const refused = await Promise.resolve()
+        .then(() => session?.sessionObservations())
+        .then(() => null, (error: unknown) => error);
+      expect(refused).toMatchObject({ message: expect.stringMatching(/disposed/) });
+    });
   });
 
   it("carries a start deadline across the Worker boundary in the position the session reads", async () => {

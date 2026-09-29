@@ -74,7 +74,7 @@ export async function createAvalonTerminalPlugin(
      */
     publicationWorkstreamId?: string | null;
   } = {},
-): Promise<HarnessPlugin | null> {
+): Promise<(HarnessPlugin & Disposable) | null> {
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const configuration = parseTerminalRegionConfiguration(env);
   if (configuration.capability === "unsupported") return null;
@@ -131,7 +131,9 @@ export async function createAvalonTerminalPlugin(
     executionPrincipal: input.executionPrincipal,
   }, new Date(), terminalPort);
 
-  const provider = options.provider ?? createTerminalProviderRpcClient(env.TERMINAL_PROVIDER, configuration, {
+  // Owned by this plugin, and so by the run: disposing the plugin releases the
+  // provider session the run's tools share.
+  const ownedProvider = options.provider ? null : createTerminalProviderRpcClient(env.TERMINAL_PROVIDER, configuration, {
     observe: (measurement) => recordTerminalPlatformObservation(env, measurement),
     observeRequest: (measurement) => {
       recordTerminalProviderRequest(measurement);
@@ -159,6 +161,7 @@ export async function createAvalonTerminalPlugin(
       );
     },
   });
+  const provider = options.provider ?? ownedProvider!;
   const coordinator = new TerminalSandboxCoordinator(
     env,
     terminalPort,
@@ -386,6 +389,7 @@ export async function createAvalonTerminalPlugin(
   return {
     ...plugin,
     activationTimeoutMs: TERMINAL_PLUGIN_ACTIVATION_BUDGET_MS,
+    [Symbol.dispose]: () => ownedProvider?.[Symbol.dispose](),
     onActivate: async (context: HarnessPluginActivationContext) => {
       const startedAt = Date.now();
       const activationAttemptNumber = ++activationAttempt;
