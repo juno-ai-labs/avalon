@@ -124,7 +124,7 @@ export const durableObjectWorkspaceTableRoutingRule = {
     },
     schema: [],
     messages: {
-      misrouted: "`{{table}}` lives in WorkspaceDO, not regional D1: this.env.DB here answers `no such table` and the caller gets a 500. Route the query through the object that owns the table (a typed WorkspaceDO method, or withWorkspaceRuntimeDatabase(env, workspaceId)).",
+      misrouted: "`{{table}}` lives in WorkspaceDO, not regional D1: this.env.DB here answers `no such table` and the caller gets a 500. Route the query through the object that owns the table: from another object, a typed WorkspaceDO method or withWorkspaceRuntimeDatabase(env, workspaceId); inside WorkspaceDO itself, its own storage (runWorkspaceSql or localWorkspaceEnv), because withWorkspaceRuntimeDatabase without the local executor calls the object back.",
     },
   },
   create(context) {

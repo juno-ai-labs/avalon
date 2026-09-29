@@ -548,10 +548,9 @@ tool built for that shape:
 
 A lint rule could enforce this mechanically by refusing any `node:fs` read of a
 production source from a test file. None exists yet, so reviewers enforce it by
-hand. The one named exception, a scan of Durable Object sources for
-`WORKSPACE_LOCAL_TABLES` names, has ended: the
-`rally/durable-object-workspace-table-routing` ESLint rule replaced it, and no
-exception remains.
+hand. A few scans that predate this rule remain, such as the whole-stylesheet
+checks in `themes.css.node.test.ts` and `palette.css.node.test.ts`; they are not
+precedent for a new one.
 
 **A good test:**
 
