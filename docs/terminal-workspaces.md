@@ -553,6 +553,10 @@ personless; it is not duplicated into these product events.
   belonged in. Each of those failures looks like a plausible number rather
   than an error, which is why `terminal-provider-rpc-boundary.test.ts` and
   `terminal-provider-session-target.test.ts` pin all three.
+- **Whoever creates a provider RPC client disposes it.** An undisposed
+  session holds an invocation open in the provider Worker, and a caller in a
+  Durable Object never ends the context that would release it. Sessions left
+  behind every status check ran that Worker out of memory.
 - **One regional sandbox generation belongs to one conversation and one frozen
   authority fingerprint.** Reusing it after a principal, resource visibility,
   GitHub connection, or repository change would make old filesystem bytes a new
@@ -1203,6 +1207,40 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-09-29 — The owner of a provider RPC client disposes it
+
+**What changed:** `createTerminalProviderRpcClient` returns a `Disposable`.
+Disposing it releases the provider Worker session once the calls in flight
+settle, and a call made after that gets a session of its own that is released
+when it goes idle. Every caller disposes its client when done: the per-channel
+status check, the workspace lifecycle pass, the Daytona webhook, the Terminal
+settings routes, and the harness run, which disposes its plugins when
+`runHarness` settles and so releases the Terminal plugin's session.
+
+**Why:** The client opened a session on first use and never disposed it. A
+session is an `RpcTarget`, and Cloudflare keeps the provider Worker's
+invocation open until every stub to it is disposed. A caller in a Durable
+Object never ends the context that would dispose it for us, and the status
+check made a new client every minute for every channel with a sandbox. Sessions
+piled up in `avalon-api-terminal-global` until an instance hit 128 MB and
+everything in it was killed, in-flight Terminal tool calls included: about
+8,900 killed invocations a day, with the `default.jsrpc` errors and the
+"waitUntil cancelled" warnings as side effects.
+
+**Considered and rejected:** A session per call, which would drop the sandbox
+objects the provider caches for a run and add a Daytona `GET` to every tool
+call. Releasing the session whenever the client goes idle, for the same reason,
+since a run's tool calls are separated by model turns. A harness-level teardown
+hook, which the harness package does not need: the host already knows when a
+run ends.
+
+**Consequences:** Anything that creates this client owns disposing it. A
+plugin that holds run-scoped resources makes itself `Disposable`, and
+`runWorkstreamHarness` releases it. Local workerd does not run an `RpcTarget`'s
+disposer in the Workers test pool, so
+`terminal-provider-rpc-boundary.test.ts` pins that the real stub is disposed,
+not that the provider side ran its disposer.
 
 ### 2026-09-28 — The sandbox status check moves into its conversation, stops publishing, and slows for stopped sandboxes
 
