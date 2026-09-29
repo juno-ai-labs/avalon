@@ -340,6 +340,12 @@ the covering test; if there is none, flag it.
 - A bug fix ships with a regression test that fails without the fix.
 - A new route should test the authorized response, the unauthorized/forbidden response,
   and malformed-body rejection at the `zValidator` boundary — not just the 200.
+- A missing test on genuinely untestable wiring or a pure CSS declaration is not a
+  finding when the PR's **Validation** section states how it was verified (a real-window
+  screenshot, or the logic extracted into a module that is tested). It is a finding when
+  the PR is silent, or when the "untestable" code holds a decision that could have been
+  extracted; `docs/testing.md` ("What to test and what not to") has the extraction
+  pattern. Never propose a source-text scan as the way to close a coverage gap.
 
 **2. The right suite.** `pnpm test` runs every package's suite, and the packages do not
 all run the same way:
@@ -370,6 +376,17 @@ than no test.
 - Flag tautological assertions (`toBeDefined()` on something the types guarantee,
   asserting a mock was called without asserting *with what*) and tests that would still
   pass if the implementation were deleted.
+- Flag any test that reads a production source file, stylesheet, HTML, Wrangler or
+  `_headers` file off disk and asserts on its text, or that walks a directory to grep
+  which files import a module. It cannot fail for the reason its name claims. Propose
+  the replacement by shape: `no-restricted-imports` or a rule in `scripts/eslint-rules/`
+  for an import or code-shape rule, a behavioral test that runs the subject for a
+  behavior, a real-window check stated in the PR for CSS. `docs/testing.md` ("What to
+  test and what not to") has the table.
+- Flag mock and constant echoes: `mockResolvedValue(x)` followed by
+  `expect(result).toEqual(x)`, an expected value built by calling the subject or its
+  helper, or a constant asserted against its own literal. Each passes for any consistent
+  wrong answer.
 - For D1 work, assert on the statement the code actually issues — the recording-database
   pattern in `apps/api/test/organization-region-bindings.test.ts` is the reference, and
   it is how a missing `workspace_id` predicate gets caught.
