@@ -164,6 +164,37 @@ describe("Rally engineering MCP tools", () => {
     expect(result.content[0]!.text).toContain("exists in multiple Rally regions");
   });
 
+  it("logs why a tool failed by code, and keeps the error's text off the log", async () => {
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000ec1");
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    vi.mocked(global.listWorkstreams).mockResolvedValue({ found: false });
+    vi.mocked(enterprise.listWorkstreams).mockRejectedValue(
+      new Error("D1_ERROR: no such column: Customer_Email: SQLITE_ERROR"),
+    );
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await rpc(
+        { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise },
+        "tools/call",
+        { name: "list_workstreams", arguments: { workspaceId } },
+      );
+      vi.mocked(enterprise.listWorkstreams).mockResolvedValue({ found: false });
+      await rpc(
+        { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise },
+        "tools/call",
+        { name: "list_workstreams", arguments: { workspaceId } },
+      );
+      const rows = logged.mock.calls.map((call) => JSON.parse(String(call[0])) as Record<string, unknown>)
+        .filter((row) => row.event === "engineering_mcp_tool_failed");
+      expect(rows.map((row) => row.error_code)).toEqual(["tool_failed:sqlite_no_such_column", "target_not_found"]);
+      expect(JSON.stringify(rows)).not.toContain("Customer_Email");
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
   it("serves each inventory tool from the one region that resolves it", async () => {
     const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000ebb");
     const sidekickId = asAutomationId("00000000-0000-7000-8000-000000000ebc");

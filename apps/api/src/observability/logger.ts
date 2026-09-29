@@ -1,3 +1,4 @@
+import { platformErrorCode } from "@rally/contracts/platform-diagnostics";
 import { codeShaped, describeZodIssues, isDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import type { Context } from "hono";
 import { z } from "zod";
@@ -75,7 +76,7 @@ const STABLE_CODE = /^[a-z][a-z0-9_]{0,119}$/u;
  * to the caller's fallback, as they always did.
  */
 export function diagnosticErrorCode(error: unknown, fallback: string): string {
-  if (error instanceof ApiError) return error.code;
+  if (error instanceof ApiError) return error.diagnosticCode ?? error.code;
   if (error instanceof z.ZodError) return codeShaped(`${fallback}:${describeZodIssues(error)}`);
   if (!(error instanceof Error)) return fallback;
   const direct = error.message.trim();
@@ -84,28 +85,6 @@ export function diagnosticErrorCode(error: unknown, fallback: string): string {
   if (tagged) return tagged.replaceAll(".", "_");
   const platform = platformErrorCode(error);
   return platform ? `${fallback}:${platform}` : fallback;
-}
-
-/**
- * The Workers runtime's own failures, which arrive as sentences rather than
- * codes. Each is matched to a word of ours, so the sentence itself is never
- * copied; the runtime's `overloaded` flag names the rest. `retryable` is not
- * read: this tree's own provider errors carry a property of that name, so it
- * says nothing about where an error came from.
- * Without this, a legacy object resetting under a deploy logged as the
- * caller's bare fallback, indistinguishable from a real refusal.
- */
-const PLATFORM_ERRORS: readonly (readonly [RegExp, string])[] = [
-  [/^Durable Object reset because its code was updated/u, "durable_object_code_updated"],
-  [/exceeded timeout which caused object to be reset/u, "durable_object_storage_timeout"],
-  [/this Durable Object instance is no longer active/u, "durable_object_inactive"],
-  [/^Network connection lost/u, "network_connection_lost"],
-  [/code had hung and would never generate a response/u, "worker_hung"],
-];
-
-function platformErrorCode(error: Error): string | null {
-  for (const [pattern, code] of PLATFORM_ERRORS) if (pattern.test(error.message)) return code;
-  return (error as Error & { overloaded?: unknown }).overloaded === true ? "durable_object_overloaded" : null;
 }
 
 export function logEvent(

@@ -1,5 +1,5 @@
 import type { LogEnv } from "../observability/logger";
-import { logInfo } from "../observability/logger";
+import { diagnosticErrorCode, logInfo } from "../observability/logger";
 import { inSpan } from "../observability/tracing";
 import { SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS } from "./scheduled-alarms";
 
@@ -142,6 +142,12 @@ export class WorkspaceAlarmInstrumentation {
           duration_ms: durationMs,
           alarm_elapsed_ms: Math.max(0, failedAt - this.startedAt),
           crossed_recovery_horizon: crossedRecoveryHorizon,
+          // Not every phase runs under the workspace's isolating wrapper, so
+          // this may be the only record of why it failed. The code is never
+          // the error's own text, so it stays off the trace as the comment
+          // below requires.
+          error_name: error instanceof Error ? error.name : typeof error,
+          code: diagnosticErrorCode(error, `${phase}_failed`),
         });
         // Cloudflare records errors thrown from an enterSpan callback. Keep the
         // original error in this outer closure so target ids or provider text

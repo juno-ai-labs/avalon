@@ -1,6 +1,9 @@
 import { IdSchema } from "@rally/contracts";
+import { ConnectorError, connectorDiagnosticCode } from "@rally/connectors";
 import { DIAGNOSTIC_CODE_MAX_LENGTH } from "@rally/contracts/zod-diagnostics";
 import { z } from "zod";
+
+import { diagnosticErrorCode } from "../observability/logger";
 
 /**
  * What a connector poll step hands back to the workflow, as the step result
@@ -26,3 +29,15 @@ export const PollResultSchema = z.object({
     message: z.string().min(1).max(500),
   })).max(100).optional(),
 });
+
+/**
+ * A poll attempt's failure named by what it was: an adapter's code with the
+ * provider's status, a schema rejection's paths, or a D1 failure. The step
+ * boundary hands the workflow a plain `Error` for all of them, so the terminal
+ * log said `connector_poll_failed` and `Error` and nothing else.
+ */
+export function pollAttemptErrorCode(error: unknown): string {
+  return error instanceof ConnectorError
+    ? connectorDiagnosticCode(error)
+    : diagnosticErrorCode(error, "connector_poll_failed");
+}
