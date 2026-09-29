@@ -365,7 +365,7 @@ page size asked for), 60-character labels
 pnpm --filter @rally/desktop exec vitest run src/main/menu-bar-menu.test.ts \
   src/main/menu-bar-content.test.ts src/main/menu-bar.test.ts \
   src/main/menu-bar-open-observer.test.ts src/main/telemetry-reporter.test.ts \
-  src/main/telemetry-wiring.test.ts src/main/launch-at-login.test.ts
+  src/main/launch-at-login.test.ts
 ```
 
 `menuBarMenuTemplate` takes an injectable `now` for the same reason the store

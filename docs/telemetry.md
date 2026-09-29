@@ -570,7 +570,7 @@ pnpm --filter @rally/api exec vitest run test/telemetry-collector.test.ts test/t
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/telemetry-delivery-rpc-boundary.test.ts test-workers/runtime-deferral.test.ts
 pnpm --filter @rally/api build:telemetry
 pnpm --filter @rally/api test:crash-symbolicator-container
-pnpm --filter @rally/desktop exec vitest run src/renderer/lib/api.test.ts src/renderer/lib/telemetry.test.ts src/main/javascript-error-candidate.test.ts src/main/telemetry-reporter.test.ts src/main/product-analytics-settings.test.ts src/main/native-crash-generation.test.ts src/main/native-crash-uploader.test.ts src/main/main-process-network-recovery.test.ts src/main/renderer-crash-recovery.test.ts src/main/renderer-window-availability.test.ts src/main/telemetry-wiring.test.ts
+pnpm --filter @rally/desktop exec vitest run src/renderer/lib/api.test.ts src/renderer/lib/telemetry.test.ts src/main/javascript-error-candidate.test.ts src/main/telemetry-reporter.test.ts src/main/product-analytics-settings.test.ts src/main/native-crash-generation.test.ts src/main/native-crash-uploader.test.ts src/main/main-process-network-recovery.test.ts src/main/renderer-crash-recovery.test.ts src/main/renderer-window-availability.test.ts
 pnpm --filter @rally/desktop test:release
 pnpm --filter @rally/desktop test:crashpad
 pnpm --filter @rally/site test

@@ -57,7 +57,7 @@ element, so the two travel together whichever way the line reads.
 - **`formatRelative` has exactly one caller, and it is `RelativeTime`.** A
   surface that formats the string itself renders a label that is right once and
   wrong for the rest of the session, and nothing on screen says so.
-  `relative-time.node.test.ts` fails the build when a second importer appears.
+  Nothing automated fails when a second importer appears; that guard belongs in `no-restricted-imports`.
 - **`useNow` is the only relative-time clock.** A component that arms its own
   `setInterval` to keep a label current adds a timer per label — fifty turns,
   two sidebars and an inspector would arm fifty-odd — and each drifts onto its
@@ -130,7 +130,6 @@ formatted where they are produced.
 pnpm --filter @rally/desktop exec vitest run \
   src/renderer/lib/clock.test.tsx \
   src/renderer/components/relative-time.test.tsx \
-  src/renderer/components/relative-time.node.test.ts \
   src/renderer/components/message-byline.test.tsx \
   src/renderer/styles/app.css.node.test.ts
 ```
@@ -139,9 +138,7 @@ pnpm --filter @rally/desktop exec vitest run \
 `vi.setSystemTime`; the late-subscriber case records every value a probe
 component was rendered with rather than the one it settled on, because
 subscribing re-reads the clock and an assertion on the final value passes
-whether or not the first frame was stale. `relative-time.node.test.ts` is the
-single-door guard and runs on node, so it is named `.node.test.ts` and typed by
-`tsconfig.node.json`.
+whether or not the first frame was stale.
 
 ### 2026-09-10 — One byline, one clock, one relative label
 
