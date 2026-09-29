@@ -85,12 +85,14 @@ describe("Terminal provider Service Binding RPC protocol", () => {
     await expect(session?.sessionObservations()).resolves.toMatchObject({ installed: false });
 
     provider[Symbol.dispose]();
+    // Disposal runs once the last call settles, inside this isolate. Five
+    // seconds leaves room on a loaded runner and stays under the test's 30.
     await vi.waitFor(async () => {
       const refused = await Promise.resolve()
         .then(() => session?.sessionObservations())
         .then(() => null, (error: unknown) => error);
       expect(refused).toMatchObject({ message: expect.stringMatching(/disposed/) });
-    });
+    }, { timeout: 5_000 });
   });
 
   it("carries a start deadline across the Worker boundary in the position the session reads", async () => {

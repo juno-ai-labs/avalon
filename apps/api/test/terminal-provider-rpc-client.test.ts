@@ -121,20 +121,20 @@ describe("Terminal provider RPC client", () => {
     const provider = createTerminalProviderRpcClient(binding, configuration);
 
     const reading = provider.readFile("sandbox-1", "/workspace/a.txt");
-    await vi.waitFor(() => expect(readFile).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(readFile).toHaveBeenCalledOnce(), { timeout: 1_000 });
     provider[Symbol.dispose]();
     await Promise.resolve();
     expect(disposed).not.toHaveBeenCalled();
 
     finishRead?.();
     await expect(reading).resolves.toEqual(new Uint8Array([1]));
-    await vi.waitFor(() => expect(disposed).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(disposed).toHaveBeenCalledOnce(), { timeout: 1_000 });
 
     // A call after disposal opens its own session and releases it when idle,
     // rather than failing or leaving it open.
     const late = provider.getSandbox("sandbox-1");
     await expect(late).resolves.toEqual(snapshot);
-    await vi.waitFor(() => expect(disposed).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(disposed).toHaveBeenCalledTimes(2), { timeout: 1_000 });
     expect(binding.createSession).toHaveBeenCalledTimes(2);
   });
 
