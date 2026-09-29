@@ -447,26 +447,37 @@ describe("Terminal resource bridge", () => {
 
   it("reports a published site's alias, and the same one when it republishes", async () => {
     const state = fixture(vi.fn(async () => undefined));
-    const site = (html: string) => ({
+    const site = (html: string, sha256: string) => ({
       mode: "static" as const,
       stateful: false,
-      files: [{
-        path: "index.html",
-        bytes: new TextEncoder().encode(html),
-        sha256: "c".repeat(64),
-      }],
+      files: [{ path: "index.html", bytes: new TextEncoder().encode(html), sha256 }],
       serverModuleSha256: null,
     });
 
-    const first = await state.bridge.publishSiteResource(context, { filePath: "site" }, site("<h1>one</h1>"));
+    const first = await state.bridge.publishSiteResource(
+      context, { filePath: "site" }, site("<h1>one</h1>", "c".repeat(64)),
+    );
     const stored = state.database.prepare("SELECT slug FROM resources WHERE id = ?")
       .get(first.resourceId) as { slug: string | null };
     expect(first.slug).toMatch(RESOURCE_SLUG_PATTERN);
     expect(first.slug).toBe(stored.slug);
 
-    const replay = await state.bridge.publishSiteResource(context, { filePath: "site" }, site("<h1>one</h1>"));
+    // A crash replay of the same call returns through the equal-content branch.
+    const replay = await state.bridge.publishSiteResource(
+      context, { filePath: "site" }, site("<h1>one</h1>", "c".repeat(64)),
+    );
     expect(replay.resourceId).toBe(first.resourceId);
     expect(replay.slug).toBe(first.slug);
+
+    // A later run with new content swaps the row's content and keeps its alias.
+    const republished = await state.bridge.publishSiteResource(
+      { ...context, effectIntentId: I2, toolCallId: "resource-recall" },
+      { filePath: "site" },
+      site("<h1>two</h1>", "d".repeat(64)),
+    );
+    expect(republished.resourceId).toBe(first.resourceId);
+    expect(republished.version).toBe(2);
+    expect(republished.slug).toBe(first.slug);
   });
 
   it("reserves a site's hostname before a republish mutates its resource row", async () => {
