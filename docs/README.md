@@ -208,5 +208,6 @@ update it in the same change.
 | [`api-worker-deployment.md`](api-worker-deployment.md) | Static Worker services, Global release ordering, shared ingress, and migration barriers. |
 | [`inference-lakehouse.md`](inference-lakehouse.md) | Archiving and querying inference records in the configured deployment. |
 | [`analytics-lakehouse.md`](analytics-lakehouse.md) | Product-event acceptance, queued delivery, and lakehouse records. |
+| [`landing-page-tracking.md`](landing-page-tracking.md) | What the landing page reports to PostHog, the tagged links, and the checklist a redesign must keep so tracking survives. |
 | [`public-site-telemetry.md`](public-site-telemetry.md) | Global anonymous acquisition and desktop-handoff measurement. |
 | [`terminal-production-qa-2026-08-21.md`](terminal-production-qa-2026-08-21.md) | Historical Terminal production verification. |

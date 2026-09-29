@@ -8,8 +8,7 @@ import type {
 } from '@rally/contracts/telemetry';
 
 type SitePage = TelemetryEventProperties<'site_page_viewed'>['page'];
-type SiteAction = TelemetryEventProperties<'site_action_selected'>['action'];
-type SitePlacement = TelemetryEventProperties<'site_action_selected'>['placement'];
+type SiteActionLink = Omit<TelemetryEventProperties<'site_action_selected'>, 'page'>;
 type HandoffType = TelemetryEventProperties<'desktop_handoff_attempted'>['handoffType'];
 
 const ANONYMOUS_EPOCH_KEY = 'rally.site.anonymous-epoch.v1';
@@ -24,6 +23,10 @@ const pageVisibleAt = Date.now();
 const pending: TelemetryEnvelope[] = [];
 let capabilityPromise: Promise<CapabilityState> | null = null;
 let leaveReported = false;
+// Set by any queued event that must survive the page handing off; carried by
+// whichever request next sends the queue, since that request may include it.
+let keepaliveWanted = false;
+let capabilityRefreshed = false;
 
 function apiBaseUrl(): string {
   return location.hostname === 'localhost' || location.hostname === '127.0.0.1'
@@ -150,17 +153,49 @@ function makeEnvelope<TName extends TelemetryEventName>(
   } as TelemetryEnvelope;
 }
 
-async function flush(keepalive = false): Promise<void> {
+async function flush(): Promise<void> {
   if (pending.length === 0) return;
   const state = await getCapability();
+  // Two reports waiting on one bootstrap resume together; the first request
+  // takes both events and the second finds nothing left to send.
   const events = pending.splice(0, 50);
-  const response = await fetch(`${apiBaseUrl()}/telemetry/anonymous`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ capability: state.capability, events }),
-    keepalive,
-  });
-  if (!response.ok) pending.unshift(...events);
+  if (events.length === 0) return;
+  const keepalive = keepaliveWanted;
+  keepaliveWanted = false;
+  const requeue = (): void => {
+    pending.unshift(...events);
+    if (keepalive) keepaliveWanted = true;
+  };
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl()}/telemetry/anonymous`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ capability: state.capability, events }),
+      keepalive,
+    });
+  } catch {
+    // Offline or blocked: keep the batch for the page's next send.
+    requeue();
+    return;
+  }
+  if (response.ok) {
+    capabilityRefreshed = false;
+    return;
+  }
+  // The capability expires while a tab stays open; bootstrap again once and
+  // resend, since the same anonymous epoch gets the same journey back.
+  if (response.status === 401 && !capabilityRefreshed) {
+    capabilityRefreshed = true;
+    capabilityPromise = null;
+    requeue();
+    await flush();
+    return;
+  }
+  // Any other 4xx is the API refusing the batch itself; resending it would
+  // refuse every event queued behind it on this page. A server failure, a
+  // timeout, or rate limiting is transient and retries.
+  if (response.status >= 500 || response.status === 408 || response.status === 429) requeue();
 }
 
 function report<TName extends TelemetryEventName>(
@@ -171,7 +206,8 @@ function report<TName extends TelemetryEventName>(
   void getCapability().then((state) => {
     if (pending.length >= MAX_PENDING_EVENTS) pending.shift();
     pending.push(makeEnvelope(state, name, properties));
-    return flush(keepalive);
+    if (keepalive) keepaliveWanted = true;
+    return flush();
   }).catch(() => undefined);
 }
 
@@ -243,10 +279,46 @@ function durationBucket(milliseconds: number): TelemetryEventProperties<'site_pa
   return 'gte_10m';
 }
 
-export function reportSiteAction(action: SiteAction, placement: SitePlacement): void {
+function reportSiteAction(link: SiteActionLink): void {
   const page = currentSitePage();
   if (page !== 'landing' && page !== 'download' && page !== 'support') return;
-  report('site_action_selected', { page, action, placement });
+  // A click is often the visitor's last act on the page, so it gets the same
+  // best-effort keepalive as a page leave.
+  report('site_action_selected', { page, ...link }, true);
+}
+
+/**
+ * The links a page may report, keyed by the `data-site-action` id in its HTML.
+ * An id not listed here is ignored, so markup can only select one of these
+ * closed combinations and never put its own values into an event.
+ */
+export const SITE_ACTION_LINKS = {
+  'download-header': { action: 'download', placement: 'header' },
+  'download-hero': { action: 'download', placement: 'hero' },
+  'download-pricing-pro': { action: 'download', placement: 'pricing', plan: 'pro' },
+  'download-pricing-max': { action: 'download', placement: 'pricing', plan: 'max' },
+  'download-pricing-ultra': { action: 'download', placement: 'pricing', plan: 'ultra' },
+  'demo-request': { action: 'demo_request', placement: 'sidekicks' },
+  'founder-contact': { action: 'founder_contact', placement: 'team' },
+  'support-contact-footer': { action: 'support_contact', placement: 'footer' },
+} satisfies Record<string, SiteActionLink>;
+
+export function siteActionForLink(id: string | undefined): SiteActionLink | null {
+  if (!id || !Object.hasOwn(SITE_ACTION_LINKS, id)) return null;
+  return SITE_ACTION_LINKS[id as keyof typeof SITE_ACTION_LINKS];
+}
+
+function initializeSiteActions(): void {
+  const selected = (event: MouseEvent): void => {
+    const link = (event.target as Element | null)?.closest?.<HTMLElement>('[data-site-action]');
+    const action = siteActionForLink(link?.dataset['siteAction']);
+    if (action) reportSiteAction(action);
+  };
+  document.addEventListener('click', selected, { capture: true });
+  // A middle-click opens a link without firing `click`.
+  document.addEventListener('auxclick', (event) => {
+    if (event.button === 1) selected(event);
+  }, { capture: true });
 }
 
 export function reportDesktopHandoff(
@@ -279,4 +351,5 @@ export function initializeSiteTelemetry(): void {
     }, true);
   };
   window.addEventListener('pagehide', leave, { once: true });
+  initializeSiteActions();
 }
