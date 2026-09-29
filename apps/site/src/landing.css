@@ -95,6 +95,8 @@ h1{white-space:pre-line;max-width:56rem;margin:0 auto;font-size:4.5rem}
 .card-list li{padding:8px 0;border-bottom:1px solid var(--hairline)}
 
 .people{margin:64px 0 0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:40px}
+.people a{display:inline-block;transition:opacity .15s}
+.people a:hover{opacity:.7}
 .people img{width:112px;height:112px;border:1px solid var(--hairline);border-radius:50%;object-fit:cover;filter:grayscale(1)}
 .people strong{display:block;margin-top:20px;font-weight:500}
 .people span{display:block;margin-top:2px;font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
