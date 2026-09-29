@@ -11,9 +11,11 @@ import { useAppSession } from '../lib/app-session';
 /** Resolve only the default route; live list updates never replace an open conversation. */
 export function WorkstreamLandingScreen(): React.JSX.Element {
   const workstreams = useWorkstreamsQuery();
-  const spaces = useSpaceDirectories().active.data;
+  const spaceDirectories = useSpaceDirectories();
+  const spaces = spaceDirectories.active.data;
+  const inactiveSpaces = spaceDirectories.inactive.data;
   const { session } = useAppSession();
-  const { state, sidebarConnect } = useWorkspaceSocket();
+  const { state, sidebarConnect, loadedSpaceIds } = useWorkspaceSocket();
   const routeState: unknown = useLocation().state;
   const savedRoute = routeState == null && session?.workspace && session.user
     ? readLayout(layoutKey(session.workspace.id, session.user.id, 'last-route')) : null;
@@ -50,6 +52,13 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
       ? !candidates.some((row) => row.id === savedChannelId)
       : candidates.length === 0 && !awaitingSpace
         && !spaces?.items.some((row) => row.id === savedSpaceId));
+  // Loading a Space at a time, the same wait is for the Spaces not yet in,
+  // archived ones included, unless the walk has failed.
+  const awaitingSpaces = loaded !== undefined && sidebarConnect?.channelsBySpace === true && !workstreams.isError
+    && [...(spaces?.items ?? []), ...(inactiveSpaces?.items ?? [])].some((space) => !loadedSpaceIds.has(space.id))
+    && (savedChannelId !== null
+      ? !candidates.some((row) => row.id === savedChannelId)
+      : candidates.length === 0);
   const { fetchMore } = workstreams;
   useEffect(() => {
     if (needsMore) fetchMore();
@@ -61,7 +70,7 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
     if (state === 'unavailable') return <InlineError>Unable to connect to your organization. Check your connection and restart Rally to try again.</InlineError>;
     return <LoadingState label="Opening channels…" />;
   }
-  if (needsMore) return <LoadingState label="Opening channels…" />;
+  if (needsMore || awaitingSpaces) return <LoadingState label="Opening channels…" />;
   const first = firstLandingWorkstream(candidates);
   // Only a bare startup landing resumes the device's last view. A deliberate
   // leave carries state (including an empty skip list) and uses recency instead.

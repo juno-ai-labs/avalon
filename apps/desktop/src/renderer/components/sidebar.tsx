@@ -113,6 +113,14 @@ interface SidebarProps {
   loadingMoreWorkstreams?: boolean;
   /** Ask for the next page. Called when the scroll approaches the bottom. */
   onLoadMoreWorkstreams?: () => void;
+  /**
+   * The Spaces whose Channels have been loaded, when they load a Space at a
+   * time. A Space missing here with no rows yet draws placeholders rather than
+   * "No channels yet". Absent means every Channel held is all there is.
+   */
+  loadedSpaceIds?: ReadonlySet<string>;
+  /** The Space on screen changed: load its Channels ahead of the others. */
+  onViewSpace?: (spaceId: string | null) => void;
   loading?: boolean;
   accountMenu?: ReactNode;
   onArchiveWorkstream: (workstream: WorkstreamSummary) => Promise<void>;
@@ -1189,7 +1197,9 @@ export function Sidebar({
   spacesOutOfDate = false,
   onRetrySpaces = () => undefined,
   workstreams,
-  loading,
+  loadedSpaceIds,
+  onViewSpace,
+  loading: directoryLoading,
   accountMenu,
   onArchiveWorkstream,
   onApplyWorkstreamBatch,
@@ -1275,6 +1285,15 @@ export function Sidebar({
   const requestedDeepLinkPage = useRef<string | null>(null);
   const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(() =>
     routeSpaceId ?? routeWorkstream?.spaceIds[0] ?? spaces?.[0]?.id ?? null);
+  useEffect(() => onViewSpace?.(selectedSpaceId), [onViewSpace, selectedSpaceId]);
+  // With Channels loaded a Space at a time, the list on screen is loading
+  // until its Space has answered, and a deep link cannot give up on a Channel
+  // until every Space has.
+  const channelsLoading = directoryLoading === true
+    || (loadedSpaceIds !== undefined && selectedSpaceId !== null && !loadedSpaceIds.has(selectedSpaceId));
+  const directoryIncomplete = directoryLoading === true
+    || (loadedSpaceIds !== undefined
+      && [...(spaces ?? []), ...inactiveSpaces].some((space) => !loadedSpaceIds.has(space.id)));
   const previousRouteWorkstreamId = useRef<string | null>(null);
   useEffect(() => {
     if (previousRouteWorkstreamId.current === routeWorkstreamId) return;
@@ -1299,7 +1318,7 @@ export function Sidebar({
       return;
     }
     if (!routeWorkstream) {
-      if (loading || loadingMoreWorkstreams) return;
+      if (directoryIncomplete || loadingMoreWorkstreams) return;
       if (hasMoreWorkstreams && onLoadMoreWorkstreams) {
         const pageKey = `${pendingDeepLinkNavigation.revision}:${workstreams.length}`;
         if (requestedDeepLinkPage.current === pageKey) return;
@@ -1329,7 +1348,7 @@ export function Sidebar({
     consumeDeepLinkWorkstreamNavigation(pendingDeepLinkNavigation.revision);
   }, [
     hasMoreWorkstreams,
-    loading,
+    directoryIncomplete,
     loadingMoreWorkstreams,
     onLoadMoreWorkstreams,
     pendingDeepLinkNavigation,
@@ -1377,7 +1396,7 @@ export function Sidebar({
   const scrollRef = useRef<HTMLElement | null>(null);
   useSemanticScroll(scrollRef,
     layoutKey(workspace.id, workspace.currentUser.id, `channels-scroll:${selectedSpaceId ?? 'all'}`),
-    '[data-workstream-id]', !loading,
+    '[data-workstream-id]', !channelsLoading,
     hasMoreWorkstreams ? () => { if (!loadingMoreWorkstreams) onLoadMoreWorkstreams?.(); } : undefined,
     workstreams);
   const revealedDeepLinkRevision = useRef<number | null>(null);
@@ -2231,7 +2250,7 @@ export function Sidebar({
         width={displayedSpacesSidebarWidth}
         currentPath={location.pathname}
         inactiveSpaces={inactiveSpaces}
-        loading={loading}
+        loading={directoryLoading}
         readOnly={spacesReadOnly}
         onArchive={onArchiveSpace}
         onCollapsedChange={setSpacesCollapsed}
@@ -2284,7 +2303,7 @@ export function Sidebar({
           <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
             <ChevronsLeft size={16} />
           </IconButton>
-        </SidebarTitleHeader> : spaces !== undefined && loading ? (
+        </SidebarTitleHeader> : spaces !== undefined && directoryLoading ? (
           // The first answer, which carries the Space that heads this rail, is
           // in flight: its mark and name are drawn as placeholders rather than
           // the New header below, which only an answered rail with no Space
@@ -2418,7 +2437,7 @@ export function Sidebar({
             Nothing pinned and nothing unplaced are both implied by the test:
             all three sections draw from the same rows.
           */}
-          {spacesEnabled && !loading && visibleWorkstreams.length === 0 && (
+          {spacesEnabled && !channelsLoading && visibleWorkstreams.length === 0 && (
             // In a section of its own, for the gap every other section carries:
             // hung directly off the nav it lands against the last Space's own
             // "No channels" and reads as a second line of that Space's rather
@@ -2534,12 +2553,12 @@ export function Sidebar({
                 twice. It is tied to the wait rather than to this section's own
                 placeholder because cached channels may already be visible
                 while the sections above are still filling in. */}
-            {loading && (
+            {channelsLoading && (
               <div role="status">
                 <span className="sr-only">Loading your spaces and channels</span>
               </div>
             )}
-            {loading && visibleWorkstreams.length === 0 ? (
+            {channelsLoading && visibleWorkstreams.length === 0 ? (
               // Under a Space the list has no group headings, so neither does
               // its placeholder; only the time-grouped list is drawn in groups.
               spacesEnabled ? <SidebarSkeletonRows count={7} hint="some" /> : <>

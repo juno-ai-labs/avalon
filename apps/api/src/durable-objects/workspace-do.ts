@@ -93,6 +93,7 @@ import {
   WorkspaceWorkstreamRecencyEventSchema,
   WorkspaceSidebarSchema,
   WorkspaceWorkstreamPageEventSchema,
+  WorkspaceSpaceChannelsEventSchema,
   ChannelRailSchema,
   type ChannelRail,
   WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
@@ -1148,6 +1149,8 @@ interface WorkspaceSocketAttachment extends SocketIdentity {
   presenceRevision: number;
   applicationState: "foreground" | "background";
   foregroundWorkstreamId: string | null;
+  /** Asked for `channels_by_space`: its sidebar carries Spaces and no Channel rows. */
+  channelsBySpace: boolean;
 }
 
 /** One person's subscribed sockets, under the relationship they were admitted with. */
@@ -4129,6 +4132,7 @@ function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
       // for a socket that predates it: `member` is what every attachment
       // written before Spaces existed meant.
       accessClass: z.enum(["member", "guest"]).default("member"),
+      channelsBySpace: z.boolean().default(false),
     }).safeParse(socket.deserializeAttachment());
     return parsed.success ? parsed.data : null;
   } catch {
@@ -4181,7 +4185,8 @@ type WorkspaceSocketOperation =
   | "subscribe"
   | "presence"
   | "list_workstreams"
-  | "channel_rails";
+  | "channel_rails"
+  | "space_channels";
 
 interface WorkspaceSocketCloseInput {
   code: number;
@@ -6052,6 +6057,27 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
       return;
     }
+    if (parsed.data.type === "channels_by_space") {
+      const current = readAttachment(socket);
+      if (current) socket.serializeAttachment({ ...current, channelsBySpace: true } satisfies WorkspaceSocketAttachment);
+      return;
+    }
+    if (parsed.data.type === "space_channels") {
+      const auth = await this.sessionAuth(attachment);
+      if (!auth) {
+        this.closeSocket(socket, attachment, {
+          code: WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
+          reason: "Session no longer active",
+          cause: "session_inactive",
+          operation: "space_channels",
+        });
+        return;
+      }
+      this.answerSpaceChannels(socket, {
+        workspaceId: attachment.workspaceId, userId: attachment.userId, accessClass: auth.accessClass ?? "member",
+      }, parsed.data);
+      return;
+    }
     if (parsed.data.type === "list_workstreams") {
       const auth = await this.sessionAuth(attachment);
       if (!auth) {
@@ -6177,6 +6203,84 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // A closed socket asks again when it reconnects.
         return;
       }
+    }
+  }
+
+  /**
+   * Answer `space_channels` with one `workspace_space_channels` frame: a page
+   * of the Space's Channels this viewer may see, as directory rows, and as
+   * many of their rails as fit beside them.
+   *
+   * The page is the one `channel_rails` reads for a Space, so a hidden Channel
+   * is never on it and `nextAfter` never names one. A guest, or a Space the
+   * viewer cannot see, is answered with an empty page. The page leaves out
+   * system Channels, as the connect page does.
+   *
+   * Rails are an extra: one that does not fit, or fails its schema, is left
+   * out, and the client asks for it by name.
+   */
+  private answerSpaceChannels(
+    socket: WebSocket,
+    identity: { workspaceId: string; userId: string; accessClass: "member" | "guest" },
+    request: Extract<WorkspaceSocketClientEvent, { type: "space_channels" }>,
+  ): void {
+    const sql = this.state.storage.sql;
+    const spaces = this.spaceStorage();
+    const page = identity.accessClass === "member" && spaces.reach(identity.userId, request.spaceId) !== null
+      ? visibleSpaceChannelIdsAfter(sql, {
+        spaceId: request.spaceId,
+        userId: identity.userId,
+        after: request.after ?? null,
+        limit: CHANNEL_RAILS_NAMED_LIMIT,
+      })
+      : [];
+    const byId = new Map(boundParameterChunks(page).flatMap((chunk) => sql.exec<WorkspaceDirectoryRow>(
+      `${SELECT_WORKSPACE_DIRECTORY}
+        WHERE directory.workstream_id IN (${chunk.map(() => "?").join(", ")})`,
+      identity.userId, identity.userId, ...chunk,
+    ).toArray()).map((row) => [row.workstream_id, row]));
+    const rows = page.flatMap((id) => byId.get(id) ?? []);
+    const frame = WorkspaceSpaceChannelsEventSchema.parse({
+      type: "workspace_space_channels",
+      requestId: request.requestId,
+      directoryWaterline: this.directoryWaterline(),
+      items: mapDirectoryWorkstreams(
+        sql, rows, identity.workspaceId, spaces, identity.userId, identity.accessClass, true,
+      ),
+      stateVersions: rows.map(directoryStateVersion),
+      rails: [],
+      nextAfter: page.length === CHANNEL_RAILS_NAMED_LIMIT ? page.at(-1)! : null,
+    });
+    if (request.rails && this.railLedger && rows.length > 0) {
+      const encoder = new TextEncoder();
+      let used = encoder.encode(JSON.stringify(frame)).byteLength;
+      const answer = channelRails(sql, {
+        userId: identity.userId,
+        accessClass: identity.accessClass,
+        workspaceId: identity.workspaceId,
+        workstreamIds: rows.map((row) => row.workstream_id),
+        onInvalidAppearance: this.invalidAppearanceReporter(identity.workspaceId),
+      });
+      for (const rail of answer.rails) {
+        const parsed = ChannelRailSchema.safeParse(rail);
+        if (!parsed.success) {
+          logError(this.env, "channel_rail_invalid", {
+            workspace_id: identity.workspaceId,
+            workstream_id: rail.workstreamId,
+            code: zodDiagnosticCode(parsed.error, "channel_rail") ?? "channel_rail_invalid",
+          });
+          continue;
+        }
+        const cost = encoder.encode(JSON.stringify(parsed.data)).byteLength + (frame.rails.length > 0 ? 1 : 0);
+        if (used + cost > this.channelRailFrameBytes) break;
+        frame.rails.push(parsed.data);
+        used += cost;
+      }
+    }
+    try {
+      socket.send(JSON.stringify(frame));
+    } catch {
+      // A closed socket asks again when it reconnects.
     }
   }
 
@@ -14420,6 +14524,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       presenceRevision: 0,
       applicationState: "background",
       foregroundWorkstreamId: null,
+      channelsBySpace: false,
     };
     // Before the accept: an accepted socket without a row could never be counted once its client gave up.
     if (this.unheardLedger) {
@@ -15257,6 +15362,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * does not hold. A client with it on asks for the wider directory afterwards.
    */
   private sidebarPayload(attachment: WorkspaceSocketAttachment): WorkspaceSidebar {
+    const spaces = this.spacesFor(attachment);
+    // A member whose client walks Spaces is sent no Channel rows, only while
+    // the Space hierarchy is whole: before that, a Channel can sit in no
+    // Space, and the page is the only way it reaches the sidebar.
+    if (attachment.channelsBySpace && attachment.accessClass !== "guest" && spaces.spacesReady) {
+      return WorkspaceSidebarSchema.parse({
+        workstreams: { directoryWaterline: this.directoryWaterline(), items: [], stateVersions: [], nextCursor: null },
+        automations: {
+          waterline: this.sidebarListWaterline("automations"),
+          items: this.listSidebarAutomations(attachment.workspaceId, attachment.userId),
+        },
+        notes: { waterline: 0, items: [], nextCursor: null },
+        ...spaces,
+        channelsBySpace: true,
+      });
+    }
     const workstreams = this.listDirectory({
       workspaceId: attachment.workspaceId,
       userId: attachment.userId,
@@ -15274,7 +15395,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       notes: {
         waterline: 0, items: [], nextCursor: null,
       },
-      ...this.spacesFor(attachment),
+      ...spaces,
     });
   }
 

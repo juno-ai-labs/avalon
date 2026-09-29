@@ -4,7 +4,8 @@ import type { WorkstreamSummary } from './types';
 
 /**
  * A Channel's rail data (its people, Sidekicks and Channel resources) as the
- * workspace socket answered it, fetched ahead of need a Space at a time.
+ * workspace socket answered it, fetched ahead of need a Space at a time with
+ * the Space's Channel rows.
  *
  * `rail` is null when the server answered without one: the Channel is not
  * visible to this viewer, has no rail yet, or its rail is larger than a frame.
@@ -124,37 +125,35 @@ export function useChannelRail(workstreamId: string | null): ChannelRail | undef
   }).data;
 }
 
-export type ChannelRailTarget =
-  | { spaceId: string; expected: string[] }
-  | { workstreamIds: string[] };
+/** Whether a rail, current or not, is held for this Channel. */
+export function holdsChannelRail(queryClient: QueryClient, workstreamId: string): boolean {
+  return queryClient.getQueryData(channelRailQueryKey(workstreamId)) !== undefined;
+}
 
 /**
- * The next request the prefetch queue should send, or null when every rail it
- * knows of is current.
+ * The Channels the prefetch queue should ask for next, or null when every
+ * rail it knows of is current.
  *
  * Order: the Channel in front, then its Spaces, then the other Spaces in the
- * directory's order, then Channels in no Space. A Space whose every known
- * Channel is stale is asked for whole, by Space; one with only some stale is
- * asked for by those Channels, so a single moved rail never resends a Space.
+ * directory's order, then Channels in no Space. Always by name: a Space's
+ * rails arrive whole with its Channel rows (`space_channels`), so what is left
+ * here is the rails that moved since, or did not fit beside their rows.
  */
 export function nextChannelRailRequest(
   queryClient: QueryClient,
   foregroundWorkstreamId: string | null,
   rows: readonly Pick<WorkstreamSummary, 'id' | 'spaceIds' | 'pending'>[],
   spaces: { items: readonly { id: string }[] } | undefined,
-): ChannelRailTarget | null {
+): string[] | null {
   const stale = (id: string): boolean => isRailStale(queryClient, id);
-  if (foregroundWorkstreamId && stale(foregroundWorkstreamId)) return { workstreamIds: [foregroundWorkstreamId] };
+  if (foregroundWorkstreamId && stale(foregroundWorkstreamId)) return [foregroundWorkstreamId];
   const live = rows.filter((row) => !row.pending);
   const foregroundSpaces = live.find((row) => row.id === foregroundWorkstreamId)?.spaceIds ?? [];
   const order = [...new Set([...foregroundSpaces, ...(spaces?.items ?? []).map((space) => space.id)])];
   for (const spaceId of order) {
-    const members = live.filter((row) => row.spaceIds.includes(spaceId));
-    const staleIds = members.filter((row) => stale(row.id)).map((row) => row.id);
-    if (staleIds.length === 0) continue;
-    if (staleIds.length === members.length) return { spaceId, expected: staleIds };
-    return { workstreamIds: staleIds.slice(0, CHANNEL_RAILS_NAMED_LIMIT) };
+    const staleIds = live.filter((row) => row.spaceIds.includes(spaceId) && stale(row.id)).map((row) => row.id);
+    if (staleIds.length > 0) return staleIds.slice(0, CHANNEL_RAILS_NAMED_LIMIT);
   }
   const loose = live.filter((row) => stale(row.id)).map((row) => row.id);
-  return loose.length > 0 ? { workstreamIds: loose.slice(0, CHANNEL_RAILS_NAMED_LIMIT) } : null;
+  return loose.length > 0 ? loose.slice(0, CHANNEL_RAILS_NAMED_LIMIT) : null;
 }
