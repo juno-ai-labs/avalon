@@ -6909,11 +6909,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const identity = this.objectStore.identity();
     const sandbox = this.terminal.sandbox();
     if (!identity || !sandbox?.sandboxId) return;
+    // One client per check, disposed when the check ends. This object never
+    // ends the context that would release the provider session for it, and a
+    // session left open every interval is what ran the provider Worker out of
+    // memory.
+    let client: ReturnType<typeof createTerminalProviderRpcClient> | undefined;
     const provider = {
       getSandbox: (id: string) => {
         const configuration = parseTerminalRegionConfiguration(this.env);
         if (configuration.capability !== "supported") throw new Error("terminal_provider_unavailable");
-        return createTerminalProviderRpcClient(this.env.TERMINAL_PROVIDER, configuration).getSandbox(id);
+        client ??= createTerminalProviderRpcClient(this.env.TERMINAL_PROVIDER, configuration);
+        return client.getSandbox(id);
       },
     };
     try {
@@ -6930,6 +6936,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         substream_id: this.externalSubstreamId(),
         code: diagnosticErrorCode(error, "terminal_provider_observation_failed"),
       });
+    } finally {
+      client?.[Symbol.dispose]();
     }
   }
 
