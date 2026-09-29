@@ -4,7 +4,16 @@ import { asUserId, asWorkspaceId } from '@rally/contracts';
 import type { HonoAppEnv } from '../src/env';
 import { ApiError } from '../src/lib/api-error';
 import { apiOperationTelemetry } from '../src/middleware/api-operation-telemetry';
-import { createTestEnv } from './helpers/cloudflare-test';
+import { createApp } from '../src/app';
+import { acceptAuthenticatedTelemetry } from '../src/telemetry/authenticated';
+import { createTestD1Database, createTestEnv } from './helpers/cloudflare-test';
+
+// The production app cannot take an injected emitter, so the sink beneath the
+// default emitter is replaced; everything above it is the real app.
+vi.mock('../src/telemetry/authenticated', () => ({
+  acceptAuthenticatedTelemetry: vi.fn(async () => []),
+  ensureWorkspaceAnalyticsId: vi.fn(async () => 'analytics'),
+}));
 
 const auth = {
   sessionId: 'session',
@@ -112,6 +121,35 @@ describe('allowlisted API operation telemetry', () => {
 
     expect(response.status).toBe(201);
     await vi.waitFor(() => expect(emit).toHaveBeenCalledTimes(1));
+  });
+
+  it('mounts the production middleware once so a real request emits one operation event', async () => {
+    const accept = vi.mocked(acceptAuthenticatedTelemetry);
+    accept.mockClear();
+    const statement = { bind: () => statement, first: async () => ({ role: 'owner' }) };
+    const env = createTestEnv({
+      AVALON_REGION: 'global', APP_ENV: 'development', RALLY_DEV_AUTH: 'true', LOG_LEVEL: 'error',
+      ALLOWED_ORIGINS: 'app://avalon', DB: createTestD1Database({ prepare: () => statement }),
+    });
+
+    const response = await createApp().request('https://api.example.com/workstreams', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-rally-dev-user-id': '00000000-0000-7000-8000-0000000000e1',
+        'x-rally-dev-workspace-id': '00000000-0000-7000-8000-0000000000e2',
+      },
+      body: '{}',
+    }, env);
+
+    expect(response.status).toBe(400);
+    await vi.waitFor(() => expect(accept).toHaveBeenCalledTimes(1));
+    const batch = accept.mock.calls[0]![2];
+    expect(batch.events).toHaveLength(1);
+    expect(batch.events[0]).toMatchObject({
+      name: 'api_operation_outcome',
+      properties: { operation: 'workstream_create', result: 'validation_error', duration: 'lt_100ms' },
+    });
   });
 
 });
