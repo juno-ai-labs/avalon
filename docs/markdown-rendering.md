@@ -29,7 +29,6 @@ one of them silently missed the others; the changelog records what that cost.
 | `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
 | `apps/desktop/src/renderer/components/resource-action-menu.tsx`, `lib/breakout-resource-actions.ts` | The right-click menu a resource can wear, drawn from a host-supplied list, and the one list supplied today: **Attach to channel** on a Breakout's artifacts. |
 | `packages/ui/src/styles/app.css` | The `.markdown-body` group: every element style markdown gets, and the `--markdown-*` paint properties each of those rules reads instead of a token. Also the one surface that re-points them — `.human-message-bubble .markdown-body`, which restates the whole group, and the highlighter's `syntax` roles with it, as percentages of the bubble's own ink. Also the host overrides: `.note-detail-article` and `.meeting-notes-body` (heading scale), the compact resource embed and intrinsic image treatment, and `.inspector-detail-document` (sizes the body and the host width to the rail, and restyles no markdown element). |
-| `apps/desktop/src/renderer/styles/app.css.node.test.ts` | Scans the stylesheet's text for the list markers Tailwind's preflight removes, and for a host that restyles a markdown element. A stylesheet scan is not a guard ([`testing.md`](testing.md#what-to-test-and-what-not-to)); the rendered result is verified in a real window. |
 
 Nine call sites, all passing a markdown string as `children`:
 
@@ -656,8 +655,8 @@ written this way is a sign it is not a typography override.
   bubble's block is that block; a host copying it without filling itself is
   restyling markdown with extra steps. Re-point the whole group when you do it:
   half a group is how the inline-code chip stayed on the neutral ramp under ink
-  the bubble had already forced to near-white, and it is what
-  `app.css.node.test.ts` compares the two sets of names to catch.
+  the bubble had already forced to near-white, and no automated
+  test compares the two sets of names, so check them in a real window.
 - **A host override wins on specificity, not source order.** Name
   `.markdown-body` in the selector. Anything relying on being further down the
   file is a regression waiting for the next person who splits a stylesheet, and
@@ -865,11 +864,9 @@ needs it should parse rather than widen the pattern again.
 
 ## Testing
 
-One source guard and several component suites cover different failures — none
-subsumes the others.
+Several component suites cover different failures — none subsumes the others.
 
 ```bash
-pnpm --filter @rally/desktop exec vitest run src/renderer/styles/app.css.node.test.ts
 pnpm --filter @rally/desktop exec vitest run src/renderer/components/workstream-blocks.test.tsx
 pnpm --filter @rally/desktop exec vitest run src/renderer/lib/markdown-collapse.test.ts
 pnpm --filter @rally/desktop exec vitest run src/renderer/components/attachments.test.tsx

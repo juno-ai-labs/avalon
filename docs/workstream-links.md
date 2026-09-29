@@ -225,11 +225,9 @@ with no version constant for a future change to remember to bump.
   Deliberate — a link surface should fail loudly rather than emit a URL that 404s
   for the recipient.
 - **The `_redirects` rewrite is load-bearing.** Deleting it turns every shared link
-  into a 404, which no test of the page's markup alone would catch.
-  `apps/site/test/site.test.ts` reads `_redirects` and asserts the rule's text
-  is present; that is deploy configuration, which the deploy itself is the test
-  of ([`testing.md`](testing.md#do-not-test-ci-or-deployment-configuration)),
-  so the scan is not the guard.
+  into a 404, which no test of the page's markup alone would catch. No automated
+  test covers the rule; it is deploy configuration, which the deploy itself is
+  the test of ([`testing.md`](testing.md#do-not-test-ci-or-deployment-configuration)).
 - **A `slack_unfurled_links` row is written as the card is posted, or never.** Slack
   reports a shared link exactly once and offers no way to re-enumerate past events,
   so a missed write is permanent.
@@ -320,7 +318,6 @@ The refresh sweep's bounds, all deliberate:
 | Suite | Covers |
 | --- | --- |
 | `packages/contracts/src/workstream-links.test.ts` | Minting, parsing all three accepted forms, look-alike origin rejection, and the throw on a non-UUID. |
-| `apps/site/test/site.test.ts` | Reads `_redirects` and asserts the rewrite rule's text is present. A config scan is not a guard ([`testing.md`](testing.md#what-to-test-and-what-not-to)); the deploy is the test of that file. |
 | `apps/api/test/slack-unfurl-refresh.test.ts` | WorkspaceDO directory lookup, selection, the hash gate, the audience clock, redaction, the per-sweep/per-connection bounds, and terminal-reason deletion. |
 | `apps/api/test/slack-agent-ingress.test.ts` | `link_shared` handling and the card posted in response. |
 
