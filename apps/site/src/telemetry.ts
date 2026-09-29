@@ -10,6 +10,7 @@ import type {
 type SitePage = TelemetryEventProperties<'site_page_viewed'>['page'];
 type SiteAction = TelemetryEventProperties<'site_action_selected'>['action'];
 type SitePlacement = TelemetryEventProperties<'site_action_selected'>['placement'];
+type SitePlan = NonNullable<TelemetryEventProperties<'site_action_selected'>['plan']>;
 type HandoffType = TelemetryEventProperties<'desktop_handoff_attempted'>['handoffType'];
 
 const ANONYMOUS_EPOCH_KEY = 'rally.site.anonymous-epoch.v1';
@@ -160,7 +161,9 @@ async function flush(keepalive = false): Promise<void> {
     body: JSON.stringify({ capability: state.capability, events }),
     keepalive,
   });
-  if (!response.ok) pending.unshift(...events);
+  // A 4xx is the API refusing the batch itself; resending it would refuse
+  // every event queued behind it on this page. Only a server failure retries.
+  if (response.status >= 500) pending.unshift(...events);
 }
 
 function report<TName extends TelemetryEventName>(
@@ -243,10 +246,41 @@ function durationBucket(milliseconds: number): TelemetryEventProperties<'site_pa
   return 'gte_10m';
 }
 
-export function reportSiteAction(action: SiteAction, placement: SitePlacement): void {
+export function reportSiteAction(action: SiteAction, placement: SitePlacement, plan?: SitePlan): void {
   const page = currentSitePage();
   if (page !== 'landing' && page !== 'download' && page !== 'support') return;
-  report('site_action_selected', { page, action, placement });
+  // Downloads and mailto links can hand the tab to another app, so the click
+  // gets the same best-effort keepalive as a page leave.
+  report('site_action_selected', { page, action, placement, ...(plan ? { plan } : {}) }, true);
+}
+
+/**
+ * The links a page may report, keyed by the `data-site-action` id in its HTML.
+ * An id not listed here is ignored, so markup can only select one of these
+ * closed combinations and never put its own values into an event.
+ */
+export const SITE_ACTION_LINKS = {
+  'download-header': { action: 'download', placement: 'header' },
+  'download-hero': { action: 'download', placement: 'hero' },
+  'download-pricing-pro': { action: 'download', placement: 'pricing', plan: 'pro' },
+  'download-pricing-max': { action: 'download', placement: 'pricing', plan: 'max' },
+  'download-pricing-ultra': { action: 'download', placement: 'pricing', plan: 'ultra' },
+  'demo-request': { action: 'demo_request', placement: 'sidekicks' },
+  'founder-contact': { action: 'founder_contact', placement: 'team' },
+  'support-contact-footer': { action: 'support_contact', placement: 'footer' },
+} as const satisfies Record<string, { action: SiteAction; placement: SitePlacement; plan?: SitePlan }>;
+
+export function siteActionForLink(id: string | undefined): { action: SiteAction; placement: SitePlacement; plan?: SitePlan } | null {
+  if (!id || !Object.hasOwn(SITE_ACTION_LINKS, id)) return null;
+  return SITE_ACTION_LINKS[id as keyof typeof SITE_ACTION_LINKS];
+}
+
+function initializeSiteActions(): void {
+  document.addEventListener('click', (event) => {
+    const link = (event.target as Element | null)?.closest?.<HTMLElement>('[data-site-action]');
+    const selected = siteActionForLink(link?.dataset['siteAction']);
+    if (selected) reportSiteAction(selected.action, selected.placement, selected.plan);
+  }, { capture: true });
 }
 
 export function reportDesktopHandoff(
@@ -279,4 +313,5 @@ export function initializeSiteTelemetry(): void {
     }, true);
   };
   window.addEventListener('pagehide', leave, { once: true });
+  initializeSiteActions();
 }
