@@ -102,8 +102,10 @@ a release script.
 
 Both gates cache; warm runs take seconds. **_Only_ after changing a rule in
 `scripts/eslint-rules/`, run `pnpm lint:fresh`** — ESLint's cache keys on file
-contents alone, so it clears the rest of the tree against the _old_ rule. CI
-runs cold; limits in
+contents alone, so it clears the rest of the tree against the _old_ rule. The
+same holds after adding a table to `WORKSPACE_LOCAL_TABLES` or
+`AUTHORIZATION_STORAGE_TABLES`, which the Durable Object routing rule reads from
+source. CI runs cold; limits in
 [`docs/dev-environment.md`](docs/dev-environment.md#quality-gate-caches).
 
 ## Writing tests
