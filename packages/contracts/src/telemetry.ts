@@ -2185,7 +2185,15 @@ export const TelemetryEnvelopeSchema = EnvelopeBaseSchema.superRefine((value, co
   }
   const properties = entry.properties.safeParse(value.properties);
   if (!properties.success) {
-    context.addIssue({ code: "custom", message: "telemetry_properties_invalid", path: ["properties"] });
+    // One issue per nested failure, so a diagnostic names the property rather
+    // than stopping at `properties`.
+    for (const issue of properties.error.issues) {
+      context.addIssue({
+        code: "custom",
+        message: "telemetry_properties_invalid",
+        path: ["properties", ...issue.path],
+      });
+    }
   }
 });
 
