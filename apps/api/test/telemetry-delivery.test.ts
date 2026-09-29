@@ -335,7 +335,7 @@ describe("Global telemetry delivery", () => {
     ["schema-skewed", (skewed: ReturnType<typeof envelope>) => JSON.stringify({
       ...skewed,
       properties: { ...skewed.properties, entrypoint: "moon" },
-    }), expect.stringMatching(/^stored_envelope_invalid:.*properties\.entrypoint/u)],
+    }), expect.stringMatching(/^stored_envelope_invalid:properties\.entrypoint:invalid_value$/u)],
     ["malformed", () => "{not json", "stored_envelope_invalid"],
   ] as const)("parks a %s row and still delivers the rows behind it", async (_, storedJson, terminalCode) => {
     const database = migratedObservabilityFixture();
