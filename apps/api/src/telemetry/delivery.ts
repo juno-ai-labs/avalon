@@ -1,5 +1,7 @@
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { isRetiredMeetingTelemetry, TelemetryEnvelopeSchema, type TelemetryEnvelope } from "@rally/contracts/telemetry";
 import type { Env } from "../env";
+import { logWarn } from "../observability/logger";
 import {
   telemetryDeliveryRpcCall,
   type GlobalTelemetryDeliveryRow,
@@ -16,6 +18,7 @@ export interface TelemetryDeliverySummary {
   terminal: number;
   suppressed: number;
   expired: number;
+  unparseable: number;
 }
 
 interface DeliveryDatabaseRow {
@@ -28,6 +31,11 @@ interface DeliveryDatabaseRow {
   delete_at: string;
   subject_user_id: string | null;
   product_analytics_enabled: number | null;
+}
+
+interface ParsedDeliveryRow {
+  row: DeliveryDatabaseRow;
+  envelope: TelemetryEnvelope;
 }
 
 async function reapExpiredTelemetry(env: Env, now: string): Promise<number> {
@@ -54,10 +62,10 @@ async function reapExpiredTelemetry(env: Env, now: string): Promise<number> {
   return expired;
 }
 
-function deliveryRow(row: DeliveryDatabaseRow): GlobalTelemetryDeliveryRow {
+function deliveryRow({ row, envelope }: ParsedDeliveryRow): GlobalTelemetryDeliveryRow {
   return {
     eventId: row.event_id,
-    envelope: TelemetryEnvelopeSchema.parse(JSON.parse(row.envelope_json)) as TelemetryEnvelope,
+    envelope,
     analyticsSubjectId: row.analytics_subject_id,
     workspaceAnalyticsId: row.workspace_analytics_id,
     normalizedTimestamp: row.normalized_timestamp,
@@ -66,7 +74,7 @@ function deliveryRow(row: DeliveryDatabaseRow): GlobalTelemetryDeliveryRow {
 
 async function javascriptDeliveryRow(
   env: Env,
-  row: DeliveryDatabaseRow,
+  row: ParsedDeliveryRow,
 ): Promise<GlobalTelemetryDeliveryRow> {
   const delivery = deliveryRow(row);
   if (delivery.envelope.name !== "javascript_exception") return delivery;
@@ -89,6 +97,45 @@ function backoffMs(attemptCount: number): number {
   return Math.min(60 * 60 * 1_000, 60_000 * 2 ** Math.min(attemptCount, 6));
 }
 
+function nextAttemptAt(row: DeliveryDatabaseRow, now: Date, retryAfterMs: number | null): string {
+  const delay = retryAfterMs ?? backoffMs(row.attempt_count);
+  return new Date(Math.min(Date.parse(row.delete_at), now.getTime() + delay)).toISOString();
+}
+
+/**
+ * The stored envelope under the running contract, or the code naming why not.
+ *
+ * A row accepted by a newer contract (an enum value added, then the API rolled
+ * back) fails here. It must not throw: one such row at the head of the page
+ * would stall every PostHog delivery behind it.
+ */
+function parseStoredEnvelope(row: DeliveryDatabaseRow): { envelope: TelemetryEnvelope } | { code: string } {
+  let stored: unknown;
+  try {
+    stored = JSON.parse(row.envelope_json);
+  } catch {
+    return { code: "stored_envelope_invalid" };
+  }
+  const parsed = TelemetryEnvelopeSchema.safeParse(stored);
+  if (parsed.success) return { envelope: parsed.data as TelemetryEnvelope };
+  return { code: zodDiagnosticCode(parsed.error, "stored_envelope") ?? "stored_envelope_invalid" };
+}
+
+/**
+ * Parks a row the running contract cannot read on the ordinary backoff, with
+ * the reason in `terminal_code`. It stays retrying rather than terminal so a
+ * roll-forward to the contract that accepted it delivers it before `delete_at`.
+ */
+async function parkUnparseableRow(env: Env, row: DeliveryDatabaseRow, code: string, now: Date): Promise<void> {
+  logWarn(env, "telemetry_delivery_row_unparseable", { event_id: row.event_id, error_code: code });
+  await env.TELEMETRY_DB.prepare(
+    `UPDATE telemetry_accepted_events
+     SET delivery_state = 'retrying', attempt_count = attempt_count + 1,
+         next_attempt_at = ?, terminal_code = ?
+     WHERE event_id = ? AND delivery_state IN ('pending', 'retrying')`,
+  ).bind(nextAttemptAt(row, now, null), code, row.event_id).run();
+}
+
 export async function processTelemetryOutbox(env: Env): Promise<TelemetryDeliverySummary> {
   const now = new Date();
   const summary: TelemetryDeliverySummary = {
@@ -98,6 +145,7 @@ export async function processTelemetryOutbox(env: Env): Promise<TelemetryDeliver
     terminal: 0,
     suppressed: 0,
     expired: await reapExpiredTelemetry(env, now.toISOString()),
+    unparseable: 0,
   };
   const telemetryDelivery = env.TELEMETRY_DELIVERY;
   const postHogHost = env.POSTHOG_HOST;
@@ -134,12 +182,18 @@ export async function processTelemetryOutbox(env: Env): Promise<TelemetryDeliver
   ).bind(JSON.stringify([...new Set(pending.results.map((row) => row.subject_user_id).filter(Boolean))]))
     .all<{ id: string; product_analytics_enabled: number; transition_pending: number }>();
   const preferences = new Map(subjects.results.map((row) => [row.id, row]));
-  const eligible: DeliveryDatabaseRow[] = [];
+  const eligible: ParsedDeliveryRow[] = [];
   for (const row of pending.results) {
     const subject = row.subject_user_id === null ? undefined : preferences.get(row.subject_user_id);
     if (subject?.transition_pending === 1) continue;
     row.product_analytics_enabled = subject?.product_analytics_enabled ?? null;
-    const parsed = TelemetryEnvelopeSchema.parse(JSON.parse(row.envelope_json)) as TelemetryEnvelope;
+    const stored = parseStoredEnvelope(row);
+    if ("code" in stored) {
+      await parkUnparseableRow(env, row, stored.code, now);
+      summary.unparseable += 1;
+      continue;
+    }
+    const parsed = stored.envelope;
     const attributableNonessential = row.subject_user_id !== null && parsed.category !== "essential";
     if (isRetiredMeetingTelemetry(parsed) || (attributableNonessential && row.product_analytics_enabled !== 1)) {
       await env.TELEMETRY_DB.prepare(
@@ -147,12 +201,10 @@ export async function processTelemetryOutbox(env: Env): Promise<TelemetryDeliver
       ).bind(row.event_id).run();
       summary.suppressed += 1;
     } else {
-      eligible.push(row);
+      eligible.push({ row, envelope: parsed });
     }
   }
-  const exceptionCandidates = eligible.filter((row) => (
-    TelemetryEnvelopeSchema.parse(JSON.parse(row.envelope_json)) as TelemetryEnvelope
-  ).name === "javascript_exception");
+  const exceptionCandidates = eligible.filter(({ envelope }) => envelope.name === "javascript_exception");
   const ordinaryCandidates = eligible.filter((row) => !exceptionCandidates.includes(row));
   const ordinary = captureAllowed ? ordinaryCandidates : [];
   const exceptions = exceptionAllowed ? exceptionCandidates : [];
@@ -179,7 +231,7 @@ export async function processTelemetryOutbox(env: Env): Promise<TelemetryDeliver
       : Promise.resolve([exceptions, null, "posthog_javascript_exception"] as const),
   ])) {
     if (result) {
-      await applyDestinationResult(env, rows, result, now, summary);
+      await applyDestinationResult(env, rows.map(({ row }) => row), result, now, summary);
       await recordDestinationOutcome(
         env,
         destination,
@@ -219,15 +271,11 @@ async function applyDestinationResult(
     return;
   }
 
-  await env.TELEMETRY_DB.batch(rows.map((row) => {
-    const delay = result.retryAfterMs ?? backoffMs(row.attempt_count);
-    const next = new Date(Math.min(Date.parse(row.delete_at), now.getTime() + delay));
-    return env.TELEMETRY_DB.prepare(
-      `UPDATE telemetry_accepted_events
-       SET delivery_state = 'retrying', attempt_count = attempt_count + 1,
-           next_attempt_at = ?, terminal_code = NULL
-       WHERE event_id = ? AND delivery_state IN ('pending', 'retrying')`,
-    ).bind(next.toISOString(), row.event_id);
-  }));
+  await env.TELEMETRY_DB.batch(rows.map((row) => env.TELEMETRY_DB.prepare(
+    `UPDATE telemetry_accepted_events
+     SET delivery_state = 'retrying', attempt_count = attempt_count + 1,
+         next_attempt_at = ?, terminal_code = NULL
+     WHERE event_id = ? AND delivery_state IN ('pending', 'retrying')`,
+  ).bind(nextAttemptAt(row, now, result.retryAfterMs), row.event_id)));
   summary.retried += rows.length;
 }
