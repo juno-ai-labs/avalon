@@ -76,6 +76,11 @@ interface PublishedRow {
   created_at: string;
 }
 
+/** A site's row also carries its alias, which the publish result reports. */
+interface PublishedSiteRow extends PublishedRow {
+  slug: string | null;
+}
+
 function fileName(path: string): string {
   return path.split("/").at(-1) || "resource";
 }
@@ -1136,13 +1141,13 @@ export function createTerminalResourceBridge(
         input.filePath,
       );
       const select = `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json,
-                model_content_status, created_at
+                model_content_status, created_at, slug
            FROM resources
           WHERE workspace_id = ? AND provider = 'avalon_generated' AND provider_resource_id = ?`;
       const existing = await workspace.prepare(select)
-        .bind(context.workspaceId, providerResourceId).first<PublishedRow>();
+        .bind(context.workspaceId, providerResourceId).first<PublishedSiteRow>();
       const settled = existing ?? await workspace.prepare(select)
-        .bind(context.workspaceId, `terminal:${effectIntentId}`).first<PublishedRow>();
+        .bind(context.workspaceId, `terminal:${effectIntentId}`).first<PublishedSiteRow>();
 
       // A republish that would turn a live site back into an archive never
       // reaches here — the runtime refuses it — but a republish that changes
@@ -1193,7 +1198,7 @@ export function createTerminalResourceBridge(
           totalBytes: site.files.reduce((total, file) => total + file.bytes.byteLength, 0),
           manifestSha256: settled.content_sha256 ?? "",
           hostnameStub,
-          slug: await resourceSlug(workspace, context.workspaceId, settled.id),
+          slug: settled.slug,
         });
       }
 
@@ -1236,6 +1241,8 @@ export function createTerminalResourceBridge(
         ...(input.description ? { description: input.description } : {}),
       });
 
+      // A swap keeps the row, and with it the alias it already has.
+      let slug = settled?.slug ?? null;
       if (settled) {
         await swapPublishedContent({
           workspace,
@@ -1285,7 +1292,7 @@ export function createTerminalResourceBridge(
             ? context.executionPrincipal.userId
             : null,
         });
-        await allocateResourceSlugBesideCreation(env, context.workspaceId, resourceId);
+        slug = await allocateResourceSlugBesideCreation(env, context.workspaceId, resourceId);
       }
 
       await registerArtifact(workspace, {
@@ -1337,7 +1344,7 @@ export function createTerminalResourceBridge(
         totalBytes: written.manifest.totalBytes,
         manifestSha256: written.manifestSha256,
         hostnameStub,
-        slug: await resourceSlug(workspace, context.workspaceId, resourceId),
+        slug,
       });
     },
   };
@@ -1346,17 +1353,6 @@ export function createTerminalResourceBridge(
 /** The rail's own name for a site, taken from the directory it was written in. */
 function siteTitle(filePath: string): string {
   return normalizePublishPath(filePath).split("/").at(-1) || "site";
-}
-
-async function resourceSlug(
-  workspace: D1Database,
-  workspaceId: string,
-  resourceId: string,
-): Promise<string | null> {
-  const row = await workspace.prepare(
-    `SELECT slug FROM resource_slugs WHERE workspace_id = ? AND resource_id = ?`,
-  ).bind(workspaceId, resourceId).first<{ slug: string }>().catch(() => null);
-  return row?.slug ?? null;
 }
 
 function siteOutput(

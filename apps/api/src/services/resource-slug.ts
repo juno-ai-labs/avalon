@@ -145,14 +145,16 @@ export async function backfillResourceSlugs(env: Env, workspaceId: string): Prom
  * The resource exists and is addressable by UUID either way, and `slug IS
  * NULL` is exactly what the maintenance pass looks for — so a failure here
  * costs a delay, not the row.
+ *
+ * Returns the alias, or null while it is still owed.
  */
 export async function allocateResourceSlugBesideCreation(
   env: Env,
   workspaceId: string,
   resourceId: string,
-): Promise<void> {
+): Promise<string | null> {
   try {
-    await ensureResourceSlug(env, workspaceId, resourceId);
+    return await ensureResourceSlug(env, workspaceId, resourceId);
   } catch (error) {
     logWarn(env, "resource_slug_allocation_deferred", {
       resource_id: resourceId,
@@ -163,6 +165,7 @@ export async function allocateResourceSlugBesideCreation(
     // the pass waits for whatever else wakes the object next, which on a quiet
     // workspace is activity-event retention — a quarter away.
     await refreshWorkspaceSchedule(env, workspaceId).catch(() => undefined);
+    return null;
   }
 }
 
