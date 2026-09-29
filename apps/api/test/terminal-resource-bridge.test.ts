@@ -32,6 +32,7 @@ import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d
 import { applyWorkspaceResourceSchema } from "./helpers/workspace-object-tables";
 import { workspaceResourceMaintenanceBinding } from "./helpers/workspace-object-rpcs";
 import { sha256Hex } from "../src/lib/crypto";
+import { RESOURCE_SLUG_PATTERN } from "../src/services/resource-slug";
 
 const W = "10000000-0000-4000-8000-000000000001";
 const S = "10000000-0000-4000-8000-000000000002";
@@ -442,6 +443,41 @@ describe("Terminal resource bridge", () => {
     expect(state.database.prepare(
       "SELECT current_version FROM artifact_registry WHERE artifact_id = ?",
     ).get(ARTIFACT)).toEqual({ current_version: 2 });
+  });
+
+  it("reports a published site's alias, and the same one when it republishes", async () => {
+    const state = fixture(vi.fn(async () => undefined));
+    const site = (html: string, sha256: string) => ({
+      mode: "static" as const,
+      stateful: false,
+      files: [{ path: "index.html", bytes: new TextEncoder().encode(html), sha256 }],
+      serverModuleSha256: null,
+    });
+
+    const first = await state.bridge.publishSiteResource(
+      context, { filePath: "site" }, site("<h1>one</h1>", "c".repeat(64)),
+    );
+    const stored = state.database.prepare("SELECT slug FROM resources WHERE id = ?")
+      .get(first.resourceId) as { slug: string | null };
+    expect(first.slug).toMatch(RESOURCE_SLUG_PATTERN);
+    expect(first.slug).toBe(stored.slug);
+
+    // A crash replay of the same call returns through the equal-content branch.
+    const replay = await state.bridge.publishSiteResource(
+      context, { filePath: "site" }, site("<h1>one</h1>", "c".repeat(64)),
+    );
+    expect(replay.resourceId).toBe(first.resourceId);
+    expect(replay.slug).toBe(first.slug);
+
+    // A later run with new content swaps the row's content and keeps its alias.
+    const republished = await state.bridge.publishSiteResource(
+      { ...context, effectIntentId: I2, toolCallId: "resource-recall" },
+      { filePath: "site" },
+      site("<h1>two</h1>", "d".repeat(64)),
+    );
+    expect(republished.resourceId).toBe(first.resourceId);
+    expect(republished.version).toBe(2);
+    expect(republished.slug).toBe(first.slug);
   });
 
   it("reserves a site's hostname before a republish mutates its resource row", async () => {
