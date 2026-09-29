@@ -271,7 +271,7 @@ That applies to the whole inbound surface, not merely to tool calls: provider we
 Three consequences follow, and each is load-bearing:
 
 - **Marking is still allowed; refusing to try is not.** A provider that genuinely refuses still marks the row, and the desktop still asks for a reconnect. What changed is that the mark no longer prevents the next attempt from reaching the provider.
-- **A mark records the first, most specific diagnosis.** The writes that set `needs_reconnect` deliberately still filter on `status = 'healthy'`, so a row that is already marked keeps the verdict that explains why. Re-marking on every later attempt is what replaced a precise scope failure with a bare `unauthorized`.
+- **A mark records the first, most specific diagnosis.** The writes that set `needs_reconnect` deliberately filter on `status IN ('healthy', 'error')`, so a row that is already marked keeps the verdict that explains why. Re-marking on every later attempt is what replaced a precise scope failure with a bare `unauthorized`. A generic `error` is not a diagnosis and is upgraded, and nothing writes `error` over a mark.
 - **Success heals.** Any path that gets a real answer from the provider clears the stale belief rather than leaving it for a member to resolve by hand.
 
 Recovery is part of the contract too. A durable job that failed on authorization may be classified non-retryable — that is correct while a grant is dead — but something has to lift the ceiling once the connection is reauthorized, or the outage becomes permanent for every request that arrived during it. `redriveReauthorizedIngress` is the Slack example: a job whose connection has been written since the job last failed is re-queued, which is self-limiting because a job that fails again stamps itself newer than the connection.
@@ -1370,9 +1370,10 @@ whichever object makes the mistake next.
   evidence, and the two mistakes are not symmetric — only leaving a dead connection
   reporting healthy is silent.
 - **A mark records the first, most specific diagnosis.** The writes that set
-  `needs_reconnect` still filter on `status = 'healthy'`, so a row already marked
-  keeps the verdict that explains why; re-marking on every later attempt is what
-  replaced a precise scope failure with a bare `unauthorized`.
+  `needs_reconnect` filter on `status IN ('healthy', 'error')`, so a row already
+  marked keeps the verdict that explains why; re-marking on every later attempt is
+  what replaced a precise scope failure with a bare `unauthorized`. Nothing writes
+  a generic `error` over a mark.
 - **A job classified non-retryable on authorization needs something to lift the
   ceiling.** `redriveReauthorizedIngress` re-queues a job whose connection has been
   written since it last failed, which is self-limiting because a job that fails
@@ -1479,6 +1480,16 @@ active workspace guest is insufficient after the addressed share is revoked.
 Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
+
+### 2026-09-29: A failed poll no longer hides a revoked grant
+
+**What changed:** When a poll fails because the grant is gone, the poll step now returns a `needs_reconnect` outcome instead of throwing. The workflow logs `connector_poll_needs_reconnect` as a warning with the reason, and ends without retries. The generic failure path no longer writes `error` over a `needs_reconnect` row, and its log carries `error_code` from `diagnosticErrorCode` in place of `error_name`. Both writes that mark a row `needs_reconnect` now also match `error` rows.
+
+**Why:** One Google connection with a revoked refresh token produced 1,900 of the 1,910 `connector_poll_failed` logs in seven days. The credential door marked the row `needs_reconnect`, then the workflow's catch stamped `status = 'error'` over it. The mark only matched `healthy` rows, so no later poll could restore it. The desktop shows `error` as healthy, so the member never saw "Reconnect" and their Drive activity stopped without a word. The log said only `error_name: "Error"`, because a step's thrown error reaches the workflow with its class and details stripped. That is also why the outcome is returned, not thrown.
+
+**Rejected:** Skipping `needs_reconnect` rows in the poll's load query. The status is a belief, and this document's rule is that a belief never stops an attempt. A mark can also be partial, such as a missing scope the poll does not need, and skipping would stop ingestion that still works.
+
+**What a future change must respect:** Only a mark holds the reconnect verdict the desktop shows. A write of `error` must exclude `needs_reconnect` rows, and a mark must still upgrade `error`.
 
 ### 2026-09-28: The GitHub delivery message is sent as `v8`
 

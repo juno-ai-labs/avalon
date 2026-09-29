@@ -158,7 +158,12 @@ export async function ensureFreshConnectorCredentials(
  * which no member can fix by reconnecting a working account — still declines to
  * mark, while an unclassifiable 400/401/403 from a token endpoint does.
  */
-function isReconnectRequired(error: unknown): boolean {
+/**
+ * Whether a failure means the grant itself is gone, so no retry can succeed
+ * until someone reconnects. Covers both the door's normalized refusal and a
+ * token-endpoint failure `ensureFreshConnectorCredentials` rethrows as-is.
+ */
+export function isReconnectRequired(error: unknown): error is ConnectorError {
   if (!(error instanceof ConnectorError) || error.code !== "unauthorized") return false;
   if (
     typeof error.details === "object"
@@ -297,9 +302,11 @@ async function markNeedsReconnect(
     // carries the first and most specific diagnosis of why it broke, and
     // re-marking would overwrite it with this generic one on every later
     // attempt — the exact way a `missing_scopes: reactions:read` verdict was
-    // lost behind a bare `unauthorized` hours after the fact.
+    // lost behind a bare `unauthorized` hours after the fact. A generic
+    // `error` is not a diagnosis and is upgraded: left alone, a revoked grant
+    // that a failed poll had stamped `error` could never be marked again.
     `UPDATE connector_connections SET status = 'needs_reconnect', error_json = ?, updated_at = ?
-     WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
+     WHERE id = ? AND workspace_id = ? AND status IN ('healthy', 'error')`,
   ).bind(
     JSON.stringify({
       code: "connector_reauthorization_required",

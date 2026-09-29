@@ -6,7 +6,9 @@ import {
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 
 import type { Env } from "../env";
-import { logStructuredEvent } from "../observability/logger";
+import { diagnosticErrorCode, logStructuredEvent } from "../observability/logger";
+import { reconnectReason } from "../services/connector-connection-access";
+import { isReconnectRequired } from "../services/connector-credential-refresh";
 import {
   advanceOwningPollTarget,
   commitConnectorCursor,
@@ -24,6 +26,16 @@ interface StoredPollResult {
   baseCursorJson: string;
   nextPollAt: string | null;
   streamErrors?: Array<{ streamId: string; code: string; message: string }>;
+}
+
+/**
+ * The grant is gone, so no retry of this poll can succeed. Returned rather
+ * than thrown: a step's thrown error reaches the workflow as a bare `Error`,
+ * so the reason would be lost and every attempt spent on a known answer.
+ */
+interface ReconnectRequiredPoll {
+  reconnectRequired: true;
+  reason: string;
 }
 
 /** Static, retryable poll workflow shared by all connector connections. */
@@ -63,15 +75,15 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
       return { id: connection.id, provider: connection.connector_type };
     });
 
-    let result: StoredPollResult;
+    let outcome: StoredPollResult | ReconnectRequiredPoll;
     try {
-      result = await step.do(
+      outcome = await step.do(
         "poll-and-persist-provider-page",
         {
           retries: { limit: 3, delay: "2 seconds", backoff: "exponential" },
           timeout: "25 seconds",
         },
-        async (context): Promise<StoredPollResult> => {
+        async (context): Promise<StoredPollResult | ReconnectRequiredPoll> => {
           const startedAt = Date.now();
           logStructuredEvent(this.env, "info", "connector_poll_attempt", {
             workspace_id: input.workspaceId,
@@ -81,7 +93,15 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
             workflow_step: "poll-and-persist-provider-page",
             attempt: context.attempt,
           });
-          const parsed = PollResultSchema.parse(await pollConnectorConnection(workspaceEnv, input));
+          let polled: Awaited<ReturnType<typeof pollConnectorConnection>>;
+          try {
+            polled = await pollConnectorConnection(workspaceEnv, input);
+          } catch (error) {
+            // The credential door has already marked the row `needs_reconnect`.
+            if (isReconnectRequired(error)) return { reconnectRequired: true, reason: reconnectReason(error) };
+            throw error;
+          }
+          const parsed = PollResultSchema.parse(polled);
           logStructuredEvent(this.env, "info", "connector_poll_attempt_completed", {
             workspace_id: input.workspaceId,
             connection_id: input.connectionId,
@@ -107,9 +127,12 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
       const code = timedOut ? "connector_poll_timeout" : "connector_poll_failed";
       const message = timedOut ? "Connector poll timed out" : "Connector poll failed after retries";
       await workspaceEnv.DB.prepare(
+        // Never over a `needs_reconnect` mark: that is the one status the
+        // desktop turns into "Reconnect", and it holds a more specific
+        // diagnosis than a failed poll.
         `UPDATE connector_connections
          SET status = 'error', error_json = ?, updated_at = ?
-         WHERE id = ? AND workspace_id = ?`,
+         WHERE id = ? AND workspace_id = ? AND status IN ('healthy', 'error')`,
       ).bind(JSON.stringify({ code, message }), at, input.connectionId, input.workspaceId).run();
       logStructuredEvent(this.env, "error", code, {
         workspace_id: input.workspaceId,
@@ -117,11 +140,27 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
         provider: connection.provider,
         poll_schedule_id: input.pollScheduleId,
         workflow_step: "poll-and-persist-provider-page",
-        error_name: error instanceof Error ? error.name : "Error",
+        error_code: diagnosticErrorCode(error, code),
         terminal_outcome: timedOut ? "degraded_timeout" : "degraded_error",
       });
       throw error;
     }
+
+    if ("reconnectRequired" in outcome) {
+      // The schedule keeps firing: per docs/connectors.md a mark is a belief,
+      // never a reason to stop trying. A warning, not an error, because the
+      // member holds the fix, not an operator.
+      logStructuredEvent(this.env, "warn", "connector_poll_needs_reconnect", {
+        workspace_id: input.workspaceId,
+        connection_id: input.connectionId,
+        provider: connection.provider,
+        poll_schedule_id: input.pollScheduleId,
+        reason: outcome.reason,
+        terminal_outcome: "needs_reconnect",
+      });
+      return { activityCount: 0 };
+    }
+    const result = outcome;
 
     await step.do("enqueue-normalized-activities", async () => {
       // WorkspaceDO cutover enqueues each normalized event from the provider

@@ -191,9 +191,10 @@ export async function markConnectorNeedsReconnect(
     // door now runs for marked connections, so without this every later attempt
     // would re-stamp them — which is exactly how a `missing_scopes:
     // reactions:read` verdict was replaced by a bare `unauthorized` hours after
-    // the fact.
+    // the fact. A generic `error` is not a diagnosis and is upgraded, or a
+    // failed poll that stamped one would hide a dead grant for good.
     `UPDATE connector_connections SET status = 'needs_reconnect', error_json = ?, updated_at = ?
-     WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
+     WHERE id = ? AND workspace_id = ? AND status IN ('healthy', 'error')`,
   ).bind(
     JSON.stringify({
       code: "connector_reauthorization_required",
