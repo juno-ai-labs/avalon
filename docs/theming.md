@@ -71,17 +71,17 @@ serves it through `rally-font://`.
   one that does not. `cmp.row.background-selected` was an eighth until the entry
   below removed the re-point; a future accent that wants a row back gives that
   row a token of its own rather than re-pointing the one everything shares, and
-  `palette.css.node.test.ts` fails if it comes back.
+  no automated test fails if it comes back, so check it in a real window.
 - **`system` is a preference, not a palette.** It must always resolve to light
   or dark before it reaches `data-theme`; otherwise the generated selectors do
   not provide a complete token set.
 - **Renderer rules use semantic tokens.** A literal colour in `app.css` works in
   one appearance and bypasses the contrast decisions in the token files. A
-  `mask-image` is the one exemption `themes.css.node.test.ts` makes, and it is
-  not really one: a mask is sampled for its alpha channel and never painted, so
+  `mask-image` is the one place a literal colour is fine, and it is
+  not really an exception: a mask is sampled for its alpha channel and never painted, so
   nothing in it can render wrong under the other appearance. Writing `#000`
   there means "fully opaque", and it is the honest spelling — `currentColor`
-  would satisfy the guard while tying the mask's strength to whatever alpha the
+  would work while tying the mask's strength to whatever alpha the
   element's text token happens to carry.
 - **An appearance file holds only what differs between light and dark.**
   Everything else is `base.json`, and `scripts/build-theme-assets.test.mjs`
@@ -98,7 +98,7 @@ serves it through `rally-font://`.
   half-strength wash — the lightbox's media controls, its gallery arrows and
   caption — can no longer take its contrast from the wash, so each carries its
   own opaque chip. A control added to that surface later needs one too.
-  `app.css.node.test.ts` holds both ends.
+  No automated test covers either end; verify them in a real window.
 - **Spacing is one number.** Every feed spacing token is a multiple of
   `ref.space.unit`, and `app.css` derives its `--space-N` steps from the same
   unit. The sidebar's `sys.space.group.gap` is the one spacing token off it,
@@ -129,8 +129,8 @@ serves it through `rally-font://`.
   beside the rule — not a literal on that one selector. Overriding each
   consumer in turn is what let `sys.space.group.gap` keep a retired theme's
   60px in the one place nobody had overridden; the value that survives that
-  process is the one nobody argued for. `app.css.node.test.ts` enforces this
-  for the sidebar's group breaks; `margin-top: 0` on the compact rail is
+  process is the one nobody argued for. No automated test covers this for the
+  sidebar's group breaks, so check it in a real window; `margin-top: 0` on the compact rail is
   allowed because it hides the headings the gap spaces, which is a decision
   rather than an escape.
 - **A rule that names a token is not proof the token reaches it.** Check for a
@@ -152,9 +152,9 @@ serves it through `rally-font://`.
   transition.
 - **There is one hover wash, and it is `sys.color.state.hover`.** Every neutral
   control a pointer can cross — a navigation row, a menu item, a header icon, a
-  chip, a settings button — paints hover from that one token, and
-  `app.css.node.test.ts` fails a `:hover` or `[data-highlighted]` rule that
-  reaches for a neutral surface fill instead. Two kinds of rule are exempt and
+  chip, a settings button — paints hover from that one token. No automated test fails a `:hover` or
+  `[data-highlighted]` rule that reaches for a neutral surface fill instead, so
+  check this in a real window. Two kinds of rule are exempt and
   say so: a hover carrying a semantic hue, where the hue is the point, and a
   rule shared with a selected or pressed state, which is not a hover. The wash
   is translucent in **both** appearances on purpose — an opaque fill has to know
