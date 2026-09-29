@@ -66,7 +66,7 @@ element, so the two travel together whichever way the line reads.
   size and one pair of greys whoever is speaking. A rule scoped to
   `.agent-message` or `.human-message` that touches the name or the time makes
   Rally's turn and a person's read as different kinds of row for the same two
-  facts; `app.css.node.test.ts` fails such a rule. What may still differ per
+  facts; no automated test covers this, so check it in a real window. What may still differ per
   speaker is the accent on the dot, which is the only thing that says *whose*
   turn this is.
 - **Every relative label carries its instant twice**: as text a person reads and
@@ -130,8 +130,7 @@ formatted where they are produced.
 pnpm --filter @rally/desktop exec vitest run \
   src/renderer/lib/clock.test.tsx \
   src/renderer/components/relative-time.test.tsx \
-  src/renderer/components/message-byline.test.tsx \
-  src/renderer/styles/app.css.node.test.ts
+  src/renderer/components/message-byline.test.tsx
 ```
 
 `clock.test.tsx` drives the real store, so it needs Vitest's fake timers and

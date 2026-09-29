@@ -260,13 +260,9 @@ compatibility window — nothing outside a build reads either.
 
 ## Testing
 
-`apps/site/test/site.test.ts` reads the site's config and page files as text
-and asserts the full route list, the CSP, the canonical tags, the sitemap, and
-both minted deep links —
-`declares every production custom domain…` is the one that fails if an Avalon
-route is dropped. Those are deploy-configuration assertions, and the deploy is
-their test ([`testing.md`](testing.md#what-to-test-and-what-not-to)); do not
-cite them as the guard for a hostname. `packages/contracts/src/workstream-links.test.ts` covers
+No automated test covers the site's route list, CSP, canonical tags, sitemap or
+deep-link hostnames. Those are deploy configuration, and the deploy is their
+test ([`testing.md`](testing.md#what-to-test-and-what-not-to)). `packages/contracts/src/workstream-links.test.ts` covers
 minting the new scheme and reading the old, including a test that asserts the
 *writing* side alone: parsing accepts both, so minting the wrong scheme would
 otherwise still round-trip and no other test would notice.

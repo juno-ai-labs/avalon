@@ -120,9 +120,11 @@ Seed those tables in the object that owns them — `initializeWorkspace`, then
 `test-workers/automation-acceptance-bindings.test.ts` asserts it in its first test
 rather than trusting a comment to survive. On the production side, the rule
 that no object sends a `WORKSPACE_LOCAL_TABLES` name to `env.DB` is a
-code-shape rule, and its guard belongs in `scripts/eslint-rules/` rather than
-in a test that scans the objects' source text
+code-shape rule, and its guard belongs in `scripts/eslint-rules/`
 ([What to test and what not to](#what-to-test-and-what-not-to)).
+`apps/api/test/durable-object-workspace-table-routing.test.ts` is kept as a
+stopgap source scan until that rule replaces it, and while it stands the scan is
+the one accepted exception to the source-text rule.
 
 ### 2. Node against real SQL
 
@@ -479,11 +481,7 @@ opened ready for review rather than as a draft, that is most of a change's life.
   `packages/connectors/src/digestibility-doc.test.ts`, and
   `docs/workstream-email-addresses.md` by
   `apps/api/test/workstream-email-address.test.ts`. Editing one of those runs
-  its test too. `apps/site/test/site.test.ts` also names
-  `docs/domain-migration.md`, but it reads that document and the site's own
-  files as text and compares strings, with nothing executed on the code side.
-  That is the shape [What to test and what not to](#what-to-test-and-what-not-to)
-  rules out, so it is not a contract for that document. For a document not on
+  its test too. For a document not on
   that list,
   `grep -rn 'docs/<file>.md' --include='*.test.*' .` finds the tests that name
   it; most hits only cite a document in a comment, and those need nothing.
@@ -549,7 +547,10 @@ tool built for that shape:
 
 A lint rule could enforce this mechanically by refusing any `node:fs` read of a
 production source from a test file. None exists yet, so reviewers enforce it by
-hand.
+hand. The one named exception is the stopgap scan in
+`apps/api/test/durable-object-workspace-table-routing.test.ts`, which goes away
+when the ESLint rule for `WORKSPACE_LOCAL_TABLES` lands, so the exception shrinks
+to zero.
 
 **A good test:**
 
@@ -581,7 +582,7 @@ and e2e lanes.
 Everything else is exempt from the break-and-revert cycle, because nothing real
 is underneath it to break: rung 3 and rung 4, pure `packages/*` logic, most
 desktop component tests, and the site and release-retention suites, which call
-pure functions and route handlers. At that level the only break available is
+pure functions. At that level the only break available is
 usually flipping the literal the assertion already mirrors, which costs a cycle
 and proves nothing. When writing one of those, read the list of assertions that
 survive a break, below, instead of running the check.
