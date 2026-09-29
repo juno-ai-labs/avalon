@@ -35,8 +35,8 @@ visible-duration bucket. Global maps these observations one-for-one to PostHog
 already validated site context. Electron screen events never impersonate web
 page events.
 
-`site_action_selected` reports a click on a tagged link on the landing,
-download, or support pages. A link opts in with a `data-site-action` id, and
+`site_action_selected` reports a click on a tagged link on the landing or
+support pages (`/download/` initializes no telemetry). A link opts in with a `data-site-action` id, and
 `SITE_ACTION_LINKS` in `telemetry.ts` maps each id to a closed action, placement
 and, for pricing downloads, plan. One capture-phase click listener reads the id
 and ignores any id not in that table, so markup chooses a combination but never
@@ -44,7 +44,10 @@ supplies a value. Every installer link has its own id (`download-header`,
 `download-hero`, `download-pricing-pro|max|ultra`), which is how the landing
 dashboard tells the five identical DMG links apart. The event shares the page
 view's anonymous `distinct_id`, so its referrer and campaign come from joining
-to that visit's `$pageview` rather than being copied onto the click. `desktop_handoff_attempted` reports the handoff type,
+to that visit's `$pageview` rather than being copied onto the click.
+A middle-click, which fires `auxclick` rather than `click`, counts too.
+
+`desktop_handoff_attempted` reports the handoff type,
 whether it was merely presented or actually attempted, and whether the local
 target parser considered it valid. Handoff query strings, URL fragments,
 single-use tickets, invitation tokens, Slack state, work-stream IDs, automation
@@ -54,9 +57,10 @@ Reporting is fire-and-forget. A page keeps at most 20 already-sanitized events
 in memory and sends immediately. Page leave, link clicks and handoff attempts ask
 for browser `keepalive`, and whichever request next sends the queue carries it,
 since that request may hold the event. A batch that fails with a 5xx, 408 or 429
-goes back in memory and rides the page's next send; any other 4xx is dropped. It
-has no persistent event spool and no retry that can delay navigation or opening
-the desktop.
+goes back in memory and rides the page's next send, as does one that never
+reached the API. A 401 means the one-hour capability expired: the page
+bootstraps once more and resends. Any other 4xx is dropped. It has no persistent
+event spool and no retry that can delay navigation or opening the desktop.
 
 - **One observed page produces one web event.** The adapter translates the
   Rally event to the reserved PostHog name; it does not deliver a custom copy.
@@ -147,7 +151,8 @@ is allowed.
 now report `site_action_selected`. The contract gained the `demo_request` and
 `founder_contact` actions, the `sidekicks`, `team` and `pricing` placements, and
 an optional `plan` (`pro`, `max`, `ultra`). The reporter also stopped resending
-a batch the API refused as invalid (a 4xx other than 408 or 429).
+a batch the API refused as invalid, refreshes an expired capability once on a
+401, and keeps a batch that never reached the API.
 
 **Why:** The team wanted to know which of the five identical installer links
 converts and to measure the landing for go-to-market. The event and its PostHog
@@ -162,8 +167,9 @@ the dashboard joins to the page view instead of widening the event.
 **Consequences:** Widening the enums is compatible for new values only, and the
 API validates a batch as a whole. A site deployed before the API would have
 every batch containing a new value refused; with the 4xx change the site drops
-that batch instead of resending it forever, so at worst those clicks are lost
-until the API catches up. A new tagged link needs its id in `SITE_ACTION_LINKS`;
+that batch instead of resending it forever, so at worst that batch (and any page
+view queued in it) is lost until the API catches up. A merge touching both
+starts both deploys at once, so run the API deploy first. A new tagged link needs its id in `SITE_ACTION_LINKS`;
 the site test fails on an id the table does not know.
 
 ### 2026-09-21 — Retire acquisition-form telemetry ownership
