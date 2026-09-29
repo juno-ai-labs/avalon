@@ -16,7 +16,12 @@ import {
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { refreshWorkspaceSchedule } from "../services/workstream-wakeup-service";
 
-import { pollAttemptErrorCode, PollResultSchema } from "./connector-poll-result";
+import {
+  failedPollAttemptCode,
+  pollAttemptErrorCode,
+  pollAttemptFailure,
+  PollResultSchema,
+} from "./connector-poll-result";
 
 interface StoredPollResult {
   activityIds: string[];
@@ -64,10 +69,6 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
     });
 
     let result: StoredPollResult;
-    // The step boundary serializes what an attempt threw: a `ConnectorError`,
-    // a `ZodError` or a D1 failure all arrive below as a plain `Error`, so the
-    // reason is named here, inside the attempt that still holds the original.
-    let lastAttemptErrorCode: string | undefined;
     try {
       result = await step.do(
         "poll-and-persist-provider-page",
@@ -89,7 +90,7 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
           try {
             parsed = PollResultSchema.parse(await pollConnectorConnection(workspaceEnv, input));
           } catch (error) {
-            lastAttemptErrorCode = pollAttemptErrorCode(error);
+            const errorCode = pollAttemptErrorCode(error);
             logStructuredEvent(this.env, "warn", "connector_poll_attempt_failed", {
               workspace_id: input.workspaceId,
               connection_id: input.connectionId,
@@ -99,9 +100,9 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
               attempt: context.attempt,
               duration_ms: Date.now() - startedAt,
               error_name: error instanceof Error ? error.name : typeof error,
-              error_code: lastAttemptErrorCode,
+              error_code: errorCode,
             });
-            throw error;
+            throw pollAttemptFailure(error, errorCode);
           }
           logStructuredEvent(this.env, "info", "connector_poll_attempt_completed", {
             workspace_id: input.workspaceId,
@@ -139,7 +140,7 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
         poll_schedule_id: input.pollScheduleId,
         workflow_step: "poll-and-persist-provider-page",
         error_name: error instanceof Error ? error.name : "Error",
-        error_code: timedOut ? code : lastAttemptErrorCode ?? diagnosticErrorCode(error, code),
+        error_code: timedOut ? code : failedPollAttemptCode(error) ?? diagnosticErrorCode(error, code),
         terminal_outcome: timedOut ? "degraded_timeout" : "degraded_error",
       });
       throw error;

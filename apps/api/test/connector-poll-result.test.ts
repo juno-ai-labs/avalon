@@ -3,7 +3,12 @@ import { DIAGNOSTIC_CODE_MAX_LENGTH } from "@rally/contracts/zod-diagnostics";
 
 import { ConnectorError } from "@rally/connectors";
 
-import { pollAttemptErrorCode, PollResultSchema } from "../src/workflows/connector-poll-result";
+import {
+  failedPollAttemptCode,
+  pollAttemptErrorCode,
+  pollAttemptFailure,
+  PollResultSchema,
+} from "../src/workflows/connector-poll-result";
 
 /** A degraded stream, shaped as the connector layer returns it. */
 function resultWithStreamCode(code: string) {
@@ -38,5 +43,24 @@ describe("a failed poll attempt's code", () => {
     if (rejection.success) throw new Error("expected a rejection");
     expect(pollAttemptErrorCode(rejection.error)).toBe("connector_poll_failed:activityIds:invalid_type");
     expect(pollAttemptErrorCode(new Error("connector_connection_unavailable"))).toBe("connector_connection_unavailable");
+  });
+});
+
+describe("a poll attempt's code crossing the step boundary", () => {
+  it("survives the serialization a replayed step hands the terminal catch", () => {
+    // A replayed checkpoint does not run the callback, so only what the error
+    // itself carries reaches the terminal log. The boundary keeps the message.
+    const thrown = pollAttemptFailure(
+      new ConnectorError("provider_error", "Resource not accessible", { status: 404 }),
+      "provider_error:http_404",
+    );
+    const replayed = new Error((thrown as Error).message);
+    expect(failedPollAttemptCode(replayed)).toBe("provider_error:http_404");
+    expect(failedPollAttemptCode(new Error("Resource not accessible"))).toBeNull();
+  });
+
+  it("rethrows a timeout as itself so the workflow still tells it apart", () => {
+    const timeout = new DOMException("deadline", "TimeoutError");
+    expect(pollAttemptFailure(timeout, "connector_poll_failed")).toBe(timeout);
   });
 });
