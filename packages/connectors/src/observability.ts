@@ -54,9 +54,8 @@ export function connectorObservationErrorCode(error: unknown): string {
  * Kept apart from `connectorObservationErrorCode` because that code is also
  * persisted and compared, where a finer value would split a known state.
  */
-export function connectorDiagnosticCode(error: unknown): string {
+export function connectorDiagnosticCode(error: ConnectorError): string {
   const code = connectorObservationErrorCode(error);
-  if (!(error instanceof ConnectorError)) return code;
   const details = error.details;
   const platform = platformErrorCode(details);
   if (platform) return `${code}:${platform}`;
