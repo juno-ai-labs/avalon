@@ -5,11 +5,12 @@ import {
   readNotionWebhookVerificationToken,
   verifyNotionWebhook,
   type VerifiedNotionWebhook,
+  connectorDiagnosticCode,
 } from "@rally/connectors";
 import type { Region } from "@rally/contracts";
 import type { Env } from "../env";
 import { numericEnv } from "../env";
-import { ApiError } from "../lib/api-error";
+import { ApiError, diagnosticCodeField } from "../lib/api-error";
 import { regionFromRoutedState } from "../lib/region-routed-state";
 import { ConnectionService } from "./connection-service";
 import {
@@ -54,7 +55,7 @@ export interface NotionRouteStatusInput extends NotionRouteInput {
 
 export type NotionRpcResult<T> =
   | { ok: true; value: T }
-  | { ok: false; error: { status: ApiError["status"]; code: string; message: string } };
+  | { ok: false; error: { status: ApiError["status"]; code: string; message: string; diagnosticCode?: string } };
 
 export interface NotionRegionalBridgeRpcBinding {
   completeNotion(input: NotionCallbackInput): Promise<NotionRpcResult<string>>;
@@ -74,12 +75,17 @@ export async function serializeNotionRpcResult<T>(operation: () => Promise<T>): 
     return { ok: true, value: await operation() };
   } catch (error) {
     if (error instanceof ApiError) {
-      return { ok: false, error: { status: error.status, code: error.code, message: error.message } };
+      return { ok: false, error: { status: error.status, code: error.code, message: error.message, ...diagnosticCodeField(error) } };
     }
     if (error instanceof ConnectorError) {
       return {
         ok: false,
-        error: { status: connectorErrorStatus(error), code: error.code, message: error.message },
+        error: {
+          status: connectorErrorStatus(error),
+          code: error.code,
+          message: error.message,
+          diagnosticCode: connectorDiagnosticCode(error),
+        },
       };
     }
     throw error;
@@ -453,7 +459,7 @@ function exactArrayBuffer(value: Uint8Array): ArrayBuffer {
 
 function unwrapNotionRpcResult<T>(result: NotionRpcResult<T>): T {
   if (result.ok) return result.value;
-  throw new ApiError(result.error.status, result.error.code, result.error.message);
+  throw new ApiError(result.error.status, result.error.code, result.error.message, undefined, result.error.diagnosticCode);
 }
 
 function connectorErrorStatus(error: ConnectorError): ApiError["status"] {

@@ -3,11 +3,12 @@ import { isConfiguredRegion } from "@rally/contracts/regions";
 import {
   ConnectorError,
   verifyLinearWebhook,
+  connectorDiagnosticCode,
 } from "@rally/connectors";
 import type { Region } from "@rally/contracts";
 import type { Env } from "../env";
 import { numericEnv } from "../env";
-import { ApiError } from "../lib/api-error";
+import { ApiError, diagnosticCodeField } from "../lib/api-error";
 import {
   ProviderWebhookService,
   type ProviderWebhookIngestionResult,
@@ -33,7 +34,7 @@ export interface LinearRouteStatusInput extends LinearRouteInput {
 
 export type LinearRpcResult<T> =
   | { ok: true; value: T }
-  | { ok: false; error: { status: ApiError["status"]; code: string; message: string } };
+  | { ok: false; error: { status: ApiError["status"]; code: string; message: string; diagnosticCode?: string } };
 
 export interface LinearRegionalBridgeRpcBinding {
   ingestLinear(input: LinearRegionalWebhookInput): Promise<LinearRpcResult<ProviderWebhookIngestionResult>>;
@@ -49,12 +50,17 @@ export async function serializeLinearRpcResult<T>(operation: () => Promise<T>): 
     return { ok: true, value: await operation() };
   } catch (error) {
     if (error instanceof ApiError) {
-      return { ok: false, error: { status: error.status, code: error.code, message: error.message } };
+      return { ok: false, error: { status: error.status, code: error.code, message: error.message, ...diagnosticCodeField(error) } };
     }
     if (error instanceof ConnectorError) {
       return {
         ok: false,
-        error: { status: connectorErrorStatus(error), code: error.code, message: error.message },
+        error: {
+          status: connectorErrorStatus(error),
+          code: error.code,
+          message: error.message,
+          diagnosticCode: connectorDiagnosticCode(error),
+        },
       };
     }
     throw error;
@@ -295,7 +301,7 @@ function exactArrayBuffer(value: Uint8Array): ArrayBuffer {
 
 function unwrapLinearRpcResult<T>(result: LinearRpcResult<T>): T {
   if (result.ok) return result.value;
-  throw new ApiError(result.error.status, result.error.code, result.error.message);
+  throw new ApiError(result.error.status, result.error.code, result.error.message, undefined, result.error.diagnosticCode);
 }
 
 function connectorErrorStatus(error: ConnectorError): ApiError["status"] {
