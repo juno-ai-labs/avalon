@@ -12,7 +12,7 @@ forwarded to PostHog. The site loads no PostHog script and sets no cookie.
 | PostHog event | Sent when | Carries |
 | --- | --- | --- |
 | `$pageview` | A page loads | Path, referring domain, utm_source / utm_medium / utm_campaign |
-| `$pageleave` | The tab is hidden or closed | Path |
+| `$pageleave` | The tab is hidden or closed | Path, time-on-page bucket (under 1s up to 10m+) |
 | `site_action_selected` | A tagged link is clicked | Action, placement, plan (pricing buttons only) |
 
 Tagged links on the landing page, by `data-site-action` id:
@@ -29,8 +29,7 @@ Tagged links on the landing page, by `data-site-action` id:
 Clicks went untracked from Sep 9 to Sep 29, 2026, after a redesign removed the
 reporting.
 
-Not tracked: scrolling, section views, header nav clicks, and time on page in
-PostHog (the site sends a duration bucket, but PostHog does not receive it).
+Not tracked: scrolling, section views, and header nav clicks.
 
 ## Don't lose on a redesign
 
@@ -46,8 +45,9 @@ weeks. Check these on every edit:
 3. **Keep the page at `/`.** Every landing chart filters on `$pathname = '/'`.
 4. **Keep the telemetry script.** Vite injects `src/site-entry.ts` into every
    page; don't remove the plugin in `apps/site/vite.config.ts`.
-5. **Keep UTM tags on outbound links** (utm_source, utm_medium, utm_campaign).
-   Without them the campaign chart shows only "(none)".
+5. **Put UTM tags on links that bring people to the page** (utm_source,
+   utm_medium, utm_campaign), such as posts, emails and ads. The page reads them from its
+   own URL; without them the campaign chart shows only "(none)".
 6. **Deploy the API before the site** when adding a new action, placement or
    plan. The API refuses events with values it doesn't know.
 
