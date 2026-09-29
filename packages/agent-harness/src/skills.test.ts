@@ -4,7 +4,6 @@ import {
   BUILDING_LIVE_SITES_SKILL,
   BUILT_IN_SKILLS,
   DEEP_RESEARCH_SKILL,
-  PASSING_WORK_BETWEEN_SIDEKICK_RUNS_SKILL,
   POLLING_FOR_EVENTS_SKILL,
   SCHEDULING_A_CALENDAR_EVENT_SKILL,
   WRITING_AN_EMAIL_SKILL,
@@ -13,7 +12,11 @@ import {
   type HarnessPlugin,
   type HarnessSkill,
 } from "./index";
-import { AUTOMATIONS_PLUGIN_ID } from "./automation-creator-tools";
+import {
+  AUTOMATIONS_PLUGIN_ID,
+  createAutomationsPlugin,
+  type AutomationCreatorToolHost,
+} from "./automation-creator-tools";
 import { renderPromptSkillCatalog } from "./prompts/skill-catalog";
 
 const triage: HarnessSkill = {
@@ -454,6 +457,18 @@ describe("skills in a run", () => {
   });
 });
 
+function creatorHost(): AutomationCreatorToolHost {
+  return {
+    catalog: [],
+    inspectedPluginIds: new Set(),
+    resolvedResources: new Map(),
+    loadedPluginIds: new Set(),
+    resolvedPersonIds: new Set(),
+    draftState: { submitted: null },
+    model: "test/model",
+  };
+}
+
 function webPlugin(): HarnessPlugin {
   return {
     canonicalId: "rally:web",
@@ -585,21 +600,6 @@ describe("built-in skills", () => {
     expect(POLLING_FOR_EVENTS_SKILL.ownerPlugin).toBe(AUTOMATIONS_PLUGIN_ID);
   });
 
-  it("scopes the run-handoff skill to the plugin that drafts the Sidekick", () => {
-    // Same reason as the polling skill: the procedure is writing a definition,
-    // and an automation occurrence is never given the drafting tools.
-    expect(PASSING_WORK_BETWEEN_SIDEKICK_RUNS_SKILL.ownerPlugin).toBe(AUTOMATIONS_PLUGIN_ID);
-  });
-
-  it("tells the drafter that a reply continues the run that asked", () => {
-    const body = PASSING_WORK_BETWEEN_SIDEKICK_RUNS_SKILL.body;
-    // The failure this skill exists for: a reply continued the run, the run had
-    // no instructions for it, said "noted", and the answer never left the run.
-    expect(body).toContain("**a reply in a thread a run started continues that same run.**");
-    expect(body).toContain("**cycle key**");
-    expect(body).toContain("## Anti-patterns");
-  });
-
   it("states the polling floor the team set, and the rule that keeps a run honest", () => {
     const body = POLLING_FOR_EVENTS_SKILL.body;
     // The whole sentence, not "600" and "ten minutes" separately: "3600" in the
@@ -620,6 +620,38 @@ describe("built-in skills", () => {
     // builds it neither a schedule nor an evaluator — and it is exactly the kind
     // a model reaches for when told to watch one named document.
     expect(body).toContain("`resource_watch`");
+  });
+
+  it("lets a Sidekick drafter load the skill its system message points to", async () => {
+    // The drafter's message names the handoff skill by name. A rename, a skill
+    // dropped from the built-ins, or an owner plugin that no longer matches
+    // the drafter's would leave that pointer naming nothing, and nothing else
+    // would notice. The name is taken from the rendered prompt, not repeated.
+    const drafter = createAutomationsPlugin(creatorHost());
+    const observed: Array<Record<string, unknown>> = [];
+    let pointed: string | undefined;
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      observed.push(body);
+      if (observed.length > 1) return textResponse("done");
+      pointed = /load the ([a-z0-9-]+) skill/.exec(systemPrompt(body))?.[1];
+      return toolCallResponse("load_skill", { name: pointed ?? "" });
+    }) as typeof fetch;
+
+    await expect(
+      runHarness({
+        ...runInput(fetcher),
+        skills: [...BUILT_IN_SKILLS],
+        plugins: [drafter],
+        activationHints: [AUTOMATIONS_PLUGIN_ID],
+        preauthorizedActivationHints: [AUTOMATIONS_PLUGIN_ID],
+      }),
+    ).resolves.toMatchObject({ status: "completed" });
+
+    expect(pointed).toBeDefined();
+    const loaded = BUILT_IN_SKILLS.find((skill) => skill.name === pointed);
+    expect(loaded).toBeDefined();
+    expect(systemPrompt(observed[1]!)).toContain(loaded!.body.slice(0, 200));
   });
 
   it("teaches the site contract the runtime actually enforces", () => {
