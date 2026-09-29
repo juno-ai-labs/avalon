@@ -38,8 +38,8 @@ export interface CopyButtonProps extends
  * keeps the same click as its retry.
  *
  * Every surface that offers to copy something renders this or drives `useCopy`
- * underneath a control of its own; `copy-button.node.test.ts` keeps the direct
- * callers of the bridge to the ones that are menu items.
+ * underneath a control of its own; the direct callers of the bridge are only the
+ * ones that are menu items.
  */
 export const CopyButton = forwardRef<HTMLButtonElement, CopyButtonProps>(function CopyButton(
   { className, copyText, label, onCopied, size = 14, tooltipSide, value, ...props },
