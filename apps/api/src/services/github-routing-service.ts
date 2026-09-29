@@ -352,7 +352,9 @@ export class GitHubRoutingService {
       body,
     };
     try {
-      await this.env.ACTIVITY_QUEUE.send(GitHubDeliveryQueueMessageSchema.parse(message));
+      // `v8`, not the Queue's default `json`: JSON turns the inline body's
+      // ArrayBuffer into `{}`, and the consumer rejects every such message.
+      await this.env.ACTIVITY_QUEUE.send(GitHubDeliveryQueueMessageSchema.parse(message), { contentType: "v8" });
     } catch (error) {
       // GitHub is answered with a failure and nothing will consume this
       // message, so a staged body would otherwise sit in Global's bucket.
@@ -491,7 +493,11 @@ export async function consumeGitHubDeliveryMessage(
 ): Promise<void> {
   const parsed = GitHubDeliveryQueueMessageSchema.safeParse(message.body);
   if (!parsed.success) {
+    // The id is our receiver's own field, so it may be logged even when the
+    // rest of the message is wrong; it is what an operator redelivers by.
+    const identity = GitHubDeliveryIdentitySchema.pick({ deliveryId: true }).safeParse(message.body);
     logWarn(env, "github_delivery_message_invalid", {
+      delivery_id: identity.success ? identity.data.deliveryId : null,
       queue_attempts: message.attempts,
       error_code: diagnosticErrorCode(parsed.error, "github_delivery_message"),
     });
