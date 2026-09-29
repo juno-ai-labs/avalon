@@ -239,8 +239,7 @@ pre {
    100% keyframe from the first frame, and every line here takes the mask
    whether or not it clips anything — the unconditional fade this whole
    arrangement exists to avoid, reintroduced by a reordering that looks like
-   tidying. Keep both in these positions; no test covers it, so check the
-   result in a real window.
+   tidying. Keep both in these positions.
 
    The fill mode is also what survives the global reduced-motion block below,
    which forces every duration to 0.001ms: `both` fills the one value outside
@@ -6693,9 +6692,10 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
    itself. It takes the row instead, inside the dock's own gutters, and the
    rows a launcher stacks above it come with it or they stop lining up.
    568px is a 600px pane less a dock's two 16px gutters — a size query reads the
-   container's content box, which is inside them, so those numbers have to keep to
-   that sum for every dock that states a gutter, because a dock that states a different one crosses at a different pane and puts the
-   width change back into the hand-off. */
+   container's content box, which is inside them, so those numbers have to keep
+   to that sum for every dock that states a gutter, because a dock that states a
+   different one crosses at a different pane and puts the width change back into
+   the hand-off. */
 @container composer-dock (width < 568px) {
   :is(.workstream-screen, .workstream-launch-screen)
   :is(.composer-stack, .substream-launch-banner) { max-width: none; }

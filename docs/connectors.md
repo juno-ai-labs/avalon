@@ -1353,10 +1353,8 @@ its own storage via `localWorkspaceEnv`), never `this.env.DB`.
 Written against the regional binding it names a table regional D1 does not have,
 which reaches the person as "An unexpected error occurred" rather than as
 anything naming the boundary. That defect was found on the automation delivery
-path this section used to describe. The `rally/durable-object-workspace-table-routing`
-ESLint rule now fails lint on any object that names a `WORKSPACE_LOCAL_TABLES`
-table on `this.env.DB`
-([`testing.md`](testing.md#what-to-test-and-what-not-to)).
+path this section used to describe. `rally/durable-object-workspace-table-routing`
+now guards it.
 
 ## Failure modes and limits
 
