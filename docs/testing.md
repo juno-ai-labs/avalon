@@ -120,11 +120,12 @@ Seed those tables in the object that owns them — `initializeWorkspace`, then
 `test-workers/automation-acceptance-bindings.test.ts` asserts it in its first test
 rather than trusting a comment to survive. On the production side, the rule
 that no object sends a `WORKSPACE_LOCAL_TABLES` name to `env.DB` is a
-code-shape rule, and its guard belongs in `scripts/eslint-rules/`
-([What to test and what not to](#what-to-test-and-what-not-to)).
-`apps/api/test/durable-object-workspace-table-routing.test.ts` is kept as a
-stopgap source scan until that rule replaces it, and while it stands the scan is
-the one accepted exception to the source-text rule.
+code-shape rule, and `rally/durable-object-workspace-table-routing` in
+`scripts/eslint-rules/` enforces it on every file under
+`apps/api/src/durable-objects/`
+([What to test and what not to](#what-to-test-and-what-not-to)). It reads the
+list from `apps/api/src/services/workspace-runtime-database.ts` when it loads,
+so a table added there is guarded without a second edit.
 
 ### 2. Node against real SQL
 
@@ -547,10 +548,10 @@ tool built for that shape:
 
 A lint rule could enforce this mechanically by refusing any `node:fs` read of a
 production source from a test file. None exists yet, so reviewers enforce it by
-hand. The one named exception is the stopgap scan in
-`apps/api/test/durable-object-workspace-table-routing.test.ts`, which goes away
-when the ESLint rule for `WORKSPACE_LOCAL_TABLES` lands, so the exception shrinks
-to zero.
+hand. The one named exception, a scan of Durable Object sources for
+`WORKSPACE_LOCAL_TABLES` names, has ended: the
+`rally/durable-object-workspace-table-routing` ESLint rule replaced it, and no
+exception remains.
 
 **A good test:**
 
