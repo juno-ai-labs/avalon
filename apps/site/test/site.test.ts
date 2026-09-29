@@ -467,8 +467,8 @@ describe('public Rally site', () => {
     expect(readProjectFile('trust/dpa/index.html')).toContain('Annex B · Technical and organizational measures');
     expect(readProjectFile('trust/subprocessors/index.html')).toContain('Cloudflare, Inc.');
     const cookies = readProjectFile('trust/cookies/index.html');
-    expect(cookies).toContain('Effective September 21, 2026');
-    expect(cookies).toContain('Version · 2026.09.21');
+    expect(cookies).toContain('Effective September 29, 2026');
+    expect(cookies).toContain('Version · 2026.09.29');
     expect(cookies).toContain('uses bounded first-party product analytics');
     expect(cookies).toContain('first-party anonymous identifier in local storage');
     expect(cookies).toContain("does not load PostHog's browser SDK");
