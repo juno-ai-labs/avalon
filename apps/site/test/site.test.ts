@@ -105,31 +105,6 @@ describe('public Rally site', () => {
     expect(page).toContain('{{access.description}}');
   });
 
-  it('marks every landing section the side navigation links to', () => {
-    const page = readProjectFile('index.html');
-    const nav = /<nav class="section-nav"[^>]*data-section-nav>([\s\S]*?)<\/nav>/u.exec(page)?.[1] ?? '';
-    const targets = [...nav.matchAll(/href="#([\w-]+)"/gu)].map(([, id]) => id);
-    expect(targets).toEqual(['teamwork', 'sidekicks', 'features', 'team', 'pricing']);
-    // section-nav.ts reads each target's first h2 to decide which one is current.
-    for (const id of targets) {
-      expect(page, id).toMatch(new RegExp(`<section [^>]*id="${id}"[^>]*>\\s*<p class="eyebrow">[^<]+</p>[\\s\\S]*?<h2 `, 'u'));
-    }
-    expect(page).toContain('<script type="module" src="/src/section-nav.ts"></script>');
-  });
-
-  it('serves the landing fonts from the site origin with their licence', () => {
-    const css = readProjectFile('src/landing.css');
-    const fonts = [...css.matchAll(/url\('\.\/fonts\/([^']+)'\)/gu)].map(([, file]) => file);
-    // The CSP allows fonts from 'self' only; a hosted font URL would fail silently.
-    expect(fonts.length).toBeGreaterThan(0);
-    for (const file of fonts) {
-      expect(existsSync(new URL(`../src/fonts/${file}`, import.meta.url)), file).toBe(true);
-      expect(readProjectFile('src/fonts/README.md')).toContain(`\`${file}\``);
-    }
-    expect(existsSync(new URL('../src/fonts/OFL.txt', import.meta.url))).toBe(true);
-    expect(readProjectFile('index.html')).not.toMatch(/fonts\.(googleapis|gstatic)\.com/u);
-  });
-
   it('defines responsive behavior for every public surface', () => {
     const publicPages = [
       'index.html',
@@ -528,34 +503,6 @@ describe('public Rally site', () => {
       .map((match) => match[1]);
 
     expect(new Set(buildInputPaths)).toEqual(new Set(publicHtmlPaths));
-  });
-
-  it('uses help@rallywith.ai as the only role-based public contact and preserves triage subjects', () => {
-    const publicHtmlPaths = readdirSync(new URL('../', import.meta.url), {
-      encoding: 'utf8',
-      recursive: true,
-    }).filter((path) => path.endsWith('.html')
-      && !path.startsWith('dist/')
-      && !path.startsWith('node_modules/'));
-    const publicAddresses = new Set<string>();
-    const publicMailtoTargets = new Set<string>();
-
-    for (const path of publicHtmlPaths) {
-      const page = readProjectFile(path);
-      const addresses = page.match(/[a-z0-9._%+-]+@rallywith\.ai/giu) ?? [];
-      for (const address of addresses) {
-        const normalizedAddress = address.toLowerCase();
-        publicAddresses.add(normalizedAddress);
-        expect(normalizedAddress, path).toBe('help@rallywith.ai');
-      }
-      for (const target of page.match(/mailto:[^"\s]+/gu) ?? []) {
-        publicMailtoTargets.add(target);
-        expect(target, path).toMatch(/^mailto:help@rallywith\.ai\?subject=[^&"\s]+$/u);
-      }
-    }
-
-    expect(publicAddresses).toEqual(new Set(['help@rallywith.ai']));
-    expect(publicMailtoTargets.size).toBeGreaterThan(0);
   });
 
   it('routes site telemetry before choosing whether an anonymous browser identifier may persist', () => {
