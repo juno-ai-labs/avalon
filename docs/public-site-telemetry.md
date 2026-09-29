@@ -144,7 +144,7 @@ is allowed.
 now report `site_action_selected`. The contract gained the `demo_request` and
 `founder_contact` actions, the `sidekicks`, `team` and `pricing` placements, and
 an optional `plan` (`pro`, `max`, `ultra`). The reporter also stopped resending
-a batch the API refused with a 4xx.
+a batch the API refused as invalid (a 4xx other than 408 or 429).
 
 **Why:** The team wanted to know which of the five identical installer links
 converts and to measure the landing for go-to-market. The event and its PostHog
