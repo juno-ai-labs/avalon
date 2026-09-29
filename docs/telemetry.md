@@ -633,6 +633,16 @@ counts, rejection count, open-circuit count, and oldest backlog ages. Alert on a
 open circuit, any terminal count, oldest age approaching 15 minutes, persistent
 processing failures, missing symbols, or deletion survivors.
 
+A stored event the running contract no longer admits (accepted by a newer
+contract, then the API rolled back) does not stop PostHog delivery. The pass logs
+`telemetry_delivery_row_unparseable` with a `stored_envelope_invalid:…` code that
+names the rejected field, writes that code to `terminal_code`, and puts the row
+back on the ordinary retry backoff. It is delivered once a contract that admits it
+is running again, or expires at its `delete_at`. A parked row still counts as
+backlog, so it holds the oldest-backlog age up until then: an age that keeps
+climbing while delivery still moves means search the logs for
+`telemetry_delivery_row_unparseable`.
+
 Use the [telemetry incident procedures](runbook.md#regional-telemetry) for provider
 outage, backlog, rejection/abuse, missing artifacts, prohibited data,
 cross-region routing, preference inconsistency, replay, or deletion failure. Never
@@ -1935,6 +1945,27 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 
 ## Changelog
+
+### 2026-09-29 — An unreadable stored event no longer stalls PostHog delivery
+
+**What changed:** The PostHog outbox parses each selected row once with
+`safeParse`. A row the running contract rejects is parked on the retry backoff
+with its diagnostic code in `terminal_code`, logged as
+`telemetry_delivery_row_unparseable`, and counted as `unparseable`; the rest of
+the page is delivered. `TelemetryEnvelopeSchema` now reports each nested
+property failure at its own path (`properties.entrypoint`) rather than one issue
+on `properties`, so that code names the field.
+
+**Why:** The selection loop used `.parse`. After a rollback below a contract
+change, such as a widened enum, one stored row threw on every pass and blocked
+all delivery behind it. The lakehouse path already used `safeParse` and rejects
+such rows. PostHog parks rather than rejects because the rollback case is the
+common one: the row is valid under the contract it was accepted by, and a
+roll-forward should deliver it.
+
+**What to respect:** No row in the outbox may be able to throw out of the
+selection loop. A parked row keeps retrying until `delete_at`, so a genuinely
+corrupt row costs one read an hour, not a stall.
 
 ### 2026-09-23 — Correlate organization socket opening across desktop and room
 
