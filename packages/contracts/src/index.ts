@@ -2352,6 +2352,26 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
       .refine((ids) => new Set(ids).size === ids.length, "must be unique")
       .optional(),
   }),
+  /**
+   * Sent before `subscribe` by a client that loads Channel rows a Space at a
+   * time. The sidebar it is then sent carries no Channel rows and says
+   * `channelsBySpace`.
+   */
+  z.strictObject({
+    type: z.literal("channels_by_space"),
+  }),
+  /**
+   * One page of the Channels in a Space this viewer may see, in id order after
+   * `after`, with their rails when `rails` is set.
+   */
+  z.strictObject({
+    type: z.literal("space_channels"),
+    requestId: IdSchema,
+    spaceId: SpaceIdSchema,
+    /** The `nextAfter` of the previous answer for this Space. */
+    after: WorkstreamIdSchema.optional(),
+    rails: z.boolean(),
+  }),
 ]).superRefine((event, context) => {
   if (event.type === "channel_rails"
     && (event.spaceId === undefined) === (event.workstreamIds === undefined)) {
@@ -2434,6 +2454,25 @@ function refineWorkstreamPagePairing(
     });
   }
 }
+
+/**
+ * One page of a Space's Channel rows, answering `space_channels`.
+ *
+ * `rails` holds the rails that fit the frame beside the rows, and is empty
+ * when none were asked for. A row with no rail here is asked for by name.
+ * `nextAfter` is the last Channel on a full page, so the next request starts
+ * after it; `null` means the Space ends here.
+ */
+export const WorkspaceSpaceChannelsEventSchema = z.strictObject({
+  type: z.literal("workspace_space_channels"),
+  requestId: IdSchema,
+  directoryWaterline: z.number().int().nonnegative(),
+  items: z.array(WorkstreamSchema),
+  stateVersions: z.array(WorkspaceWorkstreamStateVersionSchema),
+  rails: z.array(z.lazy(() => ChannelRailSchema)),
+  nextAfter: WorkstreamIdSchema.nullable(),
+}).superRefine(refineWorkstreamPagePairing);
+export type WorkspaceSpaceChannelsEvent = z.infer<typeof WorkspaceSpaceChannelsEventSchema>;
 
 /** A WorkspaceDO-owned, cursor-paged sidebar result sent on the workspace socket. */
 export const WorkspaceWorkstreamPageEventSchema = z.strictObject({
@@ -2529,6 +2568,12 @@ export const WorkspaceSidebarSchema = z.strictObject({
    * is not permanently stuck opening.
    */
   spacesReady: z.boolean().optional(),
+  /**
+   * Set when this socket asked for `channels_by_space` and the server honoured
+   * it: `workstreams` is then empty, and the client asks each Space for its
+   * Channels. Absent means `workstreams` is the directory's first page.
+   */
+  channelsBySpace: z.literal(true).optional(),
 });
 
 /**

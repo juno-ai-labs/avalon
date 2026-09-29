@@ -212,7 +212,7 @@ the directory row, the breakout list and the Channel's rail while the
 conversation's snapshot is in flight (`renderOpeningSidebar` in
 `screens/workstream.tsx`). A rail is the Channel's people, its owned,
 recommended and attached Sidekicks, and its Channel resources, which the
-workspace socket answers a Space at a time ahead of need
+workspace socket sends with each Space's Channel rows ahead of need
 (`lib/channel-rails.ts`; the protocol is in
 [`realtime-sockets.md`](realtime-sockets.md)). Rails ride the `directory` row
 under `rails`, read like `breakouts`, each kept at the `railWaterline` it was
@@ -330,8 +330,9 @@ channel** plus still navigate.
 
 The bound on this cache is membership, not a number or an age:
 
-- **The directory prunes parents.** A live subscribe answer that carries the
-  whole directory, one with no `nextCursor`, keeps the conversations whose
+- **The directory prunes parents.** A finished walk of every Space, or a live
+  subscribe answer that carries the whole directory (one with no
+  `nextCursor`), keeps the conversations whose
   parent is a row in it or an automation in its list, and removes the rest for
   that scope. Page one of a longer directory prunes nothing: it cannot tell a
   parent on a later page from one that is gone, which is the same reason the
