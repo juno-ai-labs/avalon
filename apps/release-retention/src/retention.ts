@@ -43,6 +43,9 @@ const MUTABLE_POINTERS = new Set([...CANONICAL_DMG_POINTERS, ...REQUIRED_POINTER
 // Retention must preserve it whether it is active or released, but its absence
 // remains valid before the first channel-aware publisher acquires the lock.
 const OPERATIONAL_OBJECTS = new Set([RELEASE_LOCK]);
+// R2's own cap on keys per `delete` call, not a retention policy: a backlog
+// larger than this throws on a single call, after every copy has succeeded.
+const R2_DELETE_BATCH_SIZE = 1000;
 const SEMANTIC_VERSION = "(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)";
 const VERSIONED_ARTIFACT = new RegExp(
   `^${RELEASE_PREFIX}(${PRODUCT_NAMES.join("|")})-(${SEMANTIC_VERSION})-mac-arm64\\.(?:dmg|zip)(?:\\.blockmap)?$`,
@@ -368,7 +371,11 @@ export async function runRetention(
     throw new Error("Active release keep set changed during retention; refusing deletion");
   }
 
-  await bindings.ACTIVE_RELEASES.delete(initial.plan.candidateKeys);
+  for (let start = 0; start < initial.plan.candidateKeys.length; start += R2_DELETE_BATCH_SIZE) {
+    await bindings.ACTIVE_RELEASES.delete(
+      initial.plan.candidateKeys.slice(start, start + R2_DELETE_BATCH_SIZE),
+    );
+  }
   report.deletedObjectCount = initial.plan.candidateKeys.length;
 
   const finalObjects = await listAll(bindings.ACTIVE_RELEASES);

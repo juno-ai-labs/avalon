@@ -570,7 +570,8 @@ Each admitted invocation performs this fail-closed transaction:
    if any key, metadata, ETag, release grouping, or retained-version decision
    changed while copies were in progress. This protects a release that races the
    nightly job.
-5. Delete only the computed, verified candidate-key array. Re-list both sides,
+5. Delete only the computed, verified candidate keys, in batches of R2's
+   1,000-key cap per `delete` call. Re-list both sides,
    require the calculated complete release set plus every mutable pointer in
    active storage, prove every candidate is absent from the active bucket, and
    prove its verified archive copy remains present. Stable may make the active
@@ -579,7 +580,10 @@ Each admitted invocation performs this fail-closed transaction:
 
 The Worker calls `noRetry()` so Cloudflare cannot start a concurrent automatic
 retry after a partial failure; the next nightly invocation safely reuses any
-verified archive copies. A successful admitted run logs
+verified archive copies. A large backlog (for example, after the deployed Worker fell
+behind the source) can exceed one Cron invocation's 15-minute limit while
+copying. Each failed night still keeps its verified copies, so the backlog
+drains over successive nights and the first run to finish copying deletes it. A successful admitted run logs
 `desktop_release_retention_completed` with its plan and copy/delete counts. An
 exception is a failed Cron event and must be investigated before manually
 deleting any object.

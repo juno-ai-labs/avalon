@@ -115,6 +115,8 @@ class MockBucket {
 
   async delete(keys: string | string[]): Promise<void> {
     const requested = Array.isArray(keys) ? [...keys] : [keys];
+    // Mirrors R2, which rejects a batch delete of more than 1000 keys.
+    if (requested.length > 1000) throw new Error("R2 delete accepts at most 1000 keys");
     this.deleteCalls.push(requested);
     for (const key of requested) this.objects.delete(key);
   }
@@ -210,6 +212,15 @@ describe("release retention", () => {
       expect(archive.objects.get(key)?.storageClass).toBe("InfrequentAccess");
       expect(archive.objects.get(key)?.customMetadata).toEqual({ release: key });
     }
+  });
+
+  it("deletes a backlog larger than one R2 delete call allows", async () => {
+    const versions = Array.from({ length: 210 }, (_, index) => `1.${index}.0`);
+    const active = new MockBucket(inventory(versions));
+    const report = await runRetention(bindings(active), { dryRun: false, keepCount: 5 });
+    expect(report.deletedObjectCount).toBe(1025);
+    expect(active.deleteCalls.map((call) => call.length)).toEqual([1000, 25]);
+    expect(active.objects.size).toBe(27);
   });
 
   it("accepts already verified archive objects without rewriting them", async () => {
