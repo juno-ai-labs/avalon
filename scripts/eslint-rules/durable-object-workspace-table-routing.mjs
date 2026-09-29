@@ -23,10 +23,8 @@ import tseslint from "typescript-eslint";
  * cannot resolve to a string, so a change to the list's shape stops lint
  * rather than shrinking the list the rule enforces.
  *
- * ESLint's cache keys on each linted file and the config, not on this list, so
- * after adding a table to `WORKSPACE_LOCAL_TABLES` or `AUTHORIZATION_STORAGE_TABLES`
- * run `pnpm lint:fresh`: cached Durable Object files are not re-checked against
- * the new table until a cold run, which is what CI does.
+ * The ESLint cache does not see that list: run `pnpm lint:fresh` after changing it
+ * (docs/dev-environment.md#quality-gate-caches).
  */
 
 const LIST_MODULE = new URL("../../apps/api/src/services/workspace-runtime-database.ts", import.meta.url);

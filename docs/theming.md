@@ -70,8 +70,7 @@ serves it through `rally-font://`.
   screenshot against an account that has a personal colour set before believing
   one that does not. `cmp.row.background-selected` was an eighth until the entry
   below removed the re-point; a future accent that wants a row back gives that
-  row a token of its own rather than re-pointing the one everything shares, and
-  no automated test fails if it comes back, so check it in a real window.
+  row a token of its own rather than re-pointing the one everything shares.
 - **`system` is a preference, not a palette.** It must always resolve to light
   or dark before it reaches `data-theme`; otherwise the generated selectors do
   not provide a complete token set.
@@ -98,7 +97,6 @@ serves it through `rally-font://`.
   half-strength wash — the lightbox's media controls, its gallery arrows and
   caption — can no longer take its contrast from the wash, so each carries its
   own opaque chip. A control added to that surface later needs one too.
-  No automated test covers either end; verify them in a real window.
 - **Spacing is one number.** Every feed spacing token is a multiple of
   `ref.space.unit`, and `app.css` derives its `--space-N` steps from the same
   unit. The sidebar's `sys.space.group.gap` is the one spacing token off it,
@@ -129,8 +127,7 @@ serves it through `rally-font://`.
   beside the rule — not a literal on that one selector. Overriding each
   consumer in turn is what let `sys.space.group.gap` keep a retired theme's
   60px in the one place nobody had overridden; the value that survives that
-  process is the one nobody argued for. No automated test covers this for the
-  sidebar's group breaks, so check it in a real window; `margin-top: 0` on the compact rail is
+  process is the one nobody argued for. `margin-top: 0` on the compact rail is
   allowed because it hides the headings the gap spaces, which is a decision
   rather than an escape.
 - **A rule that names a token is not proof the token reaches it.** Check for a
@@ -152,9 +149,7 @@ serves it through `rally-font://`.
   transition.
 - **There is one hover wash, and it is `sys.color.state.hover`.** Every neutral
   control a pointer can cross — a navigation row, a menu item, a header icon, a
-  chip, a settings button — paints hover from that one token. No automated test fails a `:hover` or
-  `[data-highlighted]` rule that reaches for a neutral surface fill instead, so
-  check this in a real window. Two kinds of rule are exempt and
+  chip, a settings button — paints hover from that one token. Two kinds of rule are exempt and
   say so: a hover carrying a semantic hue, where the hue is the point, and a
   rule shared with a selected or pressed state, which is not a hover. The wash
   is translucent in **both** appearances on purpose — an opaque fill has to know
