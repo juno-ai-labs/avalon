@@ -118,14 +118,9 @@ in D1 today, where they prove nothing about the routed reads they sit beside.
 Seed those tables in the object that owns them — `initializeWorkspace`, then
 `runInDurableObject(workspaceStub(), …)`. Where the absence is the point,
 `test-workers/automation-acceptance-bindings.test.ts` asserts it in its first test
-rather than trusting a comment to survive. On the production side, the rule
-that no object sends a `WORKSPACE_LOCAL_TABLES` name to `env.DB` is a
-code-shape rule, and `rally/durable-object-workspace-table-routing` in
-`scripts/eslint-rules/` enforces it on every file under
-`apps/api/src/durable-objects/`
-([What to test and what not to](#what-to-test-and-what-not-to)). It reads the
-list from `apps/api/src/services/workspace-runtime-database.ts` when it loads,
-so a table added there is guarded without a second edit.
+rather than trusting a comment to survive. On the production side,
+`rally/durable-object-workspace-table-routing` refuses a `WORKSPACE_LOCAL_TABLES`
+name on `env.DB` in any object.
 
 ### 2. Node against real SQL
 

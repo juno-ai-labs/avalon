@@ -102,10 +102,8 @@ a release script.
 
 Both gates cache; warm runs take seconds. **_Only_ after changing a rule in
 `scripts/eslint-rules/`, run `pnpm lint:fresh`** — ESLint's cache keys on file
-contents alone, so it clears the rest of the tree against the _old_ rule. The
-same holds after adding a table to `WORKSPACE_LOCAL_TABLES` or
-`AUTHORIZATION_STORAGE_TABLES`, which the Durable Object routing rule reads from
-source. CI runs cold; limits in
+contents alone, so it clears the rest of the tree against the _old_ rule. CI
+runs cold; limits in
 [`docs/dev-environment.md`](docs/dev-environment.md#quality-gate-caches).
 
 ## Writing tests
@@ -126,18 +124,11 @@ read [`docs/durable-object-sqlite.md`](docs/durable-object-sqlite.md).
   _cannot_ run here — Workers AI, Vectorize, Flagship, a provider's API — never
   for setup that was inconvenient.
 - **A test runs the subject and asserts its observable output against a
-  literal.** A test never reads a production source, stylesheet, HTML, or
-  deploy/config file and asserts on its text; never asserts on a mock's own
-  configuration, a constant against itself, or a value the subject computed;
-  and never greps importers. Enforce a code-shape or import rule with ESLint,
-  a behavior by running it, a cross-package constant by importing it, and
-  Electron main wiring by extracting it into a module that takes its
-  dependencies. If none of those is possible (a pure CSS declaration, deploy
-  configuration), verify another way, such as a real-window screenshot, and
-  say so in the pull request. This does not lower the bar: a behavior change
-  with no test that can fail for the reason it names is still a review
-  finding. [`docs/testing.md`](docs/testing.md#what-to-test-and-what-not-to)
-  has the table of what to do instead.
+  literal.** It never asserts on the text of a source, stylesheet, HTML or
+  config file, a mock's own value, or a constant against itself. This does not
+  lower the bar:
+  [`docs/testing.md`](docs/testing.md#what-to-test-and-what-not-to) has what to
+  do instead, including when no runnable test is possible.
 - **Prove every integration test can fail.** For a `test-workers/` test, a Node
   test exercising a query, schema, route, service, or object against the real
   migrations, or a local smoke or e2e lane, break the behavior it covers with one
