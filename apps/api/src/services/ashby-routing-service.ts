@@ -1,9 +1,9 @@
 import type { Region } from "@rally/contracts/regions";
 import { RegionSchema } from "@rally/contracts/regions";
 import { z } from 'zod';
-import { ConnectorError } from '@rally/connectors';
+import { ConnectorError, connectorDiagnosticCode } from '@rally/connectors';
 import type { Env } from '../env';
-import { ApiError } from '../lib/api-error';
+import { ApiError, diagnosticCodeField } from '../lib/api-error';
 import { workspaceRegionalDatabase } from './workspace-runtime-database';
 
 export const AshbyRouteSchema = z.strictObject({ connectionId: z.string().uuid(), region: RegionSchema, status: z.enum(['active', 'disabled']) });
@@ -12,7 +12,7 @@ export const AshbyIngestionResultSchema = z.union([
   z.strictObject({ ping: z.literal(true) }),
   z.strictObject({ duplicate: z.boolean(), activityId: z.string().uuid() }),
 ]);
-export type AshbyRpcResult<T> = { ok: true; value: T } | { ok: false; error: { status: ApiError['status']; code: string; message: string } };
+export type AshbyRpcResult<T> = { ok: true; value: T } | { ok: false; error: { status: ApiError['status']; code: string; message: string; diagnosticCode?: string } };
 export interface GlobalAshbyRouterRpcBinding {
   health(): Promise<AshbyRpcResult<{ region: Region }>>;
   lookupRoute(connectionId: string): Promise<AshbyRpcResult<{ region: Region }>>;
@@ -25,17 +25,17 @@ export interface AshbyRegionalBridgeRpcBinding {
 export async function serializeAshbyRpcResult<T>(operation: () => Promise<T>): Promise<AshbyRpcResult<T>> {
   try { return { ok: true, value: await operation() }; }
   catch (error) {
-    if (error instanceof ApiError) return { ok: false, error: { status: error.status, code: error.code, message: error.message } };
+    if (error instanceof ApiError) return { ok: false, error: { status: error.status, code: error.code, message: error.message, ...diagnosticCodeField(error) } };
     if (error instanceof ConnectorError) return { ok: false, error: {
       status: error.code === 'invalid_signature' || error.code === 'unauthorized' ? 401 : error.code === 'payload_too_large' ? 413 : 422,
-      code: error.code, message: error.message,
+      code: error.code, message: error.message, diagnosticCode: connectorDiagnosticCode(error),
     } };
     throw error;
   }
 }
 function unwrap<T>(result: AshbyRpcResult<T>): T {
   if (result.ok) return result.value;
-  throw new ApiError(result.error.status, result.error.code, result.error.message);
+  throw new ApiError(result.error.status, result.error.code, result.error.message, undefined, result.error.diagnosticCode);
 }
 /** Global stores only an opaque routing address, never API keys or signing secrets. */
 export async function registerAshbyRoute(env: Env, input: z.infer<typeof AshbyRouteSchema>) {

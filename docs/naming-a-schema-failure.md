@@ -155,7 +155,7 @@ its own is a boundary that drifts.
 | `packages/contracts/src/platform-diagnostics.ts` | `platformErrorCode` names a Workers runtime, D1 or SQLite failure (`d1_overloaded`, `sqlite_unique_constraint`) from its fixed sentence or its `cause`, never copying the table, column or value the sentence quotes; `diagnosticErrorCode` and the engineering MCP read it |
 | `packages/connectors/src/observability.ts` | `connectorDiagnosticCode` is `connectorObservationErrorCode` plus the provider's HTTP status, its rate limit, or the platform failure behind a request that never completed (`provider_error:http_403:rate_limited`) |
 | `apps/api/src/lib/api-error.ts` | `ApiError.diagnosticCode` carries what a log may say beyond the public `code`, across an RPC hop, and never into the response body; `request_failed` and `diagnosticErrorCode` log it |
-| `apps/api/src/services/github-routing-service.ts` | the regional hop carries GitHub's status as `diagnosticCode` behind its 502 `provider_error`; `github_delivery_retry` logs it |
+| `apps/api/src/services/{github,slack,linear,notion,ashby}-routing-service.ts`, `resend-inbound-email-service.ts` | every regional bridge's error envelope carries `diagnosticCode` through `diagnosticCodeField`, so a provider's status behind a 502 `provider_error`, or a D1 failure behind the work-stream fence's refusal, reaches the Global log; `github_delivery_retry` logs it too |
 | `apps/api/src/workflows/connector-poll.ts` | `connector_poll_attempt_failed` names each attempt's failure where the original error is still in hand, and `connector_poll_failed` carries the last one as `error_code` beside `error_name: "Error"` |
 | `apps/api/src/services/workstream-authority.ts` | a fence that failed closed carries `failedClosedReason`, so the queue refusal reads `workstream_maintenance:quarantined:0:authority_control_read_failed:d1_overloaded` rather than a quarantine that never happened |
 | `apps/api/src/durable-objects/workspace-alarm-instrumentation.ts` | `workspace_scheduled_alarm_phase_failed` logs `code` and `error_name` |
@@ -243,6 +243,9 @@ constraint message: a member's memory table names its own columns, so the
 kind of failure crosses and the names do not. Putting the provider status in
 `ApiError.details`: that goes to the caller, and the rule is not to widen what
 the caller sees.
+
+Every regional bridge's error envelope carries the log-only code, since each
+one runs the work-stream fence and rebuilds its refusal on the Global side.
 
 **Consequences:** `request_failed` now carries `error_code` for every
 `ConnectorError`, and for an `ApiError` only when it has a `diagnosticCode`.

@@ -19,6 +19,14 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * An `ApiError`'s `diagnosticCode` as the optional field a regional RPC error
+ * envelope carries, so the side that rebuilds the error can still log it.
+ */
+export function diagnosticCodeField(error: ApiError): { diagnosticCode?: string } {
+  return error.diagnosticCode === undefined ? {} : { diagnosticCode: error.diagnosticCode };
+}
+
 const API_ERROR_STATUSES: ReadonlySet<number> = new Set([400, 401, 403, 404, 409, 413, 422, 426, 429, 500, 502, 503]);
 
 /**

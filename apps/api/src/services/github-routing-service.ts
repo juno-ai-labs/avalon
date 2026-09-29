@@ -11,7 +11,7 @@ import {
 import type { Region } from "@rally/contracts";
 import { z } from "zod";
 import type { Env } from "../env";
-import { ApiError } from "../lib/api-error";
+import { ApiError, diagnosticCodeField } from "../lib/api-error";
 import { githubRegionFromInstallState } from "../lib/github-install-state";
 import {
   GitHubDeliveryIdentitySchema,
@@ -90,7 +90,7 @@ export async function serializeGitHubRegionalRpcResult<T>(
           status: error.status,
           code: error.code,
           message: error.message,
-          ...(error.diagnosticCode === undefined ? {} : { diagnosticCode: error.diagnosticCode }),
+          ...diagnosticCodeField(error),
         },
       };
     }
