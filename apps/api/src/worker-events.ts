@@ -176,7 +176,12 @@ export default {
     }
     const authority = await readWorkstreamAuthorityControl(env);
     if (!acceptsNewWorkstreamWork(authority)) {
-      throw new Error(`workstream_maintenance:${authority.phase}:${authority.generation}`);
+      throw new Error([
+        "workstream_maintenance",
+        authority.phase,
+        authority.generation,
+        ...(authority.failedClosedReason ? [authority.failedClosedReason] : []),
+      ].join(":"));
     }
     return consumeActivityQueue(batch, env);
   }),

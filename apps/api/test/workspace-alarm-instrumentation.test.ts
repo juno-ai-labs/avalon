@@ -54,6 +54,10 @@ describe("WorkspaceDO alarm instrumentation", () => {
       phase: "schedule_reconcile",
       duration_ms: 200,
       crossed_recovery_horizon: false,
+      // A phase outside the workspace's isolating wrapper has no other record
+      // of why it failed; the code is the caller's, never the message.
+      error_name: "Error",
+      code: "schedule_reconcile_failed",
     });
     expect(rows[4]).toMatchObject({
       status: "completed_with_phase_failure",

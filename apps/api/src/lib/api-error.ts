@@ -1,9 +1,18 @@
+import { isCodeShaped } from "@rally/contracts/zod-diagnostics";
+
 export class ApiError extends Error {
   constructor(
     readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 422 | 426 | 429 | 500 | 502 | 503,
     readonly code: string,
     message: string,
     readonly details?: Record<string, unknown>,
+    /**
+     * What a log may say beyond `code`, when the error was built from a
+     * failure whose reason `code` is too coarse to carry — a provider's own
+     * HTTP status behind `provider_error`, say. It never reaches the response
+     * body: `details` is the caller's, this is the operator's.
+     */
+    readonly diagnosticCode?: string,
   ) {
     super(message);
     this.name = "ApiError";
@@ -24,13 +33,19 @@ const API_ERROR_STATUSES: ReadonlySet<number> = new Set([400, 401, 403, 404, 409
 export function asApiError(error: unknown): ApiError | null {
   if (error instanceof ApiError) return error;
   if (!(error instanceof Error) || error.name !== "ApiError") return null;
-  const { status, code, details } = error as Error & { status?: unknown; code?: unknown; details?: unknown };
+  const { status, code, details, diagnosticCode } = error as Error & {
+    status?: unknown;
+    code?: unknown;
+    details?: unknown;
+    diagnosticCode?: unknown;
+  };
   if (typeof status !== "number" || !API_ERROR_STATUSES.has(status) || typeof code !== "string") return null;
   return new ApiError(
     status as ApiError["status"],
     code,
     error.message,
     details !== null && typeof details === "object" ? details as Record<string, unknown> : undefined,
+    typeof diagnosticCode === "string" && isCodeShaped(diagnosticCode) ? diagnosticCode : undefined,
   );
 }
 
