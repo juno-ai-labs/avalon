@@ -25,6 +25,9 @@ const pageVisibleAt = Date.now();
 const pending: TelemetryEnvelope[] = [];
 let capabilityPromise: Promise<CapabilityState> | null = null;
 let leaveReported = false;
+// Set by any queued event that must survive the page handing off; carried by
+// whichever request next sends the queue, since that request may include it.
+let keepaliveWanted = false;
 
 function apiBaseUrl(): string {
   return location.hostname === 'localhost' || location.hostname === '127.0.0.1'
@@ -151,10 +154,15 @@ function makeEnvelope<TName extends TelemetryEventName>(
   } as TelemetryEnvelope;
 }
 
-async function flush(keepalive = false): Promise<void> {
+async function flush(): Promise<void> {
   if (pending.length === 0) return;
   const state = await getCapability();
+  // Two reports waiting on one bootstrap resume together; the first request
+  // takes both events and the second finds nothing left to send.
   const events = pending.splice(0, 50);
+  if (events.length === 0) return;
+  const keepalive = keepaliveWanted;
+  keepaliveWanted = false;
   const response = await fetch(`${apiBaseUrl()}/telemetry/anonymous`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -175,7 +183,8 @@ function report<TName extends TelemetryEventName>(
   void getCapability().then((state) => {
     if (pending.length >= MAX_PENDING_EVENTS) pending.shift();
     pending.push(makeEnvelope(state, name, properties));
-    return flush(keepalive);
+    if (keepalive) keepaliveWanted = true;
+    return flush();
   }).catch(() => undefined);
 }
 

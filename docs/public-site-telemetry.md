@@ -51,9 +51,12 @@ single-use tickets, invitation tokens, Slack state, work-stream IDs, automation
 IDs, and settings values never enter an event.
 
 Reporting is fire-and-forget. A page keeps at most 20 already-sanitized events
-in memory, sends immediately, and uses browser `keepalive` only for the single
-page-leave attempt. It has no persistent event spool and no retry that can delay
-navigation or opening the desktop.
+in memory and sends immediately. Page leave, link clicks and handoff attempts ask
+for browser `keepalive`, and whichever request next sends the queue carries it,
+since that request may hold the event. A batch that fails with a 5xx, 408 or 429
+goes back in memory and rides the page's next send; any other 4xx is dropped. It
+has no persistent event spool and no retry that can delay navigation or opening
+the desktop.
 
 - **One observed page produces one web event.** The adapter translates the
   Rally event to the reserved PostHog name; it does not deliver a custom copy.
