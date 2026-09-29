@@ -358,6 +358,19 @@ methods and `.call()`/`.apply()` inside these callbacks therefore remain a
 mandatory review target. Do not silence the rule or cast a Promise-shaped result
 to make it pass—make the prepare/commit split explicit instead.
 
+`rally/durable-object-workspace-table-routing` fails lint when a statement a
+Durable Object sends to its own `this.env.DB` names a `WORKSPACE_LOCAL_TABLES`
+table. An object is handed the raw environment, so that binding is regional D1,
+which does not have those tables; the statement answers `no such table` and the
+caller gets a `500 internal_error`. That shipped three times before the guard
+existed. The rule reads the list from
+`apps/api/src/services/workspace-runtime-database.ts` (following the spread of
+`AUTHORIZATION_STORAGE_TABLES` into its own module) and throws when it cannot,
+so the list cannot drift from the router's. It sees only literal SQL passed to
+`this.env.DB.prepare` or `exec`: a statement built elsewhere and handed in, or
+the binding aliased to a local, is still a review target. Route such a read
+through a typed WorkspaceDO method or `withWorkspaceRuntimeDatabase`.
+
 ### 2026-09-21 — A migration fingerprint cannot take an object offline
 
 **What changed:** A stored implementation hash that differs from the current
