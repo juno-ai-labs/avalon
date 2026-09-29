@@ -12,5 +12,7 @@ page uses are kept; add a weight here before using it in CSS.
 | `barlow-latin-500-normal.woff2` | Barlow | 500 | [`@fontsource/barlow`](https://fontsource.org/fonts/barlow) 5.3.0 |
 | `barlow-semi-condensed-latin-500-normal.woff2` | Barlow Semi Condensed | 500 | [`@fontsource/barlow-semi-condensed`](https://fontsource.org/fonts/barlow-semi-condensed) 5.3.0 |
 
-Both families are licensed under the SIL Open Font License 1.1; the licence is
-in [`OFL.txt`](OFL.txt) and must stay beside the files it covers.
+Both families are licensed under the SIL Open Font License 1.1, which must ship
+with the fonts. The licence is in
+[`public/fonts/OFL.txt`](../../public/fonts/OFL.txt) so the build publishes it at
+`/fonts/OFL.txt` alongside the site that serves the fonts.

@@ -1,3 +1,4 @@
+/* Barlow is SIL OFL 1.1; the licence ships at /fonts/OFL.txt. */
 @font-face{font-family:Barlow;font-style:normal;font-weight:400;font-display:swap;src:url('./fonts/barlow-latin-400-normal.woff2') format('woff2')}
 @font-face{font-family:Barlow;font-style:normal;font-weight:500;font-display:swap;src:url('./fonts/barlow-latin-500-normal.woff2') format('woff2')}
 @font-face{font-family:'Barlow Semi Condensed';font-style:normal;font-weight:500;font-display:swap;src:url('./fonts/barlow-semi-condensed-latin-500-normal.woff2') format('woff2')}
@@ -90,7 +91,7 @@ h1{white-space:pre-line;max-width:56rem;margin:0 auto;font-size:4.5rem}
 .card-tall{grid-row:span 2}
 .card-wide{grid-column:span 2}
 .card-full{grid-column:1/-1}
-.card-list{margin:32px 0 0;padding:0;list-style:none;font-family:var(--mono);font-size:11px;color:oklch(.97 0 0/.45)}
+.card-list{margin:32px 0 0;padding:0;list-style:none;font-family:var(--mono);font-size:11px;color:var(--muted)}
 .card-list li{padding:8px 0;border-bottom:1px solid var(--hairline)}
 
 .people{margin:64px 0 0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:40px}
