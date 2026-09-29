@@ -152,7 +152,6 @@ describe('allowlisted API operation telemetry', () => {
       properties: { operation: 'workstream_create', result: 'validation_error', duration: expect.any(String) },
     });
   });
-
 });
 
 function sequentialClock(...values: number[]): () => number {
