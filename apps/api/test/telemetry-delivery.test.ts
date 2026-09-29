@@ -214,6 +214,7 @@ describe("Global telemetry delivery", () => {
       terminal: 0,
       suppressed: 0,
       expired: 2,
+      unparseable: 0,
     });
     expect(database.prepare(
       "SELECT delivery_state, delivered_at, attempt_count FROM telemetry_accepted_events",
@@ -324,6 +325,71 @@ describe("Global telemetry delivery", () => {
         delivery_state: "retrying",
         attempt_count: 1,
         next_attempt_at: "2026-08-12T20:01:00.000Z",
+      },
+    ]);
+    database.close();
+  });
+
+  it("parks a row the running contract rejects and still delivers the rows behind it", async () => {
+    const database = migratedObservabilityFixture();
+    const deliverTelemetryBatch = vi.fn(async () => ({
+      postHog: { result: "delivered" as const, requestId: "posthog-request-3", retryAfterMs: null },
+    }));
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      POSTHOG_HOST: "https://us.i.posthog.com",
+      POSTHOG_PROJECT_TOKEN: "phc_test",
+      TELEMETRY_DELIVERY: { deliverTelemetryBatch },
+    });
+    // Accepted by a newer contract that widened the enum, then the API rolled back.
+    const skewed = envelope("018f22f2-4c22-7abc-8def-0123456789aa");
+    database.prepare(`
+      INSERT INTO telemetry_accepted_events (
+        event_id, payload_hash, envelope_json, route, routing_basis,
+        analytics_subject_id, workspace_analytics_id, subject_user_id,
+        accepted_at, normalized_timestamp, delete_at, delivery_state
+      ) VALUES (?, 'payload-hash', ?, 'global', 'explicit_binding', 'subject-1', NULL, NULL,
+                '2026-08-12T19:59:00.000Z', ?, '2026-11-10T20:00:00.000Z', 'pending')
+    `).run(
+      skewed.eventId,
+      JSON.stringify({ ...skewed, properties: { ...skewed.properties, entrypoint: "moon" } }),
+      now,
+    );
+    const validId = "018f22f2-4c22-7abc-8def-0123456789ab";
+    await new TelemetryCollector(env).accept(envelope(validId), {
+      route: "global",
+      routingBasis: "geolocation_fallback",
+      analyticsSubjectId: "018f22f2-4c22-7abc-8def-0123456789ad",
+      subjectUserId: null,
+      workspaceAnalyticsId: null,
+    });
+
+    await expect(processTelemetryOutbox(env)).resolves.toMatchObject({
+      selected: 1,
+      delivered: 1,
+      unparseable: 1,
+    });
+    expect(deliverTelemetryBatch).toHaveBeenCalledWith(expect.objectContaining({
+      rows: [expect.objectContaining({ eventId: validId })],
+    }));
+    expect(database.prepare(`
+      SELECT event_id, delivery_state, attempt_count, next_attempt_at, terminal_code
+      FROM telemetry_accepted_events ORDER BY event_id
+    `).all()).toEqual([
+      {
+        event_id: skewed.eventId,
+        delivery_state: "retrying",
+        attempt_count: 1,
+        next_attempt_at: "2026-08-12T20:01:00.000Z",
+        terminal_code: expect.stringMatching(/^stored_envelope_invalid:.*properties\.entrypoint/u),
+      },
+      {
+        event_id: validId,
+        delivery_state: "delivered",
+        attempt_count: 1,
+        next_attempt_at: null,
+        terminal_code: null,
       },
     ]);
     database.close();
