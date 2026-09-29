@@ -1837,8 +1837,8 @@ compatibility surface rather than a label.
 
 **Consequences:** `app://avalon` stays in the allowlist until shipped clients
 carrying it are gone; removing it is a decision about installed builds.
-`apps/api/test/domain-migration-config.test.ts` asserts both origins are listed
-in configured deployments, so dropping one fails on the edit. The origin policy is
+Nothing automated asserts both origins are listed in configured deployments, so
+dropping one does not fail on the edit. The origin policy is
 otherwise unchanged — it still admits exact origins only, and CORS remains not
 authorization. See [`domain-migration.md`](domain-migration.md).
 ### 2026-08-25 — The origin allowlist admits both site zones

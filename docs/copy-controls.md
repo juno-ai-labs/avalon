@@ -19,7 +19,6 @@ saying "Copy endpoint" where the field already says what it is.
 | --- | --- |
 | `apps/desktop/src/renderer/lib/use-copy.ts` | `useCopy` — the one copy-to-clipboard behaviour: the write, the `idle` / `copied` / `failed` state it settles into, and the reset timer. `COPY_FEEDBACK_MS` is how long an outcome shows. |
 | `apps/desktop/src/renderer/components/copy-button.tsx` | `CopyButton` — the icon control every copy affordance renders, and `CopyField` — a caption, the value in a read-only field, and the control beside it. |
-| `apps/desktop/src/renderer/components/copy-button.node.test.ts` | Lists which files may call the bridge's `copyText` directly, and which may call `useCopy`, by scanning renderer sources. That is an import rule, and its guard belongs in `no-restricted-imports` per [`testing.md`](testing.md#what-to-test-and-what-not-to); the scan is not a guard. |
 | `packages/ui/src/styles/app.css` | `.copy-button-copied` and `.copy-button-failed` colour the outcome's glyph; `.copy-field` lays the field and its control on one row; `.copy-detail` is the older "value beside its control" row the inspector rail and the run-failure notice share. |
 
 ## How it works
@@ -53,9 +52,9 @@ endpoint and a secret.
 ## Invariants
 
 - **A button that copies a value is a `CopyButton`, or drives `useCopy` under
-  a control of its own.** `copy-button.node.test.ts` lists every file that may
-  call `copyText` on the bridge directly, by scanning source text; the guard
-  that fails when another appears should be a `no-restricted-imports` entry
+  a control of its own.** Nothing automated lists the files that may
+  call `copyText` on the bridge directly; a guard that fails when another
+  appears should be a `no-restricted-imports` entry
   ([`testing.md`](testing.md#what-to-test-and-what-not-to)). What
   may: a menu item, whose row is its label and whose menu closes on the click,
   and `copy-workstream-link.ts`, the helper those items share. The
@@ -107,7 +106,6 @@ provider above it.
 | --- | --- |
 | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/use-copy.test.tsx` | The hook: writes through the bridge or the clipboard it is handed, settles into `copied` or `failed` without rejecting, resolves an on-demand value, reports only on success, resets after the interval, and leaves no timer behind on unmount. |
 | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/copy-button.test.tsx` | The control: an icon named by its label with a tooltip, the outcome in its name, class and live region, the failed state's retry, and `CopyField`'s read-only and masked fields. |
-| `pnpm --filter @rally/desktop exec vitest run src/renderer/components/copy-button.node.test.ts` | Lists the bridge's direct callers and the hook's, by scanning source text. It is not a guard for the invariant above; a lint rule is, per [`testing.md`](testing.md#what-to-test-and-what-not-to). |
 
 The surfaces' own tests — the inbound-webhook dialog, the invite link, the
 inspector rail, the run-failure notice, the site detail, the code block —
@@ -122,8 +120,8 @@ export replaced their labelled `Copy …` buttons with the icon control; the
 inspector rail's email and id controls, the site detail's public-link control
 and the meeting-notes header controls replaced their hand-rolled state with
 it; the code block's header control drives the hook. The run-failure notice
-now shows the request id beside its control. `copy-button.node.test.ts` pins
-the bridge's direct callers to the menu items.
+now shows the request id beside its control. The bridge's direct callers are
+only the menu items.
 
 **Why:** The product asked for copy icons instead of labelled buttons in the
 Fireflies setup and the same look everywhere a value is offered for copying.

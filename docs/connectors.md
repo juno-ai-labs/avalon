@@ -1352,8 +1352,7 @@ Durable Object goes through `withWorkspaceRuntimeDatabase`, never `this.env.DB`.
 Written against the regional binding it names a table regional D1 does not have,
 which reaches the person as "An unexpected error occurred" rather than as
 anything naming the boundary. That defect was found on the automation delivery
-path this section used to describe. `durable-object-workspace-table-routing.test.ts`
-scans the objects' source text for it today; that guard belongs in a rule under
+path this section used to describe. Nothing automated guards it now; that guard belongs in a rule under
 `scripts/eslint-rules/` ([`testing.md`](testing.md#what-to-test-and-what-not-to)).
 
 ## Failure modes and limits
