@@ -49,27 +49,31 @@ export async function ingestDaytonaWebhook(env: Env, rawBody: string, headers: H
     throw new ApiError(503, "daytona_webhook_unavailable", "Daytona is not configured");
   }
   const provider = createTerminalProviderRpcClient(env.TERMINAL_PROVIDER, configuration);
-  // Daytona events carry an ID, not routing labels. Metadata identifies the owner.
-  // Deleted sandboxes have no metadata; the owner's periodic observation detects
-  // their absence. This avoids maintaining a second sandbox ownership database.
-  const snapshot = await observeTerminalSandbox(provider, event.id);
-  const labels = LabelsSchema.safeParse(snapshot?.labels);
-  if (!labels.success) return { accepted: true, ignored: true };
-  const workspaceId = labels.data["rally.workspace"];
-  const workstreamId = labels.data["rally.workstream"];
-  if (!await resolveInspectionWorkspaceRoute(env, workspaceId)) {
-    // Each region subscribes to the organization; only the owning region acts.
-    return { accepted: true, ignored: true };
+  try {
+    // Daytona events carry an ID, not routing labels. Metadata identifies the owner.
+    // Deleted sandboxes have no metadata; the owner's periodic observation detects
+    // their absence. This avoids maintaining a second sandbox ownership database.
+    const snapshot = await observeTerminalSandbox(provider, event.id);
+    const labels = LabelsSchema.safeParse(snapshot?.labels);
+    if (!labels.success) return { accepted: true, ignored: true };
+    const workspaceId = labels.data["rally.workspace"];
+    const workstreamId = labels.data["rally.workstream"];
+    if (!await resolveInspectionWorkspaceRoute(env, workspaceId)) {
+      // Each region subscribes to the organization; only the owning region acts.
+      return { accepted: true, ignored: true };
+    }
+    const terminal = createTerminalPortFactory(env)(workspaceId, workstreamId, labels.data["rally.substream"]);
+    const current = await terminal.sandbox();
+    if (current?.sandboxId !== event.id || current.generation !== labels.data["rally.generation"]) {
+      return { accepted: true, ignored: true };
+    }
+    // Read again after reserving ordering in the authority. Reusing the routing
+    // lookup would allow an older event handler to overwrite a newer observation.
+    await refreshTerminalProviderObservation(terminal, provider, {
+      sandboxId: event.id, generation: current.generation,
+    });
+    return { accepted: true, ignored: false };
+  } finally {
+    provider[Symbol.dispose]();
   }
-  const terminal = createTerminalPortFactory(env)(workspaceId, workstreamId, labels.data["rally.substream"]);
-  const current = await terminal.sandbox();
-  if (current?.sandboxId !== event.id || current.generation !== labels.data["rally.generation"]) {
-    return { accepted: true, ignored: true };
-  }
-  // Read again after reserving ordering in the authority. Reusing the routing
-  // lookup would allow an older event handler to overwrite a newer observation.
-  await refreshTerminalProviderObservation(terminal, provider, {
-    sandboxId: event.id, generation: current.generation,
-  });
-  return { accepted: true, ignored: false };
 }

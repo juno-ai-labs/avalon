@@ -546,19 +546,25 @@ async function reconcileTerminalSandbox(
 ): Promise<ScheduledAlarmOutcome> {
   const configuration = parseTerminalRegionConfiguration(ctx.env);
   if (configuration.capability !== "supported") throw new Error("terminal_provider_unavailable");
+  // Disposed when the pass ends: WorkspaceDO never ends the context that would
+  // release the provider session for it.
   const provider = createTerminalProviderRpcClient(ctx.env.TERMINAL_PROVIDER, configuration);
-  // A work stream created before conversations reported their own deadlines
-  // lists none; its sandbox, if any, is the main conversation's.
-  const due = await ctx.dueTerminalSubstreams(workstreamId, now);
-  const substreams = due.length > 0 ? due : ["0"];
-  let outcome: ScheduledAlarmOutcome = undefined;
-  for (const substreamId of substreams) {
-    outcome = soonerTerminalOutcome(
-      outcome,
-      await reconcileConversationTerminalSandbox(ctx, provider, workstreamId, substreamId, now),
-    );
+  try {
+    // A work stream created before conversations reported their own deadlines
+    // lists none; its sandbox, if any, is the main conversation's.
+    const due = await ctx.dueTerminalSubstreams(workstreamId, now);
+    const substreams = due.length > 0 ? due : ["0"];
+    let outcome: ScheduledAlarmOutcome = undefined;
+    for (const substreamId of substreams) {
+      outcome = soonerTerminalOutcome(
+        outcome,
+        await reconcileConversationTerminalSandbox(ctx, provider, workstreamId, substreamId, now),
+      );
+    }
+    return outcome;
+  } finally {
+    provider[Symbol.dispose]();
   }
-  return outcome;
 }
 
 /** The outcome that re-checks first; a Terminal pass only ever answers with a wait. */

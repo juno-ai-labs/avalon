@@ -65,12 +65,19 @@ export async function workspaceSocketTicket(c: Context<HonoAppEnv>) {
 
 export const workspaceRoutes = new Hono<HonoAppEnv>();
 
-function terminalSettingsService(c: Context<HonoAppEnv>): TerminalSettingsService {
+async function withTerminalSettingsService<T>(
+  c: Context<HonoAppEnv>,
+  use: (service: TerminalSettingsService) => Promise<T>,
+): Promise<T> {
   const configuration = parseTerminalRegionConfiguration(c.env);
   const provider = configuration.capability === "supported"
     ? createTerminalProviderRpcClient(c.env.TERMINAL_PROVIDER, configuration)
     : null;
-  return new TerminalSettingsService(c.env, getAuth(c), provider);
+  try {
+    return await use(new TerminalSettingsService(c.env, getAuth(c), provider));
+  } finally {
+    provider?.[Symbol.dispose]();
+  }
 }
 
 workspaceRoutes.get("/", async (c) =>
@@ -105,20 +112,20 @@ workspaceRoutes.put("/order", zValidator("json", ContainerOrderSchema), async (c
   )),
 );
 workspaceRoutes.get("/terminal", async (c) =>
-  c.json(TerminalWorkspaceSettingsSchema.parse(await terminalSettingsService(c).get())),
+  c.json(TerminalWorkspaceSettingsSchema.parse(await withTerminalSettingsService(c, (service) => service.get()))),
 );
 workspaceRoutes.post(
   "/terminal/network-policy/preview",
   zValidator("json", PreviewTerminalNetworkPolicyRequestSchema),
   async (c) => c.json(TerminalNetworkPolicyPreviewSchema.parse(
-    await terminalSettingsService(c).preview(c.req.valid("json")),
+    await withTerminalSettingsService(c, (service) => service.preview(c.req.valid("json"))),
   )),
 );
 workspaceRoutes.post(
   "/terminal/network-policy/apply",
   zValidator("json", ApplyTerminalNetworkPolicyRequestSchema),
   async (c) => c.json(TerminalWorkspaceSettingsSchema.parse(
-    await terminalSettingsService(c).apply(c.req.valid("json")),
+    await withTerminalSettingsService(c, (service) => service.apply(c.req.valid("json"))),
   )),
 );
 workspaceRoutes.get("/members", async (c) =>
