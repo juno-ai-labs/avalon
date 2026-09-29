@@ -15,6 +15,7 @@ import {
   automationAcceptanceSelections,
   CreateWorkstreamRequestSchema,
   CreateWorkspaceInvitationRequestSchema,
+  BackgroundTaskSchema,
   ConnectorManifestSchema,
   HarnessFailureCodeSchema,
   HarnessRunMetadataSchema,
@@ -1103,6 +1104,21 @@ describe("boundary contracts", () => {
       error: { code: "context_limit_exceeded" },
       requestId: id
     });
+  });
+
+  it("carries task records across reloads", () => {
+    expect(BackgroundTaskSchema.parse({
+      id,
+      harnessRunId: id,
+      title: "Respond to message",
+      taskType: "agent",
+      status: "completed",
+      startedAt: "2026-07-31T20:00:00.000Z",
+      completedAt: "2026-07-31T20:00:12.000Z",
+      tokenCount: 1250,
+      toolUses: 3,
+      transcriptTurnId: id
+    })).toMatchObject({ taskType: "agent", tokenCount: 1250, toolUses: 3 });
   });
 
   it("tolerates artifacts in both directions of a rollout", () => {

@@ -148,7 +148,8 @@ describe('allowlisted API operation telemetry', () => {
     expect(batch.events).toHaveLength(1);
     expect(batch.events[0]).toMatchObject({
       name: 'api_operation_outcome',
-      properties: { operation: 'workstream_create', result: 'validation_error', duration: 'lt_100ms' },
+      // The duration bucket depends on how fast the runner is; sequentialClock tests above pin the buckets.
+      properties: { operation: 'workstream_create', result: 'validation_error', duration: expect.any(String) },
     });
   });
 
