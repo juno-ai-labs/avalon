@@ -949,6 +949,11 @@ would be invisible until serve time.
 | `index.html`, no `index.js` | A **static site** | The same, with `mode: "static"` |
 | Neither | One downloadable **zip** | Today's file shape over the zip, plus `fileCount` and `totalBytes` |
 
+A site's `slug` is its `resources.slug` alias. A republish keeps the one the
+resource already has. It is `null` only while the alias is still owed: the
+allocation beside a first publish failed and the `resource_slugs` maintenance
+pass has not named it yet. A caller then falls back to `resourceId`.
+
 `index.js` wins over `index.html`, because an active site almost always ships
 both. The discriminant is `publishKind` rather than `resourceType` because a
 document and an archive share the latter — a model told to switch on
