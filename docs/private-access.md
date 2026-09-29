@@ -5,6 +5,7 @@
 | Path | Responsibility |
 | --- | --- |
 | `apps/site/src/access-copy.ts`, `landing.css`, `index.html` | Replaceable static landing copy, layout, and direct canonical installer link. |
+| `apps/site/src/section-nav.ts`, `src/fonts/`, `src/assets/` | The landing's current-section marker, its self-hosted Barlow faces, and its hero and team images. |
 | `apps/api/src/services/access-request-content.ts` | Replaceable acknowledgement subject and body, delivered as plain text. |
 | `apps/api/src/services/access-request-service.ts` | Persist-before-send acknowledgement, deduplication and explicit retry. |
 | `apps/api/src/routes/private-access.ts` | Global public intake and explicit POST download redemption. |
@@ -312,6 +313,33 @@ related delivery/support investigation is complete. No automatic age-based sweep
 or numerical retention period is configured.
 
 ## Changelog
+
+### 2026-09-29 — Dark multi-section landing from the agency design
+
+**What changed:** Rebuilt the landing on the agency's design: a dark theme set in
+Barlow over a sunrise hero, then Teamwork, Sidekicks, Features, Team and Pricing
+sections with a sticky numbered side navigation. The shared-thread demo, the
+canonical installer links, the copy renderer and the trust footer carry over.
+`section-nav.ts` marks the current section for any `nav[data-section-nav]`.
+
+**Why:** The product owner asked for the agency's design and content. The
+agency delivered a TanStack Start, React and Tailwind app; the landing stays
+static HTML and hand-written CSS, so it ships no framework and keeps the
+existing build, CSP and tests.
+
+**Considered and rejected:** Importing the agency app as-is, which would add a
+React runtime and a second build to a page with one interactive behavior.
+Loading Barlow from Google Fonts and the team photos from `juno-labs.com`, which
+the site CSP (`default-src 'self'`) blocks; both now ship from the site origin.
+Keeping `help@rallywith.ai` as the only public address: the product owner wants
+each founder's address linked from the team section, and spam is an accepted
+cost.
+
+**Consequences:** The landing is now dark while the other public pages stay
+light; the ink mark is inverted with CSS rather than adding a new mark file. A
+new font weight must be added to `src/fonts/` with its README row first. The
+Sidekicks "When something happens" blurb was unfinished in the design and was
+completed with one concrete example in the tone of the rest of the page.
 
 ### 2026-09-21 — Remove retired acquisition and release deployment coupling
 
