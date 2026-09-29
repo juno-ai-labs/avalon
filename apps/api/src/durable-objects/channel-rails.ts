@@ -363,7 +363,8 @@ export function channelRails(sql: Sql, request: ChannelRailsRequest): ChannelRai
 
 /**
  * One page of a Space's active Channels this viewer may see, in id order after
- * `after`. Visibility is decided in the page query, so a page never holds a
+ * `after`. System Channels are left off, as every sidebar list leaves them
+ * off, so they never fill a page or become its cursor. Visibility is decided in the page query, so a page never holds a
  * Channel the viewer cannot be told about and one request reads one page, however
  * many of the Space's Channels are hidden from them. The caller has already
  * asked whether they may see the Space at all.
@@ -383,7 +384,7 @@ export function visibleSpaceChannelIdsAfter(
         AND viewer.user_id = ?
         AND viewer.authority_generation = directory.authority_generation
       WHERE membership.space_id = ? AND membership.state = 'active' AND membership.workstream_id > ?
-        AND directory.archived_at IS NULL
+        AND directory.archived_at IS NULL AND directory.system_kind IS NULL
         AND ${channelVisibleToViewerSql("directory", "viewer")}
       ORDER BY membership.workstream_id
       LIMIT ?`,

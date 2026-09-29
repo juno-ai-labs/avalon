@@ -53,6 +53,18 @@ describe("socket event compatibility", () => {
     expect(valid({ workstreamIds: ids(CHANNEL_RAILS_NAMED_LIMIT) })).toBe(true);
     expect(valid({ workstreamIds: ids(CHANNEL_RAILS_NAMED_LIMIT + 1) })).toBe(false);
   });
+  it("takes a space_channels request for one Space, paged with `after`, saying whether it wants rails", () => {
+    const requestId = "018f22f2-4c22-7abc-8def-0123456789ab";
+    const spaceId = "00000000-0000-4000-8000-000000000001";
+    const workstreamId = "018f22f2-4c22-7abc-8def-0123456789ac";
+    const valid = (event: Record<string, unknown>) =>
+      WorkspaceSocketClientEventSchema.safeParse({ type: "space_channels", requestId, ...event }).success;
+    expect(valid({ spaceId, rails: true })).toBe(true);
+    expect(valid({ spaceId, after: workstreamId, rails: false })).toBe(true);
+    expect(valid({ spaceId })).toBe(false);
+    expect(valid({ rails: true })).toBe(false);
+    expect(WorkspaceSocketClientEventSchema.safeParse({ type: "channels_by_space" }).success).toBe(true);
+  });
   it("handles additive fields inside ordinary union members", () => {
     const union = z.strictObject({ row: z.union([z.strictObject({ first: z.string() }), z.strictObject({ second: z.number() })]) });
     expect(safeParseSocketEvent(union, { row: { second: 2, extra: true } })).toEqual({ success: true, data: { row: { second: 2 } } });
