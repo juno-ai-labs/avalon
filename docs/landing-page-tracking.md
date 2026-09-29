@@ -11,8 +11,8 @@ forwarded to PostHog. The site loads no PostHog script and sets no cookie.
 
 | PostHog event | Sent when | Carries |
 | --- | --- | --- |
-| `$pageview` | A page loads | Path, referring domain, utm_source / utm_medium / utm_campaign |
-| `$pageleave` | The tab is hidden or closed | Path, time-on-page bucket (under 1s up to 10m+) |
+| `$pageview` | A page loads | Page class, path, referring domain, `$utm_source` / `$utm_medium` / `$utm_campaign` |
+| `$pageleave` | The visitor leaves the page (`pagehide`) | Page class, path, time-on-page bucket (under 1s up to 10m+) |
 | `site_action_selected` | A tagged link is clicked | Action, placement, plan (pricing buttons only) |
 
 Tagged links on the landing page, by `data-site-action` id:
@@ -26,30 +26,28 @@ Tagged links on the landing page, by `data-site-action` id:
 | `founder-contact` | Founder photos and names | founder_contact · team |
 | `support-contact-footer` | Footer help@ email | support_contact · footer |
 
-Clicks went untracked from Sep 9 to Sep 29, 2026, after a redesign removed the
-reporting.
-
 Not tracked: scrolling, section views, and header nav clicks.
 
 ## Don't lose on a redesign
 
-The Sep 9 redesign dropped click tracking without anyone noticing for three
-weeks. Check these on every edit:
+Check these on every edit to the landing page:
 
 1. **Keep `data-site-action` on every download and contact link.** A link
    without it is not counted. A new link needs its id added to
    `SITE_ACTION_LINKS` in `apps/site/src/telemetry.ts`; the site tests fail on
-   an unknown id.
+   an unknown id or a tracked id that is missing from the page.
 2. **Give each download button its own id.** All five point at the same DMG;
    the id is the only way to tell them apart.
-3. **Keep the page at `/`.** Every landing chart filters on `$pathname = '/'`.
+3. **Keep the page at `/`.** The page-view charts filter on `$pathname = '/'`; clicks carry `page: landing` instead.
 4. **Keep the telemetry script.** Vite injects `src/site-entry.ts` into every
    page; don't remove the plugin in `apps/site/vite.config.ts`.
 5. **Put UTM tags on links that bring people to the page** (utm_source,
    utm_medium, utm_campaign), such as posts, emails and ads. The page reads them from its
    own URL; without them the campaign chart shows only "(none)".
 6. **Deploy the API before the site** when adding a new action, placement or
-   plan. The API refuses events with values it doesn't know.
+   plan. A merge touching both starts both deploys at once, so run the API
+   deploy first. Until the API knows a value it refuses the whole batch that
+   carries it, including any page view in that batch.
 
 ## Where to look
 
