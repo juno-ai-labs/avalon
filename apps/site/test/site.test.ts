@@ -90,8 +90,12 @@ describe('public Rally site', () => {
     const page = readProjectFile('index.html');
     const appleMark = `<svg class="button-mark" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="${thesvgMonoPath('apple')}"/></svg>`;
     expect(page).toContain(
-      `href="https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg" download>${appleMark} Download for Mac</a>`,
+      `href="https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg" download>${appleMark} Download the macOS beta</a>`,
     );
+    // Every installer link on the page is the canonical one and downloads it.
+    for (const link of page.match(/<a [^>]*Rally\.dmg[^>]*>/gu) ?? []) {
+      expect(link).toContain('href="https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg" download');
+    }
     expect(page).not.toContain('id="access-request"');
     expect(page).not.toContain('<dialog');
     expect(page).not.toContain('<details');
@@ -101,27 +105,29 @@ describe('public Rally site', () => {
     expect(page).toContain('{{access.description}}');
   });
 
-  it("paints Leonardo's demo bubble in white ink on the blue fill", () => {
-    const css = readProjectFile('src/landing.css');
-    // Shared `.bubble` ink is near-black so Alan's yellow and Grace's green
-    // stay readable. Leonardo's blue is the one fill that needs the other ink.
-    expect(css).toMatch(/\.bubble\{[^}]*color:#08111a/u);
-    expect(css).toMatch(/\.leonardo \.bubble\{[^}]*color:#fff(?:;|\})/u);
+  it('marks every landing section the side navigation links to', () => {
+    const page = readProjectFile('index.html');
+    const nav = /<nav class="section-nav"[^>]*data-section-nav>([\s\S]*?)<\/nav>/u.exec(page)?.[1] ?? '';
+    const targets = [...nav.matchAll(/href="#([\w-]+)"/gu)].map(([, id]) => id);
+    expect(targets).toEqual(['teamwork', 'sidekicks', 'features', 'team', 'pricing']);
+    // section-nav.ts reads each target's first h2 to decide which one is current.
+    for (const id of targets) {
+      expect(page, id).toMatch(new RegExp(`<section [^>]*id="${id}"[^>]*>\\s*<p class="eyebrow">[^<]+</p>[\\s\\S]*?<h2 `, 'u'));
+    }
+    expect(page).toContain('<script type="module" src="/src/section-nav.ts"></script>');
   });
 
-  it('vertically centers the Rally mark to the first line of each landing response', () => {
-    const landing = readProjectFile('src/landing.css');
-    // The mark sits in the first grid row of the body, not the whole (taller)
-    // response — centering the grid item itself would drop it beside the
-    // artifact on the last Rally turn.
-    expect(landing).toMatch(/\.ai\{[^}]*align-items:start/u);
-    expect(landing).toMatch(/\.message\{[^}]*line-height:1\.5/u);
-    // The art is square; 25×29 stretched it below the 1.5 line box. The top
-    // margin is half the leftover of that line box, so the mark stays centered
-    // on the first line when --body moves.
-    expect(landing).toMatch(
-      /\.ai-mark\{width:25px;height:25px;object-fit:contain;flex-shrink:0;margin-top:calc\(\(1\.5em - 25px\)\/2\)\}/u,
-    );
+  it('serves the landing fonts from the site origin with their licence', () => {
+    const css = readProjectFile('src/landing.css');
+    const fonts = [...css.matchAll(/url\('\.\/fonts\/([^']+)'\)/gu)].map(([, file]) => file);
+    // The CSP allows fonts from 'self' only; a hosted font URL would fail silently.
+    expect(fonts.length).toBeGreaterThan(0);
+    for (const file of fonts) {
+      expect(existsSync(new URL(`../src/fonts/${file}`, import.meta.url)), file).toBe(true);
+      expect(readProjectFile('src/fonts/README.md')).toContain(`\`${file}\``);
+    }
+    expect(existsSync(new URL('../src/fonts/OFL.txt', import.meta.url))).toBe(true);
+    expect(readProjectFile('index.html')).not.toMatch(/fonts\.(googleapis|gstatic)\.com/u);
   });
 
   it('defines responsive behavior for every public surface', () => {
@@ -203,7 +209,7 @@ describe('public Rally site', () => {
 
     expect(pages[0]).toContain('class="rally-symbol"');
     expect(pages[0]).toContain('/brand/rally-mark-ink.svg');
-    // Every public page uses the ink mark on its light header.
+    // Every public page uses the ink mark; the dark landing inverts it in CSS.
     for (const page of pages) {
       expect(page).toContain('/brand/rally-mark-ink.svg');
       expect(page).not.toContain('/brand/rally-mark.svg"');
