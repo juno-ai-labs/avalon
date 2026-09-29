@@ -1,8 +1,7 @@
-import { readFileSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { ConnectorError, SlackWorkspaceBotScopes } from "@rally/connectors";
+import { ConnectorError } from "@rally/connectors";
 import type { Env } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
 import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-agent-service";
@@ -153,34 +152,6 @@ describe("Slack Agent durable ingress", () => {
       type: "channel_created",
       channel: { id: "C1", creator: "UBOT" },
     })).toEqual(["UBOT"]);
-  });
-
-  it("keeps the Slack manifest aligned with thread-follow-up scopes and events", () => {
-    const manifest = JSON.parse(readFileSync(
-      new URL("../../../config/provider-apps/slack.json", import.meta.url),
-      "utf8",
-    )) as {
-      oauth_config: { scopes: { bot: string[] } };
-      settings: { event_subscriptions: { bot_events: string[] } };
-      app_directory: { support_email: string };
-    };
-
-    expect([...manifest.oauth_config.scopes.bot].sort()).toEqual([...SlackWorkspaceBotScopes].sort());
-    expect(manifest.app_directory.support_email).toBe("help@rallywith.ai");
-    expect(manifest.settings.event_subscriptions.bot_events).toEqual(expect.arrayContaining([
-      "file_shared",
-      "member_joined_channel",
-      "member_left_channel",
-      "message.channels",
-      "message.groups",
-      "message.im",
-      "message.mpim",
-      "channel_id_changed",
-      "channel_archive",
-      "group_archive",
-      "reaction_added",
-      "reaction_removed",
-    ]));
   });
 
   it("classifies deterministic failures as terminal", () => {

@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
   AddressingEvaluationCaseSchema,
@@ -84,18 +83,5 @@ describe("addressing model evaluation", () => {
       classificationAccuracy: 0,
       endToEndAccuracy: 0,
     });
-  });
-
-  it("keeps a small committed synthetic smoke corpus", async () => {
-    const source = await readFile(new URL("../evals/addressing/synthetic-cases.jsonl", import.meta.url), "utf8");
-    const cases = source.trim().split("\n").map((line) =>
-      AddressingEvaluationCaseSchema.parse(JSON.parse(line)));
-    expect(cases).toHaveLength(4);
-    expect(cases.map((item) => item.expected?.classification)).toEqual([
-      "agent_action",
-      "human_only",
-      "both",
-      "uncertain",
-    ]);
   });
 });

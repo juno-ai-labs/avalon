@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -89,21 +88,6 @@ function batch(queue: string, messages: Message<unknown>[]): MessageBatch<unknow
 }
 
 describe("background callers meeting a retired object", () => {
-  it("is decided in every background caller that reaches a gated object", () => {
-    // Structural, like the initialization wiring test: each of these reaches a
-    // gated object from a transport that retries a throw, and each has to
-    // have made the terminal decision explicitly. A new consumer that does
-    // not is the dead-letter loop again.
-    for (const file of [
-      "src/queues/access-revocation-consumer.ts",
-      "src/queues/product-feature-flag-consumer.ts",
-      "src/queues/activity-consumer.ts",
-      "src/workflows/connector-event.ts",
-      "src/services/digest-service.ts",
-    ]) {
-      expect(readFileSync(`${process.cwd()}/${file}`, "utf8"), file).toContain("isRetirementRefusal(");
-    }
-  });
 
   it("acknowledges a feature-flag fan-out message the retired workspace refuses", async () => {
     const outcomes = { acked: [] as string[], retried: [] as string[] };

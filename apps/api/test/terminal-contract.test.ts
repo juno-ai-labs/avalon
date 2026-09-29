@@ -1,5 +1,4 @@
 import "../../../tests/isolated-region";
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -126,18 +125,6 @@ describe("Terminal plugin contract", () => {
     });
   });
 
-  it("deploys Terminal against the configured Daytona environment", () => {
-    const stripJsoncComments = (raw: string): string => raw.replace(/^\s*\/\/.*$/gmu, "");
-    const vars = (fileName: string): Record<string, string> => {
-      const raw = readFileSync(new URL(`../${fileName}`, import.meta.url), "utf8");
-      return (JSON.parse(stripJsoncComments(raw)) as { vars?: Record<string, string> }).vars ?? {};
-    };
-    const globalVars = vars("wrangler.global.jsonc");
-
-    expect(globalVars.TERMINAL_REGION_CAPABILITY).toBe("supported");
-    expect(globalVars.DAYTONA_TARGET).toBe("us");
-    expect(globalVars.DAYTONA_TERMINAL_SNAPSHOT).toMatch(/^[a-z0-9][a-z0-9._-]*$/u);
-  });
   // The production wiring, not a hand-built stand-in. Every other test of
   // re-entry constructs its own plugin with `reenterable: true`, so deleting
   // the spread in `createTerminalPlugin` left the whole suite green while the

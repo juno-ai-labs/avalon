@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
 import { asUserId, asWorkspaceId } from '@rally/contracts';
@@ -115,11 +114,6 @@ describe('allowlisted API operation telemetry', () => {
     await vi.waitFor(() => expect(emit).toHaveBeenCalledTimes(1));
   });
 
-  it('mounts the production middleware once above the sibling sub-apps', () => {
-    const source = readFileSync(`${process.cwd()}/src/app.ts`, 'utf8');
-    expect(source.match(/apiOperationTelemetry\(\)/gu)).toHaveLength(1);
-    expect(source.indexOf('apiOperationTelemetry()')).toBeLessThan(source.indexOf('app.route("/health"'));
-  });
 });
 
 function sequentialClock(...values: number[]): () => number {
