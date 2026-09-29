@@ -462,6 +462,13 @@ contents and nothing else:
   so a warm run reuses its cached pass while a cold run reports the violation.
   **Run `pnpm lint:fresh` after changing the return type of anything passed into
   `transactionSync`, `commitRuntimeMutation`, or `commitWithRegionalEffects`.**
+- **So is a rule that reads a list from source.**
+  `rally/durable-object-workspace-table-routing` takes its table names from
+  `WORKSPACE_LOCAL_TABLES` and `AUTHORIZATION_STORAGE_TABLES` when it loads. The
+  cache keys on each linted file and the config, so a Durable Object file that
+  already passed is not re-checked when a table joins either list. This follows
+  from how the cache keys, and was not demonstrated. **Run `pnpm lint:fresh`
+  after changing either list.**
 
   `consistent-type-imports` used to be named here as a second such case, on the
   belief that it asks the exporting file whether a symbol is a type. It does not:
