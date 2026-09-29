@@ -11,7 +11,10 @@ setup that was inconvenient. And **prove the test can fail**, at the integration
 rungs: an integration test that stays green while the behavior under it is broken
 is not covering that behavior, and the suite is worse off for it because the name
 says otherwise. The boundary: [do not test CI or deployment
-configuration](#do-not-test-ci-or-deployment-configuration).
+configuration](#do-not-test-ci-or-deployment-configuration). Beneath both sits a
+rule for every test at every rung, in
+[What to test and what not to](#what-to-test-and-what-not-to): a test runs the
+subject and asserts on what it produced, never on the text of a source file.
 
 [`e2e.md`](e2e.md) owns the manual acceptance flows and the live-Worker smoke
 check; [`type-safety-boundaries.md`](type-safety-boundaries.md) owns how a test
@@ -115,9 +118,11 @@ in D1 today, where they prove nothing about the routed reads they sit beside.
 Seed those tables in the object that owns them — `initializeWorkspace`, then
 `runInDurableObject(workspaceStub(), …)`. Where the absence is the point,
 `test-workers/automation-acceptance-bindings.test.ts` asserts it in its first test
-rather than trusting a comment to survive.
-`apps/api/test/durable-object-workspace-table-routing.test.ts` is the matching
-guard on the production side.
+rather than trusting a comment to survive. On the production side, the rule
+that no object sends a `WORKSPACE_LOCAL_TABLES` name to `env.DB` is a
+code-shape rule, and its guard belongs in `scripts/eslint-rules/` rather than
+in a test that scans the objects' source text
+([What to test and what not to](#what-to-test-and-what-not-to)).
 
 ### 2. Node against real SQL
 
@@ -469,13 +474,17 @@ opened ready for review rather than as a draft, that is most of a change's life.
   that does not match its manifest in `config/`, and only the second of those
   runs in CI — through `pnpm test:scripts` — so a documentation change that
   skips `docs:check` is one whose headings nothing checked.
-  And three documents are executable contracts, read off disk and asserted on:
-  `docs/connector-digestibility.md` by
-  `packages/connectors/src/digestibility-doc.test.ts`,
+  And two documents are executable contracts, read off disk and checked against
+  what the code produces: `docs/connector-digestibility.md` by
+  `packages/connectors/src/digestibility-doc.test.ts`, and
   `docs/workstream-email-addresses.md` by
-  `apps/api/test/workstream-email-address.test.ts`, and
-  `docs/domain-migration.md` by `apps/site/test/site.test.ts`. Editing one of
-  those runs its test too. For a document not on that list,
+  `apps/api/test/workstream-email-address.test.ts`. Editing one of those runs
+  its test too. `apps/site/test/site.test.ts` also names
+  `docs/domain-migration.md`, but it reads that document and the site's own
+  files as text and compares strings, with nothing executed on the code side.
+  That is the shape [What to test and what not to](#what-to-test-and-what-not-to)
+  rules out, so it is not a contract for that document. For a document not on
+  that list,
   `grep -rn 'docs/<file>.md' --include='*.test.*' .` finds the tests that name
   it; most hits only cite a document in a comment, and those need nothing.
   A change inside a source file is not a documentation change even when it
@@ -501,6 +510,64 @@ A narrow run you actually read beats a wide one you skim. If a test outside what
 you touched fails, that is a real result and it belongs to this change, whether
 or not you planned to run it.
 
+## What to test and what not to
+
+**This applies to every test at every rung**, unit suites included. A test runs
+the subject and asserts its observable output against a literal: the status and
+body a route returned, the rows read back, the message a socket delivered, the
+state a reducer settled into, the string a function returned for a fixed input.
+Its name says what behavior it covers, and it fails when that behavior breaks.
+
+**A test never reads a production source, stylesheet, HTML, or deploy/config
+file and asserts on its text.** `readFileSync` of a `src/` module, `app.css`,
+an `index.html`, a Wrangler config or `_headers` followed by `toContain` or
+`toMatch` is not a test of anything: it cannot fail for the reason its name
+claims, only for the string having moved, and the repair every time is to
+paste the new spelling in. `ordinary-harness-run-selection.test.ts` did exactly
+that through a rewrite that moved its four queries into a Durable Object: the
+assertions were retargeted and stayed green while nobody re-checked the rule.
+It is now a workerd suite that seeds the three run shapes and reads. The same
+rule covers a test that walks a directory and greps which files import a
+module, a test that asserts a declaration is present in a stylesheet, and a
+test that restates a config file's contents. If a rule is worth pinning,
+something has to _run_ it, or lint has to enforce it.
+
+Each of those tests was written to enforce something real. Enforce it with the
+tool built for that shape:
+
+| You want to enforce | Do this |
+| --- | --- |
+| Only some files may import a module, or call an export | `no-restricted-imports` in `eslint.config.mjs`, with `files` and `ignores` naming who may. The `authorizedConnection` block there is the pattern: everyone under `apps/api/src/` is refused the import except the one module allowed to hold it. |
+| A code-shape rule: a class must call a gate in its constructor, a method must stay a prototype method, a statement must not name a table | A rule in `scripts/eslint-rules/`, registered in `eslint.config.mjs`. The rule sees the AST, so it fails on the shape rather than on a spelling, and it runs on every file including the one added next month. |
+| Handler wiring in `apps/desktop/src/main/index.ts` | Extract the decision into a module that takes its dependencies as an argument and test that module. `apps/desktop/src/main/workspace-activation.ts` is the pattern: `revalidateWorkspaceActivation(target, operationId, dependencies)` owns the request shape and the error mapping, `index.ts` calls it with the real bridge, and `workspace-activation-wiring.test.ts` drives it with a recording double. What stays in `index.ts` is one call, which a test cannot reach and does not need to. |
+| A CSS declaration, a layout, a color | No unit test. jsdom lays nothing out and a stylesheet scan proves only that a string is present. Verify in a real window per [verifying visible changes](../AGENTS.md#verifying-visible-changes), and state that in the pull request's **Validation** section. |
+| A config or deploy setting: a route list, a header file, a workflow step | Not testable, and not to be tested; the deploy is the test. See [Do not test CI or deployment configuration](#do-not-test-ci-or-deployment-configuration). |
+| A flag list or constant must match across packages | Import the constant from the package that owns it and assert against it, or derive the second list from the first so there is nothing to match. Never scan a source file for the spelling. |
+| A doc table must match the code | Allowed only when the test executes the code side. `packages/connectors/src/digestibility-doc.test.ts` reads the document and compares it to what `createConnectorRegistry` produces; a test that reads the document and a source file and compares two strings is the scrape above with a second file. |
+| A mock was called | Assert the state the call produced, or the argument it was called with. `toHaveBeenCalled()` alone, or `mockResolvedValue(row)` followed by `expect(result).toEqual(row)`, asserts that Vitest works. |
+| A constant has its value | Nothing. `expect(LIMIT).toBe(50)` is the constant written twice. A test covers what the code _does_ with the constant. |
+
+A lint rule could enforce this mechanically by refusing any `node:fs` read of a
+production source from a test file. None exists yet, so reviewers enforce it by
+hand.
+
+**A good test:**
+
+- fails when the behavior it is named after breaks, and for that reason;
+- asserts a literal the test wrote, not a value the subject or a mock produced;
+- survives a refactor that keeps the behavior: renaming a variable, moving a
+  query into an object, restyling a rule, changing which file holds a function.
+
+**None of this lowers the bar.** Every behavior change still needs a test that
+can fail for the reason it names, and a behavior change without one is a review
+finding. The one exception is a change with no runnable test possible: a pure
+CSS declaration, unexported Electron wiring, a deploy setting. There the author
+verifies another way, a real-window screenshot or an extraction into a module
+that can be tested, and says so in the pull request. "No test, verified by
+screenshot" is an honest answer; a source scan named as if it were coverage is
+not. The choice is never between a scraping test and no test; it is between a
+test that runs the subject and a stated, non-test verification.
+
 ## Prove the test can fail
 
 **This applies to integration tests only**, and what makes a test one is what
@@ -511,13 +578,18 @@ migrations — `packages/db/test/` included, where the migration itself is the
 subject and no route or service is involved. It also applies to the local smoke
 and e2e lanes.
 
-Everything else is exempt, because nothing real is underneath it to break: rung
-3 and rung 4, pure `packages/*` logic, most desktop component tests, and the site
-and release-retention suites, which read config files and call pure functions. At
-that level the only break available is usually flipping the literal the
-assertion already mirrors, which costs a cycle and proves nothing. When writing
-one of those, read the list of assertions that survive a break, below, instead
-of running the check.
+Everything else is exempt from the break-and-revert cycle, because nothing real
+is underneath it to break: rung 3 and rung 4, pure `packages/*` logic, most
+desktop component tests, and the site and release-retention suites, which call
+pure functions and route handlers. At that level the only break available is
+usually flipping the literal the assertion already mirrors, which costs a cycle
+and proves nothing. When writing one of those, read the list of assertions that
+survive a break, below, instead of running the check.
+
+The exemption is from the cycle only. It is not an exemption from
+[What to test and what not to](#what-to-test-and-what-not-to): a unit test still
+runs its subject and asserts a literal, and a test that reads a source or config
+file off disk is out at every rung, exempt or not.
 
 The exemption is by the shape of the test, not the suite it sits in. A renderer
 test that drives a real reducer or store through a state transition and reads the
@@ -592,12 +664,10 @@ is usually one of these:
   pair — rather than the subject's answer against the test's clock.
 - **The source text.** `expect(source(file)).toContain("SELECT … WHERE …")` reads
   a module off disk and asserts a string is in it. It cannot fail for the reason
-  it is named after — only for the string having moved — and the repair, every
-  time, is to paste the new spelling in. `ordinary-harness-run-selection.test.ts`
-  did exactly that through a rewrite that moved its four queries into a Durable
-  Object: the assertions were retargeted and stayed green while nobody re-checked
-  the rule. It is now a workerd suite that seeds the three run shapes and reads.
-  If a rule is worth pinning, something has to *run* it.
+  it is named after, only for the string having moved. This one is not specific
+  to integration tests: it is ruled out at every rung, and
+  [What to test and what not to](#what-to-test-and-what-not-to) has the history
+  and the table of what to do instead.
 
 What to assert instead: the observable output of the real thing — the status and
 body a route returned, rows read back through the same API production reads them
