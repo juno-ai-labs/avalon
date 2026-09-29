@@ -4533,6 +4533,9 @@ export async function runWorkstreamHarness(
     throw error;
   } finally {
     await livenessMonitor.stop();
+    // Tools run only inside the harness, so this is where a plugin's
+    // run-scoped resources, such as Terminal's provider session, are done.
+    disposeHarnessPlugins(env, harnessTools.plugins);
   }
 
   await streamDeltaBatcher.flush();
@@ -5849,6 +5852,28 @@ function customMcpActivityName(name: unknown): string {
     || CUSTOM_MCP_DISPLAY_NAME;
 }
 
+/**
+ * Release what each plugin holds for the run. A plugin that holds nothing is
+ * not `Disposable`; Terminal is, for the provider session its tools share.
+ * One plugin failing to release is logged and does not stop the rest, nor
+ * replace the run's own outcome.
+ */
+function disposeHarnessPlugins(env: Env, plugins: readonly HarnessPlugin[]): void {
+  for (const plugin of plugins) {
+    if (!(Symbol.dispose in plugin)) continue;
+    const dispose = (plugin as Partial<Disposable>)[Symbol.dispose];
+    if (typeof dispose !== "function") continue;
+    try {
+      dispose.call(plugin);
+    } catch (error) {
+      logStructuredEvent(env, "warn", "harness_plugin_dispose_failed", {
+        plugin_id: plugin.canonicalId,
+        code: diagnosticErrorCode(error, "harness_plugin_dispose_failed"),
+      });
+    }
+  }
+}
+
 /** Participant-only metadata; never passed to Bind's prompt catalog. */
 function transcriptPluginPresentation(
   harnessTools: Pick<LoadedHarnessTools, "corePlugins" | "plugins">,
@@ -7048,7 +7073,7 @@ export async function reenterInterruptedWriteForRecovery(
   } catch (error) {
     return { outcome: "unknown", reason: diagnosticErrorCode(error, "run_authority_lost") };
   }
-  let plugin: HarnessPlugin | null;
+  let plugin: Awaited<ReturnType<typeof createAvalonTerminalPlugin>>;
   try {
     // The same publication scope `loadHarnessTools` freezes. A work-stream
     // scoped Sidekick publishes into the room that owns it, so a plugin built
@@ -7153,6 +7178,7 @@ export async function reenterInterruptedWriteForRecovery(
       reason: declared ? codeShaped(declared) : diagnosticErrorCode(error, "reentry_failed"),
     };
   } finally {
+    plugin[Symbol.dispose]();
     // Never left running. A timer that outlives this call keeps renewing the
     // lease of an attempt nobody is executing, in a Worker isolate that may go
     // on to serve something else.
