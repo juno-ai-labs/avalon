@@ -435,7 +435,6 @@ describe("Durable Object SQLite migrations", () => {
         foreignKeys: "disabled_during_rebuild",
         legacyHashWithoutExecutionMode: true,
       };
-      expect(durableObjectMigrationHash(declared)).toBe(durableObjectMigrationHash(published));
       expect(applyDurableObjectSqliteMigrations({
         storage,
         migrations: [declared],

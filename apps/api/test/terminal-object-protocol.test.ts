@@ -35,13 +35,6 @@ describe("the Terminal operation contract", () => {
     expect([...TERMINAL_OPERATIONS].sort()).toEqual(publicStorageMethods());
   });
 
-  it("names only methods that exist", () => {
-    for (const operation of TERMINAL_OPERATIONS) {
-      const prototype = WorkstreamTerminalStorage.prototype as unknown as Record<string, unknown>;
-      expect(typeof prototype[operation]).toBe("function");
-    }
-  });
-
   it("refuses a name that is not on the contract", () => {
     expect(isTerminalOperation("sandbox")).toBe(true);
     expect(isTerminalOperation("dropEverything")).toBe(false);

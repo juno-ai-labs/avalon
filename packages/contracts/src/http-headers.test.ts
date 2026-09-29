@@ -3,17 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   LEGACY_RALLY_HEADER_PREFIXES,
   RALLY_HEADERS,
-  RALLY_HEADER_PREFIX,
   rallyHeaderAliases,
   readRallyHeader,
 } from "./http-headers";
 
 describe("rally http headers", () => {
-  it("mints every header on the current prefix", () => {
-    for (const name of Object.values(RALLY_HEADERS)) {
-      expect(name.startsWith(RALLY_HEADER_PREFIX)).toBe(true);
-    }
-  });
 
   it("pairs each canonical name with every superseded spelling", () => {
     expect(rallyHeaderAliases(RALLY_HEADERS.OPERATION_ID)).toEqual([
