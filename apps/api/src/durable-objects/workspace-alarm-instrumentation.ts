@@ -143,9 +143,8 @@ export class WorkspaceAlarmInstrumentation {
           alarm_elapsed_ms: Math.max(0, failedAt - this.startedAt),
           crossed_recovery_horizon: crossedRecoveryHorizon,
           // Not every phase runs under the workspace's isolating wrapper, so
-          // this may be the only record of why it failed. The code is never
-          // the error's own text, so it stays off the trace as the comment
-          // below requires.
+          // this may be the only record of why it failed. Only a code-shaped
+          // message or a platform word crosses, never prose.
           error_name: error instanceof Error ? error.name : typeof error,
           code: diagnosticErrorCode(error, `${phase}_failed`),
         });
