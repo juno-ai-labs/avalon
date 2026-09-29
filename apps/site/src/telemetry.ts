@@ -161,9 +161,10 @@ async function flush(keepalive = false): Promise<void> {
     body: JSON.stringify({ capability: state.capability, events }),
     keepalive,
   });
-  // A 4xx is the API refusing the batch itself; resending it would refuse
-  // every event queued behind it on this page. Only a server failure retries.
-  if (response.status >= 500) pending.unshift(...events);
+  // Any other 4xx is the API refusing the batch itself; resending it would
+  // refuse every event queued behind it on this page. A server failure, a
+  // timeout, or rate limiting is transient and retries.
+  if (response.status >= 500 || response.status === 408 || response.status === 429) pending.unshift(...events);
 }
 
 function report<TName extends TelemetryEventName>(
