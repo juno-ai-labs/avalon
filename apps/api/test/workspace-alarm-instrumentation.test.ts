@@ -15,6 +15,26 @@ const env = createTestEnv({
 });
 
 describe("WorkspaceDO alarm instrumentation", () => {
+  it("names a failed phase by the code its handler threw", async () => {
+    const rows: Record<string, unknown>[] = [];
+    const info = vi.spyOn(console, "info").mockImplementation((row: unknown) => {
+      rows.push(row as Record<string, unknown>);
+    });
+    try {
+      const instrumentation = new WorkspaceAlarmInstrumentation(env);
+      await expect(instrumentation.phase("stored_target", "terminal", async () => {
+        throw new Error("terminal_lifecycle_provider_transition_pending");
+      })).rejects.toThrow();
+    } finally {
+      info.mockRestore();
+    }
+    expect(rows.find((row) => row.event === "workspace_scheduled_alarm_phase_failed")).toMatchObject({
+      phase: "stored_target",
+      alarm_kind: "terminal",
+      code: "terminal_lifecycle_provider_transition_pending",
+    });
+  });
+
   it("records only bounded phase and kind fields and identifies work beyond the recovery horizon", async () => {
     resetRecordedSpans();
     const rows: Record<string, unknown>[] = [];
@@ -52,6 +72,7 @@ describe("WorkspaceDO alarm instrumentation", () => {
     });
     expect(rows[3]).toMatchObject({
       phase: "schedule_reconcile",
+      code: "schedule_reconcile_failed",
       duration_ms: 200,
       crossed_recovery_horizon: false,
     });

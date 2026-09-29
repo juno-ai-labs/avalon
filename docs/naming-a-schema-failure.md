@@ -151,6 +151,9 @@ its own is a boundary that drifts.
 | `apps/api/src/durable-objects/substream-agent.ts` | `appendWatchedResourceEvent`, the other destination an external event is delivered to |
 | `packages/db/src/link-payloads.ts` | a link payload that no longer satisfies the schema its prefix promises reports `link_payload_drift_invalid:<prefix>:<path>:<code>` — including when it is no longer JSON, as `-root-:invalid_json` — where the row's own existence proves this deployment wrote it. The `_invalid:` label is what `isDiagnosticCode` matches, without which the code reaches an operator as the caller's generic fallback |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | `receiveChildEffects`, which every conversation effect crosses |
+| `apps/api/src/durable-objects/conversation-parent-object.ts` | a stored outbox row the envelope schema rejects logs `parent_outbox_row_unreadable` as `parent_outbox_row_invalid:<paths>` and is dropped, where it threw out of the Sidekick's whole drain |
+| `apps/api/src/durable-objects/workspace-alarm-instrumentation.ts` | `workspace_scheduled_alarm_phase_failed` carries `code` from `diagnosticErrorCode`, behind `<phase>_failed`, where it said only that the phase failed |
+| `apps/api/src/services/workstream-authority.ts` | a failed read of the authority control row logs `workstream_authority_unreadable` with its `code` and answers the phase `unreadable`, where it answered `quarantined` at generation 0 |
 | `apps/api/src/queues/activity-consumer.ts` | an effect envelope the consumer's contract refuses logs `effect_queue_message_invalid` with its failing paths, including unknown key names (the Queue's producers are our own objects, so they are the diagnosis of a deploy skew), where it logged `legacy_message_after_cutover` under a connector-event code; it is still acked |
 | `apps/api/src/queues/access-revocation-consumer.ts` | `access_revocation_message_invalid` names each failing field of a queue message it cannot read, where it formatted the issues by hand and spelled the whole-value case `(root)` |
 
@@ -205,6 +208,25 @@ published, so the product asserts health while the tail never landed. Naming the
 error made that diagnosable in minutes; it did not make it visible.
 
 ## Changelog
+
+### 2026-09-29 — Three alarm-path failures are named, and D1's overload sentence with them
+
+**What changed:** `diagnosticErrorCode` names D1's two overload sentences
+(`D1 DB is overloaded. …`) as `d1_overloaded`. The WorkspaceDO alarm's
+per-phase failure row, the authority control read, and the Sidekick outbox
+drain each now log a code (see the table above).
+
+**Why:** A production review of 2026-09-26 to 09-28 found each of these left a
+diagnosis to guesswork. A Terminal lifecycle loop produced 38k phase-failed
+rows with no reason on them. A D1 overload read as `quarantined:0`. An outbox
+row that failed its schema threw a bare `ZodError` out of the drain.
+
+**Considered and rejected:** Copying D1's sentence: the rule here is to name,
+not to quote.
+
+**Consequences:** Other D1 sentences (a memory or CPU reset, a storage timeout)
+still reduce to the caller's fallback, except the storage timeout, which the
+existing `exceeded timeout` pattern names `durable_object_storage_timeout`.
 
 ### 2026-09-26 — A Workers runtime failure is named behind the caller's code
 

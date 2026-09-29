@@ -24,12 +24,13 @@ import {
   type ConversationParentTerminalDeadlinesResult,
 } from "@rally/contracts/conversation-parent";
 import { asSubstreamId, type Region, type WorkspaceId } from "@rally/contracts";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { z } from "zod";
 
 import type { Env } from "../env";
 import { parseRpcInput } from "../lib/rpc-input";
 import { uuidV7 } from "../lib/uuid-v7";
-import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observability/logger";
 import { ScheduledDurableObject } from "./scheduled-alarms";
 import {
   applyRetirementGate,
@@ -940,8 +941,8 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
   }
 
   protected dueParentEffects(limit = QUEUE_BATCH_MAX_MESSAGES, now = Date.now()): ParentEffectEnvelope[] {
-    return this.parentSql.exec<StoredEnvelopeRow>(
-      `SELECT payload_json, payload_hash, attempts FROM durable_outbox
+    const rows = this.parentSql.exec<StoredEnvelopeRow & { message_id: string }>(
+      `SELECT message_id, payload_json, payload_hash, attempts FROM durable_outbox
         WHERE state IN ('pending', 'inflight') AND not_before <= ?
         ORDER BY CASE effect_kind
                    WHEN 'directory_common' THEN 0
@@ -952,7 +953,26 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
                  created_at, message_id LIMIT ?`,
       now,
       limit,
-    ).toArray().map((row) => ParentEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
+    ).toArray();
+    const due: ParentEffectEnvelope[] = [];
+    for (const row of rows) {
+      const parsed = ParentEffectEnvelopeSchema.safeParse(JSON.parse(row.payload_json));
+      if (parsed.success) {
+        due.push(parsed.data);
+        continue;
+      }
+      // A row this deployment's schema no longer reads never will. Left due, it
+      // throws the whole drain on every alarm, which is how one stored row kept
+      // a legacy WorkstreamDO alarm failing for days. Dropped, as an oversized
+      // row is, and named for an operator.
+      this.parentSql.exec(`DELETE FROM durable_outbox WHERE message_id = ?`, row.message_id);
+      logError(this.env, "parent_outbox_row_unreadable", {
+        ...this.parentLogFields(),
+        message_id: row.message_id,
+        code: zodDiagnosticCode(parsed.error, "parent_outbox_row") ?? "parent_outbox_row_invalid",
+      });
+    }
+    return due;
   }
 
   /** Drop delivered rows; returns how many were still there. */

@@ -48,6 +48,8 @@ describe("structured logging", () => {
       ["Connection closed: this Durable Object instance is no longer active. Reconnect or retry the request.", "durable_object_inactive"],
       ["Network connection lost.", "network_connection_lost"],
       ["The Workers runtime canceled this request because it detected that your Worker's code had hung and would never generate a response.", "worker_hung"],
+      ["D1_ERROR: D1 DB is overloaded. Too many requests queued.", "d1_overloaded"],
+      ["D1_ERROR: D1 DB is overloaded. Requests queued for too long.", "d1_overloaded"],
     ];
     for (const [sentence, name] of sentences) {
       expect(diagnosticErrorCode(new Error(sentence), "parent_export_failed")).toBe(`parent_export_failed:${name}`);

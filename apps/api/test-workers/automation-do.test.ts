@@ -430,6 +430,18 @@ beforeEach(async () => {
 });
 
 describe("AutomationDO", () => {
+  it("drops an outbox row its schema no longer reads, rather than failing every drain", async () => {
+    await runInDurableObject(automationStub(), async (instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO durable_outbox (message_id, partition_key, source_version, source_epoch, effect_kind,
+           payload_json, payload_hash, state, attempts, not_before, created_at)
+         VALUES ('stale-row', 'stale', 1, 1, 'activity_event', '{"kind":"parent_effect"}', 'stale', 'pending', 0, 0, 0)`,
+      );
+      await (instance as unknown as { drainParentOutbox(): Promise<void> }).drainParentOutbox();
+      expect(state.storage.sql.exec("SELECT message_id FROM durable_outbox").toArray()).toEqual([]);
+    });
+  });
+
   it("lets a child recommend workspace knowledge without activating main or siblings, and loads only locally", async () => {
     const workstreamId = asWorkstreamId('00000000-0000-7000-8000-00000000ad99');
     const parent = hostedParentStub(env, WORKSPACE_ID);

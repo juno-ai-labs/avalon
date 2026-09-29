@@ -57,7 +57,6 @@ import type { Region } from "@rally/contracts/regions";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   ParentEffectEnvelopeSchema,
-  ParentEffectSchema,
   WorkstreamDirectoryCommonEffectSchema,
   WorkstreamDirectoryUserEffectSchema,
   conversationEffectHash,
@@ -3406,11 +3405,3 @@ function closeRevoked(socket: WebSocket, attachment: ControlSocketAttachment): v
     // Already closing; the runtime owns the rest of the teardown.
   }
 }
-
-/** Parse the parent effects a hosted parent put in its outbox. */
-export function parseParentOutboxEnvelope(payloadJson: string): ParentEffectEnvelope {
-  return ParentEffectEnvelopeSchema.parse(JSON.parse(payloadJson));
-}
-
-/** Guard an envelope's effect against the parent effect union; kept for the drain's own checks. */
-export const HostedParentEffectSchema = ParentEffectSchema;

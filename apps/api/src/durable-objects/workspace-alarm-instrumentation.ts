@@ -1,5 +1,5 @@
 import type { LogEnv } from "../observability/logger";
-import { logInfo } from "../observability/logger";
+import { diagnosticErrorCode, logInfo } from "../observability/logger";
 import { inSpan } from "../observability/tracing";
 import { SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS } from "./scheduled-alarms";
 
@@ -63,7 +63,9 @@ interface WorkspaceScheduledAlarmPhaseSample {
  * Cloudflare already attaches the Durable Object id and invocation id to each
  * row and span, so this deliberately records only bounded enums and numbers:
  * no workspace id, alarm key, due time, payload, connector data, or error
- * message. A start row without its completion row identifies the phase whose
+ * message. A failed phase adds its `code`: `diagnosticErrorCode` copies a
+ * thrown message only when it is a bare code, and otherwise names the phase.
+ * A start row without its completion row identifies the phase whose
  * continuation ended; the completion summary identifies the slowest phase in
  * an invocation that returned normally.
  */
@@ -139,6 +141,7 @@ export class WorkspaceAlarmInstrumentation {
         logInfo(this.env, "workspace_scheduled_alarm_phase_failed", {
           status: "failed",
           ...commonFields,
+          code: diagnosticErrorCode(error, `${phase}_failed`),
           duration_ms: durationMs,
           alarm_elapsed_ms: Math.max(0, failedAt - this.startedAt),
           crossed_recovery_horizon: crossedRecoveryHorizon,

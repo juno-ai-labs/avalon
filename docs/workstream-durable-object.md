@@ -1803,6 +1803,39 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ## Changelog
 
+### 2026-09-29 — A failed authority read says so, and a Sidekick drops an unreadable outbox row
+
+**What changed:** `readWorkstreamAuthorityControl` returns the phase
+`unreadable`, and logs `workstream_authority_unreadable` with a `code`, when D1
+errors or the control row no longer parses. It used to return `quarantined` at
+generation 0. `unreadable` is never stored and is closed to every check, like
+`quarantined`. Separately, `SidekickDO`'s outbox drain (`dueParentEffects`)
+deletes a row `ParentEffectEnvelopeSchema` rejects and logs
+`parent_outbox_row_unreadable` with its failing paths, instead of throwing out
+of the whole drain.
+
+**Why:** On 2026-09-26 the search backfill (#996) woke every conversation
+object, and each alarm with due work reads the control row. D1 overloaded, and
+about 21k errors in three days showed up as `quarantined:0`, which reads as an
+operator's quarantine rather than a D1 fault. The outbox fix is the same fault
+#984 removed from the old `WorkstreamDO`: one stored row that failed to parse
+failed that alarm about every two seconds for days (493k failures in a week).
+The Sidekick drain kept the same bare `.parse`; `WorkspaceDO`'s hosted drain
+already marked such a row `failed`.
+
+**Considered and rejected:** Throwing on a failed read. Several callers are
+alarm deferrals, where a throw spends the platform's alarm retries and can
+leave an object with no alarm; a closed phase defers and rechecks. Marking the
+Sidekick row `failed`, as `WorkspaceDO` does: `durable_outbox.state` allows
+only `pending` and `inflight`, and a schema migration for a row no deployment
+can deliver is not worth it. Deleting it matches the oversized-row rule in the
+same drain.
+
+**Consequences:** A caller that compares phases must keep treating anything
+but `durable_object_open` (or `legacy_open`) as closed; `unreadable` relies on
+that. The per-alarm D1 read of the control row remains: it is the maintenance
+fence, and a backfill that wakes every object still pays it once per object.
+
 ### 2026-09-28 — An oversized directory effect is sent without its Sidekick attachments
 
 **What changed:** `drainRegionalEffects` sends a `directory_common` envelope

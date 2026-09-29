@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { diagnosticErrorCode, logWarn, type LogEnv } from "../observability/logger";
 
 export const WorkstreamAuthorityPhaseSchema = z.enum([
   "legacy_open",
@@ -12,7 +13,11 @@ export const WorkstreamAuthorityPhaseSchema = z.enum([
   "quarantined",
 ]);
 
-export type WorkstreamAuthorityPhase = z.infer<typeof WorkstreamAuthorityPhaseSchema>;
+/**
+ * `unreadable` is never stored. It is what a read that failed returns: closed,
+ * like `quarantined`, but not mistaken for an operator's quarantine in a log.
+ */
+export type WorkstreamAuthorityPhase = z.infer<typeof WorkstreamAuthorityPhaseSchema> | "unreadable";
 
 export interface WorkstreamAuthorityControl {
   phase: WorkstreamAuthorityPhase;
@@ -38,12 +43,16 @@ const LEGACY_OPEN = {
  * Read the regional cutover fence.
  *
  * Missing-table fallback exists only for rollout ordering: the compatibility
- * Worker can deploy before D1 migration 0079. Every other database error is a
- * fail-closed maintenance state so an outage cannot accidentally reopen legacy
- * writers while an authority move is in progress.
+ * Worker can deploy before D1 migration 0079. Every other failure, a D1 error
+ * or a row that no longer parses, fails closed as `unreadable` and logs why.
+ * It used to answer `quarantined` at generation 0, so a D1 overload read as
+ * an operator's quarantine in every caller's log.
+ *
+ * It returns rather than throws because several callers are alarm deferrals,
+ * where a throw spends the platform's alarm retries; a closed phase defers.
  */
 export async function readWorkstreamAuthorityControl(
-  env: Pick<Env, "DB">,
+  env: Pick<Env, "DB"> & LogEnv,
 ): Promise<WorkstreamAuthorityControl> {
   try {
     const row = await env.DB.prepare(
@@ -72,8 +81,11 @@ export async function readWorkstreamAuthorityControl(
     if (error instanceof Error && /no such table: workstream_authority_control/iu.test(error.message)) {
       return LEGACY_OPEN;
     }
+    logWarn(env, "workstream_authority_unreadable", {
+      code: diagnosticErrorCode(error, "workstream_authority_read_failed"),
+    });
     return {
-      phase: "quarantined",
+      phase: "unreadable",
       generation: 0,
       requiredServingContractVersion: 1,
       servingContractVersion: 0,
@@ -102,7 +114,7 @@ export function permitsLegacyRuntimeDrain(control: WorkstreamAuthorityControl): 
  * code no environment is meant to execute.
  */
 export async function requireOpenWorkstreamAuthority(
-  env: Pick<Env, "DB">,
+  env: Pick<Env, "DB"> & LogEnv,
 ): Promise<WorkstreamAuthorityControl> {
   const control = await readWorkstreamAuthorityControl(env);
   if (control.phase !== "durable_object_open") {
@@ -117,7 +129,7 @@ export async function requireOpenWorkstreamAuthority(
 
 /** Reject product ingress that reaches a named WorkerEntrypoint instead of the default HTTP handler. */
 export async function requireWorkstreamIngress(
-  env: Pick<Env, "DB">,
+  env: Pick<Env, "DB"> & LogEnv,
 ): Promise<WorkstreamAuthorityControl> {
   const control = await readWorkstreamAuthorityControl(env);
   if (!acceptsNewWorkstreamWork(control)) {

@@ -101,6 +101,8 @@ const PLATFORM_ERRORS: readonly (readonly [RegExp, string])[] = [
   [/this Durable Object instance is no longer active/u, "durable_object_inactive"],
   [/^Network connection lost/u, "network_connection_lost"],
   [/code had hung and would never generate a response/u, "worker_hung"],
+  // Both of D1's overload sentences; unanchored, as D1 prefixes `D1_ERROR: `.
+  [/D1 DB is overloaded/u, "d1_overloaded"],
 ];
 
 function platformErrorCode(error: Error): string | null {
