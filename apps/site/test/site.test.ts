@@ -6,7 +6,7 @@ import { parseDesktopTarget } from '../src/auth-handoff';
 import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
 import { isIosDevice, legacyIosWorkstreamHandoff } from '../src/workstream-link';
-import { normalizedTelemetryPathname, sitePageForPath } from '../src/telemetry';
+import { normalizedTelemetryPathname, SITE_ACTION_LINKS, siteActionForLink, sitePageForPath } from '../src/telemetry';
 
 const readProjectFile = (path: string): string =>
   readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -103,6 +103,19 @@ describe('public Rally site', () => {
     expect(page).toContain('Document · Saved');
     expect(page).toContain('{{access.headline}}');
     expect(page).toContain('{{access.description}}');
+  });
+
+  it('tags every tracked landing link with a known id, one per installer link', () => {
+    const page = readProjectFile('index.html');
+    const ids = [...page.matchAll(/data-site-action="([^"]+)"/gu)].map(([, id]) => id);
+    // A misspelled id is ignored at runtime, which would silently stop counting that link.
+    for (const id of ids) expect(siteActionForLink(id), id).not.toBeNull();
+    // A tag removed in a redesign is just as silent: every tracked link must still be on the page.
+    for (const id of Object.keys(SITE_ACTION_LINKS)) expect(ids, id).toContain(id);
+    // Each installer link carries its own id, so the dashboard can tell them apart.
+    for (const link of page.match(/<a [^>]*Rally\.dmg[^>]*>/gu) ?? []) {
+      expect(link).toMatch(/data-site-action="download-[a-z-]+"/u);
+    }
   });
 
   it('defines responsive behavior for every public surface', () => {
@@ -454,8 +467,8 @@ describe('public Rally site', () => {
     expect(readProjectFile('trust/dpa/index.html')).toContain('Annex B · Technical and organizational measures');
     expect(readProjectFile('trust/subprocessors/index.html')).toContain('Cloudflare, Inc.');
     const cookies = readProjectFile('trust/cookies/index.html');
-    expect(cookies).toContain('Effective September 21, 2026');
-    expect(cookies).toContain('Version · 2026.09.21');
+    expect(cookies).toContain('Effective September 29, 2026');
+    expect(cookies).toContain('Version · 2026.09.29');
     expect(cookies).toContain('uses bounded first-party product analytics');
     expect(cookies).toContain('first-party anonymous identifier in local storage');
     expect(cookies).toContain("does not load PostHog's browser SDK");
