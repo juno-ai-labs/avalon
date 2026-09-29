@@ -2,7 +2,7 @@ import { regionalBindings } from "../lib/regional-bindings";
 import { isConfiguredRegion } from "@rally/contracts/regions";
 import type { Region } from "@rally/contracts";
 import type { Env } from "../env";
-import { ApiError } from "../lib/api-error";
+import { ApiError, diagnosticCodeField } from "../lib/api-error";
 import { SlackAgentService } from "./slack-agent-service";
 
 export const DEFAULT_SLACK_INGRESS_BASE_URL = "https://slack.rallywith.ai";
@@ -20,7 +20,7 @@ export interface SlackRouteStatusInput extends SlackRouteInput {
 
 export type SlackRpcResult<T> =
   | { ok: true; value: T }
-  | { ok: false; error: { status: ApiError["status"]; code: string; message: string } };
+  | { ok: false; error: { status: ApiError["status"]; code: string; message: string; diagnosticCode?: string } };
 
 export interface SlackRegionalBridgeRpcBinding {
   processSlackEvent(input: { payload: unknown; bodyHash: string }): Promise<SlackRpcResult<{ ok: true; duplicate?: boolean }>>;
@@ -37,7 +37,7 @@ export async function serializeSlackRpcResult<T>(operation: () => Promise<T>): P
   try {
     return { ok: true, value: await operation() };
   } catch (error) {
-    if (error instanceof ApiError) return { ok: false, error: { status: error.status, code: error.code, message: error.message } };
+    if (error instanceof ApiError) return { ok: false, error: { status: error.status, code: error.code, message: error.message, ...diagnosticCodeField(error) } };
     throw error;
   }
 }
@@ -164,5 +164,5 @@ function nestedTeam(payload: Record<string, unknown>): string {
 
 function unwrap<T>(result: SlackRpcResult<T>): T {
   if (result.ok) return result.value;
-  throw new ApiError(result.error.status, result.error.code, result.error.message);
+  throw new ApiError(result.error.status, result.error.code, result.error.message, undefined, result.error.diagnosticCode);
 }
