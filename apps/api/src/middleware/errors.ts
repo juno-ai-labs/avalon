@@ -2,7 +2,7 @@ import type { ErrorHandler, NotFoundHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import { RepositoryError } from "@rally/db";
-import { ConnectorError } from "@rally/connectors";
+import { ConnectorError, connectorDiagnosticCode } from "@rally/connectors";
 import type { HonoAppEnv } from "../env";
 import { asApiError } from "../lib/api-error";
 import {
@@ -68,9 +68,16 @@ export const errorHandler: ErrorHandler<HonoAppEnv> = (error, c) => {
     message = error.message;
   }
 
-  const errorCode = code === "internal_error" && !(error instanceof z.ZodError)
-    ? diagnosticErrorCode(error, code)
-    : code;
+  // `provider_error` is what a provider's 404, its rate limit and a dropped
+  // connection all say; the adapter recorded which, and an error rebuilt from
+  // one across a regional hop carries it as `diagnosticCode`.
+  const errorCode = apiError
+    ? apiError.diagnosticCode ?? code
+    : error instanceof ConnectorError
+      ? connectorDiagnosticCode(error)
+      : code === "internal_error" && !(error instanceof z.ZodError)
+        ? diagnosticErrorCode(error, code)
+        : code;
   logEvent(c, status >= 500 ? "error" : "warn", "request_failed", {
     code,
     status,

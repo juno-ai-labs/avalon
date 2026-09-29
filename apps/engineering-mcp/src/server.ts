@@ -20,6 +20,8 @@ import {
   WorkspaceIdSchema,
   WorkstreamIdSchema,
 } from "@rally/contracts";
+import { platformErrorCode } from "@rally/contracts/platform-diagnostics";
+import { isDiagnosticCode, zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { AccessPrincipal } from "./access";
@@ -32,6 +34,31 @@ type ToolResult = {
 
 function jsonResult(value: unknown): ToolResult {
   return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
+}
+
+/** A refusal this server decided, with the code its log names it by. */
+class InspectionRefusal extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = "InspectionRefusal";
+  }
+}
+
+/**
+ * Why a tool failed, in a form a log field can carry: this server's own
+ * refusal, a schema rejection's paths, a code a regional object composed, or
+ * the platform failure behind a SQL statement. The message is returned to the
+ * engineer who ran the tool and stays off the log, since a SQL error can quote
+ * what the statement touched.
+ */
+function toolErrorCode(error: unknown, tool: string): string {
+  if (error instanceof InspectionRefusal) return error.code;
+  const schema = zodDiagnosticCode(error, tool);
+  if (schema) return schema;
+  if (!(error instanceof Error)) return "tool_failed";
+  if (isDiagnosticCode(error.message)) return error.message;
+  const platform = platformErrorCode(error);
+  return platform ? `tool_failed:${platform}` : "tool_failed";
 }
 
 function errorResult(error: unknown): ToolResult {
@@ -49,8 +76,8 @@ function oneRegionalResult<T extends { found: boolean }>(
   target: string,
 ): T & { found: true } {
   const found = results.filter((result): result is T & { found: true } => result.found);
-  if (found.length === 0) throw new Error(`${target} was not found in any configured Rally region`);
-  if (found.length !== 1) throw new Error(`${target} exists in multiple Rally regions; inspection refused`);
+  if (found.length === 0) throw new InspectionRefusal("target_not_found", `${target} was not found in any configured Rally region`);
+  if (found.length !== 1) throw new InspectionRefusal("target_in_multiple_regions", `${target} exists in multiple Rally regions; inspection refused`);
   return found[0]!;
 }
 
@@ -59,7 +86,7 @@ type Lookup<T> = { found: false } | { found: true; value: T };
 function inspectionBindings(env: Env) {
   return configuredRegions.map((region) => {
     const binding = env[`${regionConfiguration(region).bindingPrefix}_INSPECTION`];
-    if (!binding) throw new Error('regional_inspection_unavailable');
+    if (!binding) throw new InspectionRefusal("regional_inspection_unavailable", "regional_inspection_unavailable");
     return binding;
   });
 }
@@ -70,14 +97,17 @@ function oneRegionalTarget<T>(
 ): { binding: Env["GLOBAL_INSPECTION"]; value: T } {
   const bindings = inspectionBindings(env);
   const found = results.flatMap((result, index) => result.found ? [{ binding: bindings[index]!, value: result.value }] : []);
-  if (found.length !== 1) throw new Error(`${target} must resolve to one region`);
+  if (found.length !== 1) throw new InspectionRefusal("target_not_in_one_region", `${target} must resolve to one region`);
   return found[0]!;
 }
 
 function executedSql(value: unknown, target: string) {
   const result = EngineeringSqlLookupSchema.parse(value);
   if (!result.found) {
-    throw new Error(`${target} authority changed before SQL execution; inspection refused`);
+    throw new InspectionRefusal(
+      "target_authority_changed",
+      `${target} authority changed before SQL execution; inspection refused`,
+    );
   }
   return result.value;
 }
@@ -105,7 +135,8 @@ async function tool(
       actor_email: principal.email,
       tool: name,
       ...target,
-      error_code: "tool_failed",
+      error_name: error instanceof Error ? error.name : typeof error,
+      error_code: toolErrorCode(error, name),
     }));
     return errorResult(error);
   }

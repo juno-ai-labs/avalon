@@ -8162,7 +8162,7 @@ export async function pollConnectorConnection(
   const row = await env.DB.prepare(
     `SELECT * FROM connector_connections WHERE id = ? AND workspace_id = ? AND status <> 'disabled'`,
   ).bind(input.connectionId, input.workspaceId).first<Record<string, unknown>>();
-  if (!row) throw new Error("Connector connection is unavailable");
+  if (!row) throw new Error("connector_connection_unavailable");
   let credentials: Record<string, unknown> = {};
   if (typeof row.encrypted_credentials === "string" && typeof row.credential_iv === "string") {
     credentials = JSON.parse(await decryptVersionedConnectorCredentials(env, {

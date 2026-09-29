@@ -132,6 +132,7 @@ export {
   type ConnectorWebhookVerificationInput,
 } from "./types";
 export {
+  connectorDiagnosticCode,
   connectorObservationErrorCode,
   connectorObservationFailureLevel,
   instrumentConnectorAdapter,
