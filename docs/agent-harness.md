@@ -483,9 +483,11 @@ The always-active `rally_skills` plugin owns two globally named controls. `load_
 
 Three bounds keep a looping model from loading its way into a context-limit error: a count cap, a budget over the total tokens of loaded bodies, and a byte cap on a single `read_skill_resource` response. Bind judges the first two (`admitSkillLoad`); Rally measures the token half by resolving the bodies the load would actually inject, and applies the third itself — an unbounded Tier-3 read would otherwise route around the Tier-2 budget, since a skill whose body fits can bundle a reference that does not. All three are configurable, through `maxActiveSkills`, `maxActiveSkillBodyTokens`, and `maxSkillResourceBytes`.
 
-The package ships five skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Three are unowned and offered to every run: `deep-research`, `writing-an-email`, and `scheduling-a-calendar-event`. The other two — `polling-for-events` below and `building-live-sites` above — each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin. The latter two of the unowned three are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
+The package ships six skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Three are unowned and offered to every run: `deep-research`, `writing-an-email`, and `scheduling-a-calendar-event`. The other three — `polling-for-events` and `passing-work-between-sidekick-runs` below and `building-live-sites` above — each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin. The latter two of the unowned three are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
 
 `polling-for-events` is what a run reads when somebody asks to be told whenever something happens. Its first instruction is to *not* poll: most connectors declare events Rally can trigger on, so the skill sends the model to `plugin_inspect` before it reaches for a timer, and the interval is the fallback for what inspection rules out. It then carries the three things a model gets wrong unaided: the cadence floor (no `interval` trigger faster than every ten minutes, slower is fine, and the person's own stated cadence wins), the keyed memory table that stops a run re-reporting what the last one already saw, and the steer away from `resource_watch`, which a model reaches for when told to watch one document and which `SidekickDO` builds neither a schedule nor an evaluator for. It sets `ownerPlugin: "rally:sidekicks"` because the whole procedure is drafting a Sidekick, which also keeps it out of an automation occurrence's catalog — an occurrence is deliberately never given the drafting tools.
+
+`passing-work-between-sidekick-runs` is what a run reads when it drafts a Sidekick whose triggers build on each other: one run asks people something, their replies arrive, a later run gathers them. It carries the fact a drafter misses, that a reply in a thread a run started continues that run rather than firing a trigger, and has the definition give that continued run its own steps: post the reply to the Sidekick's home conversation under a cycle key, then finish. The gathering run reads the home back to the cycle's opening post instead of re-reading the outside source. It sets `ownerPlugin: "rally:sidekicks"` for the same reason as `polling-for-events`.
 
 All of them are offered to every production run the API starts, subject to the owner filter. Nothing is withheld by surface. A skill
 is advice, and what a surface may *do* is settled in the tool loop. Offering is
@@ -1410,6 +1412,36 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-09-29 — Sidekicks whose triggers build on each other get a drafting skill
+
+**What changed:** `passing-work-between-sidekick-runs` joined `BUILT_IN_SKILLS`
+with `ownerPlugin: "rally:sidekicks"`. It has a drafter map every way a run
+starts, including a reply that continues the run that asked, write steps for
+each, and hand work between them through the Sidekick's home conversation:
+every handoff post carries a cycle key, and the first run of a cycle posts an
+opening message that a later run reads back to.
+
+**Why:** The Northstar weekly call prep Sidekick asks three people by Slack DM at
+1 PM and compiles an agenda at 2 PM. After external conversation bindings
+shipped, a reply in its DM thread reached the run that sent it, as designed,
+but the definition had no step for a continued run. The run answered "Noted"
+with no tool call, so the reply stayed in the run child where no later run
+looks, and the 2 PM run was written to re-read the DMs instead. A run posts
+only when its instructions say to (`RUN_POST_INSTRUCTION`), so the fix belongs
+in how definitions are written, not in the runtime.
+
+**Considered and rejected:** A standing-policy line in every run's prompt
+telling a continued run to forward the reply home. Not every continuation
+should post, and the definition is where a person can see and change that
+choice. Keeping the handoff in a memory table only: people cannot read a
+table, so a handoff that went wrong would be invisible; the skill keeps the
+table for keys and the home for content.
+
+**Consequences:** The body's claims (a reply continues the run; a post to the
+home needs no `conversation`; the host marks a forwarded post's sender) are
+`external-conversation-bindings.md`'s and `conversation-tools.md`'s. A change
+to either has to update this body in the same change.
 
 ### 2026-09-27 — A run's result reaches a conversation only by conversation_post
 

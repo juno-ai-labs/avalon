@@ -4,6 +4,7 @@ import {
   BUILDING_LIVE_SITES_SKILL,
   BUILT_IN_SKILLS,
   DEEP_RESEARCH_SKILL,
+  PASSING_WORK_BETWEEN_SIDEKICK_RUNS_SKILL,
   POLLING_FOR_EVENTS_SKILL,
   SCHEDULING_A_CALENDAR_EVENT_SKILL,
   WRITING_AN_EMAIL_SKILL,
@@ -582,6 +583,21 @@ describe("built-in skills", () => {
     // string would stay green through the next rename while the skill silently
     // left every catalog.
     expect(POLLING_FOR_EVENTS_SKILL.ownerPlugin).toBe(AUTOMATIONS_PLUGIN_ID);
+  });
+
+  it("scopes the run-handoff skill to the plugin that drafts the Sidekick", () => {
+    // Same reason as the polling skill: the procedure is writing a definition,
+    // and an automation occurrence is never given the drafting tools.
+    expect(PASSING_WORK_BETWEEN_SIDEKICK_RUNS_SKILL.ownerPlugin).toBe(AUTOMATIONS_PLUGIN_ID);
+  });
+
+  it("tells the drafter that a reply continues the run that asked", () => {
+    const body = PASSING_WORK_BETWEEN_SIDEKICK_RUNS_SKILL.body;
+    // The failure this skill exists for: a reply continued the run, the run had
+    // no instructions for it, said "noted", and the answer never left the run.
+    expect(body).toContain("**a reply in a thread a run started continues that same run.**");
+    expect(body).toContain("**cycle key**");
+    expect(body).toContain("## Anti-patterns");
   });
 
   it("states the polling floor the team set, and the rule that keeps a run honest", () => {
