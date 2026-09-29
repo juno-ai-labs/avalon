@@ -638,7 +638,10 @@ contract, then the API rolled back) does not stop PostHog delivery. The pass log
 `telemetry_delivery_row_unparseable` with a `stored_envelope_invalid:…` code that
 names the rejected field, writes that code to `terminal_code`, and puts the row
 back on the ordinary retry backoff. It is delivered once a contract that admits it
-is running again, or expires at its `delete_at`.
+is running again, or expires at its `delete_at`. A parked row still counts as
+backlog, so it holds the oldest-backlog age up until then: an age that keeps
+climbing while delivery still moves means search the logs for
+`telemetry_delivery_row_unparseable`.
 
 Use the [telemetry incident procedures](runbook.md#regional-telemetry) for provider
 outage, backlog, rejection/abuse, missing artifacts, prohibited data,
