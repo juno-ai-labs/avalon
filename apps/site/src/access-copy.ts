@@ -1,8 +1,8 @@
 /** Approved landing copy. */
 export const accessCopy = {
-  title: 'Rally — Work together',
+  title: 'Rally: one place for you, your coworkers, and AI',
   headline: 'Stop copy-pasting\nbetween Claude and Slack.',
-  description: 'Rally gives you, your (human) coworkers, and AI a single place to get work done together.',
+  description: 'Rally gives you, your (human) coworkers, and an AI agent a single place to get work done together.',
 };
 
 export function renderAccessCopy(html: string): string {

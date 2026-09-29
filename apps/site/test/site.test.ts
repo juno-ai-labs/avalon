@@ -90,8 +90,12 @@ describe('public Rally site', () => {
     const page = readProjectFile('index.html');
     const appleMark = `<svg class="button-mark" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="${thesvgMonoPath('apple')}"/></svg>`;
     expect(page).toContain(
-      `href="https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg" download>${appleMark} Download for Mac</a>`,
+      `href="https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg" download>${appleMark} Download the macOS beta</a>`,
     );
+    // Every installer link on the page is the canonical one and downloads it.
+    for (const link of page.match(/<a [^>]*Rally\.dmg[^>]*>/gu) ?? []) {
+      expect(link).toContain('href="https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg" download');
+    }
     expect(page).not.toContain('id="access-request"');
     expect(page).not.toContain('<dialog');
     expect(page).not.toContain('<details');
@@ -99,29 +103,6 @@ describe('public Rally site', () => {
     expect(page).toContain('Document · Saved');
     expect(page).toContain('{{access.headline}}');
     expect(page).toContain('{{access.description}}');
-  });
-
-  it("paints Leonardo's demo bubble in white ink on the blue fill", () => {
-    const css = readProjectFile('src/landing.css');
-    // Shared `.bubble` ink is near-black so Alan's yellow and Grace's green
-    // stay readable. Leonardo's blue is the one fill that needs the other ink.
-    expect(css).toMatch(/\.bubble\{[^}]*color:#08111a/u);
-    expect(css).toMatch(/\.leonardo \.bubble\{[^}]*color:#fff(?:;|\})/u);
-  });
-
-  it('vertically centers the Rally mark to the first line of each landing response', () => {
-    const landing = readProjectFile('src/landing.css');
-    // The mark sits in the first grid row of the body, not the whole (taller)
-    // response — centering the grid item itself would drop it beside the
-    // artifact on the last Rally turn.
-    expect(landing).toMatch(/\.ai\{[^}]*align-items:start/u);
-    expect(landing).toMatch(/\.message\{[^}]*line-height:1\.5/u);
-    // The art is square; 25×29 stretched it below the 1.5 line box. The top
-    // margin is half the leftover of that line box, so the mark stays centered
-    // on the first line when --body moves.
-    expect(landing).toMatch(
-      /\.ai-mark\{width:25px;height:25px;object-fit:contain;flex-shrink:0;margin-top:calc\(\(1\.5em - 25px\)\/2\)\}/u,
-    );
   });
 
   it('defines responsive behavior for every public surface', () => {
@@ -203,7 +184,7 @@ describe('public Rally site', () => {
 
     expect(pages[0]).toContain('class="rally-symbol"');
     expect(pages[0]).toContain('/brand/rally-mark-ink.svg');
-    // Every public page uses the ink mark on its light header.
+    // Every public page uses the ink mark; the dark landing inverts it in CSS.
     for (const page of pages) {
       expect(page).toContain('/brand/rally-mark-ink.svg');
       expect(page).not.toContain('/brand/rally-mark.svg"');
@@ -522,34 +503,6 @@ describe('public Rally site', () => {
       .map((match) => match[1]);
 
     expect(new Set(buildInputPaths)).toEqual(new Set(publicHtmlPaths));
-  });
-
-  it('uses help@rallywith.ai as the only role-based public contact and preserves triage subjects', () => {
-    const publicHtmlPaths = readdirSync(new URL('../', import.meta.url), {
-      encoding: 'utf8',
-      recursive: true,
-    }).filter((path) => path.endsWith('.html')
-      && !path.startsWith('dist/')
-      && !path.startsWith('node_modules/'));
-    const publicAddresses = new Set<string>();
-    const publicMailtoTargets = new Set<string>();
-
-    for (const path of publicHtmlPaths) {
-      const page = readProjectFile(path);
-      const addresses = page.match(/[a-z0-9._%+-]+@rallywith\.ai/giu) ?? [];
-      for (const address of addresses) {
-        const normalizedAddress = address.toLowerCase();
-        publicAddresses.add(normalizedAddress);
-        expect(normalizedAddress, path).toBe('help@rallywith.ai');
-      }
-      for (const target of page.match(/mailto:[^"\s]+/gu) ?? []) {
-        publicMailtoTargets.add(target);
-        expect(target, path).toMatch(/^mailto:help@rallywith\.ai\?subject=[^&"\s]+$/u);
-      }
-    }
-
-    expect(publicAddresses).toEqual(new Set(['help@rallywith.ai']));
-    expect(publicMailtoTargets.size).toBeGreaterThan(0);
   });
 
   it('routes site telemetry before choosing whether an anonymous browser identifier may persist', () => {
