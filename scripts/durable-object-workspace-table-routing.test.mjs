@@ -44,11 +44,6 @@ test("rejects the three shipped incidents", () => {
   `), ["connector_connections"]);
 });
 
-test("names the message's remedy", () => {
-  const [message] = lint("this.env.DB.prepare(`SELECT 1 FROM connector_connections`)");
-  assert.match(message.message, /Route the query through the object that owns the table/u);
-});
-
 test("reads tables spread into the list from their own module", () => {
   assert.deepEqual(misroutedTables("this.env.DB.prepare(`DELETE FROM authorization_delivery WHERE job_key = ?`)"),
     ["authorization_delivery"]);

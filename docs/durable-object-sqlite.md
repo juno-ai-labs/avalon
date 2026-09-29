@@ -369,7 +369,9 @@ existed. The rule reads the list from
 so the list cannot drift from the router's. It sees only literal SQL passed to
 `this.env.DB.prepare` or `exec`: a statement built elsewhere and handed in, or
 the binding aliased to a local, is still a review target. Route such a read
-through a typed WorkspaceDO method or `withWorkspaceRuntimeDatabase`.
+through a typed WorkspaceDO method or `withWorkspaceRuntimeDatabase`. Inside
+WorkspaceDO itself use its own storage (`runWorkspaceSql`, or `localWorkspaceEnv`):
+`withWorkspaceRuntimeDatabase` without the local executor calls the object back.
 
 ### 2026-09-21 — A migration fingerprint cannot take an object offline
 
