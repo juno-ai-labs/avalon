@@ -15,7 +15,7 @@ Support and Trust Center pages use `apps/site/src/information.css`, a static com
 | `apps/site/src/*-handoff.ts`, `desktop-open.ts`, `invite.ts`, `slack-link.ts`, `workstream-link.ts` | Report presented, automatic, and manual browser-to-desktop handoff attempts after each page has validated its own target. |
 | `apps/site/vite.config.ts` | Injects the shared telemetry entry and immutable release/build context into every site page. |
 | `apps/api/src/routes/telemetry.ts` | Exposes the content-free Cloudflare route decision and the capability-bound anonymous ingest. |
-| `apps/api/src/telemetry/posthog-adapter.ts` | Maps the Global page observations once to PostHog `$pageview` and `$pageleave`. |
+| `apps/api/src/telemetry/posthog-adapter.ts` | Maps the Global page observations once to PostHog `$pageview` and `$pageleave`; `site_action_selected` keeps its own name and properties. |
 | `apps/site/trust/cookies/index.html` | Public disclosure for first-party site analytics, browser storage, regional behavior, and prohibited fields. |
 
 The product decision is in the [public-site telemetry
@@ -35,8 +35,16 @@ visible-duration bucket. Global maps these observations one-for-one to PostHog
 already validated site context. Electron screen events never impersonate web
 page events.
 
-`site_action_selected` retains the legacy closed action and placement contract for landing,
-download, or support pages. `desktop_handoff_attempted` reports the handoff type,
+`site_action_selected` reports a click on a tagged link on the landing,
+download, or support pages. A link opts in with a `data-site-action` id, and
+`SITE_ACTION_LINKS` in `telemetry.ts` maps each id to a closed action, placement
+and, for pricing downloads, plan. One capture-phase click listener reads the id
+and ignores any id not in that table, so markup chooses a combination but never
+supplies a value. Every installer link has its own id (`download-header`,
+`download-hero`, `download-pricing-pro|max|ultra`), which is how the landing
+dashboard tells the five identical DMG links apart. The event shares the page
+view's anonymous `distinct_id`, so its referrer and campaign come from joining
+to that visit's `$pageview` rather than being copied onto the click. `desktop_handoff_attempted` reports the handoff type,
 whether it was merely presented or actually attempted, and whether the local
 target parser considered it valid. Handoff query strings, URL fragments,
 single-use tickets, invitation tokens, Slack state, work-stream IDs, automation
@@ -129,6 +137,31 @@ that reports. Events are sent immediately in batches bounded by the shared
 256-KiB/50-event contract; the page itself holds at most 20. The route lookup
 avoids writing a disposable D1 journey merely to decide whether browser storage
 is allowed.
+
+### 2026-09-29 — Report which landing link was clicked
+
+**What changed:** The landing's download, demo, founder and footer support links
+now report `site_action_selected`. The contract gained the `demo_request` and
+`founder_contact` actions, the `sidekicks`, `team` and `pricing` placements, and
+an optional `plan` (`pro`, `max`, `ultra`). The reporter also stopped resending
+a batch the API refused with a 4xx.
+
+**Why:** The team wanted to know which of the five identical installer links
+converts and to measure the landing for go-to-market. The event and its PostHog
+path already existed, but no page called it, so the only signal was page views.
+
+**Considered and rejected:** A `link` property carrying the link's own id.
+That would let markup put any string into an event; a closed placement and plan
+keep the event within the contract. Copying the referrer and UTM values onto each
+click was also rejected: the click already shares the visit's anonymous id, so
+the dashboard joins to the page view instead of widening the event.
+
+**Consequences:** Widening the enums is compatible for new values only, and the
+API validates a batch as a whole. A site deployed before the API would have
+every batch containing a new value refused; with the 4xx change the site drops
+that batch instead of resending it forever, so at worst those clicks are lost
+until the API catches up. A new tagged link needs its id in `SITE_ACTION_LINKS`;
+the site test fails on an id the table does not know.
 
 ### 2026-09-21 — Retire acquisition-form telemetry ownership
 

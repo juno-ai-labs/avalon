@@ -6,7 +6,8 @@ import { parseDesktopTarget } from '../src/auth-handoff';
 import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
 import { isIosDevice, legacyIosWorkstreamHandoff } from '../src/workstream-link';
-import { normalizedTelemetryPathname, sitePageForPath } from '../src/telemetry';
+import { TELEMETRY_EVENTS } from '@rally/contracts/telemetry';
+import { normalizedTelemetryPathname, SITE_ACTION_LINKS, siteActionForLink, sitePageForPath } from '../src/telemetry';
 
 const readProjectFile = (path: string): string =>
   readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -103,6 +104,22 @@ describe('public Rally site', () => {
     expect(page).toContain('Document · Saved');
     expect(page).toContain('{{access.headline}}');
     expect(page).toContain('{{access.description}}');
+  });
+
+  it('reports every tagged landing link with values the telemetry contract admits', () => {
+    const page = readProjectFile('index.html');
+    const ids = [...page.matchAll(/data-site-action="([^"]+)"/gu)].map(([, id]) => id);
+    // A misspelled id is ignored at runtime, which would silently stop counting that link.
+    for (const id of ids) expect(siteActionForLink(id), id).not.toBeNull();
+    // Each installer link carries its own id, so the dashboard can tell them apart.
+    for (const link of page.match(/<a [^>]*Rally\.dmg[^>]*>/gu) ?? []) {
+      expect(link).toMatch(/data-site-action="download-[a-z-]+"/u);
+    }
+    // The API refuses a whole batch over one value its schema does not admit.
+    const schema = TELEMETRY_EVENTS.site_action_selected.properties;
+    for (const [id, props] of Object.entries(SITE_ACTION_LINKS)) {
+      expect(schema.safeParse({ page: 'landing', ...props }).success, id).toBe(true);
+    }
   });
 
   it('defines responsive behavior for every public surface', () => {

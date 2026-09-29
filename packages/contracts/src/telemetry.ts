@@ -1954,8 +1954,9 @@ export const TELEMETRY_EVENTS = {
     identityScopes: ["anonymous-epoch"],
     properties: deferredZodSchema(() => z.strictObject({
       page: z.enum(["landing", "download", "support"]),
-      action: z.enum(["download", "primary_cta", "secondary_cta", "faq_opened", "connector_setup", "support_contact"]),
-      placement: z.enum(["header", "hero", "body", "footer", "faq", "connector", "unknown"]),
+      action: z.enum(["download", "primary_cta", "secondary_cta", "faq_opened", "connector_setup", "support_contact", "demo_request", "founder_contact"]),
+      placement: z.enum(["header", "hero", "body", "footer", "faq", "connector", "unknown", "sidekicks", "team", "pricing"]),
+      plan: z.enum(["pro", "max", "ultra"]).optional(),
     })),
   }),
   desktop_handoff_attempted: productEvent({
