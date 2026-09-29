@@ -231,6 +231,15 @@ describe("the automations plugin", () => {
     expect(systemMessage).toContain("Scheduled result delivery to a workstream is limited to the owning workstream");
   });
 
+  it("tells the drafter that runs share nothing unless the instructions say how", () => {
+    const { systemMessage } = createAutomationsPlugin(host());
+    // A drafter that assumes a later run remembers an earlier one writes a
+    // definition whose handoff exists nowhere; the detail is the skill's.
+    expect(systemMessage).toContain("Every run starts fresh");
+    expect(systemMessage).toContain("where each run writes it and where the next run reads it");
+    expect(systemMessage).toContain("passing-work-between-sidekick-runs");
+  });
+
   it("publishes ready submissions without a separate activation tool", () => {
     // Publication belongs to the authorized host submission boundary.
     const modes = createAutomationsPlugin(host()).tools

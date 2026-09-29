@@ -2386,7 +2386,7 @@ const automationDraftSubmissionJsonSchema = {
       description: `The color of the Sidekick's hexagon. A Sidekick that already has one keeps it unless the person asks for another: sidekicks_list shows the current one. A new choice is one of ${PROJECT_COLOR_RING.join(", ")}. The other values are accepted only to keep a Sidekick's current color.`,
     },
     overview: { type: "string", description: "A few sentences for the person approving it: what it watches, what it does each time, and where the result goes. This is what somebody reads to decide whether to accept the draft." },
-    instructions: { type: "string", description: "What each run should actually do, written for a run that cannot see this conversation. Name the steps, the tools, and what finishing looks like. A result meant to reach an inbox, a channel, or a document is only sent if a step here says to send it." },
+    instructions: { type: "string", description: "What each run should actually do, written for a run that cannot see this conversation. Name the steps, the tools, and what finishing looks like. A result meant to reach an inbox, a channel, or a document is only sent if a step here says to send it. A run cannot see earlier runs either: anything one run must pass to a later one needs a step saying where it is written and where it is read." },
     triggers: {
       type: "array",
       description: "What starts a run, one entry per trigger. Every field of an entry is required, so set the ones the chosen type does not use to null.",

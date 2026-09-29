@@ -1420,7 +1420,12 @@ with `ownerPlugin: "rally:sidekicks"`. It has a drafter map every way a run
 starts, including a reply that continues the run that asked, write steps for
 each, and hand work between them through the Sidekick's home conversation:
 every handoff post carries a cycle key, and the first run of a cycle posts an
-opening message that a later run reads back to.
+opening message that a later run reads back to. The Sidekicks plugin's
+system message (`AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`) gained the high-level rule
+that points to it: every run starts fresh with only its instructions and its
+trigger, so when one run needs what another run or a reply produced, the
+instructions must say where each run writes it and where the next reads it.
+The draft schema's `instructions` field says the same in one sentence.
 
 **Why:** The Northstar weekly call prep Sidekick asks three people by Slack DM at
 1 PM and compiles an agenda at 2 PM. After external conversation bindings
@@ -1430,6 +1435,10 @@ with no tool call, so the reply stayed in the run child where no later run
 looks, and the 2 PM run was written to re-read the DMs instead. A run posts
 only when its instructions say to (`RUN_POST_INSTRUCTION`), so the fix belongs
 in how definitions are written, not in the runtime.
+
+The rule sits in the drafter's system message as well as the skill because a
+drafter that never suspects runs share nothing has no reason to load the skill;
+the message carries the fact and the skill carries the procedure.
 
 **Considered and rejected:** A standing-policy line in every run's prompt
 telling a continued run to forward the reply home. Not every continuation
