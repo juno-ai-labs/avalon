@@ -331,14 +331,15 @@ existing build, CSP and tests.
 React runtime and a second build to a page with one interactive behavior.
 Loading Barlow from Google Fonts and the team photos from `juno-labs.com`, which
 the site CSP (`default-src 'self'`) blocks; both now ship from the site origin.
-Linking each founder's personal address, which breaks the rule that
-`help@rallywith.ai` is the only public contact.
+Keeping `help@rallywith.ai` as the only public address: the product owner wants
+each founder's address linked from the team section, and spam is an accepted
+cost.
 
 **Consequences:** The landing is now dark while the other public pages stay
 light; the ink mark is inverted with CSS rather than adding a new mark file. A
 new font weight must be added to `src/fonts/` with its README row first. The
 Sidekicks "When something happens" blurb was unfinished in the design and was
-completed here; it needs product review.
+completed with one concrete example in the tone of the rest of the page.
 
 ### 2026-09-21 — Remove retired acquisition and release deployment coupling
 
