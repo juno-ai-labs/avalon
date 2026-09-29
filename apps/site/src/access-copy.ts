@@ -1,6 +1,6 @@
 /** Approved landing copy. */
 export const accessCopy = {
-  title: 'Rally — one place for you, your coworkers, and AI',
+  title: 'Rally: one place for you, your coworkers, and AI',
   headline: 'Stop copy-pasting\nbetween Claude and Slack.',
   description: 'Rally gives you, your (human) coworkers, and an AI agent a single place to get work done together.',
 };
