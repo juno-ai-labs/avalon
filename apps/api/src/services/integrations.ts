@@ -4532,10 +4532,10 @@ export async function runWorkstreamHarness(
     }
     throw error;
   } finally {
+    await livenessMonitor.stop();
     // Tools run only inside the harness, so this is where a plugin's
     // run-scoped resources, such as Terminal's provider session, are done.
-    disposeHarnessPlugins(harnessTools.plugins);
-    await livenessMonitor.stop();
+    disposeHarnessPlugins(env, harnessTools.plugins);
   }
 
   await streamDeltaBatcher.flush();
@@ -5855,12 +5855,22 @@ function customMcpActivityName(name: unknown): string {
 /**
  * Release what each plugin holds for the run. A plugin that holds nothing is
  * not `Disposable`; Terminal is, for the provider session its tools share.
+ * One plugin failing to release is logged and does not stop the rest, nor
+ * replace the run's own outcome.
  */
-function disposeHarnessPlugins(plugins: readonly HarnessPlugin[]): void {
+function disposeHarnessPlugins(env: Env, plugins: readonly HarnessPlugin[]): void {
   for (const plugin of plugins) {
     if (!(Symbol.dispose in plugin)) continue;
     const dispose = (plugin as Partial<Disposable>)[Symbol.dispose];
-    if (typeof dispose === "function") dispose.call(plugin);
+    if (typeof dispose !== "function") continue;
+    try {
+      dispose.call(plugin);
+    } catch (error) {
+      logStructuredEvent(env, "warn", "harness_plugin_dispose_failed", {
+        plugin_id: plugin.canonicalId,
+        code: diagnosticErrorCode(error, "harness_plugin_dispose_failed"),
+      });
+    }
   }
 }
 
