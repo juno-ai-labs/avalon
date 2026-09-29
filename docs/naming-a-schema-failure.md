@@ -154,12 +154,7 @@ its own is a boundary that drifts.
 | `apps/api/src/queues/activity-consumer.ts` | an effect envelope the consumer's contract refuses logs `effect_queue_message_invalid` with its failing paths, including unknown key names (the Queue's producers are our own objects, so they are the diagnosis of a deploy skew), where it logged `legacy_message_after_cutover` under a connector-event code; it is still acked |
 | `packages/contracts/src/platform-diagnostics.ts` | `platformErrorCode` names a Workers runtime, D1 or SQLite failure (`d1_overloaded`, `sqlite_unique_constraint`) from its fixed sentence or its `cause`, never copying the table, column or value the sentence quotes; `diagnosticErrorCode` and the engineering MCP read it |
 | `packages/connectors/src/observability.ts` | `connectorDiagnosticCode` is `connectorObservationErrorCode` plus the provider's HTTP status, its rate limit, or the platform failure behind a request that never completed (`provider_error:http_403:rate_limited`) |
-| `apps/api/src/lib/api-error.ts` | `ApiError.diagnosticCode` carries what a log may say beyond the public `code`, across an RPC hop, and never into the response body; `request_failed` and `diagnosticErrorCode` log it |
-| `apps/api/src/services/{github,slack,linear,notion,ashby}-routing-service.ts`, `resend-inbound-email-service.ts` | every regional bridge's error envelope carries `diagnosticCode` through `diagnosticCodeField`, so a provider's status behind a 502 `provider_error`, or a D1 failure behind the work-stream fence's refusal, reaches the Global log; `github_delivery_retry` logs it too |
-| `apps/api/src/workflows/connector-poll.ts` | `connector_poll_attempt_failed` names each attempt's failure where the original error is still in hand, and `connector_poll_failed` carries the last one as `error_code` beside `error_name: "Error"` |
-| `apps/api/src/services/workstream-authority.ts` | a fence that failed closed carries `failedClosedReason`, so the queue refusal reads `workstream_maintenance:quarantined:0:authority_control_read_failed:d1_overloaded` rather than a quarantine that never happened |
-| `apps/api/src/durable-objects/workspace-alarm-instrumentation.ts` | `workspace_scheduled_alarm_phase_failed` logs `code` and `error_name` |
-| `apps/engineering-mcp/src/server.ts` | `engineering_mcp_tool_failed` logs the server's own refusal code, a schema rejection's paths, or the SQL failure's platform word, where it logged `tool_failed` for all of them |
+| `apps/api/src/lib/api-error.ts` | `ApiError.diagnosticCode` carries what a log may say beyond the public `code`, across an RPC hop and through every regional bridge envelope (`diagnosticCodeField`), and never into the response body; `request_failed` and `diagnosticErrorCode` log it |
 | `apps/api/src/queues/access-revocation-consumer.ts` | `access_revocation_message_invalid` names each failing field of a queue message it cannot read, where it formatted the issues by hand and spelled the whole-value case `(root)` |
 
 The label a Durable Object entry point passes to `parseRpcInput` is the RPC
@@ -247,8 +242,9 @@ the caller sees.
 Every regional bridge's error envelope carries the log-only code, since each
 one runs the work-stream fence and rebuilds its refusal on the Global side.
 
-**Consequences:** `request_failed` now carries `error_code` for every
-`ConnectorError`, and for an `ApiError` only when it has a `diagnosticCode`.
+**Consequences:** `request_failed` now carries `error_code` for a
+`ConnectorError` whose details name a status, rate limit or platform failure,
+and for an `ApiError` that has a `diagnosticCode`.
 A sentence the platform table does not know still reduces to the caller's
 fallback; add it to `PLATFORM_ERRORS` when a log shows it. The queue refusal's
 message grows a fourth segment only when the fence failed closed.
