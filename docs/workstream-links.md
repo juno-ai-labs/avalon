@@ -24,6 +24,7 @@ changing the Slack unfurl card or the sweep that keeps it current.
 | Choose a Channel's current Space placement for server-generated links | `WorkspaceDO.canonicalChannelSpace`, `apps/api/src/services/workstream-link-service.ts` |
 | Serve current and legacy work-stream paths | `apps/site/app/workstreams/index.html`, `apps/site/src/workstream-link.ts` |
 | Make the dynamic path resolve | `apps/site/public/_redirects` |
+| Style every desktop-handoff page like the desktop sign-in screen | `apps/site/src/desktop-handoff.css` |
 | Slack unfurl | `unfurlRallyLinks` in `apps/api/src/services/slack-agent-service.ts` |
 | The card's blocks and its one status table | `slack-workstream-card.ts` |
 | The refresh sweep | `refreshSlackWorkstreamUnfurls`, wired into `scheduled` in `apps/api/src/index.ts` |
