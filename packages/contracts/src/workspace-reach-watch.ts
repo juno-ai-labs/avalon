@@ -23,9 +23,8 @@ export const WORKSPACE_SOCKET_PONG_TIMEOUT_MS = 15_000;
  *
  * Bounds: time from `new WebSocket` to its `open` event.
  * Without it: a `101` that never reaches the client leaves the socket in
- *   CONNECTING until the operating system gives up. On 2026-09-29 one sat for
- *   about twelve minutes, sending nothing, while the server held it open as a
- *   socket that never spoke and reset WorkspaceDO over it.
+ *   CONNECTING, sending nothing, until the operating system gives up, while
+ *   the server counts it as a socket that never spoke.
  * Direction: upper bound.
  * Trips: the client closes the socket, reports `open_timeout`, and redials
  *   with the ordinary backoff. A redial that speaks within the server's

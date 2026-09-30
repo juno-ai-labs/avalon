@@ -1307,12 +1307,10 @@ export const WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS = 2 * 60_000;
  * docs/adding-security-defensive-and-other-limits.md.
  *
  * Bounds: resets caused by one socket its client never spoke on.
- * Without it: a lone member whose Mac sleeps, or whose network drops, between
- *   the upgrade and `subscribe` leaves one silent socket, nobody else is there
- *   to be heard from, and the object resets and pages #firehose-alert although
- *   it was never stuck. Eleven such resets between 2026-09-27 and 2026-09-30,
- *   every one with `missed_sockets: 1` (docs/realtime-sockets.md, "What a false
- *   positive looks like").
+ * Without it: a lone member whose client goes away between the upgrade and
+ *   `subscribe` resets an object that was never stuck, and pages
+ *   #firehose-alert (docs/realtime-sockets.md, "What a false positive looks
+ *   like").
  * Direction: lower bound on missed sockets; the value that restores the
  *   earlier behavior is 1.
  * Trips: below it, each missed socket is logged once per instance as
