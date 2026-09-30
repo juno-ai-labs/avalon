@@ -3,7 +3,7 @@
 The Technology section of the public landing page (`rallywith.ai/#technology`)
 shows Rally's stack as a cut-away sphere drawn in points. A starfield gathers
 into five nested spheres, one at a time, each labeled with an amber leader
-line: the LLM routing core, Authorization, Sidekicks, Connectors, and
+line: the LLM routing core, Authorization, Connectors, Sidekicks, and
 Multiplayer collaboration. The octant facing the viewer is cut away so every
 layer shows. After a long hold the cut fills in, the sphere becomes a tennis
 ball with a neon seam, spins, and breaks back into the starfield, and the loop
@@ -28,7 +28,7 @@ out), and their colors. The text list in `index.html` repeats the names and the
 order for screen readers and search, so a change to either lands in both files
 in the same commit. The colors are the product's icon palette
 (`--av-sys-color-project-*` in `packages/ui/src/styles/themes.css`): amber,
-fuchsia, emerald, orange, blue. The seam is `--av-sys-color-brand-base`. The
+fuchsia, orange, emerald, blue. The seam is `--av-sys-color-brand-base`. The
 site does not load that stylesheet, so the hex values are copied, with the
 token name beside each; the leader-line amber is copied again in `landing.css`.
 
@@ -43,6 +43,11 @@ not say on its own.
 - **Timeline:** one loop is `LOOP` seconds: a starfield rest, then each layer
   forms and holds, the last for 20 s; the cut fills, the ball forms and spins,
   and it scatters back to stars.
+- **Starfield:** every star sits behind the spheres as the camera sees them,
+  in a slab from just past the outer sphere to well beyond it, and drifts by
+  turning about the camera's line of sight, which keeps its depth. Stars
+  whose line of sight crosses a formed sphere dim, so the spheres read as in
+  front.
 - **Drift:** every layer point moves, computed in the vertex shader from
   time alone, with no per-frame CPU work or buffer upload. A shell point
   slides along its own great circle; shells are sampled over the whole sphere

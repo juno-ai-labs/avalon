@@ -29,12 +29,12 @@ type Layer = { readonly name: string; readonly color: string };
 
 export const LAYERS: readonly Layer[] = [
   // Colors are the product's icon palette (`--av-sys-color-project-*` in
-  // packages/ui/src/styles/themes.css), by key: amber, fuchsia, emerald,
-  // orange, blue.
+  // packages/ui/src/styles/themes.css), by key: amber, fuchsia, orange,
+  // emerald, blue.
   { name: 'LLM routing core', color: '#f59e0b' },
   { name: 'Authorization', color: '#d946ef' },
-  { name: 'Sidekicks', color: '#10b981' },
   { name: 'Connectors', color: '#f97316' },
+  { name: 'Sidekicks', color: '#10b981' },
   { name: 'Multiplayer collaboration', color: '#3b82f6' },
 ];
 
@@ -66,6 +66,10 @@ export const MOMENTS = {
 } as const;
 
 const STEP = 0.44;
+/** Where the camera looks from: the cut octant faces it. */
+const CAMERA_FROM = new Vector3(-0.52, 0.5, 1).normalize();
+const CAMERA_DISTANCE = 11.5;
+const FOV = 34;
 const OUTER = STEP * LAYERS.length;
 const STAR_ONLY = 5200;
 const LAYER_POINTS = [1300, 2400, 3500, 4700, 5900];
@@ -169,12 +173,26 @@ function buildGeometry(): BufferGeometry {
   const info = new Float32Array(total * 4);
   const drift = new Float32Array(total * 4);
 
-  // A jittered grid: evenly spread, never regular.
-  const box = { x: 20, y: 11, z: 12 };
-  const cell = Math.cbrt((box.x * box.y * box.z) / total);
-  const nx = Math.ceil(box.x / cell);
-  const ny = Math.ceil(box.y / cell);
-  const nz = Math.ceil(box.z / cell);
+  // The starfield sits wholly behind the spheres as the camera sees them: a
+  // slab from just past the outer sphere to well beyond it, as wide at each
+  // depth as the view is there (with room for the phone zoom and the wide
+  // layout's offset). A jittered grid spreads it evenly, never regularly.
+  const back = CAMERA_FROM.clone().negate();
+  const across = new Vector3(0, 1, 0).cross(CAMERA_FROM).normalize();
+  const upward = CAMERA_FROM.clone().cross(across);
+  const nearest = OUTER + 0.6;
+  const deepest = OUTER + 10;
+  const cell = Math.cbrt(2 * 2 * 1 / total);
+  const nx = Math.ceil(2 / cell);
+  const ny = Math.ceil(2 / cell);
+  const nz = Math.ceil(1 / cell);
+  const starAt = (a: number, b: number, c: number): Vector3 => {
+    const depth = nearest + c * (deepest - nearest);
+    const half = Math.tan((FOV / 2) * (Math.PI / 180)) * (CAMERA_DISTANCE + depth) * 1.45;
+    return back.clone().multiplyScalar(depth)
+      .addScaledVector(across, a * half * 2.4)
+      .addScaledVector(upward, b * half);
+  };
   const cells = Array.from({ length: nx * ny * nz }, (_, i) => i);
   for (let i = cells.length - 1; i > 0; i -= 1) {
     const j = Math.floor(rand() * (i + 1));
@@ -193,11 +211,7 @@ function buildGeometry(): BufferGeometry {
     const gx = c % nx;
     const gy = Math.floor(c / nx) % ny;
     const gz = Math.floor(c / (nx * ny));
-    const s = new Vector3(
-      (gx + rand()) * cell - box.x / 2,
-      (gy + rand()) * cell - box.y / 2,
-      (gz + rand()) * cell - box.z * 0.6,
-    );
+    const s = starAt(((gx + rand()) / nx) * 2 - 1, ((gy + rand()) / ny) * 2 - 1, (gz + rand()) / nz);
     const at = shapeAt ?? s;
     const to = ballAt ?? at;
     star.set([s.x, s.y, s.z], next * 3);
@@ -344,13 +358,29 @@ vec3 drifted(vec3 s, int group, float shell) {
   return wall == 0 ? vec3(-uw.x, uw.y, 0.0) : wall == 1 ? vec3(-uw.x, 0.0, uw.y) : vec3(0.0, uw.x, uw.y);
 }
 
-vec3 turnY(vec3 p, float a) { float c = cos(a); float s = sin(a); return vec3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z); }
+// Turns p about the camera's line of sight, which keeps a star at the same
+// depth, so the field stays behind the spheres as it drifts.
+vec3 turnAboutView(vec3 p, float a) {
+  vec3 k = normalize(uEye);
+  return p * cos(a) + cross(k, p) * sin(a) + k * dot(k, p) * (1.0 - cos(a));
+}
+
+// Whether the camera's view of p passes through the formed spheres, and how
+// much: stars there are dimmed so the spheres read as in front of them.
+float behindSpheres(vec3 p) {
+  float reach = 0.0;
+  for (int i = 0; i < ${LAYERS.length}; i++) reach = max(reach, ${STEP.toFixed(4)} * float(i + 1) * uForm[i]);
+  reach = max(reach, ${OUTER.toFixed(4)} * uForm[${LAYERS.length}]);
+  vec3 ray = normalize(p - uEye);
+  float miss = length(cross(-uEye, ray));
+  return 1.0 - 0.7 * (1.0 - smoothstep(reach * 0.9, reach * 1.05, miss)) * step(0.01, reach);
+}
 
 void main() {
   int group = int(aInfo.x + 0.5);
   float seed = aInfo.y;
   float seam = aInfo.z;
-  vec3 star = turnY(position, uStarTurn + seed * 0.02);
+  vec3 star = turnAboutView(position, uStarTurn + seed * 0.02);
   star.y += sin(uTime * 0.3 + seed * 40.0) * 0.04;
 
   float form = 0.0;
@@ -407,8 +437,9 @@ void main() {
   shellAlpha *= mix(1.0, open, form);
   float alpha = mix(shellAlpha, sphereAlpha, fillT);
   alpha = mix(alpha, seam > 0.5 ? seamAlpha : sphereAlpha, ballT);
-  float size = mix(1.4, mix(2.3, 2.4, 1.0 - aInfo.w), structure) + seam * ballT * (1.0 - scatter) * 2.6;
-  vAlpha = mix(0.3 + 0.35 * twinkle, alpha, structure);
+  // Stars sit twice as far from the camera as the spheres, so they start larger.
+  float size = mix(2.8, mix(2.3, 2.4, 1.0 - aInfo.w), structure) + seam * ballT * (1.0 - scatter) * 2.6;
+  vAlpha = mix((0.3 + 0.35 * twinkle) * behindSpheres(p), alpha, structure);
 
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
@@ -469,8 +500,8 @@ export function createSchematic(canvas: HTMLCanvasElement, overlay: SVGSVGElemen
   const renderer = new WebGLRenderer({ canvas, antialias: false, alpha: true, powerPreference: 'low-power' });
   renderer.setClearColor(0x000000, 0);
   const scene = new Scene();
-  const camera = new PerspectiveCamera(34, 1, 0.1, 60);
-  camera.position.set(-0.52, 0.5, 1).normalize().multiplyScalar(11.5);
+  const camera = new PerspectiveCamera(FOV, 1, 0.1, 60);
+  camera.position.copy(CAMERA_FROM).multiplyScalar(CAMERA_DISTANCE);
   camera.lookAt(0, 0, 0);
 
   const uniforms = {
