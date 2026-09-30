@@ -14,6 +14,26 @@ export default defineConfig({
   plugins: [
     { name: 'rally-access-copy', transformIndexHtml: renderAccessCopy },
     {
+      // The technology schematic is its own entry so three.js stays out of the
+      // landing page. `technology-loader.ts` adds its script when the figure
+      // nears the screen, reading the URL from `data-tech-src`: the source file
+      // in development, rewritten here to the hashed bundle. A build that cannot
+      // find the bundle fails rather than shipping a page that loads a 404.
+      name: 'rally-technology-entry',
+      transformIndexHtml: {
+        order: 'post',
+        handler: (html, context) => {
+          const source = 'data-tech-src="/src/technology.ts"';
+          if (!context.bundle || !html.includes(source)) return html;
+          const entry = Object.values(context.bundle).find(
+            (output) => output.type === 'chunk' && output.isEntry && output.name === 'technology',
+          );
+          if (!entry) throw new Error('rally-technology-entry: the technology bundle is missing from the build');
+          return html.replace(source, `data-tech-src="/${entry.fileName}"`);
+        },
+      },
+    },
+    {
       name: 'rally-site-telemetry',
       transformIndexHtml: {
         order: 'pre',
@@ -30,6 +50,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: `${projectRoot}index.html`,
+        technology: `${projectRoot}src/technology.ts`,
         concepts: `${projectRoot}concepts/index.html`,
         horizonConcepts: `${projectRoot}concepts/horizon/index.html`,
         heroConcepts: `${projectRoot}concepts/hero/index.html`,
