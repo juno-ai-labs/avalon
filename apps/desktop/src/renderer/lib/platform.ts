@@ -232,6 +232,10 @@ const browserBridge: RallyDesktopBridge = {
       document.removeEventListener('visibilitychange', report);
     };
   },
+  onPowerStateChanged() {
+    // A browser tab is told nothing about sleep; its socket rides it out.
+    return () => undefined;
+  },
   async getApplicationSettings() {
     return { ...browserApplicationSettings };
   },
