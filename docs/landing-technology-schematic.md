@@ -150,12 +150,20 @@ the rest return in the ball's colors.
 that turn, so within a minute a rectangle's short side swung into the view
 and left a bare corner. The dimming read the layers' form, which stays at 1
 through the scatter, so a dark disc sat where the ball had been until the
-loop wrapped, and then snapped bright. A larger rectangle was rejected: any
-rectangle bares a corner at some turn. A future change to the camera zoom or
-view offsets must keep the disc's radius past the view's farthest corner.
-The fill used to move every layer's points onto the outer sphere at once,
-still in their own colors, so the cut read as a swarm rather than the blue
-shell closing; the fill should stay one shell, and the recolor its own step.
+loop wrapped, and then snapped bright. The fill used to move every layer's
+points onto the outer sphere at once, still in their own colors, so the cut
+read as a swarm rather than the blue shell closing.
+
+**Considered and rejected:** A larger rectangle: any rectangle bares a corner
+at some turn. Stopping the turn: the slow drift is what keeps the field alive
+during the long holds.
+
+**Consequences:** A future change to the camera zoom or view offsets must keep
+the disc's radius past the view's farthest corner. The field is about 18%
+sparser for the same star count. The fill should stay one shell and the
+recolor its own step; the ball grows denser as the other layers return.
+
+PR: https://github.com/juno-ai-labs/avalon/pull/1036
 
 ### 2026-09-30 — The technology schematic is added to the landing page
 
