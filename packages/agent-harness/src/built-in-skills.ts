@@ -481,8 +481,9 @@ If you are drafting from Main, or the Sidekick would have no home, say so in one
 line and suggest setting it up from a Breakout for this job before you go on.
 
 A run can read and post in the home, in any room **linked** to the Sidekick,
-and in any other room the person it runs as can open. The home cannot be moved,
-but links can be added. A link belongs to the Sidekick, so the run keeps that
+and in any other room the person it runs as can open. The home is linked by
+default and cannot be moved, but more links can be added. A link belongs to the
+Sidekick, so the run keeps that
 room even if the person it runs as later loses access; a room it reaches only
 through that person comes and goes with them. So link every room the handoff or
 the result depends on, and every room at all for a personal or workspace

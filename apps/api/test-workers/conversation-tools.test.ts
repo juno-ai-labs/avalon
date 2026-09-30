@@ -241,6 +241,27 @@ describe("a Sidekick's home conversation", () => {
     });
   });
 
+  it("keeps reading and posting in its home Breakout after its run-as person leaves it", async () => {
+    const breakout = await seedBreakout("Weekly call");
+    await seedSidekick(breakout);
+    await workspace().addPrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
+      substreamId: breakout, actorUserId: AUTHOR_ID, userId: COLLEAGUE_ID, operationId: "add-colleague" });
+    await workspace().removePrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
+      substreamId: breakout, actorUserId: AUTHOR_ID, userId: AUTHOR_ID, operationId: "author-leaves" });
+    // The parent outbox is left alone: adding a member queued a
+    // participant_notification this suite's D1 has no tables to deliver.
+    await deliverChildEffects(TEST_ENV, conversation(ROOM_ID, breakout));
+
+    // The home is linked by default, and a link is the Sidekick's own
+    // permission, so the author leaving takes nothing from it.
+    expect((await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
+      scope: sidekickScope() })).conversations.map((entry) => entry.conversationId)).toEqual([`${ROOM_ID}/${breakout}`]);
+    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
+      scope: sidekickScope(), reference: null })).toMatchObject({
+      ok: true, conversation: { conversationId: `${ROOM_ID}/${breakout}`, isHome: true },
+    });
+  });
+
   it("narrows a Breakout-homed Sidekick to the Breakout's members, wherever it is asked", async () => {
     // The colleague is in the room, not in the Breakout.
     const breakout = await seedBreakout("Weekly call");
