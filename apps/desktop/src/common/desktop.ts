@@ -367,11 +367,16 @@ export interface DesktopRestorableArtifactWindow {
   mimeType?: string;
 }
 
+/** The machine is about to sleep, or has woken from sleep. */
+export type DesktopPowerState = 'suspended' | 'resumed';
+
 export interface RallyDesktopBridge {
   getRuntimeConfig: () => Promise<RuntimeConfig>;
   /** Whether any Rally window currently owns application focus. */
   getApplicationForegroundState: () => Promise<boolean>;
   onApplicationForegroundChanged: (listener: (foregrounded: boolean) => void) => () => void;
+  /** Main's `powerMonitor` suspend and resume, relayed to every Rally window. */
+  onPowerStateChanged: (listener: (state: DesktopPowerState) => void) => () => void;
   getApplicationSettings: () => Promise<DesktopApplicationSettings>;
   setLockdownMode: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setDebugEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
