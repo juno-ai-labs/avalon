@@ -41,8 +41,9 @@ describe each part; what follows is what the code does
 not say on its own.
 
 - **Timeline:** one loop is `LOOP` seconds: a starfield rest, then each layer
-  forms and holds, the last for 20 s; the cut fills, the ball forms and spins,
-  and it scatters back to stars.
+  forms and holds, the last for 20 s; the inner layers fade and the outer
+  shell closes over the cut, the ball recolors and spins, and it scatters
+  back to stars.
 - **Starfield:** every star sits behind the spheres as the camera sees them,
   in a slab from just past the outer sphere to well beyond it, and drifts by
   turning about the camera's line of sight, which keeps its depth. Because it
@@ -136,11 +137,14 @@ drifts.
 
 ## Changelog
 
-### 2026-09-30 — The starfield covers the view at every turn and brightens after the scatter
+### 2026-09-30 — The starfield covers the view at every turn, and the cut closes as one shell
 
 **What changed:** Each depth of the starfield is now a disc, filled through a
 concentric square-to-disc map so the jittered grid stays even, instead of a
 wide rectangle. The dimming behind the spheres fades out with the scatter.
+During the fill only the outer shell shows: every other layer fades out
+before it moves, the shell's points in the cut fade in at full weight, and
+the rest return in the ball's colors.
 
 **Why:** The field turns about the line of sight and the clock never wraps
 that turn, so within a minute a rectangle's short side swung into the view
@@ -149,6 +153,9 @@ through the scatter, so a dark disc sat where the ball had been until the
 loop wrapped, and then snapped bright. A larger rectangle was rejected: any
 rectangle bares a corner at some turn. A future change to the camera zoom or
 view offsets must keep the disc's radius past the view's farthest corner.
+The fill used to move every layer's points onto the outer sphere at once,
+still in their own colors, so the cut read as a swarm rather than the blue
+shell closing; the fill should stay one shell, and the recolor its own step.
 
 ### 2026-09-30 — The technology schematic is added to the landing page
 
