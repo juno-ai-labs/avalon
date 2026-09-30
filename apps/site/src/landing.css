@@ -103,7 +103,7 @@ h1{white-space:pre-line;max-width:56rem;margin:0 auto;font-size:4.5rem}
 
 .pricing-callout{margin-top:56px;padding:24px 28px;border:1px solid var(--hairline);border-left:3px solid var(--green);border-radius:2px;background:oklch(.5 .12 160/.1)}
 .pricing-callout-title{font-family:var(--display-font);font-size:24px;font-weight:500;line-height:1.2}
-.pricing-callout-body{margin-top:8px;max-width:64ch;font-size:var(--small);color:var(--soft)}
+.pricing-callout-body{margin-top:8px;font-size:var(--small);color:var(--soft)}
 .pricing-callout+.tiers{margin-top:16px}
 .tiers{margin-top:56px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
 .tier{display:flex;flex-direction:column;padding:28px;border:1px solid var(--hairline);border-radius:2px}
