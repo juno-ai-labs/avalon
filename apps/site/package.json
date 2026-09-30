@@ -12,9 +12,11 @@
     "deploy": "pnpm build && wrangler deploy --config wrangler.jsonc"
   },
   "dependencies": {
-    "@rally/contracts": "workspace:*"
+    "@rally/contracts": "workspace:*",
+    "three": "^0.186.1"
   },
   "devDependencies": {
+    "@types/three": "^0.186.0",
     "jsdom": "latest",
     "typescript": "catalog:",
     "vite": "latest",
