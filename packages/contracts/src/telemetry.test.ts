@@ -625,6 +625,9 @@ describe("telemetry registry", () => {
     ["site_action_selected", "site", "anonymous-epoch", {
       page: "landing", action: "download", placement: "pricing", plan: "grow",
     }],
+    ["site_action_selected", "site", "anonymous-epoch", {
+      page: "landing", action: "download", placement: "pricing", plan: "max",
+    }],
     ["desktop_handoff_attempted", "site", "anonymous-epoch", {
       handoffType: "auth", method: "automatic", validity: "valid",
     }],
