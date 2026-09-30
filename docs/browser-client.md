@@ -410,7 +410,9 @@ Substream Archive stays in the right-click menu, away from the header Share cont
 **What changed:** A "Download the Mac app" button, linking to the public macOS
 build the marketing site uses, is pinned just above the account menu, in
 whichever rail holds that menu: Spaces, Channels, the Breakout rail, or the
-floating fallback. A compact rail shows the icon alone. `WorkstreamSidebar`
+floating fallback. It is a Space-style row wearing Apple's mark from the
+brand pack, so a compact rail collapses it to the same lone tile a Space
+becomes. `WorkstreamSidebar`
 gained an optional `footerAbove` slot for the Breakout rail case, which desktop
 does not use.
 
