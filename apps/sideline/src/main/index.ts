@@ -15,6 +15,7 @@ import { CLIENT_CONTRACT_VERSION, RALLY_HEADERS } from "@rally/contracts/http-he
 import { socketTicketProtocols } from "@rally/contracts/socket-tickets";
 import { workstreamDeepLink } from "@rally/contracts/workstream-links";
 import { watchWorkspaceReach, type ReachWatchDiagnostic } from "@rally/contracts/workspace-reach-watch";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import {
   app,
   BrowserWindow,
@@ -465,6 +466,13 @@ ipcMain.handle("sideline:sign-out", async (event) => {
 });
 const OrganizationsResponseSchema = z.object({ workspaces: z.array(WorkspaceSchema) });
 
+/** Parse a server response, naming the rejected field in what crosses the IPC boundary. */
+function parseResponse<T>(schema: z.ZodType<T>, value: unknown, label: string): T {
+  const parsed = schema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  throw new Error(zodDiagnosticCode(parsed.error, label) ?? `${label}_invalid`);
+}
+
 ipcMain.handle("sideline:organizations", async (event): Promise<SidelineOrganization[]> => {
   assertSender(event);
   if (VISUAL_STATE) {
@@ -473,7 +481,7 @@ ipcMain.handle("sideline:organizations", async (event): Promise<SidelineOrganiza
       { id: "00000000-0000-7000-8000-00000000c009", name: "Juno Labs" },
     ];
   }
-  const { workspaces } = OrganizationsResponseSchema.parse(await authenticated("/auth/workspaces"));
+  const { workspaces } = parseResponse(OrganizationsResponseSchema, await authenticated("/auth/workspaces"), "organizations");
   return workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name }));
 });
 /**
@@ -484,29 +492,36 @@ ipcMain.handle("sideline:organizations", async (event): Promise<SidelineOrganiza
 async function switchOrganization(workspaceId: string): Promise<SidelineOrganizationSwitch> {
   const current = session;
   if (!current || current.workspace?.id === workspaceId) return "switched";
-  const selected = SessionSchema.parse(await authenticated("/auth/workspace/select", {
+  const selected = parseResponse(SessionSchema, await authenticated("/auth/workspace/select", {
     method: "POST",
     body: JSON.stringify({ workspaceId }),
-  }));
+  }), "organization_session");
   try {
-    SidelineCatalogSchema.parse(await jsonRequest(
+    parseResponse(SidelineCatalogSchema, await jsonRequest(
       `${selected.apiBaseUrl}/sideline/catalog`,
       { headers: { Authorization: `Bearer ${selected.accessToken}` } },
-    ));
+    ), "sideline_catalog");
   } catch (error) {
     void endSession(selected);
     if (error instanceof HttpResponseError && error.status === 403) return "not_admitted";
     throw error;
   }
-  // Signed out or switched elsewhere while this ran: that is the session now.
+  // Saved before it goes live, so a write failure leaves the old session in charge.
+  try {
+    await storeSession(selected);
+  } catch (error) {
+    void endSession(selected);
+    throw error;
+  }
+  // Signed out while this ran: that is the session now, so put it back on disk.
   // A token refresh replaces the object but not the Organization, so compare that.
   const previous = session;
   if (!previous || previous.workspace?.id !== current.workspace?.id) {
+    await storeSession(previous).catch(() => undefined);
     void endSession(selected);
     return "superseded";
   }
   session = selected;
-  await storeSession(session);
   restartReachWatch();
   sendToWindow("sideline:session-changed", publicSession(session));
   void endSession(previous);
