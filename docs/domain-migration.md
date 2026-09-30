@@ -27,7 +27,6 @@ deep-link scheme, and the work-stream email domain.
 | `apps/desktop/src/main/user-data-path.ts` | The canonical userData directory, the superseded ones, and the launch-time adoption that moves them. |
 | `apps/desktop/src/main/session-file.ts` | `rally-data`, and the one-shot rename of the superseded session directory. |
 | `apps/desktop/src/main/session-encryption.ts` | The minted session envelope headers and the superseded ones, which are also the AES-GCM AAD. |
-| `apps/api/test/domain-migration-config.test.ts` | Asserts the deployed configs list both renderer origins, all four site origins, both route sets, and no superseded host in any minted URL. |
 | `apps/api/src/lib/desktop-handoff.ts` | `compatibleDesktopDeepLink` — the one place a deep link is minted in its superseded scheme, for targets the server cannot attribute to a calling build. |
 | `apps/api/src/services/auth-service.ts` | `allowedReturnUri` — pins the sign-in destination's host and path, deliberately not its scheme. |
 | `apps/site/public/_headers` | The site's CSP `connect-src`, which permits both API origins. |
@@ -261,10 +260,9 @@ compatibility window — nothing outside a build reads either.
 
 ## Testing
 
-`apps/site/test/site.test.ts` asserts the full route list, the CSP, the
-canonical tags, the sitemap, and both minted deep links —
-`declares every production custom domain…` is the one that fails if an Avalon
-route is dropped. `packages/contracts/src/workstream-links.test.ts` covers
+No automated test covers the site's route list, CSP, canonical tags, sitemap or
+deep-link hostnames. Those are deploy configuration, and the deploy is their
+test ([`testing.md`](testing.md#what-to-test-and-what-not-to)). `packages/contracts/src/workstream-links.test.ts` covers
 minting the new scheme and reading the old, including a test that asserts the
 *writing* side alone: parsing accepts both, so minting the wrong scheme would
 otherwise still round-trip and no other test would notice.
@@ -502,7 +500,7 @@ is migrating off, with nothing to notice.
 **What changed:** The packaged renderer's origin became `app://rallywithai`, with
 `app://avalon` added to `ALLOWED_ORIGINS` in configured deployments rather than replaced.
 The message-export scheme became `rallywithai-export://` outright, with no legacy
-accepted. `apps/api/test/domain-migration-config.test.ts` now asserts the
+accepted. No automated check asserts the
 deployed configs against both.
 
 **Why:** Neither is a hostname, but one of them behaves like one. `app://rallywithai`

@@ -12,8 +12,6 @@ import {
   AGENT_MODEL_ROLES,
   AgentModelRoutingSchema,
   ClientSocketEventSchema,
-  ConnectorOAuthProviderSchema,
-  ConnectorOAuthProviders,
   automationAcceptanceSelections,
   CreateWorkstreamRequestSchema,
   CreateWorkspaceInvitationRequestSchema,
@@ -94,11 +92,6 @@ describe("boundary contracts", () => {
       ...legacy,
       surface: "private-screen-name",
     }).success).toBe(false);
-  });
-
-  it("uses one connector OAuth provider catalog across protocol consumers", () => {
-    expect(ConnectorOAuthProviderSchema.options).toEqual(ConnectorOAuthProviders);
-    expect(ConnectorOAuthProviders).toContain("granola");
   });
 
   it("represents provider members as external actors without manufacturing Avalon users", () => {

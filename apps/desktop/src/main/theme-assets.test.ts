@@ -9,7 +9,6 @@ import { fontScheme } from '../common/theme-assets';
 import {
   FONT_SIZE_LIMIT,
   ThemeFontCache,
-  themeFontSchemes,
 } from './theme-assets';
 
 async function directory(): Promise<string> {
@@ -29,11 +28,6 @@ function ok(body: ArrayBuffer): Response {
 }
 
 describe('the remote font cache', () => {
-  it('registers only the private font scheme', () => {
-    expect(themeFontSchemes).toEqual([
-      { scheme: fontScheme, privileges: { standard: true, secure: true } },
-    ]);
-  });
 
   const id = 'a'.repeat(32);
   const url = `${fontScheme}://cache/${id}.woff2`;

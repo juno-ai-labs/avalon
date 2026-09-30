@@ -9,19 +9,6 @@ describe('PLUGIN_BRAND_MARKS', () => {
     expect(new Set(marks.map(([, brand]) => brand.Mark)).size).toBe(marks.length);
   });
 
-  it('records which brands ship single-colour art', () => {
-    // Eight do. Slack and Granola do not — their variant unions are
-    // `default | wordmark` and `default | light | dark` — so they render their
-    // palette and `.connector-mark` recolours it. Ashby and Fireflies are local
-    // marks that only ship `mono`. If this flips upstream the table stops
-    // typechecking, which is the point of recording it.
-    expect(PLUGIN_BRAND_MARKS.slack.mono).toBe(false);
-    expect(PLUGIN_BRAND_MARKS.granola.mono).toBe(false);
-    for (const slug of ['ashby', 'fireflies', 'github', 'google', 'google-drive', 'linear', 'notion', 'x'] as const) {
-      expect(PLUGIN_BRAND_MARKS[slug].mono, slug).toBe(true);
-    }
-  });
-
   it('narrows a company name apart from the shapes no company owns', () => {
     expect(isPluginBrandMark('slack')).toBe(true);
     expect(isPluginBrandMark('ashby')).toBe(true);

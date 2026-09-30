@@ -31,6 +31,15 @@ const attempt = (challengeId:string,credential:string,method:"magic"|"otp" = "ot
   ({ challengeId,redemptionId:crypto.randomUUID(),credential,method });
 
 describe("passwordless email login", () => {
+  it("accepts a well-formed email sign-in policy from literal configuration", () => {
+    const env = createTestEnv({
+      AVALON_REGION:"global",APP_ENV:"production",RESEND_FROM_EMAIL:"Rally <login@example.test>",
+      BROWSER_APP_ORIGIN:"https://app.example.test",SESSION_SIGNING_KEY:"literal-signing-key",
+      OAUTH_STATE_ENCRYPTION_KEY:"literal-encryption-key",
+      EMAIL_LOGIN_POLICY_JSON:'{"otpDigits":6,"ttlSeconds":600,"maxFailedAttempts":5}',
+    });
+    expect(configuredEmailLoginPolicy(env)).toEqual({ otpDigits:6,ttlSeconds:600,maxFailedAttempts:5 });
+  });
   it("keeps issuance idempotent and stores neither credential in plaintext", async () => {
     const { env,challengeId,started,otp,token } = await challenge();
     const before = db.prepare("SELECT * FROM email_login_challenges").get()!;

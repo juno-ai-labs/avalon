@@ -124,7 +124,12 @@ was asked rather than skipped.
    two halves of a composer can never drift apart" is an invariant; "keys are
    built in `draft-keys.ts`" is trivia. This is the section a future change is
    checked against, so write it for someone who is about to do something you did
-   not anticipate.
+   not anticipate. Where an invariant has a guard, name it, and the guard is one
+   of: a lint rule, a type, a runnable test that exercises the behavior, or the
+   words "verified visually, no automated guard". A test that reads a source
+   file, a stylesheet, or a config file off disk and asserts on its text is not
+   a guard and must not be cited as one; the rule and the alternatives are in
+   [`testing.md`](testing.md#what-to-test-and-what-not-to).
 
 4. **Boundary** — What this module owns, what it exposes to callers, what it
    depends on, and who is allowed to call it. Include what it deliberately does
