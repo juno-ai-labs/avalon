@@ -398,7 +398,10 @@ paging, in two cases:
   no Space there, and the page is the only way it reaches the sidebar.
 
 Electron asks for Channel rails with `channel_rails`: a stable request ID and
-up to 250 named Channels (`workstreamIds`). Each
+up to 250 named Channels (`workstreamIds`). The retired Space target
+(`spaceId`, `after`), which desktops 1.467.0 and 1.468.0 still send, is
+answered with one empty final frame, since refusing it would close their
+socket. Each
 Channel row carries `railWaterline`; a held rail is stale once a row's passes
 it. The desktop asks for stale rails by name, in order: the Channel in front,
 then its Spaces, then the other Spaces, then Channels in no Space. Rails
@@ -984,20 +987,28 @@ Child archive admission uses the same `parent_archived` ticket field as parent a
 **What changed:** A member's connect sidebar carries Spaces and no Channel rows
 whenever the Space hierarchy is whole, without the desktop asking.
 `channels_by_space` is retired. The `channel_rails` Space target (`spaceId`,
-`after`) is gone, and the desktop's paging toward a Space's `channelCount` with
-it.
+`after`) no longer reads a Space: it is answered with one empty final frame.
 
 **Why:** Both were kept only for desktops from before 1.469.0, the first
 release that walks Spaces. Those desktops have had time to update.
 
-**Considered and rejected:** Keeping `channels_by_space` as a no-op. An
-unknown event type is already ignored, so a desktop that still sends it needs
-nothing from the server.
+**Considered and rejected:**
+- *Keeping `channels_by_space` as a no-op.* An unknown event type is already
+  ignored, so a desktop that still sends it needs nothing from the server.
+- *Refusing the Space target.* A 1.467.0 or 1.468.0 desktop still holding
+  rows from its disk cache would ask a Space for them, and a refused request
+  closes the socket with 4400, which it would then hit again on every
+  reconnect. An empty answer costs one frame.
+- *Removing the desktop's paging toward a Space's `channelCount`.* It only
+  runs against the first-page sidebar, which a member no longer gets. But a
+  desktop from this change meeting a server from before it, in a rollback,
+  would get that page with no opt-in sent, and the paging is what fills a
+  Space there. It stays until that cannot happen.
 
 **Consequences:**
 - A desktop older than 1.469.0 is sent no Channel rows and never asks a Space
   for them, so its sidebar lists nothing. That is the cost of this change for
-  anyone who has not updated.
+  anyone who has not updated. It stays connected.
 - `nextAfter` is still sent, always `null`, because 1.469.0 through this
   release require it on a `workspace_channel_rails` frame. The contract now has
   it optional, so a later server can stop sending it once those releases are

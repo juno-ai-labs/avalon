@@ -6148,12 +6148,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * Answer `channel_rails` from local reads, as `workspace_channel_rails`
    * frames; the answer always ends with a `final` one.
    *
-   * Named Channels are answered whole, over as many frames as they take. A
-   * Space is answered from one page of the Channels in it this viewer may see,
-   * in id order after `after`, until the page or the frame runs out, with
-   * `nextAfter` naming the last Channel answered; a client wanting the rest
-   * asks again. A guest is told nothing about a Space (see `spacesFor`), and a
-   * Space the viewer cannot see is answered the same way: one empty final frame.
+   * Named Channels are answered whole, over as many frames as they take. The
+   * retired Space target, still sent by desktops 1.467.0 and 1.468.0, is
+   * answered with one empty final frame: refusing it would close their socket
+   * on every reconnect, and a Space's rails now arrive with its rows.
    *
    * A rail that fails its schema is sent as `oversized`, so the client paints
    * that Channel from its snapshot, and the log names the field.
@@ -6182,7 +6180,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       });
       return frames.addOversized(rail);
     };
-    if (!this.railLedger) {
+    if (!request.workstreamIds) {
+      // The retired Space target: nothing to answer.
+    } else if (!this.railLedger) {
       frames.addUnavailable(request.workstreamIds);
     } else {
       const answer = rails(request.workstreamIds);

@@ -2338,12 +2338,21 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
     before: WorkspaceWorkstreamCursorSchema.optional(),
     includeSystem: z.boolean(),
   }),
-  /** The Channel rail data for named Channels whose `railWaterline` moved. */
+  /**
+   * The Channel rail data for named Channels whose `railWaterline` moved.
+   *
+   * `spaceId` and `after` are the retired Space target, still sent by desktops
+   * 1.467.0 and 1.468.0. They are accepted so those desktops are not
+   * disconnected, and answered with one empty final frame.
+   */
   z.strictObject({
     type: z.literal("channel_rails"),
     requestId: IdSchema,
+    spaceId: SpaceIdSchema.optional(),
+    after: WorkstreamIdSchema.optional(),
     workstreamIds: z.array(WorkstreamIdSchema).min(1).max(CHANNEL_RAILS_NAMED_LIMIT)
-      .refine((ids) => new Set(ids).size === ids.length, "must be unique"),
+      .refine((ids) => new Set(ids).size === ids.length, "must be unique")
+      .optional(),
   }),
   /**
    * One page of the Channels in a Space this viewer may see, in id order after
