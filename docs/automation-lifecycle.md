@@ -189,10 +189,9 @@ Main's three lists ride its Channel rail (`channel_rails`,
 [`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-channels-rail-and-its-waterline)),
 read from the Organization object's own rows: the room's `automation_directory`
 rows, `parent_sidekicks`, and the attachment list Main reports on its
-`directory_common` effect. SubstreamAgent does not send that list yet — the
-Organization learns to read it first and emission follows in a later deploy —
-so until then every Main's rail omits `attached` and the desktop keeps the REST
-attachment read. A listed Sidekick is named by its title and shown under the
+`directory_common` effect. A Main that has never reported is asked to when its
+Channel is opened; until it reports, its rail omits `attached` and the desktop
+reads that list over REST. A listed Sidekick is named by its title and shown under the
 one audience predicate `SidekickDO.readSkillSummary` applies
 (`sidekick-audience.ts`, shared by both), with the directory row's
 `run_as_user_id`, which is null until the Sidekick next publishes and leaves the

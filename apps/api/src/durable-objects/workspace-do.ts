@@ -157,6 +157,7 @@ import {
   ChannelRailFrames,
   channelRails,
   drainChannelRailChanges,
+  mainAttachmentsUnreported,
   mainResourceLinksChanged,
   ownedAutomationSummaries,
   visibleSpaceChannelIdsAfter,
@@ -5072,11 +5073,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private wakeMainConversation(parentId: string): void {
     const workspaceId = this.workspaceId();
     if (!workspaceId) return;
+    // A Main that has never reported its Sidekick attachments is asked to,
+    // so the Channel a reader opens has its rail's `attached` list. Every
+    // other Main reports on its own directory effects.
+    const reportAttachments = this.railLedger && mainAttachmentsUnreported(this.state.storage.sql, parentId);
     this.state.waitUntil((async () => {
       try {
         const stub = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, workspaceId,
           conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), parentId));
-        await stub.wake();
+        await stub.wake(reportAttachments ? { reportAttachments: true } : {});
       } catch {
         // Warming is best effort by construction.
       }
