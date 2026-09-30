@@ -8,6 +8,7 @@ import {
   type ConnectorPollingActivitySource,
   type ConnectorWebhookActivitySource,
 } from "./types";
+import { platformErrorCode } from "@rally/contracts/platform-diagnostics";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import type { FetchLike } from "./provider-utils";
 
@@ -40,6 +41,30 @@ export function connectorObservationErrorCode(error: unknown): string {
   // model's malformed input on the provider, which is a worse lie than the
   // generic code it replaces.
   return zodDiagnosticCode(error, "schema") ?? "unexpected_error";
+}
+
+/**
+ * `connectorObservationErrorCode` plus what the adapter recorded about why:
+ * the provider's own HTTP status, its rate limit, or the runtime failure behind
+ * a request that never completed. `provider_error` alone is the word a GitHub
+ * 404, a 403 rate limit, a 500 and a dropped connection all say, and each
+ * adapter already holds which one it was in `details`. Only the status number,
+ * a flag and a platform word cross — never the provider's message.
+ *
+ * Kept apart from `connectorObservationErrorCode` because that code is also
+ * persisted and compared, where a finer value would split a known state.
+ */
+export function connectorDiagnosticCode(error: ConnectorError): string {
+  const code = connectorObservationErrorCode(error);
+  const details = error.details;
+  const platform = platformErrorCode(details);
+  if (platform) return `${code}:${platform}`;
+  if (!details || typeof details !== "object") return code;
+  const { status, rateLimited } = details as { status?: unknown; rateLimited?: unknown };
+  const http = typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599
+    ? `:http_${status}`
+    : "";
+  return `${code}${http}${rateLimited === true ? ":rate_limited" : ""}`;
 }
 
 export function connectorObservationFailureLevel(error: unknown): ConnectorLogLevel {

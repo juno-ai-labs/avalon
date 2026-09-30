@@ -1,6 +1,9 @@
 import { IdSchema } from "@rally/contracts";
-import { DIAGNOSTIC_CODE_MAX_LENGTH } from "@rally/contracts/zod-diagnostics";
+import { ConnectorError, connectorDiagnosticCode } from "@rally/connectors";
+import { DIAGNOSTIC_CODE_MAX_LENGTH, isCodeShaped } from "@rally/contracts/zod-diagnostics";
 import { z } from "zod";
+
+import { diagnosticErrorCode } from "../observability/logger";
 
 /**
  * What a connector poll step hands back to the workflow, as the step result
@@ -26,3 +29,37 @@ export const PollResultSchema = z.object({
     message: z.string().min(1).max(500),
   })).max(100).optional(),
 });
+
+/**
+ * A poll attempt's failure named by what it was: an adapter's code with the
+ * provider's status, a schema rejection's paths, or a D1 failure. The step
+ * boundary hands the workflow a plain `Error` for all of them, so the terminal
+ * log said `connector_poll_failed` and `Error` and nothing else.
+ */
+export function pollAttemptErrorCode(error: unknown): string {
+  return error instanceof ConnectorError
+    ? connectorDiagnosticCode(error)
+    : diagnosticErrorCode(error, "connector_poll_failed");
+}
+
+const POLL_ATTEMPT_FAILURE = "connector_poll_attempt_failed:";
+
+/**
+ * The error an attempt rethrows, carrying its code in the one field the step
+ * boundary keeps. The workflow's terminal catch may run in a later invocation
+ * that replays the failed step from its checkpoint without running the
+ * callback, so the code has to travel with the error rather than beside it.
+ * A timeout or abort is rethrown as itself: the terminal catch tells a timeout
+ * apart by its type.
+ */
+export function pollAttemptFailure(error: unknown, code: string): unknown {
+  if (error instanceof DOMException) return error;
+  return new Error(`${POLL_ATTEMPT_FAILURE}${code}`);
+}
+
+/** The code `pollAttemptFailure` put on an error, after it crossed the step boundary. */
+export function failedPollAttemptCode(error: unknown): string | null {
+  if (!(error instanceof Error) || !error.message.startsWith(POLL_ATTEMPT_FAILURE)) return null;
+  const code = error.message.slice(POLL_ATTEMPT_FAILURE.length);
+  return isCodeShaped(code) ? code : null;
+}

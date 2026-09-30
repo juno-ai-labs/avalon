@@ -188,6 +188,23 @@ describe("shared GitHub App routing", () => {
     });
   });
 
+  it("carries GitHub's own status across the regional hop for the log, not the caller", async () => {
+    // The hop rewrites every GitHub failure to 502 `provider_error`; the status
+    // GitHub answered rides as `diagnosticCode`, which `request_failed` and
+    // `github_delivery_retry` log and the response body never carries.
+    await expect(serializeGitHubRegionalRpcResult(async () => {
+      throw new ConnectorError("provider_error", "Not Found", { status: 404 });
+    })).resolves.toEqual({
+      ok: false,
+      error: {
+        status: 502,
+        code: "provider_error",
+        message: "Not Found",
+        diagnosticCode: "provider_error:http_404",
+      },
+    });
+  });
+
   it("gates the dedicated hostname to setup, webhook, and health only", () => {
     const { env } = fixture();
     expect(isSharedGitHubIngress(env, "https://github.with-avalon.com/ingest/github")).toBe(true);
@@ -441,6 +458,12 @@ describe("shared GitHub App routing", () => {
     const limited = queued(queue.messages[0]);
     await consumeGitHubDeliveryMessage(limited, env, service);
     expect(limited.retry).toHaveBeenCalledWith({ delaySeconds: 900 });
+    // `provider_error` alone is what GitHub's 404, its rate limit and an outage
+    // all say; the adapter recorded which.
+    expect(vi.mocked(console.warn).mock.calls.map((call) => call[0])).toContainEqual(expect.objectContaining({
+      event: "github_delivery_retry",
+      error_code: "provider_error:http_403:rate_limited",
+    }));
   });
 
   it("removes a staged body when the delivery cannot be enqueued", async () => {

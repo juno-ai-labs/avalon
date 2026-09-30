@@ -2,6 +2,7 @@ import { regionalBindings } from "../lib/regional-bindings";
 import { isConfiguredRegion, configuredRegions } from "@rally/contracts/regions";
 import {
   ConnectorError,
+  connectorDiagnosticCode,
   connectorRetryAfterMs,
   isDiscardedGitHubDelivery,
   parseGitHubWebhook,
@@ -10,7 +11,7 @@ import {
 import type { Region } from "@rally/contracts";
 import { z } from "zod";
 import type { Env } from "../env";
-import { ApiError } from "../lib/api-error";
+import { ApiError, diagnosticCodeField } from "../lib/api-error";
 import { githubRegionFromInstallState } from "../lib/github-install-state";
 import {
   GitHubDeliveryIdentitySchema,
@@ -71,6 +72,8 @@ export type GitHubRegionalRpcResult<T> =
         message: string;
         /** A provider's Retry-After, carried so the Global consumer can honour it. */
         retryAfterMs?: number;
+        /** What the log may say beyond `code`: GitHub's own status behind `provider_error`. */
+        diagnosticCode?: string;
       };
     };
 
@@ -83,7 +86,12 @@ export async function serializeGitHubRegionalRpcResult<T>(
     if (error instanceof ApiError) {
       return {
         ok: false,
-        error: { status: error.status, code: error.code, message: error.message },
+        error: {
+          status: error.status,
+          code: error.code,
+          message: error.message,
+          ...diagnosticCodeField(error),
+        },
       };
     }
     if (error instanceof ConnectorError) {
@@ -94,6 +102,7 @@ export async function serializeGitHubRegionalRpcResult<T>(
           status: connectorErrorStatus(error),
           code: error.code,
           message: error.message,
+          diagnosticCode: connectorDiagnosticCode(error),
           ...(retryAfterMs === null ? {} : { retryAfterMs }),
         },
       };
@@ -519,7 +528,7 @@ export async function consumeGitHubDeliveryMessage(
       event_type: parsed.data.event,
       queue_attempts: message.attempts,
       error_code: error instanceof ConnectorError
-        ? error.code
+        ? connectorDiagnosticCode(error)
         : diagnosticErrorCode(error, "github_delivery_failed"),
     });
     message.retry({ delaySeconds: githubDeliveryRetryDelaySeconds(message.attempts, error) });
@@ -637,6 +646,7 @@ function unwrapRegionalResult<T>(result: GitHubRegionalRpcResult<T>): T {
     result.error.code,
     result.error.message,
     result.error.retryAfterMs === undefined ? undefined : { retryAfterMs: result.error.retryAfterMs },
+    result.error.diagnosticCode,
   );
 }
 

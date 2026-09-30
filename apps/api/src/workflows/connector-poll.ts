@@ -6,7 +6,7 @@ import {
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 
 import type { Env } from "../env";
-import { logStructuredEvent } from "../observability/logger";
+import { diagnosticErrorCode, logStructuredEvent } from "../observability/logger";
 import {
   advanceOwningPollTarget,
   commitConnectorCursor,
@@ -16,7 +16,12 @@ import {
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { refreshWorkspaceSchedule } from "../services/workstream-wakeup-service";
 
-import { PollResultSchema } from "./connector-poll-result";
+import {
+  failedPollAttemptCode,
+  pollAttemptErrorCode,
+  pollAttemptFailure,
+  PollResultSchema,
+} from "./connector-poll-result";
 
 interface StoredPollResult {
   activityIds: string[];
@@ -81,7 +86,24 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
             workflow_step: "poll-and-persist-provider-page",
             attempt: context.attempt,
           });
-          const parsed = PollResultSchema.parse(await pollConnectorConnection(workspaceEnv, input));
+          let parsed;
+          try {
+            parsed = PollResultSchema.parse(await pollConnectorConnection(workspaceEnv, input));
+          } catch (error) {
+            const errorCode = pollAttemptErrorCode(error);
+            logStructuredEvent(this.env, "warn", "connector_poll_attempt_failed", {
+              workspace_id: input.workspaceId,
+              connection_id: input.connectionId,
+              provider: connection.provider,
+              poll_schedule_id: input.pollScheduleId,
+              workflow_step: "poll-and-persist-provider-page",
+              attempt: context.attempt,
+              duration_ms: Date.now() - startedAt,
+              error_name: error instanceof Error ? error.name : typeof error,
+              error_code: errorCode,
+            });
+            throw pollAttemptFailure(error, errorCode);
+          }
           logStructuredEvent(this.env, "info", "connector_poll_attempt_completed", {
             workspace_id: input.workspaceId,
             connection_id: input.connectionId,
@@ -118,6 +140,7 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
         poll_schedule_id: input.pollScheduleId,
         workflow_step: "poll-and-persist-provider-page",
         error_name: error instanceof Error ? error.name : "Error",
+        error_code: timedOut ? code : failedPollAttemptCode(error) ?? diagnosticErrorCode(error, code),
         terminal_outcome: timedOut ? "degraded_timeout" : "degraded_error",
       });
       throw error;
