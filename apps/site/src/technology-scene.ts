@@ -30,11 +30,14 @@ import { createBodies, inCut, SHELL, step, WALL, WALL_PLANES, type Bodies } from
 export type Layer = { readonly name: string; readonly color: string };
 
 export const LAYERS: readonly Layer[] = [
-  { name: 'LLM routing core', color: '#ffc24a' },
-  { name: 'Authorization', color: '#d266c6' },
-  { name: 'Sidekicks', color: '#3fcf97' },
-  { name: 'Connectors', color: '#ff7a59' },
-  { name: 'Multiplayer collaboration', color: '#5b8cff' },
+  // Colors are the product's icon palette (`--av-sys-color-project-*` in
+  // packages/ui/src/styles/themes.css), by key: amber, fuchsia, emerald,
+  // orange, blue.
+  { name: 'LLM routing core', color: '#f59e0b' },
+  { name: 'Authorization', color: '#d946ef' },
+  { name: 'Sidekicks', color: '#10b981' },
+  { name: 'Connectors', color: '#f97316' },
+  { name: 'Multiplayer collaboration', color: '#3b82f6' },
 ];
 
 /** Seconds. Each layer forms, then holds; the last hold is the long one. */
@@ -184,7 +187,7 @@ function buildGeometry(): { geometry: BufferGeometry; bodies: Bodies } {
 
   const starColor = new Color('#f5f5f2');
   const ballBody = new Color('#dfe4ea');
-  const seamGold = new Color('#f2b441');
+  const seamGold = new Color('#f59e0b');
   let next = 0;
   const innerPoints = LAYER_POINTS.slice(0, -1).reduce((sum, n) => sum + n, 0);
   // The layer points come first in every buffer, so body i is particle i.
@@ -277,6 +280,7 @@ uniform float uStarTurn;
 uniform float uPixel;
 uniform vec3 uEye;
 uniform vec3 uOuterColor;
+uniform vec3 uLight;
 attribute vec3 aShape;
 attribute vec3 aBall;
 attribute vec3 aColor;
@@ -287,6 +291,43 @@ varying float vAlpha;
 
 float ease(float t) { return t < 0.5 ? 4.0 * t * t * t : 1.0 - pow(-2.0 * t + 2.0, 3.0) / 2.0; }
 float stagger(float progress, float seed) { return ease(clamp(progress * 1.6 - seed * 0.6, 0.0, 1.0)); }
+bool inCut(vec3 p) { return p.x < 0.0 && p.y > 0.0 && p.z > 0.0; }
+
+// How much light reaches point s: the ray from s toward the light is tested
+// against every formed sphere shell, and each crossing outside the cut takes
+// a share of the light. Shells are clouds of points, not solid, so a crossing
+// dims rather than blacks out.
+float shadow(vec3 s) {
+  float lit = 1.0;
+  float b = dot(s, uLight);
+  float ss = dot(s, s);
+  for (int i = 0; i < ${LAYERS.length}; i++) {
+    float r = ${STEP.toFixed(4)} * float(i + 1);
+    float disc = b * b - (ss - r * r);
+    if (disc <= 0.0) continue;
+    float root = sqrt(disc);
+    float near = -b - root;
+    float far = -b + root;
+    float block = 0.22 * uForm[i];
+    if (near > 0.03 && !inCut(s + near * uLight)) lit *= 1.0 - block;
+    if (far > 0.03 && !inCut(s + far * uLight)) lit *= 1.0 - block;
+  }
+  return lit;
+}
+
+// The outward face of a point: the sphere's radius for a shell point, and for
+// a point on a cut wall, the wall's face, which looks into the cut.
+vec3 faceOf(vec3 s, float shell) {
+  if (shell > 0.5) return normalize(s);
+  if (abs(s.z) < 1e-4) return vec3(0.0, 0.0, 1.0);
+  if (abs(s.y) < 1e-4) return vec3(0.0, 1.0, 0.0);
+  return vec3(-1.0, 0.0, 0.0);
+}
+
+// Wrapped diffuse light: a smooth fall from lit to unlit across a sphere,
+// rather than a hard terminator, so its roundness reads in a cloud of points.
+float diffuse(vec3 normal) { float d = dot(normal, uLight) * 0.5 + 0.5; return d * d; }
+
 vec3 turnY(vec3 p, float a) { float c = cos(a); float s = sin(a); return vec3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z); }
 
 void main() {
@@ -316,9 +357,18 @@ void main() {
   float scatter = stagger(uScatter, fract(seed * 7.31));
   p = mix(p, star, scatter);
 
-  vec3 c = mix(vec3(0.96), aColor, form);
-  c = mix(c, uOuterColor, fillT);
-  c = mix(c, aBallColor, ballT);
+  // One directional light. The schematic takes diffuse light and cast shadows;
+  // the ball takes diffuse light on its spinning surface. Stars are unlit.
+  vec3 ballAt = uSpin * aBall;
+  float schematicLight = 0.5 + 1.0 * diffuse(faceOf(aShape, aInfo.w)) * shadow(aShape);
+  float ballLight = 0.35 + 1.0 * diffuse(normalize(ballAt));
+  float light = mix(schematicLight, ballLight, fillT);
+  // A seam stays readable all the way round.
+  light = mix(light, max(light, 0.75), seam * ballT);
+
+  vec3 c = mix(vec3(0.96), aColor * mix(1.0, light, form), form);
+  c = mix(c, uOuterColor * light, fillT);
+  c = mix(c, aBallColor * light, ballT);
   c = mix(c, vec3(0.96), scatter);
   vColor = c;
 
@@ -400,6 +450,10 @@ export function createSchematic(canvas: HTMLCanvasElement, overlay: SVGSVGElemen
     uPixel: { value: 1 },
     uEye: { value: new Vector3() },
     uOuterColor: { value: new Color(LAYERS[LAYERS.length - 1]!.color) },
+    // Overhead, leaning toward the camera and a little right of the cut, so
+    // light falls into the cut, its right-hand rim throws a shadow band into
+    // the corner, and its three faces take different amounts of light.
+    uLight: { value: new Vector3(0.12, 0.9, 0.5).normalize() },
   };
   const material = new ShaderMaterial({
     uniforms,

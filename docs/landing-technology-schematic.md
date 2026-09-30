@@ -23,7 +23,11 @@ loads.
 | `apps/site/src/landing.css` | `.tech-*` rules: figure size, label type, the gold line color, the layer list |
 
 `LAYERS` is the single source of the layer names, their order (inside out), and
-their colors. The label overlay and the geometry both read it.
+their colors. The colors, and the amber of the leader lines and seam, are the
+product's icon palette (`--av-sys-color-project-*` in
+`packages/ui/src/styles/themes.css`): amber, fuchsia, emerald, orange, blue.
+The site does not load that stylesheet, so the hex values are copied; the
+palette key sits beside each. The label overlay and the geometry both read it.
 
 ## How it works
 
@@ -60,6 +64,27 @@ with each other. The engine is flat typed arrays and a tight loop, stepped on
 the CPU in steps of at most 1/30 s; each frame the layer range of the shape
 buffer is re-uploaded. A jump in time advances the bodies by at most one
 second, so a seek or a background tab never tunnels a body through a wall.
+
+### Light and shadow
+
+One directional light sits overhead, leaning toward the camera and a little to
+the right of the cut (`uLight`). Points are not surfaces, so three.js shadow
+maps do not apply; the vertex shader lights each point itself:
+
+- **Diffuse**: each point has a face: a shell point faces out along its
+  radius, and a cut-wall point faces into the cut along its wall's normal. The
+  light uses wrapped diffuse shading, a smooth fall from lit to unlit, so a
+  sphere's roundness shows across a cloud of points and the three cut faces
+  each take a different share of light.
+- **Cast shadow**: the ray from each point toward the light is intersected with
+  every formed sphere shell. Each crossing outside the cut dims the point by a
+  share. Shells are point clouds, so a crossing dims rather than blacks out.
+  The light leans right of the cut, so the cut's right-hand rim throws a band
+  of shadow into its corner.
+
+Once the cut fills, the ball takes diffuse light on its spinning surface, and
+the seam keeps a floor of brightness so it reads all the way round. Stars are
+unlit.
 
 ### Rendering
 
@@ -172,13 +197,18 @@ drifts.
 **What changed:** A Technology section after Pricing shows the stack as a
 point-cloud cut-away that forms layer by layer, becomes a tennis ball, and
 dissolves back into stars on a loop. Each layer's points move under a small
-physics engine, bouncing off the cut planes and ring edges.
+physics engine, bouncing off the cut planes and ring edges, and a directional
+light shades them and casts shadows from each shell, in the icon palette's
+colors.
 
 **Why:** The landing page said what Rally does but nothing about how it is
 built. A cut-away shows the layers and how they nest in one picture, and the
 tennis ball ties it back to the Rally mark.
 
-**Considered and rejected:** A physics library such as Rapier or cannon-es.
+**Considered and rejected:** three.js lights and shadow maps. Those shade
+meshes; a point has no surface for a shadow map to land on, so the light is
+computed per point in the shader against the analytic spheres instead. A
+physics library such as Rapier or cannon-es.
 The motion needs constant-speed travel on a surface and elastic bounces off
 planes and spheres, about a hundred lines; a general engine adds a large
 download and a collision broadphase this scene has no use for. Precomputed 2D projections or a video. Both fix the
