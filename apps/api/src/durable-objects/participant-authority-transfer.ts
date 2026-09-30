@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { IdSchema, UserIdSchema, WorkspaceIdSchema, SubstreamIdSchema } from "@rally/contracts";
+import { startReadCursorAtLatest } from "./member-attention";
 
 export const ParticipantTransferRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamId: SubstreamIdSchema, transferId: IdSchema,
@@ -149,6 +150,7 @@ export class ParticipantAuthorityTransferStorage {
             added_at=excluded.added_at,first_opened_at=NULL,updated_at=excluded.updated_at,
             participant_epoch=participants.participant_epoch+1`,
         request.userId,request.reason,request.addedByUserId,request.changedAt,request.changedAt);
+        startReadCursorAtLatest(this.storage.sql, request.userId, request.changedAt);
       } else if (!request.active && prior?.status === "active") {
         this.storage.sql.exec(`UPDATE participants SET status='removed',removed_at=?,updated_at=?,
           participant_epoch=participant_epoch+1 WHERE user_id=?`,request.changedAt,request.changedAt,request.userId);
