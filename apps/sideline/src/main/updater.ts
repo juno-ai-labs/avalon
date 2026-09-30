@@ -3,6 +3,9 @@ import type { AppUpdater, UpdateDownloadedEvent } from "electron-updater";
 import electronUpdater from "electron-updater";
 
 const UPDATE_INTERVAL_MS = 3 * 60 * 60 * 1000;
+/** A downloaded update waits quietly behind the header button until the
+ * running build is this old; past it, Sideline asks once per downloaded version. */
+export const STALE_BUILD_PROMPT_AGE_MS = 48 * 60 * 60 * 1000;
 
 interface UpdateLogger {
   info(message: string, ...args: unknown[]): void;
@@ -23,6 +26,11 @@ export interface SidelineUpdateDependencies {
   platform: NodeJS.Platform;
   arch: string;
   showMessageBox(options: MessageBoxOptions): Promise<MessageBoxReturnValue>;
+  /** When the running build was made, in epoch milliseconds; unknown builds are never stale. */
+  currentBuildTime?: number | undefined;
+  /** The version now waiting to install on restart. */
+  onDownloaded?(version: string): void;
+  now?(): number;
   updater?: SidelineUpdater;
   scheduleInterval?(callback: () => void, delayMs: number): { unref(): unknown };
   log?: UpdateLogger;
@@ -30,7 +38,10 @@ export interface SidelineUpdateDependencies {
 
 export interface SidelineUpdateHandle {
   enabled: boolean;
+  /** The version waiting to install on restart, or null. */
+  downloadedVersion(): string | null;
   checkForUpdates(): void;
+  installDownloadedUpdate(): void;
 }
 
 export interface SidelineUpdateMenuItem {
@@ -53,7 +64,12 @@ export function initializeSidelineUpdater(deps: SidelineUpdateDependencies): Sid
   const log = deps.log ?? console;
   if (!deps.isPackaged || !deps.isReleaseBuild || deps.platform !== "darwin" || deps.arch !== "arm64") {
     log.info("[sideline] auto-update disabled for this build");
-    return { enabled: false, checkForUpdates: () => undefined };
+    return {
+      enabled: false,
+      downloadedVersion: () => null,
+      checkForUpdates: () => undefined,
+      installDownloadedUpdate: () => undefined,
+    };
   }
 
   const updater = deps.updater ?? electronUpdater.autoUpdater;
@@ -64,19 +80,38 @@ export function initializeSidelineUpdater(deps: SidelineUpdateDependencies): Sid
   updater.on("error", (error) => {
     log.error("[sideline] automatic update failed", error);
   });
-  updater.on("update-downloaded", (event) => {
+  const now = deps.now ?? Date.now;
+  let downloaded: string | null = null;
+  let staleBuildPromptedVersion: string | null = null;
+  const install = (): void => {
+    if (downloaded !== null) updater.quitAndInstall(false, true);
+  };
+  const promptIfStaleBuild = (): void => {
+    // An unstamped or unparsable build time is unknown, and never stale.
+    if (downloaded === null || deps.currentBuildTime === undefined || !Number.isFinite(deps.currentBuildTime)) return;
+    if (now() - deps.currentBuildTime < STALE_BUILD_PROMPT_AGE_MS) return;
+    if (staleBuildPromptedVersion === downloaded) return;
+    const version = downloaded;
+    staleBuildPromptedVersion = version;
     void deps.showMessageBox({
       type: "info",
       message: "Sideline is ready to update",
-      detail: `Version ${event.version} has been downloaded. Restart Sideline to install it.`,
+      detail: `Version ${version} has been downloaded. Restart Sideline to install it.`,
       buttons: ["Restart Sideline", "Later"],
       defaultId: 0,
       cancelId: 1,
     }).then((result) => {
-      if (result.response === 0) updater.quitAndInstall(false, true);
+      // Another download may have staged a newer build while the dialog was open.
+      if (result.response === 0 && downloaded === version) install();
     }).catch((error: unknown) => {
       log.error("[sideline] could not show the update prompt", error);
     });
+  };
+  updater.on("update-downloaded", (event) => {
+    downloaded = event.version;
+    deps.onDownloaded?.(event.version);
+    // The window offers the restart; a dialog interrupts only a stale build.
+    promptIfStaleBuild();
   });
 
   const check = (): void => {
@@ -89,6 +124,14 @@ export function initializeSidelineUpdater(deps: SidelineUpdateDependencies): Sid
     const handle = setInterval(callback, delayMs);
     return { unref: () => handle.unref() };
   });
-  schedule(check, UPDATE_INTERVAL_MS).unref();
-  return { enabled: true, checkForUpdates: check };
+  schedule(() => {
+    promptIfStaleBuild();
+    check();
+  }, UPDATE_INTERVAL_MS).unref();
+  return {
+    enabled: true,
+    downloadedVersion: () => downloaded,
+    checkForUpdates: check,
+    installDownloadedUpdate: install,
+  };
 }

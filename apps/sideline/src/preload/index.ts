@@ -13,6 +13,15 @@ const bridge: SidelineBridge = {
     ipcRenderer.on("sideline:session-changed", handler);
     return () => ipcRenderer.removeListener("sideline:session-changed", handler);
   },
+  organizations: () => ipcRenderer.invoke("sideline:organizations"),
+  switchOrganization: (workspaceId) => ipcRenderer.invoke("sideline:switch-organization", workspaceId),
+  getDownloadedUpdate: () => ipcRenderer.invoke("sideline:downloaded-update") as Promise<string | null>,
+  onUpdateDownloaded: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, version: string): void => listener(version);
+    ipcRenderer.on("sideline:update-downloaded", handler);
+    return () => ipcRenderer.removeListener("sideline:update-downloaded", handler);
+  },
+  installDownloadedUpdate: () => ipcRenderer.invoke("sideline:install-update") as Promise<void>,
   onCatalogStale: (listener) => {
     const handler = (): void => listener();
     ipcRenderer.on("sideline:catalog-stale", handler);

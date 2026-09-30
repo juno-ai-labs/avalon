@@ -4,8 +4,9 @@ import {
   SidelineComposer,
   type SidelineCardModel,
 } from "@rally/ui/components/sideline-composer";
+import { SidelineSidebar } from "@rally/ui/components/sideline-sidebar";
 
-import type { SidelineSession } from "../common/bridge";
+import type { SidelineOrganization, SidelineSession } from "../common/bridge";
 
 function newCard(): SidelineCardModel {
   return {
@@ -33,6 +34,8 @@ export default function App(): React.JSX.Element {
   const [cards, setCards] = useState<SidelineCardModel[]>([newCard()]);
   const [status, setStatus] = useState<"loading" | "ready" | "empty" | "denied" | "offline" | "error">("loading");
   const [statusMessage, setStatusMessage] = useState<string>();
+  const [downloadedUpdate, setDownloadedUpdate] = useState<string | null>(null);
+  const [organizations, setOrganizations] = useState<SidelineOrganization[] | null>(null);
   const catalogGeneration = useRef(0);
   const catalogShown = useRef(false);
   catalogShown.current = status === "ready" || status === "empty";
@@ -84,6 +87,18 @@ export default function App(): React.JSX.Element {
       state.running = false;
     }
   }, [load]);
+  useEffect(() => {
+    // A broadcast that lands before the mount-time read answers is newer than it.
+    let heard = false;
+    const unsubscribe = window.sideline.onUpdateDownloaded((version) => {
+      heard = true;
+      setDownloadedUpdate(version);
+    });
+    void window.sideline.getDownloadedUpdate()
+      .then((version) => { if (!heard) setDownloadedUpdate(version); })
+      .catch(() => undefined);
+    return unsubscribe;
+  }, []);
   useEffect(() => window.sideline.onCatalogStale(() => { void refreshStale(); }), [refreshStale]);
 
   useEffect(() => {
@@ -164,23 +179,41 @@ export default function App(): React.JSX.Element {
   };
 
   return (
-    <SidelineComposer
-      catalog={catalog}
-      workspaceName={session.workspace.name}
-      operatorName={session.user.name}
-      cards={cards}
-      status={status}
-      statusMessage={statusMessage}
-      onAdd={() => setCards((current) => [...current, newCard()])}
-      onRemove={(cardId) => setCards((current) => current.filter((card) => card.id !== cardId))}
-      onChange={change}
-      onSend={(cardId) => void send(cardId)}
-      onRetryCatalog={() => void load()}
-      onOpenInRally={(cardId) => {
-        const card = cards.find((item) => item.id === cardId);
-        if (card) void window.sideline.openInRally({ workstreamId: card.workstreamId, substreamId: card.substreamId });
+    <SidelineSidebar
+      currentUser={{
+        id: session.user.id,
+        name: session.user.name,
+        email: session.user.email,
+        timezone: session.user.timezone,
+        ...(session.user.avatarUrl ? { avatarUrl: session.user.avatarUrl } : {}),
       }}
+      workspaceName={session.workspace.name}
+      activeOrganizationId={session.workspace.id}
+      organizations={organizations}
+      // The list is read each time the menu opens; a failed read keeps the last one.
+      onMenuOpen={() => { void window.sideline.organizations().then(setOrganizations, () => undefined); }}
+      onSwitchOrganization={(id) => window.sideline.switchOrganization(id)}
+      downloadedUpdate={downloadedUpdate}
+      onRestartToUpdate={() => void window.sideline.installDownloadedUpdate()}
       onSignOut={() => void window.sideline.signOut()}
-    />
+    >
+      <SidelineComposer
+        catalog={catalog}
+        workspaceName={session.workspace.name}
+        operatorName={session.user.name}
+        cards={cards}
+        status={status}
+        statusMessage={statusMessage}
+        onAdd={() => setCards((current) => [...current, newCard()])}
+        onRemove={(cardId) => setCards((current) => current.filter((card) => card.id !== cardId))}
+        onChange={change}
+        onSend={(cardId) => void send(cardId)}
+        onRetryCatalog={() => void load()}
+        onOpenInRally={(cardId) => {
+          const card = cards.find((item) => item.id === cardId);
+          if (card) void window.sideline.openInRally({ workstreamId: card.workstreamId, substreamId: card.substreamId });
+        }}
+      />
+    </SidelineSidebar>
   );
 }

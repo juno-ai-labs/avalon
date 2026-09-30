@@ -20,7 +20,6 @@ export const STALE_BUILD_PROMPT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 export const MANUAL_UPDATE_URL =
   'https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg';
 
-export type UpdateStatus = DesktopUpdateStatus;
 
 export interface UpdateOutcome {
   phase: 'check' | 'download' | 'apply' | 'rollback';
@@ -82,7 +81,7 @@ export interface AutoUpdateDependencies {
   readonly beforeInstall?: () => Promise<void>;
   /** Roll back preparation side effects when installation does not start. */
   readonly onInstallFailed?: () => Promise<void> | void;
-  readonly onStatusChange?: (status: UpdateStatus) => void;
+  readonly onStatusChange?: (status: DesktopUpdateStatus) => void;
   /** Content-free observation seam; exceptions are isolated from update control flow. */
   readonly onOutcome?: (outcome: UpdateOutcome) => void;
   readonly now?: () => number;
@@ -102,7 +101,7 @@ export interface AutoUpdateController {
   setReleaseChannel(channel: DesktopReleaseChannel): void;
 }
 
-function sameStatus(left: UpdateStatus, right: UpdateStatus): boolean {
+function sameStatus(left: DesktopUpdateStatus, right: DesktopUpdateStatus): boolean {
   if (left.kind !== right.kind) return false;
   if (left.kind === 'downloaded' && right.kind === 'downloaded') {
     return left.version === right.version;
@@ -146,7 +145,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     };
   }
 
-  let status: UpdateStatus = { kind: 'idle' };
+  let status: DesktopUpdateStatus = { kind: 'idle' };
   let manualCheck = false;
   let checkInFlight = false;
   let downloadInFlight = false;
@@ -169,7 +168,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
       // Telemetry must never alter update state, retry, or user feedback.
     }
   };
-  const setStatus = (next: UpdateStatus): void => {
+  const setStatus = (next: DesktopUpdateStatus): void => {
     if (sameStatus(status, next)) return;
     status = next;
     deps.onStatusChange?.(next);
@@ -238,7 +237,8 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   let staleBuildPromptedVersion: string | null = null;
   const promptIfStaleBuild = (): void => {
     if (status.kind !== 'downloaded' || installInFlight) return;
-    if (deps.currentBuildTime === undefined) return;
+    // An unstamped or unparsable build time is unknown, and never stale.
+    if (deps.currentBuildTime === undefined || !Number.isFinite(deps.currentBuildTime)) return;
     if (now() - deps.currentBuildTime < STALE_BUILD_PROMPT_AGE_MS) return;
     const { version } = status;
     if (staleBuildPromptedVersion === version) return;
@@ -390,9 +390,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     }
     updater.autoInstallOnAppQuit = true;
     setStatus({ kind: 'downloaded', version: info.version });
-    // The renderer shows a restart button in the sidebar and the account menu
-    // while this status holds, and the app menu offers one too. A dialog
-    // interrupts only once the running build is stale.
+    // The renderer offers the restart; a dialog interrupts only a stale build.
     log.info(`[rally] update ${info.version} downloaded`);
     promptIfStaleBuild();
   });
