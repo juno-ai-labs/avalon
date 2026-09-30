@@ -12,6 +12,7 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | Path | Responsibility |
 | --- | --- |
 | `apps/browser/src/worker.tsx` | Static entry, asset delivery and regional service forwarding. |
+| `apps/browser/src/footer.tsx` | The 60px footer under every screen, with the Mac app download. |
 | `apps/browser/src/entry.tsx` | Email/OTP and explicit magic-link redemption, invitation acceptance, session restore and workspace list. |
 | `apps/browser/src/invitation.ts` | Tokenized and addressed invitation fragments, and exact canonical scope destinations. |
 | `apps/browser/src/transport.ts` | Same-origin entry requests and runtime response validation. |
@@ -403,6 +404,28 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-09-30 — A footer offers the Mac app
+
+**What changed:** Every browser screen, sign-in and signed-in alike, now sits
+above a full-width 60px footer whose right-aligned button downloads the public
+macOS build from the same URL the marketing site uses. The footer renders
+outside the error boundary, so it survives a crashed screen.
+
+**Why:** Browser visitors are mostly guests, and the browser client has no path
+to the desktop app they would need for anything beyond shared collaboration.
+
+**Considered and rejected:** Offsetting each fixed-position rail by the footer
+height. The shared rails pin to the window with `top: 0; bottom: 0`, and
+changing them would touch desktop styles for a browser-only concern. Instead
+the content box above the footer takes `contain: layout`, which makes it the
+containing block for those fixed rails, so they end at the footer.
+
+**Consequences:** Anything `position: fixed` inside the browser app, the
+floating account menu included, now positions against the area above the
+footer rather than the window. Portalled menus and dialogs mount on `body` and
+are unaffected. The download URL is hard-coded in `footer.tsx`, as it is in the
+site; a change to the release path must update both.
 
 ### 2026-09-25 — Rails with one row are hidden
 
