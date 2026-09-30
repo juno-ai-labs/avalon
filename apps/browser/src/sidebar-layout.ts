@@ -28,6 +28,19 @@ export function browserRailVisibility(counts: { spaceCount: number; channelCount
   return { channels: counts.channelCount !== 1, spaces: counts.spaceCount !== 1 };
 }
 
+/**
+ * Where the account menu lives, and the download pinned above it: the leftmost
+ * rail that is shown, or the conversation's own rail when neither outer rail
+ * is. One decision for both, so the two cannot be placed apart.
+ */
+export type BrowserAccountHome = 'spaces' | 'channels' | 'conversation';
+
+export function browserAccountHome(rails: BrowserRailVisibility): BrowserAccountHome {
+  if (rails.spaces) return 'spaces';
+  if (rails.channels) return 'channels';
+  return 'conversation';
+}
+
 /** Preserve Electron's conversation minimum while sizing the two outer hierarchy rails. */
 export function browserSidebarLayout(input: {
   channelOpen: boolean;

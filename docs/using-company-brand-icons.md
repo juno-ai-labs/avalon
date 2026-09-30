@@ -72,6 +72,9 @@ connector's own type, so a connector looks the same in the transcript and in
 Settings. [`plugin-activity-rows.md`](plugin-activity-rows.md) owns the
 transcript's use of it.
 
+`apple` is in the table without being a connector: the browser client's Mac
+download row wears it. The table holds company marks, whatever links to them.
+
 The public landing is static HTML and has no React runtime, so it cannot go
 through `ConnectorMark`. It inlines `@thesvg/react/apple`'s `mono` path on the
 download button, painted in `currentColor`. A Lucide or Tabler stand-in is still
@@ -82,7 +85,7 @@ inlined `d` against the pack.
 ### Marks are monochrome
 
 `ConnectorMark` asks for `variant="mono"`, the package's own single-colour art,
-which paints in `currentColor`. Eight of the ten brands ship one. **Slack and
+which paints in `currentColor`. Ten of the twelve brands ship one. **Slack and
 Granola do not** — their variant unions are `default | wordmark` and
 `default | light | dark` — so `PLUGIN_BRAND_MARKS` records that per brand and
 asking for `mono` there is a *type error* rather than a silent fallback. Those

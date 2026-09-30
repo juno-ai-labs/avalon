@@ -148,7 +148,7 @@ function ConversationRowMenu({ actions, children, icon, target }: {
 }
 
 /** Work-stream navigation only: no second resource query or substream model. */
-export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSidekickMenuOpen, onRefreshSidekicks, onOpenResource, workstream, creatingSubstream = null, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekickFailure, addSidekick, substreamActions, mainActions, scrollRef, footerLeading, participantsPending = false }: {
+export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSidekickMenuOpen, onRefreshSidekicks, onOpenResource, workstream, creatingSubstream = null, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekickFailure, addSidekick, substreamActions, mainActions, scrollRef, footerAbove, footerLeading, participantsPending = false }: {
   workstream: SidebarPresentation;
   /**
    * Who is in the Channel is not known yet: neither the Channel's rail nor
@@ -197,6 +197,8 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
   scrollRef?: React.Ref<HTMLElement>;
   /** Leading footer content, for a host whose outer rails are absent and left it nowhere else to go. */
   footerLeading?: React.ReactNode;
+  /** Content pinned between the scroll area and the footer, for the same host. */
+  footerAbove?: React.ReactNode;
 }): React.JSX.Element {
   const {
     compact,
@@ -375,6 +377,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
         <SidekickSection items={sidekicks} failure={sidekickFailure} onOpen={onOpenSidekick} onMenuOpen={onSidekickMenuOpen} onRefresh={onRefreshSidekicks} layoutId="section:sidekicks" />
         {addSidekick}
       </SidebarScroll>
+      {footerAbove}
       <SidebarCollapseFooter
         collapseLabel="Collapse channel"
         compact={compact}
