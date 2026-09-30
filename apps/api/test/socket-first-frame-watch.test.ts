@@ -38,6 +38,12 @@ describe("socket first-frame watch", () => {
     expect(nextFirstFrameDeadline([], DEADLINE_MS)).toBeNull();
   });
 
+  it("does not wake on a socket already held below the reset threshold", () => {
+    const sockets = [unheard("held", "06:00:05.000"), unheard("fresh", "06:00:20.000")];
+    expect(nextFirstFrameDeadline(sockets, DEADLINE_MS, new Set(["held"]))).toBe(at("06:00:21.000"));
+    expect(nextFirstFrameDeadline(sockets.slice(0, 1), DEADLINE_MS, new Set(["held"]))).toBeNull();
+  });
+
   describe("resetting only an object that hears no socket", () => {
     const silent = unheard("silent", "06:00:10.000");
     const late = at("06:05:00.000");

@@ -30,6 +30,7 @@ import {
 import type { TelemetryEventProperties } from '@rally/contracts/telemetry';
 import {
   WORKSPACE_SOCKET_HEARTBEAT_MS,
+  WORKSPACE_SOCKET_OPEN_TIMEOUT_MS,
   WORKSPACE_SOCKET_PONG_TIMEOUT_MS,
   workspaceSocketReconnectDelay,
 } from '@rally/contracts/workspace-reach-watch';
@@ -62,7 +63,7 @@ import {
   spaceConversationsQueryKey,
 } from './sidebar-list-store';
 import { realtimeSocketTelemetry } from './socket-telemetry';
-import { reportTelemetryProductIntent, uuidV7 } from './telemetry';
+import { reportTelemetryProductIntent, telemetryJourneyDuration, uuidV7 } from './telemetry';
 import type { WorkstreamSummary } from './types';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { hydrateWorkspaceDirectory, mirrorWorkspaceDirectory } from './workspace-directory-cache';
@@ -427,13 +428,33 @@ export function WorkspaceSocketProvider({
     let reconnectTimer: number | null = null;
     let heartbeatTimer: number | null = null;
     let pongTimer: number | null = null;
+    let openTimer: number | null = null;
     let connecting = false;
+    /**
+     * Set by main's `suspend`, cleared by `online()`: resume, the network coming
+     * back, or a person asking to reconnect. Nothing dials in between, so a
+     * ticket that settles as the machine sleeps is not dialled with.
+     */
+    let suspended = false;
     let attempt = 0;
     const socketTelemetry = realtimeSocketTelemetry('workspace');
     const reportHandshake = (
       attemptId: string,
       phase: TelemetryEventProperties<'workspace_socket_handshake'>['phase'],
-    ): void => reportTelemetryProductIntent({ kind: 'workspace_socket_handshake', attemptId, phase });
+      ticketRequestedAt?: number,
+    ): void => reportTelemetryProductIntent({
+      kind: 'workspace_socket_handshake',
+      attemptId,
+      phase,
+      // Timers that fire minutes late and a window nobody can see are the
+      // two things that told a sleeping Mac from a stuck server.
+      ...(ticketRequestedAt === undefined
+        ? {}
+        : {
+          sinceTicketRequested: telemetryJourneyDuration(Date.now() - ticketRequestedAt),
+          windowVisible: document.visibilityState === 'visible',
+        }),
+    });
     const isOffline = (): boolean => navigator.onLine === false;
     let lastWaterline = -1;
     let presenceRevision = 0;
@@ -494,14 +515,16 @@ export function WorkspaceSocketProvider({
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       reconnectTimer = null;
     };
-    const clearHeartbeat = (): void => {
+    const clearSocketTimers = (): void => {
       if (heartbeatTimer !== null) window.clearTimeout(heartbeatTimer);
       if (pongTimer !== null) window.clearTimeout(pongTimer);
+      if (openTimer !== null) window.clearTimeout(openTimer);
       heartbeatTimer = null;
       pongTimer = null;
+      openTimer = null;
     };
     const scheduleHeartbeat = (target: WebSocket): void => {
-      clearHeartbeat();
+      clearSocketTimers();
       heartbeatTimer = window.setTimeout(() => {
         heartbeatTimer = null;
         if (stopped || socket !== target || target.readyState !== WebSocket.OPEN) return;
@@ -853,8 +876,17 @@ export function WorkspaceSocketProvider({
       if (served.length === 0) return;
       await requestRails(served);
     };
+    /** What every end of a socket's life resets, whoever ended it. */
+    const releaseSocket = (): void => {
+      clearSocketTimers();
+      subscribed = false;
+      socket = null;
+      setPresenceUserIdsByWorkstream({});
+      rejectPendingRailRequests(new ApiError('The organization connection closed.', 0, 'workspace_socket_closed'));
+      rejectPendingSpaceRequests(new ApiError('The organization connection closed.', 0, 'workspace_socket_closed'));
+    };
     const scheduleReconnect = (): void => {
-      if (stopped || permanentlyClosed || reconnectTimer !== null) return;
+      if (stopped || permanentlyClosed || suspended || reconnectTimer !== null) return;
       if (navigator.onLine === false) {
         setState('unavailable');
         return;
@@ -867,7 +899,7 @@ export function WorkspaceSocketProvider({
       }, workspaceSocketReconnectDelay(attempt));
     };
     const connect = async (): Promise<void> => {
-      if (stopped || permanentlyClosed || connecting) return;
+      if (stopped || permanentlyClosed || suspended || connecting) return;
       if (socket?.readyState === WebSocket.CONNECTING || socket?.readyState === WebSocket.OPEN) return;
       const diagnosticAttemptId = uuidV7();
       if (navigator.onLine === false) {
@@ -880,11 +912,13 @@ export function WorkspaceSocketProvider({
       setState(attempt === 0 ? 'connecting' : 'reconnecting');
       const ticketAbort = new AbortController();
       activeTicketAbort = ticketAbort;
+      const ticketRequestedAt = Date.now();
       try {
         reportHandshake(diagnosticAttemptId, 'ticket_requested');
         const ticket = await api.getWorkspaceSocketTicket(ticketAbort.signal);
-        if (stopped) return;
-        reportHandshake(diagnosticAttemptId, 'ticket_received');
+        // A ticket that settled as the machine went to sleep: resume dials.
+        if (stopped || suspended) return;
+        reportHandshake(diagnosticAttemptId, 'ticket_received', ticketRequestedAt);
         // The offline handler normally aborts an in-flight ticket. This closes
         // the narrower race where the ticket settles just before that handler:
         // never dial after the network transition, and keep it distinct from a
@@ -897,12 +931,23 @@ export function WorkspaceSocketProvider({
         }
         const next = new WebSocket(ticket.url, ticket.protocols);
         socket = next;
+        // A `101` the client never receives leaves the socket CONNECTING, with
+        // no heartbeat yet to notice, until the operating system gives up.
+        let openTimedOut = false;
+        openTimer = window.setTimeout(() => {
+          openTimer = null;
+          if (stopped || socket !== next || next.readyState !== WebSocket.CONNECTING) return;
+          openTimedOut = true;
+          reportHandshake(diagnosticAttemptId, 'open_timeout', ticketRequestedAt);
+          socketTelemetry.willClose('open_timeout');
+          next.close();
+        }, WORKSPACE_SOCKET_OPEN_TIMEOUT_MS);
         let firstSyncObserved = false;
         let firstSidebarApplied = false;
         let syncRejectionReported = false;
         next.addEventListener('open', () => {
           if (stopped || socket !== next) return;
-          reportHandshake(diagnosticAttemptId, 'transport_open');
+          reportHandshake(diagnosticAttemptId, 'transport_open', ticketRequestedAt);
           socketTelemetry.connected(attempt);
           attempt = 0;
           // A new transport has not inherited the prior one's Space snapshot.
@@ -1232,12 +1277,7 @@ export function WorkspaceSocketProvider({
         });
         next.addEventListener('close', (event) => {
           if (socket !== next) return;
-          clearHeartbeat();
-          subscribed = false;
-          socket = null;
-          setPresenceUserIdsByWorkstream({});
-          rejectPendingRailRequests(new ApiError('The organization connection closed.', 0, 'workspace_socket_closed'));
-          rejectPendingSpaceRequests(new ApiError('The organization connection closed.', 0, 'workspace_socket_closed'));
+          releaseSocket();
           const accessRevoked = event.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE;
           const permanentError = accessRevoked
             ? new ApiError(
@@ -1283,6 +1323,8 @@ export function WorkspaceSocketProvider({
           // See `use-workstream-socket.ts`: the pending cause is the loop's, so
           // a superseded socket's error must not arm the live one's.
           if (stopped || socket !== next) return;
+          // Closing a CONNECTING socket fires `error` first; the cause is ours.
+          if (openTimedOut) return;
           socketTelemetry.willClose('transport_error');
           next.close();
         });
@@ -1293,9 +1335,11 @@ export function WorkspaceSocketProvider({
           socketTelemetry.disconnected({
             attempts: attempt,
             retrying: !offline,
-            cause: offline
-              ? 'offline'
-              : isSocketTicketRequestTimeoutError(error) ? 'ticket_timeout' : 'ticket_failed',
+            cause: suspended
+              ? 'suspended'
+              : offline
+                ? 'offline'
+                : isSocketTicketRequestTimeoutError(error) ? 'ticket_timeout' : 'ticket_failed',
           });
         }
         scheduleReconnect();
@@ -1328,6 +1372,7 @@ export function WorkspaceSocketProvider({
     });
 
     const online = (): void => {
+      suspended = false;
       clearReconnect();
       void connect();
     };
@@ -1335,7 +1380,7 @@ export function WorkspaceSocketProvider({
     reconnectRef.current = online;
     const offline = (): void => {
       clearReconnect();
-      clearHeartbeat();
+      clearSocketTimers();
       activeTicketAbort?.abort();
       activeTicketAbort = null;
       if (socket) socketTelemetry.willClose('offline');
@@ -1356,6 +1401,25 @@ export function WorkspaceSocketProvider({
     };
     window.addEventListener('online', online);
     window.addEventListener('offline', offline);
+    const stopPowerState = bridge.onPowerStateChanged((state) => {
+      if (state === 'resumed') {
+        online();
+        return;
+      }
+      suspended = true;
+      clearReconnect();
+      activeTicketAbort?.abort();
+      activeTicketAbort = null;
+      setState('reconnecting');
+      const sleeping = socket;
+      if (!sleeping) return;
+      // Settled here rather than by its `close` event, which may arrive after
+      // a resume has dialled again: that socket's events are then ignored, and
+      // its cause is reported now, for it alone.
+      releaseSocket();
+      socketTelemetry.disconnected({ attempts: attempt, retrying: true, cause: 'suspended' });
+      sleeping.close();
+    });
     // The sidebar paints from the disk while the ticket and the handshake are
     // still in flight; the subscribe answer then applies over it through the
     // ordinary receivers, whose ledgers a seed never touches.
@@ -1386,6 +1450,7 @@ export function WorkspaceSocketProvider({
       refreshChannelRailsRef.current = () => Promise.reject(new ApiError('The organization closed.', 409, 'workspace_socket_closed'));
       window.removeEventListener('online', online);
       window.removeEventListener('offline', offline);
+      stopPowerState();
       window.removeEventListener('focus', observeWindowFocus);
       window.removeEventListener('blur', observeWindowFocus);
       document.removeEventListener('visibilitychange', observeWindowFocus);
@@ -1394,7 +1459,7 @@ export function WorkspaceSocketProvider({
       reconnectRef.current = () => undefined;
       subscribed = false;
       clearReconnect();
-      clearHeartbeat();
+      clearSocketTimers();
       activeTicketAbort?.abort();
       activeTicketAbort = null;
       socket?.close();

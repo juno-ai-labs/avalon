@@ -44,6 +44,7 @@ import {
   net,
   nativeImage,
   nativeTheme,
+  powerMonitor,
   protocol,
   safeStorage,
   screen as electronScreen,
@@ -74,6 +75,7 @@ import type {
   DesktopDeepLinkEntrypoint,
   DesktopDeepLinkNavigation,
   DesktopLockdownSettings,
+  DesktopPowerState,
   DesktopSession,
   DesktopTelemetryProductIntent,
   DesktopTelemetryScreen,
@@ -398,9 +400,13 @@ async function reportTelemetryProductIntent(
   if (!telemetryReporter) return;
   switch (intent.kind) {
     case 'workspace_socket_handshake':
-      await telemetryReporter.workspaceSocketHandshake(
-        { attemptId: intent.attemptId, phase: intent.phase }, windowContext,
-      );
+      {
+        // Already parsed against this event's schema by `telemetry-intent.ts`.
+        const { attemptId, phase, sinceTicketRequested, windowVisible } = intent;
+        await telemetryReporter.workspaceSocketHandshake(
+          { attemptId, phase, sinceTicketRequested, windowVisible }, windowContext,
+        );
+      }
       return;
     case 'onboarding_region_selected':
       await telemetryReporter.onboardingRegionSelected(intent.selectedRegion, intent.entrypoint, windowContext);
@@ -603,6 +609,10 @@ function observeApplicationForeground(foregrounded: boolean): void {
   for (const window of rallyWindows()) {
     window.webContents.send('application:foreground-changed', foregrounded);
   }
+}
+/** Relay `powerMonitor` suspend and resume to every Rally window. */
+function observePowerState(state: DesktopPowerState): void {
+  for (const window of rallyWindows()) window.webContents.send('power:changed', state);
 }
 let nativeCrashUploader: NativeCrashUploader | null = null;
 let nativeCrashGenerationActive = false;
@@ -4873,6 +4883,9 @@ if (!singleInstanceLock) {
 
   void app.whenReady().then(async () => {
     app.setAppUserModelId('ai.rallywith.desktop');
+    // `powerMonitor` may not be used before `ready`.
+    powerMonitor.on('suspend', () => observePowerState('suspended'));
+    powerMonitor.on('resume', () => observePowerState('resumed'));
     for (const scheme of deepLinkProtocols) app.setAsDefaultProtocolClient(scheme);
     // Before every other recovery below: they all resolve paths through the
     // current session directory, so it has to be the one holding the files.

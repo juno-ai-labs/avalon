@@ -8,6 +8,7 @@ import type {
   DesktopDeepLinkErrorNotice,
   DesktopAuthAttempt,
   DesktopDeepLinkNavigation,
+  DesktopPowerState,
   DesktopSession,
   DesktopSystemAudioCaptureInfo,
   DesktopWorkspaceOnboardingState,
@@ -49,6 +50,7 @@ function parseDeepLinkErrorNotice(raw: unknown): DesktopDeepLinkErrorNotice | nu
   return { id: candidate.id, message: candidate.message };
 }
 const applicationForegroundListeners = new Set<(foregrounded: boolean) => void>();
+const powerStateListeners = new Set<(state: DesktopPowerState) => void>();
 const realtimeSocketListeners = new Set<(event: DesktopRealtimeSocketEvent) => void>();
 const embeddedBrowserListeners = new Set<(state: EmbeddedBrowserState) => void>();
 const workspaceSyncInbox = createWorkspaceSyncRelayInbox();
@@ -76,6 +78,11 @@ ipcRenderer.on(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.relayed, (_event, rawEvent: unk
 ipcRenderer.on('application:foreground-changed', (_event, rawForegrounded: unknown) => {
   if (typeof rawForegrounded !== 'boolean') return;
   for (const listener of applicationForegroundListeners) listener(rawForegrounded);
+});
+
+ipcRenderer.on('power:changed', (_event, rawState: unknown) => {
+  if (rawState !== 'suspended' && rawState !== 'resumed') return;
+  for (const listener of powerStateListeners) listener(rawState);
 });
 
 // Install the privileged listener before React starts. Session changes can
@@ -135,6 +142,10 @@ const bridge: RallyDesktopBridge = {
   onApplicationForegroundChanged: (listener) => {
     applicationForegroundListeners.add(listener);
     return () => applicationForegroundListeners.delete(listener);
+  },
+  onPowerStateChanged: (listener) => {
+    powerStateListeners.add(listener);
+    return () => powerStateListeners.delete(listener);
   },
   getApplicationSettings: () => ipcRenderer.invoke('application-settings:get') as Promise<DesktopApplicationSettings>,
   setLockdownMode: (enabled) =>

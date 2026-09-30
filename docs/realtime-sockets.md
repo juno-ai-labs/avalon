@@ -896,10 +896,28 @@ other socket answers a ping, speaks, or closes in the following two minutes,
 which in practice means nobody else is connected; then the reset interrupts
 only background work
 (alarms retry, and Queue-delivered RPC redelivers). A member who is the only
-one connected can cause the same on purpose. Either shows up as a
-`workspace_socket_first_frame_missed` row with few `open_sockets` and a
+one connected can cause the same on purpose. Either shows up with few `open_sockets` and a
 `missed_sockets` of one; a wedge with people retrying shows several missed
 sockets, most of them in `missed_closed_sockets`.
+
+**One missed socket is held, not reset.** Below
+`WORKSPACE_SOCKET_MISSED_SOCKETS_BEFORE_RESET` (two, set by the team), the
+watch logs `workspace_socket_first_frame_held` at warn level, once per
+instance, and keeps the ledger row so that the next silent socket counts with
+it. A held row stops being an alarm candidate, since its
+deadline is already past; a hibernation wake forgets which rows were held and
+judges them again, once. Any later socket that speaks settles it. A real wedge
+with a client retrying reaches two within one more retry, about a minute or
+two.
+
+The desktop narrows the window from its side too. A dialled workspace socket
+that has not opened within `WORKSPACE_SOCKET_OPEN_TIMEOUT_MS` (15 s, set by the
+team) is closed and redialled, so a live client whose `101` was lost speaks on a
+new socket well inside the server's deadline, and that settles the silent one.
+Main relays `powerMonitor` suspend and resume to every window: on suspend the
+provider aborts any ticket in flight, settles and closes its socket, and dials
+nothing until resume, the network coming back, or a person asking to
+reconnect.
 
 Directory pages are read-only and are not reconnect-resend commands. If
 Electron receives the browser `offline` signal while a page is in flight, it
@@ -920,7 +938,7 @@ receipt.
 | `apps/api/test/workstream-socket-warm.test.ts` | `pnpm --filter @rally/api test` | `ConversationService.socketTicket`: the parent's viewer decision gating the ticket, the parent kind and archive decision on it, and the deferred main-substream warm-up. |
 | `apps/api/test-workers/socket-subprotocol-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | The runtime constraint, on real workerd. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO and SubstreamAgent attachments/snapshots; authoritative workspace directory application/page/resource queries; eviction; native-RPC envelopes; workspace protocol/session/access close-code separation and payload-free diagnostics; truthful bounded transcript ranges; indivisible-turn payload-free envelopes; revocation; compaction recovery; queued-run coalescing; and ticket replay on real workerd. |
-| `apps/api/test-workers/workspace-socket-first-frame.test.ts`, `apps/api/test/socket-first-frame-watch.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts`; `pnpm --filter @rally/api test` | The first-frame watch, through the real accept and alarm paths: a silent socket on a silent object resets it, logs, and is dropped, also while the region is closed for maintenance and after its client has already closed it; each of the three "still hearing sockets" signals alone prevents a reset, including after a hibernation wake; the ledger forgets a socket once it speaks, lets go of a judged row, and does not reset a fresh instance after a reset or an eviction; accepting pulls the alarm in. |
+| `apps/api/test-workers/workspace-socket-first-frame.test.ts`, `apps/api/test/socket-first-frame-watch.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts`; `pnpm --filter @rally/api test` | The first-frame watch, through the real accept and alarm paths: silent sockets below the reset threshold are held, logged at warn, and kept without holding the alarm, and the one that reaches it resets; a held socket is let go once a later socket speaks; with the threshold at one, a silent socket on a silent object resets it, logs, and is dropped, also while the region is closed for maintenance and after its client has already closed it; each of the three "still hearing sockets" signals alone prevents a reset, including after a hibernation wake; the ledger forgets a socket once it speaks, lets go of a judged row, and does not reset a fresh instance after a reset or an eviction; accepting pulls the alarm in. |
 | `apps/api/test-workers/message-to-output-pipeline.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Fresh message admission and its private receipt on the authenticated SubstreamAgent socket, stable turn identity after hibernation/resend, and the message-to-provider pipeline on real workerd. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx`, `workstream-state-store.test.ts` | `pnpm --filter @rally/desktop test` | One persistent workspace connection, truthful terminal errors for access/session/protocol closes, correlated directory pages/pagination, immediate offline page rejection, waterline resume, stale/duplicate rejection across both sockets, independent common/viewer ordering, and idempotent command resend. |
 | `apps/api/test-workers/workspace-socket-fanout.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-socket-fanout.test.ts` | Sync topic audiences on real sockets, live and on replay, and the Channel row's; the full list is in [`websocket-architecture.md`](websocket-architecture.md#testing). |
@@ -965,6 +983,48 @@ what that leaves exposed.
 Child archive admission uses the same `parent_archived` ticket field as parent archive. Already-open private-child sockets additionally check the versioned local archive mirror; there is no per-command parent RPC. See [work-stream durable objects](workstream-durable-object.md) for lifecycle delivery.
 
 ## Changelog
+
+### 2026-09-30 — One silent socket is held, and the desktop stops leaving them
+
+**What changed:** WorkspaceDO resets only once
+`WORKSPACE_SOCKET_MISSED_SOCKETS_BEFORE_RESET` (two) sockets are missed at
+once; fewer are held, logged as `workspace_socket_first_frame_held` at warn
+level, and kept in the ledger without being alarm candidates. The desktop closes
+and redials a workspace socket that has not opened within
+`WORKSPACE_SOCKET_OPEN_TIMEOUT_MS` (15 s), closes its socket and dials nothing
+after `powerMonitor` suspend until resume, the network coming back, or a manual
+reconnect, and reports `open_timeout` and `suspended` as socket causes. Handshake telemetry gains `sinceTicketRequested`
+and `windowVisible`.
+
+**Why:** Eleven resets in three days paged #firehose-alert, all with
+`missed_sockets: 1`, and none was a wedge. Matched by request ID against the
+desktop's handshake telemetry, two were a Mac app on 1.469.0: one got its
+ticket, the server sent `101`, and the socket sat CONNECTING for about twelve
+minutes, because nothing timed out an open; the other asked for a ticket that
+reached the server five minutes later, with its 10-second ticket timeout never
+firing, so the renderer was not running. The desktop had no suspend handling
+and no open timeout, and the server read each such socket as the object going
+deaf.
+
+**Considered and rejected:** Holding one missed socket and deleting its row:
+the next silent socket would then count alone, and a real wedge would never
+reach the threshold. Storing the held mark in SQLite: a migration for a mark
+whose only cost when lost is one repeated warn per wake. A client-only fix:
+sleep can still land between the server's accept and the client's `open`, and a
+suspend handler cannot run on a machine that has already gone to sleep. A
+suspend flag only a resume clears: an aborted sleep can deliver no resume,
+which would leave the socket down for the life of the process. Labelling the
+suspend close from the power flag at its `close` event: a resume can land
+before that event, so the socket closed for sleep is settled and reported at
+suspend instead.
+
+**Consequences:** A real wedge recovers one retry later, about a minute or two.
+Two dead-on-arrival sockets on one live instance, with no socket heard from in
+between, still reset, however far apart they are. The desktop's new telemetry
+causes and fields reach an older API as properties its strict schema refuses,
+so the API has to deploy before a desktop that sends them. Sideline and the
+browser tab share the listen-only watcher, which has neither the open timeout
+nor suspend handling yet.
 
 ### 2026-09-28 — The connect payload carries Spaces, and each Space is asked for its Channels
 
