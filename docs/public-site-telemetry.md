@@ -38,7 +38,7 @@ page events.
 `site_action_selected` reports a click on a tagged link on the landing or
 support pages (`/download/` initializes no telemetry). A link opts in with a `data-site-action` id, and
 `SITE_ACTION_LINKS` in `telemetry.ts` maps each id to a closed action, placement
-and, for pricing downloads, plan. One capture-phase click listener reads the id
+and, for pricing actions, plan. One capture-phase click listener reads the id
 and ignores any id not in that table, so markup chooses a combination but never
 supplies a value. Every installer link has its own id (`download-header`,
 `download-hero`, `download-pricing-start|grow`), which is how the landing
@@ -145,6 +145,8 @@ that reports. Events are sent immediately in batches bounded by the shared
 avoids writing a disposable D1 journey merely to decide whether browser storage
 is allowed.
 
+## Changelog
+
 ### 2026-09-30 — Pricing plans follow the per-organization tiers
 
 **What changed:** `plan` gained `start`, `grow` and `enterprise` (the Grown up
@@ -155,6 +157,15 @@ plan's internal name). Grown up's Contact us link reports
 report the plan the visitor picked. The contract keeps `pro`, `max` and `ultra`
 because the API refuses a whole batch carrying an unknown value, and a landing
 tab opened before the site deploy still sends them.
+
+**Considered and rejected:** Dropping the old values with the rename. A tab
+opened before the site deploy would then lose every batch with a pricing click,
+page views included.
+
+**Consequences:** The enum carries three values no page sends. Removing them
+is safe once no tab can still be running the pre-change page.
+
+Shipped in juno-ai-labs/avalon#1025.
 
 ### 2026-09-29 — Report which landing link was clicked
 
