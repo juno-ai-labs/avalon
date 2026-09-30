@@ -1,6 +1,6 @@
 import "../../../../../tests/isolated-region";
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -8,7 +8,19 @@ import {
   WorkspaceAccountMenu,
 } from './workspace-account-menu';
 import { AccountSignInSupersededError, FINISH_SIGN_IN_IN_BROWSER } from '../lib/app-session';
-import { desktopWorkspaceIdentityKey } from '../../common/desktop';
+import { desktopWorkspaceIdentityKey, type DesktopUpdateStatus } from '../../common/desktop';
+import type * as PlatformModule from '../lib/platform';
+
+/** Update methods layered over the real bridge while a test sets them. */
+const updateBridge = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
+vi.mock('../lib/platform', async (importOriginal) => {
+  const original = await importOriginal<typeof PlatformModule>();
+  return {
+    ...original,
+    desktopBridge: () => ({ ...original.desktopBridge(), ...updateBridge.current }),
+  };
+});
+
 
 const currentUser = { id: 'user-1', name: 'Ada', email: 'ada@example.com', timezone: 'America/New_York' };
 const active = {
@@ -62,6 +74,35 @@ describe('organization account menu', () => {
     expect(props.onSwitchWorkspace).toHaveBeenCalledWith(enterprise);
     expect(screen.queryByText('Weekly usage')).not.toBeInTheDocument();
     expect(screen.queryByText('Get Rally for iOS')).not.toBeInTheDocument();
+  });
+  it('puts Restart to Update above Sidekicks only while an update is downloaded', async () => {
+    const installDownloadedUpdate = vi.fn(async () => undefined);
+    let status: DesktopUpdateStatus = { kind: 'idle' };
+    updateBridge.current = {
+      getUpdateStatus: async () => status,
+      onUpdateStatusChanged: () => () => undefined,
+      installDownloadedUpdate,
+      openSidekicks: vi.fn(async () => undefined),
+    };
+    try {
+      renderMenu({ presentation: 'grok' });
+      await act(async () => undefined);
+      openMenu();
+      expect(screen.queryByRole('menuitem', { name: 'Restart to Update' })).not.toBeInTheDocument();
+      cleanup();
+
+      status = { kind: 'downloaded', version: '1.2.0' };
+      renderMenu({ presentation: 'grok' });
+      await act(async () => undefined);
+      openMenu();
+      const items = within(screen.getByRole('menu')).getAllByRole('menuitem');
+      expect(items[0]).toHaveAccessibleName('Restart to Update');
+      expect(items[1]).toHaveAccessibleName('Sidekicks');
+      fireEvent.click(items[0]!);
+      expect(installDownloadedUpdate).toHaveBeenCalledOnce();
+    } finally {
+      updateBridge.current = null;
+    }
   });
   it.each([true, false])('keeps compact account actions ordered and usable with organizations enabled=%s', (enabled) => {
     const invite = {

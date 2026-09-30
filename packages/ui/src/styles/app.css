@@ -1158,6 +1158,9 @@ pre {
 .spaces-sidebar.is-compact .spaces-sidebar-titlebar { justify-content: center; }
 .spaces-sidebar.is-compact .spaces-sidebar-titlebar-actions { margin-left: 0; }
 .spaces-sidebar.is-compact .spaces-sidebar-restore { display: none; }
+.spaces-sidebar-update { color: var(--av-sys-color-accent-base); }
+.spaces-sidebar-update:hover:not(:disabled) { color: var(--av-sys-color-accent-strong); }
+.spaces-sidebar.is-compact .spaces-sidebar-update { display: none; }
 .spaces-sidebar-preview-surface { min-width: 210px; }
 .channels-space-heading { margin-top: 0 !important; }
 
