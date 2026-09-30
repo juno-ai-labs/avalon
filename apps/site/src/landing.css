@@ -101,11 +101,16 @@ h1{white-space:pre-line;max-width:56rem;margin:0 auto;font-size:4.5rem}
 .people strong{display:block;margin-top:20px;font-weight:500}
 .people span{display:block;margin-top:2px;font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
 
+.pricing-callout{margin-top:56px;padding:24px 28px;border:1px solid var(--hairline);border-left:3px solid var(--green);border-radius:2px;background:oklch(.5 .12 160/.1)}
+.pricing-callout-title{font-family:var(--display-font);font-size:24px;font-weight:500;line-height:1.2}
+.pricing-callout-body{margin-top:8px;font-size:var(--small);color:var(--soft)}
+.pricing-callout+.tiers{margin-top:16px}
 .tiers{margin-top:56px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
 .tier{display:flex;flex-direction:column;padding:28px;border:1px solid var(--hairline);border-radius:2px}
 .tier.featured{border-color:oklch(.97 0 0/.3);background:oklch(.97 0 0/.04)}
 .tier-name{font-family:var(--mono);font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:oklch(.97 0 0/.6)}
 .tier-price{margin-top:24px;font-family:var(--display-font);font-size:48px;font-weight:500;line-height:1}
+.tier-price-text{display:flex;align-items:flex-end;min-height:48px;font-size:32px;line-height:1.1}
 .tier-note{margin-top:4px;font-size:12px;color:oklch(.97 0 0/.55)}
 .tier ul{flex:1;margin:28px 0 0;padding:24px 0 0;border-top:1px solid var(--hairline);list-style:none;font-size:var(--small);color:oklch(.97 0 0/.75)}
 .tier li{display:flex;gap:12px}
