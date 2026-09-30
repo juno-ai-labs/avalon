@@ -100,3 +100,12 @@ export function spaceRefusalChannelIds(cause: unknown): string[] {
   const parsed = SpaceRefusalDetailsSchema.safeParse(cause.details);
   return parsed.success ? [...parsed.data.channelIds] : [];
 }
+
+/** Title from the catalogs the caller has, or a fallback if this device has not listed the Channel. */
+export function blockedChannelLabel(
+  channelId: string,
+  catalogs: readonly { id: string; title: string }[],
+): string {
+  return catalogs.find((item) => item.id === channelId)?.title
+    ?? 'A channel that isn’t showing here';
+}

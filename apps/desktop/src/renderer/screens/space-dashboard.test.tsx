@@ -24,6 +24,7 @@ const api = vi.hoisted(() => ({
 const removedDataHooks = vi.hoisted(() => ({
   useSocketOwnedList: vi.fn(() => ({ data: [] })),
   useWorkstreamsQuery: vi.fn(() => ({ data: [] })),
+  cachedWorkstreams: [] as { id: string; title: string }[],
 }));
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
@@ -31,7 +32,10 @@ vi.mock('../lib/sidebar-list-store', async (importOriginal) => ({
   ...await importOriginal<typeof SidebarListStore>(),
   useSocketOwnedList: removedDataHooks.useSocketOwnedList,
 }));
-vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: removedDataHooks.useWorkstreamsQuery }));
+vi.mock('../lib/use-workstreams-query', () => ({
+  useWorkstreamsQuery: removedDataHooks.useWorkstreamsQuery,
+  useCachedWorkstreams: () => removedDataHooks.cachedWorkstreams,
+}));
 vi.mock('../lib/workstream-landing', () => ({ useOpenFirstWorkstream: () => () => undefined }));
 /** Null unless a test wants the screen to think the directory is the local cache's. */
 const workspaceSocket = vi.hoisted(() => ({
@@ -146,6 +150,7 @@ function renderSpace(summary = hiring, options: { ready?: boolean } = {}): {
 describe('the Space dashboard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    removedDataHooks.cachedWorkstreams = [];
     workspaceSocket.current = null;
     api.getWorkspaceMembers.mockResolvedValue([member]);
     api.listSpaceChannels.mockResolvedValue({ items: [], nextCursor: null });
@@ -420,6 +425,44 @@ describe('the Space dashboard', () => {
 
     const blocked = await screen.findByRole('list', { name: 'Channels to move first' });
     expect(within(blocked).getByText('Ship the launch')).toBeVisible();
+  });
+
+  // Needs attention is not the Space's membership: an idle Channel is absent
+  // from it and still has to move first. The sidebar directory is what names it.
+  it('given a blocked archive named a channel that is idle, then it still lists the sidebar title', async () => {
+    api.listSpaceChannels.mockResolvedValue({ items: [], nextCursor: null });
+    api.archiveSpace.mockRejectedValue(new ApiError(
+      'A Channel in “Hiring” belongs to no other Space, so it would have no home',
+      409,
+      'space_membership_final',
+      { channelIds: ['00000000-0000-7000-8000-0000000000e1'] },
+    ));
+    removedDataHooks.cachedWorkstreams = [channelRow()];
+    renderSpace(makeSpace({ channelCount: 1 }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Archive space' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Archive space?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Archive space' }));
+
+    const blocked = await screen.findByRole('list', { name: 'Channels to move first' });
+    expect(within(blocked).getByText('Ship the launch')).toBeVisible();
+  });
+
+  it('given a blocked archive named a channel this device has not listed, then it says so without pretending it is loaded', async () => {
+    api.archiveSpace.mockRejectedValue(new ApiError(
+      'A Channel in “Hiring” belongs to no other Space, so it would have no home',
+      409,
+      'space_membership_final',
+      { channelIds: ['00000000-0000-7000-8000-0000000000e1'] },
+    ));
+    renderSpace(makeSpace({ channelCount: 1 }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Archive space' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Archive space?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Archive space' }));
+
+    const blocked = await screen.findByRole('list', { name: 'Channels to move first' });
+    expect(within(blocked).getByText('A channel that isn’t showing here')).toBeVisible();
   });
 
   // One failure appears once. A single `error` string was rendered in the body

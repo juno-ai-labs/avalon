@@ -2556,7 +2556,14 @@ export class WorkspaceSpaceStorage {
     });
   }
 
-  /** Refuse only an archive that would leave a member Channel with no home. */
+  /**
+   * Refuse only an archive that would leave a live Channel with no home.
+   *
+   * Archived Channels keep their membership so restoring this Space returns
+   * them, and the memberships below still stage to `removing` with the rest.
+   * They do not block: no list renders them, so asking the person to move one
+   * first is a refusal they cannot act on.
+   */
   prepareArchive(userId: string, spaceId: string, now = Date.now()): WorkspaceSpaceMutationResult {
     return this.storage.transactionSync(() => {
       if (!this.canEdit(userId, spaceId, true)) {
@@ -2573,7 +2580,7 @@ export class WorkspaceSpaceStorage {
         return { ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] };
       }
       const stranded: string[] = [];
-      for (const workstreamId of this.memberWorkstreamIdsUnchecked(spaceId)) {
+      for (const workstreamId of this.liveMemberWorkstreamIds(spaceId)) {
         const remainingSpaceIds = this.otherActiveSpaceIds(workstreamId, spaceId);
         if (remainingSpaceIds.length === 0) {
           stranded.push(workstreamId);
@@ -3839,10 +3846,26 @@ export class WorkspaceSpaceStorage {
     return listable;
   }
 
-  private memberWorkstreamIdsUnchecked(spaceId: string): string[] {
+  /**
+   * Active memberships that still count as a live home.
+   *
+   * Excludes only a Channel the directory already records as archived. A
+   * membership whose projection has not landed is treated as live: the
+   * directory row is an async projection, and dropping it here would let
+   * archive strand a Channel that is still open. `channelCount` inner-joins
+   * for display; this guard fails closed.
+   */
+  private liveMemberWorkstreamIds(spaceId: string): string[] {
     return this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
-      `SELECT workstream_id FROM space_channel_memberships
-        WHERE space_id = ? AND state = 'active' ORDER BY workstream_id`,
+      `SELECT membership.workstream_id
+         FROM space_channel_memberships membership
+        WHERE membership.space_id = ? AND membership.state = 'active'
+          AND NOT EXISTS (
+            SELECT 1 FROM channels directory
+             WHERE directory.workstream_id = membership.workstream_id
+               AND directory.archived_at IS NOT NULL
+          )
+        ORDER BY membership.workstream_id`,
       spaceId,
     ).toArray().map((row) => row.workstream_id);
   }

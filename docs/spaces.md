@@ -1520,8 +1520,12 @@ Space to move its placement or into the pinned section to pin it.
   Channel's direct source and every active Space source, so one Space cannot
   revoke what another supplies. Narrowing is expressed as a *retraction* of one
   source, never as a smaller application of it.
-- **Every non-deleted Channel has at least one active Space.** Removal from the
-  last one, and an archive that would produce one, are refused.
+- **Every live Channel has at least one active Space.** Removal from the
+  last one, and an archive that would produce one, are refused. An archived
+  Channel keeps its membership so restoring the Space returns it, but no list
+  renders it, so it is not a stranded home that has to move first. A Channel
+  the directory has not yet named is treated as live: the archive guard fails
+  closed until that Channel is known archived.
 - **A reader who keeps access must keep a way to find it.** After a retraction,
   every remaining reader has to be able to discover one of the Spaces the
   Channel stays in — an Organization-wide Space is discoverable by any active
@@ -1739,8 +1743,8 @@ belongs in the route suite as well as wherever its authority is proved.
 
 | Suite | What it proves |
 | --- | --- |
-| `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them against real objects: creation, audience, rename, archive, and an equal-audience one-request Channel move whose returned summaries match the settled memberships and which stages no intent and takes no add/remove fallback. Also that a move whose Channel provenance is behind the source Space writes nothing in WorkspaceDO and the route still completes it through add/remove, that a Space whose parent reservation fails commits no Space row, and that `openGeneralSpace` answers `absent`, then writes General with its parent at version one, then reuses it. Also that a narrowing which leaves its caller out is refused before anything moves, and that creation, an audience change and a rename open no conversation object for the Space. An archived Space stays archived when renamed and can be restored. And the WorkspaceDO-driven membership calls: an add seats and attributes the Space's readers and settles its intent; a seat the Channel's conversation refuses reaches the route with the conversation's own code and leaves the membership and intent cancelled; a removal withdraws the readers only that Space supplied and settles; and a removal whose narrowing could not be announced stays unsettled until the alarm finishes it in place, with no `space_intent_resume` message sent. The resumes that depend on the plan the first attempt recorded: a removal that died before the Channel was asked withdraws the departing Space's readers on the alarm; an add that died after seating settles with that reader attributed, and when its Space moved on first is abandoned with that reader withdrawn; and a removal still in flight is left to its request by the alarm. Creation: a caller WorkspaceDO refuses writes no D1 anchor. |
-| `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, and that a placement reaches an already-open socket rather than waiting for a reload. Reach: a participants-only Space named to somebody who can read a Channel in it and not to somebody who cannot, the summary that viewer is handed carrying the mark and neither participants nor defaults nor a count of what they cannot see, the reach on each row of the socket snapshot, every write refused `space_access_denied` with the Space left as its participant had it, the membership page refused with the same word while the Space's own participant still gets every row of it, a Channel that viewer cannot see moving into and out of the Space nudging them not at all while the Space's participant is nudged by every move, the Space leaving and returning to that viewer's snapshot as their participation in the one Channel reaching them into it moves — and staying put across an unread change — an audience that leaves its own caller out refused before anything is written, the single-Space read refusing a Space this viewer has no reach into rather than labelling it one, the ordering write that is not refused, and an archive taking the Space off that viewer's active list without putting it on their inactive one. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, a write reaching a second session of the same person without it asking and no session of anybody else, and a Channel removed from a Space taking its place in that Space's list with it for everybody, and archive taking neither — the arrangement is still there when the Space is restored. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
+| `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them against real objects: creation, audience, rename, archive, and an equal-audience one-request Channel move whose returned summaries match the settled memberships and which stages no intent and takes no add/remove fallback. Also that a move whose Channel provenance is behind the source Space writes nothing in WorkspaceDO and the route still completes it through add/remove, that a Space whose parent reservation fails commits no Space row, and that `openGeneralSpace` answers `absent`, then writes General with its parent at version one, then reuses it. Also that a narrowing which leaves its caller out is refused before anything moves, and that creation, an audience change and a rename open no conversation object for the Space. An archived Space stays archived when renamed and can be restored. A Space whose only leftover Channel was archived through `PATCH /workstreams/:id` still archives through `POST /spaces/:id/archive`, and restoring it returns that membership. And the WorkspaceDO-driven membership calls: an add seats and attributes the Space's readers and settles its intent; a seat the Channel's conversation refuses reaches the route with the conversation's own code and leaves the membership and intent cancelled; a removal withdraws the readers only that Space supplied and settles; and a removal whose narrowing could not be announced stays unsettled until the alarm finishes it in place, with no `space_intent_resume` message sent. The resumes that depend on the plan the first attempt recorded: a removal that died before the Channel was asked withdraws the departing Space's readers on the alarm; an add that died after seating settles with that reader attributed, and when its Space moved on first is abandoned with that reader withdrawn; and a removal still in flight is left to its request by the alarm. Creation: a caller WorkspaceDO refuses writes no D1 anchor. |
+| `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, that a placement reaches an already-open socket rather than waiting for a reload, that an archive whose only leftover Channel is archived is accepted, and that an archive whose only Channel has no directory row is refused. Reach: a participants-only Space named to somebody who can read a Channel in it and not to somebody who cannot, the summary that viewer is handed carrying the mark and neither participants nor defaults nor a count of what they cannot see, the reach on each row of the socket snapshot, every write refused `space_access_denied` with the Space left as its participant had it, the membership page refused with the same word while the Space's own participant still gets every row of it, a Channel that viewer cannot see moving into and out of the Space nudging them not at all while the Space's participant is nudged by every move, the Space leaving and returning to that viewer's snapshot as their participation in the one Channel reaching them into it moves — and staying put across an unread change — an audience that leaves its own caller out refused before anything is written, the single-Space read refusing a Space this viewer has no reach into rather than labelling it one, the ordering write that is not refused, and an archive taking the Space off that viewer's active list without putting it on their inactive one. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, a write reaching a second session of the same person without it asking and no session of anybody else, and a Channel removed from a Space taking its place in that Space's list with it for everybody, and archive taking neither — the arrangement is still there when the Space is restored. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
 | `apps/api/test-workers/space-conversation-page.test.ts` | The dashboard list on real workerd: a breakout projection forwarded by its Channel landing in the breakout tables and nowhere else, a redelivery acked and leaving the row as it was, a breakout invisible to somebody who cannot see its parent Channel and to somebody whose own viewer row is not listable, Channel badge totals respecting that parent boundary and requiring an explicit guest grant, one activity-ordered list across both kinds, an Organization-wide breakout surviving a viewer row a generation behind while a personal one does not, a keyset walk whose page boundary falls inside a four-way tie of two breakouts and two Channels, the combination walk that keeps the page's SQL and `conversationNeedsViewer` equal — run against both renderings of the predicate, with unread produced by an attention ordinal and by a manual mark — and the dashboard nudge on real sockets — Channel activity, breakout activity, one person's read state, a membership settling, and the two cases where it must not arrive. |
 | `packages/contracts/src/conversation-attention.test.ts` | The predicate itself over all 56 combinations, and that the three reader fields default to false rather than to unknown. |
 | `apps/api/test-workers/space-object.test.ts` | The role's differences, that what a Space's retired conversation still publishes is acknowledged and applied nowhere, that a Space's directory effect lands in the Space directory rather than the Channel one, and that a Channel product request aimed at a Space's conversation is refused by name. |
@@ -2095,6 +2099,45 @@ whoever reads it afterwards; `space_default_delivery_failed` does the same for a
 default target.
 
 ## Changelog
+
+### 2026-09-30 — Archived leftover Channels do not block Space archive
+
+**What changed:** `prepareArchive` tests final membership against Channels that
+are not known to be archived. A membership whose directory row has not landed
+still blocks: the guard fails closed. Known-archived members still stage to
+`removing` with the rest, so restoring the Space still returns them. Archive
+and restore walks that reach an archived Channel retract or re-apply its
+hosted-parent source from the directory projection and skip conversation
+seating, because the product read answers 404. The archive confirmation looks
+up a blocked Channel's title from the sidebar directory as well as the
+dashboard's Needs attention page, instead of printing "A channel not loaded on
+this device" for one that is merely idle.
+
+**Why:** The dashboard's empty Needs attention list is not a catalog of the
+Space. A Space whose Channels are all archived reports `channelCount` 0 and
+draws "No channels yet", then refuses archive because an archived Channel still
+has a membership — the row that would return it if it were unarchived. Nobody
+can add that Channel to another Space first: it is on no list. The same dialog
+looked titles up only in the Needs attention page, so even a live idle Channel
+the sidebar already knew was named as unloaded.
+
+**Considered and rejected:** Rehoming archived leftovers into General so the
+invariant stayed "every Channel, including archived ones." General is
+Organization-wide, and seating a personal Channel there would lock its scope
+public. Keeping the membership on the archived Space, staged rather than
+dropped, is the restore path that already existed. Inner-joining `channels` the
+way `channelCount` does was also rejected: undercounting a dashboard number is
+harmless, and dropping an unprojected live Channel from the guard would
+archive the Space out from under it.
+
+**Consequences:** Unarchiving a Channel whose only Space is itself archived is
+still not a product path — the Channel would come back with no live home.
+Restore the Space first. A live Channel whose only Space is this one still
+blocks archive, including while its directory projection is still in flight,
+and the confirmation now names it from whichever catalog this device has
+already loaded.
+
+Shipped in [#1033](https://github.com/juno-ai-labs/avalon/pull/1033).
 
 ### 2026-09-26 — A Space is WorkspaceDO rows only; its hidden conversation is retired
 
