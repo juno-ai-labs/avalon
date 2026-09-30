@@ -31,7 +31,7 @@ import { useSemanticScroll } from '../lib/desktop-layout';
 import { desktopBridge } from '../lib/platform';
 import { useDownloadedUpdate } from '../lib/use-downloaded-update';
 import { committedOrder, moveWithin, orderByStoredIds, storedOrderFor } from '../lib/personal-order';
-import { spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
+import { blockedChannelLabel, spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
 import type { WorkstreamSummary } from '../lib/types';
 import { NewWorkstreamMenu } from './new-workstream-menu';
 import { AcknowledgedErrorDialog, type AcknowledgedError } from './acknowledged-error-dialog';
@@ -542,7 +542,7 @@ export function SpacesSidebar({
           ? <InlineError>{archiveUnavailableSentence}</InlineError>
           : archiveFailure && <InlineError>{archiveFailure}</InlineError>}
         {blockedChannelIds.length > 0 && <ul aria-label="Channels to move first" className="space-dashboard-blocked-channels">
-          {blockedChannelIds.map((id) => <li key={id}>{workstreams.find((workstream) => workstream.id === id)?.title ?? 'A channel not loaded on this device'}</li>)}
+          {blockedChannelIds.map((id) => <li key={id}>{blockedChannelLabel(id, workstreams)}</li>)}
         </ul>}
       </Modal>
       <Modal

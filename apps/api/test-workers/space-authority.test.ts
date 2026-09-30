@@ -1435,6 +1435,42 @@ describe("WorkspaceDO space authority", () => {
     expect(directories.active.items.map((item) => item.id)).not.toContain(spaceId);
   });
 
+  it("given a Space whose only Channel is archived, when it is archived, then it is accepted", async () => {
+    const spaceId = await reserve("Company");
+    await publishChannel(CHANNEL_A, "2026-09-19T00:00:00.000Z");
+    await place(spaceId, CHANNEL_A);
+
+    await expect(workspace().spaceSummary({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId,
+    })).resolves.toMatchObject({ ok: true, space: { channelCount: 0 } });
+
+    await expect(workspace().prepareSpaceArchive({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId: crypto.randomUUID(),
+    })).resolves.toMatchObject({ ok: true });
+
+    expect(await workspace().runInspectionSql({
+      sql: `SELECT state FROM space_channel_memberships
+             WHERE space_id = ? AND workstream_id = ?`,
+      bindings: [spaceId, CHANNEL_A],
+    })).toMatchObject({ rows: [{ state: "removing" }] });
+  });
+
+  it("given a Space holding a live sole-member Channel and an archived one, when it is archived, then only the live Channel blocks it", async () => {
+    const spaceId = await reserve("Company");
+    await publishChannel(CHANNEL_A, null);
+    await publishChannel(CHANNEL_B, "2026-09-19T00:00:00.000Z");
+    await place(spaceId, CHANNEL_A);
+    await place(spaceId, CHANNEL_B);
+
+    await expect(workspace().prepareSpaceArchive({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId: crypto.randomUUID(),
+    })).resolves.toMatchObject({
+      ok: false,
+      code: "space_membership_final",
+      blockedWorkstreamIds: [CHANNEL_A],
+    });
+  });
+
   it("given an archive, when the fan-out runs, then the Space's source is off every member Channel", async () => {
     const spaceId = await reserve("Company");
     const second = await reserve("Recruiting");

@@ -9147,7 +9147,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
-  /** Stage an archive, refusing one that would strand any member Channel. */
+  /** Stage an archive, refusing one that would strand any live member Channel. */
   async prepareSpaceArchive(input: WorkspaceSpaceStagedRequest): Promise<WorkspaceSpaceMutationResult> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceStagedRequestSchema, input, "prepare_space_archive");
