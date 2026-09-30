@@ -32,6 +32,7 @@ function initializeWorkstreamHandoff(): void {
   const sidekickTarget = parseSidekickLinkPathTarget(window.location.pathname);
   if (!workstreamTarget && !spaceTarget && !sidekickTarget) {
     reportDesktopHandoff('workstream', 'presented', 'invalid');
+    kindLabel?.setAttribute('hidden', '');
     button.setAttribute('hidden', '');
     help?.setAttribute('hidden', '');
     error?.removeAttribute('hidden');
