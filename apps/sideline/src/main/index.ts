@@ -31,7 +31,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 
 import { sidelineHttpOutcome, type SidelineSendResult, type SidelineSession } from "../common/bridge";
-import { initializeSidelineUpdater, sidelineUpdateMenuItem } from "./updater";
+import { initializeSidelineUpdater, sidelineUpdateMenuItem, type SidelineUpdateHandle } from "./updater";
 import { sidelineHttpSend, sidelineHttpSendResponse } from "./send-request";
 
 const API_BASE_URL = (
@@ -42,7 +42,10 @@ const VISUAL_STATE = app.isPackaged ? undefined : process.env.SIDELINE_VISUAL_ST
 const SESSION_FILE = "sideline-session.bin";
 /** The origin Sideline's workspace socket presents; the Worker's `ALLOWED_ORIGINS` must admit it. */
 const SIDELINE_SOCKET_ORIGIN = "app://sideline";
+declare const __SIDELINE_BUILD_TIME__: string | undefined;
+
 let mainWindow: BrowserWindow | null = null;
+let updateHandle: SidelineUpdateHandle | null = null;
 let session: Session | null = null;
 let pendingAuth: { attemptId: string; verifier: string } | null = null;
 let stopReachWatch: (() => void) | null = null;
@@ -391,15 +394,19 @@ else {
     session = VISUAL_STATE ? null : await loadSession();
     mainWindow = createWindow();
     restartReachWatch();
-    const updateHandle = initializeSidelineUpdater({
+    const handle = initializeSidelineUpdater({
       isPackaged: app.isPackaged,
       isReleaseBuild: process.env.SIDELINE_RELEASE_BUILD === "true",
       platform: process.platform,
       arch: process.arch,
+      // Stamped by electron.vite.config.ts; absent where no build ran (unit tests).
+      currentBuildTime: typeof __SIDELINE_BUILD_TIME__ === "string" ? Date.parse(__SIDELINE_BUILD_TIME__) : undefined,
+      onDownloaded: (version) => sendToWindow("sideline:update-downloaded", version),
       showMessageBox: (options) => mainWindow && !mainWindow.isDestroyed()
         ? dialog.showMessageBox(mainWindow, options)
         : dialog.showMessageBox(options),
     });
+    updateHandle = handle;
     if (process.platform === "darwin") {
       const menu = Menu.getApplicationMenu() ?? Menu.buildFromTemplate([
         { role: "appMenu" },
@@ -410,13 +417,21 @@ else {
       ]);
       const appMenu = menu.items[0]?.submenu;
       if (appMenu && !appMenu.getMenuItemById("sideline-check-for-updates")) {
-        appMenu.insert(Math.min(1, appMenu.items.length), new MenuItem(sidelineUpdateMenuItem(updateHandle)));
+        appMenu.insert(Math.min(1, appMenu.items.length), new MenuItem(sidelineUpdateMenuItem(handle)));
         Menu.setApplicationMenu(menu);
       }
     }
   });
 }
 
+ipcMain.handle("sideline:downloaded-update", (event) => {
+  assertSender(event);
+  return updateHandle?.downloadedVersion() ?? null;
+});
+ipcMain.handle("sideline:install-update", (event) => {
+  assertSender(event);
+  updateHandle?.installDownloadedUpdate();
+});
 ipcMain.handle("sideline:session", (event) => {
   assertSender(event);
   return VISUAL_STATE && VISUAL_STATE !== "denied" ? visualSession : publicSession(session);

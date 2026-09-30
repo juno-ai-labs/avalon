@@ -22,6 +22,10 @@ export interface SidelineBridge {
   send(input: SidelineSendRequest): Promise<SidelineSendResult>;
   openInRally(input: { workstreamId: string; substreamId: string }): Promise<void>;
   onSessionChanged(listener: (session: SidelineSession | null) => void): () => void;
+  /** The update version waiting to install on restart, or null. */
+  getDownloadedUpdate(): Promise<string | null>;
+  onUpdateDownloaded(listener: (version: string) => void): () => void;
+  installDownloadedUpdate(): Promise<void>;
   /** Somebody in the catalog joined or left a Channel or Breakout, or the socket reconnected. */
   onCatalogStale(listener: () => void): () => void;
 }

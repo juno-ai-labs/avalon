@@ -94,6 +94,7 @@ select {
 .sideline-card-heading h2 { margin: 0 0 16px; font-size: 15px; }
 .sideline-icon-button { border: 0; background: transparent; color: var(--av-sys-color-text-muted); border-radius: 8px; padding: 7px; cursor: pointer; }
 .sideline-icon-button:hover { background-image: var(--hover-layer); color: var(--av-sys-color-text-default); }
+.sideline-update-button, .sideline-update-button:hover { color: var(--av-sys-color-accent-base); display: inline-flex; }
 .sideline-fields { display: grid; grid-template-columns: 1fr 1.4fr; gap: 14px; }
 .sideline-fields label { display: grid; gap: 7px; color: var(--av-sys-color-text-muted); font-size: 12px; font-weight: 600; }
 .sideline-fields select, .sideline-fields textarea, .sideline-search-field { width: 100%; border: 1px solid var(--av-sys-color-border-default); border-radius: 10px; background: var(--av-sys-color-surface-default); color: var(--av-sys-color-text-default); padding: 10px 11px; outline: none; }
