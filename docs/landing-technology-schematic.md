@@ -17,6 +17,7 @@ loads.
 | --- | --- |
 | `apps/site/index.html` | The `#technology` section: heading, the `[data-tech-schematic]` figure, and the four-item layer list that carries the same content as text |
 | `apps/site/src/technology.ts` | Page entry: starts the scene when the figure nears the screen, runs the clock only while it is visible, honors reduced motion |
+| `apps/site/src/shell-physics.ts` | The physics engine: bodies held on a sphere or a cut wall, moving at constant speed and bouncing elastically off the cut planes and the ring arcs |
 | `apps/site/src/technology-scene.ts` | The scene: `LAYERS` (names and colors), the timeline (`stateAt`, `MOMENTS`, `LOOP`), particle geometry, shaders, and the SVG label overlay |
 | `apps/site/src/landing.css` | `.tech-*` rules: figure size, label type, the gold line color, the layer list |
 
@@ -31,7 +32,7 @@ Every particle carries three positions, fixed at build time:
 
 - **star**: a point in a jittered 3D grid, so the sky is even without looking
   regular. The generator is seeded, so every visitor sees the same sky.
-- **shape**: where it sits in the schematic. A layer's points split between its
+- **shape**: where it starts in the schematic. A layer's points split between its
   sphere shell (with the cut octant `x < 0, y > 0, z > 0` left empty) and the
   three quarter-disc walls the cut exposes. Radii step by an equal amount
   (`STEP`) per layer.
@@ -46,9 +47,24 @@ sphere from outside. When the next sphere forms around it, its shell fades to a
 trace, so an inner layer shows only through the cut, the way an Earth cut-away
 shows its core.
 
+### Physics
+
+The shape position is not fixed: every layer point is a body in
+`shell-physics.ts`, so the schematic is always in motion. A shell body slides
+over its sphere at a constant slow speed, and the three planes that bound the
+cut octant are walls: a body that would cross one bounces off it. A wall body
+slides within its quarter-ring and bounces off the ring's straight edges and
+off its inner and outer arcs. Bounces are elastic and bodies do not collide
+with each other. The engine is flat typed arrays and a tight loop, stepped on
+the CPU in steps of at most 1/30 s; each frame the layer range of the shape
+buffer is re-uploaded. A jump in time advances the bodies by at most one
+second, so a seek or a background tab never tunnels a body through a wall.
+
+### Rendering
+
 The vertex shader blends star → shape → ball → star from a few uniforms. The
-CPU work per frame is a few uniform writes, one render call, and projecting four
-label anchors. Nothing is precomputed in screen space; the camera and three.js
+CPU work per frame is the physics step, one buffer upload, a few uniform
+writes, one render call, and projecting four label anchors. Nothing is precomputed in screen space; the camera and three.js
 do the projection.
 
 ### Timeline
@@ -122,12 +138,18 @@ styles are set through the CSSOM or SVG attributes, never inline markup.
 - **No WebGL**: `WebGLRenderer` throws, the error reaches the console, and the
   figure stays an empty dark panel. The layer list below it still carries the
   content.
-- **Point count**: about 23,000 points. Every frame runs the vertex shader over
-  all of them; there is no per-point CPU work.
+- **Point count**: about 23,000 points, about 16,000 of them physics bodies.
+  The physics step is linear in body count with no pairwise work; the vertex
+  shader does the rest.
 - **Pixel ratio** is capped at 2 so a high-density screen does not quadruple
   the fill cost.
 
 ## Testing
+
+`apps/site/test/shell-physics.test.ts` runs the engine: a body aimed at a cut
+plane bounces off it, shell bodies stay on their sphere, out of the cut and at
+their speed over 100 simulated seconds, and wall bodies stay in their
+quarter-ring and reach its outer arc.
 
 `apps/site/test/technology-scene.test.ts` runs `stateAt` and checks the
 timeline: nothing formed at the start, layers forming in order, labels showing
@@ -148,13 +170,17 @@ drifts.
 
 **What changed:** A Technology section after Pricing shows the stack as a
 point-cloud cut-away that forms layer by layer, becomes a tennis ball, and
-dissolves back into stars on a loop.
+dissolves back into stars on a loop. Each layer's points move under a small
+physics engine, bouncing off the cut planes and ring edges.
 
 **Why:** The landing page said what Rally does but nothing about how it is
 built. A cut-away shows the layers and how they nest in one picture, and the
 tennis ball ties it back to the Rally mark.
 
-**Considered and rejected:** Precomputed 2D projections or a video. Both fix the
+**Considered and rejected:** A physics library such as Rapier or cannon-es.
+The motion needs constant-speed travel on a surface and elastic bounces off
+planes and spheres, about a hundred lines; a general engine adds a large
+download and a collision broadphase this scene has no use for. Precomputed 2D projections or a video. Both fix the
 view and the aspect ratio, cannot place live labels on the cut, and a video
 costs more bytes than three.js plus the geometry code. Filling the cut by
 adding points to the outer octant alone was tried and dropped: the outer shell
