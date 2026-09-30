@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import test from 'node:test';
 
 import {
+  downloadReleaseObject,
   purgeAndVerifyImmutableReleaseUrls,
   purgeCloudflarePrefix,
   purgeCloudflareUrls,
@@ -344,56 +345,140 @@ test('rejects stale public bytes even when their size and first byte match', asy
   );
 });
 
-test('allows a full artifact transfer to exceed the timeout while bytes keep arriving', async () => {
-  const chunks = ['first-', 'second-', 'third'];
-  const expected = Buffer.from(chunks.join(''));
-  const idleTimeoutMilliseconds = 200;
-  const chunkGapMilliseconds = 75;
-
-  // The idle deadline is driven by this clock rather than by real timers: the
-  // gaps between chunks stay under the timeout while their sum exceeds it.
-  let elapsedMilliseconds = 0;
+// Drives an idle deadline from a manual clock rather than real timers, so the
+// gaps between chunks stay under the timeout while their sum exceeds it.
+function createManualIdleClock() {
+  const clock = { elapsedMilliseconds: 0 };
   let deadline;
-  const setIdleTimeoutImplementation = (onIdle, milliseconds) => {
-    deadline = { at: elapsedMilliseconds + milliseconds, onIdle };
+  clock.setIdleTimeoutImplementation = (onIdle, milliseconds) => {
+    deadline = { at: clock.elapsedMilliseconds + milliseconds, onIdle };
     return deadline;
   };
-  const clearIdleTimeoutImplementation = (handle) => {
+  clock.clearIdleTimeoutImplementation = (handle) => {
     if (handle !== undefined && handle === deadline) deadline = undefined;
   };
-  const advance = (milliseconds) => {
-    elapsedMilliseconds += milliseconds;
-    if (!deadline || deadline.at > elapsedMilliseconds) return;
+  clock.advance = (milliseconds) => {
+    clock.elapsedMilliseconds += milliseconds;
+    if (!deadline || deadline.at > clock.elapsedMilliseconds) return;
     const { onIdle } = deadline;
     deadline = undefined;
     onIdle();
   };
+  return clock;
+}
+
+function slowChunkedFetch(chunks, clock, chunkGapMilliseconds) {
+  return async (_url, { signal }) => {
+    let chunkIndex = 0;
+    return new Response(new ReadableStream({
+      start(controller) {
+        signal.addEventListener('abort', () => controller.error(signal.reason), { once: true });
+      },
+      pull(controller) {
+        clock.advance(chunkGapMilliseconds);
+        assert.equal(signal.aborted, false, 'idle deadline fired while bytes were still arriving');
+        controller.enqueue(Buffer.from(chunks[chunkIndex]));
+        chunkIndex += 1;
+        if (chunkIndex === chunks.length) controller.close();
+      },
+    }));
+  };
+}
+
+test('allows a full artifact transfer to exceed the timeout while bytes keep arriving', async () => {
+  const chunks = ['first-', 'second-', 'third'];
+  const expected = Buffer.from(chunks.join(''));
+  const idleTimeoutMilliseconds = 200;
+  const clock = createManualIdleClock();
 
   await verifyPublicReleaseArtifactHash({
-    clearIdleTimeoutImplementation,
+    clearIdleTimeoutImplementation: clock.clearIdleTimeoutImplementation,
     expectedHash: createHash('sha512').update(expected).digest('base64'),
-    fetchImplementation: async (_url, { signal }) => {
-      let chunkIndex = 0;
-      return new Response(new ReadableStream({
-        start(controller) {
-          signal.addEventListener('abort', () => controller.error(signal.reason), { once: true });
-        },
-        pull(controller) {
-          advance(chunkGapMilliseconds);
-          assert.equal(signal.aborted, false, 'idle deadline fired while bytes were still arriving');
-          controller.enqueue(Buffer.from(chunks[chunkIndex]));
-          chunkIndex += 1;
-          if (chunkIndex === chunks.length) controller.close();
-        },
-      }));
-    },
+    fetchImplementation: slowChunkedFetch(chunks, clock, 75),
     idleTimeoutMilliseconds,
-    setIdleTimeoutImplementation,
+    setIdleTimeoutImplementation: clock.setIdleTimeoutImplementation,
     sleepImplementation: async () => undefined,
     url: 'https://downloads.with-avalon.com/stable/darwin/arm64/Avalon-1.147.0.dmg',
   });
 
-  assert.ok(elapsedMilliseconds > idleTimeoutMilliseconds);
+  assert.ok(clock.elapsedMilliseconds > idleTimeoutMilliseconds);
+});
+
+test('downloads a release object whose transfer outlasts the idle timeout while bytes keep arriving', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'rally-r2-download-test-'));
+  try {
+    const destination = join(directory, 'Rally-1.479.0-mac-arm64.zip');
+    const idleTimeoutMilliseconds = 200;
+    const clock = createManualIdleClock();
+
+    const found = await downloadReleaseObject({
+      clearIdleTimeoutImplementation: clock.clearIdleTimeoutImplementation,
+      destination,
+      fetchImplementation: slowChunkedFetch(['zip-', 'bytes-', 'arrive-', 'slowly'], clock, 75),
+      idleTimeoutMilliseconds,
+      label: 'r2://rally-desktop-releases/stable/darwin/arm64/Rally-1.479.0-mac-arm64.zip',
+      setIdleTimeoutImplementation: clock.setIdleTimeoutImplementation,
+      source: 'Cloudflare',
+      url: 'https://api.cloudflare.com/client/v4/accounts/a/r2/buckets/b/objects/k',
+    });
+
+    assert.equal(found, true);
+    assert.equal(await readFile(destination, 'utf8'), 'zip-bytes-arrive-slowly');
+    assert.ok(clock.elapsedMilliseconds > idleTimeoutMilliseconds);
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test('aborts a release object download once bytes stop arriving', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'rally-r2-download-test-'));
+  try {
+    await assert.rejects(
+      downloadReleaseObject({
+        destination: join(directory, 'stalled.zip'),
+        fetchImplementation: async (_url, { signal }) => new Response(new ReadableStream({
+          start(controller) {
+            controller.enqueue(Buffer.from('first-chunk-then-nothing'));
+            signal.addEventListener('abort', () => controller.error(signal.reason), { once: true });
+          },
+        })),
+        idleTimeoutMilliseconds: 20,
+        label: 'r2://rally-desktop-releases/stable/darwin/arm64/stalled.zip',
+        source: 'Cloudflare',
+        url: 'https://api.cloudflare.com/client/v4/accounts/a/r2/buckets/b/objects/k',
+      }),
+      { name: 'TimeoutError', message: 'No bytes arrived for 20 ms' },
+    );
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test('reports a missing release object without writing it', async () => {
+  const found = await downloadReleaseObject({
+    destination: '/nonexistent/never-written',
+    fetchImplementation: async () => new Response('missing', { status: 404 }),
+    label: 'r2://rally-desktop-releases/stable/darwin/arm64/absent.zip',
+    source: 'Cloudflare',
+    url: 'https://api.cloudflare.com/client/v4/accounts/a/r2/buckets/b/objects/k',
+  });
+  assert.equal(found, false);
+});
+
+test('names the object and status when a release object download is refused', async () => {
+  await assert.rejects(
+    downloadReleaseObject({
+      destination: '/nonexistent/never-written',
+      fetchImplementation: async () => new Response('bucket locked', { status: 403 }),
+      label: 'r2://rally-desktop-releases/stable/darwin/arm64/Rally.zip',
+      source: 'Cloudflare',
+      url: 'https://api.cloudflare.com/client/v4/accounts/a/r2/buckets/b/objects/k',
+    }),
+    {
+      message: 'Could not inspect r2://rally-desktop-releases/stable/darwin/arm64/Rally.zip; '
+        + 'Cloudflare returned HTTP 403: bucket locked',
+    },
+  );
 });
 
 test('preserves an HTTP failure when response-body cancellation also fails', async () => {
