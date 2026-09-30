@@ -28,6 +28,7 @@ import {
 } from "@rally/contracts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { mainAttachmentsUnreported } from "../src/durable-objects/channel-rails";
 import { hostedParentStub } from "./helpers/hosted-parent";
 
 const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000d7001");
@@ -452,11 +453,16 @@ describe("channel_rails answers", () => {
     const connection = await connect(owner);
     const before = await railOf(connection, channelC);
     expect(before.sidekicks).not.toHaveProperty("attached");
+    // What decides whether opening the Channel asks its Main to report.
+    const unreported = () => runInDurableObject(organization(), (_instance, state) =>
+      mainAttachmentsUnreported(state.storage.sql, channelC));
+    expect(await unreported()).toBe(true);
 
     const pushed = rowPast(connection, channelC, before.railWaterline);
     await publish(channelC, [common("Channel C", { sidekickAttachmentIds: [] })]);
     await pushed;
     expect((await railOf(connection, channelC)).sidekicks.attached).toEqual([]);
+    expect(await unreported()).toBe(false);
     connection.socket.close(1000, "done");
   });
 
