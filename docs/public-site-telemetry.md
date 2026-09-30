@@ -41,8 +41,8 @@ support pages (`/download/` initializes no telemetry). A link opts in with a `da
 and, for pricing downloads, plan. One capture-phase click listener reads the id
 and ignores any id not in that table, so markup chooses a combination but never
 supplies a value. Every installer link has its own id (`download-header`,
-`download-hero`, `download-pricing-pro|max|ultra`), which is how the landing
-dashboard tells the five identical DMG links apart. The event shares the page
+`download-hero`, `download-pricing-team|business`), which is how the landing
+dashboard tells the four identical DMG links apart. The event shares the page
 view's anonymous `distinct_id`, so its referrer and campaign come from joining
 to that visit's `$pageview` rather than being copied onto the click.
 A middle-click, which fires `auxclick` rather than `click`, counts too.
@@ -144,6 +144,20 @@ that reports. Events are sent immediately in batches bounded by the shared
 256-KiB/50-event contract; the page itself holds at most 20. The route lookup
 avoids writing a disposable D1 journey merely to decide whether browser storage
 is allowed.
+
+### 2026-09-30 — Pricing plans follow the per-organization tiers
+
+**What changed:** The landing's pricing moved from per-seat Pro, Max and Ultra
+to per-organization Team ($100), Business ($250) and Enterprise (contact us),
+with a 14-day trial that extends to 60 days when two or more teammates take
+part. `plan` gained `team`, `business` and `enterprise`; Enterprise's Contact us
+link reports `founder_contact · pricing · enterprise`.
+
+**Why:** The team moved to a pooled quota per organization so adding a member
+never forces a plan change. The contract keeps `pro`, `max` and `ultra` because
+the API refuses a whole batch carrying an unknown value, and a landing tab
+opened before the site deploy still sends them. They can go once no such
+event has arrived for a while.
 
 ### 2026-09-29 — Report which landing link was clicked
 
