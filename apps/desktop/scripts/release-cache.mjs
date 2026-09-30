@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { createWriteStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
 
 import { cloudflareErrorCodes } from './release-cloudflare.mjs';
 
@@ -89,11 +91,83 @@ function sleep(milliseconds) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
 }
 
+// A release artifact is ~183 MiB, so a wall-clock deadline on the whole transfer
+// aborts healthy downloads on a slow link. These transfers abort only when bytes
+// stop arriving, and the deadline restarts on every chunk.
+const releaseTransferIdleTimeoutMilliseconds = 30_000;
+
+function createTransferIdleDeadline({
+  clearIdleTimeoutImplementation = clearTimeout,
+  idleTimeoutMilliseconds = releaseTransferIdleTimeoutMilliseconds,
+  setIdleTimeoutImplementation = setTimeout,
+} = {}) {
+  const abortController = new AbortController();
+  let idleTimeout;
+  const refresh = () => {
+    clearIdleTimeoutImplementation(idleTimeout);
+    idleTimeout = setIdleTimeoutImplementation(() => abortController.abort(new DOMException(
+      `No bytes arrived for ${idleTimeoutMilliseconds} ms`,
+      'TimeoutError',
+    )), idleTimeoutMilliseconds);
+  };
+  refresh();
+  return {
+    dispose: () => clearIdleTimeoutImplementation(idleTimeout),
+    refresh,
+    signal: abortController.signal,
+  };
+}
+
+// Downloads `url` into `destination`. Returns false on 404 and throws on any
+// other non-success status, naming `label` and `source` in the error.
+export async function downloadReleaseObject({
+  clearIdleTimeoutImplementation,
+  destination,
+  fetchImplementation = fetch,
+  headers,
+  idleTimeoutMilliseconds,
+  label,
+  setIdleTimeoutImplementation,
+  source,
+  url,
+}) {
+  const deadline = createTransferIdleDeadline({
+    clearIdleTimeoutImplementation,
+    idleTimeoutMilliseconds,
+    setIdleTimeoutImplementation,
+  });
+  try {
+    const response = await fetchImplementation(url, { headers, signal: deadline.signal });
+    deadline.refresh();
+    if (response.status === 404) {
+      await response.body?.cancel();
+      return false;
+    }
+    if (!response.ok || !response.body) {
+      const body = (await response.text()).slice(0, 1_000);
+      throw new Error(`Could not inspect ${label}; ${source} returned HTTP ${response.status}: ${body}`);
+    }
+    const { body } = response;
+    await pipeline(
+      async function* refreshOnEachChunk() {
+        for await (const chunk of body) {
+          deadline.refresh();
+          yield chunk;
+        }
+      },
+      createWriteStream(destination, { mode: 0o600 }),
+    );
+    return true;
+  } finally {
+    deadline.dispose();
+  }
+}
+
 export async function verifyPublicReleaseArtifactHash({
   clearIdleTimeoutImplementation = clearTimeout,
   expectedHash,
   fetchImplementation = fetch,
-  idleTimeoutMilliseconds = 30_000,
+  idleTimeoutMilliseconds = releaseTransferIdleTimeoutMilliseconds,
   setIdleTimeoutImplementation = setTimeout,
   sleepImplementation = sleep,
   url,
@@ -111,16 +185,14 @@ export async function verifyPublicReleaseArtifactHash({
 
   let failure = 'no response';
   for (let attempt = 0; attempt < 7; attempt += 1) {
-    const abortController = new AbortController();
-    let idleTimeout;
-    const refreshIdleTimeout = () => {
-      clearIdleTimeoutImplementation(idleTimeout);
-      idleTimeout = setIdleTimeoutImplementation(() => abortController.abort(), idleTimeoutMilliseconds);
-    };
+    const deadline = createTransferIdleDeadline({
+      clearIdleTimeoutImplementation,
+      idleTimeoutMilliseconds,
+      setIdleTimeoutImplementation,
+    });
     try {
-      refreshIdleTimeout();
       const response = await fetchImplementation(publicUrl, {
-        signal: abortController.signal,
+        signal: deadline.signal,
       });
       if (!response.ok) {
         failure = `HTTP ${response.status}`;
@@ -135,7 +207,7 @@ export async function verifyPublicReleaseArtifactHash({
         const hash = createHash('sha512');
         for await (const chunk of response.body) {
           hash.update(chunk);
-          refreshIdleTimeout();
+          deadline.refresh();
         }
         if (hash.digest('base64') === expectedHash) return;
         failure = 'SHA-512 mismatch';
@@ -143,7 +215,7 @@ export async function verifyPublicReleaseArtifactHash({
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error);
     } finally {
-      clearIdleTimeoutImplementation(idleTimeout);
+      deadline.dispose();
     }
     if (attempt < 6) await sleepImplementation(500 * 2 ** attempt);
   }
