@@ -154,4 +154,29 @@ describe("initializeSidelineUpdater", () => {
     tick();
     expect(showMessageBox).not.toHaveBeenCalled();
   });
+
+  it("does not install a newer build than the one the open dialog named", async () => {
+    const updater = updaterDouble();
+    const answers: Array<(value: { response: number }) => void> = [];
+    const showMessageBox = vi.fn(() => new Promise<{ response: number }>((resolve) => { answers.push(resolve); }));
+    initializeSidelineUpdater({
+      isPackaged: true,
+      isReleaseBuild: true,
+      platform: "darwin",
+      arch: "arm64",
+      showMessageBox: showMessageBox as never,
+      currentBuildTime: 0,
+      now: () => 100 * HOUR,
+      updater: updater as never,
+      scheduleInterval: () => ({ unref: vi.fn() }),
+      log: { info: vi.fn(), error: vi.fn() },
+    });
+
+    updater.listeners.get("update-downloaded")?.({ version: "0.2.0" } as never);
+    updater.listeners.get("update-downloaded")?.({ version: "0.3.0" } as never);
+    answers[0]!({ response: 0 });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
+  });
 });

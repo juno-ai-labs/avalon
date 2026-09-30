@@ -174,11 +174,11 @@ export function SidelineSidebar(props: {
                             className="menu-item workspace-menu-item"
                             key={organization.id}
                             onSelect={(event) => {
-                              if (active || switchingId) return;
-                              // The menu stays open while the switch runs, so the
+                              if (active) return;
+                              // The menu stays open while a switch runs, so the
                               // spinner and any refusal land where the person is looking.
                               event.preventDefault();
-                              switchOrganization(organization.id);
+                              if (!switchingId) switchOrganization(organization.id);
                             }}
                           >
                             <span aria-hidden="true" className="workspace-mark">{organization.name.slice(0, 1).toLocaleUpperCase()}</span>
