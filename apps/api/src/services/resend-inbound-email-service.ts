@@ -6,7 +6,7 @@ import { newId } from "@rally/db";
 import { z } from "zod";
 import type { Env } from "../env";
 import { numericEnv } from "../env";
-import { ApiError } from "../lib/api-error";
+import { ApiError, diagnosticCodeField } from "../lib/api-error";
 import { logWarn } from "../observability/logger";
 import {
   ACCEPTED_WORKSTREAM_EMAIL_DOMAINS,
@@ -162,7 +162,7 @@ export interface ResendRegionalIngestionResult {
 
 export type ResendRegionalRpcResult<T> =
   | { ok: true; value: T }
-  | { ok: false; error: { status: number; code: string; message: string } };
+  | { ok: false; error: { status: number; code: string; message: string; diagnosticCode?: string } };
 
 export interface InboundEmailRegionalRpcBinding {
   ingestResendEmail(
@@ -877,7 +877,7 @@ export async function serializeResendRegionalRpcResult<T>(
     if (error instanceof ApiError) {
       return {
         ok: false,
-        error: { status: error.status, code: error.code, message: error.message },
+        error: { status: error.status, code: error.code, message: error.message, ...diagnosticCodeField(error) },
       };
     }
     throw error;
@@ -1136,6 +1136,8 @@ function unwrapRegionalResult<T>(result: ResendRegionalRpcResult<T>): T {
     normalizeStatus(result.error.status),
     result.error.code,
     result.error.message,
+    undefined,
+    result.error.diagnosticCode,
   );
 }
 

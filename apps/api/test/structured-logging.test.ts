@@ -9,6 +9,7 @@ import {
   logWarn,
   summarizeEvent,
 } from "../src/observability/logger";
+import { ApiError } from "../src/lib/api-error";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
 const env = createTestEnv({
@@ -61,6 +62,35 @@ describe("structured logging", () => {
       Object.assign(new Error("Some runtime sentence"), { overloaded: true }),
       "parent_export_failed",
     )).toBe("parent_export_failed:durable_object_overloaded");
+  });
+
+  it("names a D1 or SQLite failure without copying the table, column or value it quotes", () => {
+    const sentences: Array<[string, string]> = [
+      ["D1_ERROR: D1 DB is overloaded. Too many requests queued.", "d1_overloaded"],
+      ["D1_ERROR: D1 DB storage operation exceeded timeout which caused object to be reset.", "d1_storage_timeout"],
+      ["D1_ERROR: Network connection lost.", "network_connection_lost"],
+      ["D1_ERROR: UNIQUE constraint failed: memory_rows.Customer_Email: SQLITE_CONSTRAINT", "sqlite_unique_constraint"],
+      ["D1_ERROR: no such column: Customer_Email: SQLITE_ERROR", "sqlite_no_such_column"],
+      ["D1_TYPE_ERROR: Type 'undefined' not supported for value 'undefined'", "d1_type_error"],
+    ];
+    for (const [sentence, name] of sentences) {
+      const code = diagnosticErrorCode(new Error(sentence), "internal_error");
+      expect(code).toBe(`internal_error:${name}`);
+      expect(code).not.toContain("Customer");
+    }
+    // Newer runtimes put the storage failure in `cause`.
+    expect(diagnosticErrorCode(
+      new Error("D1 query failed", { cause: new Error("D1 DB is overloaded. Requests queued for too long.") }),
+      "internal_error",
+    )).toBe("internal_error:d1_overloaded");
+  });
+
+  it("logs an ApiError's diagnostic code in place of its coarser public code", () => {
+    expect(diagnosticErrorCode(
+      new ApiError(502, "provider_error", "GitHub failed", undefined, "provider_error:http_404"),
+      "fallback",
+    )).toBe("provider_error:http_404");
+    expect(diagnosticErrorCode(new ApiError(502, "provider_error", "GitHub failed"), "fallback")).toBe("provider_error");
   });
 
   it("does not read an application error's own retryable flag as a runtime failure", () => {

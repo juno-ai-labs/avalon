@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { diagnosticErrorCode } from "../observability/logger";
 
 export const WorkstreamAuthorityPhaseSchema = z.enum([
   "legacy_open",
@@ -19,6 +20,12 @@ export interface WorkstreamAuthorityControl {
   generation: number;
   requiredServingContractVersion: number;
   servingContractVersion: number;
+  /**
+   * Why the fence failed closed, when it was not read: the row is missing, or
+   * the read failed. Absent for a phase the row itself holds. Without it a D1
+   * outage and a real quarantine both read `quarantined:0`.
+   */
+  failedClosedReason?: string;
 }
 
 /**
@@ -55,12 +62,7 @@ export async function readWorkstreamAuthorityControl(
       required_serving_contract_version: number;
       serving_contract_version: number;
     }>();
-    if (!row) return {
-      phase: "quarantined",
-      generation: 0,
-      requiredServingContractVersion: 1,
-      servingContractVersion: 0,
-    };
+    if (!row) return failedClosed("authority_control_row_missing");
     return {
       phase: WorkstreamAuthorityPhaseSchema.parse(row.phase),
       generation: z.number().int().nonnegative().parse(row.generation),
@@ -72,13 +74,18 @@ export async function readWorkstreamAuthorityControl(
     if (error instanceof Error && /no such table: workstream_authority_control/iu.test(error.message)) {
       return LEGACY_OPEN;
     }
-    return {
-      phase: "quarantined",
-      generation: 0,
-      requiredServingContractVersion: 1,
-      servingContractVersion: 0,
-    };
+    return failedClosed(diagnosticErrorCode(error, "authority_control_read_failed"));
   }
+}
+
+function failedClosed(reason: string): WorkstreamAuthorityControl {
+  return {
+    phase: "quarantined",
+    generation: 0,
+    requiredServingContractVersion: 1,
+    servingContractVersion: 0,
+    failedClosedReason: reason,
+  };
 }
 
 export function acceptsNewWorkstreamWork(control: WorkstreamAuthorityControl): boolean {
@@ -110,6 +117,8 @@ export async function requireOpenWorkstreamAuthority(
       503,
       "workstream_authority_not_open",
       "This deployment serves work streams from Durable Objects only; open the authority first (locally: pnpm db:open-authority)",
+      undefined,
+      control.failedClosedReason,
     );
   }
   return control;
@@ -121,7 +130,13 @@ export async function requireWorkstreamIngress(
 ): Promise<WorkstreamAuthorityControl> {
   const control = await readWorkstreamAuthorityControl(env);
   if (!acceptsNewWorkstreamWork(control)) {
-    throw new ApiError(503, "workstream_maintenance", "Work-stream maintenance is in progress");
+    throw new ApiError(
+      503,
+      "workstream_maintenance",
+      "Work-stream maintenance is in progress",
+      undefined,
+      control.failedClosedReason,
+    );
   }
   return control;
 }

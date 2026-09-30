@@ -5,6 +5,7 @@ import { z } from "zod";
 import {
   authorizedConnection,
   ConnectorError,
+  connectorDiagnosticCode,
   connectorObservationErrorCode,
   createConnectorRegistry,
   createGenericWebhookConnector,
@@ -104,6 +105,23 @@ describe("connector observability", () => {
   it("keeps its own vocabulary for the errors that already had one", () => {
     expect(connectorObservationErrorCode(new ConnectorError("unauthorized", "no"))).toBe("unauthorized");
     expect(connectorObservationErrorCode(new Error("something else"))).toBe("unexpected_error");
+  });
+
+  it("names the provider's status, rate limit, or dropped connection behind provider_error", () => {
+    expect(connectorDiagnosticCode(new ConnectorError("provider_error", "Resource not accessible", { status: 404 })))
+      .toBe("provider_error:http_404");
+    expect(connectorDiagnosticCode(new ConnectorError("provider_error", "API rate limit exceeded", {
+      status: 403,
+      rateLimited: true,
+      retryAfterMs: 900_000,
+    }))).toBe("provider_error:http_403:rate_limited");
+    expect(connectorDiagnosticCode(new ConnectorError(
+      "provider_error",
+      "The GitHub request could not be completed",
+      new Error("Network connection lost."),
+    ))).toBe("provider_error:network_connection_lost");
+    const withProse = connectorDiagnosticCode(new ConnectorError("provider_error", "alex@juno-labs.com is not a collaborator"));
+    expect(withProse).toBe("provider_error");
   });
 
 
