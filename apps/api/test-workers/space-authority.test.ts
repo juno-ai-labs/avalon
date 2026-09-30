@@ -1435,6 +1435,18 @@ describe("WorkspaceDO space authority", () => {
     expect(directories.active.items.map((item) => item.id)).not.toContain(spaceId);
   });
 
+  it("given a Space whose only Channel has no directory row, when it is archived, then it is refused", async () => {
+    const spaceId = await reserve("Company");
+    await place(spaceId, CHANNEL_A);
+
+    // The Channel is live; its directory projection has not landed. Inner-joining
+    // `channels` would drop it from the guard and archive the Space out from
+    // under it. Fail closed: unknown is not the same as archived.
+    await expect(workspace().prepareSpaceArchive({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId: crypto.randomUUID(),
+    })).resolves.toMatchObject({ ok: false, code: "space_membership_final" });
+  });
+
   it("given a Space whose only Channel is archived, when it is archived, then it is accepted", async () => {
     const spaceId = await reserve("Company");
     await publishChannel(CHANNEL_A, "2026-09-19T00:00:00.000Z");

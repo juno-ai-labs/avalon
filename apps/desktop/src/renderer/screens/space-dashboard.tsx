@@ -72,9 +72,6 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   const queryClient = useQueryClient();
   const spacesReady = useSpacesReady();
   const { active: spaces, inactive: inactiveSpaces } = useSpaceDirectories();
-  // Archive refusals name Channels that have to move first. Needs attention is
-  // not that catalog — an idle Channel is correctly absent from it — so titles
-  // also come from the sidebar directory this device already holds.
   const directoryWorkstreams = useCachedWorkstreams() ?? [];
   const [failures, setFailures] = useState<Partial<Record<FailureSlot, string>>>({});
   const [saving, setSaving] = useState(false);

@@ -42,6 +42,7 @@ import type { AuthContext, Env } from "../src/env";
 import { SpaceService } from "../src/services/space-service";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
+import { deliverEffectsToWorkspace } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { changeRelationships } from "./helpers/workspace-relationship-events";
@@ -687,6 +688,29 @@ describe("the other Space operations", () => {
     expect(restored).toMatchObject({ status: 200, body: { status: "active" } });
     expect((await channelSpaceSources(workstreamId)).map((source) => source.spaceId).sort())
       .toEqual([general.id, created.id].sort());
+  });
+
+  it("archives a Space whose only leftover Channel is already archived", async () => {
+    const created = await createSpace("personal", "Hiring");
+    const workstreamId = await createChannel("archived-only-home", [asSpaceId(created.id)]);
+    await deliverEffectsToWorkspace(env, spaceConversation(workstreamId));
+
+    const channelArchived = await request(
+      `/workstreams/${workstreamId}`,
+      OWNER_AUTH,
+      { archived: true },
+      "PATCH",
+    );
+    expect(channelArchived.status).toBe(200);
+    await deliverEffectsToWorkspace(env, spaceConversation(workstreamId));
+
+    const archived = await request(`/spaces/${created.id}/archive`, OWNER_AUTH, {}, "POST");
+    expect(archived).toMatchObject({ status: 200, body: { status: "archived" } });
+    expect(await membershipState(workstreamId, created.id)).toBe("removing");
+
+    const restored = await request(`/spaces/${created.id}/restore`, OWNER_AUTH, {}, "POST");
+    expect(restored).toMatchObject({ status: 200, body: { status: "active" } });
+    expect(await membershipState(workstreamId, created.id)).toBe("active");
   });
 });
 

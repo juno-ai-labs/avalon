@@ -3847,21 +3847,24 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
-   * Active memberships whose Channel is still live.
+   * Active memberships that still count as a live home.
    *
-   * Inner-joined on the directory so a membership whose projection has not
-   * landed, or whose Channel has been archived, is not a home that has to
-   * move before this Space can go. `channelCount` uses the same join for the
-   * same reason.
+   * Excludes only a Channel the directory already records as archived. A
+   * membership whose projection has not landed is treated as live: the
+   * directory row is an async projection, and dropping it here would let
+   * archive strand a Channel that is still open. `channelCount` inner-joins
+   * for display; this guard fails closed.
    */
   private liveMemberWorkstreamIds(spaceId: string): string[] {
     return this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
       `SELECT membership.workstream_id
          FROM space_channel_memberships membership
-         JOIN channels directory
-           ON directory.workstream_id = membership.workstream_id
         WHERE membership.space_id = ? AND membership.state = 'active'
-          AND directory.archived_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM channels directory
+             WHERE directory.workstream_id = membership.workstream_id
+               AND directory.archived_at IS NOT NULL
+          )
         ORDER BY membership.workstream_id`,
       spaceId,
     ).toArray().map((row) => row.workstream_id);
