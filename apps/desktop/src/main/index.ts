@@ -400,12 +400,13 @@ async function reportTelemetryProductIntent(
   if (!telemetryReporter) return;
   switch (intent.kind) {
     case 'workspace_socket_handshake':
-      await telemetryReporter.workspaceSocketHandshake({
-        attemptId: intent.attemptId,
-        phase: intent.phase,
-        ...(intent.sinceTicketRequested ? { sinceTicketRequested: intent.sinceTicketRequested } : {}),
-        ...(intent.windowVisible !== undefined ? { windowVisible: intent.windowVisible } : {}),
-      }, windowContext);
+      {
+        // Already parsed against this event's schema by `telemetry-intent.ts`.
+        const { attemptId, phase, sinceTicketRequested, windowVisible } = intent;
+        await telemetryReporter.workspaceSocketHandshake(
+          { attemptId, phase, sinceTicketRequested, windowVisible }, windowContext,
+        );
+      }
       return;
     case 'onboarding_region_selected':
       await telemetryReporter.onboardingRegionSelected(intent.selectedRegion, intent.entrypoint, windowContext);
@@ -609,13 +610,7 @@ function observeApplicationForeground(foregrounded: boolean): void {
     window.webContents.send('application:foreground-changed', foregrounded);
   }
 }
-/**
- * Tell every Rally window the machine is going to sleep or has woken. A socket
- * the server accepts just before sleep is never heard from, and a lone
- * member's silent socket can make WorkspaceDO reset itself
- * (docs/realtime-sockets.md, "What a false positive looks like"); the renderer
- * closes it first and redials on wake.
- */
+/** Relay `powerMonitor` suspend and resume to every Rally window. */
 function observePowerState(state: DesktopPowerState): void {
   for (const window of rallyWindows()) window.webContents.send('power:changed', state);
 }

@@ -431,9 +431,9 @@ export function WorkspaceSocketProvider({
     let openTimer: number | null = null;
     let connecting = false;
     /**
-     * Between main's `suspend` and `resume`: nothing dials. A socket the server
-     * accepts just before sleep would sit there unheard, and a lone member's
-     * silent socket is what makes WorkspaceDO reset itself.
+     * Set by main's `suspend`, cleared by `online()`: resume, the network coming
+     * back, or a person asking to reconnect. Nothing dials in between, so a
+     * ticket that settles as the machine sleeps is not dialled with.
      */
     let suspended = false;
     let attempt = 0;
@@ -876,6 +876,15 @@ export function WorkspaceSocketProvider({
       if (served.length === 0) return;
       await requestRails(served);
     };
+    /** What every end of a socket's life resets, whoever ended it. */
+    const releaseSocket = (): void => {
+      clearSocketTimers();
+      subscribed = false;
+      socket = null;
+      setPresenceUserIdsByWorkstream({});
+      rejectPendingRailRequests(new ApiError('The organization connection closed.', 0, 'workspace_socket_closed'));
+      rejectPendingSpaceRequests(new ApiError('The organization connection closed.', 0, 'workspace_socket_closed'));
+    };
     const scheduleReconnect = (): void => {
       if (stopped || permanentlyClosed || suspended || reconnectTimer !== null) return;
       if (navigator.onLine === false) {
@@ -1268,12 +1277,7 @@ export function WorkspaceSocketProvider({
         });
         next.addEventListener('close', (event) => {
           if (socket !== next) return;
-          clearSocketTimers();
-          subscribed = false;
-          socket = null;
-          setPresenceUserIdsByWorkstream({});
-          rejectPendingRailRequests(new ApiError('The organization connection closed.', 0, 'workspace_socket_closed'));
-          rejectPendingSpaceRequests(new ApiError('The organization connection closed.', 0, 'workspace_socket_closed'));
+          releaseSocket();
           const accessRevoked = event.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE;
           const permanentError = accessRevoked
             ? new ApiError(
@@ -1320,7 +1324,7 @@ export function WorkspaceSocketProvider({
           // a superseded socket's error must not arm the live one's.
           if (stopped || socket !== next) return;
           // Closing a CONNECTING socket fires `error` first; the cause is ours.
-          if (openTimedOut || suspended) return;
+          if (openTimedOut) return;
           socketTelemetry.willClose('transport_error');
           next.close();
         });
@@ -1368,6 +1372,7 @@ export function WorkspaceSocketProvider({
     });
 
     const online = (): void => {
+      suspended = false;
       clearReconnect();
       void connect();
     };
@@ -1398,7 +1403,6 @@ export function WorkspaceSocketProvider({
     window.addEventListener('offline', offline);
     const stopPowerState = bridge.onPowerStateChanged((state) => {
       if (state === 'resumed') {
-        suspended = false;
         online();
         return;
       }
@@ -1406,9 +1410,15 @@ export function WorkspaceSocketProvider({
       clearReconnect();
       activeTicketAbort?.abort();
       activeTicketAbort = null;
-      if (socket) socketTelemetry.willClose('suspended');
       setState('reconnecting');
-      socket?.close();
+      const sleeping = socket;
+      if (!sleeping) return;
+      // Settled here rather than by its `close` event, which may arrive after
+      // a resume has dialled again: that socket's events are then ignored, and
+      // its cause is reported now, for it alone.
+      releaseSocket();
+      socketTelemetry.disconnected({ attempts: attempt, retrying: true, cause: 'suspended' });
+      sleeping.close();
     });
     // The sidebar paints from the disk while the ticket and the handshake are
     // still in flight; the subscribe answer then applies over it through the

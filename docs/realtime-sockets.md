@@ -900,14 +900,11 @@ one connected can cause the same on purpose. Either shows up with few `open_sock
 `missed_sockets` of one; a wedge with people retrying shows several missed
 sockets, most of them in `missed_closed_sockets`.
 
-This is what production showed: eleven resets between 2026-09-27 and
-2026-09-30, every one with `missed_sockets: 1`, and in the two the desktop's own
-telemetry could explain, a Mac whose timers were running minutes late
-(asleep or napping) or whose `101` never arrived. So **one missed socket is
-held, not reset**: below `WORKSPACE_SOCKET_MISSED_SOCKETS_BEFORE_RESET` (two,
-set by the team), the watch logs `workspace_socket_first_frame_held` at warn
-level, once per instance, and keeps the ledger row so that the next silent
-socket counts with it. A held row stops being an alarm candidate, since its
+**One missed socket is held, not reset.** Below
+`WORKSPACE_SOCKET_MISSED_SOCKETS_BEFORE_RESET` (two, set by the team), the
+watch logs `workspace_socket_first_frame_held` at warn level, once per
+instance, and keeps the ledger row so that the next silent socket counts with
+it. A held row stops being an alarm candidate, since its
 deadline is already past; a hibernation wake forgets which rows were held and
 judges them again, once. Any later socket that speaks settles it. A real wedge
 with a client retrying reaches two within one more retry, about a minute or
@@ -918,8 +915,9 @@ that has not opened within `WORKSPACE_SOCKET_OPEN_TIMEOUT_MS` (15 s, set by the
 team) is closed and redialled, so a live client whose `101` was lost speaks on a
 new socket well inside the server's deadline, and that settles the silent one.
 Main relays `powerMonitor` suspend and resume to every window: on suspend the
-provider aborts any ticket in flight, closes its socket, and dials nothing
-until resume.
+provider aborts any ticket in flight, settles and closes its socket, and dials
+nothing until resume, the network coming back, or a person asking to
+reconnect.
 
 Directory pages are read-only and are not reconnect-resend commands. If
 Electron receives the browser `offline` signal while a page is in flight, it
@@ -994,8 +992,8 @@ once; fewer are held, logged as `workspace_socket_first_frame_held` at warn
 level, and kept in the ledger without being alarm candidates. The desktop closes
 and redials a workspace socket that has not opened within
 `WORKSPACE_SOCKET_OPEN_TIMEOUT_MS` (15 s), closes its socket and dials nothing
-between `powerMonitor` suspend and resume, and reports `open_timeout` and
-`suspended` as socket causes. Handshake telemetry gains `sinceTicketRequested`
+after `powerMonitor` suspend until resume, the network coming back, or a manual
+reconnect, and reports `open_timeout` and `suspended` as socket causes. Handshake telemetry gains `sinceTicketRequested`
 and `windowVisible`.
 
 **Why:** Eleven resets in three days paged #firehose-alert, all with
@@ -1013,7 +1011,12 @@ the next silent socket would then count alone, and a real wedge would never
 reach the threshold. Storing the held mark in SQLite: a migration for a mark
 whose only cost when lost is one repeated warn per wake. A client-only fix:
 sleep can still land between the server's accept and the client's `open`, and a
-suspend handler cannot run on a machine that has already gone to sleep.
+suspend handler cannot run on a machine that has already gone to sleep. A
+suspend flag only a resume clears: an aborted sleep can deliver no resume,
+which would leave the socket down for the life of the process. Labelling the
+suspend close from the power flag at its `close` event: a resume can land
+before that event, so the socket closed for sleep is settled and reported at
+suspend instead.
 
 **Consequences:** A real wedge recovers one retry later, about a minute or two.
 Two dead-on-arrival sockets on one live instance, with no socket heard from in
