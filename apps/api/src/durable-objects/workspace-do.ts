@@ -1149,8 +1149,6 @@ interface WorkspaceSocketAttachment extends SocketIdentity {
   presenceRevision: number;
   applicationState: "foreground" | "background";
   foregroundWorkstreamId: string | null;
-  /** Asked for `channels_by_space`: its sidebar carries Spaces and no Channel rows. */
-  channelsBySpace: boolean;
 }
 
 /** One person's subscribed sockets, under the relationship they were admitted with. */
@@ -4155,7 +4153,6 @@ function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
       // for a socket that predates it: `member` is what every attachment
       // written before Spaces existed meant.
       accessClass: z.enum(["member", "guest"]).default("member"),
-      channelsBySpace: z.boolean().default(false),
     }).safeParse(socket.deserializeAttachment());
     return parsed.success ? parsed.data : null;
   } catch {
@@ -6088,11 +6085,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
       return;
     }
-    if (parsed.data.type === "channels_by_space") {
-      const current = readAttachment(socket);
-      if (current) socket.serializeAttachment({ ...current, channelsBySpace: true } satisfies WorkspaceSocketAttachment);
-      return;
-    }
     if (parsed.data.type === "space_channels") {
       const auth = await this.sessionAuth(attachment);
       if (!auth) {
@@ -6156,12 +6148,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * Answer `channel_rails` from local reads, as `workspace_channel_rails`
    * frames; the answer always ends with a `final` one.
    *
-   * Named Channels are answered whole, over as many frames as they take. A
-   * Space is answered from one page of the Channels in it this viewer may see,
-   * in id order after `after`, until the page or the frame runs out, with
-   * `nextAfter` naming the last Channel answered; a client wanting the rest
-   * asks again. A guest is told nothing about a Space (see `spacesFor`), and a
-   * Space the viewer cannot see is answered the same way: one empty final frame.
+   * Named Channels are answered whole, over as many frames as they take. The
+   * retired Space target, still sent by desktops 1.467.0 and 1.468.0, is
+   * answered with one empty final frame: refusing it would close their socket
+   * on every reconnect, and a Space's rails now arrive with its rows.
    *
    * A rail that fails its schema is sent as `oversized`, so the client paints
    * that Channel from its snapshot, and the log names the field.
@@ -6190,10 +6180,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       });
       return frames.addOversized(rail);
     };
-    let nextAfter: string | null = null;
-    if (!this.railLedger) {
-      frames.addUnavailable(request.workstreamIds ?? []);
-    } else if (request.workstreamIds) {
+    if (!request.workstreamIds) {
+      // The retired Space target: nothing to answer.
+    } else if (!this.railLedger) {
+      frames.addUnavailable(request.workstreamIds);
+    } else {
       const answer = rails(request.workstreamIds);
       frames.addUnavailable(answer.unavailable);
       for (const rail of answer.rails) {
@@ -6201,24 +6192,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         frames.roll();
         pack(rail);
       }
-    } else if (request.spaceId && identity.accessClass === "member"
-      && this.spaceStorage().reach(identity.userId, request.spaceId) !== null) {
-      const page = visibleSpaceChannelIdsAfter(sql, {
-        spaceId: request.spaceId,
-        userId: identity.userId,
-        after: request.after ?? null,
-        limit: CHANNEL_RAILS_NAMED_LIMIT,
-      });
-      let lastAnswered: string | null = null;
-      let filled = page.length === CHANNEL_RAILS_NAMED_LIMIT;
-      for (const rail of rails(page).rails) {
-        if (pack(rail) === "full") {
-          filled = true;
-          break;
-        }
-        lastAnswered = rail.workstreamId;
-      }
-      if (filled) nextAfter = lastAnswered;
     }
     for (const oversized of frames.oversizedRails) {
       logWarn(this.env, "channel_rail_oversized", {
@@ -6227,7 +6200,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         bytes: oversized.bytes,
       });
     }
-    for (const frame of frames.finish(nextAfter)) {
+    for (const frame of frames.finish()) {
       try {
         socket.send(JSON.stringify(frame));
       } catch {
@@ -14574,7 +14547,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       presenceRevision: 0,
       applicationState: "background",
       foregroundWorkstreamId: null,
-      channelsBySpace: false,
     };
     // Before the accept: an accepted socket without a row could never be counted once its client gave up.
     if (this.unheardLedger) {
@@ -15413,10 +15385,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   private sidebarPayload(attachment: WorkspaceSocketAttachment): WorkspaceSidebar {
     const spaces = this.spacesFor(attachment);
-    // A member whose client walks Spaces is sent no Channel rows, only while
+    // A member is sent no Channel rows, and walks the Spaces for them, once
     // the Space hierarchy is whole: before that, a Channel can sit in no
-    // Space, and the page is the only way it reaches the sidebar.
-    if (attachment.channelsBySpace && attachment.accessClass !== "guest" && spaces.spacesReady) {
+    // Space, and the page is the only way it reaches the sidebar. A guest is
+    // sent no Spaces, so the page is theirs.
+    if (attachment.accessClass !== "guest" && spaces.spacesReady) {
       return WorkspaceSidebarSchema.parse({
         workstreams: { directoryWaterline: this.directoryWaterline(), items: [], stateVersions: [], nextCursor: null },
         automations: {
