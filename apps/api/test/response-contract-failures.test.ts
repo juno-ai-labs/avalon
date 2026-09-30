@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
+import { ConnectorError } from "@rally/connectors";
+
 import type { Env, HonoAppEnv } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
 import { errorHandler } from "../src/middleware/errors";
@@ -68,6 +70,46 @@ describe("response contract failures", () => {
       // group, which is how the original burst stayed hard to see.
       route: "/workstreams/:id",
       validation_issues: [{ path: "lastActivityAt", code: "invalid_type" }],
+    });
+  });
+
+  it("names the provider's status behind a 502 provider_error, and keeps it out of the body", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const app = new Hono<HonoAppEnv>();
+    app.onError(errorHandler);
+    app.get("/github", () => {
+      throw new ConnectorError("provider_error", "Resource not accessible by integration", { status: 403 });
+    });
+    app.get("/regional", () => {
+      throw new ApiError(502, "provider_error", "Not Found", undefined, "provider_error:http_404");
+    });
+
+    const direct = await app.request("https://api.example.com/github", { method: "GET" }, testEnv());
+    const regional = await app.request("https://api.example.com/regional", { method: "GET" }, testEnv());
+
+    expect(direct.status).toBe(502);
+    expect(JSON.stringify(await regional.json())).not.toContain("http_404");
+    expect(logged.mock.calls.map((call) => call[0])).toEqual([
+      expect.objectContaining({ event: "request_failed", code: "provider_error", error_code: "provider_error:http_403" }),
+      expect.objectContaining({ event: "request_failed", code: "provider_error", error_code: "provider_error:http_404" }),
+    ]);
+  });
+
+  it("names a D1 failure behind internal_error without its sentence", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const app = new Hono<HonoAppEnv>();
+    app.onError(errorHandler);
+    app.get("/boom", () => {
+      throw new Error("D1_ERROR: D1 DB is overloaded. Too many requests queued.");
+    });
+
+    const response = await app.request("https://api.example.com/boom", { method: "GET" }, testEnv());
+
+    expect(response.status).toBe(500);
+    expect(logged.mock.calls[0]![0]).toMatchObject({
+      event: "request_failed",
+      code: "internal_error",
+      error_code: "internal_error:d1_overloaded",
     });
   });
 

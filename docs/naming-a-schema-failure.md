@@ -152,6 +152,9 @@ its own is a boundary that drifts.
 | `packages/db/src/link-payloads.ts` | a link payload that no longer satisfies the schema its prefix promises reports `link_payload_drift_invalid:<prefix>:<path>:<code>` — including when it is no longer JSON, as `-root-:invalid_json` — where the row's own existence proves this deployment wrote it. The `_invalid:` label is what `isDiagnosticCode` matches, without which the code reaches an operator as the caller's generic fallback |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | `receiveChildEffects`, which every conversation effect crosses |
 | `apps/api/src/queues/activity-consumer.ts` | an effect envelope the consumer's contract refuses logs `effect_queue_message_invalid` with its failing paths, including unknown key names (the Queue's producers are our own objects, so they are the diagnosis of a deploy skew), where it logged `legacy_message_after_cutover` under a connector-event code; it is still acked |
+| `packages/contracts/src/platform-diagnostics.ts` | `platformErrorCode` names a Workers runtime, D1 or SQLite failure (`d1_overloaded`, `sqlite_unique_constraint`) from its fixed sentence or its `cause`, never copying the table, column or value the sentence quotes; `diagnosticErrorCode` and the engineering MCP read it |
+| `packages/connectors/src/observability.ts` | `connectorDiagnosticCode` is `connectorObservationErrorCode` plus the provider's HTTP status, its rate limit, or the platform failure behind a request that never completed (`provider_error:http_403:rate_limited`) |
+| `apps/api/src/lib/api-error.ts` | `ApiError.diagnosticCode` carries what a log may say beyond the public `code`, across an RPC hop and through every regional bridge envelope (`diagnosticCodeField`), and never into the response body; `request_failed` and `diagnosticErrorCode` log it |
 | `apps/api/src/queues/access-revocation-consumer.ts` | `access_revocation_message_invalid` names each failing field of a queue message it cannot read, where it formatted the issues by hand and spelled the whole-value case `(root)` |
 
 The label a Durable Object entry point passes to `parseRpcInput` is the RPC
@@ -205,6 +208,47 @@ published, so the product asserts health while the tail never landed. Naming the
 error made that diagnosable in minutes; it did not make it visible.
 
 ## Changelog
+
+### 2026-09-29 — Platform failures and provider statuses are named where a code hid them
+
+**What changed:** A new primitive, `platformErrorCode` in
+`@rally/contracts/platform-diagnostics`, maps the Workers runtime, D1 and
+SQLite sentences to words of ours; the runtime table that lived in the API's
+logger moved there. `connectorDiagnosticCode` adds a provider's HTTP status and
+rate limit to a connector's code. `ApiError` gained `diagnosticCode`, which a
+log reads and a response never does. Six logs use them: `connector_poll_failed`,
+the queue's `workstream_maintenance` refusal, `request_failed` and
+`github_delivery_retry` for a GitHub 502, `engineering_mcp_tool_failed`, and
+`workspace_scheduled_alarm_phase_failed`.
+
+**Why:** A log review found six codes standing in for a reason already in hand.
+The poll workflow logged `error_name: "Error"` because the Workflow step
+boundary serializes what an attempt threw. The work-stream fence answered
+`quarantined:0` for a D1 read that failed, which is also the value of a real
+quarantine. GitHub's 404, 403 rate limit and 500 all logged as 502
+`provider_error`. A D1 outage behind a route logged `internal_error`, because
+its message is prose. The engineering MCP logged the constant `tool_failed`,
+and the alarm phase failure logged no code at all.
+
+**Considered and rejected:** Adding the provider's status to
+`connectorObservationErrorCode`. `connection-service.ts` compares and persists
+that code, so a finer value would split one known state into many; the new
+helper sits beside it. Carrying table and column names from a SQLite
+constraint message: a member's memory table names its own columns, so the
+kind of failure crosses and the names do not. Putting the provider status in
+`ApiError.details`: that goes to the caller, and the rule is not to widen what
+the caller sees.
+
+Every regional bridge's error envelope carries the log-only code, since each
+one runs the work-stream fence and rebuilds its refusal on the Global side.
+
+**Consequences:** `request_failed` now carries `error_code` for a
+`ConnectorError` whose details name a status, rate limit or platform failure,
+and for an `ApiError` that has a `diagnosticCode`.
+A sentence the platform table does not know still reduces to the caller's
+fallback; add it to `PLATFORM_ERRORS` when a log shows it. The queue refusal's
+message grows a fourth segment only when the fence failed closed.
+
 
 ### 2026-09-26 — A Workers runtime failure is named behind the caller's code
 
