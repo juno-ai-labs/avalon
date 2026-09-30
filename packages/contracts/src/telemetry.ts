@@ -1965,7 +1965,7 @@ export const TELEMETRY_EVENTS = {
       placement: z.enum(["header", "hero", "body", "footer", "faq", "connector", "unknown", "sidekicks", "team", "pricing"]),
       // pro/max/ultra are the per-seat plans the page showed before September
       // 2026; a tab left open across the deploy can still send them.
-      plan: z.enum(["team", "business", "enterprise", "pro", "max", "ultra"]).optional(),
+      plan: z.enum(["start", "grow", "enterprise", "pro", "max", "ultra"]).optional(),
     })),
   }),
   desktop_handoff_attempted: productEvent({

@@ -57,11 +57,11 @@ afterEach(() => {
 describe('site telemetry reporter', () => {
   it('reports a click inside a tagged link with its closed values and keepalive', async () => {
     const api = stubApi();
-    await start('<a data-site-action="download-pricing-business" href="#"><span>Download</span></a>');
+    await start('<a data-site-action="download-pricing-grow" href="#"><span>Download</span></a>');
     document.querySelector('span')!.click();
 
     await vi.waitFor(() => expect(api.clicks()).toHaveLength(1));
-    expect(api.clicks()[0]!.properties).toEqual({ page: 'landing', action: 'download', placement: 'pricing', plan: 'business' });
+    expect(api.clicks()[0]!.properties).toEqual({ page: 'landing', action: 'download', placement: 'pricing', plan: 'grow' });
     expect(api.sent.find((request) => request.events.some((event) => event.name === 'site_action_selected'))!.keepalive).toBe(true);
   });
 
@@ -79,7 +79,7 @@ describe('site telemetry reporter', () => {
   it('sends a click made before bootstrap with keepalive and never an empty batch', async () => {
     let releaseBootstrap!: () => void;
     const api = stubApi({ bootstrapped: new Promise<void>((resolve) => { releaseBootstrap = resolve; }) });
-    await start('<a data-site-action="download-pricing-business" href="#">Download</a>');
+    await start('<a data-site-action="download-pricing-grow" href="#">Download</a>');
     document.querySelector('a')!.click();
     releaseBootstrap();
 
