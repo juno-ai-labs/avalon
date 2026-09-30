@@ -23,11 +23,12 @@ loads.
 | `apps/site/src/landing.css` | `.tech-*` rules: figure size, label type, the gold line color, the layer list |
 
 `LAYERS` is the single source of the layer names, their order (inside out), and
-their colors. The colors, and the amber of the leader lines and seam, are the
+their colors. The colors, and the amber of the leader lines, are the
 product's icon palette (`--av-sys-color-project-*` in
 `packages/ui/src/styles/themes.css`): amber, fuchsia, emerald, orange, blue.
-The site does not load that stylesheet, so the hex values are copied; the
-palette key sits beside each. The label overlay and the geometry both read it.
+The tennis ball's seam is the brand neon, `--av-sys-color-brand-base`. The
+site does not load that stylesheet, so the hex values are copied; the token
+name sits beside each. The label overlay and the geometry both read it.
 
 ## How it works
 
@@ -83,7 +84,8 @@ maps do not apply; the vertex shader lights each point itself:
   of shadow into its corner.
 
 Once the cut fills, the ball takes diffuse light on its spinning surface, and
-the seam keeps a floor of brightness so it reads all the way round. Stars are
+the neon seam glows at full brightness rather than taking the light, so it
+reads all the way round. Stars are
 unlit.
 
 ### Rendering
