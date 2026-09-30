@@ -41,6 +41,11 @@ Every particle carries three positions, fixed at build time:
 A `group` attribute says which layer a particle belongs to, or that it fills
 the cut octant, or that it is only ever a star.
 
+Each sphere's shell is the densest part of its layer, so it reads as a whole
+sphere from outside. When the next sphere forms around it, its shell fades to a
+trace, so an inner layer shows only through the cut, the way an Earth cut-away
+shows its core.
+
 The vertex shader blends star → shape → ball → star from a few uniforms. The
 CPU work per frame is a few uniform writes, one render call, and projecting four
 label anchors. Nothing is precomputed in screen space; the camera and three.js
@@ -117,7 +122,7 @@ styles are set through the CSSOM or SVG attributes, never inline markup.
 - **No WebGL**: `WebGLRenderer` throws, the error reaches the console, and the
   figure stays an empty dark panel. The layer list below it still carries the
   content.
-- **Point count**: about 19,000 points. Every frame runs the vertex shader over
+- **Point count**: about 23,000 points. Every frame runs the vertex shader over
   all of them; there is no per-point CPU work.
 - **Pixel ratio** is capped at 2 so a high-density screen does not quadruple
   the fill cost.
