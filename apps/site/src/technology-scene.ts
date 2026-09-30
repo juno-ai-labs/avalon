@@ -174,9 +174,12 @@ function buildGeometry(): BufferGeometry {
   const drift = new Float32Array(total * 4);
 
   // The starfield sits wholly behind the spheres as the camera sees them: a
-  // slab from just past the outer sphere to well beyond it, as wide at each
-  // depth as the view is there (with room for the phone zoom and the wide
-  // layout's offset). A jittered grid spreads it evenly, never regularly.
+  // slab from just past the outer sphere to well beyond it. The field turns
+  // about the line of sight, so each depth is a disc, not a rectangle, wide
+  // enough to cover the view's farthest corner at any turn. That corner is
+  // about 2.6 view half-heights out on a wide phone (the zoom and downward
+  // offset) and 2.5 on the widest desktop figure (the rightward offset). A
+  // jittered grid, mapped onto the disc, spreads it evenly, never regularly.
   const back = CAMERA_FROM.clone().negate();
   const across = new Vector3(0, 1, 0).cross(CAMERA_FROM).normalize();
   const upward = CAMERA_FROM.clone().cross(across);
@@ -188,10 +191,15 @@ function buildGeometry(): BufferGeometry {
   const nz = Math.ceil(1 / cell);
   const starAt = (a: number, b: number, c: number): Vector3 => {
     const depth = nearest + c * (deepest - nearest);
-    const half = Math.tan((FOV / 2) * (Math.PI / 180)) * (CAMERA_DISTANCE + depth) * 1.45;
+    const reach = Math.tan((FOV / 2) * (Math.PI / 180)) * (CAMERA_DISTANCE + depth) * 2.8;
+    // Shirley's concentric map: the square's rings become the disc's rings,
+    // so the grid's even spread survives.
+    const [r, angle] = Math.abs(a) > Math.abs(b)
+      ? [a, (Math.PI / 4) * (b / a)]
+      : [b, b === 0 ? 0 : Math.PI / 2 - (Math.PI / 4) * (a / b)];
     return back.clone().multiplyScalar(depth)
-      .addScaledVector(across, a * half * 2.4)
-      .addScaledVector(upward, b * half);
+      .addScaledVector(across, r * reach * Math.cos(angle))
+      .addScaledVector(upward, r * reach * Math.sin(angle));
   };
   const cells = Array.from({ length: nx * ny * nz }, (_, i) => i);
   for (let i = cells.length - 1; i > 0; i -= 1) {
@@ -366,14 +374,15 @@ vec3 turnAboutView(vec3 p, float a) {
 }
 
 // Whether the camera's view of p passes through the formed spheres, and how
-// much: stars there are dimmed so the spheres read as in front of them.
+// much: stars there are dimmed so the spheres read as in front of them. The
+// dimming lifts as the ball scatters, since nothing stands there any more.
 float behindSpheres(vec3 p) {
   float reach = 0.0;
   for (int i = 0; i < ${LAYERS.length}; i++) reach = max(reach, ${STEP.toFixed(4)} * float(i + 1) * uForm[i]);
   reach = max(reach, ${OUTER.toFixed(4)} * uForm[${LAYERS.length}]);
   vec3 ray = normalize(p - uEye);
   float miss = length(cross(-uEye, ray));
-  return 1.0 - 0.7 * (1.0 - smoothstep(reach * 0.9, reach * 1.05, miss)) * step(0.01, reach);
+  return 1.0 - 0.7 * (1.0 - smoothstep(reach * 0.9, reach * 1.05, miss)) * step(0.01, reach) * (1.0 - uScatter);
 }
 
 void main() {
@@ -394,9 +403,11 @@ void main() {
   vec3 swirl = normalize(cross(shape + vec3(0.001), vec3(0.0, 1.0, 0.0))) * sin(form * 3.14159) * 0.9;
   vec3 p = mix(star, shape, form) + swirl;
 
-  // Filling the cut: every structure point settles onto the outer sphere, which
-  // is what makes it read as whole. The ball then only recolors, lifts the seam
-  // and spins, so the spin starting from identity never jumps.
+  // Filling the cut: every structure point settles onto the outer sphere. Only
+  // the outer shell shows while it does, its points in the cut fading in, so
+  // the blue sphere reads as closing over. The ball then brings the rest back
+  // in its own colors, lifts the seam and spins, so the spin starting from
+  // identity never jumps.
   bool structural = group <= ${GROUP_FILL};
   float fillT = structural ? stagger(uForm[${GROUP_FILL}], seed) : 0.0;
   float ballT = structural ? stagger(uBall, seed) : 0.0;
@@ -432,11 +443,15 @@ void main() {
   float shellAlpha = aInfo.w > 0.5 ? mix(0.3, 1.0, front) * mix(1.0, 0.12, covered) : 1.0;
   float sphereAlpha = mix(0.08, 0.55, front);
   float seamAlpha = mix(0.3, 1.0, front);
-  // A shell point drifting through the open cut is not drawn until it fills.
   float open = aInfo.w > 0.5 && inCut(shape) ? 0.0 : 1.0;
-  shellAlpha *= mix(1.0, open, form);
-  float alpha = mix(shellAlpha, sphereAlpha, fillT);
+  // A shell point drifting through the open cut is not drawn until it fills,
+  // and the outer shell keeps its full weight while it closes over.
+  shellAlpha *= mix(1.0, open, form * (1.0 - fillT));
+  float alpha = shellAlpha;
   alpha = mix(alpha, seam > 0.5 ? seamAlpha : sphereAlpha, ballT);
+  // Everything but the outer shell fades early in the fill, before it moves.
+  bool outerShell = group == ${LAYERS.length - 1} && aInfo.w > 0.5;
+  if (structural && !outerShell) alpha *= 1.0 - clamp(uForm[${GROUP_FILL}] * 4.0, 0.0, 1.0) * (1.0 - ballT);
   // Stars sit twice as far from the camera as the spheres, so they start larger.
   float size = mix(2.8, mix(2.3, 2.4, 1.0 - aInfo.w), structure) + seam * ballT * (1.0 - scatter) * 2.6;
   vAlpha = mix((0.3 + 0.35 * twinkle) * behindSpheres(p), alpha, structure);
