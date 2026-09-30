@@ -1507,6 +1507,27 @@ export function Sidebar({
       }))
   ), [selectedSpaceId, spaces, spacesReady, workstreams]);
   const selectedSpace = spaces?.find((space) => space.id === selectedSpaceId);
+  const lastAutomaticSpacePage = useRef<string | null>(null);
+  useEffect(() => {
+    if (!spacesReady
+      || !selectedSpace
+      || visibleWorkstreams.length >= selectedSpace.channelCount
+      || !hasMoreWorkstreams
+      || loadingMoreWorkstreams
+      || !onLoadMoreWorkstreams) return;
+    const pageKey = `${selectedSpace.id}:${workstreams.length}`;
+    if (lastAutomaticSpacePage.current === pageKey) return;
+    lastAutomaticSpacePage.current = pageKey;
+    onLoadMoreWorkstreams();
+  }, [
+    hasMoreWorkstreams,
+    loadingMoreWorkstreams,
+    onLoadMoreWorkstreams,
+    selectedSpace,
+    spacesReady,
+    visibleWorkstreams.length,
+    workstreams.length,
+  ]);
   // Resolved here rather than through `NavLink`'s function form, because both
   // of these links are tooltip triggers: Radix clones the child and merges its
   // `className`, and a function arrives at the DOM as its own source text with
