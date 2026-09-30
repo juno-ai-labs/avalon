@@ -236,6 +236,16 @@ const browserBridge: RallyDesktopBridge = {
     // A browser tab is told nothing about sleep; its socket rides it out.
     return () => undefined;
   },
+  async getUpdateStatus() {
+    return { kind: 'idle' } as const;
+  },
+  onUpdateStatusChanged() {
+    // The browser build has no updater.
+    return () => undefined;
+  },
+  async installDownloadedUpdate() {
+    // Nothing is ever downloaded outside the desktop app.
+  },
   async getApplicationSettings() {
     return { ...browserApplicationSettings };
   },

@@ -1,8 +1,9 @@
 import { AccountTrigger } from '@rally/ui/components/account-trigger';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { IconHexagons, IconLogout, IconSettings } from '@tabler/icons-react';
+import { IconDeviceDesktopDown, IconHexagons, IconLogout, IconSettings } from '@tabler/icons-react';
 import { desktopBridge } from '../lib/platform';
+import { useDownloadedUpdate } from '../lib/use-downloaded-update';
 import type { WorkspaceAttention } from '@rally/contracts';
 import { Check, LoaderCircle, Plus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -121,6 +122,7 @@ export function WorkspaceAccountMenu({
 }: WorkspaceAccountMenuProps): React.JSX.Element {
   const [invitation, setInvitation] = useState<DesktopPendingWorkspaceInvitation | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const downloadedUpdate = useDownloadedUpdate();
   const [creating, setCreating] = useState(false);
   const [workspaceName, setWorkspaceName] = useState('');
   const workspaceRegion = 'global';
@@ -214,6 +216,12 @@ export function WorkspaceAccountMenu({
             side="top"
             sideOffset={8}
           >
+            {downloadedUpdate !== null && (
+              <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => void desktopBridge().installDownloadedUpdate()}>
+                <IconDeviceDesktopDown aria-hidden="true" />
+                <span>Restart to Update</span>
+              </DropdownMenu.Item>
+            )}
             {presentation === 'grok' && (
               <>
                 <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => void desktopBridge().openSidekicks()}>
