@@ -14,7 +14,7 @@
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { asSubstreamId, type ConversationEffectEnvelope, type WorkstreamWorkflowInput } from "@rally/contracts";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { conversationObjectName } from "../src/durable-objects/names";
 import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
@@ -81,16 +81,24 @@ describe("a conversation's Sidekick attachments on its directory effect", () => 
       const agent = instance as unknown as AgentInternals;
       agent.activeLoopExecution = { runId: RUN_ID, leaseOwner: "attach-test", executionEpoch: 1 };
       const runtime = agent.persistentLoopRuntime(runInput(RUN_ID));
-      await runtime.activateSidekickSkill(sidekickSkillRef(SIDEKICK_B));
-      await runtime.activateSidekickSkill(sidekickSkillRef(SIDEKICK_A));
-      // Loading one already attached changes nothing the parent is told.
-      await runtime.activateSidekickSkill(sidekickSkillRef(SIDEKICK_B));
+      // One request's clock, as production has it: here it would otherwise
+      // move between the awaits and hide a tie.
+      vi.useFakeTimers({ toFake: ["Date"], now });
+      try {
+        await runtime.activateSidekickSkill(sidekickSkillRef(SIDEKICK_B));
+        await runtime.activateSidekickSkill(sidekickSkillRef(SIDEKICK_A));
+        // Loading one already attached changes nothing the parent is told.
+        await runtime.activateSidekickSkill(sidekickSkillRef(SIDEKICK_B));
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     const lists = await reportedLists(stub);
-    expect(lists.at(-1)).toHaveLength(2);
-    expect(new Set(lists.at(-1))).toEqual(new Set([SIDEKICK_A, SIDEKICK_B]));
-    expect(lists.filter((list) => list?.length === 2)).toHaveLength(1);
+    // Attach order, though both loads share one request's `Date.now()` and B
+    // sorts after A by id.
+    // The outbox's own order ties under a frozen clock, so find the list by size.
+    expect(lists.filter((list) => list?.length === 2)).toEqual([[SIDEKICK_B, SIDEKICK_A]]);
   });
 
   it("reports the shorter list when the rail removes one", async () => {

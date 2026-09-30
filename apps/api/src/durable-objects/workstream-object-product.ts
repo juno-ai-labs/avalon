@@ -3483,12 +3483,11 @@ export class WorkstreamObjectProductService {
    * For a caller outside this service whose write the parent must hear about,
    * such as a Sidekick attachment.
    */
-  async commitWithCommonEffect(mutate: (sql: SqlStorage) => boolean): Promise<boolean> {
-    const { result } = await this.objectStore.commitWithRegionalEffects(
+  async commitWithCommonEffect(mutate: (sql: SqlStorage) => boolean): Promise<void> {
+    await this.objectStore.commitWithRegionalEffects(
       mutate,
       (_sql, changed) => changed ? [{ partitionKey: "common", effect: this.commonEffect(this.root()) }] : [],
     );
-    return result;
   }
 
   private commonEffect(root: RootRow) {
@@ -3572,7 +3571,8 @@ export class WorkstreamObjectProductService {
     const background = this.storage.sql.exec<{ root_substream_id: string | null }>(
       "SELECT root_substream_id FROM background_agent WHERE id = 1",
     ).toArray()[0];
-    // Main's list is the Channel rail's; a breakout reports its own the same way.
+    // Main's list is the Channel rail's. A breakout sends its own too, which
+    // its parent does not read.
     const sidekickAttachmentIds = this.storage.sql.exec<{ sidekick_id: string }>(
       `SELECT sidekick_id FROM sidekick_attachments ORDER BY attached_at, sidekick_id`,
     ).toArray().map((row) => row.sidekick_id);
