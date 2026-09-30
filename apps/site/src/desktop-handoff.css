@@ -1,0 +1,99 @@
+/*
+ * Every browser page whose job is to hand off to the desktop app: the sign-in
+ * return, shared Channel/Breakout/Space/Sidekick links, `/open`, and
+ * organization invitations. The person is on their way into the app, so these
+ * pages copy the desktop sign-in screen rather than the marketing site: the
+ * values below mirror the renderer's `.signin-*` rules in
+ * `packages/ui/src/styles/app.css` and the light and dark
+ * tokens in `config/design-tokens/themes/`. Change them together.
+ */
+:root {
+  color-scheme: light dark;
+  --canvas: #fcfcfc;
+  --text: #141414;
+  --text-muted: #696969;
+  --danger: #b23a34;
+  --focus: #0c64c1;
+  --primary: #070707;
+  --primary-hover: #2f2f2f;
+  --on-primary: #fcfcfc;
+  --mark-filter: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas: #070707;
+    --text: #fcfcfc;
+    --text-muted: #a3a3a3;
+    --danger: #d08a7b;
+    --focus: #3d91ef;
+    --primary: #fcfcfc;
+    --primary-hover: #dedede;
+    --on-primary: #070707;
+    /* The ink mark is drawn in black; the app paints it white in dark. */
+    --mark-filter: invert(1);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html,
+body { height: 100%; margin: 0; }
+
+body {
+  -webkit-font-smoothing: antialiased;
+  background: var(--canvas);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+[hidden] { display: none !important; }
+
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.handoff-shell {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  min-height: 100%;
+  padding: 36px;
+}
+
+.handoff-card { padding: 24px 0; text-align: center; width: min(420px, 100%); }
+
+.handoff-mark { display: block; filter: var(--mark-filter); height: 56px; margin: 0 auto 26px; width: 56px; }
+
+.handoff-kind { font-size: 12px; font-weight: 500; margin: 0 0 8px; }
+
+.handoff-card h1 { font-size: 34px; font-weight: 600; letter-spacing: -0.04em; line-height: 1.15; margin: 0 0 14px; }
+
+.handoff-card p { color: var(--text-muted); margin: 0; }
+
+.handoff-card p a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.handoff-card p a:hover { color: var(--text); }
+
+.handoff-status { font-size: 15px; line-height: 1.6; }
+.handoff-status[data-tone='error'] { color: var(--danger); }
+
+.handoff-open {
+  align-items: center;
+  background: var(--primary);
+  border-radius: 26px;
+  color: var(--on-primary);
+  display: flex;
+  font-size: 14px;
+  justify-content: center;
+  margin-top: 38px;
+  min-height: 48px;
+  padding: 6px 16px;
+  text-decoration: none;
+  transition: background-color 140ms ease;
+}
+.handoff-open:hover { background: var(--primary-hover); }
+.handoff-open[aria-disabled='true'] { opacity: 0.48; pointer-events: none; }
+
+.handoff-card .handoff-help { font-size: 12px; line-height: 1.5; margin-top: 14px; }
+
+.handoff-card .handoff-error { color: var(--danger); font-size: 12px; margin-top: 8px; }
