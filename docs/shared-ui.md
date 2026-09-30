@@ -52,8 +52,10 @@ so it composes the lower-level `SidebarFooter` with the same account-slot
 layout. Hosts provide labels, persistence and the optional leading content
 rather than rebuilding either layout. A host that keeps a sidebar's width and
 collapsed state across launches does it through `lib/sidebar-preferences.ts`
-under its own local-storage keys: reads fall back to the default width and a
-clamped value, and a refused write leaves the in-memory state standing.
+under its own local-storage keys. A missing or unreadable width falls back to
+the default, a readable one is clamped to the sidebar's limits, a missing
+collapsed flag reads as expanded, and a refused write leaves the in-memory state
+standing.
 
 `SidebarRow` also owns the optional hierarchy count badge. A positive count is
 a trailing badge inside the row's padding when expanded and overlaps the mark's
@@ -168,6 +170,8 @@ apps size their rails independently, so each keeps its own keys.
 **Consequences:** The desktop keys are unchanged, so saved sizes carry over.
 A new host that persists a sidebar should call this helper rather than touch
 local storage itself.
+
+PR [#1034](https://github.com/juno-ai-labs/avalon/pull/1034).
 
 ### 2026-09-22 — The shared Breakout rail owns stable alphabetical order
 
