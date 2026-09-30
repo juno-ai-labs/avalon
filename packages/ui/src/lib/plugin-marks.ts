@@ -1,3 +1,4 @@
+import Apple from '@thesvg/react/apple';
 import Canva from './brand-marks/canva';
 import Github from '@thesvg/react/github';
 import Google from '@thesvg/react/google';
@@ -33,7 +34,7 @@ import Fireflies from './brand-marks/fireflies';
 /**
  * One brand's component, and whether it has single-colour art to ask for.
  *
- * Eight of the ten ship a `mono` variant, which paints in `currentColor`.
+ * Ten of the twelve ship a `mono` variant, which paints in `currentColor`.
  * Slack and Granola ship none — their variant unions are `default | wordmark`
  * and `default | light | dark` — so asking for `mono` there is a type error
  * rather than a silent fallback, and `.connector-mark` recolours their palette
@@ -46,11 +47,12 @@ export type PluginBrandMarkComponent =
   | { readonly Mark: ComponentType<{ className?: string; variant?: 'mono' }>; readonly mono: true }
   | { readonly Mark: ComponentType<{ className?: string }>; readonly mono: false };
 
-/** The brands Rally connects to that have a mark of their own. */
+/** The brands Rally connects to, or links out to, that have a mark of their own. */
 export const PLUGIN_BRAND_MARKS: Record<
-  'ashby' | 'canva' | 'fireflies' | 'github' | 'google' | 'google-drive' | 'granola' | 'linear' | 'notion' | 'slack' | 'x',
+  'apple' | 'ashby' | 'canva' | 'fireflies' | 'github' | 'google' | 'google-drive' | 'granola' | 'linear' | 'notion' | 'slack' | 'x',
   PluginBrandMarkComponent
 > = {
+  apple: { Mark: Apple, mono: true },
   canva: { Mark: Canva, mono: true },
   ashby: { Mark: Ashby, mono: true },
   fireflies: { Mark: Fireflies, mono: true },

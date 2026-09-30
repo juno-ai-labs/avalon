@@ -19,6 +19,7 @@
   "exclude": [
     "src/client.tsx",
     "src/conversation.tsx",
-    "src/entry.tsx"
+    "src/entry.tsx",
+    "src/mac-download.tsx"
   ]
 }

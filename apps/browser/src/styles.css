@@ -28,3 +28,8 @@ a { color: inherit; }
 .browser-width-warning p { margin: 0; color: var(--av-sys-color-text-muted); line-height: 1.5; }
 .browser-account-fallback { position: fixed; left: 12px; bottom: 12px; width: 256px; z-index: 5; }
 .workspace-shell:has(.workstream-context-sidebar) .browser-account-fallback { display: none; }
+/* The slot pads the row as `.sidebar-scroll` pads a Space row, compact included,
+   so the download lines up with the Spaces above it in both widths. */
+.browser-download-slot { flex: none; padding: 4px 12px 0; transition: padding var(--sidebar-layout-motion); }
+.resizable-sidebar.is-compact .browser-download-slot { padding-inline: calc((100% - 54px) / 2); }
+.browser-account-fallback .browser-download-slot { padding: 0 0 8px; }

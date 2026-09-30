@@ -27,7 +27,8 @@ import {
   SIDEBAR_COLLAPSE_DRAG_THRESHOLD,
   SIDEBAR_EXPAND_DRAG_THRESHOLD,
 } from '@rally/ui/lib/sidebar-geometry';
-import { browserRailVisibility, browserSidebarLayout, type BrowserRailVisibility } from './sidebar-layout';
+import { browserAccountHome, browserRailVisibility, browserSidebarLayout, type BrowserRailVisibility } from './sidebar-layout';
+import { MacDownloadLink } from './mac-download';
 import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
 import { ConversationHeader } from '@rally/ui/components/conversation-header';
 import { WorkstreamSidebar } from '@rally/ui/components/workstream-sidebar';
@@ -229,6 +230,7 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
           onOpenArtifact={context.openArtifact} onOpenResource={context.openResource} sidekicks={context.sidekicks} sidekickFailure={context.sidekickFailure}
           onSidekickMenuOpen={context.loadSidekickOptions} onRefreshSidekicks={context.refreshSidekicks}
           addSidekick={<SidekickPicker workstreamId={parentId} substreamId={substreamId} />}
+          footerAbove={accountMenu && <MacDownloadLink />}
           footerLeading={accountMenu} />}
         renderHeader={(context) => <ConversationHeader grokBotMode workstream={context.detail} socketState={context.socketState}
           substreamId={substreamId} currentUserId={session?.user.id} presentUserIds={context.presentUserIds}
@@ -254,6 +256,7 @@ function SharedNavigation({ accountMenu, directory, navigationSpaces, rails, she
   const { session } = useCollaborationSession();
   const { pathname } = useLocation();
   const navigate = useNavigate();
+  const accountHome = browserAccountHome(rails);
   const canonicalHost = !location.pathname.startsWith('/app/workspaces/');
   const legacyParentId = pathname.match(/^\/workstreams\/([^/]+)/u)?.[1] ?? null;
   const canonicalRoute = /^\/s\/([^/]+)(?:\/c\/([^/]+))?/u.exec(pathname);
@@ -383,13 +386,14 @@ function SharedNavigation({ accountMenu, directory, navigationSpaces, rails, she
           })}
         </SidebarList>
       </SidebarScroll>
+      {accountHome === 'spaces' && <MacDownloadLink />}
       <SidebarCollapseFooter
         collapseLabel="Collapse spaces"
         compact={spacesDisplayedCompact}
         constrained={sidebarLayout.spacesConstrained}
         constrainedTitle="Widen the window to expand spaces"
         expandLabel="Expand spaces"
-        leading={accountMenu}
+        leading={accountHome === 'spaces' ? accountMenu : undefined}
         onToggle={spacesSidebar.toggle}
       />
     </ResizableSidebar>}
@@ -426,13 +430,14 @@ function SharedNavigation({ accountMenu, directory, navigationSpaces, rails, she
         </SidebarRow>;
       })}
       </SidebarList></SidebarScroll>
+      {accountHome === 'channels' && <MacDownloadLink />}
       <SidebarCollapseFooter
         collapseLabel="Collapse navigation"
         compact={channelsDisplayedCompact}
         constrained={sidebarLayout.channelsConstrained}
         constrainedTitle="Widen the window to expand navigation"
         expandLabel="Expand navigation"
-        leading={rails.spaces ? undefined : accountMenu}
+        leading={accountHome === 'channels' ? accountMenu : undefined}
         onToggle={channelsSidebar.toggle}
       />
     </ResizableSidebar>}
@@ -452,6 +457,7 @@ function BrowserWorkspace({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
     spaceCount: navigationSpaces.length,
     channelCount: directory.data.workstreams.length,
   } : undefined), [directory.data, directory.isError, navigationSpaces]);
+  const accountHome = browserAccountHome(rails);
   const accountMenu = useMemo(() => {
     if (!session) return null;
     const user = { ...session.user, name: session.user.name ?? session.user.email, timezone: session.user.timezone ?? 'UTC', avatarUrl: session.user.avatarUrl ?? undefined };
@@ -480,8 +486,8 @@ function BrowserWorkspace({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
     {/* The Breakout rail is absent while a Channel is archived, loading or
         failed, so the menu also floats here; CSS hides this copy whenever
         the rail is present. */}
-    {!rails.spaces && !rails.channels && <div className="browser-account-fallback">{accountMenu}</div>}
-    <BreakoutRailAccountMenu.Provider value={rails.spaces || rails.channels ? null : accountMenu}>
+    {accountHome === 'conversation' && <div className="browser-account-fallback"><MacDownloadLink />{accountMenu}</div>}
+    <BreakoutRailAccountMenu.Provider value={accountHome === 'conversation' ? accountMenu : null}>
     <main className="browser-feed main-pane"><Routes>
       <Route path="/s/:spaceId" element={<SharedSpaceRoute />} />
       <Route path="/s/:spaceId/c/:parentId" element={<SharedConversationRoute />} />
