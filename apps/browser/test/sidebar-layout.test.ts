@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { browserRailVisibility, browserSidebarLayout } from '../src/sidebar-layout';
+import { browserAccountHome, browserRailVisibility, browserSidebarLayout } from '../src/sidebar-layout';
 
 describe('browserSidebarLayout', () => {
   it('protects the conversation and compact Breakout rail at a narrow desktop width', () => {
@@ -84,5 +84,17 @@ describe('browserRailVisibility', () => {
 
   it('keeps both rails when there is nothing to list, so the empty state shows', () => {
     expect(browserRailVisibility({ spaceCount: 0, channelCount: 0 })).toEqual({ channels: true, spaces: true });
+  });
+});
+
+describe('browserAccountHome', () => {
+  it('puts the account menu and download in the leftmost rail shown', () => {
+    expect(browserAccountHome({ spaces: true, channels: true })).toBe('spaces');
+    expect(browserAccountHome({ spaces: true, channels: false })).toBe('spaces');
+    expect(browserAccountHome({ spaces: false, channels: true })).toBe('channels');
+  });
+
+  it('falls back to the conversation when a guest has neither outer rail', () => {
+    expect(browserAccountHome(browserRailVisibility({ spaceCount: 1, channelCount: 1 }))).toBe('conversation');
   });
 });

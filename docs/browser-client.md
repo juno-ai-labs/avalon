@@ -427,8 +427,12 @@ them above it, and it took height from the conversation on every screen.
 
 **Consequences:** The button follows the account menu, so any change to where
 that menu lives must move the button with it. The sign-in screen offers no
-download. The URL is hard-coded in `mac-download.tsx`, as it is in the site; a
-change to the release path must update both.
+download. The URL is hard-coded in `mac-download.tsx`, as it is in the site
+and in `MANUAL_UPDATE_URL` in `apps/desktop/src/main/updater.ts`; a change to
+the release path must update all three. Where the menu and the download live
+is one decision, `browserAccountHome`, so they cannot be placed apart.
+
+PR: [#1032](https://github.com/juno-ai-labs/avalon/pull/1032).
 
 ### 2026-09-25 — Rails with one row are hidden
 

@@ -11,7 +11,7 @@ const MAC_DOWNLOAD_URL = "https://downloads.rallywith.ai/stable/darwin/arm64/Ral
  */
 export function MacDownloadLink() {
   return <div className="browser-download-slot">
-    <SidebarRow as="a" className="browser-download-row" href={MAC_DOWNLOAD_URL} download aria-label="Download the Mac app">
+    <SidebarRow as="a" href={MAC_DOWNLOAD_URL} download aria-label="Download the Mac app">
       <SidebarNavigationRowContent
         icon={<span className="spaces-sidebar-mark"><ConnectorMark mark="apple" /></span>}
         title="Download the Mac app"
