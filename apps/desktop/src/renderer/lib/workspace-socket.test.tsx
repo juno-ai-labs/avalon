@@ -21,6 +21,7 @@ import { clearAllLocalCache } from './local-cache';
 import { LOCAL_CACHE_WRITE_COALESCE_MS } from './local-cache-mirror';
 import { LocalCacheScopeProvider } from './local-cache-scope';
 import { requestSocketTicket, SOCKET_TICKET_REQUEST_TIMEOUT_MS } from './socket-ticket-request';
+import { WORKSPACE_SOCKET_OPEN_TIMEOUT_MS } from '@rally/contracts/workspace-reach-watch';
 import { DIRECTORY_CACHE_KEY, workspaceDirectorySlice } from './workspace-directory-cache';
 import { SPACES_QUERY_KEY } from './sidebar-list-store';
 
@@ -40,6 +41,9 @@ vi.mock('./telemetry', async (importOriginal) => ({
   ...await importOriginal<typeof TelemetryModule>(),
   reportTelemetryProductIntent,
 }));
+const powerState = vi.hoisted(() => ({
+  listeners: new Set<(state: 'suspended' | 'resumed') => void>(),
+}));
 const syncRelay = vi.hoisted(() => ({
   published: [] as WorkspaceSyncPublication[],
   listeners: new Set<(event: WorkspaceSyncRelayEvent) => void>(),
@@ -54,6 +58,10 @@ vi.mock('./platform', () => ({
     onApplicationForegroundChanged: (listener: (foregrounded: boolean) => void) => {
       applicationFocus.listeners.add(listener);
       return () => applicationFocus.listeners.delete(listener);
+    },
+    onPowerStateChanged: (listener: (state: 'suspended' | 'resumed') => void) => {
+      powerState.listeners.add(listener);
+      return () => powerState.listeners.delete(listener);
     },
     publishWorkspaceSync: async (publication: WorkspaceSyncPublication) => {
       syncRelay.published.push(publication);
@@ -76,6 +84,13 @@ function relayToConsumer(event: WorkspaceSyncRelayEvent): void {
 function setApplicationForeground(foregrounded: boolean): void {
   applicationFocus.foregrounded = foregrounded;
   for (const listener of applicationFocus.listeners) listener(foregrounded);
+}
+
+/** What main relays from `powerMonitor`. */
+function setPowerState(state: 'suspended' | 'resumed'): void {
+  act(() => {
+    for (const listener of powerState.listeners) listener(state);
+  });
 }
 
 /** Every `realtime_socket_state` this test reported, in order. */
@@ -135,7 +150,10 @@ class FakeWebSocket extends EventTarget {
 
   close(code = 1000): void {
     if (this.readyState === FakeWebSocket.CLOSED) return;
+    // As a browser does: closing a socket that never opened fails it first.
+    const failed = this.readyState === FakeWebSocket.CONNECTING;
     this.readyState = FakeWebSocket.CLOSED;
+    if (failed) this.dispatchEvent(new Event('error'));
     this.dispatchEvent(Object.assign(new Event('close'), { code }));
   }
 
@@ -161,6 +179,7 @@ afterEach(() => {
   reportTelemetryProductIntent.mockClear();
   applicationFocus.foregrounded = false;
   applicationFocus.listeners.clear();
+  powerState.listeners.clear();
   syncRelay.published = [];
   syncRelay.listeners.clear();
   syncRelay.snapshot = { revision: 0, source: null };
@@ -496,8 +515,14 @@ describe('WorkspaceSocketProvider', () => {
       .map(([intent]) => intent)
       .filter((intent: { kind: string }) => intent.kind === 'workspace_socket_handshake')).toEqual([
       { kind: 'workspace_socket_handshake', attemptId: subscribe.diagnosticAttemptId, phase: 'ticket_requested' },
-      { kind: 'workspace_socket_handshake', attemptId: subscribe.diagnosticAttemptId, phase: 'ticket_received' },
-      { kind: 'workspace_socket_handshake', attemptId: subscribe.diagnosticAttemptId, phase: 'transport_open' },
+      {
+        kind: 'workspace_socket_handshake', attemptId: subscribe.diagnosticAttemptId, phase: 'ticket_received',
+        sinceTicketRequested: 'lt_1s', windowVisible: true,
+      },
+      {
+        kind: 'workspace_socket_handshake', attemptId: subscribe.diagnosticAttemptId, phase: 'transport_open',
+        sinceTicketRequested: 'lt_1s', windowVisible: true,
+      },
       { kind: 'workspace_socket_handshake', attemptId: subscribe.diagnosticAttemptId, phase: 'subscribe_sent' },
     ]);
 
@@ -592,7 +617,8 @@ describe('WorkspaceSocketProvider', () => {
     // A close nobody here asked for reads as the server's, and the count is the
     // retry depth it dropped from rather than the one it is about to start.
     act(() => FakeWebSocket.instances[0]!.close(1012));
-    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    // Past the first backoff (at most 1.5 s), and short of the open timeout.
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
     await flushPromises();
     act(() => FakeWebSocket.instances[1]!.open());
 
@@ -777,6 +803,113 @@ describe('WorkspaceSocketProvider', () => {
       'ticket_requested', 'ticket_received', 'transport_open', 'subscribe_sent',
       'sync_rejected', 'sync_received', 'sync_applied',
     ]);
+  });
+
+  describe('a socket that the client cannot finish opening', () => {
+    const ticket = {
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    };
+    function renderProvider(getWorkspaceSocketTicket: (signal?: AbortSignal) => Promise<typeof ticket>) {
+      return render(
+        <QueryClientProvider client={new QueryClient()}>
+          <WorkspaceSocketProvider region="global"
+            api={{ getWorkspaceSocketTicket }}
+            workspaceId="00000000-0000-7000-8000-000000000001"
+          >
+            <div />
+          </WorkspaceSocketProvider>
+        </QueryClientProvider>,
+      );
+    }
+
+    // 2026-09-29: the server sent `101`, the Mac never saw it, and the socket
+    // sat CONNECTING for twelve minutes while the server held it unheard.
+    it('gives up on a socket that never opens, says why, and dials again', async () => {
+      vi.useFakeTimers();
+      vi.spyOn(Math, 'random').mockReturnValue(0);
+      const getWorkspaceSocketTicket = vi.fn(async () => ticket);
+      renderProvider(getWorkspaceSocketTicket);
+      await flushPromises();
+      const stranded = FakeWebSocket.instances[0]!;
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(WORKSPACE_SOCKET_OPEN_TIMEOUT_MS); });
+
+      expect(stranded.readyState).toBe(FakeWebSocket.CLOSED);
+      expect(socketTelemetry()).toEqual([{
+        kind: 'realtime_socket_state',
+        socket: 'workspace',
+        state: 'retrying',
+        cause: 'open_timeout',
+        attempts: 'zero',
+      }]);
+      expect(handshakeTelemetry()).toContainEqual(expect.objectContaining({
+        phase: 'open_timeout',
+        sinceTicketRequested: '5s_30s',
+      }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_500); });
+      expect(FakeWebSocket.instances).toHaveLength(2);
+    });
+
+    it('does not give up on a socket that opened', async () => {
+      vi.useFakeTimers();
+      renderProvider(vi.fn(async () => ticket));
+      await flushPromises();
+      const socket = FakeWebSocket.instances[0]!;
+      act(() => socket.open());
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(WORKSPACE_SOCKET_OPEN_TIMEOUT_MS * 2); });
+
+      expect(socket.readyState).toBe(FakeWebSocket.OPEN);
+      expect(handshakeTelemetry()).toContainEqual(expect.objectContaining({
+        phase: 'transport_open',
+        sinceTicketRequested: 'lt_1s',
+      }));
+    });
+
+    it('closes its socket before sleep and dials only after wake', async () => {
+      vi.useFakeTimers();
+      const getWorkspaceSocketTicket = vi.fn(async () => ticket);
+      renderProvider(getWorkspaceSocketTicket);
+      await flushPromises();
+      const beforeSleep = FakeWebSocket.instances[0]!;
+      act(() => beforeSleep.open());
+      reportTelemetryProductIntent.mockClear();
+
+      setPowerState('suspended');
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+
+      expect(beforeSleep.readyState).toBe(FakeWebSocket.CLOSED);
+      expect(FakeWebSocket.instances).toHaveLength(1);
+      expect(getWorkspaceSocketTicket).toHaveBeenCalledTimes(1);
+      expect(socketTelemetry()).toEqual([expect.objectContaining({ state: 'retrying', cause: 'suspended' })]);
+
+      setPowerState('resumed');
+      await flushPromises();
+
+      expect(getWorkspaceSocketTicket).toHaveBeenCalledTimes(2);
+      expect(FakeWebSocket.instances).toHaveLength(2);
+    });
+
+    it('abandons a ticket still in flight when the machine sleeps', async () => {
+      let ticketSignal: AbortSignal | undefined;
+      const getWorkspaceSocketTicket = vi.fn((signal?: AbortSignal) => {
+        ticketSignal = signal;
+        return new Promise<typeof ticket>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+        });
+      });
+      renderProvider(getWorkspaceSocketTicket);
+      await flushPromises();
+
+      setPowerState('suspended');
+      await flushPromises();
+
+      expect(ticketSignal?.aborted).toBe(true);
+      expect(FakeWebSocket.instances).toHaveLength(0);
+      expect(socketTelemetry()).toEqual([expect.objectContaining({ cause: 'suspended' })]);
+    });
   });
 
   it('names the cause an organization close event cannot carry', async () => {

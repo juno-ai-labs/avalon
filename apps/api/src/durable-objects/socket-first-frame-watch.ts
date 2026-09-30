@@ -26,10 +26,20 @@ export interface FirstFrameWatchedSocket {
   lastAutoResponseAt: number | null;
 }
 
-/** The earliest first-frame deadline among these sockets, for the alarm to wake on. */
-export function nextFirstFrameDeadline(unheard: readonly UnheardSocket[], deadlineMs: number): number | null {
+/**
+ * The earliest first-frame deadline among these sockets, for the alarm to wake
+ * on. A socket in `held` was already judged missed and kept below the reset
+ * threshold; its deadline has passed, and waking on it would hold the alarm at
+ * `now + 1` until something else settles it.
+ */
+export function nextFirstFrameDeadline(
+  unheard: readonly UnheardSocket[],
+  deadlineMs: number,
+  held: ReadonlySet<string> = new Set(),
+): number | null {
   let earliest: number | null = null;
   for (const socket of unheard) {
+    if (held.has(socket.connectionId)) continue;
     const deadline = socket.acceptedAt + deadlineMs;
     if (earliest === null || deadline < earliest) earliest = deadline;
   }
