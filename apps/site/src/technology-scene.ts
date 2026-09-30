@@ -64,7 +64,7 @@ export const MOMENTS = {
 const STEP = 0.55;
 const OUTER = STEP * LAYERS.length;
 const STAR_ONLY = 5200;
-const LAYER_POINTS = [1500, 2800, 4000, 5200];
+const LAYER_POINTS = [1600, 3200, 4800, 6400];
 const FILL_POINTS = 450;
 const SEAM_POINTS = 1500;
 const GROUP_FILL = LAYERS.length;
@@ -186,7 +186,7 @@ function buildGeometry(): BufferGeometry {
     const outer = STEP * (index + 1);
     const inner = STEP * index;
     const shellArea = (7 / 8) * outer * outer;
-    const wallArea = (3 / 4) * (outer * outer - inner * inner) * 3;
+    const wallArea = (3 / 4) * (outer * outer - inner * inner) * 1.4;
     const count = LAYER_POINTS[index]!;
     for (let n = 0; n < count; n += 1) {
       const onShell = rand() < shellArea / (shellArea + wallArea);
@@ -254,7 +254,11 @@ void main() {
   star.y += sin(uTime * 0.3 + seed * 40.0) * 0.04;
 
   float form = 0.0;
-  for (int i = 0; i < ${LAYERS.length + 1}; i++) { if (i == group) form = uForm[i]; }
+  float covered = 0.0;
+  for (int i = 0; i < ${LAYERS.length + 1}; i++) {
+    if (i == group) form = uForm[i];
+    if (i == group + 1 && i < ${LAYERS.length}) covered = uForm[i];
+  }
   form = stagger(form, seed);
   vec3 swirl = normalize(cross(aShape + vec3(0.001), vec3(0.0, 1.0, 0.0))) * sin(form * 3.14159) * 0.9;
   vec3 p = mix(star, aShape, form) + swirl;
@@ -281,12 +285,15 @@ void main() {
   // walls read as solid bands rather than a haze of overlapping layers.
   float facing = dot(normalize(p + vec3(0.0001)), normalize(uEye));
   float front = smoothstep(-0.4, 0.8, facing);
-  float shellAlpha = aInfo.w > 0.5 ? mix(0.18, 0.7, front) : 1.0;
+  // Each sphere reads as a whole sphere from outside. Once the next sphere
+  // wraps it, its shell sinks back, so inner layers show only through the cut,
+  // the way an Earth cut-away shows its core.
+  float shellAlpha = aInfo.w > 0.5 ? mix(0.3, 1.0, front) * mix(1.0, 0.12, covered) : 1.0;
   float sphereAlpha = mix(0.08, 0.55, front);
   float seamAlpha = mix(0.3, 1.0, front);
   float alpha = mix(shellAlpha, sphereAlpha, fillT);
   alpha = mix(alpha, seam > 0.5 ? seamAlpha : sphereAlpha, ballT);
-  float size = mix(1.4, mix(2.0, 2.4, 1.0 - aInfo.w), structure) + seam * ballT * (1.0 - scatter) * 2.6;
+  float size = mix(1.4, mix(2.3, 2.4, 1.0 - aInfo.w), structure) + seam * ballT * (1.0 - scatter) * 2.6;
   vAlpha = mix(0.3 + 0.35 * twinkle, alpha, structure);
 
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
