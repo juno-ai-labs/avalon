@@ -23,6 +23,10 @@ const rendererContentSecurityPolicy = {
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin({ exclude: ['@rally/contracts', '@rally/ui'] })],
+    // Read by src/main/build-time.ts: the updater prompts once a build is stale.
+    define: {
+      __RALLY_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+    },
     build: {
       sourcemap: true,
     },

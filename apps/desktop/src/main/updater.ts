@@ -7,20 +7,20 @@ import type { AppUpdater, ProgressInfo, UpdateDownloadedEvent, UpdateInfo } from
 // a real Electron `app` instance.
 import electronUpdater from 'electron-updater';
 import { updatePolicy } from './update-policy';
+import type { DesktopUpdateStatus } from '../common/desktop';
 import type { DesktopReleaseChannel } from '../common/release-channels';
 
 const UPDATE_INTERVAL_MS = 3 * 60 * 60 * 1000;
 const DOWNLOAD_RETRY_BASE_DELAY_MS = 3_000;
 const MAX_DOWNLOAD_RETRIES = 5;
+/** A downloaded update waits quietly behind the sidebar button until the
+ * running build is this old; past it, Rally asks once per downloaded version. */
+export const STALE_BUILD_PROMPT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const MANUAL_UPDATE_URL =
   'https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg';
 
-export type UpdateStatus =
-  | { readonly kind: 'idle' }
-  | { readonly kind: 'checking' }
-  | { readonly kind: 'downloading'; readonly percent?: number }
-  | { readonly kind: 'downloaded'; readonly version: string };
+export type UpdateStatus = DesktopUpdateStatus;
 
 export interface UpdateOutcome {
   phase: 'check' | 'download' | 'apply' | 'rollback';
@@ -73,6 +73,8 @@ export interface AutoUpdateDependencies {
   readonly arch: string;
   readonly env: NodeJS.ProcessEnv;
   readonly currentVersion: string;
+  /** When the running build was made, in epoch milliseconds; unknown builds are never stale. */
+  readonly currentBuildTime?: number | undefined;
   readonly releaseChannel: DesktopReleaseChannel;
   readonly showMessageBox: (options: MessageBoxOptions) => Promise<MessageBoxReturnValue>;
   readonly openExternal: (url: string) => Promise<unknown>;
@@ -233,6 +235,27 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
       });
   };
 
+  let staleBuildPromptedVersion: string | null = null;
+  const promptIfStaleBuild = (): void => {
+    if (status.kind !== 'downloaded' || installInFlight) return;
+    if (deps.currentBuildTime === undefined) return;
+    if (now() - deps.currentBuildTime < STALE_BUILD_PROMPT_AGE_MS) return;
+    const { version } = status;
+    if (staleBuildPromptedVersion === version) return;
+    staleBuildPromptedVersion = version;
+    void showDialog({
+      type: 'info',
+      message: 'Update ready',
+      detail: `Rally ${version} has been downloaded. Restart now to finish updating?`,
+      buttons: ['Restart Now', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+    }).then((result) => {
+      // installUpdate refuses a build the channel change already superseded.
+      if (result?.response === 0 && status.kind === 'downloaded' && status.version === version) installUpdate();
+    });
+  };
+
   const scheduleTimeout = deps.scheduleTimeout
     ?? ((callback: () => void, delayMs: number) => {
       const handle = setTimeout(callback, delayMs);
@@ -367,17 +390,11 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     }
     updater.autoInstallOnAppQuit = true;
     setStatus({ kind: 'downloaded', version: info.version });
+    // The renderer shows a restart button in the sidebar and the account menu
+    // while this status holds, and the app menu offers one too. A dialog
+    // interrupts only once the running build is stale.
     log.info(`[rally] update ${info.version} downloaded`);
-    void showDialog({
-      type: 'info',
-      message: 'Update ready',
-      detail: `Rally ${info.version} has been downloaded. Restart now to finish updating?`,
-      buttons: ['Restart Now', 'Later'],
-      defaultId: 0,
-      cancelId: 1,
-    }).then((result) => {
-      if (result?.response === 0) installUpdate();
-    });
+    promptIfStaleBuild();
   });
   updater.on('error', (error) => {
     checkInFlight = false;
@@ -427,7 +444,12 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
       const handle = setInterval(callback, delayMs);
       return { unref: () => handle.unref() };
     });
-  const interval = scheduleInterval(() => runCheck(false), UPDATE_INTERVAL_MS);
+  const interval = scheduleInterval(() => {
+    // A download finished while the build was still fresh asks here once the
+    // build ages past the threshold.
+    promptIfStaleBuild();
+    runCheck(false);
+  }, UPDATE_INTERVAL_MS);
   interval.unref();
 
   return {

@@ -11,6 +11,7 @@ import type {
   DesktopPowerState,
   DesktopSession,
   DesktopSystemAudioCaptureInfo,
+  DesktopUpdateStatus,
   DesktopWorkspaceOnboardingState,
   RuntimeConfig,
 } from '../common/desktop';
@@ -147,6 +148,13 @@ const bridge: RallyDesktopBridge = {
     powerStateListeners.add(listener);
     return () => powerStateListeners.delete(listener);
   },
+  getUpdateStatus: () => ipcRenderer.invoke('update:get-status') as Promise<DesktopUpdateStatus>,
+  onUpdateStatusChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, status: DesktopUpdateStatus): void => listener(status);
+    ipcRenderer.on('update:status-changed', handler);
+    return () => ipcRenderer.removeListener('update:status-changed', handler);
+  },
+  installDownloadedUpdate: () => ipcRenderer.invoke('update:install') as Promise<void>,
   getApplicationSettings: () => ipcRenderer.invoke('application-settings:get') as Promise<DesktopApplicationSettings>,
   setLockdownMode: (enabled) =>
     ipcRenderer.invoke('application-settings:set-lockdown-mode', enabled) as Promise<DesktopApplicationSettings>,
