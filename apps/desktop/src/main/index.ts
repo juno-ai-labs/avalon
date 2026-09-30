@@ -280,6 +280,7 @@ import {
   type AutoUpdateController,
   type UpdateStatus,
 } from './updater';
+import { rallyBuildTime } from './build-time';
 import {
   supersededUserDataDirectories,
   userDataDirectoryForLaunch,
@@ -3408,6 +3409,14 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     await shell.openExternal('x-apple.systempreferences:com.apple.Notifications-Settings.extension');
   });
+  ipcMain.handle('update:get-status', (event) => {
+    assertTrustedIpcSender(event);
+    return updateStatus;
+  });
+  ipcMain.handle('update:install', (event) => {
+    assertTrustedIpcSender(event);
+    autoUpdateController?.installDownloadedUpdate();
+  });
   ipcMain.handle('application-settings:get', async (event) => {
     assertTrustedIpcSender(event);
     return desktopApplicationSettings(await lockdownModeController.settings());
@@ -4986,6 +4995,7 @@ if (!singleInstanceLock) {
       arch: process.arch,
       env: process.env,
       currentVersion: app.getVersion(),
+      currentBuildTime: rallyBuildTime(),
       releaseChannel: desktopReleaseChannel,
       showMessageBox: (options) => dialog.showMessageBox(options),
       openExternal: (url) => shell.openExternal(url),
@@ -4994,6 +5004,7 @@ if (!singleInstanceLock) {
       onStatusChange: (status) => {
         updateStatus = status;
         installApplicationMenu();
+        for (const window of rallyWindows()) window.webContents.send('update:status-changed', status);
       },
       onOutcome: (outcome) => {
         void telemetryBreadcrumbs?.add({

@@ -1190,6 +1190,16 @@ checks the newly selected feed; only a download from that feed re-enables
 install-on-quit. The site and `Rally.dmg` continue to advertise the newest
 published desktop release; the channel choice governs automatic updates.
 
+A downloaded update does not interrupt. While one is staged, the Spaces sidebar
+shows a restart button (Tabler `device-desktop-down`) left of **+**, the account
+menu shows **Restart to Update** at its top, and the app menu keeps its own
+item; each calls the same `installDownloadedUpdate`. The native **Update
+ready** dialog appears only once the running build is more than seven days old
+(`STALE_BUILD_PROMPT_AGE_MS` in `updater.ts`), once per downloaded version,
+checked when the download lands and on each three-hourly check. The build's age
+comes from `__RALLY_BUILD_TIME__`, which `electron.vite.config.ts` stamps into
+the main bundle; an unstamped build never prompts.
+
 Desktop publication and landing-site deployment are independent. The release workflow advances the canonical `Rally.dmg`; `deploy-site.yml` is the only workflow that publishes the landing Worker, whose direct canonical link does not render or otherwise depend on a desktop version. This separation removes both directions of the old race: a site deploy cannot carry stale release metadata, and a long-running desktop release cannot overwrite a newer site. The latter happened during the 1.182.0 build on 2026-08-27, when the release redeployed its hour-old site checkout and reverted a live fix for twenty-five minutes. The intermediate mitigation rebuilt the site from the tip of `main`; once the homepage stopped rendering release state, removing the redundant release-time deployment eliminated the race instead.
 
 The desktop release concurrency group is declared at **workflow** level, so the planning job runs inside the queue rather than ahead of it. When the plan is made matters: a plan made while another release is in flight reads a release record that run has not finished writing, so it picks a version that release is about to take, and the bump step can no longer tell a genuine resume of a failed release from a version that has just shipped — that merge's run then dies at the tag or at publish, and its desktop work ships in no release until an unrelated later push happens to match `paths:`. Planning inside the queue settles the record before it is read. The cost is that a plan now waits behind a running release before it can even skip. The admission filter still excludes unrelated packages; an admitted contract change outside the desktop closure consumes only this cheap planner job. Ubuntu release verification has a team-selected 60-minute ceiling after the full repository suite exceeded the previous 30-minute budget. It runs only the Electron desktop tests and release invariants; the broader test suites remain in repository CI. This keeps unrelated backend tests out of the desktop release queue while bounding how long a wedged verification can hold it.

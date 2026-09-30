@@ -4,7 +4,20 @@ import type { SpaceSummary } from '@rally/contracts';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { DesktopUpdateStatus } from '../../common/desktop';
 import { SpacesSidebar } from './spaces-sidebar';
+import type * as PlatformModule from '../lib/platform';
+
+/** Update methods layered over the real bridge while a test sets them. */
+const updateBridge = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
+vi.mock('../lib/platform', async (importOriginal) => {
+  const original = await importOriginal<typeof PlatformModule>();
+  return {
+    ...original,
+    desktopBridge: () => ({ ...original.desktopBridge(), ...updateBridge.current }),
+  };
+});
+
 
 function space(id: string, name: string, channelCount: number): SpaceSummary {
   return {
@@ -540,5 +553,32 @@ describe('SpacesSidebar', () => {
 
     fireEvent.focus(screen.getByRole('button', { name: 'Search organization' }));
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Search');
+  });
+
+  it('offers a restart once the main process has downloaded an update', async () => {
+    const listeners = new Set<(status: DesktopUpdateStatus) => void>();
+    const installDownloadedUpdate = vi.fn(async () => undefined);
+    updateBridge.current = {
+      getUpdateStatus: async () => ({ kind: 'idle' }),
+      onUpdateStatusChanged: (listener: (status: DesktopUpdateStatus) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      installDownloadedUpdate,
+    };
+    try {
+      renderSidebar();
+      await act(async () => undefined);
+      expect(screen.queryByRole('button', { name: /Restart to update/u })).not.toBeInTheDocument();
+
+      act(() => {
+        for (const listener of listeners) listener({ kind: 'downloaded', version: '1.2.0' });
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Restart to update to Rally 1.2.0' }));
+
+      expect(installDownloadedUpdate).toHaveBeenCalledOnce();
+    } finally {
+      updateBridge.current = null;
+    }
   });
 });

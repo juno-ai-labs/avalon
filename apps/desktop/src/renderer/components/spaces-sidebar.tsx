@@ -1,4 +1,4 @@
-import { IconArchive, IconRestore } from '@tabler/icons-react';
+import { IconArchive, IconDeviceDesktopDown, IconRestore } from '@tabler/icons-react';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { ContainerOrder, PersonalOrder, SpaceSummary } from '@rally/contracts';
@@ -28,6 +28,8 @@ import { NavLink, useNavigate } from 'react-router-dom';
 
 import { useListMotion } from '../lib/use-list-motion';
 import { useSemanticScroll } from '../lib/desktop-layout';
+import { desktopBridge } from '../lib/platform';
+import { useDownloadedUpdate } from '../lib/use-downloaded-update';
 import { committedOrder, moveWithin, orderByStoredIds, storedOrderFor } from '../lib/personal-order';
 import { spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
 import type { WorkstreamSummary } from '../lib/types';
@@ -116,6 +118,7 @@ export function SpacesSidebar({
   workstreams,
 }: SpacesSidebarProps): React.JSX.Element {
   const navigate = useNavigate();
+  const downloadedUpdate = useDownloadedUpdate();
   const sidebarRef = useRef<HTMLElement>(null);
   const scrollRef = useRef<HTMLElement | null>(null);
   useSemanticScroll(scrollRef, scrollStateKey, '[data-space-id]', ready && !loading);
@@ -278,6 +281,9 @@ export function SpacesSidebar({
       >
         <SidebarHeader aria-label="Space actions" className="spaces-sidebar-titlebar window-drag">
           <div className="spaces-sidebar-titlebar-actions window-no-drag">
+          {downloadedUpdate !== null && <IconButton className="spaces-sidebar-update" label={`Restart to update to Rally ${downloadedUpdate}`} onClick={() => void desktopBridge().installDownloadedUpdate()}>
+            <IconDeviceDesktopDown size={16} stroke={1.8} />
+          </IconButton>}
           {!readOnly && ready && restorableSpaces.length > 0 && <IconButton className="spaces-sidebar-restore" label="Restore archived space" onClick={() => { setRestoreFailed(false); setRecoveryOpen(true); }}>
             <IconRestore size={16} stroke={1.8} />
           </IconButton>}
