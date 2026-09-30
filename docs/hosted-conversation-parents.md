@@ -223,12 +223,11 @@ with set reads over `json_each`, and the workspace socket answers
   the run times, which move on every scheduled run. `recommended` is
   `parent_sidekicks` then the owned ids. `attached` is what Main last reported
   (`channel_sidekick_attachments`), and absent until Main has reported
-  (`channels.sidekick_attachments_reported`). Main does not report yet: this
-  object applies `sidekickAttachmentIds` when a `directory_common` carries it,
-  and SubstreamAgent's emission follows in a later deploy, once every Queue
-  consumer can parse the field (the reader ships before the writer,
-  [`text-search.md`](text-search.md)). Until then every rail omits `attached`
-  and the desktop keeps the REST attachment read. Recommended and attached
+  (`channels.sidekick_attachments_reported`). Main reports on every
+  `directory_common`; a Main that has never reported is asked to when its
+  Channel is opened (`wakeMainConversation` passes `reportAttachments` while
+  `mainAttachmentsUnreported` holds). Until a Main reports, its rail omits
+  `attached` and the desktop reads that list over REST. Recommended and attached
   entries are shown under the Sidekick audience predicate `SidekickDO` shares
   ([`automation-lifecycle.md`](automation-lifecycle.md)).
 - **Resources** are Main's links in `workspace_workstream_resource_links`
