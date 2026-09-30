@@ -147,17 +147,14 @@ is allowed.
 
 ### 2026-09-30 — Pricing plans follow the per-organization tiers
 
-**What changed:** The landing's pricing moved from per-seat Pro, Max and Ultra
-to per-organization Start ($100), Grow ($250) and Grown up (talk to a human),
-with a 14-day trial that extends to 60 days when two or more teammates take
-part. `plan` gained `start`, `grow` and `enterprise` (the Grown up plan's internal
-name); its Contact us link reports `founder_contact · pricing · enterprise`.
+**What changed:** `plan` gained `start`, `grow` and `enterprise` (the Grown up
+plan's internal name). Grown up's Contact us link reports
+`founder_contact · pricing · enterprise`.
 
-**Why:** The team moved to a pooled quota per organization so adding a member
-never forces a plan change. The contract keeps `pro`, `max` and `ultra` because
-the API refuses a whole batch carrying an unknown value, and a landing tab
-opened before the site deploy still sends them. They can go once no such
-event has arrived for a while.
+**Why:** The landing's pricing plans were replaced, and the pricing buttons
+report the plan the visitor picked. The contract keeps `pro`, `max` and `ultra`
+because the API refuses a whole batch carrying an unknown value, and a landing
+tab opened before the site deploy still sends them.
 
 ### 2026-09-29 — Report which landing link was clicked
 
