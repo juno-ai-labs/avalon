@@ -237,7 +237,8 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   let staleBuildPromptedVersion: string | null = null;
   const promptIfStaleBuild = (): void => {
     if (status.kind !== 'downloaded' || installInFlight) return;
-    if (deps.currentBuildTime === undefined) return;
+    // An unstamped or unparsable build time is unknown, and never stale.
+    if (deps.currentBuildTime === undefined || !Number.isFinite(deps.currentBuildTime)) return;
     if (now() - deps.currentBuildTime < STALE_BUILD_PROMPT_AGE_MS) return;
     const { version } = status;
     if (staleBuildPromptedVersion === version) return;

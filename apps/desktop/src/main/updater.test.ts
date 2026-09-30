@@ -176,6 +176,21 @@ describe('desktop auto-update runtime', () => {
     expect(updater.quitAndInstall).not.toHaveBeenCalled();
   });
 
+  it('never prompts when the build time could not be read', () => {
+    let tick!: () => void;
+    const { updater, showMessageBox } = setup({
+      currentBuildTime: Number.NaN,
+      now: () => 30 * 24 * 60 * 60 * 1000,
+      scheduleInterval: (callback) => { tick = callback; return { unref: () => undefined }; },
+    });
+
+    updater.emit('update-available', { version: '1.1.0' });
+    updater.emit('update-downloaded', { version: '1.1.0' });
+    tick();
+
+    expect(showMessageBox).not.toHaveBeenCalled();
+  });
+
   it('keeps the app running when protected state cannot be prepared', async () => {
     const beforeInstall = vi.fn(async () => {
       throw new Error('session flush failed');

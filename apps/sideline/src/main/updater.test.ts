@@ -132,4 +132,26 @@ describe("initializeSidelineUpdater", () => {
     }));
     await vi.waitFor(() => expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true));
   });
+
+  it("never prompts when the build time could not be read", () => {
+    const updater = updaterDouble();
+    let tick!: () => void;
+    const showMessageBox = vi.fn();
+    initializeSidelineUpdater({
+      isPackaged: true,
+      isReleaseBuild: true,
+      platform: "darwin",
+      arch: "arm64",
+      showMessageBox,
+      currentBuildTime: Number.NaN,
+      now: () => 100 * HOUR,
+      updater: updater as never,
+      scheduleInterval: (callback) => { tick = callback; return { unref: vi.fn() }; },
+      log: { info: vi.fn(), error: vi.fn() },
+    });
+
+    updater.listeners.get("update-downloaded")?.({ version: "0.2.0" } as never);
+    tick();
+    expect(showMessageBox).not.toHaveBeenCalled();
+  });
 });
