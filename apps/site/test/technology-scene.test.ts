@@ -7,6 +7,7 @@ describe('technology schematic timeline', () => {
     const state = stateAt(MOMENTS.starfield);
     expect(state.form).toEqual([0, 0, 0, 0, 0, 0]);
     expect(state.labels).toEqual([0, 0, 0, 0, 0]);
+    expect(state.details).toEqual([0, 0, 0, 0, 0]);
     expect(state.ball).toBe(0);
     expect(state.scatter).toBe(0);
   });
@@ -15,12 +16,15 @@ describe('technology schematic timeline', () => {
     const authorization = stateAt(MOMENTS.layers[1]!);
     expect(authorization.form).toEqual([1, 1, 0, 0, 0, 0]);
     expect(authorization.labels).toEqual([1, 1, 0, 0, 0]);
+    // Only the layer whose turn it is shows its description.
+    expect(authorization.details).toEqual([0, 1, 0, 0, 0]);
   });
 
   it('holds every layer and label in the final state with the cut still open', () => {
     const state = stateAt(MOMENTS.final);
     expect(state.form).toEqual([1, 1, 1, 1, 1, 0]);
     expect(state.labels).toEqual([1, 1, 1, 1, 1]);
+    expect(state.details).toEqual([0, 0, 0, 0, 1]);
     expect(state.ball).toBe(0);
   });
 
@@ -28,6 +32,7 @@ describe('technology schematic timeline', () => {
     const filled = stateAt(MOMENTS.filled);
     expect(filled.form[5]).toBe(1);
     expect(filled.labels).toEqual([0, 0, 0, 0, 0]);
+    expect(filled.details).toEqual([0, 0, 0, 0, 0]);
     expect(filled.spin).toBe(0);
     const ball = stateAt(MOMENTS.ball);
     expect(ball.ball).toBe(1);
