@@ -75,10 +75,12 @@ by Sidekick) and `sidekick_execution_skills` (admitted snapshots and activation
 refs pinned to an execution). Loading attaches within the current substream; removal
 affects future executions. `directory_common` has an optional
 `sidekickAttachmentIds` that WorkspaceDO applies as Main's Channel-rail list
-([`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-channels-rail-and-its-waterline)),
-but the conversation does not send it yet: emission follows in a later deploy,
-once every Queue consumer parses the field, and until then every Main's rail
-omits `attached` and the desktop keeps the REST attachment read. Future runs reauthorize attachments and pin the latest
+([`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-channels-rail-and-its-waterline)).
+Every common effect carries the list, in attach order, and an attach or a
+removal commits a common effect with its write. A Main that has never reported
+is asked to by its parent when a reader opens the Channel
+(`wake({ reportAttachments: true })`), which commits a common effect then.
+Future runs reauthorize attachments and pin the latest
 accepted revisions. Workspace migration 35 projects the owner stored `loadable`
 policy output; unknown legacy values exclude discovery. Workspace migration 36
 adds `external_registration_generations` for ordered registration replacements
@@ -1443,7 +1445,7 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | Participant removal targets the final active participant | The object returns `409 workstream_participant_required` and leaves the participant active. The desktop disables the action when its current snapshot already shows only one participant, but that is not the authority fence. |
 | Somebody loses access while holding sockets | A queue message per object closes their sockets; a failed hop retries and then dead-letters. Nothing else closes them, so a message that is never published leaves the socket open until the client reconnects. See [`access-revocation.md`](access-revocation.md). |
 | Queue duplicates/reorders effects | Stable IDs/hashes deduplicate immutable effects; the parent's receipt table and WorkspaceDO's receipt table answer a replay without applying it; generation/version orders mutable state. |
-| An effect envelope exceeds `EFFECT_QUEUE_MESSAGE_MAX_BYTES` (120,000 bytes, under Cloudflare's 128 KB per-message limit) | The sender deletes the row and logs `conversation_effect_oversized` or `parent_effect_oversized` with the byte count; it is never retried, because nothing in the object can shrink it and the Queue would refuse it on every attempt. Two fields are unbounded enough to cross the guard: `resourceLinks`, capped at `WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT` (10,000), and `sidekickAttachmentIds` (not sent yet; see above). A `directory_common` envelope that fits without its attachment list is sent without it (`outcome: "attachments_omitted"`), so the parent keeps its last list rather than losing every other directory field; only one that still does not fit is dropped. The guard is written open and the number is the team's to set. |
+| An effect envelope exceeds `EFFECT_QUEUE_MESSAGE_MAX_BYTES` (120,000 bytes, under Cloudflare's 128 KB per-message limit) | The sender deletes the row and logs `conversation_effect_oversized` or `parent_effect_oversized` with the byte count; it is never retried, because nothing in the object can shrink it and the Queue would refuse it on every attempt. Two fields are unbounded enough to cross the guard: `resourceLinks`, capped at `WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT` (10,000), and `sidekickAttachmentIds`. A `directory_common` envelope that fits without its attachment list is sent without it (`outcome: "attachments_omitted"`), so the parent keeps its last list rather than losing every other directory field; only one that still does not fit is dropped. The guard is written open and the number is the team's to set. |
 | A reader opens a conversation whose parent is archived | Admitted for reading; every write on that socket and every REST write answers `409 conversation_parent_archived`. |
 | A synchronous transaction callback returns a Promise | The callback finishes before the Promise continuation, so SQLite can commit an incomplete state transition and later writes can escape the transaction. Prepare all yielding work first; the commit callback performs only synchronous SQLite and revalidates its fences. |
 | The Queue refuses a send | The batch is deferred five seconds in the source outbox and the alarm tries again; user transcript commits are not rolled back. |
@@ -1802,6 +1804,31 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-09-30 — Conversations send their Sidekick attachments, and a Main reports when opened
+
+**What changed:** `directory_common` carries `sidekickAttachmentIds` again, an
+attach or a removal commits a common effect with its write, and `wake` takes
+`reportAttachments`, which WorkspaceDO sets when it wakes the Main of a Channel
+being opened whose attachments it has never heard.
+
+**Why:** The 2026-09-28 entry below shipped the reader first and held the
+emission back until every Queue consumer could parse the field. That wait is
+over. An idle conversation has no common effect coming, so without a prompt
+its Channel's rail would lack `attached` until its next activity; opening the
+Channel is the moment that list is needed.
+
+**Considered and rejected:**
+- *Reporting as the object starts.* A write during construction moved the
+  alarm ahead of a recovering loop's own wake, which is why #1011 dropped it.
+  `wake` is an ordinary request after construction.
+- *Asking every unreported Main once, from WorkspaceDO's alarm.* It wakes every
+  idle conversation in the Organization for a list nobody may look at, and it
+  needs a batch size, a number for the team to set.
+
+**Consequences:** A Channel that has not been opened since this deploy and has
+had no activity still lacks `attached`; the desktop's REST read covers it, and
+switches itself off for a Main whose rail carries the list.
 
 ### 2026-09-28 — An oversized directory effect is sent without its Sidekick attachments
 

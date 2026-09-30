@@ -615,6 +615,17 @@ export function drainChannelRailChanges(sql: Sql): string[] {
 }
 
 /**
+ * Whether a Channel's Main has never reported its Sidekick attachments, so its
+ * rail has no `attached` list yet. False for a Channel this object does not
+ * hold.
+ */
+export function mainAttachmentsUnreported(sql: Sql, workstreamId: string): boolean {
+  return sql.exec<{ reported: number }>(
+    `SELECT sidekick_attachments_reported AS reported FROM channels WHERE workstream_id = ?`, workstreamId,
+  ).toArray()[0]?.reported === 0;
+}
+
+/**
  * Replace a Channel's reported Main attachments, and advance its rail
  * waterline, when the list moved. The first report always moves it: before it
  * the rail had no `attached` at all.
