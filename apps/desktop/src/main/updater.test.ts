@@ -110,13 +110,12 @@ describe('desktop auto-update runtime', () => {
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(2);
   });
 
-  it('surfaces progress and installs a downloaded update after confirmation', async () => {
+  it('surfaces progress without a dialog and installs a downloaded update on request', async () => {
     let finishPreparing!: () => void;
     const beforeInstall = vi.fn(() => new Promise<void>((resolve) => {
       finishPreparing = resolve;
     }));
-    const { updater, statuses, showMessageBox } = setup({ beforeInstall });
-    showMessageBox.mockResolvedValueOnce({ response: 0, checkboxChecked: false });
+    const { controller, updater, statuses, showMessageBox } = setup({ beforeInstall });
 
     updater.emit('update-available', { version: '1.1.0' });
     updater.emit('download-progress', { percent: 52.4 });
@@ -125,14 +124,56 @@ describe('desktop auto-update runtime', () => {
     expect(statuses).toContainEqual({ kind: 'downloading' });
     expect(statuses).toContainEqual({ kind: 'downloading', percent: 52.4 });
     expect(statuses.at(-1)).toEqual({ kind: 'downloaded', version: '1.1.0' });
-    expect(showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
-      message: 'Update ready',
-      buttons: ['Restart Now', 'Later'],
-    }));
+    expect(showMessageBox).not.toHaveBeenCalled();
+    expect(beforeInstall).not.toHaveBeenCalled();
+
+    controller.installDownloadedUpdate();
     await vi.waitFor(() => expect(beforeInstall).toHaveBeenCalledOnce());
     expect(updater.quitAndInstall).not.toHaveBeenCalled();
     finishPreparing();
     await vi.waitFor(() => expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true));
+  });
+
+  it('asks to restart once a downloaded update finds the running build over a week old', async () => {
+    const day = 24 * 60 * 60 * 1000;
+    let clock = 10 * day;
+    let tick!: () => void;
+    const { updater, showMessageBox } = setup({
+      currentBuildTime: 4 * day,
+      now: () => clock,
+      scheduleInterval: (callback) => { tick = callback; return { unref: () => undefined }; },
+    });
+    showMessageBox.mockResolvedValue({ response: 0, checkboxChecked: false });
+
+    updater.emit('update-available', { version: '1.1.0' });
+    updater.emit('update-downloaded', { version: '1.1.0' });
+    expect(showMessageBox).not.toHaveBeenCalled();
+
+    clock = 11 * day + 1;
+    tick();
+    expect(showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'Update ready',
+      detail: 'Rally 1.1.0 has been downloaded. Restart now to finish updating?',
+      buttons: ['Restart Now', 'Later'],
+    }));
+    await vi.waitFor(() => expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true));
+  });
+
+  it('asks only once per downloaded version when the build is already stale', () => {
+    const day = 24 * 60 * 60 * 1000;
+    let tick!: () => void;
+    const { updater, showMessageBox } = setup({
+      currentBuildTime: 0,
+      now: () => 30 * day,
+      scheduleInterval: (callback) => { tick = callback; return { unref: () => undefined }; },
+    });
+
+    updater.emit('update-available', { version: '1.1.0' });
+    updater.emit('update-downloaded', { version: '1.1.0' });
+    tick();
+
+    expect(showMessageBox).toHaveBeenCalledOnce();
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
   });
 
   it('keeps the app running when protected state cannot be prepared', async () => {
@@ -187,9 +228,7 @@ describe('desktop auto-update runtime', () => {
   });
 
   it('does not install an update downloaded before the channel changed', async () => {
-    const { controller, updater, statuses, showMessageBox } = setup();
-    let finishDialog!: (value: { response: number; checkboxChecked: boolean }) => void;
-    showMessageBox.mockImplementationOnce(() => new Promise((resolve) => { finishDialog = resolve; }));
+    const { controller, updater, statuses } = setup();
     updater.emit('update-available', { version: '1.1.0' });
     updater.emit('update-downloaded', { version: '1.1.0' });
 
@@ -199,7 +238,7 @@ describe('desktop auto-update runtime', () => {
     expect(updater.autoInstallOnAppQuit).toBe(false);
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(2);
     expect(statuses.at(-1)).toEqual({ kind: 'checking' });
-    finishDialog({ response: 0, checkboxChecked: false });
+    controller.installDownloadedUpdate();
     await new Promise((resolve) => setImmediate(resolve));
     expect(updater.quitAndInstall).not.toHaveBeenCalled();
   });

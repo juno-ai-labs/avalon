@@ -370,6 +370,13 @@ export interface DesktopRestorableArtifactWindow {
 /** The machine is about to sleep, or has woken from sleep. */
 export type DesktopPowerState = 'suspended' | 'resumed';
 
+/** The auto-updater's state, relayed to every Rally window. */
+export type DesktopUpdateStatus =
+  | { readonly kind: 'idle' }
+  | { readonly kind: 'checking' }
+  | { readonly kind: 'downloading'; readonly percent?: number }
+  | { readonly kind: 'downloaded'; readonly version: string };
+
 export interface RallyDesktopBridge {
   getRuntimeConfig: () => Promise<RuntimeConfig>;
   /** Whether any Rally window currently owns application focus. */
@@ -377,6 +384,10 @@ export interface RallyDesktopBridge {
   onApplicationForegroundChanged: (listener: (foregrounded: boolean) => void) => () => void;
   /** Main's `powerMonitor` suspend and resume, relayed to every Rally window. */
   onPowerStateChanged: (listener: (state: DesktopPowerState) => void) => () => void;
+  getUpdateStatus: () => Promise<DesktopUpdateStatus>;
+  onUpdateStatusChanged: (listener: (status: DesktopUpdateStatus) => void) => () => void;
+  /** Quits and installs a downloaded update; does nothing when none is ready. */
+  installDownloadedUpdate: () => Promise<void>;
   getApplicationSettings: () => Promise<DesktopApplicationSettings>;
   setLockdownMode: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setDebugEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
