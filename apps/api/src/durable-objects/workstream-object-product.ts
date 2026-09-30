@@ -2042,6 +2042,7 @@ export class WorkstreamObjectProductService {
             // inside it, so this is not a room anybody has yet to look at.
             auth.userId, auth.userId, now, now, now,
           );
+          startReadCursorAtLatest(sql, auth.userId, now);
         }
         if (input.archived === true) {
           // Archiving removes the interactive surface that can issue a stop.

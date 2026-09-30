@@ -669,6 +669,23 @@ describe("adding somebody to a work stream", () => {
     expect(await participantAddedActivity()).toHaveLength(0);
   });
 
+  it("starts the cursor of somebody who seats themselves by narrowing at the latest message", async () => {
+    const stub = agentStub();
+    await openWorkstream(stub, { scope: "workspace" });
+
+    // Reading an Organization-wide Channel seats nobody; narrowing it to
+    // yourself does, and the history you could already read is not new.
+    await runInDurableObject(stub, (instance) =>
+      (instance as unknown as { product: WorkstreamObjectProductService }).product
+        .update({ ...AUTH, userId: asUserId(INVITEE_ID), role: "member" }, { scope: "personal" }));
+
+    expect(await openedBy(stub, INVITEE_ID)).toMatchObject({
+      latestAttentionSequenceNumber: 1,
+      readThroughSequenceNumber: 1,
+      firstUnreadSequenceNumber: null,
+    });
+  });
+
   it("starts their read cursor at the latest message rather than the first", async () => {
     const stub = agentStub();
     await openWorkstream(stub);
