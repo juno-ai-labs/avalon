@@ -37,7 +37,7 @@ Check these on every edit to the landing page:
    without it is not counted. A new link needs its id added to
    `SITE_ACTION_LINKS` in `apps/site/src/telemetry.ts`; the site tests fail on
    an unknown id or a tracked id that is missing from the page.
-2. **Give each download button its own id.** All four point at the same DMG;
+2. **Give each download button its own id.** All of them point at the same DMG;
    the id is the only way to tell them apart.
 3. **Keep the page at `/`.** The page-view charts filter on `$pathname = '/'`; clicks carry `page: landing` instead.
 4. **Keep the telemetry script.** Vite injects `src/site-entry.ts` into every
