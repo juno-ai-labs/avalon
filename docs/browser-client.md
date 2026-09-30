@@ -12,6 +12,7 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | Path | Responsibility |
 | --- | --- |
 | `apps/browser/src/worker.tsx` | Static entry, asset delivery and regional service forwarding. |
+| `apps/browser/src/mac-download.tsx` | The Mac app download, pinned above the account menu in whichever rail holds it. |
 | `apps/browser/src/entry.tsx` | Email/OTP and explicit magic-link redemption, invitation acceptance, session restore and workspace list. |
 | `apps/browser/src/invitation.ts` | Tokenized and addressed invitation fragments, and exact canonical scope destinations. |
 | `apps/browser/src/transport.ts` | Same-origin entry requests and runtime response validation. |
@@ -403,6 +404,35 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-09-30 — The account rail offers the Mac app
+
+**What changed:** A "Download the Mac app" button, linking to the public macOS
+build the marketing site uses, is pinned just above the account menu, in
+whichever rail holds that menu: Spaces, Channels, the Breakout rail, or the
+floating fallback. It is a Space-style row wearing Apple's mark from the
+brand pack, so a compact rail collapses it to the same lone tile a Space
+becomes. `WorkstreamSidebar`
+gained an optional `footerAbove` slot for the Breakout rail case, which desktop
+does not use.
+
+**Why:** Browser visitors are mostly guests, and the browser client had no
+path to the desktop app they would need for anything beyond shared
+collaboration.
+
+**Considered and rejected:** A full-width 60px footer under every screen. It
+reached the sign-in screen too, but the shared rails pin to the window's top
+and bottom, so the footer needed layout containment on the whole app to keep
+them above it, and it took height from the conversation on every screen.
+
+**Consequences:** The button follows the account menu, so any change to where
+that menu lives must move the button with it. The sign-in screen offers no
+download. The URL is hard-coded in `mac-download.tsx`, as it is in the site
+and in `MANUAL_UPDATE_URL` in `apps/desktop/src/main/updater.ts`; a change to
+the release path must update all three. Where the menu and the download live
+is one decision, `browserAccountHome`, so they cannot be placed apart.
+
+PR: [#1032](https://github.com/juno-ai-labs/avalon/pull/1032).
 
 ### 2026-09-25 — Rails with one row are hidden
 
