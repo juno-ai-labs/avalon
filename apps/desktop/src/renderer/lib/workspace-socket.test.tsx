@@ -504,9 +504,7 @@ describe('WorkspaceSocketProvider', () => {
     expect(FakeWebSocket.instances).toHaveLength(1);
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
-    // Asks for Channels by Space, then subscribes.
-    expect(JSON.parse(socket.send.mock.calls[0]![0] as string)).toEqual({ type: 'channels_by_space' });
-    const subscribe = JSON.parse(socket.send.mock.calls[1]![0] as string) as {
+    const subscribe = JSON.parse(socket.send.mock.calls[0]![0] as string) as {
       type: string; afterWaterline: number; diagnosticAttemptId: string;
     };
     expect(subscribe).toMatchObject({ type: 'subscribe', afterWaterline: 0 });
@@ -1352,7 +1350,7 @@ describe('WorkspaceSocketProvider', () => {
     // had got to. A directory request here would be the round trip this frame
     // exists to remove.
     const sent = socket.send.mock.calls.map(([frame]) => JSON.parse(String(frame)) as { type: string });
-    expect(sent.map((frame) => frame.type)).toEqual(['channels_by_space', 'subscribe', 'set_presence']);
+    expect(sent.map((frame) => frame.type)).toEqual(['subscribe', 'set_presence']);
     // No screen observes these entries. The workspace subscription owns the
     // directory and its ordering ledgers even when their screens are absent.
     const keys = ['workstreams', 'automations', 'spaces', 'spaces-inactive', 'personal-order',
@@ -2907,7 +2905,7 @@ describe('the organization-sync relay between windows', () => {
     await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2), { timeout: 2_000 });
     const replacement = FakeWebSocket.instances[1]!;
     act(() => replacement.open());
-    expect(JSON.parse(replacement.send.mock.calls[1]![0] as string)).toMatchObject({ type: 'subscribe', afterWaterline: 0 });
+    expect(JSON.parse(replacement.send.mock.calls[0]![0] as string)).toMatchObject({ type: 'subscribe', afterWaterline: 0 });
     // It relays nothing: only the main window publishes.
     expect(syncRelay.published).toEqual([]);
   });

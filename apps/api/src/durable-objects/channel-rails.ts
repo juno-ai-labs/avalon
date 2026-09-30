@@ -417,15 +417,12 @@ export class ChannelRailFrames {
   private readonly closed: FrameDraft[] = [];
   private draft: FrameDraft;
   private used: number;
-  /** Room kept for `nextAfter`, which is written only when the answer ends. */
-  private reserve = 0;
   private readonly empty: number;
   readonly oversizedRails: Array<{ workstreamId: string; bytes: number }> = [];
 
   constructor(private readonly requestId: string, private readonly limit: number) {
     this.draft = this.blank();
-    // The longer spellings of `final` and the shorter of `nextAfter`; `reserve`
-    // covers the difference for `nextAfter`.
+    // The longer spelling of `final`.
     this.empty = jsonBytes({ ...this.draft, nextAfter: null, final: false });
     this.used = this.empty;
   }
@@ -433,10 +430,6 @@ export class ChannelRailFrames {
   private blank(): FrameDraft {
     return { type: "workspace_channel_rails", requestId: this.requestId as FrameDraft["requestId"],
       rails: [], oversized: [], unavailable: [] };
-  }
-
-  private reserveFor(workstreamId: string): number {
-    return Math.max(this.reserve, jsonBytes(workstreamId) - jsonBytes(null));
   }
 
   /** Named Channels this viewer may not be told about; they ride the current frame. */
@@ -448,30 +441,26 @@ export class ChannelRailFrames {
   }
 
   add(rail: ChannelRail): "added" | "oversized" | "full" {
-    const reserve = this.reserveFor(rail.workstreamId);
     const railBytes = jsonBytes(rail);
-    if (this.empty + reserve + railBytes > this.limit) {
+    if (this.empty + railBytes > this.limit) {
       const outcome = this.addOversized(rail);
       if (outcome === "oversized") this.oversizedRails.push({ workstreamId: rail.workstreamId, bytes: railBytes });
       return outcome;
     }
     const cost = railBytes + (this.draft.rails.length > 0 ? 1 : 0);
-    if (this.used + cost + reserve > this.limit) return "full";
+    if (this.used + cost > this.limit) return "full";
     this.draft.rails.push(rail);
     this.used += cost;
-    this.reserve = reserve;
     return "added";
   }
 
   /** Name a Channel the client paints from its snapshot rather than from a rail. */
   addOversized(rail: Pick<ChannelRail, "workstreamId" | "railWaterline">): "oversized" | "full" {
-    const reserve = this.reserveFor(rail.workstreamId);
     const entry = { workstreamId: rail.workstreamId, railWaterline: rail.railWaterline };
     const cost = jsonBytes(entry) + (this.draft.oversized.length > 0 ? 1 : 0);
-    if (this.used + cost + reserve > this.limit) return "full";
+    if (this.used + cost > this.limit) return "full";
     this.draft.oversized.push(entry);
     this.used += cost;
-    this.reserve = reserve;
     return "oversized";
   }
 
@@ -482,17 +471,10 @@ export class ChannelRailFrames {
     this.used = this.empty;
   }
 
-  /** Every frame, in order; only the last is `final`, and only it names `nextAfter`. */
-  finish(nextAfter: string | null): WorkspaceChannelRailsEvent[] {
+  /** Every frame, in order; only the last is `final`. */
+  finish(): WorkspaceChannelRailsEvent[] {
     const drafts = [...this.closed, this.draft];
-    return drafts.map((draft, index) => {
-      const last = index === drafts.length - 1;
-      return {
-        ...draft,
-        nextAfter: (last ? nextAfter : null) as WorkspaceChannelRailsEvent["nextAfter"],
-        final: last,
-      };
-    });
+    return drafts.map((draft, index) => ({ ...draft, nextAfter: null, final: index === drafts.length - 1 }));
   }
 }
 

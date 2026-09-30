@@ -3876,23 +3876,6 @@ describe('the sidebar without a recency list', () => {
     });
   });
 
-  it('continues paging until the selected Space has all of its Channels', () => {
-    const hiring = space(undefined, undefined, { channelCount: 2 });
-    const member = placedIn(workstream('first-space-page', 'First page', 'completed'), hiring.id);
-    const onLoadMoreWorkstreams = vi.fn();
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} hasMoreWorkstreams
-            onLoadMoreWorkstreams={onLoadMoreWorkstreams} onSignOut={vi.fn()} spaces={[hiring]}
-            workspace={workspace} workstreams={[member]} />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    expect(onLoadMoreWorkstreams).toHaveBeenCalledOnce();
-  });
-
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
