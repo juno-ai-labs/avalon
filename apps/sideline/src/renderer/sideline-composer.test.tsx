@@ -41,11 +41,11 @@ function render(model: SidelineCardModel, shown = catalog): string {
     onSend={() => undefined}
     onRetryCatalog={() => undefined}
     onOpenInRally={() => undefined}
-    onSignOut={() => undefined}
   />);
 }
 
 describe("Sideline shared composer", () => {
+
   it("labels mixed self and represented messaging without implying a self-send audit", () => {
     const html = render(card());
 

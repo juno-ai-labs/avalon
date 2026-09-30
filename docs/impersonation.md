@@ -21,6 +21,7 @@ basis.
 | `.github/workflows/release-sideline-macos.yml` | Frozen-commit verification, Developer ID signing, Apple notarization, artifact retention, and R2 publication. |
 | `packages/contracts/src/impersonation.ts` | Relationship, catalog, and send wire contracts. |
 | `packages/ui/src/components/sideline-composer.tsx` | Browser-safe card-stack presentation and searchable selectors. |
+| `packages/ui/src/components/sideline-sidebar.tsx` | The left rail: Rally's Spaces sidebar parts with one **Impersonate** row, the update button, and the account footer whose menu holds the Organization picker and **Sign out**. |
 
 ## How it works
 
@@ -114,7 +115,13 @@ before its exact URL is verified. Both the version-stamping job and the final
 publication boundary refuse a candidate tag that already exists. The embedded
 generic-provider URL points only at that prefix. A signed release build on
 packaged Apple Silicon checks it at launch and every three hours, downloads in
-the background, and offers to restart after the update is ready. Its
+the background, and then shows a restart button (Tabler `device-desktop-down`)
+in the sidebar header, and **Restart to Update** in the account menu, without
+interrupting. The native restart dialog appears
+only once the running build is more than 48 hours old
+(`STALE_BUILD_PROMPT_AGE_MS` in `src/main/updater.ts`), once per downloaded
+version; the age comes from `__SIDELINE_BUILD_TIME__`, stamped into the main
+bundle by `electron.vite.config.ts`, and an unstamped build never prompts. Its
 application menu also exposes **Check
 for Updates…** for an immediate manual check through the same updater. The item
 remains visible but disabled when updates are unavailable. Development, unsigned local packages,
@@ -237,6 +244,36 @@ operator key. It registers only `sideline:`, while **Open in Rally** emits the
 existing `rallywithai:` deep link for the main app.
 
 ## Changelog
+
+### 2026-09-30 — A Rally-style sidebar, and updates that wait behind it
+
+**What changed:** Sideline gained a left rail built from Rally's Spaces
+sidebar parts (`ResizableSidebar`, `SidebarHeader`, `SidebarRow`,
+`SidebarCollapseFooter`, `AccountTrigger`) and its classes. It lists a single
+**Impersonate** row for now, and its account menu holds an **Organizations**
+picker like Rally's and **Sign out**, which left the composer header. Choosing
+an Organization selects a session for it with the current one, checks that
+Sideline's catalog admits it, and only then swaps it in and revokes the old
+session; a refusal leaves the operator where they were and names why under the
+row. Sideline also no longer opens a restart dialog the
+moment an update finishes downloading: the sidebar header and the account menu
+offer the restart, and the dialog returns only when the running build is more
+than 48 hours old, once per downloaded version.
+
+**Why:** The rail gives Sideline the same shape as Rally and a place for more
+tools than impersonation; reusing the parts and classes keeps the two rails one
+design. The update change landed in Rally's desktop app at the same time, where
+the dialog interrupted work on every release; Sideline ships as often. The team set
+Sideline's threshold at 48 hours against Rally's seven days; the reasoning for
+the shorter window was not recorded.
+
+**Consequences:** The rail reuses `.spaces-sidebar` styling, so a change to
+Rally's Spaces sidebar lands in Sideline too; width and collapse are not yet
+saved across launches. Install-on-quit still applies, so a person who never presses
+the button updates at their next quit. A build without the timestamp (local
+and test builds) never prompts.
+
+PR [#1029](https://github.com/juno-ai-labs/avalon/pull/1029).
 
 ### 2026-09-28 — The catalog reads each person's Breakouts in one call
 
