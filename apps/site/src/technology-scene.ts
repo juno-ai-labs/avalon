@@ -3,7 +3,6 @@ import {
   BufferAttribute,
   BufferGeometry,
   Color,
-  DynamicDrawUsage,
   Matrix3,
   Matrix4,
   PerspectiveCamera,
@@ -13,7 +12,6 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
-import { createBodies, inCut, SHELL, step, WALL, WALL_PLANES, type Bodies } from './shell-physics';
 
 /**
  * The technology schematic: a starfield that gathers into five nested spheres,
@@ -71,7 +69,6 @@ const STEP = 0.44;
 const OUTER = STEP * LAYERS.length;
 const STAR_ONLY = 5200;
 const LAYER_POINTS = [1300, 2400, 3500, 4700, 5900];
-const FILL_POINTS = 450;
 const SEAM_POINTS = 1500;
 const GROUP_FILL = LAYERS.length;
 const GROUP_STAR = LAYERS.length + 1;
@@ -114,32 +111,30 @@ function onCutWall(rand: () => number, inner: number, outer: number): { at: Vect
   return { at: new Vector3(0, u, w), wall };
 }
 
-/** Speeds in scene units per second: slow enough to read as drift. */
+/** Drift speeds in scene units per second: slow enough to read as drift. */
 const SHELL_SPEED = [0.05, 0.12] as const;
 const WALL_SPEED = [0.04, 0.1] as const;
 
-/** A random direction of travel in the body's surface, at a random slow speed. */
-function launch(rand: () => number, bodies: Bodies, index: number, at: Vector3, wall: number | null): void {
-  const o = index * 3;
-  bodies.position.set([at.x, at.y, at.z], o);
-  const angle = rand() * Math.PI * 2;
-  let v: Vector3;
+const between = (rand: () => number, [lo, hi]: readonly [number, number]): number => lo + rand() * (hi - lo);
+const signed = (rand: () => number, value: number): number => (rand() < 0.5 ? -value : value);
+
+/**
+ * How a point drifts, read by the shader. A shell point turns about an axis
+ * through the centre and square to its radius, so it travels a great circle:
+ * (axis, radians per second). A cut-wall point drifts in angle and radius
+ * within its quarter-ring: (wall, radians per second, units per second, 0).
+ */
+function driftFor(rand: () => number, at: Vector3, wall: number | null): [number, number, number, number] {
+  const radius = at.length();
   if (wall === null) {
-    const normal = at.clone().normalize();
-    const any = Math.abs(normal.y) < 0.9 ? new Vector3(0, 1, 0) : new Vector3(1, 0, 0);
-    const e1 = any.cross(normal).normalize();
-    const e2 = normal.clone().cross(e1);
-    v = e1.multiplyScalar(Math.cos(angle)).add(e2.multiplyScalar(Math.sin(angle)));
-    v.multiplyScalar(SHELL_SPEED[0] + rand() * (SHELL_SPEED[1] - SHELL_SPEED[0]));
-  } else {
-    const plane = WALL_PLANES[wall]!;
-    const components = [0, 0, 0];
-    components[plane.a] = Math.cos(angle);
-    components[plane.b] = Math.sin(angle);
-    v = new Vector3(...(components as [number, number, number]));
-    v.multiplyScalar(WALL_SPEED[0] + rand() * (WALL_SPEED[1] - WALL_SPEED[0]));
+    const any = new Vector3(rand() - 0.5, rand() - 0.5, rand() - 0.5);
+    const axis = any.cross(at).normalize();
+    return [axis.x, axis.y, axis.z, signed(rand, between(rand, SHELL_SPEED) / radius)];
   }
-  bodies.velocity.set([v.x, v.y, v.z], o);
+  const speed = between(rand, WALL_SPEED);
+  const heading = rand() * Math.PI * 2;
+  const angular = (Math.cos(heading) * speed) / Math.max(radius, STEP / 2);
+  return [wall, angular, Math.sin(heading) * speed, 0];
 }
 
 /**
@@ -163,15 +158,16 @@ function layerAnchor(index: number): Vector3 {
   return new Vector3(r * Math.cos(a), r * Math.sin(a), 0);
 }
 
-function buildGeometry(): { geometry: BufferGeometry; bodies: Bodies } {
+function buildGeometry(): BufferGeometry {
   const rand = random(20260930);
-  const total = STAR_ONLY + FILL_POINTS + LAYER_POINTS.reduce((sum, n) => sum + n, 0);
+  const total = STAR_ONLY + LAYER_POINTS.reduce((sum, n) => sum + n, 0);
   const star = new Float32Array(total * 3);
   const shape = new Float32Array(total * 3);
   const ball = new Float32Array(total * 3);
   const color = new Float32Array(total * 3);
   const ballColor = new Float32Array(total * 3);
   const info = new Float32Array(total * 4);
+  const drift = new Float32Array(total * 4);
 
   // A jittered grid: evenly spread, never regular.
   const box = { x: 20, y: 11, z: 12 };
@@ -191,10 +187,8 @@ function buildGeometry(): { geometry: BufferGeometry; bodies: Bodies } {
   const seamNeon = new Color('#ccff00');
   let next = 0;
   const innerPoints = LAYER_POINTS.slice(0, -1).reduce((sum, n) => sum + n, 0);
-  // The layer points come first in every buffer, so body i is particle i.
-  const bodies = createBodies(LAYER_POINTS.reduce((sum, n) => sum + n, 0));
 
-  const put = (group: number, shapeAt: Vector3 | null, ballAt: Vector3 | null, tint: Color, seam: boolean, shell: boolean): void => {
+  const put = (group: number, shapeAt: Vector3 | null, ballAt: Vector3 | null, tint: Color, seam: boolean, shell: boolean, moves: readonly number[] = [0, 0, 0, 0]): void => {
     const c = cells[next]!;
     const gx = c % nx;
     const gy = Math.floor(c / nx) % ny;
@@ -213,6 +207,7 @@ function buildGeometry(): { geometry: BufferGeometry; bodies: Bodies } {
     const bc = seam ? seamNeon : shapeAt ? ballBody : starColor;
     ballColor.set([bc.r, bc.g, bc.b], next * 3);
     info.set([group, rand(), seam ? 1 : 0, shell ? 1 : 0], next * 4);
+    drift.set(moves, next * 4);
     next += 1;
   };
 
@@ -220,26 +215,23 @@ function buildGeometry(): { geometry: BufferGeometry; bodies: Bodies } {
     const tint = new Color(layer.color);
     const outer = STEP * (index + 1);
     const inner = STEP * index;
-    const shellArea = (7 / 8) * outer * outer;
+    // Shells cover the whole sphere; the shader hides the points drifting
+    // through the cut, which keeps the density even as they move.
+    const shellArea = outer * outer;
     const wallArea = (3 / 4) * (outer * outer - inner * inner) * 1.4;
     const count = LAYER_POINTS[index]!;
     for (let n = 0; n < count; n += 1) {
       const onShell = rand() < shellArea / (shellArea + wallArea);
-      const body = next;
       let at: Vector3;
+      let moves: [number, number, number, number];
       if (onShell) {
-        at = onSphere(rand, outer, (v) => !inCut(v.x, v.y, v.z));
-        bodies.kind[body] = SHELL;
-        launch(rand, bodies, body, at, null);
+        at = onSphere(rand, outer, () => true);
+        moves = driftFor(rand, at, null);
       } else {
         const placed = onCutWall(rand, inner, outer);
         at = placed.at;
-        bodies.kind[body] = WALL;
-        bodies.plane[body] = placed.wall;
-        launch(rand, bodies, body, at, placed.wall);
+        moves = driftFor(rand, at, placed.wall);
       }
-      bodies.inner[body] = inner;
-      bodies.outer[body] = outer;
       let to: Vector3;
       let seam = false;
       if (index === LAYERS.length - 1 && onShell) {
@@ -251,24 +243,20 @@ function buildGeometry(): { geometry: BufferGeometry; bodies: Bodies } {
       } else {
         to = onSphere(rand, OUTER, () => true);
       }
-      put(index, at, to, tint, seam, onShell);
+      put(index, at, to, tint, seam, onShell, moves);
     }
   });
-  const outerTint = new Color(LAYERS[LAYERS.length - 1]!.color);
-  for (let n = 0; n < FILL_POINTS; n += 1) {
-    const at = onSphere(rand, OUTER, (v) => inCut(v.x, v.y, v.z));
-    put(GROUP_FILL, at, at, outerTint, false, true);
-  }
   for (let n = 0; n < STAR_ONLY; n += 1) put(GROUP_STAR, null, null, starColor, false, false);
 
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(star, 3));
-  geometry.setAttribute('aShape', new BufferAttribute(shape, 3).setUsage(DynamicDrawUsage));
+  geometry.setAttribute('aShape', new BufferAttribute(shape, 3));
   geometry.setAttribute('aBall', new BufferAttribute(ball, 3));
   geometry.setAttribute('aColor', new BufferAttribute(color, 3));
   geometry.setAttribute('aBallColor', new BufferAttribute(ballColor, 3));
   geometry.setAttribute('aInfo', new BufferAttribute(info, 4));
-  return { geometry, bodies };
+  geometry.setAttribute('aDrift', new BufferAttribute(drift, 4));
+  return geometry;
 }
 
 const vertexShader = /* glsl */ `
@@ -283,6 +271,7 @@ uniform vec3 uEye;
 uniform vec3 uOuterColor;
 uniform vec3 uLight;
 attribute vec3 aShape;
+attribute vec4 aDrift;
 attribute vec3 aBall;
 attribute vec3 aColor;
 attribute vec3 aBallColor;
@@ -329,6 +318,32 @@ vec3 faceOf(vec3 s, float shell) {
 // rather than a hard terminator, so its roundness reads in a cloud of points.
 float diffuse(vec3 normal) { float d = dot(normal, uLight) * 0.5 + 0.5; return d * d; }
 
+// A triangle wave between lo and hi: motion that reflects off both ends, which
+// is an elastic bounce in one dimension.
+float fold(float x, float lo, float hi) {
+  float span = hi - lo;
+  float t = mod(x - lo, 2.0 * span);
+  return lo + (t < span ? t : 2.0 * span - t);
+}
+
+// Where a layer point has drifted to by now. A shell point turns along its
+// great circle. A cut-wall point's angle and radius each bounce between the
+// edges of its quarter-ring.
+vec3 drifted(vec3 s, int group, float shell) {
+  if (group >= ${LAYERS.length}) return s;
+  if (shell > 0.5) {
+    float a = aDrift.w * uTime;
+    return s * cos(a) + cross(aDrift.xyz, s) * sin(a);
+  }
+  int wall = int(aDrift.x + 0.5);
+  vec2 uw = wall == 0 ? vec2(-s.x, s.y) : wall == 1 ? vec2(-s.x, s.z) : vec2(s.y, s.z);
+  float inner = ${STEP.toFixed(4)} * float(group);
+  float r = fold(length(uw) + aDrift.z * uTime, inner + 0.01, inner + ${STEP.toFixed(4)} - 0.01);
+  float th = fold(atan(uw.y, uw.x) + aDrift.y * uTime, 0.0, 1.5708);
+  uw = r * vec2(cos(th), sin(th));
+  return wall == 0 ? vec3(-uw.x, uw.y, 0.0) : wall == 1 ? vec3(-uw.x, 0.0, uw.y) : vec3(0.0, uw.x, uw.y);
+}
+
 vec3 turnY(vec3 p, float a) { float c = cos(a); float s = sin(a); return vec3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z); }
 
 void main() {
@@ -345,8 +360,9 @@ void main() {
     if (i == group + 1 && i < ${LAYERS.length}) covered = uForm[i];
   }
   form = stagger(form, seed);
-  vec3 swirl = normalize(cross(aShape + vec3(0.001), vec3(0.0, 1.0, 0.0))) * sin(form * 3.14159) * 0.9;
-  vec3 p = mix(star, aShape, form) + swirl;
+  vec3 shape = drifted(aShape, group, aInfo.w);
+  vec3 swirl = normalize(cross(shape + vec3(0.001), vec3(0.0, 1.0, 0.0))) * sin(form * 3.14159) * 0.9;
+  vec3 p = mix(star, shape, form) + swirl;
 
   // Filling the cut: every structure point settles onto the outer sphere, which
   // is what makes it read as whole. The ball then only recolors, lifts the seam
@@ -361,7 +377,7 @@ void main() {
   // One directional light. The schematic takes diffuse light and cast shadows;
   // the ball takes diffuse light on its spinning surface. Stars are unlit.
   vec3 ballAt = uSpin * aBall;
-  float schematicLight = 0.5 + 1.0 * diffuse(faceOf(aShape, aInfo.w)) * shadow(aShape);
+  float schematicLight = 0.5 + 1.0 * diffuse(faceOf(shape, aInfo.w)) * shadow(shape);
   float ballLight = 0.35 + 1.0 * diffuse(normalize(ballAt));
   float light = mix(schematicLight, ballLight, fillT);
   // The seam is neon: it glows rather than takes the light, so it reads all
@@ -386,6 +402,9 @@ void main() {
   float shellAlpha = aInfo.w > 0.5 ? mix(0.3, 1.0, front) * mix(1.0, 0.12, covered) : 1.0;
   float sphereAlpha = mix(0.08, 0.55, front);
   float seamAlpha = mix(0.3, 1.0, front);
+  // A shell point drifting through the open cut is not drawn until it fills.
+  float open = aInfo.w > 0.5 && inCut(shape) ? 0.0 : 1.0;
+  shellAlpha *= mix(1.0, open, form);
   float alpha = mix(shellAlpha, sphereAlpha, fillT);
   alpha = mix(alpha, seam > 0.5 ? seamAlpha : sphereAlpha, ballT);
   float size = mix(1.4, mix(2.3, 2.4, 1.0 - aInfo.w), structure) + seam * ballT * (1.0 - scatter) * 2.6;
@@ -465,10 +484,7 @@ export function createSchematic(canvas: HTMLCanvasElement, overlay: SVGSVGElemen
     blending: AdditiveBlending,
   });
   uniforms.uEye.value.copy(camera.position);
-  const { geometry, bodies } = buildGeometry();
-  const shape = geometry.getAttribute('aShape') as BufferAttribute;
-  const shapeArray = shape.array as Float32Array;
-  let simulated = -1;
+  const geometry = buildGeometry();
   scene.add(new Points(geometry, material));
 
   const svg = 'http://www.w3.org/2000/svg';
@@ -538,21 +554,6 @@ export function createSchematic(canvas: HTMLCanvasElement, overlay: SVGSVGElemen
 
   const render = (time: number): void => {
     const state = stateAt(time);
-    // Steps are capped so a jump in time (a hidden tab, a seek) moves the
-    // bodies a little rather than tunnelling them through a wall.
-    if (simulated >= 0) {
-      let left = Math.min(1, Math.max(0, time - simulated));
-      while (left > 0) {
-        const dt = Math.min(left, 1 / 30);
-        step(bodies, dt);
-        left -= dt;
-      }
-      shapeArray.set(bodies.position);
-      shape.clearUpdateRanges();
-      shape.addUpdateRange(0, bodies.count * 3);
-      shape.needsUpdate = true;
-    }
-    simulated = time;
     uniforms.uTime.value = time;
     state.form.forEach((value, index) => { uniforms.uForm.value[index] = value; });
     uniforms.uBall.value = state.ball;
