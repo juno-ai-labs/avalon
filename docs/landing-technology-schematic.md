@@ -2,8 +2,9 @@
 
 The Technology section of the public landing page (`rallywith.ai/#technology`)
 shows Rally's stack as a cut-away sphere drawn in points. A starfield gathers
-into four nested spheres, one at a time, each labeled with a gold leader line:
-the LLM routing core, Sidekicks, Authorization, and Channels & Breakouts. The
+into five nested spheres, one at a time, each labeled with a gold leader line:
+the LLM routing core, Authorization, Sidekicks, Connectors, and Multiplayer
+collaboration. The
 octant facing the viewer is cut away so every layer shows. After a long hold the
 cut fills in, the sphere becomes a tennis ball with a gold seam, spins, and
 breaks back into the starfield, and the loop starts again.
@@ -15,7 +16,7 @@ loads.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/site/index.html` | The `#technology` section: heading, the `[data-tech-schematic]` figure, and the four-item layer list that carries the same content as text |
+| `apps/site/index.html` | The `#technology` section: heading, the `[data-tech-schematic]` figure, and the five-item layer list that carries the same content as text |
 | `apps/site/src/technology.ts` | Page entry: starts the scene when the figure nears the screen, runs the clock only while it is visible, honors reduced motion |
 | `apps/site/src/shell-physics.ts` | The physics engine: bodies held on a sphere or a cut wall, moving at constant speed and bouncing elastically off the cut planes and the ring arcs |
 | `apps/site/src/technology-scene.ts` | The scene: `LAYERS` (names and colors), the timeline (`stateAt`, `MOMENTS`, `LOOP`), particle geometry, shaders, and the SVG label overlay |
@@ -37,7 +38,7 @@ Every particle carries three positions, fixed at build time:
   three quarter-disc walls the cut exposes. Radii step by an equal amount
   (`STEP`) per layer.
 - **ball**: where it sits on the outer sphere once the cut fills. A share of the
-  three inner layers' points land on the seam curve instead.
+  inner layers' points land on the seam curve instead.
 
 A `group` attribute says which layer a particle belongs to, or that it fills
 the cut octant, or that it is only ever a star.
@@ -64,7 +65,7 @@ second, so a seek or a background tab never tunnels a body through a wall.
 
 The vertex shader blends star → shape → ball → star from a few uniforms. The
 CPU work per frame is the physics step, one buffer upload, a few uniform
-writes, one render call, and projecting four label anchors. Nothing is precomputed in screen space; the camera and three.js
+writes, one render call, and projecting five label anchors. Nothing is precomputed in screen space; the camera and three.js
 do the projection.
 
 ### Timeline
@@ -102,7 +103,7 @@ graph and downloads as a deferred module script. The WebGL context is created
 only when the figure comes within 400 px of the viewport. The clock advances
 only while the figure is on screen and caps each frame's step at 0.1 s, so a
 reader always arrives at the starfield and a background tab does not skip ahead.
-Under `prefers-reduced-motion: reduce` the scene renders the final four-layer
+Under `prefers-reduced-motion: reduce` the scene renders the final five-layer
 state once and stops.
 
 ## Invariants
@@ -138,7 +139,7 @@ styles are set through the CSSOM or SVG attributes, never inline markup.
 - **No WebGL**: `WebGLRenderer` throws, the error reaches the console, and the
   figure stays an empty dark panel. The layer list below it still carries the
   content.
-- **Point count**: about 23,000 points, about 16,000 of them physics bodies.
+- **Point count**: about 23,000 points, about 18,000 of them physics bodies.
   The physics step is linear in body count with no pairwise work; the vertex
   shader does the rest.
 - **Pixel ratio** is capped at 2 so a high-density screen does not quadruple

@@ -16,24 +16,25 @@ import {
 import { createBodies, inCut, SHELL, step, WALL, WALL_PLANES, type Bodies } from './shell-physics';
 
 /**
- * The technology schematic: a starfield that gathers into four nested spheres,
+ * The technology schematic: a starfield that gathers into five nested spheres,
  * each an equal radius step larger than the one inside it, with the octant that
- * faces the camera cut away so every layer shows. Once all four stand, the cut
+ * faces the camera cut away so every layer shows. Once all five stand, the cut
  * fills in, the stack becomes a tennis ball with a gold seam, spins, and breaks
  * back into the starfield before the loop starts again.
  *
  * Every particle holds three positions (star, schematic, ball) and the vertex
  * shader blends between them from a handful of uniforms, so a frame costs the
- * CPU a few uniform writes and four label projections.
+ * CPU a few uniform writes and five label projections.
  */
 
 export type Layer = { readonly name: string; readonly color: string };
 
 export const LAYERS: readonly Layer[] = [
   { name: 'LLM routing core', color: '#ffc24a' },
-  { name: 'Sidekicks', color: '#3fcf97' },
   { name: 'Authorization', color: '#d266c6' },
-  { name: 'Channels & Breakouts', color: '#5b8cff' },
+  { name: 'Sidekicks', color: '#3fcf97' },
+  { name: 'Connectors', color: '#ff7a59' },
+  { name: 'Multiplayer collaboration', color: '#5b8cff' },
 ];
 
 /** Seconds. Each layer forms, then holds; the last hold is the long one. */
@@ -63,10 +64,10 @@ export const MOMENTS = {
   scatter: SCATTER_START + SCATTER / 2,
 } as const;
 
-const STEP = 0.55;
+const STEP = 0.44;
 const OUTER = STEP * LAYERS.length;
 const STAR_ONLY = 5200;
-const LAYER_POINTS = [1600, 3200, 4800, 6400];
+const LAYER_POINTS = [1300, 2400, 3500, 4700, 5900];
 const FILL_POINTS = 450;
 const SEAM_POINTS = 1500;
 const GROUP_FILL = LAYERS.length;

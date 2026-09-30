@@ -134,7 +134,7 @@ h1{white-space:pre-line;max-width:56rem;margin:0 auto;font-size:4.5rem}
 .tech-label text{fill:var(--paper);font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase}
 .tech-label polyline{fill:none;stroke:#d9a441;stroke-width:1}
 .tech-label circle{fill:#f2b441}
-.tech-layers{margin:32px 0 0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+.tech-layers{margin:32px 0 0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px}
 .tech-layers li{padding-top:16px;border-top:1px solid var(--hairline)}
 .tech-layers span{font-family:var(--mono);font-size:11px;letter-spacing:.18em;color:#d9a441}
 .section .tech-layers h3{margin-top:8px;font-size:20px}
