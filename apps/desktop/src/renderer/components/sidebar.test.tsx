@@ -47,6 +47,8 @@ vi.mock('../lib/platform', () => ({
       applicationSettings.listeners.add(listener);
       return () => applicationSettings.listeners.delete(listener);
     },
+    getUpdateStatus: () => Promise.resolve({ kind: 'idle' }),
+    onUpdateStatusChanged: () => () => undefined,
   }),
   desktopServicesAvailable: () => false,
 }));
