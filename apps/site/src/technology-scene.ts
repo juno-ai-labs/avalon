@@ -403,9 +403,11 @@ void main() {
   vec3 swirl = normalize(cross(shape + vec3(0.001), vec3(0.0, 1.0, 0.0))) * sin(form * 3.14159) * 0.9;
   vec3 p = mix(star, shape, form) + swirl;
 
-  // Filling the cut: every structure point settles onto the outer sphere, which
-  // is what makes it read as whole. The ball then only recolors, lifts the seam
-  // and spins, so the spin starting from identity never jumps.
+  // Filling the cut: every structure point settles onto the outer sphere. Only
+  // the outer shell shows while it does, its points in the cut fading in, so
+  // the blue sphere reads as closing over. The ball then brings the rest back
+  // in its own colors, lifts the seam and spins, so the spin starting from
+  // identity never jumps.
   bool structural = group <= ${GROUP_FILL};
   float fillT = structural ? stagger(uForm[${GROUP_FILL}], seed) : 0.0;
   float ballT = structural ? stagger(uBall, seed) : 0.0;
@@ -441,11 +443,15 @@ void main() {
   float shellAlpha = aInfo.w > 0.5 ? mix(0.3, 1.0, front) * mix(1.0, 0.12, covered) : 1.0;
   float sphereAlpha = mix(0.08, 0.55, front);
   float seamAlpha = mix(0.3, 1.0, front);
-  // A shell point drifting through the open cut is not drawn until it fills.
   float open = aInfo.w > 0.5 && inCut(shape) ? 0.0 : 1.0;
-  shellAlpha *= mix(1.0, open, form);
-  float alpha = mix(shellAlpha, sphereAlpha, fillT);
+  // A shell point drifting through the open cut is not drawn until it fills,
+  // and the outer shell keeps its full weight while it closes over.
+  shellAlpha *= mix(1.0, open, form * (1.0 - fillT));
+  float alpha = shellAlpha;
   alpha = mix(alpha, seam > 0.5 ? seamAlpha : sphereAlpha, ballT);
+  // Everything but the outer shell fades early in the fill, before it moves.
+  bool outerShell = group == ${LAYERS.length - 1} && aInfo.w > 0.5;
+  if (structural && !outerShell) alpha *= 1.0 - clamp(uForm[${GROUP_FILL}] * 4.0, 0.0, 1.0) * (1.0 - ballT);
   // Stars sit twice as far from the camera as the spheres, so they start larger.
   float size = mix(2.8, mix(2.3, 2.4, 1.0 - aInfo.w), structure) + seam * ballT * (1.0 - scatter) * 2.6;
   vAlpha = mix((0.3 + 0.35 * twinkle) * behindSpheres(p), alpha, structure);
