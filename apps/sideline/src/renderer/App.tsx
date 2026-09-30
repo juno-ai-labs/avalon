@@ -33,6 +33,7 @@ export default function App(): React.JSX.Element {
   const [cards, setCards] = useState<SidelineCardModel[]>([newCard()]);
   const [status, setStatus] = useState<"loading" | "ready" | "empty" | "denied" | "offline" | "error">("loading");
   const [statusMessage, setStatusMessage] = useState<string>();
+  const [downloadedUpdate, setDownloadedUpdate] = useState<string | null>(null);
   const catalogGeneration = useRef(0);
   const catalogShown = useRef(false);
   catalogShown.current = status === "ready" || status === "empty";
@@ -84,6 +85,18 @@ export default function App(): React.JSX.Element {
       state.running = false;
     }
   }, [load]);
+  useEffect(() => {
+    // A broadcast that lands before the mount-time read answers is newer than it.
+    let heard = false;
+    const unsubscribe = window.sideline.onUpdateDownloaded((version) => {
+      heard = true;
+      setDownloadedUpdate(version);
+    });
+    void window.sideline.getDownloadedUpdate()
+      .then((version) => { if (!heard) setDownloadedUpdate(version); })
+      .catch(() => undefined);
+    return unsubscribe;
+  }, []);
   useEffect(() => window.sideline.onCatalogStale(() => { void refreshStale(); }), [refreshStale]);
 
   useEffect(() => {
@@ -181,6 +194,8 @@ export default function App(): React.JSX.Element {
         if (card) void window.sideline.openInRally({ workstreamId: card.workstreamId, substreamId: card.substreamId });
       }}
       onSignOut={() => void window.sideline.signOut()}
+      downloadedUpdate={downloadedUpdate}
+      onRestartToUpdate={() => void window.sideline.installDownloadedUpdate()}
     />
   );
 }

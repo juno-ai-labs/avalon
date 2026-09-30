@@ -114,7 +114,12 @@ before its exact URL is verified. Both the version-stamping job and the final
 publication boundary refuse a candidate tag that already exists. The embedded
 generic-provider URL points only at that prefix. A signed release build on
 packaged Apple Silicon checks it at launch and every three hours, downloads in
-the background, and offers to restart after the update is ready. Its
+the background, and then shows a restart button (Tabler `device-desktop-down`)
+in the composer header without interrupting. The native restart dialog appears
+only once the running build is more than 48 hours old
+(`STALE_BUILD_PROMPT_AGE_MS` in `src/main/updater.ts`), once per downloaded
+version; the age comes from `__SIDELINE_BUILD_TIME__`, stamped into the main
+bundle by `electron.vite.config.ts`, and an unstamped build never prompts. Its
 application menu also exposes **Check
 for Updates…** for an immediate manual check through the same updater. The item
 remains visible but disabled when updates are unavailable. Development, unsigned local packages,
@@ -237,6 +242,22 @@ operator key. It registers only `sideline:`, while **Open in Rally** emits the
 existing `rallywithai:` deep link for the main app.
 
 ## Changelog
+
+### 2026-09-30 — A downloaded update waits behind a header button
+
+**What changed:** Sideline no longer opens a restart dialog the moment an
+update finishes downloading. The composer header shows a restart button while
+one waits, and the dialog returns only when the running build is more than 48
+hours old, once per downloaded version.
+
+**Why:** The same change landed in Rally's desktop app, where the dialog
+interrupted work on every release; Sideline ships as often. The team set
+Sideline's threshold at 48 hours against Rally's seven days; the reasoning for
+the shorter window was not recorded.
+
+**Consequences:** Install-on-quit still applies, so a person who never presses
+the button updates at their next quit. A build without the timestamp (local
+and test builds) never prompts.
 
 ### 2026-09-28 — The catalog reads each person's Breakouts in one call
 
