@@ -19,8 +19,8 @@ import { conversationObjectName, workspaceDOName } from "../durable-objects/name
 import type { MessageRow } from "../durable-objects/workstream-message-storage";
 import type {
   ConversationPostRequest,
-  ConversationToolAttachRequest,
-  ConversationToolAttachResult,
+  ConversationToolLinkRequest,
+  ConversationToolLinkResult,
   ConversationToolEntry,
   ConversationToolRefusal,
   ConversationToolResolveRequest,
@@ -42,7 +42,7 @@ import { createMessageObjectPort } from "../runtime/message-port";
  * The plugin is one set of tools and a **scope**, a function of the loop
  * input. A Channel or Breakout loop reaches its own conversation and its
  * Channel's Main; a Sidekick's configuration conversation and its runs reach
- * the Sidekick's home and attachments. A new kind of agent is a new scope, not
+ * the Sidekick's home and linked conversations. A new kind of agent is a new scope, not
  * new tools. The model never supplies or widens a scope.
  */
 
@@ -73,7 +73,7 @@ export const CONVERSATION_READ_CHARACTER_BUDGET = 12_000;
  */
 export const MAXIMUM_ECHO_CHARACTERS = Number.POSITIVE_INFINITY;
 
-export type ConversationToolName = "list" | "read" | "post" | "attach";
+export type ConversationToolName = "list" | "read" | "post" | "link";
 
 export type { ConversationPostRequest, ConversationToolScope };
 
@@ -93,7 +93,7 @@ export interface ConversationToolAccess {
  * - A Sidekick's configuration conversation (substream "0", no run): the
  *   Sidekick's conversations, all four tools.
  * - A Sidekick run (`automationRun` present): the same conversations, without
- *   attach, so a run cannot widen its own reach.
+ *   link, so a run cannot widen its own reach.
  *
  * A loop acting under workspace authority has no person to admit, and a run
  * child woken without its run has no Sidekick context; neither gets a scope.
@@ -112,14 +112,14 @@ export function conversationToolAccess(input: WorkstreamWorkflowInput): Conversa
       tools: ["list", "read", "post"], actingUserId };
   }
   if (substreamId !== "0") return null;
-  return { scope: { kind: "sidekick", automationId: input.parentId }, tools: ["list", "read", "post", "attach"], actingUserId };
+  return { scope: { kind: "sidekick", automationId: input.parentId }, tools: ["list", "read", "post", "link"], actingUserId };
 }
 
 /** The WorkspaceDO calls the tools make. Typed so a test can stand one in. */
 export interface ConversationWorkspacePort {
   conversationToolScope(input: ConversationToolScopeRequest): Promise<ConversationToolScopeResult>;
   resolveConversationToolTarget(input: ConversationToolResolveRequest): Promise<ConversationToolResolveResult>;
-  attachSidekickConversation(input: ConversationToolAttachRequest): Promise<ConversationToolAttachResult>;
+  linkSidekickConversation(input: ConversationToolLinkRequest): Promise<ConversationToolLinkResult>;
 }
 
 /** Everything the executors reach outside themselves. */
@@ -200,7 +200,7 @@ export function conversationRefusalError(
         "That conversation is archived, so it cannot be read or posted to. Tell the person.", resource);
     case "conversation_access_denied":
       return new ConversationToolError(refusal.code,
-        "The account this runs as cannot open that conversation. Ask someone with access to attach it or share it.",
+        "The account this runs as cannot open that conversation. Ask someone with access to link it or share it.",
         resource);
     case "conversation_home_missing":
       return new ConversationToolError("invalid_arguments",
@@ -244,7 +244,7 @@ export function conversationPostArgumentsSchema(home: boolean | null) {
   });
 }
 
-export const ConversationAttachArgumentsSchema = z.strictObject({
+export const ConversationLinkArgumentsSchema = z.strictObject({
   conversation: ConversationReferenceSchema.describe("The Rally link or id the person gave for a Channel or Breakout, or its exact title."),
 });
 
@@ -489,45 +489,45 @@ export function createConversationsPlugin(
     },
   };
 
-  const attach: HarnessTool = {
+  const link: HarnessTool = {
     definition: {
-      name: "attach",
-      description: "Let this Sidekick read and post in a Channel or Breakout. Pass the link or id the person gave you. Runs of the Sidekick can then use it.",
-      capability: "rally.conversation.attach",
+      name: "link",
+      description: "Link a Channel or Breakout to this Sidekick so its runs can read and post there. Pass the link or id the person gave you.",
+      capability: "rally.conversation.link",
       mode: "write",
       idempotency: "provider_key",
-      inputSchema: inputSchema(ConversationAttachArgumentsSchema),
+      inputSchema: inputSchema(ConversationLinkArgumentsSchema),
     },
     execute: async (raw) => {
-      const args = ConversationAttachArgumentsSchema.parse(raw);
-      if (scope.kind !== "sidekick") throw new Error("conversation_attach_requires_sidekick");
-      const reference = attachReference(args.conversation, input, ports.linkOrigins);
+      const args = ConversationLinkArgumentsSchema.parse(raw);
+      if (scope.kind !== "sidekick") throw new Error("conversation_link_requires_sidekick");
+      const reference = linkReference(args.conversation, input, ports.linkOrigins);
       if (reference === null) {
         throw conversationRefusalError({ ok: false, code: "conversation_not_found", available: [], resourceId: null },
           args.conversation);
       }
-      const attached = await (await ports.workspace()).attachSidekickConversation({
+      const linked = await (await ports.workspace()).linkSidekickConversation({
         workspaceId, userId: actingUserId, automationId: scope.automationId, reference,
       });
-      if (!attached.ok) throw conversationRefusalError(attached, args.conversation);
+      if (!linked.ok) throw conversationRefusalError(linked, args.conversation);
       return {
         output: {
-          conversationId: attached.conversation.conversationId,
-          kind: attached.conversation.kind,
-          title: attached.conversation.title,
-          alreadyAttached: attached.alreadyAttached,
+          conversationId: linked.conversation.conversationId,
+          kind: linked.conversation.kind,
+          title: linked.conversation.title,
+          alreadyLinked: linked.alreadyLinked,
         },
-        summary: attached.alreadyAttached
-          ? `${attached.conversation.title || "That conversation"} was already attached`
-          : `Attached ${attached.conversation.title || "a conversation"}`,
+        summary: linked.alreadyLinked
+          ? `${linked.conversation.title || "That conversation"} was already linked`
+          : `Linked ${linked.conversation.title || "a conversation"}`,
       };
     },
   };
 
-  const byName: Record<ConversationToolName, HarnessTool> = { list, read, post, attach };
+  const byName: Record<ConversationToolName, HarnessTool> = { list, read, post, link };
   const tools = access.tools.flatMap((name) => expandPages(byName[name]));
   const posts = access.tools.includes("post");
-  const attaches = access.tools.includes("attach");
+  const links = access.tools.includes("link");
   return {
     canonicalId: CONVERSATIONS_PLUGIN_ID,
     modelId: "rally_conversations",
@@ -535,7 +535,7 @@ export function createConversationsPlugin(
     displayName: "Conversations",
     searchAliases: ["channel", "breakout", "messages", "post", "home conversation"],
     description: "List, read, and post to the Rally conversations this agent can reach.",
-    systemMessage: conversationsSystemMessage({ posts, attaches, run: input.automationRun !== undefined,
+    systemMessage: conversationsSystemMessage({ posts, links, run: input.automationRun !== undefined,
       home: options.home }),
     tools,
     preload: true,
@@ -560,7 +560,7 @@ export const RUN_POST_INSTRUCTION = "Your final message stays in this run; when 
 /** The plugin's standing instructions; the tool-naming lines are pinned by a test. */
 export function conversationsSystemMessage(options: {
   posts: boolean;
-  attaches: boolean;
+  links: boolean;
   run: boolean;
   home: boolean | null;
 }): string {
@@ -571,8 +571,8 @@ export function conversationsSystemMessage(options: {
       ? [`Use conversation_post to post to one of them.${homeSentence(options.home, " Leave conversation out")}`,
         options.run ? RUN_POST_INSTRUCTION : "Post once per result."]
       : []),
-    ...(options.attaches
-      ? ["Use conversation_attach when the person asks this Sidekick to read or post somewhere new; pass the link or id they give you."]
+    ...(options.links
+      ? ["Use conversation_link when the person asks this Sidekick to read or post somewhere new; pass the link or id they give you. Linking is not the same as attaching a Sidekick to a work stream, which only recommends it there."]
       : []),
   ].join(" ");
 }
@@ -580,9 +580,9 @@ export function conversationsSystemMessage(options: {
 /**
  * The conversation a link names, as a conversationId, or the reference
  * unchanged when it is not a link. A link to another Organization, or one
- * that does not parse, names nothing this attach can use.
+ * that does not parse, names nothing this link can use.
  */
-function attachReference(reference: string, input: WorkstreamWorkflowInput, origins: readonly string[]): string | null {
+function linkReference(reference: string, input: WorkstreamWorkflowInput, origins: readonly string[]): string | null {
   const trimmed = reference.trim();
   if (!/^[a-z][a-z0-9+.-]*:\/\//iu.test(trimmed)) return trimmed;
   const target = parseWorkstreamLinkTarget(trimmed, { webBaseUrl: origins });
@@ -611,4 +611,4 @@ async function forwardedExternalSource(
   }
 }
 
-export const __conversationToolTesting = { attachReference };
+export const __conversationToolTesting = { linkReference };

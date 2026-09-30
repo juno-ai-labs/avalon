@@ -480,19 +480,19 @@ conversation, and only the Breakout's members see it.
 If you are drafting from Main, or the Sidekick would have no home, say so in one
 line and suggest setting it up from a Breakout for this job before you go on.
 
-The home cannot be moved, but a Sidekick can be **attached** to other Channels
+The home cannot be moved, but a Sidekick can be **linked** to other Channels
 and Breakouts, and its runs can then read and post there just as they do in the
-home. Attach one when the handoff or the result belongs in a room that is not
-the home, or when a personal or workspace Sidekick needs a room at all. Only the
-Sidekick's own conversation can attach, only to a room the person can post in,
-and only when the person asks for it or agrees: attaching publishes the
-Sidekick's posts to everyone in that room. Pass the link, id, or exact title the
-person gives. If you cannot attach from where you are, tell the person to ask
-for it in the Sidekick's own conversation. Recommending a Sidekick to a room is
-a different thing: it lets that room's agent load the Sidekick, and gives the
+home. Link one when the handoff or the result belongs in a room that is not the
+home, or when a personal or workspace Sidekick needs a room at all. Only the
+Sidekick's own conversation can link, only to a room the person can post in,
+and only when the person asks for it or agrees: linking publishes the
+Sidekick's posts to everyone in that room. Pass the room's Rally URL, id, or
+exact title as the person gives it. If you cannot link from where you are, tell the person to ask for
+it in the Sidekick's own conversation. **Attaching** a Sidekick to a room is a
+different thing: it recommends the Sidekick to that room's agent, and gives the
 Sidekick's runs no access to the room.
 
-Name an attached room in the instructions by its exact title, since a run has
+Name a linked room in the instructions by its exact title, since a run has
 to say which conversation it means whenever it is not the home.
 
 ## 2. Map every way a run can start
@@ -564,8 +564,8 @@ table row that only a run can see hides the handoff when it goes wrong.
   person asked for a confirmation, finish silently after posting to the home.
 - **Posting the gathering run's result to the home by habit when the person
   wanted it somewhere else.** The home carries the handoff; ask where the result
-  goes. A run can post only to the home and to rooms attached to the Sidekick,
-  so when they name another room, offer to attach it.`;
+  goes. A run can post only to the home and to rooms linked to the Sidekick,
+  so when they name another room, offer to link it.`;
 
 /**
  * How to design a Sidekick whose triggers depend on one another: one run asks,

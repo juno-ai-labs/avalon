@@ -1646,7 +1646,7 @@ describe("a room Sidekick's run and the room's agents", () => {
     // idempotently provision the run again under loaded alarm scheduling.
     const offered = provider.calls.filter((call) => call.toolNames.includes("conversation_post"));
     expect(offered.length).toBeGreaterThanOrEqual(2);
-    expect(offered.every((call) => !call.toolNames.includes("conversation_attach"))).toBe(true);
+    expect(offered.every((call) => !call.toolNames.includes("conversation_link"))).toBe(true);
     const toolResult = offered[1]!.messages.find((message) => message.role === "tool");
     expect(JSON.stringify(toolResult?.content)).toMatch(/\\?"replayed\\?"\s*:\s*false/u);
 

@@ -9,9 +9,11 @@ import type { ConversationToolScope } from "./workspace-conversation-tool-protoc
  *
  * - A **Sidekick** reaches its home (the Channel's Main conversation or the
  *   Breakout named by `automation_directory.owning_workstream_id` and
- *   `owning_substream_id`) and every conversation attached to it in
- *   `sidekick_conversation_attachments`. The home is always attached, so it is
- *   never a row there.
+ *   `owning_substream_id`) and every conversation linked to it in
+ *   `sidekick_conversation_attachments`. The home is always linked, so it is
+ *   never a row there. The table and its `attached_*` columns keep the name
+ *   the tool had when migration 86 shipped; renaming them would take a
+ *   migration for no change in behavior.
  * - A **Channel or Breakout loop** reaches its own conversation and its
  *   Channel's Main conversation.
  *
@@ -47,8 +49,8 @@ export interface ScopedConversation extends ConversationAddress {
   readable: boolean;
 }
 
-/** The migration-86 table. Keyed by the Sidekick and the whole address, so a repeat attach is one row. */
-export const SIDEKICK_CONVERSATION_ATTACHMENT_SCHEMA_STATEMENTS: readonly string[] = [
+/** The migration-86 table. Keyed by the Sidekick and the whole address, so a repeat link is one row. */
+export const SIDEKICK_CONVERSATION_LINK_SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE TABLE sidekick_conversation_attachments (
     automation_id TEXT NOT NULL,
     parent_kind TEXT NOT NULL CHECK (parent_kind = 'workstream'),
@@ -157,8 +159,8 @@ function sidekickExists(sql: SqlStorage, automationId: string): boolean {
  *
  * Nothing is filtered on those two flags here: `conversation_list` omits both,
  * while a read or a post names the reason it refuses. Home (or own) comes
- * first, then Main for a Breakout loop, then attachments in the order they
- * were made.
+ * first, then Main for a Breakout loop, then linked conversations in the order
+ * they were linked.
  */
 export function scopeConversations(sql: SqlStorage, scope: ConversationToolScope, userId: string): ScopedConversation[] {
   const addresses: Array<ConversationAddress & { isHome: boolean; isOwn: boolean }> = [];
@@ -224,7 +226,7 @@ interface TitledConversation extends ConversationAddress, DirectoryFacts {
 
 /**
  * Every Channel and Breakout titled `title` that this person can open, for an
- * attach that names a conversation the way the person did. Archived ones are
+ * link that names a conversation the way the person did. Archived ones are
  * included so the refusal can say that is why.
  */
 export function conversationsTitled(sql: SqlStorage, title: string, userId: string): TitledConversation[] {
@@ -257,18 +259,18 @@ export function conversationsTitled(sql: SqlStorage, title: string, userId: stri
 
 /**
  * Record that a Sidekick may read and post in a conversation. Idempotent on
- * the Sidekick and the address; attaching the home is a no-op reported as
- * already attached, since the home always is.
+ * the Sidekick and the address; linking the home is a no-op reported as
+ * already linked, since the home always is.
  */
-export function attachSidekickConversation(sql: SqlStorage, input: {
+export function linkSidekickConversation(sql: SqlStorage, input: {
   automationId: string;
   address: ConversationAddress;
   userId: string;
   now: number;
-}): { alreadyAttached: boolean } {
+}): { alreadyLinked: boolean } {
   const home = sidekickHome(sql, input.automationId);
   if (home && home.parentId === input.address.parentId && home.substreamId === input.address.substreamId) {
-    return { alreadyAttached: true };
+    return { alreadyLinked: true };
   }
   const inserted = sql.exec<{ automation_id: string }>(
     `INSERT INTO sidekick_conversation_attachments
@@ -278,5 +280,5 @@ export function attachSidekickConversation(sql: SqlStorage, input: {
      RETURNING automation_id`,
     input.automationId, input.address.parentId, input.address.substreamId, input.userId, input.now,
   ).toArray();
-  return { alreadyAttached: inserted.length === 0 };
+  return { alreadyLinked: inserted.length === 0 };
 }

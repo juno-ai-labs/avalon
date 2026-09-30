@@ -21,6 +21,11 @@ const CURRENT_TIME_PROSE: ToolProse = {
   settled: "Checked the current time",
   failed: "Could not check the current time",
 };
+const CONVERSATION_LINK_PROSE: ToolProse = {
+  started: "Linking a conversation",
+  settled: "Linked a conversation",
+  failed: "Could not link a conversation",
+};
 const REQUEST_ELICITATION_PROSE: ToolProse = {
   started: "Asking for a decision",
   settled: "Asked for a decision",
@@ -72,11 +77,11 @@ const CONVERSATION_PROSE: Record<string, ToolProse> = {
     settled: "Posted to a conversation",
     failed: "Could not post to a conversation",
   },
-  conversation_attach: {
-    started: "Attaching a conversation",
-    settled: "Attached a conversation",
-    failed: "Could not attach a conversation",
-  },
+  conversation_link: CONVERSATION_LINK_PROSE,
+  // The same tool's name until it was renamed to keep it apart from attaching
+  // a Sidekick to a work stream. Kept for the rows that hold it, on the terms
+  // of the retired names below.
+  conversation_attach: CONVERSATION_LINK_PROSE,
 };
 
 const AGENT_PROSE: Record<string, ToolProse> = {

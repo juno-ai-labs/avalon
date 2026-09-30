@@ -1,10 +1,10 @@
 /**
- * A Sidekick's home and attached conversations, against the checked-in
+ * A Sidekick's home and linked conversations, against the checked-in
  * schemas.
  *
  * The migrations are claims about SQL: a column added with a default keeps
  * every existing row's home at its Channel's Main conversation, and the
- * attachment table's key makes a repeat attach one row. The scope reads are
+ * link table's key makes a repeat link one row. The scope reads are
  * claims about joins over `channels`, `breakouts` and their viewer rows. Both
  * are proved here against the object ledgers rather than in the workers suite;
  * what workerd adds (the RPC, the parent's admission) is proved in
@@ -16,7 +16,7 @@ import { describe, expect, it } from "vitest";
 import { AUTOMATION_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/sidekick-do";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 import {
-  attachSidekickConversation,
+  linkSidekickConversation,
   conversationIdOf,
   conversationsTitled,
   matchConversationReference,
@@ -120,20 +120,20 @@ describe("the WorkspaceDO home-conversation migration", () => {
     ).all()).toEqual([{ automation_id: SIDEKICK, owning_workstream_id: CHANNEL, owning_substream_id: "0" }]);
   });
 
-  it("holds one attachment per Sidekick and conversation", () => {
+  it("holds one link per Sidekick and conversation", () => {
     const database = migratedWorkspace();
     const sql = createTestSqlStorage(database);
     seedSidekick(database);
     const address = { parentKind: "workstream" as const, parentId: OTHER_CHANNEL, substreamId: "0" };
 
-    expect(attachSidekickConversation(sql, { automationId: SIDEKICK, address, userId: AUTHOR, now: 1 }))
-      .toEqual({ alreadyAttached: false });
-    expect(attachSidekickConversation(sql, { automationId: SIDEKICK, address, userId: STRANGER, now: 2 }))
-      .toEqual({ alreadyAttached: true });
-    // The home is attached without a row, so attaching it writes nothing.
-    expect(attachSidekickConversation(sql, {
+    expect(linkSidekickConversation(sql, { automationId: SIDEKICK, address, userId: AUTHOR, now: 1 }))
+      .toEqual({ alreadyLinked: false });
+    expect(linkSidekickConversation(sql, { automationId: SIDEKICK, address, userId: STRANGER, now: 2 }))
+      .toEqual({ alreadyLinked: true });
+    // The home is linked without a row, so linking it writes nothing.
+    expect(linkSidekickConversation(sql, {
       automationId: SIDEKICK, address: { ...address, parentId: CHANNEL }, userId: AUTHOR, now: 3,
-    })).toEqual({ alreadyAttached: true });
+    })).toEqual({ alreadyLinked: true });
     expect(database.prepare(
       `SELECT parent_id, substream_id, attached_by_user_id FROM sidekick_conversation_attachments`,
     ).all()).toEqual([{ parent_id: OTHER_CHANNEL, substream_id: "0", attached_by_user_id: AUTHOR }]);
@@ -175,9 +175,9 @@ describe("a conversation scope", () => {
     seedChannelViewer(database, CHANNEL, AUTHOR, true);
     seedBreakout(database, "Weekly call");
     seedBreakoutMember(database, AUTHOR);
-    attachSidekickConversation(sql, { automationId: SIDEKICK,
+    linkSidekickConversation(sql, { automationId: SIDEKICK,
       address: { parentKind: "workstream", parentId: OTHER_CHANNEL, substreamId: "0" }, userId: AUTHOR, now: 1 });
-    attachSidekickConversation(sql, { automationId: SIDEKICK,
+    linkSidekickConversation(sql, { automationId: SIDEKICK,
       address: { parentKind: "workstream", parentId: CHANNEL, substreamId: "0" }, userId: AUTHOR, now: 2 });
 
     const scope = { kind: "sidekick" as const, automationId: SIDEKICK };

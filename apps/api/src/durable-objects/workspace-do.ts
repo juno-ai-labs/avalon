@@ -1012,8 +1012,8 @@ import {
   renewWorkspaceTranscriptionSession,
 } from "./workspace-transcription-storage";
 import {
-  SIDEKICK_CONVERSATION_ATTACHMENT_SCHEMA_STATEMENTS,
-  attachSidekickConversation,
+  SIDEKICK_CONVERSATION_LINK_SCHEMA_STATEMENTS,
+  linkSidekickConversation,
   conversationIdOf,
   conversationsTitled,
   describeConversation,
@@ -1022,10 +1022,10 @@ import {
   scopeConversations,
 } from "./workspace-sidekick-conversation-storage";
 import {
-  ConversationToolAttachRequestSchema,
+  ConversationToolLinkRequestSchema,
   ConversationToolResolveRequestSchema,
   ConversationToolScopeRequestSchema,
-  type ConversationToolAttachResult,
+  type ConversationToolLinkResult,
   type ConversationToolEntry,
   type ConversationToolRefusal,
   type ConversationToolRefusalCode,
@@ -4065,7 +4065,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // a skill". See docs/automation-lifecycle.md.
   statements: [
     `ALTER TABLE automation_directory ADD COLUMN owning_substream_id TEXT NOT NULL DEFAULT '0'`,
-    ...SIDEKICK_CONVERSATION_ATTACHMENT_SCHEMA_STATEMENTS,
+    ...SIDEKICK_CONVERSATION_LINK_SCHEMA_STATEMENTS,
   ],
 }];
 
@@ -7552,16 +7552,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Attach a conversation to a Sidekick, from its configuration conversation.
+   * Link a conversation to a Sidekick, from its configuration conversation.
    *
-   * Attaching is the consent to publish there: whatever a run posts is read by
-   * that conversation's audience. So the person attaching must be able to post
+   * Linking is the consent to publish there: whatever a run posts is read by
+   * that conversation's audience. So the person linking must be able to post
    * in it now, which is the parent's admission plus the conversation not being
    * archived, the rule `ConversationService.writableClient` applies to a write.
    */
-  async attachSidekickConversation(input: unknown): Promise<ConversationToolAttachResult> {
+  async linkSidekickConversation(input: unknown): Promise<ConversationToolLinkResult> {
     await this.initialized;
-    const request = parseRpcInput(ConversationToolAttachRequestSchema, input, "conversation_tool_attach");
+    const request = parseRpcInput(ConversationToolLinkRequestSchema, input, "conversation_tool_link");
     this.assertWorkspace(request.workspaceId);
     const sql = this.state.storage.sql;
     let address = parseConversationId(request.reference);
@@ -7583,7 +7583,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const attached = this.state.storage.transactionSync(() => {
       if (sql.exec(`SELECT 1 FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
         request.automationId).toArray().length === 0) return null;
-      return attachSidekickConversation(sql, {
+      return linkSidekickConversation(sql, {
         automationId: request.automationId, address: address!, userId: request.userId, now: Date.now(),
       });
     });
@@ -7592,7 +7592,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       .find((conversation) => conversation.parentId === address!.parentId && conversation.substreamId === address!.substreamId);
     return {
       ok: true,
-      alreadyAttached: attached.alreadyAttached,
+      alreadyLinked: attached.alreadyLinked,
       conversation: conversationToolEntry(scoped ?? {
         ...address, conversationId: conversationIdOf(address), kind: facts.kind, title: facts.title, isHome: false, isOwn: false,
       }),

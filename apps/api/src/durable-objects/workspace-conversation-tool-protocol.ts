@@ -101,14 +101,14 @@ export type ConversationToolResolveResult =
   }
   | ConversationToolRefusal;
 
-export const ConversationToolAttachRequestSchema = z.strictObject({
+export const ConversationToolLinkRequestSchema = z.strictObject({
   ...Addressed,
   automationId: IdSchema,
   /** A conversationId (the Worker has already turned a link into one) or an exact title. */
   reference: z.string().min(1),
 });
-export type ConversationToolAttachRequest = z.input<typeof ConversationToolAttachRequestSchema>;
+export type ConversationToolLinkRequest = z.input<typeof ConversationToolLinkRequestSchema>;
 
-export type ConversationToolAttachResult =
-  | { ok: true; conversation: ConversationToolEntry; alreadyAttached: boolean }
+export type ConversationToolLinkResult =
+  | { ok: true; conversation: ConversationToolEntry; alreadyLinked: boolean }
   | ConversationToolRefusal;

@@ -1,7 +1,7 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
- * A Sidekick's home and attached conversations, and the object methods the
+ * A Sidekick's home and linked conversations, and the object methods the
  * `rally:conversations` tools stand on, through the real Durable Objects.
  *
  * SidekickDO projects its home into WorkspaceDO's directory; WorkspaceDO
@@ -282,39 +282,39 @@ describe("a Sidekick's home conversation", () => {
   });
 });
 
-describe("attaching a conversation to a Sidekick", () => {
+describe("linking a conversation to a Sidekick", () => {
   it("refuses a person who cannot post there, and records one row however often it is asked", async () => {
     await seedRoom(OTHER_ROOM_ID, "Founders");
     await seedSidekick("0");
 
-    const refused = await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID,
+    const refused = await workspace().linkSidekickConversation({ workspaceId: WORKSPACE_ID,
       userId: COLLEAGUE_ID, automationId: AUTOMATION_ID, reference: OTHER_ROOM_ID });
     expect(refused).toEqual({ ok: false, code: "conversation_access_denied", available: [], resourceId: OTHER_ROOM_ID });
 
-    const attached = await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID,
+    const linked = await workspace().linkSidekickConversation({ workspaceId: WORKSPACE_ID,
       userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: "founders" });
-    expect(attached).toMatchObject({ ok: true, alreadyAttached: false,
+    expect(linked).toMatchObject({ ok: true, alreadyLinked: false,
       conversation: { conversationId: OTHER_ROOM_ID, kind: "channel", title: "Founders" } });
-    expect(await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID,
+    expect(await workspace().linkSidekickConversation({ workspaceId: WORKSPACE_ID,
       userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: OTHER_ROOM_ID }))
-      .toMatchObject({ ok: true, alreadyAttached: true });
+      .toMatchObject({ ok: true, alreadyLinked: true });
     expect(await runInDurableObject(workspace(), (_instance, state) =>
       state.storage.sql.exec<{ parent_id: string }>(
         `SELECT parent_id FROM sidekick_conversation_attachments WHERE automation_id = ?`, AUTOMATION_ID,
       ).toArray())).toEqual([{ parent_id: OTHER_ROOM_ID }]);
   });
 
-  it("reads and posts only where the Sidekick is attached", async () => {
+  it("reads and posts only where the Sidekick is linked", async () => {
     await seedRoom(OTHER_ROOM_ID, "Founders");
     await seedSidekick("0");
     const resolve = (reference: string) => workspace().resolveConversationToolTarget({
       workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, scope: sidekickScope(), reference,
     });
 
-    // The author can open Founders, but the Sidekick is not attached to it.
+    // The author can open Founders, but the Sidekick is not linked to it.
     expect(await resolve(OTHER_ROOM_ID))
       .toEqual({ ok: false, code: "conversation_not_in_scope", available: [ROOM_ID], resourceId: null });
-    await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID,
+    await workspace().linkSidekickConversation({ workspaceId: WORKSPACE_ID,
       userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: OTHER_ROOM_ID });
     expect(await resolve("Founders")).toMatchObject({ ok: true, conversation: { conversationId: OTHER_ROOM_ID } });
   });
@@ -324,7 +324,7 @@ describe("a conversation tool's scope", () => {
   it("re-admits on every list, omitting a Breakout the person has left", async () => {
     const breakout = await seedBreakout("Weekly call");
     await seedSidekick("0");
-    await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID,
+    await workspace().linkSidekickConversation({ workspaceId: WORKSPACE_ID,
       userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: `${ROOM_ID}/${breakout}` });
     const listed = async () => (await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID,
       userId: AUTHOR_ID, scope: sidekickScope() })).conversations.map((entry) => entry.conversationId);
@@ -368,7 +368,7 @@ describe("a conversation tool's scope", () => {
   it("refuses an archived conversation by name, and lists it no longer", async () => {
     await seedRoom(OTHER_ROOM_ID, "Founders");
     await seedSidekick("0");
-    await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID,
+    await workspace().linkSidekickConversation({ workspaceId: WORKSPACE_ID,
       userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: OTHER_ROOM_ID });
 
     const archived = await post(conversation(OTHER_ROOM_ID), "/internal/product", {

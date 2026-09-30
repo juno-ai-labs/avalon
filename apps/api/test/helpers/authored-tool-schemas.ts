@@ -66,7 +66,7 @@ export const EXPECTED_TOOLS = [
   "rally.sidekick.plugins.list:plugins_list",
   "rally.sidekick.submit:submit_draft",
   "rally.conversation.post:post",
-  "rally.conversation.attach:attach",
+  "rally.conversation.link:link",
   "terminal.import_resource",
   "notion.create_comment",
   "x.get_user_timeline",

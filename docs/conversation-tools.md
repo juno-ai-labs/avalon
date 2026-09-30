@@ -11,7 +11,7 @@ Read this before changing what an agent can read or post to outside its own
 conversation, and before giving a new kind of loop these tools. The tool design
 rules are [`agent-tools.md`](agent-tools.md)'s; the page-id mechanism is
 [`tool-pagination.md`](tool-pagination.md)'s; a Sidekick's home and its
-attachments are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
+linked conversations are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 
 ## Where the code lives
 
@@ -20,8 +20,8 @@ attachments are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 | `apps/api/src/services/conversation-tools.ts` | The plugin: `conversationToolAccess` (the one place a scope and tool set are derived from a loop), the four tools, the refusal table (`conversationRefusalError`), the system message, the page-size and character-budget placeholders, and `conversationToolPorts`, the calls the tools make. |
 | `apps/api/src/services/integrations.ts` | `loadHarnessTools` builds the plugin next to the Sidekick plugin and passes the pagination wrapper under the `conversation` prefix. |
 | `apps/api/src/durable-objects/workspace-conversation-tool-protocol.ts` | The scope, the WorkspaceDO request schemas and discriminated outcomes with the refusal codes, and the post request `appendConversationPost` takes. |
-| `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | Conversation ids, the scope read over `channels`, `breakouts` and their viewer rows, title lookup, and the attachment write. |
-| `apps/api/src/durable-objects/workspace-do.ts` | `conversationToolScope`, `resolveConversationToolTarget`, `attachSidekickConversation`: scope from the directories, then admission through the hosted parent's `authorizeViewer`. |
+| `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | Conversation ids, the scope read over `channels`, `breakouts` and their viewer rows, title lookup, and the link write. |
+| `apps/api/src/durable-objects/workspace-do.ts` | `conversationToolScope`, `resolveConversationToolTarget`, `linkSidekickConversation`: scope from the directories, then admission through the hosted parent's `authorizeViewer`. |
 | `apps/api/src/durable-objects/substream-agent.ts` | `appendConversationPost`: a post appended to any Channel or Breakout conversation, keyed on its client message id, without waking that conversation's agent. |
 | `apps/api/src/durable-objects/workstream-message-storage.ts` | `readableMessagesBefore`: a conversation's messages newest first, without tool cards or suggestions. |
 | `packages/agent-harness/src/tool-activity.ts` | The transcript wording for each `conversation_*` tool. |
@@ -33,8 +33,8 @@ attachments are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 | Loop | Scope | Tools | Acts as |
 | --- | --- | --- | --- |
 | Breakout (`parentKind: workstream`, substream not `"0"`) | Its own conversation and its Channel's Main | list, read | The person it works for |
-| Sidekick configuration (`parentKind: automation`, substream `"0"`, no run) | The Sidekick's home and attachments | list, read, post, attach | The person talking to it |
-| Sidekick run (`automationRun` present) | The Sidekick's home and attachments | list, read, post | The run-as user |
+| Sidekick configuration (`parentKind: automation`, substream `"0"`, no run) | The Sidekick's home and linked conversations | list, read, post, link | The person talking to it |
+| Sidekick run (`automationRun` present) | The Sidekick's home and linked conversations | list, read, post | The run-as user |
 
 A Channel's Main loop gets no plugin: the only conversation it would reach is
 the one it is in. Neither does a loop under workspace authority, nor a run
@@ -46,16 +46,16 @@ first read.
 
 Wire names are `conversation_list`, `conversation_list_next`,
 `conversation_read`, `conversation_read_next`, `conversation_post` and
-`conversation_attach`. A `conversationId` is `<channelId>` for a Main
+`conversation_link`. A `conversationId` is `<channelId>` for a Main
 conversation and `<channelId>/<breakoutId>` for a Breakout, because a Breakout
 id is unique only within its Channel. `conversation` accepts that id or the
-exact title of a conversation in scope (compared without case); `attach` also
+exact title of a conversation in scope (compared without case); `link` also
 accepts a Rally link, which the Worker turns into an id before WorkspaceDO sees
 it.
 
 - **list** returns `{ conversations: [{ conversationId, kind, title, isHome, isOwn }] }`
   and a `nextPageId`. The home comes first, then (for a Breakout loop) Main,
-  then attachments in the order they were made. Every call re-reads the
+  then linked conversations in the order they were linked. Every call re-reads the
   directories for the acting person and omits what they can no longer open
   and anything archived.
 - **read** takes `conversation` and `limit` and returns
@@ -83,14 +83,18 @@ it.
   woken by an external message (a bound thread's reply), the host copies that
   sender into `externalSource`. A run's system message says its final message
   stays in the run, so a conversation hears a result only by a post.
-- **attach** takes `conversation` and returns
-  `{ conversationId, kind, title, alreadyAttached }`. It writes one
-  `sidekick_conversation_attachments` row per Sidekick and conversation.
+- **link** takes `conversation` and returns
+  `{ conversationId, kind, title, alreadyLinked }`. It writes one
+  `sidekick_conversation_attachments` row per Sidekick and conversation; the
+  table keeps the name the tool had when it shipped. Linking is not attaching
+  a Sidekick to a work stream (`parent_sidekicks`), which only recommends it
+  there, and the system message says so because a model offered both reads
+  them as one.
 
 ### Admission
 
 WorkspaceDO answers each read or post in one call: it builds the scope from its
-own `automation_directory`, attachment rows, `channels`, `breakouts`,
+own `automation_directory`, link rows, `channels`, `breakouts`,
 `channel_viewers` and `breakout_viewers`, matches the reference against it,
 and then admits the acting person to that one conversation: an active
 relationship in `workspace_member_status`, then the hosted parent's
@@ -99,17 +103,17 @@ relationship in `workspace_member_status`, then the hosted parent's
 them. A list re-admits the same way: nothing for a person whose membership
 ended, the directories' viewer rows for a member, and for a guest each
 unarchived candidate's admission, since the viewer rows record no grants and
-would drop what a grant gives. Attach admits the same way and additionally refuses an archived target,
+would drop what a grant gives. Link admits the same way and additionally refuses an archived target,
 which is the rule a write through `ConversationService.writableClient` follows:
-attaching is the consent to publish there.
+linking is the consent to publish there.
 
 ## Invariants
 
 - **The scope is host-derived, from the loop input, in one function.**
   `conversationToolAccess` is the only place a scope or a tool set is decided. A
   scope that took a model argument would let a run widen its own reach.
-- **Only a Sidekick's configuration conversation attaches.** A run is offered
-  no attach, so it cannot reach anything its configuration did not grant.
+- **Only a Sidekick's configuration conversation links.** A run is offered
+  no link, so it cannot reach anything its configuration did not grant.
 - **A post never wakes the target's agent.** It is something people read, not a
   request to the agent there. Admitting it as loop input, as `post_result` did,
   would start that agent on every forwarded reply.
@@ -130,7 +134,7 @@ WorkspaceDO for the directories and admission
 conversation's SubstreamAgent for messages
 ([`workstream-durable-object.md`](workstream-durable-object.md)), and on the
 pagination wrapper ([`tool-pagination.md`](tool-pagination.md)). What a
-Sidekick's home and attachments are, and who may change them, belongs to
+Sidekick's home and linked conversations are, and who may change them, belongs to
 [`automation-lifecycle.md`](automation-lifecycle.md). It does not route
 external replies into a run, which is
 [`external-conversation-bindings.md`](external-conversation-bindings.md)'s, or
@@ -144,10 +148,10 @@ Each refusal is a typed failure with a stable `code`, a model-visible sentence
 | Tools | `code` | `details` |
 | --- | --- | --- |
 | read, post | `conversation_not_in_scope` | `available` |
-| read, post, attach | `conversation_ambiguous` | `available` |
-| attach | `conversation_not_found` | `field` |
-| read, post, attach | `conversation_archived` | `resourceId` |
-| read, post, attach | `conversation_access_denied` | `resourceId` |
+| read, post, link | `conversation_ambiguous` | `available` |
+| link | `conversation_not_found` | `field` |
+| read, post, link | `conversation_archived` | `resourceId` |
+| read, post, link | `conversation_access_denied` | `resourceId` |
 | post | `invalid_arguments` (no home, `conversation` left out) | `field`, `expected` |
 | read_next, list_next | the wrapper's page codes, per [`tool-pagination.md`](tool-pagination.md) | as there |
 
@@ -177,10 +181,10 @@ whole rather than splitting it.
   WorkspaceDO and the target are a typed double there; everything they decide
   is proved on workerd.
 - `apps/api/test/sidekick-conversation-storage.test.ts` (Node, the object
-  ledgers applied): the migrations, the attachment key, and the scope and title
+  ledgers applied): the migrations, the link key, and the scope and title
   queries.
 - `apps/api/test-workers/conversation-tools.test.ts` (workerd): the home
-  projection, archive pausing a Breakout-homed Sidekick, attach refusal and
+  projection, archive pausing a Breakout-homed Sidekick, link refusal and
   idempotency, scope refusal, list re-admission after leaving a Breakout or
   after a membership ends, archived refusal, and an append that lands once
   without waking. A guest: refused an Organization-wide Channel without a

@@ -706,11 +706,13 @@ holds it, pauses the Sidekick through `setOwningRoomArchived`; see Lifecycle.
 
 A Sidekick reads and posts through the `rally:conversations` plugin
 ([`conversation-tools.md`](conversation-tools.md)), whose scope for a Sidekick is
-its home plus the conversations attached to it in WorkspaceDO's
-`sidekick_conversation_attachments`. The home is always attached and never a
-row. Only the Sidekick's configuration conversation attaches (the
-`conversation_attach` tool), and only a conversation the attaching person can
-post in, since attaching is the consent to publish there. A run posts with
+its home plus the conversations linked to it in WorkspaceDO's
+`sidekick_conversation_attachments`. The home is always linked and never a
+row. Only the Sidekick's configuration conversation links (the
+`conversation_link` tool), and only a conversation the linking person can
+post in, since linking is the consent to publish there. Linking is a
+different act from attaching a workspace Sidekick to a work stream, which
+only recommends it there. A run posts with
 `conversation_post`, which defaults to the home; nothing posts a run's result
 for it. That table is not `parent_sidekicks` or a conversation's
 `sidekick_attachments`: those record that a conversation may load the Sidekick
@@ -862,9 +864,9 @@ Sidekick's id.
   owner, search discovery, the archive fan-out) reads both. One that read the
   Channel alone would hand a Breakout-homed Sidekick, and every post it made,
   to Channel members outside the Breakout.
-- **A conversation attachment is not a skill attachment.** Only
+- **A conversation link is not a skill attachment.** Only
   `sidekick_conversation_attachments` widens what a Sidekick may read and post
-  to, and only an attach from its configuration conversation writes it. Reading
+  to, and only a link from its configuration conversation writes it. Reading
   `parent_sidekicks` as reach would grant every conversation that ever loaded
   the Sidekick.
 - **Bindings are derived from the definition, never taken from a request.**
@@ -1035,7 +1037,7 @@ activation cutoff even for an empty replacement; migration 49 adds
 `automation_directory.appearance_json`, nullable and never backfilled; migration 86
 adds `automation_directory.owning_substream_id` (`NOT NULL DEFAULT '0'`) and
 `sidekick_conversation_attachments`, keyed by `(automation_id, parent_kind,
-parent_id, substream_id)` with who attached it and when. Migration 85 is the
+parent_id, substream_id)` with who linked it and when. Migration 85 is the
 external conversation bindings table's. Owner migration 4 stores the
 source counter. Versioned registration IDs equal immutable evaluator IDs, so a
 late delivery from a superseded predicate is refused by the owner.
