@@ -28,7 +28,7 @@ function card(patch: Partial<SidelineCardModel> = {}): SidelineCardModel {
   };
 }
 
-function render(model: SidelineCardModel, shown = catalog, downloadedUpdate: string | null = null): string {
+function render(model: SidelineCardModel, shown = catalog): string {
   return renderToStaticMarkup(<SidelineComposer
     catalog={shown}
     workspaceName={catalog.workspace.name}
@@ -41,17 +41,10 @@ function render(model: SidelineCardModel, shown = catalog, downloadedUpdate: str
     onSend={() => undefined}
     onRetryCatalog={() => undefined}
     onOpenInRally={() => undefined}
-    onSignOut={() => undefined}
-    downloadedUpdate={downloadedUpdate}
-    onRestartToUpdate={() => undefined}
   />);
 }
 
 describe("Sideline shared composer", () => {
-  it("offers a restart only while an update is downloaded", () => {
-    expect(render(card())).not.toContain("Restart to update");
-    expect(render(card(), catalog, "0.2.0")).toContain('aria-label="Restart to update to Sideline 0.2.0"');
-  });
 
   it("labels mixed self and represented messaging without implying a self-send audit", () => {
     const html = render(card());

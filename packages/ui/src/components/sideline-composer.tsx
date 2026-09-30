@@ -5,7 +5,6 @@ import {
   type SidelineDestination,
 } from "@rally/contracts";
 import { useMemo, useState } from "react";
-import { IconDeviceDesktopDown } from "@tabler/icons-react";
 import { Plus, RefreshCw, Search, Send, Trash2 } from "lucide-react";
 
 export type SidelineCardState = "idle" | "sending" | "sent" | "failed" | "unknown";
@@ -105,10 +104,6 @@ export function SidelineComposer(props: {
   onSend: (cardId: string) => void;
   onRetryCatalog: () => void;
   onOpenInRally: (cardId: string) => void;
-  onSignOut: () => void;
-  /** The version waiting to install on restart; the button shows only while one is. */
-  downloadedUpdate?: string | null;
-  onRestartToUpdate?: () => void;
 }): React.JSX.Element {
   const catalogReady = props.status === "ready";
   return (
@@ -122,18 +117,6 @@ export function SidelineComposer(props: {
         <div className="sideline-header-actions">
           <span className="sideline-marker">Messaging</span>
           <span className="sideline-audit-copy">Sending as another participant is audited.</span>
-          {props.downloadedUpdate && props.onRestartToUpdate && (
-            <button
-              aria-label={`Restart to update to Sideline ${props.downloadedUpdate}`}
-              className="sideline-icon-button sideline-update-button"
-              onClick={props.onRestartToUpdate}
-              title={`Restart to update to Sideline ${props.downloadedUpdate}`}
-              type="button"
-            >
-              <IconDeviceDesktopDown aria-hidden="true" size={18} stroke={1.8} />
-            </button>
-          )}
-          <button className="button button-secondary" type="button" onClick={props.onSignOut}>Sign out</button>
         </div>
       </header>
 

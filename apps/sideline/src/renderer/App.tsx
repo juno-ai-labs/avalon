@@ -4,6 +4,7 @@ import {
   SidelineComposer,
   type SidelineCardModel,
 } from "@rally/ui/components/sideline-composer";
+import { SidelineSidebar } from "@rally/ui/components/sideline-sidebar";
 
 import type { SidelineSession } from "../common/bridge";
 
@@ -177,25 +178,36 @@ export default function App(): React.JSX.Element {
   };
 
   return (
-    <SidelineComposer
-      catalog={catalog}
-      workspaceName={session.workspace.name}
-      operatorName={session.user.name}
-      cards={cards}
-      status={status}
-      statusMessage={statusMessage}
-      onAdd={() => setCards((current) => [...current, newCard()])}
-      onRemove={(cardId) => setCards((current) => current.filter((card) => card.id !== cardId))}
-      onChange={change}
-      onSend={(cardId) => void send(cardId)}
-      onRetryCatalog={() => void load()}
-      onOpenInRally={(cardId) => {
-        const card = cards.find((item) => item.id === cardId);
-        if (card) void window.sideline.openInRally({ workstreamId: card.workstreamId, substreamId: card.substreamId });
+    <SidelineSidebar
+      currentUser={{
+        id: session.user.id,
+        name: session.user.name,
+        email: session.user.email,
+        timezone: session.user.timezone,
+        ...(session.user.avatarUrl ? { avatarUrl: session.user.avatarUrl } : {}),
       }}
-      onSignOut={() => void window.sideline.signOut()}
+      workspaceName={session.workspace.name}
       downloadedUpdate={downloadedUpdate}
       onRestartToUpdate={() => void window.sideline.installDownloadedUpdate()}
-    />
+      onSignOut={() => void window.sideline.signOut()}
+    >
+      <SidelineComposer
+        catalog={catalog}
+        workspaceName={session.workspace.name}
+        operatorName={session.user.name}
+        cards={cards}
+        status={status}
+        statusMessage={statusMessage}
+        onAdd={() => setCards((current) => [...current, newCard()])}
+        onRemove={(cardId) => setCards((current) => current.filter((card) => card.id !== cardId))}
+        onChange={change}
+        onSend={(cardId) => void send(cardId)}
+        onRetryCatalog={() => void load()}
+        onOpenInRally={(cardId) => {
+          const card = cards.find((item) => item.id === cardId);
+          if (card) void window.sideline.openInRally({ workstreamId: card.workstreamId, substreamId: card.substreamId });
+        }}
+      />
+    </SidelineSidebar>
   );
 }
