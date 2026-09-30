@@ -7,6 +7,10 @@ function render(downloadedUpdate: string | null): string {
   return renderToStaticMarkup(<SidelineSidebar
     currentUser={{ id: "user", name: "Jordan Lee", email: "jordan@example.com", timezone: "America/Los_Angeles" }}
     workspaceName="Northstar"
+    activeOrganizationId="org-1"
+    organizations={[{ id: "org-1", name: "Northstar" }, { id: "org-2", name: "Juno Labs" }]}
+    onMenuOpen={() => undefined}
+    onSwitchOrganization={async () => "switched" as const}
     downloadedUpdate={downloadedUpdate}
     onRestartToUpdate={() => undefined}
     onSignOut={() => undefined}

@@ -1,6 +1,7 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { IconDeviceDesktopDown, IconLogout, IconMasksTheater } from "@tabler/icons-react";
+import { Check, LoaderCircle } from "lucide-react";
 import { useRef, useState } from "react";
 
 import {
@@ -34,6 +35,14 @@ import {
 export function SidelineSidebar(props: {
   currentUser: WorkspaceMember;
   workspaceName: string;
+  /** The Organization this session is in. */
+  activeOrganizationId: string;
+  /** Every Organization the person belongs to; null until the first read answers. */
+  organizations: ReadonlyArray<{ id: string; name: string }> | null;
+  /** The menu opened: read the Organization list again. */
+  onMenuOpen: () => void;
+  /** How the switch ended; a rejection means it could not be attempted. */
+  onSwitchOrganization: (id: string) => Promise<"switched" | "not_admitted" | "superseded">;
   /** The version waiting to install on restart; the restart controls show only while one is. */
   downloadedUpdate?: string | null;
   onRestartToUpdate?: () => void;
@@ -43,7 +52,21 @@ export function SidelineSidebar(props: {
   const sidebarRef = useRef<HTMLElement>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [width, setWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [switchingId, setSwitchingId] = useState<string | null>(null);
+  const [switchError, setSwitchError] = useState<{ id: string; reason: "not_admitted" | "failed" } | null>(null);
   const effectiveWidth = collapsed ? COLLAPSED_SIDEBAR_WIDTH : width;
+  const switchOrganization = (id: string): void => {
+    setSwitchingId(id);
+    setSwitchError(null);
+    props.onSwitchOrganization(id).then(
+      (outcome) => {
+        if (outcome === "not_admitted") setSwitchError({ id, reason: "not_admitted" });
+        else setMenuOpen(false);
+      },
+      () => setSwitchError({ id, reason: "failed" }),
+    ).finally(() => setSwitchingId(null));
+  };
   const restart = props.downloadedUpdate && props.onRestartToUpdate
     ? { version: props.downloadedUpdate, run: props.onRestartToUpdate }
     : null;
@@ -108,7 +131,16 @@ export function SidelineSidebar(props: {
             expandLabel="Expand navigation"
             leading={(
               <div className="spaces-account-slot">
-                <DropdownMenu.Root>
+                <DropdownMenu.Root
+                  onOpenChange={(open) => {
+                    setMenuOpen(open);
+                    if (open) {
+                      setSwitchError(null);
+                      props.onMenuOpen();
+                    }
+                  }}
+                  open={menuOpen}
+                >
                   <DropdownMenu.Trigger asChild>
                     <AccountTrigger currentUser={props.currentUser} workspaceName={props.workspaceName} />
                   </DropdownMenu.Trigger>
@@ -127,6 +159,39 @@ export function SidelineSidebar(props: {
                           <span>Restart to Update</span>
                         </DropdownMenu.Item>
                       )}
+                      <DropdownMenu.Label className="menu-label workspace-menu-section">Organizations</DropdownMenu.Label>
+                      {(props.organizations ?? [{ id: props.activeOrganizationId, name: props.workspaceName }]).map((organization) => {
+                        const active = organization.id === props.activeOrganizationId;
+                        const switching = organization.id === switchingId;
+                        const error = switchError?.id !== organization.id
+                          ? null
+                          : switchError.reason === "not_admitted"
+                            ? "Sideline isn't available in this Organization"
+                            : "Couldn't switch. Try again.";
+                        return (
+                          <DropdownMenu.Item
+                            aria-label={[organization.name, ...(active ? ["Current"] : []), ...(error ? [error] : [])].join(", ")}
+                            className="menu-item workspace-menu-item"
+                            key={organization.id}
+                            onSelect={(event) => {
+                              if (active || switchingId) return;
+                              // The menu stays open while the switch runs, so the
+                              // spinner and any refusal land where the person is looking.
+                              event.preventDefault();
+                              switchOrganization(organization.id);
+                            }}
+                          >
+                            <span aria-hidden="true" className="workspace-mark">{organization.name.slice(0, 1).toLocaleUpperCase()}</span>
+                            <span className="workspace-menu-copy">
+                              <span>{organization.name}</span>
+                              {error && <small className="workspace-menu-error">{error}</small>}
+                            </span>
+                            {switching && <LoaderCircle aria-label="Opening organization" className="spin" size={14} />}
+                            {active && <Check aria-label="Current" size={14} />}
+                          </DropdownMenu.Item>
+                        );
+                      })}
+                      <DropdownMenu.Separator className="menu-separator account-menu-separator" />
                       <DropdownMenu.Item className="menu-item account-menu-item" onSelect={props.onSignOut}>
                         <IconLogout aria-hidden="true" />
                         <span>Sign out</span>
