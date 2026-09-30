@@ -6,12 +6,15 @@ import { useRef, useState } from "react";
 
 import {
   COLLAPSED_SIDEBAR_WIDTH,
-  DEFAULT_SIDEBAR_WIDTH,
-  MAX_SIDEBAR_WIDTH,
-  MIN_SIDEBAR_WIDTH,
   SIDEBAR_COLLAPSE_DRAG_THRESHOLD,
   SIDEBAR_EXPAND_DRAG_THRESHOLD,
 } from "../lib/sidebar-geometry";
+import {
+  clampSidebarWidth,
+  loadSidebarCollapsed,
+  loadSidebarWidth,
+  saveSidebarPreference,
+} from "../lib/sidebar-preferences";
 import type { WorkspaceMember } from "../lib/types";
 import { AccountTrigger } from "./account-trigger";
 import { SidebarNavigationRowContent } from "./navigation";
@@ -25,6 +28,9 @@ import {
   SidebarRow,
   SidebarScroll,
 } from "./resizable-sidebar";
+
+const SIDEBAR_WIDTH_KEY = "sideline.sidebar-width";
+const SIDEBAR_COLLAPSED_KEY = "sideline.sidebar-collapsed";
 
 /**
  * Sideline's left rail, built from the same parts as Rally's Spaces sidebar:
@@ -50,8 +56,18 @@ export function SidelineSidebar(props: {
   children: React.ReactNode;
 }): React.JSX.Element {
   const sidebarRef = useRef<HTMLElement>(null);
-  const [collapsed, setCollapsed] = useState(false);
-  const [width, setWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+  // Kept per device, as Rally's own sidebars are, under Sideline's keys.
+  const [collapsed, setCollapsedState] = useState(() => loadSidebarCollapsed(SIDEBAR_COLLAPSED_KEY));
+  const [width, setWidthState] = useState(() => loadSidebarWidth(SIDEBAR_WIDTH_KEY));
+  const setCollapsed = (next: boolean): void => {
+    saveSidebarPreference(SIDEBAR_COLLAPSED_KEY, next);
+    setCollapsedState(next);
+  };
+  const setWidth = (next: number): void => {
+    const clamped = clampSidebarWidth(next);
+    saveSidebarPreference(SIDEBAR_WIDTH_KEY, clamped);
+    setWidthState(clamped);
+  };
   const [menuOpen, setMenuOpen] = useState(false);
   const [switchingId, setSwitchingId] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState<{ id: string; reason: "not_admitted" | "failed" } | null>(null);
@@ -74,7 +90,7 @@ export function SidelineSidebar(props: {
   const resize = (requested: number): void => {
     if (collapsed) {
       if (requested < SIDEBAR_EXPAND_DRAG_THRESHOLD) return;
-      setWidth(Math.min(MAX_SIDEBAR_WIDTH, requested));
+      setWidth(requested);
       setCollapsed(false);
       return;
     }
@@ -82,7 +98,7 @@ export function SidelineSidebar(props: {
       setCollapsed(true);
       return;
     }
-    setWidth(Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, requested)));
+    setWidth(requested);
   };
 
   return (
