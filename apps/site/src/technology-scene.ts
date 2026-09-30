@@ -3,6 +3,7 @@ import {
   BufferAttribute,
   BufferGeometry,
   Color,
+  DynamicDrawUsage,
   Matrix3,
   Matrix4,
   PerspectiveCamera,
@@ -12,6 +13,7 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
+import { createBodies, inCut, SHELL, step, WALL, WALL_PLANES, type Bodies } from './shell-physics';
 
 /**
  * The technology schematic: a starfield that gathers into four nested spheres,
@@ -85,8 +87,6 @@ function random(seed: number): () => number {
   };
 }
 
-const inCut = (x: number, y: number, z: number): boolean => x < 0 && y > 0 && z > 0;
-
 function onSphere(rand: () => number, radius: number, keep: (v: Vector3) => boolean): Vector3 {
   const v = new Vector3();
   do {
@@ -99,15 +99,43 @@ function onSphere(rand: () => number, radius: number, keep: (v: Vector3) => bool
 }
 
 /** A point on one of the three quarter-disc walls the cut exposes. */
-function onCutWall(rand: () => number, inner: number, outer: number): Vector3 {
+function onCutWall(rand: () => number, inner: number, outer: number): { at: Vector3; wall: number } {
   const r = Math.sqrt(rand() * (outer * outer - inner * inner) + inner * inner);
   const a = rand() * Math.PI / 2;
   const u = r * Math.cos(a);
   const w = r * Math.sin(a);
   const wall = Math.floor(rand() * 3);
-  if (wall === 0) return new Vector3(-u, w, 0);
-  if (wall === 1) return new Vector3(-u, 0, w);
-  return new Vector3(0, u, w);
+  if (wall === 0) return { at: new Vector3(-u, w, 0), wall };
+  if (wall === 1) return { at: new Vector3(-u, 0, w), wall };
+  return { at: new Vector3(0, u, w), wall };
+}
+
+/** Speeds in scene units per second: slow enough to read as drift. */
+const SHELL_SPEED = [0.05, 0.12] as const;
+const WALL_SPEED = [0.04, 0.1] as const;
+
+/** A random direction of travel in the body's surface, at a random slow speed. */
+function launch(rand: () => number, bodies: Bodies, index: number, at: Vector3, wall: number | null): void {
+  const o = index * 3;
+  bodies.position.set([at.x, at.y, at.z], o);
+  const angle = rand() * Math.PI * 2;
+  let v: Vector3;
+  if (wall === null) {
+    const normal = at.clone().normalize();
+    const any = Math.abs(normal.y) < 0.9 ? new Vector3(0, 1, 0) : new Vector3(1, 0, 0);
+    const e1 = any.cross(normal).normalize();
+    const e2 = normal.clone().cross(e1);
+    v = e1.multiplyScalar(Math.cos(angle)).add(e2.multiplyScalar(Math.sin(angle)));
+    v.multiplyScalar(SHELL_SPEED[0] + rand() * (SHELL_SPEED[1] - SHELL_SPEED[0]));
+  } else {
+    const plane = WALL_PLANES[wall]!;
+    const components = [0, 0, 0];
+    components[plane.a] = Math.cos(angle);
+    components[plane.b] = Math.sin(angle);
+    v = new Vector3(...(components as [number, number, number]));
+    v.multiplyScalar(WALL_SPEED[0] + rand() * (WALL_SPEED[1] - WALL_SPEED[0]));
+  }
+  bodies.velocity.set([v.x, v.y, v.z], o);
 }
 
 /**
@@ -131,7 +159,7 @@ export function layerAnchor(index: number): Vector3 {
   return new Vector3(r * Math.cos(a), r * Math.sin(a), 0);
 }
 
-function buildGeometry(): BufferGeometry {
+function buildGeometry(): { geometry: BufferGeometry; bodies: Bodies } {
   const rand = random(20260930);
   const total = STAR_ONLY + FILL_POINTS + LAYER_POINTS.reduce((sum, n) => sum + n, 0);
   const star = new Float32Array(total * 3);
@@ -158,6 +186,8 @@ function buildGeometry(): BufferGeometry {
   const seamGold = new Color('#f2b441');
   let next = 0;
   const innerPoints = LAYER_POINTS.slice(0, -1).reduce((sum, n) => sum + n, 0);
+  // The layer points come first in every buffer, so body i is particle i.
+  const bodies = createBodies(LAYER_POINTS.reduce((sum, n) => sum + n, 0));
 
   const put = (group: number, shapeAt: Vector3 | null, ballAt: Vector3 | null, tint: Color, seam: boolean, shell: boolean): void => {
     const c = cells[next]!;
@@ -190,9 +220,21 @@ function buildGeometry(): BufferGeometry {
     const count = LAYER_POINTS[index]!;
     for (let n = 0; n < count; n += 1) {
       const onShell = rand() < shellArea / (shellArea + wallArea);
-      const at = onShell
-        ? onSphere(rand, outer, (v) => !inCut(v.x, v.y, v.z))
-        : onCutWall(rand, inner, outer);
+      const body = next;
+      let at: Vector3;
+      if (onShell) {
+        at = onSphere(rand, outer, (v) => !inCut(v.x, v.y, v.z));
+        bodies.kind[body] = SHELL;
+        launch(rand, bodies, body, at, null);
+      } else {
+        const placed = onCutWall(rand, inner, outer);
+        at = placed.at;
+        bodies.kind[body] = WALL;
+        bodies.plane[body] = placed.wall;
+        launch(rand, bodies, body, at, placed.wall);
+      }
+      bodies.inner[body] = inner;
+      bodies.outer[body] = outer;
       let to: Vector3;
       let seam = false;
       if (index === LAYERS.length - 1 && onShell) {
@@ -216,12 +258,12 @@ function buildGeometry(): BufferGeometry {
 
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(star, 3));
-  geometry.setAttribute('aShape', new BufferAttribute(shape, 3));
+  geometry.setAttribute('aShape', new BufferAttribute(shape, 3).setUsage(DynamicDrawUsage));
   geometry.setAttribute('aBall', new BufferAttribute(ball, 3));
   geometry.setAttribute('aColor', new BufferAttribute(color, 3));
   geometry.setAttribute('aBallColor', new BufferAttribute(ballColor, 3));
   geometry.setAttribute('aInfo', new BufferAttribute(info, 4));
-  return geometry;
+  return { geometry, bodies };
 }
 
 const vertexShader = /* glsl */ `
@@ -367,7 +409,10 @@ export function createSchematic(canvas: HTMLCanvasElement, overlay: SVGSVGElemen
     blending: AdditiveBlending,
   });
   uniforms.uEye.value.copy(camera.position);
-  const geometry = buildGeometry();
+  const { geometry, bodies } = buildGeometry();
+  const shape = geometry.getAttribute('aShape') as BufferAttribute;
+  const shapeArray = shape.array as Float32Array;
+  let simulated = -1;
   scene.add(new Points(geometry, material));
 
   const svg = 'http://www.w3.org/2000/svg';
@@ -437,6 +482,21 @@ export function createSchematic(canvas: HTMLCanvasElement, overlay: SVGSVGElemen
 
   const render = (time: number): void => {
     const state = stateAt(time);
+    // Steps are capped so a jump in time (a hidden tab, a seek) moves the
+    // bodies a little rather than tunnelling them through a wall.
+    if (simulated >= 0) {
+      let left = Math.min(1, Math.max(0, time - simulated));
+      while (left > 0) {
+        const dt = Math.min(left, 1 / 30);
+        step(bodies, dt);
+        left -= dt;
+      }
+      shapeArray.set(bodies.position);
+      shape.clearUpdateRanges();
+      shape.addUpdateRange(0, bodies.count * 3);
+      shape.needsUpdate = true;
+    }
+    simulated = time;
     uniforms.uTime.value = time;
     state.form.forEach((value, index) => { uniforms.uForm.value[index] = value; });
     uniforms.uBall.value = state.ball;
