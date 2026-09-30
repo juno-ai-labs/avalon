@@ -174,9 +174,12 @@ function buildGeometry(): BufferGeometry {
   const drift = new Float32Array(total * 4);
 
   // The starfield sits wholly behind the spheres as the camera sees them: a
-  // slab from just past the outer sphere to well beyond it, as wide at each
-  // depth as the view is there (with room for the phone zoom and the wide
-  // layout's offset). A jittered grid spreads it evenly, never regularly.
+  // slab from just past the outer sphere to well beyond it. The field turns
+  // about the line of sight, so each depth is a disc, not a rectangle, wide
+  // enough to cover the view's farthest corner at any turn. That corner is
+  // about 2.6 view half-heights out on a wide phone (the zoom and downward
+  // offset) and 2.5 on the widest desktop figure (the rightward offset). A
+  // jittered grid, mapped onto the disc, spreads it evenly, never regularly.
   const back = CAMERA_FROM.clone().negate();
   const across = new Vector3(0, 1, 0).cross(CAMERA_FROM).normalize();
   const upward = CAMERA_FROM.clone().cross(across);
@@ -188,10 +191,15 @@ function buildGeometry(): BufferGeometry {
   const nz = Math.ceil(1 / cell);
   const starAt = (a: number, b: number, c: number): Vector3 => {
     const depth = nearest + c * (deepest - nearest);
-    const half = Math.tan((FOV / 2) * (Math.PI / 180)) * (CAMERA_DISTANCE + depth) * 1.45;
+    const reach = Math.tan((FOV / 2) * (Math.PI / 180)) * (CAMERA_DISTANCE + depth) * 2.8;
+    // Shirley's concentric map: the square's rings become the disc's rings,
+    // so the grid's even spread survives.
+    const [r, angle] = Math.abs(a) > Math.abs(b)
+      ? [a, (Math.PI / 4) * (b / a)]
+      : [b, b === 0 ? 0 : Math.PI / 2 - (Math.PI / 4) * (a / b)];
     return back.clone().multiplyScalar(depth)
-      .addScaledVector(across, a * half * 2.4)
-      .addScaledVector(upward, b * half);
+      .addScaledVector(across, r * reach * Math.cos(angle))
+      .addScaledVector(upward, r * reach * Math.sin(angle));
   };
   const cells = Array.from({ length: nx * ny * nz }, (_, i) => i);
   for (let i = cells.length - 1; i > 0; i -= 1) {
@@ -366,14 +374,15 @@ vec3 turnAboutView(vec3 p, float a) {
 }
 
 // Whether the camera's view of p passes through the formed spheres, and how
-// much: stars there are dimmed so the spheres read as in front of them.
+// much: stars there are dimmed so the spheres read as in front of them. The
+// dimming lifts as the ball scatters, since nothing stands there any more.
 float behindSpheres(vec3 p) {
   float reach = 0.0;
   for (int i = 0; i < ${LAYERS.length}; i++) reach = max(reach, ${STEP.toFixed(4)} * float(i + 1) * uForm[i]);
   reach = max(reach, ${OUTER.toFixed(4)} * uForm[${LAYERS.length}]);
   vec3 ray = normalize(p - uEye);
   float miss = length(cross(-uEye, ray));
-  return 1.0 - 0.7 * (1.0 - smoothstep(reach * 0.9, reach * 1.05, miss)) * step(0.01, reach);
+  return 1.0 - 0.7 * (1.0 - smoothstep(reach * 0.9, reach * 1.05, miss)) * step(0.01, reach) * (1.0 - uScatter);
 }
 
 void main() {

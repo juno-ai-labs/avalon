@@ -45,9 +45,11 @@ not say on its own.
   and it scatters back to stars.
 - **Starfield:** every star sits behind the spheres as the camera sees them,
   in a slab from just past the outer sphere to well beyond it, and drifts by
-  turning about the camera's line of sight, which keeps its depth. Stars
-  whose line of sight crosses a formed sphere dim, so the spheres read as in
-  front.
+  turning about the camera's line of sight, which keeps its depth. Because it
+  turns, each depth is a disc sized to the view's farthest corner, not a
+  rectangle sized to the view. Stars whose line of sight crosses a formed
+  sphere dim, so the spheres read as in front; the dimming lifts as the ball
+  scatters.
 - **Drift:** every layer point moves, computed in the vertex shader from
   time alone, with no per-frame CPU work or buffer upload. A shell point
   slides along its own great circle; shells are sampled over the whole sphere
@@ -133,6 +135,20 @@ the IntersectionObserver that starts the scene, so timing from page load
 drifts.
 
 ## Changelog
+
+### 2026-09-30 — The starfield covers the view at every turn and brightens after the scatter
+
+**What changed:** Each depth of the starfield is now a disc, filled through a
+concentric square-to-disc map so the jittered grid stays even, instead of a
+wide rectangle. The dimming behind the spheres fades out with the scatter.
+
+**Why:** The field turns about the line of sight and the clock never wraps
+that turn, so within a minute a rectangle's short side swung into the view
+and left a bare corner. The dimming read the layers' form, which stays at 1
+through the scatter, so a dark disc sat where the ball had been until the
+loop wrapped, and then snapped bright. A larger rectangle was rejected: any
+rectangle bares a corner at some turn. A future change to the camera zoom or
+view offsets must keep the disc's radius past the view's farthest corner.
 
 ### 2026-09-30 — The technology schematic is added to the landing page
 
