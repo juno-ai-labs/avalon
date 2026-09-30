@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { ArrowRight, GitBranch, LockKeyhole, Plus, Search } from 'lucide-react';
 import { onboardingMotion } from '../lib/onboarding-motion';
-import { Button, InlineError, RallyMark } from './primitives';
+import { Button, ConnectorMark, InlineError, RallyMark } from './primitives';
+import type { PluginBrandMark } from '../lib/plugin-marks';
 import { PersonalAvatar } from './personal-avatar';
 import { ResourceEmbedCard } from './markdown-citations';
 import '../styles/onboarding-introduction.css';
 
 const slides = [
-  { scene: 3, title: 'Meet Rally. Work moves forward together.', description: 'Bring your team and Rally into the same stream. Share context, give direction, and build on each other’s work.', next: 'Meet streams' },
+  { scene: 3, title: 'STOP COPY-PASTING BETWEEN CLAUDE AND SLACK.', description: 'Rally gives you, your (human) coworkers, and an AI agent a single place to get work done together.', next: 'Meet channels' },
   { scene: 1, title: 'A stream gives your work a home.', description: 'Give each area of work its own stream. As your team and Rally make progress, active work rises to the top.', next: 'Explore breakouts' },
   { scene: 2, title: 'Explore an idea in a breakout.', description: 'Take a focused conversation off Main, with context from your stream.', next: 'Get started' },
 ] as const;
@@ -101,24 +102,42 @@ function SubstreamStory(): React.JSX.Element {
   </div>;
 }
 
+type ToolCall = { mark: PluginBrandMark; label: string };
+type ScenarioMessage =
+  | { author: 'Rally'; text: string; tools?: readonly ToolCall[]; artifact?: string }
+  | { author: 'Leonardo' | 'Alan' | 'Grace'; text: React.ReactNode };
+
+/** The launch-announcement thread from the landing page (`apps/site/index.html`). */
+const launchScenario: readonly ScenarioMessage[] = [
+  { author: 'Leonardo', text: 'Let’s draft our launch announcement. Use yesterday’s meeting notes and the positioning doc.' },
+  { author: 'Rally', text: 'I’ve pulled both. Here’s a first draft for everyone to build on.', tools: [{ mark: 'granola', label: 'Read meeting notes' }, { mark: 'google-drive', label: 'Read positioning doc' }] },
+  { author: 'Alan', text: <>The launch is Tuesday now. <strong>@Grace</strong>, is the pricing final?</> },
+  { author: 'Grace', text: 'Yes, $20 per human. Lead with how teams can work together.' },
+  { author: 'Rally', text: 'Updated the date, added the pricing, and put teamwork first.' },
+  { author: 'Leonardo', text: 'Looks good. Save it to our shared Drive folder.' },
+  { author: 'Rally', text: 'Saved. Everyone has the latest version.', tools: [{ mark: 'google-drive', label: 'Saved to shared Drive' }], artifact: 'Launch announcement' },
+];
+
 function Story({ step }: { step: number }): React.JSX.Element {
   const [previewOpen, setPreviewOpen] = useState(false);
-  const ongoing = step === 1;
-  const fileTitle = ongoing ? 'Customer pilot plan' : 'Customer welcome session';
   if (step === 1) return <SidebarStory />;
   if (step === 2) return <SubstreamStory />;
   return <div className={`onboarding-story onboarding-story-step-${step}`}>
     <div className="onboarding-story-frame">
-      {(step === 3 || step === 1) && <div className="onboarding-stream-preview">
-
+      <div className="onboarding-stream-preview">
         <div className="onboarding-preview-feed">
-          <div className="onboarding-preview-message"><span className="onboarding-story-person"><strong>Aspen</strong>{ongoing && <small>Last week</small>}</span><p>{ongoing ? "Let’s use this stream to plan our customer pilot." : "Rally, help us plan a welcome session for our new customers."}</p></div>
-          <div className="onboarding-preview-message onboarding-preview-rally"><span className="onboarding-story-person"><RallyMark /><strong>Rally</strong></span><p>{ongoing ? "Here’s a starting plan. We can keep building on it as the pilot progresses." : "Let’s do a short walkthrough, then Q&A. Who can host?"}</p></div>
-          <div className="onboarding-preview-message onboarding-preview-sam"><span className="onboarding-story-person"><strong>Harper</strong>{ongoing && <small>Today</small>}</span><p>{ongoing ? "The first five customers are in. Add a feedback session for Friday." : "I can host on Tuesday. Let’s leave time for questions."}</p></div>
-          <div className="onboarding-preview-message onboarding-preview-rally"><span className="onboarding-story-person"><RallyMark /><strong>Rally</strong></span><p>{ongoing ? "Updated the same plan with Friday’s feedback session and our next steps." : "Here’s the plan for Tuesday, with Harper hosting and time for Q&A."}</p><ResourceEmbedCard label={fileTitle} resource={{ id: 'onboarding-example-plan', title: `${fileTitle}.md`, resourceType: 'file', mimeType: 'text/markdown' }} onOpen={() => setPreviewOpen((open) => !open)} />{previewOpen && (ongoing ? <p>First cohort · 5 customers<br />Feedback session · Friday<br />Next · Review feedback and update the plan</p> : <p>Welcome &amp; introductions · 5 min<br />Product walkthrough · 15 min<br />Questions &amp; next steps · 10 min</p>)}</div>
-          <div className="onboarding-preview-composer"><span>Message your team and Rally…</span><ArrowRight size={16} /></div>
+          {launchScenario.map((message, index) => {
+            const style = { '--message-index': index } as CSSProperties;
+            if (message.author !== 'Rally') return <div key={index} className={`onboarding-preview-message onboarding-preview-${message.author.toLowerCase()}`} style={style}><span className="onboarding-story-person"><strong>{message.author}</strong></span><p>{message.text}</p></div>;
+            return <div key={index} className="onboarding-preview-message onboarding-preview-rally" style={style}>
+              <span className="onboarding-story-person"><RallyMark /><strong>Rally</strong></span><p>{message.text}</p>
+              {message.tools && <div className="onboarding-preview-tools" aria-label="Tools used">{message.tools.map((tool) => <span key={tool.label}><ConnectorMark mark={tool.mark} />{tool.label}</span>)}</div>}
+              {message.artifact && <ResourceEmbedCard label={message.artifact} resource={{ id: 'onboarding-example-announcement', title: `${message.artifact}.md`, resourceType: 'file', mimeType: 'text/markdown' }} onOpen={() => setPreviewOpen((open) => !open)} />}
+              {message.artifact && previewOpen && <p>Launching Tuesday · Built for teams<br />Pricing · $20 per human<br />Rally, your coworkers, and AI in one place</p>}
+            </div>;
+          })}
         </div>
-      </div>}
+      </div>
     </div>
   </div>;
 }

@@ -62,7 +62,11 @@
 .onboarding-preview-message > .onboarding-story-person .personal-avatar { display: none; }
 .onboarding-preview-message:not(.onboarding-preview-rally) > .onboarding-story-person::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--preview-person-color); }
 .onboarding-preview-message:not(.onboarding-preview-rally) > p { background: var(--preview-person-color); color: white; padding: 11px 16px; border-radius: 22px; margin-top: 0; }
-.onboarding-preview-sam { --preview-person-color: #aa298e; }
+.onboarding-preview-sam, .onboarding-preview-grace { --preview-person-color: #aa298e; }
+.onboarding-preview-alan { --preview-person-color: #1f8a65; }
+.onboarding-preview-tools { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 12px; color: var(--av-sys-color-text-muted); }
+.onboarding-preview-tools > span { display: inline-flex; align-items: center; gap: 6px; }
+.onboarding-preview-tools .connector-mark, .onboarding-preview-tools svg { width: 14px; height: 14px; }
 .onboarding-preview-rally { justify-self: stretch; max-width: 100%; padding: 12px 0; border-radius: 0; background: transparent; }
 .onboarding-preview-rally > .onboarding-story-person { justify-content: flex-start; }
 .onboarding-preview-message p { margin: 5px 0 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; font-size: 13px; line-height: 1.5; }
@@ -80,6 +84,12 @@
 .onboarding-preview-message:nth-child(4) { animation-delay: calc(var(--story-beat) * 3.4); }
 .onboarding-preview-rally { transform-origin: left top; }
 .onboarding-preview-rally .citation-card { animation: onboarding-message-arrive var(--story-duration) var(--story-spring) both; animation-delay: calc(var(--story-beat) * 4.2); transform-origin: left top; }
+.onboarding-stream-preview .onboarding-preview-feed { gap: 6px; }
+.onboarding-stream-preview .onboarding-preview-rally { padding: 2px 0; }
+.onboarding-stream-preview .onboarding-preview-message > .onboarding-story-person { margin-bottom: 4px; }
+.onboarding-stream-preview .onboarding-preview-message:not(.onboarding-preview-rally) > p { padding: 8px 16px; }
+.onboarding-stream-preview .onboarding-preview-message { animation-delay: calc(var(--story-beat) * (var(--message-index) + .4)); }
+.onboarding-stream-preview .citation-card { animation-delay: calc(var(--story-beat) * (var(--message-index) + 1.2)); }
 @keyframes onboarding-message-arrive {
   from { opacity: 0; visibility: hidden; transform: translateY(10px) scale(.98); }
   to { opacity: 1; visibility: visible; transform: none; }

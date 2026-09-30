@@ -63,7 +63,7 @@ describe('new-account learning paths', () => {
   it('introduces the platform before offering sign-in without fetching private account data', async () => {
     state.signedIn = false;
     show();
-    expect(screen.getByRole('heading', { name: 'Meet Rally. Work moves forward together.' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'STOP COPY-PASTING BETWEEN CLAUDE AND SLACK.' })).toBeInTheDocument();
     expect(state.getAccount).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     expect(await screen.findByText('Ordinary organization')).toBeInTheDocument();
@@ -178,7 +178,7 @@ describe('new-account learning paths', () => {
     expect(screen.getByRole('heading', { name: 'Opening Rally' })).toBeInTheDocument();
     expect(screen.queryByText('Ordinary organization')).not.toBeInTheDocument();
     await act(async () => { resolveLookup({ ...state.account, introduced: false }); });
-    expect(await screen.findByRole('heading', { name: 'Meet Rally. Work moves forward together.' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'STOP COPY-PASTING BETWEEN CLAUDE AND SLACK.' })).toBeInTheDocument();
     expect(screen.queryByText('Ordinary organization')).not.toBeInTheDocument();
   });
   it('still introduces an eligible organization account when its background lookup completes', async () => {
@@ -188,7 +188,7 @@ describe('new-account learning paths', () => {
     expect(screen.getByText('Ordinary organization')).toBeInTheDocument();
     expect(screen.getByTestId('admission')).toHaveTextContent('blocked');
     await act(async () => { resolveLookup({ ...state.account, introduced: false }); });
-    expect(await screen.findByRole('heading', { name: 'Meet Rally. Work moves forward together.' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'STOP COPY-PASTING BETWEEN CLAUDE AND SLACK.' })).toBeInTheDocument();
     expect(screen.queryByText('Ordinary organization')).not.toBeInTheDocument();
   });
   it('withholds admission when pending journey progress resolves to unfinished setup', async () => {
