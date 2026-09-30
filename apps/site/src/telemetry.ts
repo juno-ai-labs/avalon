@@ -295,9 +295,9 @@ function reportSiteAction(link: SiteActionLink): void {
 export const SITE_ACTION_LINKS = {
   'download-header': { action: 'download', placement: 'header' },
   'download-hero': { action: 'download', placement: 'hero' },
-  'download-pricing-pro': { action: 'download', placement: 'pricing', plan: 'pro' },
-  'download-pricing-max': { action: 'download', placement: 'pricing', plan: 'max' },
-  'download-pricing-ultra': { action: 'download', placement: 'pricing', plan: 'ultra' },
+  'download-pricing-start': { action: 'download', placement: 'pricing', plan: 'start' },
+  'download-pricing-grow': { action: 'download', placement: 'pricing', plan: 'grow' },
+  'contact-pricing-enterprise': { action: 'founder_contact', placement: 'pricing', plan: 'enterprise' },
   'demo-request': { action: 'demo_request', placement: 'sidekicks' },
   'founder-contact': { action: 'founder_contact', placement: 'team' },
   'support-contact-footer': { action: 'support_contact', placement: 'footer' },
