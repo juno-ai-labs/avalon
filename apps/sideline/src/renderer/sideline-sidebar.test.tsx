@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SidelineSidebar } from "@rally/ui/components/sideline-sidebar";
 
@@ -32,5 +32,40 @@ describe("Sideline sidebar", () => {
   it("offers a restart in the header only while an update is downloaded", () => {
     expect(render(null)).not.toContain("Restart to update");
     expect(render("0.2.0")).toContain('aria-label="Restart to update to Sideline 0.2.0"');
+  });
+
+  describe("saved size", () => {
+    const stored = new Map<string, string>();
+    beforeEach(() => {
+      stored.clear();
+      vi.stubGlobal("window", {
+        localStorage: {
+          getItem: (key: string) => stored.get(key) ?? null,
+          setItem: (key: string, value: string) => { stored.set(key, value); },
+        },
+      });
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("opens at the width this device saved", () => {
+      stored.set("sideline.sidebar-width", "320");
+
+      expect(render(null)).toContain("--spaces-sidebar-width:320px");
+    });
+
+    it("opens collapsed when this device saved it collapsed", () => {
+      stored.set("sideline.sidebar-width", "320");
+      stored.set("sideline.sidebar-collapsed", "true");
+
+      const html = render(null);
+      expect(html).toContain("--spaces-sidebar-width:88px");
+      expect(html).toContain("is-compact");
+    });
+
+    it("falls back to the default width when the saved one is unreadable", () => {
+      stored.set("sideline.sidebar-width", "wide");
+
+      expect(render(null)).toContain("--spaces-sidebar-width:280px");
+    });
   });
 });
