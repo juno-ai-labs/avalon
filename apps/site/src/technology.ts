@@ -12,7 +12,10 @@ const overlay = figure?.querySelector('svg');
 
 if (figure && canvas && overlay) {
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
-  const schematic = createSchematic(canvas, overlay);
+  // The descriptions come from the layer list under the figure, in the same
+  // order as LAYERS, so the copy is written once.
+  const details = Array.from(document.querySelectorAll('.tech-layers p'), (item) => item.textContent ?? '');
+  const schematic = createSchematic(canvas, overlay, details);
   // Hidden until the viewport observer says otherwise: the loader's margin
   // starts the scene early, but only an on-screen figure advances the clock.
   let visible = false;

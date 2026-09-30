@@ -55,6 +55,12 @@ not say on its own.
   light, and a cast shadow from every formed shell the ray to the light
   crosses outside the cut. The light leans right of the cut so its rim throws
   a shadow band into the corner.
+- **Descriptions:** during a layer's turn, from its label appearing until the
+  next layer starts forming, its description from the text list shows under
+  its label and the labels below slide down to make room. `technology.ts`
+  reads the descriptions from the list, so the copy is written once. On a
+  phone the label stack has no room, so the description runs along the bottom
+  of the figure instead.
 - **Loading:** the schematic and three.js are a separate build entry, not a
   lazy `import()` (which `rally/no-dynamic-import` forbids). The landing
   page's own bundle carries only `technology-loader.ts`, which adds the
@@ -69,8 +75,9 @@ not say on its own.
 ## Invariants
 
 - **`LAYERS` order is inside out and matches the text list in `index.html`.**
-  The geometry assigns radii by index and the labels stack by index; reordering
-  one without the other mislabels a layer. No automated guard; verified
+  The geometry assigns radii by index, the labels stack by index, and each
+  label's description is read from the list item at the same index; reordering
+  one without the other mislabels a layer or describes it with another's text. No automated guard; verified
   visually.
 - **The cut octant, the anchors, and the camera agree.** The cut is the octant
   facing the camera and the anchors sit on its back wall. Moving the camera to a
@@ -129,7 +136,8 @@ point-cloud cut-away that forms layer by layer, becomes a tennis ball, and
 dissolves back into stars on a loop. Each layer's points drift in the shader,
 the cut-wall points bouncing off their ring's edges, and a directional
 light shades them and casts shadows from each shell, in the icon palette's
-colors, with a brand-neon seam on the ball.
+colors, with a brand-neon seam on the ball. Each layer's description shows
+under its label during its turn.
 
 **Why:** The landing page said what Rally does but nothing about how it is
 built. A cut-away shows the layers and how they nest in one picture, and the

@@ -141,3 +141,5 @@ h1{white-space:pre-line;max-width:56rem;margin:0 auto;font-size:4.5rem}
 .tech-layers p{margin-top:8px;font-size:var(--small);line-height:1.6;color:var(--muted)}
 @media(max-width:1050px){.tech-layers{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:640px){.tech-figure{height:420px}.tech-label text{font-size:10px;letter-spacing:.08em}.tech-layers{grid-template-columns:minmax(0,1fr)}}
+.tech-detail{position:absolute;margin:0;pointer-events:none;opacity:0;font-size:13px;line-height:1.5;color:var(--soft)}
+@media(max-width:640px){.tech-detail{font-size:11px}}
