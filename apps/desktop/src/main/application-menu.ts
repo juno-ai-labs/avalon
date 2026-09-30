@@ -1,5 +1,5 @@
 import type { MenuItemConstructorOptions } from 'electron';
-import type { UpdateStatus } from './updater';
+import type { DesktopUpdateStatus } from '../common/desktop';
 
 export interface ApplicationMenuActions {
   readonly openSettings: () => void;
@@ -11,12 +11,12 @@ export interface ApplicationMenuActions {
 export interface ApplicationMenuOptions {
   readonly appName: string;
   readonly platform: NodeJS.Platform;
-  readonly updateStatus: UpdateStatus;
+  readonly updateStatus: DesktopUpdateStatus;
   readonly actions: ApplicationMenuActions;
 }
 
 export function updateMenuItem(
-  status: UpdateStatus,
+  status: DesktopUpdateStatus,
   actions: Pick<ApplicationMenuActions, 'checkForUpdates' | 'installDownloadedUpdate'>,
 ): MenuItemConstructorOptions {
   switch (status.kind) {

@@ -6,8 +6,8 @@ import {
   type AutoUpdateDependencies,
   type AutoUpdaterPort,
   type UpdateOutcome,
-  type UpdateStatus,
 } from './updater';
+import type { DesktopUpdateStatus } from '../common/desktop';
 
 class FakeUpdater extends EventEmitter implements AutoUpdaterPort {
   autoDownload = false;
@@ -23,7 +23,7 @@ class FakeUpdater extends EventEmitter implements AutoUpdaterPort {
 
 function setup(overrides: Partial<AutoUpdateDependencies> = {}) {
   const updater = new FakeUpdater();
-  const statuses: UpdateStatus[] = [];
+  const statuses: DesktopUpdateStatus[] = [];
   const showMessageBox = vi.fn(async () => ({ response: 1, checkboxChecked: false }));
   const openExternal = vi.fn(async () => undefined);
   const unref = vi.fn();

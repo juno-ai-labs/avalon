@@ -1190,15 +1190,12 @@ checks the newly selected feed; only a download from that feed re-enables
 install-on-quit. The site and `Rally.dmg` continue to advertise the newest
 published desktop release; the channel choice governs automatic updates.
 
-A downloaded update does not interrupt. While one is staged, the Spaces sidebar
-shows a restart button (Tabler `device-desktop-down`) left of **+**, the account
-menu shows **Restart to Update** at its top, and the app menu keeps its own
-item; each calls the same `installDownloadedUpdate`. The native **Update
-ready** dialog appears only once the running build is more than seven days old
-(`STALE_BUILD_PROMPT_AGE_MS` in `updater.ts`), once per downloaded version,
-checked when the download lands and on each three-hourly check. The build's age
-comes from `__RALLY_BUILD_TIME__`, which `electron.vite.config.ts` stamps into
-the main bundle; an unstamped build never prompts.
+A downloaded update does not interrupt: the app offers the restart in the
+window, and the native **Update ready** dialog appears only once the running
+build is more than seven days old (`STALE_BUILD_PROMPT_AGE_MS` in
+`updater.ts`). The build's age comes from `__RALLY_BUILD_TIME__`, which
+`electron.vite.config.ts` stamps into the main bundle; an unstamped build never
+prompts.
 
 Desktop publication and landing-site deployment are independent. The release workflow advances the canonical `Rally.dmg`; `deploy-site.yml` is the only workflow that publishes the landing Worker, whose direct canonical link does not render or otherwise depend on a desktop version. This separation removes both directions of the old race: a site deploy cannot carry stale release metadata, and a long-running desktop release cannot overwrite a newer site. The latter happened during the 1.182.0 build on 2026-08-27, when the release redeployed its hour-old site checkout and reverted a live fix for twenty-five minutes. The intermediate mitigation rebuilt the site from the tip of `main`; once the homepage stopped rendering release state, removing the redundant release-time deployment eliminated the race instead.
 

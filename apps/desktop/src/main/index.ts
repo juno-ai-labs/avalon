@@ -78,6 +78,7 @@ import type {
   DesktopPowerState,
   DesktopSession,
   DesktopTelemetryProductIntent,
+  DesktopUpdateStatus,
   DesktopTelemetryScreen,
   DesktopPendingWorkspaceInvitation,
   DesktopWorkspaceOnboardingState,
@@ -278,9 +279,7 @@ import {
 import {
   initializeAutoUpdate,
   type AutoUpdateController,
-  type UpdateStatus,
 } from './updater';
-import { rallyBuildTime } from './build-time';
 import {
   supersededUserDataDirectories,
   userDataDirectoryForLaunch,
@@ -322,6 +321,7 @@ const rendererProtocol = 'app';
  * are gone.
  */
 const rendererHost = 'rallywithai';
+declare const __RALLY_BUILD_TIME__: string | undefined;
 const UPDATE_SESSION_SETTLE_TIMEOUT_MS = 5_000;
 /** A signed-in cold launch can pay DNS, TLS, Worker activation, and the
  * canonical regional D1 read. Keep the verification bounded without treating
@@ -561,7 +561,7 @@ let sessionMutationTail: Promise<void> = Promise.resolve();
 let sessionLifecycleEpoch = 0;
 let workspaceSelectionIntent = 0;
 let loggingOut = false;
-let updateStatus: UpdateStatus = { kind: 'idle' };
+let updateStatus: DesktopUpdateStatus = { kind: 'idle' };
 let autoUpdateController: AutoUpdateController | null = null;
 let desktopReleaseChannel: DesktopReleaseChannel = defaultDesktopReleaseChannel;
 let updateInstallationPending = false;
@@ -4995,7 +4995,8 @@ if (!singleInstanceLock) {
       arch: process.arch,
       env: process.env,
       currentVersion: app.getVersion(),
-      currentBuildTime: rallyBuildTime(),
+      // Stamped by electron.vite.config.ts; absent where no build ran (unit tests).
+      currentBuildTime: typeof __RALLY_BUILD_TIME__ === 'string' ? Date.parse(__RALLY_BUILD_TIME__) : undefined,
       releaseChannel: desktopReleaseChannel,
       showMessageBox: (options) => dialog.showMessageBox(options),
       openExternal: (url) => shell.openExternal(url),
