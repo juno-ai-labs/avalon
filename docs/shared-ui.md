@@ -50,7 +50,12 @@ toggle when compact; a footer with an account slot keeps the slot and toggle as
 one trailing control row. The browser Spaces hierarchy has no collapse control,
 so it composes the lower-level `SidebarFooter` with the same account-slot
 layout. Hosts provide labels, persistence and the optional leading content
-rather than rebuilding either layout.
+rather than rebuilding either layout. A host that keeps a sidebar's width and
+collapsed state across launches does it through `lib/sidebar-preferences.ts`
+under its own local-storage keys. A missing or unreadable width falls back to
+the default, a readable one is clamped to the sidebar's limits, a missing
+collapsed flag reads as expanded, and a refused write leaves the in-memory state
+standing.
 
 `SidebarRow` also owns the optional hierarchy count badge. A positive count is
 a trailing badge inside the row's padding when expanded and overlaps the mark's
@@ -146,6 +151,27 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-09-30 — One helper keeps a sidebar's size across launches
+
+**What changed:** `lib/sidebar-preferences.ts` holds the load, clamp and save
+that Rally's desktop store wrote out once per sidebar. The desktop store now
+calls it with its existing keys, and Sideline's sidebar uses it under
+`sideline.sidebar-width` and `sideline.sidebar-collapsed`, so Sideline opens at
+the size it was left.
+
+**Why:** Sideline's sidebar reset on every launch. Copying the desktop's
+functions into a second host would have made three copies of the same
+best-effort storage handling.
+
+**Considered and rejected:** Sharing the desktop's keys with Sideline. The two
+apps size their rails independently, so each keeps its own keys.
+
+**Consequences:** The desktop keys are unchanged, so saved sizes carry over.
+A new host that persists a sidebar should call this helper rather than touch
+local storage itself.
+
+PR [#1034](https://github.com/juno-ai-labs/avalon/pull/1034).
 
 ### 2026-09-22 — The shared Breakout rail owns stable alphabetical order
 
