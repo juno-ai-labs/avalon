@@ -429,6 +429,8 @@ void main() {
 export type SceneState = {
   readonly form: readonly number[];
   readonly labels: readonly number[];
+  /** How much of each layer's description shows: only during that layer's turn. */
+  readonly details: readonly number[];
   readonly ball: number;
   readonly scatter: number;
   readonly spin: number;
@@ -441,6 +443,12 @@ export function stateAt(time: number): SceneState {
   return {
     form: [...LAYERS.map((_, index) => ramp(t, layerStart(index), FORM)), ramp(t, FILL_START, FILL)],
     labels: LAYERS.map((_, index) => ramp(t, layerStart(index) + FORM - 0.6, 0.8) * fadeLabels),
+    // A layer's turn runs from its label appearing until the next layer starts
+    // to form; the last layer's runs through the final hold.
+    details: LAYERS.map((_, index) => {
+      const end = index === LAYERS.length - 1 ? FILL_START : layerStart(index + 1);
+      return ramp(t, layerStart(index) + FORM - 0.6, 0.8) * (1 - ramp(t, end, 0.6));
+    }),
     ball: ramp(t, BALL_START, BALL),
     scatter: ramp(t, SCATTER_START, SCATTER),
     spin: Math.max(0, t - BALL_START) * 0.55,
@@ -452,7 +460,12 @@ export type Schematic = {
   resize(): void;
 };
 
-export function createSchematic(canvas: HTMLCanvasElement, overlay: SVGSVGElement): Schematic {
+/**
+ * `details` holds one description per layer, in `LAYERS` order; each shows
+ * under its label during that layer's turn. The caller reads them from the
+ * page so the copy lives in one place.
+ */
+export function createSchematic(canvas: HTMLCanvasElement, overlay: SVGSVGElement, details: readonly string[] = []): Schematic {
   const renderer = new WebGLRenderer({ canvas, antialias: false, alpha: true, powerPreference: 'low-power' });
   renderer.setClearColor(0x000000, 0);
   const scene = new Scene();
@@ -500,6 +513,13 @@ export function createSchematic(canvas: HTMLCanvasElement, overlay: SVGSVGElemen
     overlay.append(group);
     return { group, text, line, dot, width: 0 };
   });
+  const notes = LAYERS.map((_, index) => {
+    const note = document.createElement('p');
+    note.className = 'tech-detail';
+    note.textContent = details[index] ?? '';
+    overlay.after(note);
+    return { note, height: 0 };
+  });
 
   const spinAxis = new Vector3(0.35, 1, 0.2).normalize();
   const spin = new Matrix4();
@@ -525,6 +545,15 @@ export function createSchematic(canvas: HTMLCanvasElement, overlay: SVGSVGElemen
     uniforms.uPixel.value = renderer.getPixelRatio() * Math.min(1.4, Math.max(0.8, height / 560));
     overlay.setAttribute('viewBox', `0 0 ${width} ${height}`);
     labels.forEach((label) => { label.width = label.text.getComputedTextLength(); });
+    // On wide layouts a description sits under its label and ends before the
+    // leader lines' elbows. A phone has no room there, so it runs along the
+    // bottom of the figure instead.
+    const widest = Math.max(...labels.map((label) => label.width));
+    const noteWidth = narrow ? width - 24 : Math.max(240, widest + 40);
+    notes.forEach((entry) => {
+      entry.note.style.width = `${noteWidth}px`;
+      entry.height = entry.note.textContent ? entry.note.offsetHeight + 6 : 0;
+    });
   };
 
   const placeLabels = (state: SceneState): void => {
@@ -540,7 +569,16 @@ export function createSchematic(canvas: HTMLCanvasElement, overlay: SVGSVGElemen
     const elbow = left + Math.max(...labels.map((label) => label.width)) + 12;
     labels.forEach((label, index) => {
       const slot = LAYERS.length - 1 - index;
-      const y = top + slot * gap;
+      // A showing description pushes every label below its own down.
+      let push = 0;
+      for (let above = index + 1; !narrow && above < LAYERS.length; above += 1) {
+        push += notes[above]!.height * state.details[above]!;
+      }
+      const y = top + slot * gap + push;
+      const note = notes[index]!;
+      note.note.style.left = `${narrow ? 12 : left}px`;
+      note.note.style.top = `${narrow ? height - note.height - 8 : y + 8}px`;
+      note.note.style.opacity = state.details[index]!.toFixed(3);
       const end = elbow + slot * (narrow ? 14 : 20);
       const anchor = anchors[index]!;
       label.text.setAttribute('x', String(left));
