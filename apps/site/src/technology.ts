@@ -3,8 +3,9 @@ import { createSchematic, MOMENTS } from './technology-scene';
 /**
  * Starts the technology schematic once its figure nears the screen, so the GPU
  * does no work for a reader who never scrolls that far. The clock runs only
- * while the figure is visible: a reader always arrives at the starfield, and an
- * off-screen figure costs nothing.
+ * while the figure is visible: a first-time reader arrives at the starfield, a
+ * returning one picks up where they left, and an off-screen figure costs
+ * nothing.
  */
 const figure = document.querySelector<HTMLElement>('[data-tech-schematic]');
 const canvas = figure?.querySelector('canvas');
@@ -17,7 +18,6 @@ if (figure && canvas && overlay) {
   const start = (): void => {
     started = true;
     const schematic = createSchematic(canvas, overlay);
-    figure.dataset.ready = 'true';
     // Hidden until the viewport observer says otherwise: the preload margin
     // starts the scene early, but only an on-screen figure advances the clock.
     let visible = false;

@@ -27,7 +27,7 @@ import { createBodies, inCut, SHELL, step, WALL, WALL_PLANES, type Bodies } from
  * CPU a few uniform writes and five label projections.
  */
 
-export type Layer = { readonly name: string; readonly color: string };
+type Layer = { readonly name: string; readonly color: string };
 
 export const LAYERS: readonly Layer[] = [
   // Colors are the product's icon palette (`--av-sys-color-project-*` in
@@ -157,7 +157,7 @@ function onSeam(t: number, radius: number): Vector3 {
 }
 
 /** Where a layer's label points: its band on the back wall of the cut. */
-export function layerAnchor(index: number): Vector3 {
+function layerAnchor(index: number): Vector3 {
   const r = STEP * (index + 0.6);
   const a = (118 * Math.PI) / 180;
   return new Vector3(r * Math.cos(a), r * Math.sin(a), 0);
@@ -431,7 +431,6 @@ export function stateAt(time: number): SceneState {
 export type Schematic = {
   render(time: number): void;
   resize(): void;
-  dispose(): void;
 };
 
 export function createSchematic(canvas: HTMLCanvasElement, overlay: SVGSVGElement): Schematic {
@@ -568,10 +567,5 @@ export function createSchematic(canvas: HTMLCanvasElement, overlay: SVGSVGElemen
   return {
     render,
     resize,
-    dispose: () => {
-      geometry.dispose();
-      material.dispose();
-      renderer.dispose();
-    },
   };
 }

@@ -2,12 +2,12 @@
 
 The Technology section of the public landing page (`rallywith.ai/#technology`)
 shows Rally's stack as a cut-away sphere drawn in points. A starfield gathers
-into five nested spheres, one at a time, each labeled with a gold leader line:
-the LLM routing core, Authorization, Sidekicks, Connectors, and Multiplayer
-collaboration. The octant facing the viewer is cut away so every layer shows.
-After a long hold the cut fills in, the sphere becomes a tennis ball with a
-neon seam, spins, and breaks back into the starfield, and the loop starts
-again.
+into five nested spheres, one at a time, each labeled with an amber leader
+line: the LLM routing core, Authorization, Sidekicks, Connectors, and
+Multiplayer collaboration. The octant facing the viewer is cut away so every
+layer shows. After a long hold the cut fills in, the sphere becomes a tennis
+ball with a neon seam, spins, and breaks back into the starfield, and the loop
+starts again.
 
 Read this before changing the animation, its timing, its labels, or how it
 loads.
@@ -18,122 +18,45 @@ loads.
 | --- | --- |
 | `apps/site/index.html` | The `#technology` section: heading, the `[data-tech-schematic]` figure, and the five-item layer list that carries the same content as text |
 | `apps/site/src/technology.ts` | Page entry: starts the scene when the figure nears the screen, runs the clock only while it is visible, honors reduced motion |
-| `apps/site/src/shell-physics.ts` | The physics engine: bodies held on a sphere or a cut wall, moving at constant speed and bouncing elastically off the cut planes and the ring arcs |
-| `apps/site/src/technology-scene.ts` | The scene: `LAYERS` (names and colors), the timeline (`stateAt`, `MOMENTS`, `LOOP`), particle geometry, shaders, and the SVG label overlay |
-| `apps/site/src/landing.css` | `.tech-*` rules: figure size, label type, the gold line color, the layer list |
+| `apps/site/src/technology-scene.ts` | The scene: `LAYERS`, the timeline (`stateAt`, `MOMENTS`, `LOOP`), particle geometry, the shader with its lighting, and the SVG label overlay |
+| `apps/site/src/shell-physics.ts` | The physics engine for the layer points |
+| `apps/site/src/landing.css` | `.tech-*` rules: figure size, label type, the amber of the lines, dots and numerals, the layer list |
 
 `LAYERS` is the scene's single source of the layer names, their order (inside
 out), and their colors. The text list in `index.html` repeats the names and the
 order for screen readers and search, so a change to either lands in both files
-in the same commit. The colors, and the amber of the leader lines, are the
-product's icon palette (`--av-sys-color-project-*` in
-`packages/ui/src/styles/themes.css`): amber, fuchsia, emerald, orange, blue.
-The tennis ball's seam is the brand neon, `--av-sys-color-brand-base`. The
-site does not load that stylesheet, so the hex values are copied; the token
-name sits beside each. The label overlay and the geometry both read it.
+in the same commit. The colors are the product's icon palette
+(`--av-sys-color-project-*` in `packages/ui/src/styles/themes.css`): amber,
+fuchsia, emerald, orange, blue. The seam is `--av-sys-color-brand-base`. The
+site does not load that stylesheet, so the hex values are copied, with the
+token name beside each; the leader-line amber is copied again in `landing.css`.
 
 ## How it works
 
-### Particles
+Each particle carries three positions, a star, a place in the schematic, and a
+place on the ball, and the vertex shader blends between them from a few
+uniforms that `stateAt(time)` computes. The comments in `technology-scene.ts`
+and `shell-physics.ts` describe each part; what follows is what the code does
+not say on its own.
 
-Every particle carries three positions, fixed at build time:
-
-- **star**: a point in a jittered 3D grid, so the sky is even without looking
-  regular. The generator is seeded, so every visitor sees the same sky.
-- **shape**: where it starts in the schematic. A layer's points split between its
-  sphere shell (with the cut octant `x < 0, y > 0, z > 0` left empty) and the
-  three quarter-disc walls the cut exposes. Radii step by an equal amount
-  (`STEP`) per layer.
-- **ball**: where it sits on the outer sphere once the cut fills. A share of the
-  inner layers' points land on the seam curve instead.
-
-A `group` attribute says which layer a particle belongs to, or that it fills
-the cut octant, or that it is only ever a star.
-
-Each sphere's shell is the densest part of its layer, so it reads as a whole
-sphere from outside. When the next sphere forms around it, its shell fades to a
-trace, so an inner layer shows only through the cut, the way an Earth cut-away
-shows its core.
-
-### Physics
-
-The shape position is not fixed: every layer point is a body in
-`shell-physics.ts`, so the schematic is always in motion. A shell body slides
-over its sphere at a constant slow speed, and the three planes that bound the
-cut octant are walls: a body that would cross one bounces off it. A wall body
-slides within its quarter-ring and bounces off the ring's straight edges and
-off its inner and outer arcs. Bounces are elastic and bodies do not collide
-with each other. The engine is flat typed arrays and a tight loop, stepped on
-the CPU in steps of at most 1/30 s; each frame the layer range of the shape
-buffer is re-uploaded. A jump in time advances the bodies by at most one
-second, so a seek or a background tab never tunnels a body through a wall.
-
-### Light and shadow
-
-One directional light sits overhead, leaning toward the camera and a little to
-the right of the cut (`uLight`). Points are not surfaces, so three.js shadow
-maps do not apply; the vertex shader lights each point itself:
-
-- **Diffuse**: each point has a face: a shell point faces out along its
-  radius, and a cut-wall point faces into the cut along its wall's normal. The
-  light uses wrapped diffuse shading, a smooth fall from lit to unlit, so a
-  sphere's roundness shows across a cloud of points and the three cut faces
-  each take a different share of light.
-- **Cast shadow**: the ray from each point toward the light is intersected with
-  every formed sphere shell. Each crossing outside the cut dims the point by a
-  share. Shells are point clouds, so a crossing dims rather than blacks out.
-  The light leans right of the cut, so the cut's right-hand rim throws a band
-  of shadow into its corner.
-
-Once the cut fills, the ball takes diffuse light on its spinning surface, and
-the neon seam glows at full brightness rather than taking the light, so it
-reads all the way round. Stars are
-unlit.
-
-### Rendering
-
-The vertex shader blends star → shape → ball → star from a few uniforms. The
-CPU work per frame is the physics step, one buffer upload, a few uniform
-writes, one render call, and projecting five label anchors. Nothing is precomputed in screen space; the camera and three.js
-do the projection.
-
-### Timeline
-
-`stateAt(time)` turns seconds into the uniforms. One loop is `LOOP` seconds:
-
-| Phase | Length |
-| --- | --- |
-| Starfield rest | `REST` (3 s) |
-| Each layer forms, then holds (core first) | `FORM` (3 s) + `HOLD` (4 s) |
-| The last layer's hold | `FINAL_HOLD` (20 s) |
-| Cut fills: every structure point settles onto the outer sphere, labels fade | `FILL` (2.5 s) |
-| Ball: recolor, gold seam lifts, spin starts | `BALL` (3 s) + `SPIN_HOLD` (7 s) |
-| Scatter back to the starfield | `SCATTER` (3.5 s) |
-
-Each particle's progress through a phase is staggered by its seed, so layers
-gather as a stream rather than a single jump. `MOMENTS` names the midpoint of
-each state for anyone who needs to render one.
-
-### Labels
-
-An SVG overlay above the canvas draws each label as text, a straight gold rule
-under it, and an angled line to an anchor on the back wall of the cut
-(`layerAnchor`). Anchors are projected through the live camera every frame.
-Label slots stack top to bottom from the outer layer in; elbows step right as
-the slots step down, so the lines fan out without crossing. Wide layouts shift
-the sphere right with a view offset to leave the left side for labels; narrow
-ones zoom out and shift it down so labels sit above it.
-
-### Loading and motion
-
-`technology.ts` imports the scene statically (the repo's `rally/no-dynamic-import`
-rule forbids a lazy import), so three.js ships in the landing page's module
-graph and downloads as a deferred module script. The WebGL context is created
-only when the figure comes within 400 px of the viewport. The clock advances
-only while the figure is on screen and caps each frame's step at 0.1 s, so a
-reader always arrives at the starfield and a background tab does not skip ahead.
-Under `prefers-reduced-motion: reduce` the scene renders the final five-layer
-state once and stops.
+- **Timeline:** one loop is `LOOP` seconds: a starfield rest, then each layer
+  forms and holds, the last for 20 s; the cut fills, the ball forms and spins,
+  and it scatters back to stars.
+- **Physics:** every layer point is a body that slides over its sphere, or
+  within its cut-wall ring, at a constant slow speed and bounces elastically
+  off the cut planes and ring arcs. It steps on the CPU each frame, in steps of
+  at most 1/30 s and at most one second per frame, so a seek or a background
+  tab never tunnels a body through a wall.
+- **Light:** three.js shadow maps need surfaces, and points have none, so the
+  shader lights each point itself: wrapped diffuse light from one overhead
+  light, and a cast shadow from every formed shell the ray to the light
+  crosses outside the cut. The light leans right of the cut so its rim throws
+  a shadow band into the corner.
+- **Loading:** `technology.ts` imports the scene statically (the repo's
+  `rally/no-dynamic-import` rule forbids a lazy import), so three.js ships in
+  the landing page's module graph. The WebGL context is created only near the
+  viewport, the clock advances only while the figure is on screen, and under
+  `prefers-reduced-motion` the scene renders the final five-layer state once.
 
 ## Invariants
 
@@ -176,16 +99,9 @@ styles are set through the CSSOM or SVG attributes, never inline markup.
 
 ## Testing
 
-`apps/site/test/shell-physics.test.ts` runs the engine: a body aimed at a cut
-plane bounces off it, shell bodies stay on their sphere, out of the cut and at
-their speed over 100 simulated seconds, and wall bodies stay in their
-quarter-ring and reach its outer arc.
-
-`apps/site/test/technology-scene.test.ts` runs `stateAt` and checks the
-timeline: nothing formed at the start, layers forming in order, labels showing
-during the final hold and gone once the ball forms, and the loop wrapping back
-to the starfield. It runs in the site's Node suite
-(`pnpm --filter @rally/site test`) and never creates a WebGL context.
+`apps/site/test/shell-physics.test.ts` (the engine) and
+`apps/site/test/technology-scene.test.ts` (the timeline) run in the site's Node
+suite, `pnpm --filter @rally/site test`, and never create a WebGL context.
 
 The rendering itself has no automated guard. Check it in a real browser:
 Chromium under Playwright with `--use-angle=swiftshader` renders it. Drive time
@@ -203,7 +119,7 @@ point-cloud cut-away that forms layer by layer, becomes a tennis ball, and
 dissolves back into stars on a loop. Each layer's points move under a small
 physics engine, bouncing off the cut planes and ring edges, and a directional
 light shades them and casts shadows from each shell, in the icon palette's
-colors.
+colors, with a brand-neon seam on the ball.
 
 **Why:** The landing page said what Rally does but nothing about how it is
 built. A cut-away shows the layers and how they nest in one picture, and the
@@ -212,10 +128,10 @@ tennis ball ties it back to the Rally mark.
 **Considered and rejected:** three.js lights and shadow maps. Those shade
 meshes; a point has no surface for a shadow map to land on, so the light is
 computed per point in the shader against the analytic spheres instead. A
-physics library such as Rapier or cannon-es.
-The motion needs constant-speed travel on a surface and elastic bounces off
-planes and spheres, about a hundred lines; a general engine adds a large
-download and a collision broadphase this scene has no use for. Precomputed 2D projections or a video. Both fix the
+physics library such as Rapier or cannon-es: the motion needs constant-speed
+travel on a surface and elastic bounces off planes and spheres, about a hundred
+lines, and a general engine adds a large download and a collision broadphase
+this scene has no use for. Precomputed 2D projections or a video: both fix the
 view and the aspect ratio, cannot place live labels on the cut, and a video
 costs more bytes than three.js plus the geometry code. Filling the cut by
 adding points to the outer octant alone was tried and dropped: the outer shell
