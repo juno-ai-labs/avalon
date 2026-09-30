@@ -211,7 +211,9 @@ Space, are ordinary rather than a 404.
 
 Removing one is the same shape in reverse (`removeSpaceChannel`), with one
 refusal in front of it: `space_membership_final` preserves the invariant that
-every Channel has a home. The plan transaction flips the membership to
+every live Channel has a home. An archived Channel keeps its membership so
+restoring the Space returns it, but no list renders it, so archive does not
+treat it as a home that has to move first. The plan transaction flips the membership to
 `removing`, stages the `remove` intent, withdraws the source from the Channel's
 record and attributes every surviving reader to the remaining Space that
 supplies them, before anybody is seated. Attributing first means an
@@ -1520,8 +1522,10 @@ Space to move its placement or into the pinned section to pin it.
   Channel's direct source and every active Space source, so one Space cannot
   revoke what another supplies. Narrowing is expressed as a *retraction* of one
   source, never as a smaller application of it.
-- **Every non-deleted Channel has at least one active Space.** Removal from the
-  last one, and an archive that would produce one, are refused.
+- **Every live Channel has at least one active Space.** Removal from the
+  last one, and an archive that would produce one, are refused. An archived
+  Channel keeps its membership so restoring the Space returns it, but no list
+  renders it, so it is not a stranded home that has to move first.
 - **A reader who keeps access must keep a way to find it.** After a retraction,
   every remaining reader has to be able to discover one of the Spaces the
   Channel stays in — an Organization-wide Space is discoverable by any active
@@ -2095,6 +2099,35 @@ whoever reads it afterwards; `space_default_delivery_failed` does the same for a
 default target.
 
 ## Changelog
+
+### 2026-09-30 — Archived leftover Channels do not block Space archive
+
+**What changed:** `prepareArchive` tests final membership against live Channels
+only. Archived members still stage to `removing` with the rest, so restoring
+the Space still returns them. The archive confirmation looks up a blocked
+Channel's title from the sidebar directory as well as the dashboard's Needs
+attention page, instead of printing "A channel not loaded on this device" for
+one that is merely idle.
+
+**Why:** The dashboard's empty Needs attention list is not a catalog of the
+Space. A Space whose Channels are all archived reports `channelCount` 0 and
+draws "No channels yet", then refuses archive because an archived Channel still
+has a membership — the row that would return it if it were unarchived. Nobody
+can add that Channel to another Space first: it is on no list. The same dialog
+looked titles up only in the Needs attention page, so even a live idle Channel
+the sidebar already knew was named as unloaded.
+
+**Considered and rejected:** Rehoming archived leftovers into General so the
+invariant stayed "every Channel, including archived ones." General is
+Organization-wide, and seating a personal Channel there would lock its scope
+public. Keeping the membership on the archived Space, staged rather than
+dropped, is the restore path that already existed.
+
+**Consequences:** Unarchiving a Channel whose only Space is itself archived is
+still not a product path — the Channel would come back with no live home.
+Restore the Space first. A live Channel whose only Space is this one still
+blocks archive, and the confirmation now names it from whichever catalog this
+device has already loaded.
 
 ### 2026-09-26 — A Space is WorkspaceDO rows only; its hidden conversation is retired
 

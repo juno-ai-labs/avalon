@@ -100,3 +100,20 @@ export function spaceRefusalChannelIds(cause: unknown): string[] {
   const parsed = SpaceRefusalDetailsSchema.safeParse(cause.details);
   return parsed.success ? [...parsed.data.channelIds] : [];
 }
+
+/**
+ * The title a confirmation prints for a Channel the refusal named.
+ *
+ * The dashboard's Needs attention page and the sidebar directory are different
+ * catalogs, and a Channel that has to move first is often in neither of the
+ * ones the surface happens to be drawing. Walk every catalog the caller has;
+ * an id none of them know is one this device has not listed, not one the
+ * viewer cannot see — the server would not have named that.
+ */
+export function blockedChannelLabel(
+  channelId: string,
+  catalogs: readonly { id: string; title: string }[],
+): string {
+  return catalogs.find((item) => item.id === channelId)?.title
+    ?? 'A channel that isn’t showing here';
+}
