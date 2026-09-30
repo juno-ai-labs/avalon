@@ -261,7 +261,7 @@ function completeSpaceBootstrap(state: DurableObjectState) {
 /** Every frame of one `channel_rails` answer, once its final frame has arrived. */
 async function askRails(
   connection: Awaited<ReturnType<typeof connect>>,
-  target: { workstreamIds: string[] },
+  target: { workstreamIds: string[] } | { spaceId: string; after?: string },
 ): Promise<RailsFrame[]> {
   requestSeq += 1;
   const requestId = `00000000-0000-7000-8002-${String(requestSeq).padStart(12, "0")}`;
@@ -501,6 +501,17 @@ describe("channel_rails for a guest, and a row that no longer parses", () => {
     const rail = await railOf(connection, channelC);
     expect(rail.participantUserIds).toEqual(expect.arrayContaining([guest, owner]));
     expect(rail.sidekicks.owned).toEqual([]);
+    connection.socket.close(1000, "done");
+  });
+
+  it("answers the retired Space target with one empty final frame, and keeps the socket", async () => {
+    await runInDurableObject(organization(), (_instance, state) => insertSpace(state, [channelA, channelC]));
+    const connection = await connect(owner);
+    const answer = await askRails(connection, { spaceId, after: channelA });
+    expect(answer).toHaveLength(1);
+    expect(answer[0]).toMatchObject({ rails: [], oversized: [], unavailable: [], nextAfter: null, final: true });
+    // Still open: a named request after it is answered.
+    expect((await railOf(connection, channelA)).workstreamId).toBe(channelA);
     connection.socket.close(1000, "done");
   });
 
