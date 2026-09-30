@@ -5,6 +5,7 @@ import {
   WorkstreamIconKeySchema,
   type WorkstreamIconKey,
 } from "@rally/contracts";
+import { startReadCursorAtLatest } from "./member-attention";
 
 /**
  * What a system-provisioned work stream is, on the object that owns it.
@@ -457,6 +458,7 @@ export class WorkstreamIdentityStorage {
         input.now,
         input.userId,
       );
+      startReadCursorAtLatest(this.sql, input.userId, input.now);
       return { outcome: "readmitted", participationReason: input.reason, addedAt: input.now };
     }
     this.sql.exec(
@@ -470,6 +472,7 @@ export class WorkstreamIdentityStorage {
       input.now,
       input.now,
     );
+    startReadCursorAtLatest(this.sql, input.userId, input.now);
     return { outcome: "admitted", participationReason: input.reason, addedAt: input.now };
   }
 

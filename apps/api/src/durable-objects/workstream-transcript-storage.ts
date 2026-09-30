@@ -62,6 +62,7 @@ import {
   insertPreparedCanonicalTranscriptFact,
   prepareCanonicalTranscriptFact,
 } from "./ordered-transcript-sqlite/canonical-payload-store";
+import { startReadCursorAtLatest } from "./member-attention";
 
 export interface TranscriptFactMaterial {
   factId: string;
@@ -5055,6 +5056,7 @@ export class WorkstreamTranscriptStorage {
         now,
         now,
       );
+      startReadCursorAtLatest(this.sql, userId, now);
     }
     if (participantUserIds.includes(authorUserId)) this.sql.exec(
       `INSERT INTO member_attention
