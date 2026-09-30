@@ -5,6 +5,14 @@ export interface SidelineSession {
   workspace: NonNullable<Session["workspace"]>;
 }
 
+export interface SidelineOrganization {
+  id: string;
+  name: string;
+}
+
+/** How a switch ended: moved, refused by the Organization, or overtaken by a sign-out or another switch. */
+export type SidelineOrganizationSwitch = "switched" | "not_admitted" | "superseded";
+
 export type SidelineSendResult =
   | { ok: true; response: SidelineSendResponse }
   | { ok: false; outcome: "rejected" | "unknown"; message: string };
@@ -22,6 +30,10 @@ export interface SidelineBridge {
   send(input: SidelineSendRequest): Promise<SidelineSendResult>;
   openInRally(input: { workstreamId: string; substreamId: string }): Promise<void>;
   onSessionChanged(listener: (session: SidelineSession | null) => void): () => void;
+  /** Every Organization the signed-in person belongs to. */
+  organizations(): Promise<SidelineOrganization[]>;
+  /** Rejects only when the switch could not be attempted (offline, a server failure). */
+  switchOrganization(workspaceId: string): Promise<SidelineOrganizationSwitch>;
   /** The update version waiting to install on restart, or null. */
   getDownloadedUpdate(): Promise<string | null>;
   onUpdateDownloaded(listener: (version: string) => void): () => void;

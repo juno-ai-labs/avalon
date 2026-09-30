@@ -5,8 +5,11 @@ import {
   SidelineSendResponseSchema,
   ChannelAccessSchema,
   SocketTicketSchema,
+  WorkspaceIdSchema,
+  WorkspaceSchema,
   type Session,
 } from "@rally/contracts";
+import { z } from "zod";
 import { SIDELINE_AUTH_CALLBACK_URI } from "@rally/contracts/desktop-deep-link";
 import { CLIENT_CONTRACT_VERSION, RALLY_HEADERS } from "@rally/contracts/http-headers";
 import { socketTicketProtocols } from "@rally/contracts/socket-tickets";
@@ -30,7 +33,13 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 
-import { sidelineHttpOutcome, type SidelineSendResult, type SidelineSession } from "../common/bridge";
+import {
+  sidelineHttpOutcome,
+  type SidelineOrganization,
+  type SidelineOrganizationSwitch,
+  type SidelineSendResult,
+  type SidelineSession,
+} from "../common/bridge";
 import { initializeSidelineUpdater, sidelineUpdateMenuItem, type SidelineUpdateHandle } from "./updater";
 import { sidelineHttpSend, sidelineHttpSendResponse } from "./send-request";
 
@@ -350,6 +359,15 @@ async function handleCallback(raw: string): Promise<void> {
   }
 }
 
+/** Revoke a session on the server; a failure leaves it to expire. */
+async function endSession(value: Session): Promise<void> {
+  await jsonRequest(`${value.apiBaseUrl}/auth/logout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${value.accessToken}` },
+    body: JSON.stringify({ refreshToken: value.refreshToken }),
+  }).catch(() => undefined);
+}
+
 function assertSender(event: IpcMainInvokeEvent): void {
   if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error("Untrusted Sideline IPC sender");
 }
@@ -439,15 +457,62 @@ ipcMain.handle("sideline:session", (event) => {
 ipcMain.handle("sideline:sign-in", async (event) => { assertSender(event); await beginSignIn(); });
 ipcMain.handle("sideline:sign-out", async (event) => {
   assertSender(event);
-  if (session) await jsonRequest(`${session.apiBaseUrl}/auth/logout`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken}` },
-    body: JSON.stringify({ refreshToken: session.refreshToken }),
-  }).catch(() => undefined);
+  if (session) await endSession(session);
   session = null;
   await storeSession(null);
   restartReachWatch();
   sendToWindow("sideline:session-changed", null);
+});
+const OrganizationsResponseSchema = z.object({ workspaces: z.array(WorkspaceSchema) });
+
+ipcMain.handle("sideline:organizations", async (event): Promise<SidelineOrganization[]> => {
+  assertSender(event);
+  if (VISUAL_STATE) {
+    return [
+      { id: visualSession.workspace.id, name: visualSession.workspace.name },
+      { id: "00000000-0000-7000-8000-00000000c009", name: "Juno Labs" },
+    ];
+  }
+  const { workspaces } = OrganizationsResponseSchema.parse(await authenticated("/auth/workspaces"));
+  return workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name }));
+});
+/**
+ * Move the session to another Organization. The new session must be admitted
+ * to Sideline's catalog before it replaces the current one, so a refusal
+ * leaves the operator where they were.
+ */
+ipcMain.handle("sideline:switch-organization", async (event, raw: unknown): Promise<SidelineOrganizationSwitch> => {
+  assertSender(event);
+  const workspaceId = WorkspaceIdSchema.parse(raw);
+  const current = session;
+  if (!current || current.workspace?.id === workspaceId) return "switched";
+  const selected = SessionSchema.parse(await authenticated("/auth/workspace/select", {
+    method: "POST",
+    body: JSON.stringify({ workspaceId }),
+  }));
+  try {
+    SidelineCatalogSchema.parse(await jsonRequest(
+      `${selected.apiBaseUrl}/sideline/catalog`,
+      { headers: { Authorization: `Bearer ${selected.accessToken}` } },
+    ));
+  } catch (error) {
+    void endSession(selected);
+    if (error instanceof HttpResponseError && error.status === 403) return "not_admitted";
+    throw error;
+  }
+  // Signed out or switched elsewhere while this ran: that is the session now.
+  // A token refresh replaces the object but not the Organization, so compare that.
+  const previous = session;
+  if (!previous || previous.workspace?.id !== current.workspace?.id) {
+    void endSession(selected);
+    return "superseded";
+  }
+  session = selected;
+  await storeSession(session);
+  restartReachWatch();
+  sendToWindow("sideline:session-changed", publicSession(session));
+  void endSession(previous);
+  return "switched";
 });
 ipcMain.handle("sideline:catalog", async (event) => {
   assertSender(event);

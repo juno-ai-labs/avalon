@@ -21,7 +21,7 @@ basis.
 | `.github/workflows/release-sideline-macos.yml` | Frozen-commit verification, Developer ID signing, Apple notarization, artifact retention, and R2 publication. |
 | `packages/contracts/src/impersonation.ts` | Relationship, catalog, and send wire contracts. |
 | `packages/ui/src/components/sideline-composer.tsx` | Browser-safe card-stack presentation and searchable selectors. |
-| `packages/ui/src/components/sideline-sidebar.tsx` | The left rail: Rally's Spaces sidebar parts with one **Impersonate** row, the update button, and the account footer that holds **Sign out**. |
+| `packages/ui/src/components/sideline-sidebar.tsx` | The left rail: Rally's Spaces sidebar parts with one **Impersonate** row, the update button, and the account footer whose menu holds the Organization picker and **Sign out**. |
 
 ## How it works
 
@@ -250,8 +250,12 @@ existing `rallywithai:` deep link for the main app.
 **What changed:** Sideline gained a left rail built from Rally's Spaces
 sidebar parts (`ResizableSidebar`, `SidebarHeader`, `SidebarRow`,
 `SidebarCollapseFooter`, `AccountTrigger`) and its classes. It lists a single
-**Impersonate** row for now, and its account footer holds **Sign out**, which
-left the composer header. Sideline also no longer opens a restart dialog the
+**Impersonate** row for now, and its account menu holds an **Organizations**
+picker like Rally's and **Sign out**, which left the composer header. Choosing
+an Organization selects a session for it with the current one, checks that
+Sideline's catalog admits it, and only then swaps it in and revokes the old
+session; a refusal leaves the operator where they were and names why under the
+row. Sideline also no longer opens a restart dialog the
 moment an update finishes downloading: the sidebar header and the account menu
 offer the restart, and the dialog returns only when the running build is more
 than 48 hours old, once per downloaded version.
