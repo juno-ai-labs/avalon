@@ -34,10 +34,11 @@ import { useAppSession } from '../lib/app-session';
 import { copySpaceLink } from '../lib/copy-workstream-link';
 import { PROJECT_COLOR_DEFAULT } from '../lib/project-palette';
 import { workstreamMarkerStatus } from '../lib/format';
-import { spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
+import { blockedChannelLabel, spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
 import { INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY, spaceConversationsQueryKey } from '../lib/sidebar-list-store';
 import type { Workspace } from '../lib/types';
 import { useSpaceDirectories, useSpacesReady } from '../lib/use-space-directories';
+import { useCachedWorkstreams } from '../lib/use-workstreams-query';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 
@@ -71,6 +72,10 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   const queryClient = useQueryClient();
   const spacesReady = useSpacesReady();
   const { active: spaces, inactive: inactiveSpaces } = useSpaceDirectories();
+  // Archive refusals name Channels that have to move first. Needs attention is
+  // not that catalog — an idle Channel is correctly absent from it — so titles
+  // also come from the sidebar directory this device already holds.
+  const directoryWorkstreams = useCachedWorkstreams() ?? [];
   const [failures, setFailures] = useState<Partial<Record<FailureSlot, string>>>({});
   const [saving, setSaving] = useState(false);
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
@@ -394,13 +399,12 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
               has to move" into something a person can act on. It can be empty
               even on a refusal: the server names only the Channels this viewer
               may already read, and the sentence above stands without it.
-              An id with no title is one this device has not loaded a page for —
-              not one the viewer cannot see, which the server would not have
-              named. */}
+              Titles come from Needs attention and from the sidebar directory,
+              because an idle Channel is in the second and not the first. */}
           {blockedChannelIds.length > 0 && (
             <ul aria-label="Channels to move first" className="space-dashboard-blocked-channels">
               {blockedChannelIds.map((id) => (
-                <li key={id}>{conversations.find((conversation) => conversation.id === id)?.title ?? 'A channel not loaded on this device'}</li>
+                <li key={id}>{blockedChannelLabel(id, [...conversations, ...directoryWorkstreams])}</li>
               ))}
             </ul>
           )}

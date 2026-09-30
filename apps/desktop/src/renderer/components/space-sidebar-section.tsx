@@ -15,7 +15,7 @@ import { SidebarList } from '@rally/ui/components/resizable-sidebar';
 
 import { compareWorkstreamRecency } from '../lib/format';
 import { committedOrder, moveWithin, orderByStoredIds, storedOrderFor } from '../lib/personal-order';
-import { spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
+import { blockedChannelLabel, spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
 import { Button, IconButton, InlineError, Modal } from './primitives';
 import { AcknowledgedErrorDialog, type AcknowledgedError } from './acknowledged-error-dialog';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
@@ -645,7 +645,7 @@ export function SpaceSidebarSection({
         {blockedChannelIds.length > 0 && (
           <ul aria-label="Channels to move first" className="space-dashboard-blocked-channels">
             {blockedChannelIds.map((id) => (
-              <li key={id}>{workstreams.find((workstream) => workstream.id === id)?.title ?? 'A channel not loaded on this device'}</li>
+              <li key={id}>{blockedChannelLabel(id, workstreams)}</li>
             ))}
           </ul>
         )}
