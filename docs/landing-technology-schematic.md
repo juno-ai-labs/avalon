@@ -41,13 +41,16 @@ describe each part; what follows is what the code does
 not say on its own.
 
 - **Timeline:** one loop is `LOOP` seconds: a starfield rest, then each layer
-  forms and holds, the last for 20 s; the cut fills, the ball forms and spins,
-  and it scatters back to stars.
+  forms and holds, the last for 20 s; the inner layers fade and the outer
+  shell closes over the cut, the ball recolors and spins, and it scatters
+  back to stars.
 - **Starfield:** every star sits behind the spheres as the camera sees them,
   in a slab from just past the outer sphere to well beyond it, and drifts by
-  turning about the camera's line of sight, which keeps its depth. Stars
-  whose line of sight crosses a formed sphere dim, so the spheres read as in
-  front.
+  turning about the camera's line of sight, which keeps its depth. Because it
+  turns, each depth is a disc sized to the view's farthest corner, not a
+  rectangle sized to the view. Stars whose line of sight crosses a formed
+  sphere dim, so the spheres read as in front; the dimming lifts as the ball
+  scatters.
 - **Drift:** every layer point moves, computed in the vertex shader from
   time alone, with no per-frame CPU work or buffer upload. A shell point
   slides along its own great circle; shells are sampled over the whole sphere
@@ -133,6 +136,34 @@ the IntersectionObserver that starts the scene, so timing from page load
 drifts.
 
 ## Changelog
+
+### 2026-09-30 — The starfield covers the view at every turn, and the cut closes as one shell
+
+**What changed:** Each depth of the starfield is now a disc, filled through a
+concentric square-to-disc map so the jittered grid stays even, instead of a
+wide rectangle. The dimming behind the spheres fades out with the scatter.
+During the fill only the outer shell shows: every other layer fades out
+before it moves, the shell's points in the cut fade in at full weight, and
+the rest return in the ball's colors.
+
+**Why:** The field turns about the line of sight and the clock never wraps
+that turn, so within a minute a rectangle's short side swung into the view
+and left a bare corner. The dimming read the layers' form, which stays at 1
+through the scatter, so a dark disc sat where the ball had been until the
+loop wrapped, and then snapped bright. The fill used to move every layer's
+points onto the outer sphere at once, still in their own colors, so the cut
+read as a swarm rather than the blue shell closing.
+
+**Considered and rejected:** A larger rectangle: any rectangle bares a corner
+at some turn. Stopping the turn: the slow drift is what keeps the field alive
+during the long holds.
+
+**Consequences:** A future change to the camera zoom or view offsets must keep
+the disc's radius past the view's farthest corner. The field is about 18%
+sparser for the same star count. The fill should stay one shell and the
+recolor its own step; the ball grows denser as the other layers return.
+
+PR: https://github.com/juno-ai-labs/avalon/pull/1036
 
 ### 2026-09-30 — The technology schematic is added to the landing page
 
