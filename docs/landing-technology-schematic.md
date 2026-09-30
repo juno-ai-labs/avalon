@@ -223,3 +223,5 @@ moves onto the outer sphere instead.
 **Consequences:** three.js is now part of the landing page's JavaScript. A
 future change that adds more WebGL to the site should share it rather than
 bundle a second copy.
+
+Shipped in #1028.
