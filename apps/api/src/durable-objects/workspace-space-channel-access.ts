@@ -390,6 +390,9 @@ export class SpaceChannelAccess {
         workstreamId: member.workstreamId,
         change,
         operationId: () => `${request.operationId}:${member.workstreamId}`,
+        // Archive and restore walks include leftover archived Channels. Their
+        // product read answers 404; observe then from the directory.
+        archived: kind === "archive" || kind === "restore",
         plan: () => (change === "retract" ? null : {
           space: this.currentSpace(storage, actor.userId, spaceId),
           membershipGeneration: member.membershipGeneration,
@@ -641,7 +644,7 @@ export class SpaceChannelAccess {
   }): Promise<ChangeOutcome<T>> {
     const { actor, spaceId, workstreamId, change } = input;
     const client = this.client(actor, workstreamId);
-    let observation: { channel: ObservedChannel; title: string };
+    let observation: { channel: ObservedChannel; title: string; archived: boolean };
     let parent: HostedParent;
     try {
       observation = await this.observe(client, workstreamId, change === "retract" || (input.archived ?? false));
@@ -721,7 +724,10 @@ export class SpaceChannelAccess {
 
     let seated: UserId[] = [];
     try {
-      if (planned.retraction) {
+      // An archived Channel's conversation refuses every product mutation.
+      // The hosted-parent source is the authority that still has to move;
+      // seating and narrowing wait until the Channel is live again.
+      if (planned.retraction && !observation.archived) {
         await runSpaceSourceRetraction({
           env: this.host.env,
           workspaceId: asWorkspaceId(actor.workspaceId),
@@ -732,7 +738,9 @@ export class SpaceChannelAccess {
           remaining: planned.retraction.remaining,
         });
       }
-      if (planned.application) seated = await runSpaceSourceApplication(client, spaceId, planned.application.plan);
+      if (planned.application && !observation.archived) {
+        seated = await runSpaceSourceApplication(client, spaceId, planned.application.plan);
+      }
     } catch (error) {
       if (!(error instanceof SpaceSourceApplicationInterrupted) || !planned.application) {
         return { ok: false, refusal: conversationRefusal(error) };
@@ -781,23 +789,24 @@ export class SpaceChannelAccess {
   /**
    * What the Channel's readers are, from the conversation that owns them.
    *
-   * An archived Channel's product read answers 404; a retraction, and the
-   * cutover placing an archived Channel, read the directory's projection of it
-   * instead.
+   * An archived Channel's product read answers 404; a retraction, a restore,
+   * and the cutover placing an archived Channel, read the directory's
+   * projection of it instead. `archived` is true only on that fallback, which
+   * is also the signal that conversation seating and narrowing must not run.
    */
   private async observe(
     client: WorkstreamObjectClient,
     workstreamId: string,
     archivedAllowed: boolean,
-  ): Promise<{ channel: ObservedChannel; title: string }> {
+  ): Promise<{ channel: ObservedChannel; title: string; archived: boolean }> {
     try {
       const detail = await client.get();
-      return { channel: observedOf(detail), title: detail.title };
+      return { channel: observedOf(detail), title: detail.title, archived: false };
     } catch (error) {
       if (!archivedAllowed || asApiError(error)?.status !== 404) throw error;
       const projected = this.host.archivedChannel(workstreamId);
       if (!projected) throw error;
-      return projected;
+      return { ...projected, archived: true };
     }
   }
 
