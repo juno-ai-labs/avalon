@@ -7519,13 +7519,18 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
   text-align: center;
 }
 
+/* While composing, the field sits in the middle of the pane under the
+   recipient bar: an empty channel has nothing above it to read, so the bottom
+   edge was an arbitrary place to start. The dock spans the body and dock rows
+   and centres itself in them, staying in flow rather than going absolute, so
+   the launching state only has to drop it back into the dock row it already
+   names. The move is not animated for the same reason the header is not:
+   creation can finish before a transition would. */
 .new-chat-screen:not(.is-launching) > .launch-dock {
-  background: linear-gradient(to top, var(--av-sys-color-surface-default) 72%, transparent);
-  bottom: 0;
-  left: 0;
-  padding: 0 16px 16px;
-  position: absolute;
-  right: 0;
+  align-self: center;
+  grid-row: 2 / 4;
+  padding: 0 16px;
+  z-index: 3;
 }
 
 
