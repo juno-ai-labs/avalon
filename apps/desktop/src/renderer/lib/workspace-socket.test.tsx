@@ -892,6 +892,51 @@ describe('WorkspaceSocketProvider', () => {
       expect(FakeWebSocket.instances).toHaveLength(2);
     });
 
+    // An aborted sleep can deliver `suspend` with no `resume`; the network
+    // coming back or a person asking must still bring the socket back.
+    it('dials again after a suspend with no resume, once online or asked', async () => {
+      const getWorkspaceSocketTicket = vi.fn(async () => ticket);
+      renderProvider(getWorkspaceSocketTicket);
+      await flushPromises();
+      act(() => FakeWebSocket.instances[0]!.open());
+
+      setPowerState('suspended');
+      await flushPromises();
+      expect(FakeWebSocket.instances).toHaveLength(1);
+
+      act(() => { window.dispatchEvent(new Event('online')); });
+      await flushPromises();
+
+      expect(getWorkspaceSocketTicket).toHaveBeenCalledTimes(2);
+      expect(FakeWebSocket.instances).toHaveLength(2);
+    });
+
+    // The close event of a socket closed for sleep can land after a resume
+    // has dialled again: it must neither relabel the sleep nor go unreported.
+    it('reports the sleep once when the old socket closes after the resume dials', async () => {
+      const getWorkspaceSocketTicket = vi.fn(async () => ticket);
+      renderProvider(getWorkspaceSocketTicket);
+      await flushPromises();
+      const beforeSleep = FakeWebSocket.instances[0]!;
+      act(() => beforeSleep.open());
+      // As a real socket does, `close()` only starts closing; the events come later.
+      const closeLater = beforeSleep.close.bind(beforeSleep);
+      beforeSleep.close = () => undefined;
+      reportTelemetryProductIntent.mockClear();
+
+      setPowerState('suspended');
+      setPowerState('resumed');
+      await flushPromises();
+      expect(FakeWebSocket.instances).toHaveLength(2);
+      act(() => {
+        beforeSleep.dispatchEvent(new Event('error'));
+        closeLater(1006);
+      });
+
+      expect(socketTelemetry()).toEqual([expect.objectContaining({ state: 'retrying', cause: 'suspended' })]);
+      expect(FakeWebSocket.instances).toHaveLength(2);
+    });
+
     it('abandons a ticket still in flight when the machine sleeps', async () => {
       let ticketSignal: AbortSignal | undefined;
       const getWorkspaceSocketTicket = vi.fn((signal?: AbortSignal) => {
