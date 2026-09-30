@@ -42,7 +42,9 @@ The component renders one tree in both states, a three-row grid of header, body,
 and composer dock:
 
 - **Not launching** — the header is the **Participants** bar, the body row is
-  empty, and the dock carries only the composer. The retired Welcome back dashboard,
+  empty, and the dock carries only the composer. The dock spans the body and
+  dock rows and centres itself in them, so the composer sits in the middle of
+  the pane below the bar. The retired Welcome back dashboard,
   attention list, and suggested-work shelf no longer sit between opening Rally
   and starting a work stream.
 - **Launching** — the root additionally carries `workstream-screen`, the header
@@ -86,10 +88,11 @@ a placeholder row for the unsent draft.
 
 Two things animate, and they are the whole transition:
 
-- **The composer stays put.** It is the same DOM element throughout, and now
-  also the same width and the same capsule on both sides, so nothing about it
-  moves: it is the fixed point the eye holds while the header, the transcript and
-  the rows around it change. It used to settle instead — dock padding, stack
+- **The composer drops to the dock.** It is the same DOM element throughout,
+  the same width and the same capsule on both sides. Its one change is place:
+  on the keystroke it leaves the middle of the pane for the dock row, without a
+  transition, for the reason the header does not ease open — creation can
+  finish before a transition would. It used to settle instead — dock padding, stack
   width, background, border, radius, shadow and text height each transitioning
   from a launcher treatment to the conversation's — and the transitions that
   carried it are gone with the difference they existed for.
@@ -560,6 +563,25 @@ see
   to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-09-30 — The launcher's composer starts in the middle of the pane
+
+**What changed:** While composing, the new-Channel dock spans the body and
+dock rows and centres itself there, rather than floating absolute at the
+bottom of the pane. The launching state drops it back into the dock row.
+
+**Why:** An unsent Channel has nothing above its composer to read, so the
+bottom edge was an arbitrary place for the first thing a person types into.
+Asked for directly.
+
+**Considered and rejected:** Centring by absolute position and a transform,
+which would have kept the dock out of flow and made the launching state undo
+three properties instead of one grid row. Animating the drop, which races
+creation the same way an eased header did.
+
+**Consequences:** The composer is no longer the fixed point of the hand-off; it
+moves once, on submit. A later change that wants it to stay put has to bring
+the settled conversation's composer up, not this one down.
 
 ### 2026-09-25 — A Channel is placed and reserved in one WorkspaceDO call
 
