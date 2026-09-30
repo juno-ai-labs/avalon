@@ -708,7 +708,10 @@ A Sidekick reads and posts through the `rally:conversations` plugin
 ([`conversation-tools.md`](conversation-tools.md)), whose scope for a Sidekick is
 its home plus the conversations linked to it in WorkspaceDO's
 `sidekick_conversation_attachments`. The home is always linked and never a
-row. Only the Sidekick's configuration conversation links (the
+row. A run also reaches any other conversation its run-as user can open, but
+only a linked one is the Sidekick's own and outlasts that user's access
+([`conversation-tools.md`](conversation-tools.md#admission)). Only the
+Sidekick's configuration conversation links (the
 `conversation_link` tool), and only a conversation the linking person can
 post in, since linking is the consent to publish there. Linking is a
 different act from attaching a workspace Sidekick to a work stream, which
@@ -865,8 +868,9 @@ Sidekick's id.
   Channel alone would hand a Breakout-homed Sidekick, and every post it made,
   to Channel members outside the Breakout.
 - **A conversation link is not a skill attachment.** Only
-  `sidekick_conversation_attachments` widens what a Sidekick may read and post
-  to, and only a link from its configuration conversation writes it. Reading
+  `sidekick_conversation_attachments` grants a Sidekick a conversation of its
+  own, beyond what its run-as user can open, and only a link from its
+  configuration conversation writes it. Reading
   `parent_sidekicks` as reach would grant every conversation that ever loaded
   the Sidekick.
 - **Bindings are derived from the definition, never taken from a request.**

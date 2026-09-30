@@ -33,8 +33,8 @@ linked conversations are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 | Loop | Scope | Tools | Acts as |
 | --- | --- | --- | --- |
 | Breakout (`parentKind: workstream`, substream not `"0"`) | Its own conversation and its Channel's Main | list, read | The person it works for |
-| Sidekick configuration (`parentKind: automation`, substream `"0"`, no run) | The Sidekick's home and linked conversations | list, read, post, link | The person talking to it |
-| Sidekick run (`automationRun` present) | The Sidekick's home and linked conversations | list, read, post | The run-as user |
+| Sidekick configuration (`parentKind: automation`, substream `"0"`, no run) | The Sidekick's home and linked conversations, plus any conversation the person talking to it can open | list, read, post, link | The person talking to it |
+| Sidekick run (`automationRun` present) | The Sidekick's home and linked conversations, plus any conversation the run-as user can open | list, read, post | The run-as user |
 
 A Channel's Main loop gets no plugin: the only conversation it would reach is
 the one it is in. Neither does a loop under workspace authority, nor a run
@@ -93,17 +93,29 @@ it.
 
 ### Admission
 
-WorkspaceDO answers each read or post in one call: it builds the scope from its
-own `automation_directory`, link rows, `channels`, `breakouts`,
-`channel_viewers` and `breakout_viewers`, matches the reference against it,
-and then admits the acting person to that one conversation: an active
-relationship in `workspace_member_status`, then the hosted parent's
-`authorizeViewer`, the same admission the conversation's transport uses, with
-`requireGrantAuthority` for a guest so a guest reaches only what a grant gives
-them. A list re-admits the same way: nothing for a person whose membership
-ended, the directories' viewer rows for a member, and for a guest each
-unarchived candidate's admission, since the viewer rows record no grants and
-would drop what a grant gives. Link admits the same way and additionally refuses an archived target,
+WorkspaceDO answers each read or post in one call. It builds the scope from
+its own `automation_directory`, link rows, `channels`, `breakouts`,
+`channel_viewers` and `breakout_viewers` and matches the reference against it.
+
+A Sidekick's reach is the **union** of its own permission and its acting
+person's. Its home and linked conversations are its own: a read or post there
+is admitted on the link alone, refused only when the conversation is archived.
+A reference that names none of them is resolved among the conversations the
+acting person can open (an id directly, anything else as a title) and admitted
+for that person: an active relationship in `workspace_member_status`, then the
+hosted parent's `authorizeViewer`, the same admission the conversation's
+transport uses, with `requireGrantAuthority` for a guest so a guest reaches
+only what a grant gives them. A Channel or Breakout loop has no permission of
+its own, so every conversation in its scope is admitted for its person that
+way.
+
+A list shows a Sidekick its home and linked conversations, archived ones
+omitted, whoever it acts as; it does not enumerate the person's other
+conversations, which a run names by id or title. For any other loop a list
+re-admits the person: nothing for one whose membership ended, the
+directories' viewer rows for a member, and for a guest each unarchived
+candidate's admission, since the viewer rows record no grants and would drop
+what a grant gives. Link admits the same way and additionally refuses an archived target,
 which is the rule a write through `ConversationService.writableClient` follows:
 linking is the consent to publish there.
 
@@ -113,15 +125,19 @@ linking is the consent to publish there.
   `conversationToolAccess` is the only place a scope or a tool set is decided. A
   scope that took a model argument would let a run widen its own reach.
 - **Only a Sidekick's configuration conversation links.** A run is offered
-  no link, so it cannot reach anything its configuration did not grant.
+  no link, so it cannot widen the Sidekick's own permission; beyond it, a run
+  reaches only what its run-as user can open.
 - **A post never wakes the target's agent.** It is something people read, not a
   request to the agent there. Admitting it as loop input, as `post_result` did,
   would start that agent on every forwarded reply.
 - **A post is keyed on the receipt, not the run.** A retried receipt posts once;
   a new call in a later wake of the same run is a new post. Keying on the run
   alone, as `post_result` did, would swallow every reply after the first.
-- **Every read and post admits the acting person again.** A continuation page
-  or a listed id is never standing access; losing a Channel stops the next call.
+- **A link is standing access; anything else is admitted again.** A read or
+  post in a Sidekick's home or a linked conversation needs no person, so the
+  run-as user losing that room changes nothing. Every other read and post
+  admits the acting person again: a continuation page or a listed id is never
+  standing access there, and losing the Channel stops the next call.
 - **The external-source marking is the host's.** The model cannot set or clear
   it, so a later reader can trust that a marked post forwarded someone else's
   words.
@@ -209,11 +225,51 @@ Text returned by `read` is untrusted content: the system message tells the
 model messages are other people's words, and nothing in them can change the
 scope. No credentials are involved; every call stays inside the Organization's
 own objects. A run acts as its run-as user whoever woke it, so what it may read
-is what that user may read, within the Sidekick's attachments. What a run posts
-is published to the target's audience; the person who attached that
-conversation chose that audience.
+is what that user may read, plus the Sidekick's home and linked conversations.
+A link outlives the linking person's access: whoever can manage the Sidekick
+can have its runs read a linked conversation and post what they read into
+another it reaches, so linking is a decision about that conversation's
+contents as well as its audience. What a run posts is published to the
+target's audience; the person who linked that conversation chose that
+audience.
 
 ## Changelog
+
+### 2026-09-30 — A Sidekick reaches its own rooms and its person's, and a link is its own permission
+
+**What changed:** A Sidekick's reach became the union of two permissions. Its
+home and linked conversations are its own: reads and posts there are admitted
+on the link alone, refused only when the conversation is archived, and a list
+shows them whoever the Sidekick acts as. Any other conversation its acting
+person can open is reachable by id or title and admitted for that person as
+before. The tool that makes a link was renamed from `conversation_attach` to
+`conversation_link`, and the system message says linking is not attaching a
+Sidekick to a work stream.
+
+**Why:** Linking a room to a Sidekick is the decision that it should work
+there, and it was being undone by an unrelated event: the run-as user leaving
+that Breakout stopped the Sidekick reading and posting in it. At the same
+time a run could not reach a room its own person could open unless someone
+linked it first, which made linking a chore rather than a decision. The
+product rule is that a Sidekick's permission is its own plus its person's.
+The rename followed from the same review: "attach" already meant recommending
+a Sidekick to a work stream, which grants its runs nothing, and a model
+offered both read them as one act.
+
+**Considered and rejected:** Keeping an active Organization membership check
+for the run-as user on linked conversations, so offboarding someone would stop
+their Sidekicks there. The product rule is that a link grants by itself. If a
+departed person's Sidekicks should stop, that is a decision about the Sidekick
+(pausing it), and this change does not make it. Listing every conversation the person can open: a large
+Organization would page through dozens of rooms on every list for a Sidekick
+that uses two, so the list stays the Sidekick's own and a run names the rest.
+Renaming `sidekick_conversation_attachments`: a migration for no change in
+behavior, so the table keeps the tool's first name.
+
+**Consequences:** Nothing re-checks a person on a linked conversation, so the
+check when a link is made (the linking person can post there now) is the only
+gate on it. A change that loosens that check loosens every run afterwards. A
+future unlink tool is the only way to take a linked room back.
 
 ### 2026-09-27 — The conversation tools replace post_result
 

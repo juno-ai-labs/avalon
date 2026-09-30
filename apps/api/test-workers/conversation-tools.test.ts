@@ -304,47 +304,53 @@ describe("linking a conversation to a Sidekick", () => {
       ).toArray())).toEqual([{ parent_id: OTHER_ROOM_ID }]);
   });
 
-  it("reads and posts only where the Sidekick is linked", async () => {
+  it("reaches a room its run-as person can open without it being linked", async () => {
     await seedRoom(OTHER_ROOM_ID, "Founders");
     await seedSidekick("0");
     const resolve = (reference: string) => workspace().resolveConversationToolTarget({
       workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, scope: sidekickScope(), reference,
     });
 
-    // The author can open Founders, but the Sidekick is not linked to it.
-    expect(await resolve(OTHER_ROOM_ID))
-      .toEqual({ ok: false, code: "conversation_not_in_scope", available: [ROOM_ID], resourceId: null });
-    await workspace().linkSidekickConversation({ workspaceId: WORKSPACE_ID,
-      userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: OTHER_ROOM_ID });
+    // The Sidekick is not linked to Founders, but the author it runs as can
+    // open it, and a Sidekick's reach is its own plus its person's.
+    expect(await resolve(OTHER_ROOM_ID)).toMatchObject({ ok: true, conversation: { conversationId: OTHER_ROOM_ID } });
     expect(await resolve("Founders")).toMatchObject({ ok: true, conversation: { conversationId: OTHER_ROOM_ID } });
   });
 });
 
 describe("a conversation tool's scope", () => {
-  it("re-admits on every list, omitting a Breakout the person has left", async () => {
-    const breakout = await seedBreakout("Weekly call");
+  it("keeps a linked Breakout after its run-as person leaves, and drops an unlinked one", async () => {
+    const linked = await seedBreakout("Weekly call");
+    const unlinked = await seedBreakout("Hiring");
     await seedSidekick("0");
     await workspace().linkSidekickConversation({ workspaceId: WORKSPACE_ID,
-      userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: `${ROOM_ID}/${breakout}` });
+      userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: `${ROOM_ID}/${linked}` });
     const listed = async () => (await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID,
       userId: AUTHOR_ID, scope: sidekickScope() })).conversations.map((entry) => entry.conversationId);
-    expect(await listed()).toEqual([ROOM_ID, `${ROOM_ID}/${breakout}`]);
+    const resolve = (breakout: string) => workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID,
+      userId: AUTHOR_ID, scope: sidekickScope(), reference: `${ROOM_ID}/${breakout}` });
+    expect(await listed()).toEqual([ROOM_ID, `${ROOM_ID}/${linked}`]);
+    expect(await resolve(unlinked)).toMatchObject({ ok: true });
 
-    // The author adds someone, then leaves; the Breakout goes on without them.
-    await workspace().addPrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
-      substreamId: breakout, actorUserId: AUTHOR_ID, userId: COLLEAGUE_ID, operationId: "add-colleague" });
-    await workspace().removePrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
-      substreamId: breakout, actorUserId: AUTHOR_ID, userId: AUTHOR_ID, operationId: "author-leaves" });
-    // The Breakout reports its roster to its parent, which the Organization
-    // hosts; the parent applies the Breakout's viewer rows in the same object.
-    // The parent outbox is left alone: adding a member queued a
-    // participant_notification this suite's D1 has no tables to deliver.
-    await deliverChildEffects(TEST_ENV, conversation(ROOM_ID, breakout));
+    // The author adds someone to each, then leaves both; the Breakouts go on
+    // without them.
+    for (const breakout of [linked, unlinked]) {
+      await workspace().addPrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
+        substreamId: breakout, actorUserId: AUTHOR_ID, userId: COLLEAGUE_ID, operationId: `add-colleague-${breakout}` });
+      await workspace().removePrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
+        substreamId: breakout, actorUserId: AUTHOR_ID, userId: AUTHOR_ID, operationId: `author-leaves-${breakout}` });
+      // The Breakout reports its roster to its parent, which the Organization
+      // hosts; the parent applies the Breakout's viewer rows in the same
+      // object. The parent outbox is left alone: adding a member queued a
+      // participant_notification this suite's D1 has no tables to deliver.
+      await deliverChildEffects(TEST_ENV, conversation(ROOM_ID, breakout));
+    }
 
-    expect(await listed()).toEqual([ROOM_ID]);
-    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
-      scope: sidekickScope(), reference: `${ROOM_ID}/${breakout}` }))
-      .toEqual({ ok: false, code: "conversation_access_denied", available: [], resourceId: breakout });
+    // The link is the Sidekick's own permission, so the author leaving takes
+    // nothing from it; the unlinked Breakout was only ever the author's.
+    expect(await listed()).toEqual([ROOM_ID, `${ROOM_ID}/${linked}`]);
+    expect(await resolve(linked)).toMatchObject({ ok: true, conversation: { conversationId: `${ROOM_ID}/${linked}` } });
+    expect(await resolve(unlinked)).toEqual({ ok: false, code: "conversation_access_denied", available: [], resourceId: unlinked });
   });
 
   it("reaches nothing for a person whose membership has ended", async () => {

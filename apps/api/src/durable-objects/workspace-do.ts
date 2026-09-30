@@ -1014,6 +1014,7 @@ import {
 import {
   SIDEKICK_CONVERSATION_LINK_SCHEMA_STATEMENTS,
   linkSidekickConversation,
+  conversationForPerson,
   conversationIdOf,
   conversationsTitled,
   describeConversation,
@@ -1030,6 +1031,7 @@ import {
   type ConversationToolRefusal,
   type ConversationToolRefusalCode,
   type ConversationToolResolveResult,
+  type ConversationToolScope,
   type ConversationToolScopeResult,
 } from "./workspace-conversation-tool-protocol";
 
@@ -7466,21 +7468,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(ConversationToolScopeRequestSchema, input, "conversation_tool_scope");
     this.assertWorkspace(request.workspaceId);
     const scoped = scopeConversations(this.state.storage.sql, request.scope, request.userId);
-    const conversations = await this.reachableConversations(request.workspaceId, scoped, request.userId);
+    const conversations = await this.reachableConversations(request.workspaceId, request.scope, scoped, request.userId);
     return { conversations: conversations.map(conversationToolEntry) };
   }
 
   /**
-   * The unarchived conversations of a scope this person can read. A guest
-   * reads only what a grant gives them, which the directory's viewer rows do
-   * not record, so their `readable` flag says nothing: each candidate is
-   * admitted the way a read would be.
+   * The unarchived conversations of a scope this loop can read. A Sidekick's
+   * home and linked conversations are its own, so they are listed whoever it
+   * runs as. For any other loop the person must be able to read each one; a
+   * guest reads only what a grant gives them, which the directory's viewer
+   * rows do not record, so their `readable` flag says nothing and each
+   * candidate is admitted the way a read would be.
    */
   private async reachableConversations<T extends { parentId: string; substreamId: string; readable: boolean; archived: boolean }>(
     workspaceId: string,
+    scope: ConversationToolScope,
     scoped: readonly T[],
     userId: string,
   ): Promise<T[]> {
+    if (scope.kind === "sidekick") return scoped.filter((conversation) => !conversation.archived);
     const relationship = await this.readRelationship(workspaceId, userId);
     if (relationship?.status !== "active") return [];
     const guest = relationship.accessClass === "guest";
@@ -7514,25 +7520,39 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * One conversation a read or a post named, checked against the scope and
-   * then admitted through the hosted parent's `authorizeViewer`, which is what
-   * the conversation's own transport asks. The directory rows decide the
-   * scope; the parent decides the person.
+   * One conversation a read or a post named. A Sidekick's reach is the union
+   * of its own and its run-as person's: its home and linked conversations are
+   * admitted on the link alone, and any other conversation the person can
+   * open is admitted through the hosted parent's `authorizeViewer`, which is
+   * what the conversation's own transport asks. A Channel or Breakout loop
+   * reaches only its scope, and every one is admitted for the person.
    */
   async resolveConversationToolTarget(input: unknown): Promise<ConversationToolResolveResult> {
     await this.initialized;
     const request = parseRpcInput(ConversationToolResolveRequestSchema, input, "conversation_tool_resolve");
     this.assertWorkspace(request.workspaceId);
-    const scoped = scopeConversations(this.state.storage.sql, request.scope, request.userId);
-    // Only a refusal lists what the person can reach, so only a refusal pays for it.
-    const available = async () => (await this.reachableConversations(request.workspaceId, scoped, request.userId))
+    const sql = this.state.storage.sql;
+    const scoped = scopeConversations(sql, request.scope, request.userId);
+    // Only a refusal lists what the loop can reach, so only a refusal pays for it.
+    const available = async () => (await this.reachableConversations(request.workspaceId, request.scope, scoped, request.userId))
       .map((conversation) => conversation.conversationId);
-    let target;
+    let target: (typeof scoped)[number];
+    let ownedBySidekick = request.scope.kind === "sidekick";
     if (request.reference === null) {
-      target = scoped.find((conversation) => conversation.isHome);
-      if (!target) return conversationToolRefusal("conversation_home_missing", await available());
+      const home = scoped.find((conversation) => conversation.isHome);
+      if (!home) return conversationToolRefusal("conversation_home_missing", await available());
+      target = home;
     } else {
-      const match = matchConversationReference(scoped, request.reference);
+      let match = matchConversationReference(scoped, request.reference);
+      if (match.outcome === "missing" && request.scope.kind === "sidekick") {
+        const theirs = conversationForPerson(sql, request.reference, request.userId);
+        match = theirs.outcome === "found"
+          ? { outcome: "found", conversation: { ...theirs.conversation, isHome: false, isOwn: false } }
+          : theirs.outcome === "ambiguous"
+            ? { outcome: "ambiguous", matches: theirs.matches.map((conversation) => ({ ...conversation, isHome: false, isOwn: false })) }
+            : theirs;
+        ownedBySidekick = false;
+      }
       if (match.outcome === "missing") return conversationToolRefusal("conversation_not_in_scope", await available());
       if (match.outcome === "ambiguous") {
         return conversationToolRefusal("conversation_ambiguous", match.matches.map((conversation) => conversation.conversationId));
@@ -7541,9 +7561,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     const resourceId = target.substreamId === "0" ? target.parentId : target.substreamId;
     if (target.archived) return conversationToolRefusal("conversation_archived", [], resourceId);
-    const admission = await this.conversationToolAdmission(request.workspaceId, target, request.userId);
-    if (!admission.authorized) return conversationToolRefusal("conversation_access_denied", [], resourceId);
-    if (admission.archived) return conversationToolRefusal("conversation_archived", [], resourceId);
+    if (!ownedBySidekick) {
+      const admission = await this.conversationToolAdmission(request.workspaceId, target, request.userId);
+      if (!admission.authorized) return conversationToolRefusal("conversation_access_denied", [], resourceId);
+      if (admission.archived) return conversationToolRefusal("conversation_archived", [], resourceId);
+    }
     const sidekickName = request.scope.kind !== "sidekick" ? null
       : this.state.storage.sql.exec<{ title: string }>(
         `SELECT title FROM automation_directory WHERE automation_id = ?`, request.scope.automationId,

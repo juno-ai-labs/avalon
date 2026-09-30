@@ -225,6 +225,30 @@ interface TitledConversation extends ConversationAddress, DirectoryFacts {
 }
 
 /**
+ * The conversation a reference names among those this person can open, for a
+ * Sidekick reaching past its own rooms on the strength of the person it runs
+ * as. An id is looked up directly; anything else is a title. The caller still
+ * admits the person, since the viewer rows say nothing about a guest's grants.
+ */
+export function conversationForPerson(
+  sql: SqlStorage,
+  reference: string,
+  userId: string,
+): ReferenceMatch<TitledConversation> {
+  const address = parseConversationId(reference);
+  if (address) {
+    const facts = describeConversation(sql, address, userId);
+    return facts
+      ? { outcome: "found", conversation: { ...address, ...facts, conversationId: conversationIdOf(address) } }
+      : { outcome: "missing" };
+  }
+  const titled = conversationsTitled(sql, reference, userId);
+  if (titled.length === 1) return { outcome: "found", conversation: titled[0]! };
+  if (titled.length > 1) return { outcome: "ambiguous", matches: titled };
+  return { outcome: "missing" };
+}
+
+/**
  * Every Channel and Breakout titled `title` that this person can open, for an
  * link that names a conversation the way the person did. Archived ones are
  * included so the refusal can say that is why.
