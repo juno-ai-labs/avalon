@@ -104,7 +104,6 @@ export function SidelineComposer(props: {
   onSend: (cardId: string) => void;
   onRetryCatalog: () => void;
   onOpenInRally: (cardId: string) => void;
-  onSignOut: () => void;
 }): React.JSX.Element {
   const catalogReady = props.status === "ready";
   return (
@@ -118,7 +117,6 @@ export function SidelineComposer(props: {
         <div className="sideline-header-actions">
           <span className="sideline-marker">Messaging</span>
           <span className="sideline-audit-copy">Sending as another participant is audited.</span>
-          <button className="button button-secondary" type="button" onClick={props.onSignOut}>Sign out</button>
         </div>
       </header>
 

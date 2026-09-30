@@ -5,13 +5,17 @@ import {
   SidelineSendResponseSchema,
   ChannelAccessSchema,
   SocketTicketSchema,
+  WorkspaceIdSchema,
+  WorkspaceSchema,
   type Session,
 } from "@rally/contracts";
+import { z } from "zod";
 import { SIDELINE_AUTH_CALLBACK_URI } from "@rally/contracts/desktop-deep-link";
 import { CLIENT_CONTRACT_VERSION, RALLY_HEADERS } from "@rally/contracts/http-headers";
 import { socketTicketProtocols } from "@rally/contracts/socket-tickets";
 import { workstreamDeepLink } from "@rally/contracts/workstream-links";
 import { watchWorkspaceReach, type ReachWatchDiagnostic } from "@rally/contracts/workspace-reach-watch";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import {
   app,
   BrowserWindow,
@@ -30,8 +34,14 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 
-import { sidelineHttpOutcome, type SidelineSendResult, type SidelineSession } from "../common/bridge";
-import { initializeSidelineUpdater, sidelineUpdateMenuItem } from "./updater";
+import {
+  sidelineHttpOutcome,
+  type SidelineOrganization,
+  type SidelineOrganizationSwitch,
+  type SidelineSendResult,
+  type SidelineSession,
+} from "../common/bridge";
+import { initializeSidelineUpdater, sidelineUpdateMenuItem, type SidelineUpdateHandle } from "./updater";
 import { sidelineHttpSend, sidelineHttpSendResponse } from "./send-request";
 
 const API_BASE_URL = (
@@ -42,7 +52,10 @@ const VISUAL_STATE = app.isPackaged ? undefined : process.env.SIDELINE_VISUAL_ST
 const SESSION_FILE = "sideline-session.bin";
 /** The origin Sideline's workspace socket presents; the Worker's `ALLOWED_ORIGINS` must admit it. */
 const SIDELINE_SOCKET_ORIGIN = "app://sideline";
+declare const __SIDELINE_BUILD_TIME__: string | undefined;
+
 let mainWindow: BrowserWindow | null = null;
+let updateHandle: SidelineUpdateHandle | null = null;
 let session: Session | null = null;
 let pendingAuth: { attemptId: string; verifier: string } | null = null;
 let stopReachWatch: (() => void) | null = null;
@@ -347,6 +360,15 @@ async function handleCallback(raw: string): Promise<void> {
   }
 }
 
+/** Revoke a session on the server; a failure leaves it to expire. */
+async function endSession(value: Session): Promise<void> {
+  await jsonRequest(`${value.apiBaseUrl}/auth/logout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${value.accessToken}` },
+    body: JSON.stringify({ refreshToken: value.refreshToken }),
+  }).catch(() => undefined);
+}
+
 function assertSender(event: IpcMainInvokeEvent): void {
   if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error("Untrusted Sideline IPC sender");
 }
@@ -391,15 +413,19 @@ else {
     session = VISUAL_STATE ? null : await loadSession();
     mainWindow = createWindow();
     restartReachWatch();
-    const updateHandle = initializeSidelineUpdater({
+    const handle = initializeSidelineUpdater({
       isPackaged: app.isPackaged,
       isReleaseBuild: process.env.SIDELINE_RELEASE_BUILD === "true",
       platform: process.platform,
       arch: process.arch,
+      // Stamped by electron.vite.config.ts; absent where no build ran (unit tests).
+      currentBuildTime: typeof __SIDELINE_BUILD_TIME__ === "string" ? Date.parse(__SIDELINE_BUILD_TIME__) : undefined,
+      onDownloaded: (version) => sendToWindow("sideline:update-downloaded", version),
       showMessageBox: (options) => mainWindow && !mainWindow.isDestroyed()
         ? dialog.showMessageBox(mainWindow, options)
         : dialog.showMessageBox(options),
     });
+    updateHandle = handle;
     if (process.platform === "darwin") {
       const menu = Menu.getApplicationMenu() ?? Menu.buildFromTemplate([
         { role: "appMenu" },
@@ -410,13 +436,21 @@ else {
       ]);
       const appMenu = menu.items[0]?.submenu;
       if (appMenu && !appMenu.getMenuItemById("sideline-check-for-updates")) {
-        appMenu.insert(Math.min(1, appMenu.items.length), new MenuItem(sidelineUpdateMenuItem(updateHandle)));
+        appMenu.insert(Math.min(1, appMenu.items.length), new MenuItem(sidelineUpdateMenuItem(handle)));
         Menu.setApplicationMenu(menu);
       }
     }
   });
 }
 
+ipcMain.handle("sideline:downloaded-update", (event) => {
+  assertSender(event);
+  return updateHandle?.downloadedVersion() ?? null;
+});
+ipcMain.handle("sideline:install-update", (event) => {
+  assertSender(event);
+  updateHandle?.installDownloadedUpdate();
+});
 ipcMain.handle("sideline:session", (event) => {
   assertSender(event);
   return VISUAL_STATE && VISUAL_STATE !== "denied" ? visualSession : publicSession(session);
@@ -424,15 +458,87 @@ ipcMain.handle("sideline:session", (event) => {
 ipcMain.handle("sideline:sign-in", async (event) => { assertSender(event); await beginSignIn(); });
 ipcMain.handle("sideline:sign-out", async (event) => {
   assertSender(event);
-  if (session) await jsonRequest(`${session.apiBaseUrl}/auth/logout`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken}` },
-    body: JSON.stringify({ refreshToken: session.refreshToken }),
-  }).catch(() => undefined);
+  // Cleared before the logout call, so a switch finishing meanwhile sees the
+  // sign-out and does not commit the session it selected.
+  const ending = session;
   session = null;
+  if (ending) await endSession(ending);
   await storeSession(null);
   restartReachWatch();
   sendToWindow("sideline:session-changed", null);
+});
+const OrganizationsResponseSchema = z.object({ workspaces: z.array(WorkspaceSchema) });
+
+/** Parse a server response, naming the rejected field in what crosses the IPC boundary. */
+function parseResponse<T>(schema: z.ZodType<T>, value: unknown, label: string): T {
+  const parsed = schema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  throw new Error(zodDiagnosticCode(parsed.error, label) ?? `${label}_invalid`);
+}
+
+ipcMain.handle("sideline:organizations", async (event): Promise<SidelineOrganization[]> => {
+  assertSender(event);
+  if (VISUAL_STATE) {
+    return [
+      { id: visualSession.workspace.id, name: visualSession.workspace.name },
+      { id: "00000000-0000-7000-8000-00000000c009", name: "Juno Labs" },
+    ];
+  }
+  const { workspaces } = parseResponse(OrganizationsResponseSchema, await authenticated("/auth/workspaces"), "organizations");
+  return workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name }));
+});
+/**
+ * Move the session to another Organization. The new session must be admitted
+ * to Sideline's catalog before it replaces the current one, so a refusal
+ * leaves the operator where they were.
+ */
+async function switchOrganization(workspaceId: string): Promise<SidelineOrganizationSwitch> {
+  const current = session;
+  if (!current || current.workspace?.id === workspaceId) return "switched";
+  const selected = parseResponse(SessionSchema, await authenticated("/auth/workspace/select", {
+    method: "POST",
+    body: JSON.stringify({ workspaceId }),
+  }), "organization_session");
+  try {
+    parseResponse(SidelineCatalogSchema, await jsonRequest(
+      `${selected.apiBaseUrl}/sideline/catalog`,
+      { headers: { Authorization: `Bearer ${selected.accessToken}` } },
+    ), "sideline_catalog");
+  } catch (error) {
+    void endSession(selected);
+    if (error instanceof HttpResponseError && error.status === 403) return "not_admitted";
+    throw error;
+  }
+  // Saved before it goes live, so a write failure leaves the old session in charge.
+  try {
+    await storeSession(selected);
+  } catch (error) {
+    void endSession(selected);
+    throw error;
+  }
+  // Signed out while this ran: that is the session now, so put it back on disk.
+  // A token refresh replaces the object but not the Organization, so compare that.
+  const previous = session;
+  if (!previous || previous.workspace?.id !== current.workspace?.id) {
+    await storeSession(previous).catch(() => undefined);
+    void endSession(selected);
+    return "superseded";
+  }
+  session = selected;
+  restartReachWatch();
+  sendToWindow("sideline:session-changed", publicSession(session));
+  void endSession(previous);
+  return "switched";
+}
+// One switch at a time: each starts from the session the previous one left, so
+// two quick choices cannot both select a session and orphan one of them.
+let organizationSwitchTail: Promise<unknown> = Promise.resolve();
+ipcMain.handle("sideline:switch-organization", (event, raw: unknown): Promise<SidelineOrganizationSwitch> => {
+  assertSender(event);
+  const workspaceId = WorkspaceIdSchema.parse(raw);
+  const run = organizationSwitchTail.then(() => switchOrganization(workspaceId));
+  organizationSwitchTail = run.catch(() => undefined);
+  return run;
 });
 ipcMain.handle("sideline:catalog", async (event) => {
   assertSender(event);

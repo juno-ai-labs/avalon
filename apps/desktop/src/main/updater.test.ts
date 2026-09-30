@@ -6,8 +6,8 @@ import {
   type AutoUpdateDependencies,
   type AutoUpdaterPort,
   type UpdateOutcome,
-  type UpdateStatus,
 } from './updater';
+import type { DesktopUpdateStatus } from '../common/desktop';
 
 class FakeUpdater extends EventEmitter implements AutoUpdaterPort {
   autoDownload = false;
@@ -23,7 +23,7 @@ class FakeUpdater extends EventEmitter implements AutoUpdaterPort {
 
 function setup(overrides: Partial<AutoUpdateDependencies> = {}) {
   const updater = new FakeUpdater();
-  const statuses: UpdateStatus[] = [];
+  const statuses: DesktopUpdateStatus[] = [];
   const showMessageBox = vi.fn(async () => ({ response: 1, checkboxChecked: false }));
   const openExternal = vi.fn(async () => undefined);
   const unref = vi.fn();
@@ -174,6 +174,21 @@ describe('desktop auto-update runtime', () => {
 
     expect(showMessageBox).toHaveBeenCalledOnce();
     expect(updater.quitAndInstall).not.toHaveBeenCalled();
+  });
+
+  it('never prompts when the build time could not be read', () => {
+    let tick!: () => void;
+    const { updater, showMessageBox } = setup({
+      currentBuildTime: Number.NaN,
+      now: () => 30 * 24 * 60 * 60 * 1000,
+      scheduleInterval: (callback) => { tick = callback; return { unref: () => undefined }; },
+    });
+
+    updater.emit('update-available', { version: '1.1.0' });
+    updater.emit('update-downloaded', { version: '1.1.0' });
+    tick();
+
+    expect(showMessageBox).not.toHaveBeenCalled();
   });
 
   it('keeps the app running when protected state cannot be prepared', async () => {
