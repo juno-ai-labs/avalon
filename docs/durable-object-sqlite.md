@@ -358,6 +358,15 @@ methods and `.call()`/`.apply()` inside these callbacks therefore remain a
 mandatory review target. Do not silence the rule or cast a Promise-shaped result
 to make it pass—make the prepare/commit split explicit instead.
 
+`rally/durable-object-workspace-table-routing` fails lint when a Durable Object
+names a `WORKSPACE_LOCAL_TABLES` table on its own `this.env.DB`, which is regional
+D1 and answers `no such table` as a `500 internal_error`. It sees only literal
+SQL, so a statement built elsewhere or an aliased binding is still a review
+target. Route such a read through a typed WorkspaceDO method or
+`withWorkspaceRuntimeDatabase`; inside WorkspaceDO itself use `runWorkspaceSql`
+or `localWorkspaceEnv`, because `withWorkspaceRuntimeDatabase` without the local
+executor calls the object back.
+
 ### 2026-09-21 — A migration fingerprint cannot take an object offline
 
 **What changed:** A stored implementation hash that differs from the current

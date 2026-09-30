@@ -168,8 +168,8 @@ fade completes; changing direction reverses the active animation in place. The
 jump control hangs one spacing step above the composer, anchored from
 underneath to the composer dock's top edge so the gap survives a composer that
 grows; that edge is the composer's own only while the dock states no padding
-above it, which `app.css.node.test.ts` holds for every rule naming either
-class.
+above it, which no automated test covers for the rules naming either class; it
+is verified in a real window.
 
 Every surface with a composer renders the same one, dressed the same way: the
 message capsule, keyed on `:is(.workstream-screen, .workstream-launch-screen)
@@ -364,8 +364,9 @@ measures the container's content box, so the number in the query is that pane
 width less a dock's two 16px gutters. Every dock states the same gutter, because
 a dock that states a different one crosses at a different *pane* — and a launcher
 that crosses somewhere else puts the width change back into the hand-off, in a
-band of pane widths either side of the threshold. `app.css.node.test.ts` holds
-the threshold and every dock's gutter to that one sum.
+band of pane widths either side of the threshold. No automated test
+holds the threshold and every dock's gutter to that one sum; verify them in a
+real window.
 
 The feed's vertical rhythm is one primitive: a row owns the space above it,
 chosen by what precedes it, and no row sets a bottom margin. `MessageFeed`
@@ -525,7 +526,7 @@ same fill; its start and end lengths cannot, and are the exception the kill
 switch carves out.
 
 Both longhands sit below the `animation` shorthand, which resets both of them,
-and `app.css.node.test.ts` asserts their *positions* rather than their presence.
+and no automated test covers their *positions*; verify the result in a real window.
 Duration is the milder of the two: the shorthand puts it back to `0s`.
 `animation-timeline` is the one that costs the condition — reinstated above the
 shorthand it falls back to the document's timeline, `auto` computes to `0s`
@@ -623,7 +624,7 @@ and each attachment image cell, media tile and file card — painted by
 surface's corner, in a twentieth of the surface's own ink so it shows on a dark
 or profile-coloured bubble as well as on a light card. The sweep is keyed on a
 selector list naming those four surfaces, once in the animated rule and once in
-its reduced-motion twin, and `app.css.node.test.ts` pins both: a new attachment
+its reduced-motion twin, and no automated test pins both: a new attachment
 surface has to be added to both lists, or a send made of that attachment alone
 goes out with no in-flight cue. Every
 turn's identity line is `MessageByline`, one component for the assistant's turn,

@@ -76,8 +76,8 @@ The public landing is static HTML and has no React runtime, so it cannot go
 through `ConnectorMark`. It inlines `@thesvg/react/apple`'s `mono` path on the
 download button, painted in `currentColor`. A Lucide or Tabler stand-in is still
 not a company mark there, and adding React to the site just to mount one
-component is not the fallback. The inlined `d` is pinned against the pack in
-`apps/site/test/site.test.ts`.
+component is not the fallback. No automated test pins the
+inlined `d` against the pack.
 
 ### Marks are monochrome
 
@@ -131,9 +131,9 @@ order:
 
 Both Settings sizes were written the inert way first and drew at the shared
 default; the difference was small enough to pass a visual check.
-`app.css.node.test.ts` pins that every rule sizing a mark names the surface that
-owns it, and the Settings component test pins that a mark carries no second
-class to hang one on.
+No automated test covers that every rule sizing a mark names the surface that
+owns it; that is verified in a real window. The Settings component test pins
+that a mark carries no second class to hang one on.
 
 ## Adding a connector
 

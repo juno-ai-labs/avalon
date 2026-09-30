@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { desktopSettingsSections, parseDesktopSettingsSection } from '../common/settings';
+import { parseDesktopSettingsSection } from '../common/settings';
 
 describe('desktop settings sections', () => {
-  it('accepts every supported section exactly', () => {
-    for (const section of desktopSettingsSections) {
-      expect(parseDesktopSettingsSection(section)).toBe(section);
-    }
+  it('accepts a supported section unchanged', () => {
+    expect(parseDesktopSettingsSection('notifications')).toBe('notifications');
+    expect(parseDesktopSettingsSection('custom-mcp')).toBe('custom-mcp');
   });
 
   it.each([undefined, null, '', 'general', 'Organization', 'workspace/people', 1, {}])(

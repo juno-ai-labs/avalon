@@ -1348,13 +1348,13 @@ or the client.
 
 The one thing to be careful with is where the identity-link table lives: a new
 one (`teams_user_links`, say) is a WorkspaceDO table, so any read of it from a
-Durable Object goes through `withWorkspaceRuntimeDatabase`, never `this.env.DB`.
+Durable Object goes through `withWorkspaceRuntimeDatabase` (inside WorkspaceDO,
+its own storage via `localWorkspaceEnv`), never `this.env.DB`.
 Written against the regional binding it names a table regional D1 does not have,
 which reaches the person as "An unexpected error occurred" rather than as
 anything naming the boundary. That defect was found on the automation delivery
-path this section used to describe, and
-`durable-object-workspace-table-routing.test.ts` is what catches it now,
-whichever object makes the mistake next.
+path this section used to describe. `rally/durable-object-workspace-table-routing`
+now guards it.
 
 ## Failure modes and limits
 

@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  FAVICON_CANDIDATE_TIMEOUT_MS,
   faviconHostChain,
   resolveFavicon,
 } from "../src/services/favicon-service";
@@ -272,21 +271,6 @@ describe("favicon host resolution", () => {
     )).rejects.toThrow("favicon_image_fetch_failed");
     expect(observedSignal?.aborted).toBe(true);
     expect(put).not.toHaveBeenCalled();
-  });
-
-  it("keeps the team-selected origin deadline above an ordinary image response", async () => {
-    const { cache } = cacheFixture();
-    const scrapeBranding = vi.fn(async (url: string) => ({ faviconUrl: "/favicon.png", url, statusCode: 200 }));
-    let observedSignal: AbortSignal | undefined;
-    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      observedSignal = init?.signal as AbortSignal;
-      return response(String(input), png, "image/png");
-    });
-
-    await expect(resolveFavicon(cache, "example.com", { scrapeBranding }, fetchMock as unknown as typeof fetch))
-      .resolves.toMatchObject({ contentType: "image/png" });
-    expect(FAVICON_CANDIDATE_TIMEOUT_MS).toBeGreaterThan(0);
-    expect(observedSignal?.aborted).toBe(false);
   });
 
   it("stops reading an unbounded image body at the KV value boundary", async () => {

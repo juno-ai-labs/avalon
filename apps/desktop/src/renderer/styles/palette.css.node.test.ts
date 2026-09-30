@@ -8,15 +8,12 @@ import {
   PALETTE_KEYS,
   PERSONAL_COLOR_KEYS,
   PROJECT_COLOR_KEYS,
-  PersonalColorSchema,
-  personalColorKey,
 } from '@rally/contracts';
 
 import { PROJECT_COLOR_COLUMNS, glyphInk, projectColorCells } from '../lib/project-palette';
 
 // Read from disk for the same reason `themes.css.node.test.ts` does: Vite hands
 // `?raw` an empty string for a file it is already processing as CSS.
-const app = readFileSync(resolve(process.cwd(), '../../packages/ui/src/styles/app.css'), 'utf8');
 const onboarding = readFileSync(resolve(process.cwd(), '../../packages/ui/src/styles/onboarding.css'), 'utf8');
 const tokensDirectory = resolve(process.cwd(), '../../config/design-tokens');
 
@@ -249,47 +246,11 @@ describe('project palette', () => {
     expect(cells.filter((cell) => cell !== null).sort()).toEqual([...PROJECT_COLOR_KEYS].sort());
   });
 
-  it('given the swatch grids, when app.css is read, then both use the column count the layout assumes', () => {
-    // The serpentine order is computed against PROJECT_COLOR_COLUMNS; a grid
-    // that renders at a different width silently reorders the swatches.
-    expect(app).toContain(`grid-template-columns: repeat(${PROJECT_COLOR_COLUMNS}, 32px)`);
-    expect(app).toContain(`.appearance-picker-colors { grid-template-columns: repeat(${PROJECT_COLOR_COLUMNS}, minmax(0, 1fr)); }`);
-  });
-
-  it('given an accent, when onboarding.css is read, then it does not redefine persistent row selection', () => {
-    // The accent may re-point what it likes in `sys.color.accent.*`; what it
-    // may not re-point is `cmp.row.background-selected`. That token is a
-    // persistent selection fill, and only about half its readers are
-    // selections — the rest are an inline mention chip, a resting dictation
-    // button, two hovers and the letter beside an option, none of which anybody
-    // chose to paint in a reader's colour. A deliberately personal transient
-    // state can still read `sys.color.accent.*` directly without turning every
-    // selected row personal.
-    //
-    // Matched as a *declaration*, with comments stripped first. Asserting on
-    // the file text passed only because the comment beside the deleted line
-    // spells the token as a path (`cmp.row.background-selected`) rather than
-    // as the custom property — a distinction the prose is right to draw and
-    // the guard has no business depending on. As written, prose may spell it
-    // either way and only a re-point fails; reading the token through `var()`
-    // stays allowed, because borrowing the fill was never the problem.
-    const declarations = onboarding.replace(/\/\*[\s\S]*?\*\//gu, ' ');
-    expect(declarations).not.toMatch(/--av-cmp-row-background-selected\s*:/u);
-  });
-
-  it('given the accent ink rules, when onboarding.css is read, then they mirror the ink table', () => {
-    // `accent-on` is paired with `accent-base`, a mix toward `text-default`, so
-    // it follows the appearance rather than the accent — one rule, no per-hue
-    // exception. Pinning a per-hue rule here is what locked in near-black ink on
-    // a near-black mix for every light-theme accent.
-    expect(onboarding).toContain("html[data-personal-color] { --av-sys-color-accent-on: var(--av-sys-color-text-on-inverse); }");
-    expect(onboarding).not.toMatch(/--av-sys-color-accent-on: var\(--personal-ink/u);
-
-    // The swatch checkmark does sit on a raw fill, and that one follows the
-    // table. Pinned by name rather than recomputed: the point is that a change
-    // to `PALETTE_INK` shows up as an edit here, so somebody has to look at the
-    // swatch row when the ring's ink moves. `lime` is the one accent a person
-    // can hold that still takes black.
+  it('given the personal accents, when PALETTE_INK is read, then the white-ink accents are the pinned set', () => {
+    // Pinned by name rather than recomputed: a change to `PALETTE_INK` shows up
+    // as an edit here, so somebody has to look at the swatch row when the
+    // ring's ink moves. `lime` is the one accent a person can hold that still
+    // takes black.
     const whiteAccents = PERSONAL_COLOR_KEYS.filter((key) => PALETTE_INK[key] === 'white');
     expect(whiteAccents).toEqual(['rose', 'orange', 'emerald', 'blue', 'violet', 'fuchsia', 'black']);
   });
@@ -326,19 +287,6 @@ describe('project palette', () => {
         expect(Math.abs(apcaLc(chosen, fill)), `${key} in ${theme}: accent ink below the floor`)
           .toBeGreaterThanOrEqual(READABLE_LC);
       }
-    }
-  });
-
-  it('given every accent a person can hold, when onboarding.css is read, then each resolves to the token the contract gives', () => {
-    // `data-personal-color` is written verbatim from the stored value, and the
-    // rules below it feed `--personal-color` into `color-mix()`. A missing
-    // selector leaves the variable unset, which yields nothing rather than
-    // failing loudly, so the app chrome quietly loses its accent while the
-    // avatar and the message bubble — which resolve through `personalColorKey()`
-    // in TypeScript — keep theirs. Every option, retired names included.
-    for (const option of PersonalColorSchema.options) {
-      const rule = `html[data-personal-color='${option}'] { --personal-color: var(--av-sys-color-project-${personalColorKey(option)}); }`;
-      expect(onboarding, `no accent rule for "${option}" matching personalColorKey()`).toContain(rule);
     }
   });
 

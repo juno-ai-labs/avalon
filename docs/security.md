@@ -1024,7 +1024,7 @@ no unit test standing in for them.
 | `apps/api/test/rpc-contracts.test.ts` | That a cross-region rejection names field paths and never values. |
 | `apps/desktop/src/main/telemetry-*.test.ts`, `native-crash-*.test.ts` | Sender/schema boundaries, redacted inspection, owner-only bounded spools, route-final generations, opt-out invalidation, and authenticated next-launch upload. |
 | `apps/api/test/telemetry-*.test.ts`, `crash-*.test.ts`, `posthog-adapter.test.ts` | Regional acceptance, capabilities, preference/identity ordering, immutable deadlines, raw-object access, sanitization, and exact destination negative space. |
-| `apps/site/test/site.test.ts` | Every public entry, route-before-identity behavior, storage failure isolation, and tracking disclosure. |
+| `apps/site/test/site.test.ts` | Pure functions only: iOS detection, telemetry path classification, desktop handoff target parsing and Slack fragment parsing. Public entries, route-before-identity behavior and tracking disclosure have no automated test. |
 | `pnpm --filter @rally/desktop test:release` | The entitlement rules, notarization, blockmap ordering, and the final verifier. CI runs this as a separate job — `pnpm test:scripts` does **not** cover `apps/desktop/scripts/`. |
 | `scripts/gitleaks-allowlist.test.mjs` (`pnpm test:scripts`) | That every `.gitleaks.toml` pattern still rejects real key material. It fails when an exception is added without a case, because the scan itself only reports what it finds today and would not notice an exception that had been widened. |
 | The `secrets` CI job | Gitleaks over the commits a pull request adds to its base branch — `HEAD_SHA --not <base tip>` — and not the base branch's own history. |
@@ -1837,8 +1837,8 @@ compatibility surface rather than a label.
 
 **Consequences:** `app://avalon` stays in the allowlist until shipped clients
 carrying it are gone; removing it is a decision about installed builds.
-`apps/api/test/domain-migration-config.test.ts` asserts both origins are listed
-in configured deployments, so dropping one fails on the edit. The origin policy is
+Nothing automated asserts both origins are listed in configured deployments, so
+dropping one does not fail on the edit. The origin policy is
 otherwise unchanged — it still admits exact origins only, and CORS remains not
 authorization. See [`domain-migration.md`](domain-migration.md).
 ### 2026-08-25 — The origin allowlist admits both site zones

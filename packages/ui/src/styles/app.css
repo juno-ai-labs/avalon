@@ -239,8 +239,7 @@ pre {
    100% keyframe from the first frame, and every line here takes the mask
    whether or not it clips anything — the unconditional fade this whole
    arrangement exists to avoid, reintroduced by a reordering that looks like
-   tidying. `app.css.node.test.ts` asserts both positions rather than both
-   presences.
+   tidying. Keep both in these positions.
 
    The fill mode is also what survives the global reduced-motion block below,
    which forces every duration to 0.001ms: `both` fills the one value outside
@@ -3516,9 +3515,8 @@ pre {
 /* The spacing scale, derived from the theme's one unit. Every margin, padding
    and gap between the feed's rows, inside its turns and on its cards is a step
    of it, so a theme that wants a looser or tighter feed moves `ref.space.unit`
-   and nothing else; `app.css.node.test.ts` holds that line, and the few values
-   under a step that remain are optical nudges inside inline controls, each
-   exempted there by name. Rule-local rather than eight registry tokens because
+   and nothing else; the few values under a step that remain are optical nudges
+   inside inline controls. Rule-local rather than eight registry tokens because
    a theme has no opinion about step five that is not an opinion about the
    unit. */
 :root {
@@ -6694,10 +6692,10 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
    itself. It takes the row instead, inside the dock's own gutters, and the
    rows a launcher stacks above it come with it or they stop lining up.
    568px is a 600px pane less a dock's two 16px gutters — a size query reads the
-   container's content box, which is inside them, and `app.css.node.test.ts`
-   holds those numbers to that sum for every dock that states a gutter, because
-   a dock that states a different one crosses at a different pane and puts the
-   width change back into the hand-off. */
+   container's content box, which is inside them, so those numbers have to keep
+   to that sum for every dock that states a gutter, because a dock that states a
+   different one crosses at a different pane and puts the width change back into
+   the hand-off. */
 @container composer-dock (width < 568px) {
   :is(.workstream-screen, .workstream-launch-screen)
   :is(.composer-stack, .substream-launch-banner) { max-width: none; }
@@ -7073,7 +7071,7 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
    takes the track down to 44. Two numbers have to agree here — this row's
    resting height, below, and the launching header's own — and both have to
    follow the row that *applies* rather than the base one, which is the drift
-   `app.css.node.test.ts` now pins. */
+   to watch for. */
 .workstream-launch-screen {
   display: grid;
   /* The column is stated because the rows alone leave an implicit `auto` one,
@@ -7133,8 +7131,8 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
    the row `.grokbot-workstream-header` sizes — every conversation renders that
    header. It was 55px, the base row's height, for as long as the newer header
    has been 44px, and those 11px were the last thing still moving at the swap.
-   `app.css.node.test.ts` now asserts this against the row that applies rather
-   than the row underneath it. */
+   Keep it agreeing with the row that applies rather than the row underneath
+   it. */
 .workstream-launch-screen.is-launching > .launch-header {
   height: 44px;
 }

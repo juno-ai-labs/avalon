@@ -123,6 +123,12 @@ read [`docs/durable-object-sqlite.md`](docs/durable-object-sqlite.md).
   rather than stubbing a database. A double stands in for something that
   _cannot_ run here — Workers AI, Vectorize, Flagship, a provider's API — never
   for setup that was inconvenient.
+- **A test runs the subject and asserts its observable output against a
+  literal.** It never asserts on the text of a source, stylesheet, HTML or
+  config file, a mock's own value, or a constant against itself. This does not
+  lower the bar:
+  [`docs/testing.md`](docs/testing.md#what-to-test-and-what-not-to) has what to
+  do instead, including when no runnable test is possible.
 - **Prove every integration test can fail.** For a `test-workers/` test, a Node
   test exercising a query, schema, route, service, or object against the real
   migrations, or a local smoke or e2e lane, break the behavior it covers with one
