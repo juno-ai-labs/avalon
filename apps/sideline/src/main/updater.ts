@@ -101,7 +101,8 @@ export function initializeSidelineUpdater(deps: SidelineUpdateDependencies): Sid
       defaultId: 0,
       cancelId: 1,
     }).then((result) => {
-      if (result.response === 0) install();
+      // Another download may have staged a newer build while the dialog was open.
+      if (result.response === 0 && downloaded === version) install();
     }).catch((error: unknown) => {
       log.error("[sideline] could not show the update prompt", error);
     });

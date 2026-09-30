@@ -273,6 +273,8 @@ saved across launches. Install-on-quit still applies, so a person who never pres
 the button updates at their next quit. A build without the timestamp (local
 and test builds) never prompts.
 
+PR [#1029](https://github.com/juno-ai-labs/avalon/pull/1029).
+
 ### 2026-09-28 — The catalog reads each person's Breakouts in one call
 
 **What changed:** For each person in the catalog, the service asks the

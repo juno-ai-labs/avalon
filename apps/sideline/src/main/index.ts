@@ -458,8 +458,11 @@ ipcMain.handle("sideline:session", (event) => {
 ipcMain.handle("sideline:sign-in", async (event) => { assertSender(event); await beginSignIn(); });
 ipcMain.handle("sideline:sign-out", async (event) => {
   assertSender(event);
-  if (session) await endSession(session);
+  // Cleared before the logout call, so a switch finishing meanwhile sees the
+  // sign-out and does not commit the session it selected.
+  const ending = session;
   session = null;
+  if (ending) await endSession(ending);
   await storeSession(null);
   restartReachWatch();
   sendToWindow("sideline:session-changed", null);
