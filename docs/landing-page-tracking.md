@@ -22,7 +22,7 @@ Tagged links on the landing page, by `data-site-action` id:
 | `download-header` | Header Download for Mac | download · header |
 | `download-hero` | Hero Download the macOS beta | download · hero |
 | `download-pricing-start` / `-grow` | Start and Grow Start free trial buttons | download · pricing · plan |
-| `contact-pricing-enterprise` | Grown up Contact us (emails Katherine and Alex) | founder_contact · pricing · enterprise |
+| `contact-pricing-enterprise` | Grown up Contact us (emails Katherine) | founder_contact · pricing · enterprise |
 | `demo-request` | Ask for a demo (emails Katherine and Alex) | demo_request · sidekicks |
 | `founder-contact` | Founder photos and names | founder_contact · team |
 | `support-contact-footer` | Footer help@ email | support_contact · footer |
