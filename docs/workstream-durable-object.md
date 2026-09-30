@@ -118,6 +118,7 @@ and retry-stable event cutoffs. Owner migration 4 supplies the monotonic counter
 | `packages/contracts/src/workstream-transcript.ts` | Socket-safe ordered turn, block, mention, attachment, external-actor, range, and activity schemas. |
 | `apps/desktop/src/renderer/lib/transcript.ts` | Flattens canonical ordered blocks into participant-visible rows and composes explicitly identified transient overlays at protocol-declared anchors. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Product transactions, message/run admission, read waterlines, compaction inputs, and local regional-effect creation. |
+| `apps/api/src/durable-objects/member-attention.ts` | `startReadCursorAtLatest`: the read waterline every seating path gives a person joining a conversation that already has history. |
 | `apps/api/src/durable-objects/workstream-object-storage.ts` | SQL repositories for replay, active output, alarms, inbox/outbox receipts, and projection versions. |
 | `apps/api/src/durable-objects/sqlite-migrations.ts` | Shared SQL-only constructor migration runner. |
 | `apps/api/src/durable-objects/migration-reporting.ts` | `withMigrationReport`, which wraps every constructor's migration call and reports the outcome to `avalon-migration-tracker`. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
@@ -249,6 +250,18 @@ projections before removing the original payload tables, views, receipts, and
 operator RPCs. That object-local fail-closed guard and the one-time fleet
 transfer that satisfied it are historical deployment evidence, not a runtime
 read or repair path.
+
+A person seated in a conversation that already has history starts with their
+read waterline at its latest attention ordinal, not at
+`unread_tracking_start_ordinal`. Every path that turns a participant row active
+(an explicit add, a confirmed mention, a grant projection, a private Breakout
+membership, an identity admission) calls `startReadCursorAtLatest` in the same
+transaction, and only when the person was not already active. The history before
+they arrived is therefore not unread, the first-unread anchor is null, and the
+feed opens at the tail; the message that seats them, and anything after it,
+still counts. The "you were added" signal stays on
+`participants.first_opened_at`. The opening message of a new conversation is the
+exception: people named at creation have no row and read it as unread.
 
 Participant history is read through snapshot-fenced half-open ranges. Opening
 creates one fence and returns the first-unread conversation turn with up to five
@@ -1804,6 +1817,33 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-09-30 — A person added to a conversation starts at its latest message
+
+**What changed:** Seating somebody in a conversation that is not new now writes
+their `member_attention` row with `seen_attention_ordinal` at the latest
+attention ordinal. `startReadCursorAtLatest` holds the one statement, and every
+path that makes a participant active calls it. A re-add moves the cursor
+forward, clears any manual unread mark, and bumps its generation.
+
+**Why:** Without a row of their own a person fell back to
+`unread_tracking_start_ordinal`, which is 0 on every conversation created
+since unread tracking shipped. Being added to an existing Channel therefore
+marked its whole history unread, and the feed opened at the first message
+rather than the newest.
+
+**Considered and rejected:**
+- *Seeding from a SQLite trigger on `participants`.* It would cover every path
+  with no call sites, but it needs a schema version, it also fires for the
+  creator's seat, whose plain `INSERT INTO member_attention` would then hit the
+  primary key, and it hides a product rule in the schema.
+- *Fixing it in the client.* The unread count in the sidebar comes from the
+  same row, so the badge would still be wrong.
+
+**Consequences:** A new seating path must call `startReadCursorAtLatest`, and
+only when the person was not already active, or it marks read whatever arrived
+since they joined. It must run before the seating message takes its ordinal so
+that message stays unread.
 
 ### 2026-09-30 — Conversations send their Sidekick attachments, and a Main reports when opened
 

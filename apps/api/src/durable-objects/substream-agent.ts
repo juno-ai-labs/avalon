@@ -274,6 +274,7 @@ import {
   type DurableObjectRpcResult,
   type ObjectPortOutcome,
 } from "./rpc-result";
+import { startReadCursorAtLatest } from "./member-attention";
 
 export { applyActiveStreamCheckpointEvent, splitActiveStreamCheckpointText } from "./workstream-object-storage";
 
@@ -1462,6 +1463,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         request.userId, request.membershipVersion, Number(request.active), request.actorUserId, now,
       );
       if (request.active) {
+        const wasActive = this.state.storage.sql.exec(
+          `SELECT 1 FROM participants WHERE user_id = ? AND status = 'active'`,
+          request.userId,
+        ).toArray().length > 0;
         this.state.storage.sql.exec(
           `INSERT INTO participants
              (user_id, participation_reason, added_by_user_id, status, participant_epoch,
@@ -1474,6 +1479,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
              removed_at = NULL, updated_at = excluded.updated_at`,
           request.userId, request.actorUserId, now, now,
         );
+        if (!wasActive) startReadCursorAtLatest(this.state.storage.sql, request.userId, now);
       } else {
         this.state.storage.sql.exec(
           `UPDATE participants SET status = 'removed', removed_at = ?,

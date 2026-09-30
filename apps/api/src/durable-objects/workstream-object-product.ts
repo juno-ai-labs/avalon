@@ -124,6 +124,7 @@ import {
   type AnswerExternalElicitationInput,
   type ExternalMessageAdmissionResult,
 } from "./workstream-external-message-protocol";
+import { startReadCursorAtLatest } from "./member-attention";
 
 type SqlRow = Record<string, SqlStorageValue>;
 interface AttachmentResourceRow {
@@ -2911,6 +2912,7 @@ export class WorkstreamObjectProductService {
           // somebody who is already looking at the work stream.
           userId, auth.userId, now, userId === auth.userId ? now : null, now,
         );
+        if (!alreadyActive) startReadCursorAtLatest(sql, userId, now);
         return { alreadyActive };
       },
       (sql, write) => {
@@ -4896,6 +4898,8 @@ export class WorkstreamObjectProductService {
             // here, which is exactly what the dot is for.
             userId, auth.userId, now, now,
           );
+          // Before this message takes its ordinal, so it is the first unread.
+          startReadCursorAtLatest(sql, userId, now);
         }
         transcriptMessage.input.attentionOrdinal = attention;
         transcriptMessage.input.messageSequenceNumber = sequence;

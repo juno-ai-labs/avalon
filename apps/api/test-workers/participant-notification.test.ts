@@ -62,6 +62,7 @@ const CREATE_NAMING_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b4");
  */
 const WORKSPACE_VISIBLE_MENTION_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b5");
 const CONFIRMED_MENTION_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b6");
+const CONFIRMED_MENTION_HISTORY_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b9");
 const REJECTED_CONFIRMED_MENTION_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b7");
 const ELICITATION_ANSWER_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b8");
 const CREATOR_ID = asUserId("00000000-0000-7000-8000-0000000006a3");
@@ -371,6 +372,17 @@ async function deliveredEffects(
   return (await pendingParentEffects(parent)).filter((envelope) => envelope.parentId === workstreamId);
 }
 
+/**
+ * The work stream as this person would open it. Through the product service
+ * rather than the route, which also checks a session this file seeds only for
+ * the creator; the unread arithmetic is the service's.
+ */
+async function openedBy(stub: DurableObjectStub<SubstreamAgent>, userId: string) {
+  return runInDurableObject(stub, (instance) =>
+    (instance as unknown as { product: WorkstreamObjectProductService }).product
+      .get({ ...AUTH, userId: asUserId(userId), role: "member" }));
+}
+
 interface FeedActivity {
   body: string;
   actorUserId: string | null;
@@ -655,6 +667,23 @@ describe("adding somebody to a work stream", () => {
     const envelopes = await deliveredEffects(stub);
     expect(envelopes.filter((envelope) => envelope.effect.kind === "participant_notification")).toHaveLength(0);
     expect(await participantAddedActivity()).toHaveLength(0);
+  });
+
+  it("starts their read cursor at the latest message rather than the first", async () => {
+    const stub = agentStub();
+    await openWorkstream(stub);
+
+    const added = await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
+    expect(added.status).toBe(200);
+
+    // The history was written before they were here, so none of it is
+    // unread and the room opens at the newest message.
+    expect(await openedBy(stub, INVITEE_ID)).toMatchObject({
+      latestAttentionSequenceNumber: 1,
+      readThroughSequenceNumber: 1,
+      firstUnreadSequenceNumber: null,
+      hasUnread: false,
+    });
   });
 });
 
@@ -951,6 +980,47 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
       envelope.effect.kind === "participant_notification"
       && envelope.effect.recipientUserId === INVITEE_ID
     ))).toHaveLength(0);
+  });
+
+  it("makes the message that seats them their first unread, not the history before it", async () => {
+    const stub = agentStub(CONFIRMED_MENTION_HISTORY_ID);
+    await provisionWorkstream(stub, CONFIRMED_MENTION_HISTORY_ID);
+    const earlier = await product(stub, {
+      operation: "create_message",
+      auth: AUTH,
+      input: {
+        text: "Notes before anybody else is here",
+        clientMessageId: "history-before-seat",
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+      },
+    });
+    expect(earlier.status).toBe(200);
+    await waitForCanonicalTurn(stub, (earlier.body.turn as { turnId: string }).turnId);
+    const sent = await product(stub, {
+      operation: "create_message",
+      auth: AUTH,
+      input: {
+        text: "Ask @Invitee to review",
+        clientMessageId: "seat-after-history",
+        mentions: [{
+          type: "person",
+          userId: INVITEE_ID,
+          connectorType: null,
+          startOffset: 4,
+          endOffset: 12,
+        }],
+        confirmedParticipantUserIds: [INVITEE_ID],
+        attachmentIds: [],
+      },
+    });
+    expect(sent.status).toBe(200);
+    await waitForCanonicalTurn(stub, (sent.body.turn as { turnId: string }).turnId);
+
+    const workstream = await openedBy(stub, INVITEE_ID);
+    expect(workstream.firstUnreadSequenceNumber).toBe(2);
+    expect(workstream.readThroughSequenceNumber).toBe(1);
   });
 
   it("does not let confirmation seat the raw target of a rejected mention", async () => {
