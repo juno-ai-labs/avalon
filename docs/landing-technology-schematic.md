@@ -4,10 +4,10 @@ The Technology section of the public landing page (`rallywith.ai/#technology`)
 shows Rally's stack as a cut-away sphere drawn in points. A starfield gathers
 into five nested spheres, one at a time, each labeled with a gold leader line:
 the LLM routing core, Authorization, Sidekicks, Connectors, and Multiplayer
-collaboration. The
-octant facing the viewer is cut away so every layer shows. After a long hold the
-cut fills in, the sphere becomes a tennis ball with a gold seam, spins, and
-breaks back into the starfield, and the loop starts again.
+collaboration. The octant facing the viewer is cut away so every layer shows.
+After a long hold the cut fills in, the sphere becomes a tennis ball with a
+neon seam, spins, and breaks back into the starfield, and the loop starts
+again.
 
 Read this before changing the animation, its timing, its labels, or how it
 loads.
@@ -22,8 +22,10 @@ loads.
 | `apps/site/src/technology-scene.ts` | The scene: `LAYERS` (names and colors), the timeline (`stateAt`, `MOMENTS`, `LOOP`), particle geometry, shaders, and the SVG label overlay |
 | `apps/site/src/landing.css` | `.tech-*` rules: figure size, label type, the gold line color, the layer list |
 
-`LAYERS` is the single source of the layer names, their order (inside out), and
-their colors. The colors, and the amber of the leader lines, are the
+`LAYERS` is the scene's single source of the layer names, their order (inside
+out), and their colors. The text list in `index.html` repeats the names and the
+order for screen readers and search, so a change to either lands in both files
+in the same commit. The colors, and the amber of the leader lines, are the
 product's icon palette (`--av-sys-color-project-*` in
 `packages/ui/src/styles/themes.css`): amber, fuchsia, emerald, orange, blue.
 The tennis ball's seam is the brand neon, `--av-sys-color-brand-base`. The
