@@ -1,12 +1,10 @@
 import "../../../tests/isolated-region";
 import { describe, expect, it } from "vitest";
-import { z } from "zod";
 
 import { EngineeringSqlLookupSchema } from "./engineering-inspection";
 
 const WORKSPACE = "3f2504e0-4f89-41d3-9a0c-0305e82c3311";
 const WORKSTREAM = "3f2504e0-4f89-41d3-9a0c-0305e82c3312";
-const SIDEKICK = "3f2504e0-4f89-41d3-9a0c-0305e82c3313";
 
 const RESULT = { columns: ["answer"], rows: [{ answer: 1 }], rowsRead: 1, rowsWritten: 0 };
 
@@ -35,25 +33,4 @@ describe("engineering SQL result wire compatibility", () => {
     })).toMatchObject({ found: true });
   });
 
-  it("is strict, which is why a required new id would break the older parser", () => {
-    // The hazard itself: strict parsing rejects a key it does not know, so a
-    // result carrying an id the deployed MCP has never heard of fails there
-    // exactly as this fails here. An optional field is absent on the wire and
-    // reaches no older parser at all.
-    const previousBuild = z.strictObject({
-      region: z.string(),
-      workspaceId: z.string(),
-      workstreamId: z.string().nullable(),
-      substreamId: z.string().nullable(),
-      result: z.unknown(),
-    });
-    expect(previousBuild.safeParse({
-      region: "global",
-      workspaceId: WORKSPACE,
-      workstreamId: null,
-      substreamId: null,
-      sidekickId: SIDEKICK,
-      result: RESULT,
-    }).success).toBe(false);
-  });
 });

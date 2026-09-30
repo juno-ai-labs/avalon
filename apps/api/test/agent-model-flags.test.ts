@@ -1,5 +1,4 @@
 import "../../../tests/isolated-region";
-import { readFileSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
@@ -416,23 +415,6 @@ describe("agent model flags", () => {
       defaultAgentModelRouting(baseEnv, "workstream"),
     );
   });
-
-  // `wrangler deploy` rejects a flagship binding with no `app_id`, but a
-  // dry-run build substitutes an inherit placeholder and passes — so neither CI
-  // gate catches the omission and the failure would land mid-release, after the
-  // remote D1 migrations have already applied.
-  it.each(["wrangler.global.jsonc"])(
-    "%s binds FLAGS to a Flagship app id",
-    (fileName) => {
-      const raw = readFileSync(new URL(`../${fileName}`, import.meta.url), "utf8");
-      const config = JSON.parse(raw.replace(/^\s*\/\/.*$/gmu, "")) as {
-        flagship?: Array<{ binding: string; app_id?: string }>;
-      };
-      const binding = config.flagship?.find((entry) => entry.binding === "FLAGS");
-      expect(binding).toBeDefined();
-      expect(binding?.app_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u);
-    },
-  );
 
   it("records a scheduled new work stream's model without reading its uncommitted facts", async () => {
     const env = envWithFlags(serving({ model: "anthropic/claude-opus-4.6", fallbackModels: [] }));

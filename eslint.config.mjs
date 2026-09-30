@@ -33,6 +33,7 @@ import { durableObjectSqlStorageRule } from "./scripts/eslint-rules/durable-obje
 import { durableObjectRegionRoutingRule } from "./scripts/eslint-rules/durable-object-region-routing.mjs";
 import { durableObjectNativeRpcRule } from "./scripts/eslint-rules/durable-object-native-rpc.mjs";
 import { durableObjectSyncTransactionRule } from "./scripts/eslint-rules/durable-object-sync-transaction.mjs";
+import { durableObjectWorkspaceTableRoutingRule } from "./scripts/eslint-rules/durable-object-workspace-table-routing.mjs";
 
 export default tseslint.config(
   {
@@ -78,6 +79,7 @@ export default tseslint.config(
           "durable-object-region-routing": durableObjectRegionRoutingRule,
           "durable-object-native-rpc": durableObjectNativeRpcRule,
           "durable-object-sync-transaction": durableObjectSyncTransactionRule,
+          "durable-object-workspace-table-routing": durableObjectWorkspaceTableRoutingRule,
         },
       },
     },
@@ -170,6 +172,15 @@ export default tseslint.config(
     ],
     rules: {
       "rally/durable-object-sql-storage": "error",
+    },
+  },
+  {
+    // A Durable Object's `this.env.DB` is regional D1, which does not have the
+    // WorkspaceDO tables; the rule reads that list from its TypeScript source.
+    files: ["apps/api/src/durable-objects/**/*.ts"],
+    ignores: ["**/*.test.ts"],
+    rules: {
+      "rally/durable-object-workspace-table-routing": "error",
     },
   },
   {

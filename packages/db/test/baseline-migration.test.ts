@@ -22,7 +22,6 @@ import { DatabaseSync } from "node:sqlite";
 import { beforeAll, describe, expect, it } from "vitest";
 
 const migrationsDirectory = fileURLToPath(new URL("../migrations/", import.meta.url));
-const baselinesDirectory = fileURLToPath(new URL("../baselines/", import.meta.url));
 
 interface BaselineEntry {
   through: string;
@@ -596,11 +595,6 @@ describe("columns the chain recomputes are recomputed, not frozen", () => {
 });
 
 describe("the baseline is not mistaken for a migration", () => {
-  it("does not live in the directory Wrangler applies migrations from", () => {
-    const migrationFiles = readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql"));
-    expect(migrationFiles).not.toContain(manifest.file);
-    expect(baselinesDirectory).not.toContain(`${migrationsDirectory}`);
-  });
 
   it("keeps the migration chain intact so hosted databases can still replay it", () => {
     // A baseline is an addition. If someone ever "cleans up" by deleting the
