@@ -1364,10 +1364,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * Awaiting `storageReady` is the whole point: it runs the migrations and the
    * schema work that make the first real call slow. WorkspaceDO fires this
    * when a person opens a Channel, so Main's cold start runs before the first
-   * request that needs it. Deliberately without side effects — it must stay something
-   * that is free to call on an object nobody has asked for yet.
-   */
-  /**
+   * request that needs it. Without side effects unless the parent passes
+   * `reportAttachments`, so it stays free to call on an object nobody has
+   * asked for yet.
+   *
    * `reportAttachments`: the parent has never heard this Main's Sidekick
    * attachments, so commit its directory projection now, which carries them.
    * Asked for by the parent when a reader opens the Channel, rather than done
@@ -5128,8 +5128,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           sql.exec(`UPDATE sidekick_execution_skills SET snapshot_json = ? WHERE execution_id = ?`, JSON.stringify(snapshot), execution.runId);
           const source = snapshot.sources.find((entry) => sidekickSkillRef(entry.id) === ref);
           if (!source || this.objectStore.identity()?.parentKind !== "workstream") return false;
+          // Strictly after the last attach: the list is reported in attach
+          // order, and `Date.now()` does not move within one request.
           return sql.exec<{ sidekick_id: string }>(
-            `INSERT INTO sidekick_attachments (sidekick_id, attached_at) VALUES (?, ?)
+            `INSERT INTO sidekick_attachments (sidekick_id, attached_at)
+             VALUES (?, MAX(?, COALESCE((SELECT MAX(attached_at) FROM sidekick_attachments), 0) + 1))
              ON CONFLICT(sidekick_id) DO NOTHING RETURNING sidekick_id`,
             source.id, Date.now(),
           ).toArray().length > 0;
