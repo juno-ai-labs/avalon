@@ -17,7 +17,9 @@ loads.
 | Path | Responsibility |
 | --- | --- |
 | `apps/site/index.html` | The `#technology` section: heading, the `[data-tech-schematic]` figure, and the five-item layer list that carries the same content as text |
-| `apps/site/src/technology.ts` | Page entry: starts the scene when the figure nears the screen, runs the clock only while it is visible, honors reduced motion |
+| `apps/site/src/technology-loader.ts` | The only part in the landing page's own bundle: adds the schematic's script when the figure nears the screen |
+| `apps/site/src/technology.ts` | The schematic's own build entry: starts the scene, runs the clock only while the figure is visible, honors reduced motion |
+| `apps/site/vite.config.ts` | The `technology` input, and `rally-technology-entry`, which rewrites the figure's `data-tech-src` to the hashed bundle |
 | `apps/site/src/technology-scene.ts` | The scene: `LAYERS`, the timeline (`stateAt`, `MOMENTS`, `LOOP`), particle geometry, the shader with its lighting, and the SVG label overlay |
 | `apps/site/src/landing.css` | `.tech-*` rules: figure size, label type, the amber of the lines, dots and numerals, the layer list |
 
@@ -53,11 +55,16 @@ not say on its own.
   light, and a cast shadow from every formed shell the ray to the light
   crosses outside the cut. The light leans right of the cut so its rim throws
   a shadow band into the corner.
-- **Loading:** `technology.ts` imports the scene statically (the repo's
-  `rally/no-dynamic-import` rule forbids a lazy import), so three.js ships in
-  the landing page's module graph. The WebGL context is created only near the
-  viewport, the clock advances only while the figure is on screen, and under
-  `prefers-reduced-motion` the scene renders the final five-layer state once.
+- **Loading:** the schematic and three.js are a separate build entry, not a
+  lazy `import()` (which `rally/no-dynamic-import` forbids). The landing
+  page's own bundle carries only `technology-loader.ts`, which adds the
+  entry's `<script type="module">` when the figure comes within 400 px of the
+  viewport, so a reader who never scrolls there downloads none of it. The
+  figure names the entry in `data-tech-src`: the source file in development,
+  rewritten at build time to the hashed bundle, and the build fails if that
+  bundle is missing. The clock advances only while the figure is on screen,
+  and under `prefers-reduced-motion` the scene renders the final five-layer
+  state once.
 
 ## Invariants
 
@@ -84,7 +91,8 @@ The scene owns its canvas and overlay and nothing else on the page. It depends
 on `three` (`WebGLRenderer`, `Points`, `ShaderMaterial`). It reports nothing to
 telemetry; [`landing-page-tracking.md`](landing-page-tracking.md) owns what the
 landing page reports, and this section adds no tracked links. The page's CSP
-(`script-src 'self'`, `style-src 'self'`) holds: three.js is bundled, and
+(`script-src 'self'`, `style-src 'self'`) holds: three.js is bundled and served
+from the site's own origin, and
 styles are set through the CSSOM or SVG attributes, never inline markup.
 
 ## Failure modes and limits
@@ -108,7 +116,7 @@ guard.
 The rendering itself has no automated guard. Check it in a real browser:
 Chromium under Playwright with `--use-angle=swiftshader` renders it. Drive time
 by importing `/src/technology-scene.ts` from the dev server and calling
-`render(MOMENTS.…)` on a fresh canvas; Playwright's fake clock does not hold
+`createSchematic(canvas, overlay).render(MOMENTS.…)` on a fresh canvas; Playwright's fake clock does not hold
 the IntersectionObserver that starts the scene, so timing from page load
 drifts.
 
@@ -143,8 +151,11 @@ adding points to the outer octant alone was tried and dropped: the outer shell
 is too sparse on its own to read as a whole sphere, so every structure point
 moves onto the outer sphere instead.
 
-**Consequences:** three.js is now part of the landing page's JavaScript. A
-future change that adds more WebGL to the site should share it rather than
-bundle a second copy.
+**Consequences:** three.js lives in the schematic's own entry, and the landing
+page loads it only near the figure; review caught an earlier revision that
+put all 137 kB (gzipped) of it in the landing bundle. Anything else added to
+`technology.ts`'s imports lands in that entry, not the page. A future change
+that adds more WebGL to the site should share this entry's three.js rather
+than bundle a second copy.
 
 Shipped in #1028.
