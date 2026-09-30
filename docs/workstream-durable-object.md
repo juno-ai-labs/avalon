@@ -1845,6 +1845,8 @@ only when the person was not already active, or it marks read whatever arrived
 since they joined. It must run before the seating message takes its ordinal so
 that message stays unread.
 
+Shipped in [#1031](https://github.com/juno-ai-labs/avalon/pull/1031).
+
 ### 2026-09-30 — Conversations send their Sidekick attachments, and a Main reports when opened
 
 **What changed:** `directory_common` carries `sidekickAttachmentIds` again, an
