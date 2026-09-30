@@ -187,7 +187,8 @@ function buildGeometry(): { geometry: BufferGeometry; bodies: Bodies } {
 
   const starColor = new Color('#f5f5f2');
   const ballBody = new Color('#dfe4ea');
-  const seamGold = new Color('#f59e0b');
+  // The brand's neon (`--av-sys-color-brand-base` in packages/ui).
+  const seamNeon = new Color('#ccff00');
   let next = 0;
   const innerPoints = LAYER_POINTS.slice(0, -1).reduce((sum, n) => sum + n, 0);
   // The layer points come first in every buffer, so body i is particle i.
@@ -209,7 +210,7 @@ function buildGeometry(): { geometry: BufferGeometry; bodies: Bodies } {
     shape.set([at.x, at.y, at.z], next * 3);
     ball.set([to.x, to.y, to.z], next * 3);
     color.set([tint.r, tint.g, tint.b], next * 3);
-    const bc = seam ? seamGold : shapeAt ? ballBody : starColor;
+    const bc = seam ? seamNeon : shapeAt ? ballBody : starColor;
     ballColor.set([bc.r, bc.g, bc.b], next * 3);
     info.set([group, rand(), seam ? 1 : 0, shell ? 1 : 0], next * 4);
     next += 1;
@@ -363,8 +364,9 @@ void main() {
   float schematicLight = 0.5 + 1.0 * diffuse(faceOf(aShape, aInfo.w)) * shadow(aShape);
   float ballLight = 0.35 + 1.0 * diffuse(normalize(ballAt));
   float light = mix(schematicLight, ballLight, fillT);
-  // A seam stays readable all the way round.
-  light = mix(light, max(light, 0.75), seam * ballT);
+  // The seam is neon: it glows rather than takes the light, so it reads all
+  // the way round.
+  light = mix(light, 1.0, seam * ballT);
 
   vec3 c = mix(vec3(0.96), aColor * mix(1.0, light, form), form);
   c = mix(c, uOuterColor * light, fillT);
