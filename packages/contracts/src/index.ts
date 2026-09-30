@@ -2314,8 +2314,8 @@ export const WorkspaceWorkstreamCursorSchema = z.string()
 
 /**
  * How many Channels one `channel_rails` request may name: `list_workstreams`'
- * page bound, reused rather than chosen. The server also reads a Space's
- * Channels in batches of this size.
+ * page bound, reused rather than chosen. A `space_channels` page is this size
+ * too.
  */
 export const CHANNEL_RAILS_NAMED_LIMIT = 250;
 
@@ -2339,26 +2339,20 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
     includeSystem: z.boolean(),
   }),
   /**
-   * The Channel rail data for one Space's Channels, a page at a time, or for
-   * named Channels whose `railWaterline` moved. Exactly one target.
+   * The Channel rail data for named Channels whose `railWaterline` moved.
+   *
+   * `spaceId` and `after` are the retired Space target, still sent by desktops
+   * 1.467.0 and 1.468.0. They are accepted so those desktops are not
+   * disconnected, and answered with one empty final frame.
    */
   z.strictObject({
     type: z.literal("channel_rails"),
     requestId: IdSchema,
     spaceId: SpaceIdSchema.optional(),
-    /** The `nextAfter` of the previous answer for this Space. */
     after: WorkstreamIdSchema.optional(),
     workstreamIds: z.array(WorkstreamIdSchema).min(1).max(CHANNEL_RAILS_NAMED_LIMIT)
       .refine((ids) => new Set(ids).size === ids.length, "must be unique")
       .optional(),
-  }),
-  /**
-   * Sent before `subscribe` by a client that loads Channel rows a Space at a
-   * time. The sidebar it is then sent carries no Channel rows and says
-   * `channelsBySpace`.
-   */
-  z.strictObject({
-    type: z.literal("channels_by_space"),
   }),
   /**
    * One page of the Channels in a Space this viewer may see, in id order after
@@ -2373,13 +2367,6 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
     rails: z.boolean(),
   }),
 ]).superRefine((event, context) => {
-  if (event.type === "channel_rails"
-    && (event.spaceId === undefined) === (event.workstreamIds === undefined)) {
-    context.addIssue({ code: "custom", path: ["spaceId"], message: "exactly one of spaceId or workstreamIds" });
-  }
-  if (event.type === "channel_rails" && event.after !== undefined && event.spaceId === undefined) {
-    context.addIssue({ code: "custom", path: ["after"], message: "only pages a Space" });
-  }
   if (event.type === "set_presence"
     && event.applicationState === "background"
     && event.foregroundWorkstreamId !== null) {
@@ -2569,9 +2556,10 @@ export const WorkspaceSidebarSchema = z.strictObject({
    */
   spacesReady: z.boolean().optional(),
   /**
-   * Set when this socket asked for `channels_by_space` and the server honoured
-   * it: `workstreams` is then empty, and the client asks each Space for its
-   * Channels. Absent means `workstreams` is the directory's first page.
+   * Set for a member once the Space hierarchy is whole: `workstreams` is then
+   * empty, and the client asks each Space for its Channels. Absent (a guest,
+   * or an Organization still opening) means `workstreams` is the directory's
+   * first page.
    */
   channelsBySpace: z.literal(true).optional(),
 });
@@ -4335,7 +4323,7 @@ export type ChannelRail = z.infer<typeof ChannelRailSchema>;
 
 /**
  * One frame of a `channel_rails` answer. A long answer spans frames; the last
- * says `final`. A Space answer that stopped before its end names `nextAfter`.
+ * says `final`.
  */
 export const WorkspaceChannelRailsEventSchema = z.strictObject({
   type: z.literal("workspace_channel_rails"),
@@ -4345,7 +4333,12 @@ export const WorkspaceChannelRailsEventSchema = z.strictObject({
   oversized: z.array(z.strictObject({ workstreamId: WorkstreamIdSchema, railWaterline: z.number().int().nonnegative() })),
   /** Named Channels this viewer may not see, or that have no rail yet. */
   unavailable: z.array(WorkstreamIdSchema),
-  nextAfter: WorkstreamIdSchema.nullable(),
+  /**
+   * Always null: it paged the Space target, which is gone. Still sent, since
+   * desktops before this change require it; optional so a later server can
+   * stop sending it.
+   */
+  nextAfter: WorkstreamIdSchema.nullable().optional(),
   final: z.boolean(),
 });
 export type WorkspaceChannelRailsEvent = z.infer<typeof WorkspaceChannelRailsEventSchema>;

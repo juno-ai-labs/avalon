@@ -214,9 +214,9 @@ Connecting a workspace socket should deliver, without being asked:
   count), retained for wire compatibility even though current navigation no
   longer renders participant facepiles, plus the
   pinned section, and the automation and note sections the sidebar renders. A
-  cursor for the rest. A member's desktop that asks for `channels_by_space`
-  is sent every visible Space instead of Channel rows, and asks each Space for
-  its Channels (`space_channels`) straight after
+  cursor for the rest. That is a guest's sidebar, and an Organization's while
+  it is still opening. A member is sent every visible Space instead of Channel
+  rows, and asks each Space for its Channels (`space_channels`) straight after
   ([`realtime-sockets.md`](realtime-sockets.md)).
 - **The initial suggested actions** — the current suggestion set for this viewer.
   It is computed in the background by the scheduler and already resident in
