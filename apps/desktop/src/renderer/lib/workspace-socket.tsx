@@ -955,10 +955,6 @@ export function WorkspaceSocketProvider({
           // response (or a later Space push) establishes current authority.
           setSidebarConnect((current) => current ? { ...current, spacesLive: false } : current);
           setState('connected');
-          // Ahead of `subscribe`, so the sidebar it answers with carries
-          // Spaces and no Channel rows. A server that predates it ignores it
-          // and sends the directory's first page as before.
-          next.send(JSON.stringify(WorkspaceSocketClientEventSchema.parse({ type: 'channels_by_space' })));
           next.send(JSON.stringify({
             type: 'subscribe',
             afterWaterline: Math.max(0, lastWaterline),

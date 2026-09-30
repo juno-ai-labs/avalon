@@ -484,28 +484,10 @@ describe("channel_rails answers", () => {
     connection.socket.close(1000, "done");
   });
 
-  it("pages a Space's Channels a frame at a time, passing over ones the viewer cannot see", async () => {
-    await runInDurableObject(organization(), (_instance, state) => insertSpace(state, [channelA, channelB, channelC]));
-    const connection = await connect(owner);
-    const [whole] = await askRails(connection, { spaceId });
-    expect(whole!.rails.map((rail) => rail.workstreamId)).toEqual([channelA, channelC]);
-    expect(whole!.nextAfter).toBeNull();
-
-    const [single] = await askRails(connection, { workstreamIds: [channelA] });
-    await setFrameLimit(new TextEncoder().encode(JSON.stringify(single)).byteLength + 40);
-    const [first] = await askRails(connection, { spaceId });
-    expect(first!.rails.map((rail) => rail.workstreamId)).toEqual([channelA]);
-    expect(first!.nextAfter).toBe(channelA);
-    const [second] = await askRails(connection, { spaceId, after: channelA });
-    expect(second!.rails.map((rail) => rail.workstreamId)).toEqual([channelC]);
-    expect(second!.unavailable).toEqual([]);
-    expect(second!.nextAfter).toBeNull();
-    connection.socket.close(1000, "done");
-  });
 });
 
-describe("channel_rails for a guest, a large Space, and a row that no longer parses", () => {
-  it("tells a guest in the room that it owns nothing, and answers a Space with one empty final frame", async () => {
+describe("channel_rails for a guest, and a row that no longer parses", () => {
+  it("tells a guest in the room that it owns nothing", async () => {
     await organization().applyAutomationDirectory({ workspaceId, envelope:
       sidekick("00000000-0000-7000-8000-0000000d72c1", { title: "C's helper", scope: "workstream", owningWorkstreamId: channelC }) });
     await runInDurableObject(organization(), (_instance, state) => insertSpace(state, [channelA, channelC]));
@@ -519,41 +501,17 @@ describe("channel_rails for a guest, a large Space, and a row that no longer par
     const rail = await railOf(connection, channelC);
     expect(rail.participantUserIds).toEqual(expect.arrayContaining([guest, owner]));
     expect(rail.sidekicks.owned).toEqual([]);
-    const answer = await askRails(connection, { spaceId });
-    expect(answer).toHaveLength(1);
-    expect(answer[0]).toMatchObject({ rails: [], oversized: [], unavailable: [], nextAfter: null, final: true });
     connection.socket.close(1000, "done");
   });
 
-  it("answers a Space one bounded page of the Channels the viewer may see, never naming one they cannot", async () => {
-    // More hidden Channels than one page, sorted ahead of every visible one,
-    // and more visible ones than one page after them.
-    const hex = (prefix: string, index: number) =>
-      `00000000-0000-4000-8000-0000000${prefix}${index.toString(16).padStart(4, "0")}`;
-    const hidden = Array.from({ length: 260 }, (_, index) => hex("c", index));
-    const shown = Array.from({ length: 260 }, (_, index) => hex("e", index));
-    // Subscribed before the Space fills: the snapshot of 500 Channels is not what this is about.
+  it("answers the retired Space target with one empty final frame, and keeps the socket", async () => {
+    await runInDurableObject(organization(), (_instance, state) => insertSpace(state, [channelA, channelC]));
     const connection = await connect(owner);
-    await runInDurableObject(organization(), (_instance, state) => {
-      for (const id of hidden) insertChannel(state, id, "personal");
-      for (const id of shown) insertChannel(state, id, "workspace");
-      insertSpace(state, [...hidden, channelA, channelB, channelC, ...shown]);
-    });
-    const visible = [channelA, channelC, ...shown];
-
-    const [first, ...firstRest] = await askRails(connection, { spaceId });
-    expect(firstRest).toEqual([]);
-    expect(first!.rails.map((rail) => rail.workstreamId)).toEqual(visible.slice(0, 250));
-    expect(first!.nextAfter).toBe(visible[249]);
-    const [second] = await askRails(connection, { spaceId, after: first!.nextAfter! });
-    expect(second!.rails.map((rail) => rail.workstreamId)).toEqual(visible.slice(250));
-    expect(second!.nextAfter).toBeNull();
-
-    const named = [first!, second!].flatMap((frame) => [
-      ...frame.rails.map((rail) => rail.workstreamId), ...frame.unavailable, ...frame.oversized.map((item) => item.workstreamId),
-      ...(frame.nextAfter ? [frame.nextAfter] : []),
-    ]);
-    expect(named.filter((id) => hidden.includes(id) || id === channelB)).toEqual([]);
+    const answer = await askRails(connection, { spaceId, after: channelA });
+    expect(answer).toHaveLength(1);
+    expect(answer[0]).toMatchObject({ rails: [], oversized: [], unavailable: [], nextAfter: null, final: true });
+    // Still open: a named request after it is answered.
+    expect((await railOf(connection, channelA)).workstreamId).toBe(channelA);
     connection.socket.close(1000, "done");
   });
 
@@ -663,17 +621,17 @@ describe("space_channels and the sidebar without Channel rows", () => {
     connection.socket.close(1000, "done");
   });
 
-  it("sends a socket that asked for it the Spaces and no Channel rows, once the Space hierarchy is whole", async () => {
+  it("sends a member the Spaces and no Channel rows once the Space hierarchy is whole, and a guest the page", async () => {
     await runInDurableObject(organization(), (_instance, state) => insertSpace(state, [channelA, channelB, channelC]));
     // Still opening: a Channel may sit in no Space, so the page is sent as before.
-    const opening = await connect(member, { channelsBySpace: true });
+    const opening = await connect(member);
     const openingSidebar = opening.sync.sidebar as { workstreams: { items: unknown[] }; channelsBySpace?: true };
     expect(openingSidebar.channelsBySpace).toBeUndefined();
     expect(openingSidebar.workstreams.items.length).toBeGreaterThan(0);
     opening.socket.close(1000, "done");
 
     await runInDurableObject(organization(), (_instance, state) => completeSpaceBootstrap(state));
-    const connection = await connect(member, { channelsBySpace: true });
+    const connection = await connect(member);
     const sidebar = connection.sync.sidebar as {
       workstreams: { items: unknown[]; nextCursor: string | null };
       spaces?: { active: { items: Array<{ id: string }> } };
@@ -684,16 +642,17 @@ describe("space_channels and the sidebar without Channel rows", () => {
     expect(sidebar.spaces?.active.items.map((space) => space.id)).toContain(spaceId);
     connection.socket.close(1000, "done");
 
-    // A client that did not ask gets the page it always has.
-    const legacy = await connect(member);
-    const legacySidebar = legacy.sync.sidebar as { workstreams: { items: unknown[] }; channelsBySpace?: true };
-    expect(legacySidebar.channelsBySpace).toBeUndefined();
-    expect(legacySidebar.workstreams.items.length).toBeGreaterThan(0);
-    legacy.socket.close(1000, "done");
+    // A desktop that still sends the retired `channels_by_space` is answered
+    // the same way: the event is an unknown type now, and ignored.
+    const retired = await connect(member, { channelsBySpace: true });
+    expect((retired.sync.sidebar as { channelsBySpace?: true }).channelsBySpace).toBe(true);
+    retired.socket.close(1000, "done");
 
     // A guest is sent no Spaces, so the page stays theirs.
-    const guestConnection = await connect(guest, { channelsBySpace: true });
-    expect((guestConnection.sync.sidebar as { channelsBySpace?: true }).channelsBySpace).toBeUndefined();
+    const guestConnection = await connect(guest);
+    const guestSidebar = guestConnection.sync.sidebar as { workstreams: { items: unknown[] }; channelsBySpace?: true };
+    expect(guestSidebar.channelsBySpace).toBeUndefined();
+    expect(guestSidebar.workstreams.items.length).toBeGreaterThan(0);
     guestConnection.socket.close(1000, "done");
   });
 });

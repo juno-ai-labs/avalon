@@ -32,19 +32,15 @@ describe("socket event compatibility", () => {
     expect(WorkspaceSocketClientEventSchema.safeParse({ ...subscribe, diagnosticAttemptId }).success).toBe(true);
     expect(WorkspaceSocketClientEventSchema.safeParse({ ...subscribe, diagnosticAttemptId: "not-a-uuid" }).success).toBe(false);
   });
-  it("takes a channel_rails request for exactly one target", () => {
+  it("takes a channel_rails request for named Channels, and still parses the retired Space target", () => {
     const requestId = "018f22f2-4c22-7abc-8def-0123456789ab";
     const spaceId = "00000000-0000-4000-8000-000000000001";
     const workstreamId = "018f22f2-4c22-7abc-8def-0123456789ac";
     const valid = (event: Record<string, unknown>) =>
       WorkspaceSocketClientEventSchema.safeParse({ type: "channel_rails", requestId, ...event }).success;
-    expect(valid({ spaceId })).toBe(true);
-    expect(valid({ spaceId, after: workstreamId })).toBe(true);
     expect(valid({ workstreamIds: [workstreamId] })).toBe(true);
-    // Neither target, both, or a cursor with no Space to page.
-    expect(valid({})).toBe(false);
-    expect(valid({ spaceId, workstreamIds: [workstreamId] })).toBe(false);
-    expect(valid({ workstreamIds: [workstreamId], after: workstreamId })).toBe(false);
+    // Desktops 1.467.0 and 1.468.0 still send it; refusing would disconnect them.
+    expect(valid({ spaceId, after: workstreamId })).toBe(true);
     // Named Channels: at least one, unique, and no more than the bound.
     expect(valid({ workstreamIds: [] })).toBe(false);
     expect(valid({ workstreamIds: [workstreamId, workstreamId] })).toBe(false);
@@ -63,7 +59,8 @@ describe("socket event compatibility", () => {
     expect(valid({ spaceId, after: workstreamId, rails: false })).toBe(true);
     expect(valid({ spaceId })).toBe(false);
     expect(valid({ rails: true })).toBe(false);
-    expect(WorkspaceSocketClientEventSchema.safeParse({ type: "channels_by_space" }).success).toBe(true);
+    // Retired: an unknown type, which a server ignores rather than refuses.
+    expect(WorkspaceSocketClientEventTypeSchema.safeParse("channels_by_space").success).toBe(false);
   });
   it("handles additive fields inside ordinary union members", () => {
     const union = z.strictObject({ row: z.union([z.strictObject({ first: z.string() }), z.strictObject({ second: z.number() })]) });
