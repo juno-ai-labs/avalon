@@ -13,6 +13,26 @@ import { safeParseSocketEvent } from "./socket-events";
  */
 export const WORKSPACE_SOCKET_HEARTBEAT_MS = 50_000;
 export const WORKSPACE_SOCKET_PONG_TIMEOUT_MS = 15_000;
+/**
+ * How long a client waits for a dialled workspace socket to open before it
+ * closes it and dials again.
+ *
+ * Set 2026-09-30 by the team (15 s, the pong timeout's wait for the same
+ * server), not derived here; see
+ * docs/adding-security-defensive-and-other-limits.md.
+ *
+ * Bounds: time from `new WebSocket` to its `open` event.
+ * Without it: a `101` that never reaches the client leaves the socket in
+ *   CONNECTING, sending nothing, until the operating system gives up, while
+ *   the server counts it as a socket that never spoke.
+ * Direction: upper bound.
+ * Trips: the client closes the socket, reports `open_timeout`, and redials
+ *   with the ordinary backoff. A redial that speaks within the server's
+ *   two-minute first-frame deadline settles the silent socket there.
+ * Derive from: a healthy open takes one to four seconds after the ticket;
+ *   15 s plus backoff and a ticket still fits well inside two minutes.
+ */
+export const WORKSPACE_SOCKET_OPEN_TIMEOUT_MS = 15_000;
 export function workspaceSocketReconnectDelay(attempt: number): number {
   const ceiling = Math.min(30_000, 750 * 2 ** Math.min(Math.max(attempt, 0), 6));
   return Math.floor(ceiling / 2 + Math.random() * ceiling / 2);

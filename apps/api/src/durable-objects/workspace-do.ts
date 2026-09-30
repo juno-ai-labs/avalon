@@ -1288,16 +1288,39 @@ const MAINTENANCE_RECHECK_MS = 5 * 60_000;
  *   sockets").
  * Direction: upper bound.
  * Trips: when the object has also heard from no other socket since (see
- *   `socket-first-frame-watch.ts`), the next alarm logs
- *   `workspace_socket_first_frame_missed` at error level and aborts the
- *   instance, which drops every socket; the platform starts a fresh one and
- *   clients reconnect on their own.
+ *   `socket-first-frame-watch.ts`), the socket counts as missed. Once
+ *   `WORKSPACE_SOCKET_MISSED_SOCKETS_BEFORE_RESET` sockets are missed at once,
+ *   the next alarm logs `workspace_socket_first_frame_missed` at error level
+ *   and aborts the instance, which drops every socket; the platform starts a
+ *   fresh one and clients reconnect on their own. Fewer are held and logged as
+ *   `workspace_socket_first_frame_held` at warn level.
  * Derive from: the desktop sends `subscribe` the moment a socket opens, so a
  *   healthy object hears it within the round trip. Independent of the
  *   desktop's 65 s pong timeout, since the watch counts a socket from its
  *   ledger row rather than from the open socket.
  */
 export const WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS = 2 * 60_000;
+/**
+ * How many sockets must be missed at once before WorkspaceDO resets itself.
+ *
+ * Set 2026-09-30 by the team (two), not derived here; see
+ * docs/adding-security-defensive-and-other-limits.md.
+ *
+ * Bounds: resets caused by one socket its client never spoke on.
+ * Without it: a lone member whose client goes away between the upgrade and
+ *   `subscribe` resets an object that was never stuck, and pages
+ *   #firehose-alert (docs/realtime-sockets.md, "What a false positive looks
+ *   like").
+ * Direction: lower bound on missed sockets; the value that restores the
+ *   earlier behavior is 1.
+ * Trips: below it, each missed socket is logged once per instance as
+ *   `workspace_socket_first_frame_held` at warn level and kept in the ledger,
+ *   so a later silent socket counts with it.
+ * Derive from: the 2026-09-24 wedge, where the client opened a new socket
+ *   every 65 to 120 s and none was heard. Two costs one more retry, about one
+ *   to two minutes, before a real wedge recovers.
+ */
+export const WORKSPACE_SOCKET_MISSED_SOCKETS_BEFORE_RESET = 2;
 /** `_internal_durable_alarms` identity for this workspace's opportunity and ranking work. */
 const PRODUCT_ALARM_KIND = "product";
 const PRODUCT_ALARM_KEY = "workspace";
@@ -4776,6 +4799,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * test can shorten it and drive the real accept and alarm paths.
    */
   private socketFirstFrameDeadlineMs = WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS;
+  /** `WORKSPACE_SOCKET_MISSED_SOCKETS_BEFORE_RESET`, per instance for the same reason. */
+  private missedSocketsBeforeReset = WORKSPACE_SOCKET_MISSED_SOCKETS_BEFORE_RESET;
+  /**
+   * Ledger rows this instance judged missed and held below the reset
+   * threshold: logged once, and left out of the alarm's candidates. In memory,
+   * so a hibernation wake judges them again, once.
+   */
+  private heldUnheardSockets = new Set<string>();
   /**
    * `WORKSTREAM_REALTIME_MAX_FRAME_BYTES` for `channel_rails` answers, held
    * per instance so a runtime test can pack frames without megabytes of rows.
@@ -6452,7 +6483,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const lanes = this.derivedAlarmLanes();
     return [
       ...Object.values(lanes).map((dueAt) => dueAt()),
-      nextFirstFrameDeadline(this.unheardSockets(), this.socketFirstFrameDeadlineMs),
+      nextFirstFrameDeadline(this.unheardSockets(), this.socketFirstFrameDeadlineMs, this.heldUnheardSockets),
     ].filter((dueAt): dueAt is number => dueAt !== null);
   }
 
@@ -6525,10 +6556,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Reset this instance when it has stopped receiving socket events: a socket
-   * has gone unheard past the first-frame deadline, and no socket at all has
-   * been heard from since it was accepted. The socket may already be gone;
-   * docs/realtime-sockets.md, "An instance that stops hearing its sockets".
+   * Reset this instance when it has stopped receiving socket events: enough
+   * sockets have gone unheard past the first-frame deadline, and no socket at
+   * all has been heard from since each was accepted. A socket may already be
+   * gone; docs/realtime-sockets.md, "An instance that stops hearing its
+   * sockets". Below `missedSocketsBeforeReset`, the missed ones are held.
    *
    * Runs from the alarm, the one path such an object still runs. The abort
    * drops every socket (`1006`) and clients reconnect; no close is sent first,
@@ -6547,9 +6579,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     for (const socket of settled) {
       this.state.storage.sql.exec(`DELETE FROM workspace_socket_unheard WHERE connection_id = ?`, socket.connectionId);
     }
+    const missedIds = new Set(missed.map((socket) => socket.connectionId));
+    for (const id of this.heldUnheardSockets) {
+      if (!missedIds.has(id)) this.heldUnheardSockets.delete(id);
+    }
     if (missed.length === 0) return;
     const openIds = new Set(open.map((socket) => socket.connectionId));
-    logError(this.env, "workspace_socket_first_frame_missed", {
+    const fields = {
       workspace_id: this.workspaceId(),
       missed_sockets: missed.length,
       missed_closed_sockets: missed.filter((socket) => !openIds.has(socket.connectionId)).length,
@@ -6557,7 +6593,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       oldest_silent_ms: now - Math.min(...missed.map((socket) => socket.acceptedAt)),
       last_socket_event_ms: this.lastSocketEventAt === null ? null : now - this.lastSocketEventAt,
       instance_age_ms: this.instanceAgeMs(),
-    });
+    };
+    if (missed.length < this.missedSocketsBeforeReset) {
+      // One silent socket is usually a client that went away mid-handshake.
+      // Its row stays, so a second silent socket counts with it.
+      const newlyHeld = missed.filter((socket) => !this.heldUnheardSockets.has(socket.connectionId));
+      for (const socket of newlyHeld) this.heldUnheardSockets.add(socket.connectionId);
+      if (newlyHeld.length > 0) {
+        logWarn(this.env, "workspace_socket_first_frame_held", {
+          ...fields,
+          reset_at_missed_sockets: this.missedSocketsBeforeReset,
+        });
+      }
+      return;
+    }
+    logError(this.env, "workspace_socket_first_frame_missed", fields);
     // Rows are left in place: the fresh instance settles them as older than itself.
     this.state.abort("workspace_socket_first_frame_missed");
   }

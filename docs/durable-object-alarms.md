@@ -52,7 +52,8 @@ takes the earliest of both:
   their own writers and no separate identity is needed: each outbox's
   `MIN(not_before)`, the oldest activity event plus its retention, an in-memory
   keep-alive lease. WorkspaceDO's socket first-frame watch is one too: the
-  earliest instant a socket this instance accepted should have spoken by
+  earliest instant a socket this instance accepted should have spoken by,
+  leaving out sockets already judged and held below the reset threshold
   ([`realtime-sockets.md`](realtime-sockets.md) owns it). WorkspaceDO's Space
   cutover is another: the
   `space_bootstrap` row's `not_before`, which a fresh migration leaves at the
