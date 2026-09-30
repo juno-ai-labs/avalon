@@ -62,11 +62,21 @@ const CREATE_NAMING_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b4");
  */
 const WORKSPACE_VISIBLE_MENTION_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b5");
 const CONFIRMED_MENTION_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b6");
+const CONFIRMED_MENTION_HISTORY_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b9");
+const CONFIRMED_MENTION_DIRECT_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006ba");
 const REJECTED_CONFIRMED_MENTION_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b7");
 const ELICITATION_ANSWER_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b8");
 const CREATOR_ID = asUserId("00000000-0000-7000-8000-0000000006a3");
 const SESSION_ID = "00000000-0000-7000-8000-0000000006a4";
 const INVITEE_ID = "00000000-0000-7000-8000-0000000006a5";
+const INVITEE_SESSION_ID = "00000000-0000-7000-8000-0000000006ad";
+const INVITEE_AUTH: AuthContext = {
+  sessionId: INVITEE_SESSION_ID,
+  userId: asUserId(INVITEE_ID),
+  workspaceId: WORKSPACE_ID,
+  region: "global" as const,
+  role: "member" as const,
+};
 const SECOND_INVITEE_ID = "00000000-0000-7000-8000-0000000006a7";
 const MISSING_RECIPIENT_ID = "00000000-0000-7000-8000-0000000006a8";
 const ATTACHMENT_ID = "00000000-0000-7000-8000-0000000006a9";
@@ -124,6 +134,9 @@ beforeEach(async () => {
     env.DB.prepare(`INSERT OR REPLACE INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
       VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
       .bind(SESSION_ID, CREATOR_ID, WORKSPACE_ID),
+    env.DB.prepare(`INSERT OR REPLACE INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+      VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+      .bind(INVITEE_SESSION_ID, INVITEE_ID, WORKSPACE_ID),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
     )`),
@@ -369,6 +382,27 @@ async function deliveredEffects(
   await parkEffectQueue(parent);
   await deliverChildEffects(env, stub);
   return (await pendingParentEffects(parent)).filter((envelope) => envelope.parentId === workstreamId);
+}
+
+/** The work stream as the invitee opens it, through the product route. */
+async function openedByInvitee(stub: DurableObjectStub): Promise<Record<string, unknown>> {
+  const opened = await product(stub, { operation: "get", auth: INVITEE_AUTH });
+  expect(opened.status).toBe(200);
+  return opened.body;
+}
+
+/** A message from the creator, promoted to a canonical turn. */
+async function sendAndSettle(
+  stub: DurableObjectStub,
+  input: Record<string, unknown> & { clientMessageId: string },
+): Promise<void> {
+  const sent = await product(stub, {
+    operation: "create_message",
+    auth: AUTH,
+    input: { text: "An update", mentions: [], confirmedParticipantUserIds: [], attachmentIds: [], ...input },
+  });
+  expect(sent.status).toBe(200);
+  await waitForCanonicalTurn(stub, (sent.body.turn as { turnId: string }).turnId);
 }
 
 interface FeedActivity {
@@ -655,6 +689,63 @@ describe("adding somebody to a work stream", () => {
     const envelopes = await deliveredEffects(stub);
     expect(envelopes.filter((envelope) => envelope.effect.kind === "participant_notification")).toHaveLength(0);
     expect(await participantAddedActivity()).toHaveLength(0);
+  });
+
+  it("starts the cursor of somebody who seats themselves by narrowing at the latest message", async () => {
+    const stub = agentStub();
+    await openWorkstream(stub, { scope: "workspace" });
+
+    // Reading an Organization-wide Channel seats nobody; narrowing it to
+    // yourself does, and the history you could already read is not new.
+    const narrowed = await product(stub, {
+      operation: "update", auth: INVITEE_AUTH, input: { scope: "personal" },
+    });
+    expect(narrowed.status).toBe(200);
+
+    expect(await openedByInvitee(stub)).toMatchObject({
+      latestAttentionSequenceNumber: 1,
+      readThroughSequenceNumber: 1,
+      firstUnreadSequenceNumber: null,
+    });
+  });
+
+  it("starts their read cursor at the latest message rather than the first", async () => {
+    const stub = agentStub();
+    await openWorkstream(stub);
+
+    const added = await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
+    expect(added.status).toBe(200);
+
+    // The history was written before they were here, so none of it is
+    // unread and the room opens at the newest message.
+    expect(await openedByInvitee(stub)).toMatchObject({
+      latestAttentionSequenceNumber: 1,
+      readThroughSequenceNumber: 1,
+      firstUnreadSequenceNumber: null,
+      hasUnread: false,
+    });
+  });
+
+  it("moves a re-added person's cursor forward and drops their old unread mark", async () => {
+    const stub = agentStub();
+    await provisionWorkstream(stub);
+    await sendAndSettle(stub, { clientMessageId: "before-first-add" });
+    await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
+    const marked = await product(stub, { operation: "mark_unread", auth: INVITEE_AUTH });
+    expect(marked.status).toBe(200);
+    const removed = await product(stub, { operation: "remove_participant", auth: AUTH, userId: INVITEE_ID });
+    expect(removed.status).toBe(200);
+    await sendAndSettle(stub, { clientMessageId: "while-removed" });
+
+    await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
+
+    expect(await openedByInvitee(stub)).toMatchObject({
+      latestAttentionSequenceNumber: 2,
+      readThroughSequenceNumber: 2,
+      manualUnreadFromSequenceNumber: null,
+      manualUnreadGeneration: 2,
+      firstUnreadSequenceNumber: null,
+    });
   });
 });
 
@@ -951,6 +1042,70 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
       envelope.effect.kind === "participant_notification"
       && envelope.effect.recipientUserId === INVITEE_ID
     ))).toHaveLength(0);
+  });
+
+  it("makes the message that seats them their first unread, not the history before it", async () => {
+    const stub = agentStub(CONFIRMED_MENTION_HISTORY_ID);
+    await provisionWorkstream(stub, CONFIRMED_MENTION_HISTORY_ID);
+    const earlier = await product(stub, {
+      operation: "create_message",
+      auth: AUTH,
+      input: {
+        text: "Notes before anybody else is here",
+        clientMessageId: "history-before-seat",
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+      },
+    });
+    expect(earlier.status).toBe(200);
+    await waitForCanonicalTurn(stub, (earlier.body.turn as { turnId: string }).turnId);
+    const sent = await product(stub, {
+      operation: "create_message",
+      auth: AUTH,
+      input: {
+        text: "Ask @Invitee to review",
+        clientMessageId: "seat-after-history",
+        mentions: [{
+          type: "person",
+          userId: INVITEE_ID,
+          connectorType: null,
+          startOffset: 4,
+          endOffset: 12,
+        }],
+        confirmedParticipantUserIds: [INVITEE_ID],
+        attachmentIds: [],
+      },
+    });
+    expect(sent.status).toBe(200);
+    await waitForCanonicalTurn(stub, (sent.body.turn as { turnId: string }).turnId);
+
+    expect(await openedByInvitee(stub)).toMatchObject({
+      firstUnreadSequenceNumber: 2,
+      readThroughSequenceNumber: 1,
+    });
+  });
+
+  it("makes a message that seats them without starting a run their first unread", async () => {
+    // Two people already in the room and a message that starts no run: this
+    // one is written directly rather than queued for the loop to promote.
+    const stub = agentStub(CONFIRMED_MENTION_DIRECT_ID);
+    await provisionWorkstream(stub, CONFIRMED_MENTION_DIRECT_ID);
+    await product(stub, { operation: "add_participant", auth: AUTH, userId: SECOND_INVITEE_ID });
+    const seed = { packVersion: "test", actionId: "no-run", assistant: null };
+    await sendAndSettle(stub, { clientMessageId: "direct-history", seed });
+    await sendAndSettle(stub, {
+      clientMessageId: "direct-seat",
+      text: "Ask @Invitee to review",
+      mentions: [{ type: "person", userId: INVITEE_ID, connectorType: null, startOffset: 4, endOffset: 12 }],
+      confirmedParticipantUserIds: [INVITEE_ID],
+      seed: { ...seed, actionId: "no-run-seat" },
+    });
+
+    expect(await openedByInvitee(stub)).toMatchObject({
+      firstUnreadSequenceNumber: 2,
+      readThroughSequenceNumber: 1,
+    });
   });
 
   it("does not let confirmation seat the raw target of a rejected mention", async () => {
