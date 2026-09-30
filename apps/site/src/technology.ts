@@ -18,7 +18,9 @@ if (figure && canvas && overlay) {
     started = true;
     const schematic = createSchematic(canvas, overlay);
     figure.dataset.ready = 'true';
-    let visible = true;
+    // Hidden until the viewport observer says otherwise: the preload margin
+    // starts the scene early, but only an on-screen figure advances the clock.
+    let visible = false;
     let clock = 0;
     let last = -1;
     let frame = 0;
