@@ -18,7 +18,12 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
-import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
+import type { Env } from "../src/env";
+import {
+  WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS,
+  WORKSPACE_SOCKET_MISSED_SOCKETS_BEFORE_RESET,
+  type WorkspaceDO,
+} from "../src/durable-objects/workspace-do";
 
 const OWNER = asUserId("00000000-0000-7000-8000-000000000ff1");
 let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000ff0");
@@ -28,6 +33,7 @@ let ticketSeq = 0;
 /** The private members this suite drives, named once rather than cast at each use. */
 interface WatchSurface {
   socketFirstFrameDeadlineMs: number;
+  missedSocketsBeforeReset: number;
   lastSocketEventAt: number | null;
   nextDerivedAlarmCandidates(): readonly number[];
 }
@@ -105,10 +111,22 @@ function closed(socket: WebSocket): Promise<CloseEvent> {
   return new Promise((resolve) => socket.addEventListener("close", resolve, { once: true }));
 }
 
-/** Shorten the deadline on the live instance, so the real paths can be driven without waiting. */
-async function setDeadline(ms: number): Promise<void> {
+/**
+ * Shorten the deadline on the live instance, so the real paths can be driven
+ * without waiting. The judging tests reset on one missed socket, so each proves
+ * its signal alone; the threshold has its own tests, at its real value.
+ */
+async function setDeadline(ms: number, missedSocketsBeforeReset = 1): Promise<void> {
   await runInDurableObject(workspace(), (instance: WorkspaceDO) => {
     watch(instance).socketFirstFrameDeadlineMs = ms;
+    watch(instance).missedSocketsBeforeReset = missedSocketsBeforeReset;
+    // The test config logs errors only, and a held socket logs at warn.
+    const target = instance as unknown as { env: Env };
+    target.env = new Proxy(target.env, {
+      get: (current, property, receiver) => property === "LOG_LEVEL"
+        ? "warn"
+        : Reflect.get(current, property, receiver),
+    });
   });
 }
 
@@ -136,17 +154,25 @@ async function currentInstance(): Promise<WorkspaceDO> {
 }
 
 let errors: MockInstance<typeof console.error>;
+let warnings: MockInstance<typeof console.warn>;
 
 beforeEach(async () => {
   workspaceSeq += 1;
   WORKSPACE_ID = asWorkspaceId(`00000000-0000-7000-8000-${String(workspaceSeq).padStart(9, "0")}ff0`);
   await establishWorkspace();
   errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  warnings = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 });
 
 afterEach(() => {
   errors.mockRestore();
+  warnings.mockRestore();
 });
+
+function heldLogs(): unknown[] {
+  return warnings.mock.calls.map(([entry]) => entry)
+    .filter((entry) => (entry as { event?: unknown } | undefined)?.event === "workspace_socket_first_frame_held");
+}
 
 function resetLogged(): boolean {
   return errors.mock.calls.some(([entry]) =>
@@ -345,5 +371,83 @@ describe("WorkspaceDO first-frame watch", () => {
     expect(candidates).toContain(deadline);
     expect(alarm).not.toBeNull();
     expect(alarm!).toBeLessThanOrEqual(deadline);
+  });
+});
+
+describe("WorkspaceDO first-frame reset threshold", () => {
+  // Accepting a socket arms the alarm for its deadline, so a socket opened
+  // while the deadline is shortened to zero is due at once, and the runtime's
+  // own alarm can judge it before the test does. Every socket after the first
+  // is opened under the real deadline.
+  async function openUnderRealDeadline(): Promise<WebSocket> {
+    await setDeadline(WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS, WORKSPACE_SOCKET_MISSED_SOCKETS_BEFORE_RESET);
+    return openSilentSocket();
+  }
+
+  // Every false reset seen in production had one missed socket: a lone
+  // member whose client went away between the upgrade and `subscribe`.
+  it("holds silent sockets below the threshold and resets on the one that reaches it", async () => {
+    const before = await currentInstance();
+    for (let held = 1; held < WORKSPACE_SOCKET_MISSED_SOCKETS_BEFORE_RESET; held += 1) {
+      await openUnderRealDeadline();
+      await setDeadline(0, WORKSPACE_SOCKET_MISSED_SOCKETS_BEFORE_RESET);
+
+      await runDurableObjectAlarm(workspace());
+
+      expect(await currentInstance()).toBe(before);
+      expect(resetLogged()).toBe(false);
+      expect(heldLogs().at(-1)).toMatchObject({
+        level: "warn",
+        workspace_id: WORKSPACE_ID,
+        missed_sockets: held,
+        reset_at_missed_sockets: WORKSPACE_SOCKET_MISSED_SOCKETS_BEFORE_RESET,
+      });
+      // Kept, so the next silent socket counts with it.
+      expect(await unheardIds()).toHaveLength(held);
+    }
+    const last = await openUnderRealDeadline();
+    const lastClosed = closed(last);
+    await setDeadline(0, WORKSPACE_SOCKET_MISSED_SOCKETS_BEFORE_RESET);
+
+    await runDurableObjectAlarm(workspace()).catch(() => undefined);
+
+    expect((await lastClosed).code).toBe(1006);
+    expect(await currentInstance()).not.toBe(before);
+    expect(errors).toHaveBeenCalledWith(expect.objectContaining({
+      level: "error",
+      event: "workspace_socket_first_frame_missed",
+      missed_sockets: WORKSPACE_SOCKET_MISSED_SOCKETS_BEFORE_RESET,
+    }));
+  });
+
+  it("does not hold the alarm on a held socket's past deadline", async () => {
+    await openSilentSocket();
+    await setDeadline(0, 2);
+    await runDurableObjectAlarm(workspace());
+    expect(heldLogs()).toHaveLength(1);
+
+    const { deadline, candidates } = await silentSocketDeadline();
+
+    expect(candidates).not.toContain(deadline);
+  });
+
+  it("lets a held socket go once a later socket speaks", async () => {
+    await openSilentSocket();
+    await setDeadline(0, 2);
+    await runDurableObjectAlarm(workspace());
+    expect(heldLogs()).toHaveLength(1);
+    const active = await openUnderRealDeadline();
+    await subscribe(active);
+    // What a hibernation wake forgets, so only the spoken attachment counts.
+    await runInDurableObject(workspace(), (instance: WorkspaceDO) => {
+      watch(instance).lastSocketEventAt = null;
+    });
+    await setDeadline(0, 2);
+
+    await runDurableObjectAlarm(workspace());
+
+    expect(resetLogged()).toBe(false);
+    expect(await unheardIds()).toEqual([]);
+    active.close(1000, "done");
   });
 });

@@ -44,6 +44,7 @@ import {
   net,
   nativeImage,
   nativeTheme,
+  powerMonitor,
   protocol,
   safeStorage,
   screen as electronScreen,
@@ -74,6 +75,7 @@ import type {
   DesktopDeepLinkEntrypoint,
   DesktopDeepLinkNavigation,
   DesktopLockdownSettings,
+  DesktopPowerState,
   DesktopSession,
   DesktopTelemetryProductIntent,
   DesktopTelemetryScreen,
@@ -398,9 +400,12 @@ async function reportTelemetryProductIntent(
   if (!telemetryReporter) return;
   switch (intent.kind) {
     case 'workspace_socket_handshake':
-      await telemetryReporter.workspaceSocketHandshake(
-        { attemptId: intent.attemptId, phase: intent.phase }, windowContext,
-      );
+      await telemetryReporter.workspaceSocketHandshake({
+        attemptId: intent.attemptId,
+        phase: intent.phase,
+        ...(intent.sinceTicketRequested ? { sinceTicketRequested: intent.sinceTicketRequested } : {}),
+        ...(intent.windowVisible !== undefined ? { windowVisible: intent.windowVisible } : {}),
+      }, windowContext);
       return;
     case 'onboarding_region_selected':
       await telemetryReporter.onboardingRegionSelected(intent.selectedRegion, intent.entrypoint, windowContext);
@@ -603,6 +608,16 @@ function observeApplicationForeground(foregrounded: boolean): void {
   for (const window of rallyWindows()) {
     window.webContents.send('application:foreground-changed', foregrounded);
   }
+}
+/**
+ * Tell every Rally window the machine is going to sleep or has woken. A socket
+ * the server accepts just before sleep is never heard from, and a lone
+ * member's silent socket can make WorkspaceDO reset itself
+ * (docs/realtime-sockets.md, "What a false positive looks like"); the renderer
+ * closes it first and redials on wake.
+ */
+function observePowerState(state: DesktopPowerState): void {
+  for (const window of rallyWindows()) window.webContents.send('power:changed', state);
 }
 let nativeCrashUploader: NativeCrashUploader | null = null;
 let nativeCrashGenerationActive = false;
@@ -4873,6 +4888,9 @@ if (!singleInstanceLock) {
 
   void app.whenReady().then(async () => {
     app.setAppUserModelId('ai.rallywith.desktop');
+    // `powerMonitor` may not be used before `ready`.
+    powerMonitor.on('suspend', () => observePowerState('suspended'));
+    powerMonitor.on('resume', () => observePowerState('resumed'));
     for (const scheme of deepLinkProtocols) app.setAsDefaultProtocolClient(scheme);
     // Before every other recovery below: they all resolve paths through the
     // current session directory, so it has to be the one holding the files.
