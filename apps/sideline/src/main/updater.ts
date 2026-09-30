@@ -87,7 +87,8 @@ export function initializeSidelineUpdater(deps: SidelineUpdateDependencies): Sid
     if (downloaded !== null) updater.quitAndInstall(false, true);
   };
   const promptIfStaleBuild = (): void => {
-    if (downloaded === null || deps.currentBuildTime === undefined) return;
+    // An unstamped or unparsable build time is unknown, and never stale.
+    if (downloaded === null || deps.currentBuildTime === undefined || !Number.isFinite(deps.currentBuildTime)) return;
     if (now() - deps.currentBuildTime < STALE_BUILD_PROMPT_AGE_MS) return;
     if (staleBuildPromptedVersion === downloaded) return;
     const version = downloaded;

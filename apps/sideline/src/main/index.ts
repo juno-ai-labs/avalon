@@ -481,9 +481,7 @@ ipcMain.handle("sideline:organizations", async (event): Promise<SidelineOrganiza
  * to Sideline's catalog before it replaces the current one, so a refusal
  * leaves the operator where they were.
  */
-ipcMain.handle("sideline:switch-organization", async (event, raw: unknown): Promise<SidelineOrganizationSwitch> => {
-  assertSender(event);
-  const workspaceId = WorkspaceIdSchema.parse(raw);
+async function switchOrganization(workspaceId: string): Promise<SidelineOrganizationSwitch> {
   const current = session;
   if (!current || current.workspace?.id === workspaceId) return "switched";
   const selected = SessionSchema.parse(await authenticated("/auth/workspace/select", {
@@ -513,6 +511,16 @@ ipcMain.handle("sideline:switch-organization", async (event, raw: unknown): Prom
   sendToWindow("sideline:session-changed", publicSession(session));
   void endSession(previous);
   return "switched";
+}
+// One switch at a time: each starts from the session the previous one left, so
+// two quick choices cannot both select a session and orphan one of them.
+let organizationSwitchTail: Promise<unknown> = Promise.resolve();
+ipcMain.handle("sideline:switch-organization", (event, raw: unknown): Promise<SidelineOrganizationSwitch> => {
+  assertSender(event);
+  const workspaceId = WorkspaceIdSchema.parse(raw);
+  const run = organizationSwitchTail.then(() => switchOrganization(workspaceId));
+  organizationSwitchTail = run.catch(() => undefined);
+  return run;
 });
 ipcMain.handle("sideline:catalog", async (event) => {
   assertSender(event);
