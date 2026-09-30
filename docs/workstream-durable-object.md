@@ -254,10 +254,10 @@ read or repair path.
 A person seated in a conversation that already has history starts with their
 read waterline at its latest attention ordinal, not at
 `unread_tracking_start_ordinal`. Every path that turns a participant row active
-(an explicit add, a confirmed mention, a grant projection, a private Breakout
-membership, an identity admission) calls `startReadCursorAtLatest` in the same
-transaction, and only when the person was not already active. The history before
-they arrived is therefore not unread, the first-unread anchor is null, and the
+(an explicit add, a confirmed mention, narrowing a Channel to yourself, a grant
+projection, a private Breakout membership, an identity admission) calls
+`startReadCursorAtLatest` in the same transaction, and only when the person was
+not already active. The history before they arrived is therefore not unread, the first-unread anchor is null, and the
 feed opens at the tail; the message that seats them, and anything after it,
 still counts. The "you were added" signal stays on
 `participants.first_opened_at`. The opening message of a new conversation is the
