@@ -10,22 +10,22 @@
     <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
     <link rel="manifest" href="/site.webmanifest" />
-    <link rel="stylesheet" href="/src/auth-handoff.css" />
+    <link rel="stylesheet" href="/src/desktop-handoff.css" />
     <title>Return to Rally</title>
   </head>
   <body>
-    <main class="auth-shell">
-      <section class="auth-card" aria-labelledby="auth-title">
-        <img class="auth-mark" src="/brand/rally-mark-ink.svg" width="56" height="56" alt="" />
+    <main class="handoff-shell">
+      <section class="handoff-card" aria-labelledby="auth-title">
+        <img class="handoff-mark" src="/brand/rally-mark-ink.svg" width="56" height="56" alt="" />
         <h1 id="auth-title">Returning you to Rally</h1>
-        <p class="auth-status" id="auth-status" role="status">Checking the sign-in response…</p>
-        <a aria-disabled="true" class="auth-open" href="/" id="open-rally">
+        <p class="handoff-status" id="auth-status" role="status">Checking the sign-in response…</p>
+        <a aria-disabled="true" class="handoff-open" href="/" id="open-rally">
           <span id="open-app-label">Open Rally</span>
         </a>
-        <p class="auth-help" id="auth-help">
+        <p class="handoff-help" id="auth-help">
           If Rally does not open automatically, use the button above. You can safely close this page after the desktop app opens.
         </p>
-        <noscript><p class="auth-error">JavaScript is required to return securely to the Rally desktop app.</p></noscript>
+        <noscript><p class="handoff-error">JavaScript is required to return securely to the Rally desktop app.</p></noscript>
       </section>
     </main>
     <script type="module" src="/src/auth-handoff.ts"></script>

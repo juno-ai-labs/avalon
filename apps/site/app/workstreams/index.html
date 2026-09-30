@@ -3,28 +3,26 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#111210" />
+    <meta name="theme-color" content="#fcfcfc" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#070707" media="(prefers-color-scheme: dark)" />
     <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
     <link rel="manifest" href="/site.webmanifest" />
     <meta name="robots" content="noindex, nofollow" />
     <meta name="referrer" content="no-referrer" />
-    <link rel="stylesheet" href="/src/styles.css" />
+    <link rel="stylesheet" href="/src/desktop-handoff.css" />
     <title>Open channel in Rally</title>
   </head>
-  <body class="invite-page">
-    <main class="invite-shell">
-      <section class="invite-card" aria-labelledby="workstream-title">
-        <a class="brand invite-brand" href="/" aria-label="Rally home">
-          <img class="brand-mark" src="/brand/rally-mark-ink.svg" width="24" height="24" alt="" />
-          <span>rally</span>
-        </a>
-        <p class="eyebrow" id="resource-kind">Channel</p>
+  <body>
+    <main class="handoff-shell">
+      <section class="handoff-card" aria-labelledby="workstream-title">
+        <img class="handoff-mark" src="/brand/rally-mark-ink.svg" width="56" height="56" alt="" />
+        <p class="handoff-kind" id="resource-kind">Channel</p>
         <h1 id="workstream-title">Opening this channel in Rally</h1>
-        <p id="workstream-status">This channel opens with your existing Rally session and organization permissions.</p>
-        <a aria-disabled="true" class="button button-primary invite-open" href="#" id="open-rally">Open Rally <span class="button-arrow" aria-hidden="true">↗</span></a>
-        <p class="invite-help" id="workstream-help">If the app does not open, <a href="/">install Rally</a> and return to this page.</p>
-        <p class="invite-error" hidden id="workstream-error" role="alert">This link is incomplete or invalid.</p>
+        <p class="handoff-status" id="workstream-status">This channel opens with your existing Rally session and organization permissions.</p>
+        <a aria-disabled="true" class="handoff-open" href="#" id="open-rally">Open Rally</a>
+        <p class="handoff-help" id="workstream-help">If the app does not open, <a href="/">install Rally</a> and return to this page.</p>
+        <p class="handoff-error" hidden id="workstream-error" role="alert">This link is incomplete or invalid.</p>
       </section>
     </main>
     <script type="module" src="/src/workstream-link.ts"></script>
