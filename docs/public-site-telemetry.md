@@ -41,7 +41,7 @@ support pages (`/download/` initializes no telemetry). A link opts in with a `da
 and, for pricing downloads, plan. One capture-phase click listener reads the id
 and ignores any id not in that table, so markup chooses a combination but never
 supplies a value. Every installer link has its own id (`download-header`,
-`download-hero`, `download-pricing-team|business`), which is how the landing
+`download-hero`, `download-pricing-start|grow`), which is how the landing
 dashboard tells the four identical DMG links apart. The event shares the page
 view's anonymous `distinct_id`, so its referrer and campaign come from joining
 to that visit's `$pageview` rather than being copied onto the click.
@@ -148,10 +148,10 @@ is allowed.
 ### 2026-09-30 — Pricing plans follow the per-organization tiers
 
 **What changed:** The landing's pricing moved from per-seat Pro, Max and Ultra
-to per-organization Team ($100), Business ($250) and Enterprise (contact us),
+to per-organization Start ($100), Grow ($250) and Grown up (talk to a human),
 with a 14-day trial that extends to 60 days when two or more teammates take
-part. `plan` gained `team`, `business` and `enterprise`; Enterprise's Contact us
-link reports `founder_contact · pricing · enterprise`.
+part. `plan` gained `start`, `grow` and `enterprise` (the Grown up plan's internal
+name); its Contact us link reports `founder_contact · pricing · enterprise`.
 
 **Why:** The team moved to a pooled quota per organization so adding a member
 never forces a plan change. The contract keeps `pro`, `max` and `ultra` because

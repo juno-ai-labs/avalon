@@ -623,7 +623,7 @@ describe("telemetry registry", () => {
       page: "landing", action: "download", placement: "hero",
     }],
     ["site_action_selected", "site", "anonymous-epoch", {
-      page: "landing", action: "download", placement: "pricing", plan: "business",
+      page: "landing", action: "download", placement: "pricing", plan: "grow",
     }],
     ["desktop_handoff_attempted", "site", "anonymous-epoch", {
       handoffType: "auth", method: "automatic", validity: "valid",
