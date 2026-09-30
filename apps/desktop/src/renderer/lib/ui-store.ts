@@ -45,16 +45,12 @@ export const MIN_RAIL_WIDTH = 280;
 export const DEFAULT_RAIL_WIDTH = 320;
 /** GrokBot's compact rail and expanded-sidebar geometry. */
 export { COLLAPSED_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '@rally/ui/lib/sidebar-geometry';
-import { MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH } from '@rally/ui/lib/sidebar-geometry';
+import { clampSidebarWidth, loadSidebarCollapsed, loadSidebarWidth, saveSidebarPreference } from '@rally/ui/lib/sidebar-preferences';
 export const SIDEBAR_COLLAPSED_STORAGE_KEY = 'rally.sidebar-collapsed';
 const SIDEBAR_WIDTH_STORAGE_KEY = 'rally.sidebar-width';
 const SPACES_SIDEBAR_WIDTH_STORAGE_KEY = 'rally.spaces-sidebar-width';
 const SPACES_SIDEBAR_COLLAPSED_STORAGE_KEY = 'rally.spaces-sidebar-collapsed';
 const RAIL_WIDTH_STORAGE_PREFIX = 'rally.rail-width';
-
-function clampSidebarWidth(width: number): number {
-  return Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width));
-}
 
 function clampRailWidth(width: number): number {
   // Grok preserves the preferred width; the host caps its visible width to
@@ -87,75 +83,12 @@ function saveRailWidth(prefix: string, scope: string | null, width: number): voi
   }
 }
 
-function loadSidebarWidth(): number {
-  if (typeof window === 'undefined') return DEFAULT_SIDEBAR_WIDTH;
-
-  try {
-    const storedWidth = Number.parseFloat(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY) ?? '');
-    return Number.isFinite(storedWidth) ? clampSidebarWidth(storedWidth) : DEFAULT_SIDEBAR_WIDTH;
-  } catch {
-    return DEFAULT_SIDEBAR_WIDTH;
-  }
-}
-
-function saveSidebarWidth(width: number): void {
-  if (typeof window === 'undefined') return;
-
-  try {
-    window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(width));
-  } catch {
-    // Local persistence is best-effort; resizing should still work when storage is unavailable.
-  }
-}
-
-function loadSpacesSidebarWidth(): number {
-  if (typeof window === 'undefined') return DEFAULT_SIDEBAR_WIDTH;
-  try {
-    const storedWidth = Number.parseFloat(window.localStorage.getItem(SPACES_SIDEBAR_WIDTH_STORAGE_KEY) ?? '');
-    return Number.isFinite(storedWidth) ? clampSidebarWidth(storedWidth) : DEFAULT_SIDEBAR_WIDTH;
-  } catch {
-    return DEFAULT_SIDEBAR_WIDTH;
-  }
-}
-
-function saveSpacesSidebarWidth(width: number): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(SPACES_SIDEBAR_WIDTH_STORAGE_KEY, String(width));
-  } catch {
-    // Local persistence is best-effort; resizing should still work when storage is unavailable.
-  }
-}
-
-function loadSidebarCollapsed(): boolean {
-  if (typeof window === 'undefined') return false;
-
-  try {
-    return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
-
-function saveSidebarCollapsed(collapsed: boolean): void {
-  if (typeof window === 'undefined') return;
-
-  try {
-    window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(collapsed));
-  } catch {
-    // Local persistence is best-effort; compacting should still work when storage is unavailable.
-  }
-}
-
 export const useUiStore = create<UiState>((set, get) => ({
   sidebarOpen: false,
-  sidebarCollapsed: loadSidebarCollapsed(),
-  sidebarWidth: loadSidebarWidth(),
-  spacesSidebarWidth: loadSpacesSidebarWidth(),
-  spacesSidebarCollapsed: typeof window !== 'undefined' && (() => {
-    try { return window.localStorage.getItem(SPACES_SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true'; }
-    catch { return false; }
-  })(),
+  sidebarCollapsed: loadSidebarCollapsed(SIDEBAR_COLLAPSED_STORAGE_KEY),
+  sidebarWidth: loadSidebarWidth(SIDEBAR_WIDTH_STORAGE_KEY),
+  spacesSidebarWidth: loadSidebarWidth(SPACES_SIDEBAR_WIDTH_STORAGE_KEY),
+  spacesSidebarCollapsed: loadSidebarCollapsed(SPACES_SIDEBAR_COLLAPSED_STORAGE_KEY),
   railOpen: false,
   railVariant: 'context',
   railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, null),
@@ -164,22 +97,21 @@ export const useUiStore = create<UiState>((set, get) => ({
   railScope: null,
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
   setSidebarCollapsed: (sidebarCollapsed) => {
-    saveSidebarCollapsed(sidebarCollapsed);
+    saveSidebarPreference(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed);
     set({ sidebarCollapsed });
   },
   setSidebarWidth: (width) => {
     const sidebarWidth = clampSidebarWidth(width);
-    saveSidebarWidth(sidebarWidth);
+    saveSidebarPreference(SIDEBAR_WIDTH_STORAGE_KEY, sidebarWidth);
     set({ sidebarWidth });
   },
   setSpacesSidebarWidth: (width) => {
     const spacesSidebarWidth = clampSidebarWidth(width);
-    saveSpacesSidebarWidth(spacesSidebarWidth);
+    saveSidebarPreference(SPACES_SIDEBAR_WIDTH_STORAGE_KEY, spacesSidebarWidth);
     set({ spacesSidebarWidth });
   },
   setSpacesSidebarCollapsed: (spacesSidebarCollapsed) => {
-    try { window.localStorage.setItem(SPACES_SIDEBAR_COLLAPSED_STORAGE_KEY, String(spacesSidebarCollapsed)); }
-    catch { /* Keep the in-memory preference when local storage is unavailable. */ }
+    saveSidebarPreference(SPACES_SIDEBAR_COLLAPSED_STORAGE_KEY, spacesSidebarCollapsed);
     set({ spacesSidebarCollapsed });
   },
   openRail: (railVariant = 'context') => set({ railOpen: true, railVariant, inspector: null }),
