@@ -21,7 +21,8 @@ Tagged links on the landing page, by `data-site-action` id:
 | --- | --- | --- |
 | `download-header` | Header Download for Mac | download · header |
 | `download-hero` | Hero Download the macOS beta | download · hero |
-| `download-pricing-pro` / `-max` / `-ultra` | Pricing tier buttons | download · pricing · plan |
+| `download-pricing-start` / `-grow` | Start and Grow Start free trial buttons | download · pricing · plan |
+| `contact-pricing-enterprise` | Grown up Contact us (emails Katherine) | founder_contact · pricing · enterprise |
 | `demo-request` | Ask for a demo (emails Katherine and Alex) | demo_request · sidekicks |
 | `founder-contact` | Founder photos and names | founder_contact · team |
 | `support-contact-footer` | Footer help@ email | support_contact · footer |
@@ -36,7 +37,7 @@ Check these on every edit to the landing page:
    without it is not counted. A new link needs its id added to
    `SITE_ACTION_LINKS` in `apps/site/src/telemetry.ts`; the site tests fail on
    an unknown id or a tracked id that is missing from the page.
-2. **Give each download button its own id.** All five point at the same DMG;
+2. **Give each download button its own id.** All of them point at the same DMG;
    the id is the only way to tell them apart.
 3. **Keep the page at `/`.** The page-view charts filter on `$pathname = '/'`; clicks carry `page: landing` instead.
 4. **Keep the telemetry script.** Vite injects `src/site-entry.ts` into every
