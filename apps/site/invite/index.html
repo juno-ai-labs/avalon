@@ -3,31 +3,26 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#111210" />
+    <meta name="theme-color" content="#fcfcfc" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#070707" media="(prefers-color-scheme: dark)" />
     <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
     <link rel="manifest" href="/site.webmanifest" />
     <meta name="robots" content="noindex, nofollow" />
     <meta name="referrer" content="no-referrer" />
-    <link rel="stylesheet" href="/src/styles.css" />
+    <link rel="stylesheet" href="/src/desktop-handoff.css" />
     <title>Join a Rally organization</title>
   </head>
-  <body class="invite-page">
-    <main class="invite-shell">
-      <section class="invite-card" aria-labelledby="invite-title">
-        <a class="brand invite-brand" href="/" aria-label="Rally home">
-          <img class="brand-mark" src="/brand/rally-mark-ink.svg" width="24" height="24" alt="" />
-          <span>rally</span>
-        </a>
-        <p class="eyebrow">Organization invitation</p>
+  <body>
+    <main class="handoff-shell">
+      <section class="handoff-card" aria-labelledby="invite-title">
+        <img class="handoff-mark" src="/brand/rally-mark-ink.svg" width="56" height="56" alt="" />
+        <p class="handoff-kind">Organization invitation</p>
         <h1 id="invite-title">Continue in the Rally app</h1>
-        <p id="invite-description">This private link opens Rally, verifies the invited account, and routes the organization to its data region.</p>
-        <a aria-disabled="true" class="button button-primary invite-open" href="#" id="open-rally">
-          Open Rally
-          <span class="button-arrow" aria-hidden="true">↗</span>
-        </a>
-        <p class="invite-help">Rally is currently a macOS desktop preview. If the app does not open, install it first and then return to this link.</p>
-        <p class="invite-error" hidden id="invite-error" role="alert">This invitation link is incomplete or invalid. Ask the sender for a new link.</p>
+        <p class="handoff-status" id="invite-description">This private link opens Rally, verifies the invited account, and routes the organization to its data region.</p>
+        <a aria-disabled="true" class="handoff-open" href="#" id="open-rally">Open Rally</a>
+        <p class="handoff-help">Rally is currently a macOS desktop preview. If the app does not open, install it first and then return to this link.</p>
+        <p class="handoff-error" hidden id="invite-error" role="alert">This invitation link is incomplete or invalid. Ask the sender for a new link.</p>
       </section>
     </main>
     <script type="module" src="/src/invite.ts"></script>
