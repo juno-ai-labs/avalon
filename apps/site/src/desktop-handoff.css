@@ -65,7 +65,7 @@ body {
 
 .handoff-mark { display: block; filter: var(--mark-filter); height: 56px; margin: 0 auto 26px; width: 56px; }
 
-.handoff-kind { font-size: 12px; font-weight: 500; margin: 0 0 8px; }
+.handoff-card .handoff-kind { font-size: 12px; font-weight: 500; margin: 0 0 8px; }
 
 .handoff-card h1 { font-size: 34px; font-weight: 600; letter-spacing: -0.04em; line-height: 1.15; margin: 0 0 14px; }
 
