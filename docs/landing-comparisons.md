@@ -172,4 +172,6 @@ page: eleven copies of the rival list would drift.
 **Consequences:** A new rival is one Markdown file plus a sitemap and
 `llms.txt` line. A new footer link goes in `renderSiteFooter`, never in a page.
 The site build now depends on `sharp`'s native binary and on the `@fontsource`
-packages for the card fonts.
+packages for the card fonts. `opentype.js` is pinned to exactly 1.3.4: npm's 1.3.5 is a
+mistaken publish of 2.0.0, deprecated by its maintainers. `sharp` follows the
+0.35.2 the workspace already locks, so the site adds no second copy.
