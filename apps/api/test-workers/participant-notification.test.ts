@@ -709,20 +709,35 @@ describe("adding somebody to a work stream", () => {
     });
   });
 
-  it("starts their read cursor at the latest message rather than the first", async () => {
+  it("leaves only the latest message unread for somebody added by another person", async () => {
     const stub = agentStub();
     await openWorkstream(stub);
+    await sendAndSettle(stub, { clientMessageId: "history-second" });
 
     const added = await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
     expect(added.status).toBe(200);
 
-    // The history was written before they were here, so none of it is
-    // unread and the room opens at the newest message.
+    // The earlier history was written before they were here, so it is read;
+    // the newest message stays unread so the Channel still badges for them.
+    expect(await openedByInvitee(stub)).toMatchObject({
+      latestAttentionSequenceNumber: 2,
+      readThroughSequenceNumber: 1,
+      firstUnreadSequenceNumber: 2,
+      hasUnread: true,
+    });
+  });
+
+  it("leaves the only message unread for somebody added to a one-message Channel", async () => {
+    const stub = agentStub();
+    await openWorkstream(stub);
+
+    await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
+
     expect(await openedByInvitee(stub)).toMatchObject({
       latestAttentionSequenceNumber: 1,
-      readThroughSequenceNumber: 1,
-      firstUnreadSequenceNumber: null,
-      hasUnread: false,
+      readThroughSequenceNumber: 0,
+      firstUnreadSequenceNumber: 1,
+      hasUnread: true,
     });
   });
 
@@ -741,10 +756,10 @@ describe("adding somebody to a work stream", () => {
 
     expect(await openedByInvitee(stub)).toMatchObject({
       latestAttentionSequenceNumber: 2,
-      readThroughSequenceNumber: 2,
+      readThroughSequenceNumber: 1,
       manualUnreadFromSequenceNumber: null,
       manualUnreadGeneration: 2,
-      firstUnreadSequenceNumber: null,
+      firstUnreadSequenceNumber: 2,
     });
   });
 });

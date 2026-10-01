@@ -240,6 +240,33 @@ describe("identity authority on real workerd", () => {
     });
   });
 
+  it("leaves the newest message unread only for somebody another person seats", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      seedWorkstreamRoot(state);
+      // Four messages with attention ordinals 1 to 4.
+      state.storage.sql.exec(`UPDATE workstream SET next_attention_ordinal = 5 WHERE id = 1`);
+    });
+
+    await identity(stub, "admitParticipant", {
+      userId: TAYLOR, addedByUserId: JORDAN, reason: "explicit", now: 3,
+    });
+    // A null adder is each member seating themselves.
+    await identity(stub, "admitParticipants", {
+      userIds: [JORDAN], addedByUserId: null, reason: "explicit", now: 4,
+    });
+
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(
+        `SELECT user_id, seen_attention_ordinal FROM member_attention ORDER BY user_id`,
+      ).toArray()).toEqual([
+        { user_id: TAYLOR, seen_attention_ordinal: 3 },
+        { user_id: JORDAN, seen_attention_ordinal: 4 },
+      ]);
+    });
+  });
+
   it("seats a whole audience or none of it, and reports what each seating did", async () => {
     const stub = agent();
     await boot(stub);
