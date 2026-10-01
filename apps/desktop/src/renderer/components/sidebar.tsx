@@ -637,6 +637,7 @@ function WorkstreamRow({
   onRemoveFromSpace,
   onRemoveFromPlacement,
   placementSpaceId,
+  dragSourceSpaceId = placementSpaceId,
   canPin = placementSpaceId !== undefined,
   spaceSubtitle,
   onOpen,
@@ -662,6 +663,11 @@ function WorkstreamRow({
   onRemoveFromPlacement: (workstream: WorkstreamSummary, spaceId: string) => void;
   /** The Space whose placement this particular copy of the row represents. */
   placementSpaceId?: string;
+  /**
+   * The Space a drag onto a pill moves this Channel out of. Under All the row
+   * stands for no one placement, so the sidebar names the Channel's first.
+   */
+  dragSourceSpaceId?: string | undefined;
   /** Whether the menu offers Pin/Unpin; All offers it without a placement. */
   canPin?: boolean;
   /** The Spaces named under the title; absent for a Channel only in General. */
@@ -868,8 +874,9 @@ function WorkstreamRow({
               event.dataTransfer.effectAllowed = 'move';
               event.dataTransfer.setData('text/plain', workstream.id);
               event.dataTransfer.setData('application/x-rally-workstream-id', workstream.id);
-              if (removablePlacement && placementSpaceId !== undefined) {
-                event.dataTransfer.setData('application/x-rally-channel-source-space-id', placementSpaceId);
+              if (dragSourceSpaceId !== undefined && isProductChannel && !spacesReadOnly
+                && spaces.some((space) => space.id === dragSourceSpaceId && space.reach !== 'through_channel')) {
+                event.dataTransfer.setData('application/x-rally-channel-source-space-id', dragSourceSpaceId);
               }
               if (canStartPinDrag) onPinDragStart?.(workstream);
               drag?.onDragStart(workstream);
@@ -935,7 +942,13 @@ function WorkstreamRow({
             as={NavLink}
             aria-description={workstream.scope === 'workspace' ? PUBLIC_SCOPE_NAME : undefined}
             aria-describedby={previewOpen ? `workstream-preview-${workstream.id}` : undefined}
-            aria-label={[naming ? 'Rally is naming this channel' : workstream.title, drag?.position].filter(Boolean).join(', ')}
+            aria-label={[
+              naming ? 'Rally is naming this channel' : workstream.title,
+              attentionCount > 0
+                ? `${attentionCount} ${attentionCount === 1 ? 'conversation needs' : 'conversations need'} attention`
+                : null,
+              drag?.position,
+            ].filter(Boolean).join(', ')}
             className={({ isActive }: { isActive: boolean }) => clsx(
               'workstream-row channel-row',
               isActive && 'is-active',
@@ -977,9 +990,6 @@ function WorkstreamRow({
               subtitle={spaceSubtitle}
               titlePrefix={workstream.systemKind ? <Cog aria-label="System channel" size={11} /> : undefined}
               time={<RelativeTime format={formatSidebarActivityTime} value={workstream.lastActivityAt} />} />
-            {attentionCount > 0 && <span className="sr-only">
-              {`${attentionCount} ${attentionCount === 1 ? 'conversation needs' : 'conversations need'} attention`}
-            </span>}
             {/* The manual order is the whole point of the section, and a
                 pointer-only affordance leaves it unreadable to anyone not
                 looking at it. The position — and only the position — rides on
@@ -1293,7 +1303,9 @@ export function Sidebar({
   // until its Space has answered, and a deep link cannot give up on a Channel
   // until every Space has.
   const channelsLoading = directoryLoading === true
-    || (loadedSpaceIds !== undefined && selectedSpaceId !== null && !loadedSpaceIds.has(selectedSpaceId));
+    || (loadedSpaceIds !== undefined && (selectedSpaceId !== null
+      ? !loadedSpaceIds.has(selectedSpaceId)
+      : (spaces ?? []).some((space) => !loadedSpaceIds.has(space.id))));
   // Under All, every Channel the reader holds belongs on screen, so a Space
   // whose Channels have not loaded yet leaves the list incomplete rather than
   // loading: rows already held are drawn while the rest arrive.
@@ -1661,6 +1673,11 @@ export function Sidebar({
   const openBrowserImport = typeof window === 'undefined' ? undefined : window.rally?.openBrowserImport;
   const importSpaces = placementSpaces.filter((space) => space.reach !== 'through_channel'
     && (selectedSpaceId === null || space.id === selectedSpaceId));
+  const allViewSourceSpaceId = (workstream: WorkstreamSummary): string | undefined => (
+    workstream.spaceIds.includes(generalSpaceId ?? '')
+      ? generalSpaceId ?? undefined
+      : workstream.spaceIds.find((spaceId) => spaceNames.has(spaceId))
+  );
   const spaceSubtitleFor = (workstream: WorkstreamSummary): string | undefined => {
     const names = workstream.spaceIds.flatMap((spaceId) => spaceNames.get(spaceId) ?? []);
     return names.length > 0 ? names.join(', ') : undefined;
@@ -2050,6 +2067,7 @@ export function Sidebar({
         && motionMoveIntent.current.pinned === (workstream.pinPosition !== null)}
       {...(placementSpaceId !== undefined && !spacesReadOnly ? { placementSpaceId } : {})}
       canPin={spacesEnabled && spacesReady && !spacesReadOnly}
+      dragSourceSpaceId={placementSpaceId ?? allViewSourceSpaceId(workstream)}
       spaceSubtitle={spaceSubtitleFor(workstream)}
       spacesReadOnly={spacesReadOnly}
       spaces={placementSpaces}
@@ -2391,7 +2409,7 @@ export function Sidebar({
             // heading a few pixels above the first one — would silently throw
             // the arrangement away.
             <section
-              aria-describedby={spacesReadOnly || pinnedWorkstreams.length === 0 ? undefined : PINNED_DRAG_HINT_ID}
+              aria-describedby={spacesReadOnly || pinOrderSpaceId === null || pinnedWorkstreams.length === 0 ? undefined : PINNED_DRAG_HINT_ID}
               aria-labelledby="pinned-heading"
               className="sidebar-section pinned-section"
               data-motion-scope={selectedSpaceId ? `space:${selectedSpaceId}` : undefined}
@@ -2425,7 +2443,7 @@ export function Sidebar({
                   as a per-row description it lands inside each link's
                   accessible name, so somebody arrowing through the list hears
                   the whole instruction again before every title. */}
-              {!spacesReadOnly && pinnedWorkstreams.length > 0 && <p className="sr-only" id={PINNED_DRAG_HINT_ID}>
+              {!spacesReadOnly && pinOrderSpaceId !== null && pinnedWorkstreams.length > 0 && <p className="sr-only" id={PINNED_DRAG_HINT_ID}>
                 Hold Alt and press the up or down arrow to move a pinned channel.
               </p>}
               <SidebarList>
@@ -2436,10 +2454,11 @@ export function Sidebar({
                   <WorkstreamRow
                     {...workstreamRowActions}
                     debugEnabled={debugEnabled}
-                    {...(!spacesReadOnly ? { drag: pinnedRowDrag(pinned, index) } : {})}
+                    {...(!spacesReadOnly && pinOrderSpaceId !== null ? { drag: pinnedRowDrag(pinned, index) } : {})}
                     key={pinned.id}
                     {...(selectedSpaceId !== null && !spacesReadOnly ? { placementSpaceId: selectedSpaceId } : {})}
                     canPin={!spacesReadOnly}
+                    dragSourceSpaceId={selectedSpaceId ?? allViewSourceSpaceId(pinned)}
                     spaceSubtitle={spaceSubtitleFor(pinned)}
                     pinPending={pinPendingWorkstreamId === pinned.id}
                     motionMove={motionMoveIntent.current?.id === pinned.id

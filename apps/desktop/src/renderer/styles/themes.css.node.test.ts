@@ -190,6 +190,9 @@ describe('token references', () => {
     '--markdown-table-columns', '--arrival-index',
     '--workstream-sidebar-width', '--conversation-min-width',
     '--citation-card-played',
+    // The open Breakout's pane width, set by SplitConversationLayout from the
+    // width the reader dragged it to.
+    '--split-breakout-width',
     '--radix-dropdown-menu-content-available-height',
     '--radix-select-content-available-height', '--radix-select-trigger-width'];
 

@@ -165,7 +165,10 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
   const parent = directory.data?.workstreams.find((item) => item.parentId === parentId);
   const archived = parent?.conversations.find((item) => item.substreamId === substreamId)?.archived ?? false;
   const parentArchived = parent?.archived === true || (substreamId === '0' && archived);
-  const mainVisible = !parent || parent.conversations.some((item) => item.substreamId === '0' && !item.archived);
+  // Main is on screen when the route names it, or once the directory says this
+  // reader holds it; a Breakout grant proves nothing about Main.
+  const mainVisible = substreamId === '0'
+    || Boolean(parent?.conversations.some((item) => item.substreamId === '0' && !item.archived));
   const openBreakoutId = substreamId !== '0' ? substreamId : null;
   const breakoutMarks = useMemo<BreakoutMark[] | undefined>(() => parent?.conversations
     .filter((item) => item.substreamId !== '0' && !item.archived)
@@ -267,7 +270,6 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
   const mainPane = mainVisible ? <ConversationSurface
     breakouts={breakoutMarks}
     honorsSearchTarget={openBreakoutId === null}
-    key={`main:${parentId}`}
     onOpenBreakout={openBreakout}
     openBreakoutId={openBreakoutId}
     parentId={parentId}
@@ -284,11 +286,10 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
           ? <Button disabled={changingArchive} onClick={() => void changeArchive(false)}>Restore breakout</Button>
           : <p>This conversation is archived.</p>}</section>
     : <ConversationSurface
-      key={`breakout:${parentId}:${openBreakoutId}`}
       parentId={parentId}
       parentKind="workstream"
       renderHeader={(context) => <TitlePillHeader
-        ancestors={mode === 'breakout' ? [channelLevel(null, mainVisible ? closeRail : undefined)] : []}
+        ancestors={mode === 'breakout' && mainVisible ? [channelLevel(null, closeRail)] : []}
         current={breakoutLevel(context)}
         trailing={mainVisible ? <TitlePillClose label="Close breakout" onClose={() => navigate(sharedConversationPath(spaceId, parentId, '0'))} /> : undefined}
       />}
@@ -353,16 +354,6 @@ function SharedNavigation({ accountMenu, directory, navigationSpaces }: {
     // A Channel the filter would hide widens the list to All.
     if (selectedSpace && routeParentId && !selectedSpace.workstreamIds.includes(routeParentId)) setSelectedSpaceId(null);
   }, [routeParentId, selectedSpace]);
-  // With nothing to choose between, the one Channel opens in place of the
-  // empty chooser.
-  const onlyWorkstream = directory.data && !browserSidebarVisible({
-    spaceCount: navigationSpaces.length, channelCount: directory.data.workstreams.length,
-  }) ? directory.data.workstreams[0] : undefined;
-  useEffect(() => {
-    if (!onlyWorkstream || routeParentId) return;
-    const target = sharedWorkstreamTarget(onlyWorkstream, canonicalHost ? navigationSpaces[0]?.id ?? null : null);
-    if (target) navigate(target.path, { replace: true });
-  }, [canonicalHost, navigate, navigationSpaces, onlyWorkstream, routeParentId]);
   if (!session) return <></>;
   const workstreams = [...(directory.data?.workstreams ?? [])]
     .filter((workstream) => !selectedSpace || selectedSpace.workstreamIds.includes(workstream.parentId))
@@ -429,6 +420,31 @@ function SharedNavigation({ accountMenu, directory, navigationSpaces }: {
   </ResizableSidebar>;
 }
 
+/**
+ * With nothing to choose between — the case the sidebar is hidden for — the one
+ * Channel opens in place of the empty chooser. Lives beside the sidebar rather
+ * than in it, since the sidebar is not mounted then.
+ */
+function OpenLoneWorkstream({ directory, navigationSpaces }: {
+  directory: SharedNavigationDirectory | undefined;
+  navigationSpaces: ReturnType<typeof sharedNavigationSpaces>;
+}): null {
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const canonicalHost = !location.pathname.startsWith('/app/workspaces/');
+  const routeParentId = pathname.match(/^\/workstreams\/([^/]+)/u)?.[1]
+    ?? (/^\/s\/[^/]+\/c\/[^/]+/u.test(pathname) ? pathname : null);
+  const onlyWorkstream = directory && !browserSidebarVisible({
+    spaceCount: navigationSpaces.length, channelCount: directory.workstreams.length,
+  }) ? directory.workstreams[0] : undefined;
+  useEffect(() => {
+    if (!onlyWorkstream || routeParentId) return;
+    const target = sharedWorkstreamTarget(onlyWorkstream, canonicalHost ? navigationSpaces[0]?.id ?? null : null);
+    if (target) navigate(target.path, { replace: true });
+  }, [canonicalHost, navigate, navigationSpaces, onlyWorkstream, routeParentId]);
+  return null;
+}
+
 function BrowserWorkspace({ api, onSignOut }: { api: RallyApi; onSignOut: () => void }): React.JSX.Element {
   const { session } = useCollaborationSession();
   const directory = useQuery({ queryKey: ['shared-navigation'], queryFn: ({ signal }) => api.getSharedNavigationDirectory(signal), refetchOnWindowFocus: 'always' });
@@ -463,6 +479,7 @@ function BrowserWorkspace({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
     </section>
   </main>;
   return <div className="browser-workspace workspace-shell">
+    <OpenLoneWorkstream directory={directory.data} navigationSpaces={navigationSpaces} />
     {sidebarVisible
       ? <SharedNavigation accountMenu={accountMenu} directory={directory} navigationSpaces={navigationSpaces} />
       // With no sidebar the account menu floats over the corner it would sit in.
