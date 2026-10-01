@@ -7525,11 +7525,13 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
    and centres itself in them, staying in flow rather than going absolute, so
    the launching state only has to drop it back into the dock row it already
    names. The move is not animated for the same reason the header is not:
-   creation can finish before a transition would. */
+   creation can finish before a transition would. The padding is the settled
+   dock's own, so the padding transition every launch dock carries has nothing
+   to move on submit. */
 .new-chat-screen:not(.is-launching) > .launch-dock {
   align-self: center;
   grid-row: 2 / 4;
-  padding: 0 16px;
+  padding: 0 16px 16px;
   z-index: 3;
 }
 
