@@ -24,6 +24,7 @@ covers the machinery.
 | `apps/site/build/help/markdown.ts` | Renders one page body: GitHub-flavored Markdown, GitHub's HTML sanitizer, `> [!NOTE]` alerts, syntax highlighting, heading ids and anchors, table and code-block wrappers, and the plain text used by search. |
 | `apps/site/build/help/layout.ts` | The page template: header, chapters sidebar, article header for each page kind, chapter contents, previous/next links, outline, and the search dialog. |
 | `apps/site/build/help/site.ts` | Builds every output file: resolves and checks links, publishes images, writes the Markdown copies, `llms.txt`, `llms-full.txt`, `search-index.json` and `sitemap.xml`. |
+| `apps/site/worker/index.ts` | The site's only Worker code. It runs for `/help` and `/help/*` alone (`run_worker_first` in `wrangler.jsonc`): it answers `Accept: text/markdown` with the page's Markdown copy and adds the discovery headers. |
 | `apps/site/build/help/plugin.ts` | The Vite plugin: serves pages on request under `vite dev`, and emits every output during `vite build`, linking the `help` entry's hashed script and stylesheet. |
 | `apps/site/src/help.ts`, `src/help-search.ts` | The browser script: phone menu, copy buttons, the outline's current-section marker, and search. Ranking lives in `help-search.ts` so it can be tested without a DOM. |
 | `apps/site/src/help.css` | All styling. Colours and type are `--help-*` tokens; the light and dark themes are the only places colours are set. |
@@ -77,10 +78,35 @@ copies, so an agent reading one page can follow the manual without HTML.
 | `help/**/index.html` | People. Static and complete without the script. |
 | `help/**.md` | Agents, and the "Copy page as Markdown" button. The author's text byte for byte, under a `# title` and `> description`, with links made absolute. Each HTML page names it in `<link rel="alternate" type="text/markdown">`. |
 | `help/llms.txt` | Agents: the manual's contents with one-line descriptions and Markdown URLs. |
+| `help/<chapter>/llms.txt` | Agents: one chapter's index, so an agent can load a chapter without the whole book. |
 | `help/llms-full.txt` | Agents: the index followed by every page, in reading order. |
 | `help/search-index.json` | The search dialog. Title, chapter, URL, description, headings, and body text per page. |
 | `help/sitemap.xml` | Crawlers. `public/robots.txt` lists it beside the site's own sitemap. |
 | `help/_assets/*` | Images the pages reference. |
+
+### For agents
+
+Agents are the second audience, and they arrive three ways, each handled:
+
+- **Asking for Markdown.** Claude Code, Cursor and OpenCode send
+  `Accept: text/markdown`. The Worker answers any page URL with that page's
+  Markdown copy (`Content-Type: text/markdown`, `Vary: Accept`,
+  `X-Robots-Tag: noindex` so search engines index only the HTML). The decision
+  is `prefersMarkdown`: Markdown must outrank `text/html`, or tie it and be
+  listed first. A browser's `Accept` never names Markdown, so it always gets
+  HTML.
+- **Reading the HTML.** Copilot, Codex and Gemini CLI send `*/*` and read
+  HTML, so the HTML is kept small: the article comes first in the source (the
+  grid draws the sidebar on its left), the sidebar lists only the current
+  chapter's pages, class names are short, highlighting classes use the `hl-`
+  prefix, and the search dialog is built by the script rather than shipped in
+  every page. JSON-LD (`TechArticle` and `BreadcrumbList`) names the page, its
+  place in the manual, and its Markdown copy.
+- **Looking for an index.** Every `/help/` response carries
+  `Link: </help/llms.txt>; rel="llms-txt", …` and `X-Llms-Txt`; every page has
+  `<link rel="alternate" type="text/markdown">`; every Markdown copy opens with
+  a two-line pointer to `llms.txt` and the chapter's own index, placed first so
+  an agent that truncates still sees it.
 
 ### In the browser
 
@@ -121,6 +147,10 @@ Barlow for text, Barlow Semi Condensed for display, and a monospace for labels.
   'self'` and `style-src 'self'`, so highlighting is class-based and the theme
   is set in the stylesheet. An inline `style` attribute would be blocked
   silently. Verified visually, no automated guard.
+- **The Worker runs only for `/help`.** `run_worker_first` lists `/help` and
+  `/help/*`, so the landing page, downloads and handoff pages stay pure static
+  assets with no Worker invocation. Widening it puts a script in front of pages
+  whose latency and headers were designed without one.
 - **Search and "Copy page" fetch same-origin files**, which is why the site CSP's
   `connect-src` includes `'self'`. Removing it breaks both without an error
   anywhere but the browser console.
@@ -153,7 +183,9 @@ engineering reference.
 ordering and numbering, front matter and layout errors, drafts, rendering
 (alerts, sanitizing, heading ids, highlighting, link rewriting), the full build
 of a temporary folder (outputs, assets, Markdown copies, `llms.txt`), link and
-anchor failures, the real `help/` folder, and search ranking. Each test writes
+anchor failures, the real `help/` folder, search ranking, and the Worker's
+`Accept` negotiation. The Worker's headers were checked end to end under
+`wrangler dev`. Each test writes
 its own folder under the system temp directory and removes it afterwards.
 
 Visual changes are checked in a browser: `pnpm --filter @rally/site build`,
@@ -165,8 +197,10 @@ phone widths.
 ### 2026-10-01 — Help center built from Markdown at /help/
 
 **What changed:** Added the help center: a content folder, a build step that
-renders it into static pages, Markdown copies, `llms.txt`, a search index and a
-sitemap, and a browser script for search and the phone menu.
+renders it into static pages, Markdown copies, `llms.txt` (whole manual and per
+chapter), a search index and a sitemap, a browser script for search and the
+phone menu, and a Worker in front of `/help/` that serves Markdown to agents
+that ask for it.
 
 **Why:** The existing `/support/` pages are hand-written HTML, which people
 rarely update and agents can't easily write. A folder of Markdown files with a
@@ -174,7 +208,14 @@ fixed shape is something both can write, review in a pull request, and read
 back. The manual is meant to be read by agents as well as people, so it
 publishes the Markdown it was written in.
 
-**Considered and rejected:** A documentation framework (Astro Starlight,
+Agents were designed for from the start rather than bolted on: as of 2026 the
+coding agents split between those that send `Accept: text/markdown` and those
+that read HTML, so the help center serves the first Markdown at the same URL
+and keeps its HTML small for the second.
+
+**Considered and rejected:** Cloudflare's zone-level Markdown for Agents, which
+converts HTML at the edge: the author's own Markdown is already built and is
+better than a conversion of the rendered page. A documentation framework (Astro Starlight,
 VitePress, Docusaurus). Each brings its own build, theme system and client
 runtime to a site that is otherwise a plain Vite build with a strict CSP; the
 renderer here is a few hundred lines on the same `unified` libraries those
