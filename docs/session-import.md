@@ -308,6 +308,8 @@ HTML/code artifacts remain stored files; importing does not launch a site.
 
 **Consequences:** A signed-in import now depends on ChatGPT still putting `mapping` and `current_node` in the page (or on `/backend-api/conversation/<id>` still answering with a bearer token). Client-side navigation can leave a stale tree; the reader matches the URL's conversation id and then hits the HTTP fallback. Project and GPT chats under `/g/…/c/<id>` are importable; a slug after the id is not.
 
+Shipped in #1055.
+
 ### 2026-10-01 — Read a shared ChatGPT conversation from the page that rendered it
 
 **What changed:** Importing `chatgpt.com/share/<id>` recovers the conversation JSON ChatGPT already put in the share page's React Router loader stream, then falls back to `/backend-anon/share/<id>`. Files still come from the anonymous download routes.

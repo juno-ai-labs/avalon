@@ -188,6 +188,8 @@ location, and notifications stay denied. Sign-in that needs `window.opener` is
 still unsupported. A future host that shows a Rally dialog over the page must
 hide the native view the same way, not assume z-index.
 
+Shipped in #1055.
+
 ### 2026-09-25 — Closing the only blank tab closes the rail
 
 **What changed:** `EmbeddedBrowserTabs` and `useEmbeddedBrowserShortcuts` take
