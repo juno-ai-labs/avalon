@@ -12,6 +12,9 @@ edge: "Your team and AI in the same conversation."
 
 ChatGPT when it's you and AI (and never anyone else). Rally when the work gets better with a team. In Rally, your team and AI talk in long-running Channels (like Slack).
 
+> [!NOTE]
+> You can import an existing ChatGPT session into Rally and start collaborating with your team immediately.
+
 ## Side by side
 
 | | Rally | ChatGPT |
@@ -43,4 +46,3 @@ Need to think something through alone or with one coworker? Open a Breakout, do 
 
 Rally is priced per organization, with one quota the team shares. Bring in the designer and the contractor without doing seat math first.
 
-> Before Rally, our team's AI process was pure GPT. Grab it, Paste it, Tell everyone.
