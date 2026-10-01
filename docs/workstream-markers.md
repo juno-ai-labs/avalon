@@ -6,8 +6,7 @@ which colour it is. Eight states compete for that dot: five belong to the run
 to the reader alone — **unread**, **mentioned**, and **unseen**, a
 work stream somebody put them in that they have never opened. The ranking
 between them is a product decision, written down once, and every surface that
-draws a ranked dot reads it from here. Channel navigation and its conversation
-rail instead use the shared numeric attention badge.
+draws a ranked dot reads it from here, the sidebar's Channel rows included.
 
 Read this before changing a marker colour, adding a state, or reordering the
 ranking. The colours themselves are tokens, so [`theming.md`](theming.md) still
@@ -20,7 +19,7 @@ token and which state wins.
 | --- | --- |
 | `apps/desktop/src/renderer/lib/format.ts` | `MARKER_PRECEDENCE` and `workstreamMarkerStatus` own the ranking. Shared vocabulary, labels and `harnessMarkerStatus` live in `packages/ui/src/lib/format.ts` and are re-exported here. |
 | `packages/ui/src/components/primitives.tsx` | `StatusDot` — the one component that draws a marker, for every surface. |
-| `apps/desktop/src/renderer/screens/workstream.tsx` and `packages/ui/src/components/workstream-sidebar.tsx` | Main and Breakout attention badges in the Channel rail. |
+| `apps/desktop/src/renderer/components/sidebar.tsx` | The sidebar row's one dot: this ranking, with `completed` left out and a Breakout that needs the reader counted as unread. |
 | `apps/desktop/src/renderer/screens/project-space.tsx` | The project space's work-stream rows, which draw the ranked marker. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | The work-stream header's status line, which names the run's own marker rather than this viewer's. |
 | `apps/desktop/src/renderer/components/automation-header.tsx` | The Sidekick run history, the one surface that still draws `scheduled` under its own name. |

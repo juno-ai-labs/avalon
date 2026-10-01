@@ -182,6 +182,16 @@ reader (common and viewer state, waterlined) also carries, for that reader,
 `channelViewerStates` reads both for any number of Channels in three queries,
 so the connect sidebar costs the same per Channel as one row.
 
+Each breakout in `privateChildren` carries, besides its title and state,
+`originTurnId` — the Main turn it was branched through, read from its
+`parent_breakout_preparations` request's `sourceThroughTurnId`, and null when it
+was branched through none or has no preparation row — and `lastActivityAt`, from
+its `directory_common` projection and absent until one has arrived. Both are in
+the hashed breakout list, so a breakout's activity alone moves
+`privateChildrenWaterline`. The guest navigation read (`readSharedWorkstream`)
+gives each Breakout the same `originTurnId`. A reply count is deliberately not
+carried.
+
 Most changes reach the row through the directory apply. Two do not, and the
 parent republishes the row itself when they happen: a breakout list that moved
 for someone (`advancePrivateChildrenVersion` notes whom; the row goes to that
@@ -483,6 +493,37 @@ Space in an Organization now shares one SQLite database and one socket set.
   deleting those objects is its own decision.
 
 ## Changelog
+
+### 2026-10-01 — A breakout row says where it branched and when it last moved
+
+**What changed:** `visiblePrivateChildren` joins `parent_breakout_preparations`
+and lists each breakout's `originTurnId` (the preparation request's
+`sourceThroughTurnId`) and `lastActivityAt` (from its `directory_common`
+projection; epoch milliseconds on the RPC, ISO on the workspace-socket row and
+control metadata). `readSharedWorkstream` adds `originTurnId` to each Breakout in
+the guest navigation, and the navigation's Spaces carry `systemRole`. No
+migration: both values were already stored.
+
+**Why:** The desktop and browser redesign draws a breakout's chip under the Main
+message it branched from and a tick bar of breakout activity, from the rows they
+already hold rather than a read per Channel. The origin was only in the
+preparation request, which nothing listed.
+
+**Considered and rejected:** A reply count per breakout: it would need a read of
+each breakout's transcript or a new projected counter, and the redesign does not
+need it yet. A column for the origin: the preparation row is the one record of
+it and is kept for the breakout's life.
+
+**Consequences:** `lastActivityAt` is part of the hashed breakout list, so a
+directory effect that moves only a breakout's activity now advances
+`children:<user>` and republishes the Channel row to that breakout's members,
+where before it changed nothing. The first advance after deploy moves every
+list once because the hashed shape grew. A breakout whose preparation row is
+gone lists `originTurnId: null`, indistinguishable from one branched through no
+turn. The workspace socket's parser drops keys an older client does not know,
+so the row's new fields are safe to ship first; `/sharing/navigation` is parsed
+strictly by shipped desktop and browser builds, which reject a response
+carrying keys they do not know.
 
 ### 2026-09-28 — A Channel's rail is answered here, and its row says when it moved
 

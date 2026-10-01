@@ -22,12 +22,7 @@ import { desktopBridge } from '../lib/platform';
 import { layoutKey, writeLayout } from '../lib/desktop-layout';
 import { uuidV7 } from '../lib/telemetry';
 import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
-import {
-  COLLAPSED_SIDEBAR_WIDTH,
-  MIN_SIDEBAR_WIDTH,
-  SIDEBAR_CONTENT_MIN_WIDTH,
-  useUiStore,
-} from '../lib/ui-store';
+import { SIDEBAR_CONTENT_MIN_WIDTH, useUiStore } from '../lib/ui-store';
 import { INACTIVE_SPACES_QUERY_KEY, PERSONAL_ORDER_QUERY_KEY, SIDEBAR_LIST_QUERY_KEYS, SPACES_QUERY_KEY, applyContainerOrder, useSocketOwnedList } from '../lib/sidebar-list-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { usePersonalOrder, useSpaceDirectories, useSpacesReady } from '../lib/use-space-directories';
@@ -47,34 +42,6 @@ import type { AttachmentPreview } from './attachments';
 import { SearchModal } from './search-modal';
 import { Sidebar } from './sidebar';
 import { WorkspaceAccountMenu } from './workspace-account-menu';
-
-export function sidebarConstraintThreshold(input: {
-  pathname: string;
-  sidebarWidth: number;
-  spacesSidebarWidth: number;
-  spacesCollapsed: boolean;
-  spacesEnabled: boolean;
-}): number {
-  const channelOpen = openWorkstreamId(input.pathname) !== null;
-  const contextWidth = channelOpen ? COLLAPSED_SIDEBAR_WIDTH : 0;
-  const spacesWidth = input.spacesEnabled
-    ? input.spacesCollapsed ? COLLAPSED_SIDEBAR_WIDTH : input.spacesSidebarWidth
-    : 0;
-  return input.sidebarWidth + SIDEBAR_CONTENT_MIN_WIDTH + contextWidth + spacesWidth;
-}
-
-/** Room the first hierarchy rail may use after preserving every level to its right. */
-export function spacesSidebarAvailableWidth(input: {
-  pathname: string;
-  viewportWidth: number;
-}): number {
-  const channelOpen = openWorkstreamId(input.pathname) !== null;
-  const contextWidth = channelOpen ? COLLAPSED_SIDEBAR_WIDTH : 0;
-  return input.viewportWidth
-    - SIDEBAR_CONTENT_MIN_WIDTH
-    - COLLAPSED_SIDEBAR_WIDTH
-    - contextWidth;
-}
 
 interface AppShellProps extends PropsWithChildren {
   workspace: Workspace;
@@ -564,37 +531,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const railOpen = useUiStore((state) => state.railOpen);
   const railWidth = useUiStore((state) => state.railWidth);
   const railLeaving = useUiStore((state) => state.railLeaving);
-  const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
-  const spacesSidebarWidth = useUiStore((state) => state.spacesSidebarWidth);
   const spacesEnabled = spacesEnabledForSession(session);
-  const spacesSidebarCollapsed = useUiStore((state) => state.spacesSidebarCollapsed);
-  const setSpacesSidebarCollapsed = useUiStore((state) => state.setSpacesSidebarCollapsed);
-  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
-  useEffect(() => {
-    const measure = (): void => setViewportWidth(window.innerWidth);
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, []);
-  const spacesAvailableWidth = spacesSidebarAvailableWidth({
-    pathname: location.pathname,
-    viewportWidth,
-  });
-  const spacesSidebarConstrained = spacesEnabled && spacesAvailableWidth < MIN_SIDEBAR_WIDTH;
-  const constraintThreshold = sidebarConstraintThreshold({
-    pathname: location.pathname,
-    sidebarWidth,
-    spacesSidebarWidth,
-    spacesCollapsed: spacesSidebarCollapsed || spacesSidebarConstrained,
-    spacesEnabled,
-  });
-  const sidebarConstrained = viewportWidth < constraintThreshold;
-  // GrokBot protects 424px for the conversation. Its saved expanded width is
-  // the other half of the breakpoint, so resizing the sidebar also moves the
-  // point at which it becomes an icon rail. Existing work streams also need
-  // room for their context rail; other routes keep the original reservation.
-  const sidebarCompact = sidebarCollapsed || sidebarConstrained;
-  const effectiveSidebarWidth = sidebarCompact ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth;
   // The main pane keeps room for a sidebar that is still fading out.
   const showShellRail = railOpen || railLeaving;
   const expandForShellRail = railOpen;
@@ -816,7 +754,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const shellStyle = {
     '--rail-width': `${railWidth}px`,
     '--conversation-min-width': `${SIDEBAR_CONTENT_MIN_WIDTH}px`,
-    '--av-cmp-sidebar-width': `${effectiveSidebarWidth}px`,
+    '--av-cmp-sidebar-width': `${sidebarWidth}px`,
   } as CSSProperties;
 
   return (
@@ -906,9 +844,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           />
         )}
         automations={automations.data}
-        compact={sidebarCompact}
-        constrained={sidebarConstrained}
-        conversationOnly
         // Not `isLoading`: the first page is not fetched, so there is no
         // in-flight request to report. The sidebar is waiting exactly while it
         // has no list yet — which also keeps the skeletons up rather than
@@ -916,10 +851,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         loading={workstreams.data === undefined || (guestSession && associativeNavigation.isPending)}
         spaces={spacesEnabled ? visibleSpaces : undefined}
         spacesReadOnly={guestSession}
-        spacesAvailableWidth={spacesAvailableWidth}
-        spacesCollapsed={spacesSidebarCollapsed}
-        spacesConstrained={spacesSidebarConstrained}
-        onSpacesCollapsedChange={setSpacesSidebarCollapsed}
         inactiveSpaces={visibleInactiveSpaces}
         spacesReady={spacesReady}
         // The rows on screen are the last ones the socket delivered and the

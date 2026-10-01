@@ -1,39 +1,43 @@
-import { ShareConversationButton, ShareConversationDialog } from "../components/scope-sharing-panel";
-import { ConversationHeader } from '@rally/ui/components/conversation-header';
-import { IconCloudDownload } from '@tabler/icons-react';
+import { ShareConversationDialog } from "../components/scope-sharing-panel";
+import { BreakoutMenu, ChannelMenu, type ConversationRowTarget } from '@rally/ui/components/conversation-menus';
+import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
+import { SpaceIcon } from '@rally/ui/components/space-icon';
+import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
+import { TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
+import { WorkstreamGlyph, WorkstreamMark } from '@rally/ui/components/workstream-glyph';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useLocation, useParams, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
-import type { WorkspaceTarget } from '@rally/contracts/workspace-target';
 import { conversationNeedsViewer, type HarnessStatus } from '@rally/contracts';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { mainOmitted, useConversationDirectory } from '../lib/conversation-directory';
 
-import { desktopBridge } from '../lib/platform';
-import { layoutKey } from '../lib/desktop-layout';
+import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { reportTelemetryProductIntent, telemetryVisibility, uuidV7 } from '../lib/telemetry';
 import { holdCreationTraceUntilSendReady, startPerfTrace } from '../lib/perf-trace';
 
-import { CONTEXT_SIDEBAR_ENABLED, useUiStore } from '../lib/ui-store';
+import { useUiStore } from '../lib/ui-store';
+import { useSpaceDirectories } from '../lib/use-space-directories';
+import { AppearancePicker } from '../components/appearance-picker';
+import { RelativeTime } from '../components/relative-time';
 
 import type { WorkstreamChildDirectory } from '../lib/channel-viewer-state';
 import type { WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
-import { Button, IconButton, InlineError, Modal } from '../components/primitives';
+import { Button, InlineError, Modal, TitleSkeleton } from '../components/primitives';
 import { SessionImportUpdateDialog, importedSourceUpdatable } from '../components/session-import-update-dialog';
 
 import { useCachedWorkstreamAppearance, useCachedWorkstreamSummary } from '../lib/use-workstreams-query';
 import { launchedSubstreamDetail, optimisticOpeningTranscript } from '../lib/launched-conversation';
 import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
 import { holdCachedWorkstreamArchive, patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
-import { WorkstreamSidebar, type ConversationRowTarget } from '../components/workstream-sidebar';
 import { SidekickPicker } from '../components/sidekick-picker';
 import { workstreamSidekickRows } from '../components/sidekick-section';
 import { useChannelRail } from '../lib/channel-rails';
-import { PENDING_SUBSTREAM_DRAFT_ID, type LaunchingSubstream, type SubstreamLaunchProps } from '../components/substream-launch';
-import { ConversationOpeningSkeleton, ConversationSurface, workspaceMemberFromSession } from './conversation-surface';
+import { type LaunchingSubstream, type SubstreamLaunchProps } from '../components/substream-launch';
+import { ConversationOpeningSkeleton, ConversationSurface, workspaceMemberFromSession, type ConversationHeaderContext } from './conversation-surface';
 
 // The feed, composer and rail live in `conversation-surface.tsx`, shared with
 // the automation screen. The helpers below are re-exported so the tests and
@@ -124,30 +128,6 @@ const workstreamSidebarFailureCopy: Record<WorkstreamSidebarFailure, { title: st
   archive_substream: { title: 'The breakout couldn’t be archived', copy: 'The breakout couldn’t be archived. Try again.' },
 };
 
-export function WorkstreamHeader({ workspaceTarget, spaceId, onCopyLinkFailure, ...props }: Omit<React.ComponentProps<typeof ConversationHeader>,
-  'onShowNavigation' | 'onCopyLink' | 'onCopyEmail' | 'onCopyId'> & { workspaceTarget: WorkspaceTarget | null; spaceId: string | null; onCopyLinkFailure?: () => void }): React.JSX.Element {
-  const railOpen = useUiStore((state) => state.railOpen);
-  const railVariant = useUiStore((state) => state.railVariant);
-  const closeRail = useUiStore((state) => state.closeRail);
-  const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
-  const copy = (value: string, contentType: 'workstream_email' | 'workstream_id') => {
-    void desktopBridge().copyText(value).then(() => reportTelemetryProductIntent({
-      kind: 'content_copied', contentType, resourceType: 'workstream', resourceId: props.workstream.id,
-    })).catch(() => undefined);
-  };
-  // HTTPS links unfurl and work without the desktop app installed; custom schemes do not.
-  return <ConversationHeader {...props} railOpen={railOpen} railVariant={railVariant} onCloseRail={closeRail}
-    contextEnabled={CONTEXT_SIDEBAR_ENABLED} onShowNavigation={() => setSidebarOpen(true)}
-    onCopyLink={() => {
-      if (!workspaceTarget || !spaceId) { onCopyLinkFailure?.(); return; }
-      void copyWorkstreamLink(workspaceTarget, spaceId, props.workstream.id, props.substreamId ?? '0').catch(() => onCopyLinkFailure?.());
-    }}
-    onCopyEmail={props.workstream.emailAddress ? () => copy(props.workstream.emailAddress!, 'workstream_email') : undefined}
-    onCopyId={() => copy(props.workstream.id, 'workstream_id')} />;
-}
-
-type RailContext = Parameters<NonNullable<React.ComponentProps<typeof ConversationSurface>['renderSidebar']>>[0];
-
 /**
  * A work stream: the shared conversation surface under the work-stream header.
  * A pending row mounts nothing that dials or reads its room, only a captioned
@@ -162,7 +142,6 @@ export function WorkstreamScreen(): React.JSX.Element {
         caption
         label={row.pendingOrigin === 'import' ? 'Importing conversation…' : 'Creating channel…'}
         parentKind="workstream"
-        sidebar
       />
     );
   }
@@ -189,7 +168,11 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   // Parent chrome remains live even on a direct link into a child. Reuse the
   // retained Main connection rather than deriving its inventory from the child.
   // A child grant proves nothing about Main; keep that host scoped to its child.
-  const mainConnection = useRetainedWorkstreamSocket(api, id, Boolean(api && id && (!conversationScoped || selectedSubstreamId === '0')), 'workstream', '0');
+  // Main is on screen beside any Breakout, unless the reader holds only some of
+  // this Channel's conversations and Main is not among them.
+  const mainVisible = !directoryEntry || !mainOmitted(directoryEntry);
+  const mainConnection = useRetainedWorkstreamSocket(api, id, Boolean(api && id && (!conversationScoped || mainVisible)), 'workstream', '0');
+  const navigate = useNavigate();
   const parent = useQuery<WorkstreamDetail | undefined>({
     queryKey: ['workstream', id], queryFn: async () => undefined, enabled: false,
   });
@@ -249,6 +232,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
             updatedAt: '1970-01-01T00:00:00.000Z',
           }),
           scope: item.scope,
+          originTurnId: live?.originTurnId ?? item.originTurnId ?? null,
           ...(live?.appearance ?? item.appearance ? { appearance: live?.appearance ?? item.appearance } : {}),
           ...(live || item.needsAttention === undefined ? {} : { needsAttention: item.needsAttention }),
         };
@@ -265,7 +249,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         }
       : child);
   const railChildren = railChildrenWithAttention(namedChildren, selectedSubstreamId, openChild.data);
-  const railScrollKey = layoutKey(session?.workspace?.id ?? 'unbound', session?.user.id ?? 'unbound', `channel-context-scroll:${id}`);
   // One target per dialog rather than one shared "menu target": both can be
   // open in sequence on different rows, and a single slot would make cancelling
   // one clear the other's subject out from under it.
@@ -301,18 +284,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     clientMessageId: string;
   } | null>(null);
   const [launching, setLaunching] = useState<LaunchingSubstream | null>(null);
-  /**
-   * The child preparation reserved for the attempt on screen, once it has
-   * answered with one.
-   *
-   * The rail needs it to keep one row per conversation: readiness publishes the
-   * child to the parent's directory from inside the confirmation, so the real
-   * row can arrive before the response that clears `launching` does, and a
-   * placeholder watching only `launching` would stand beside it. Reserved
-   * children are not readable as conversations, so this is an id to recognize
-   * a row by and never one to navigate to.
-   */
-  const [reservedChildId, setReservedChildId] = useState<string | null>(null);
   const [creationError, setCreationError] = useState<string | null>(null);
   const creationRef = useRef(creation);
   creationRef.current = creation;
@@ -452,7 +423,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     const abandoned = preparedRef.current ? creationRef.current : null;
     preparedRef.current = false;
     creationRef.current = null;
-    setCreation(null); setLaunching(null); setCreationError(null); setReservedChildId(null);
+    setCreation(null); setLaunching(null); setCreationError(null);
     // Best effort by design: the endpoint refuses an operation that is already
     // confirming or ready, which is exactly when there is nothing to release.
     if (api && abandoned) {
@@ -503,16 +474,12 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     });
     setCreationError(null);
     try {
-      const prepared = await trace.step('prepare_request', () => api.prepareSubstream(attempt.parentId, {
+      await trace.step('prepare_request', () => api.prepareSubstream(attempt.parentId, {
         operationId: attempt.operationId, throughTurnId: attempt.throughTurnId,
       }));
       // From here the operation holds a reserved child, so leaving the surface
-      // has something to release — and the rail has an id to recognize that
-      // child's own row by when confirmation publishes it.
-      if (creationRef.current === attempt) {
-        preparedRef.current = true;
-        setReservedChildId(prepared.substreamId);
-      }
+      // has something to release.
+      if (creationRef.current === attempt) preparedRef.current = true;
       const created = await trace.step('confirm_request', () => api.confirmSubstream(
         attempt.parentId,
         attempt.operationId,
@@ -590,11 +557,8 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       throw error;
     }
   };
-  // One rail for both states. Before the snapshot, everything it lists comes
-  // from the workspace socket: the row, the breakout list and the Channel's
-  // rail. What the rail cannot say yet holds its place until the context
-  // arrives. Without a breakout list the placeholder rail stands in, since
-  // Main alone would read as a Channel with no breakouts.
+  // The Channel's people, Sidekicks and artifacts as the workspace socket
+  // already holds them, for the menus drawn before a snapshot answers.
   const channelRail = useChannelRail(id);
   // The roster App holds for the session, read on its own terms.
   const members = useQuery({
@@ -619,102 +583,236 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     })
     : undefined;
   const railTitle = parent.data?.title ?? row?.title ?? sharedParent?.title ?? undefined;
-  const renderRail = (context: RailContext | undefined): React.JSX.Element => (
-    <WorkstreamSidebar
-      scrollStateKey={railScrollKey}
-      mainVisible={!conversationScoped || selectedSubstreamId === '0'}
-      onSidekickMenuOpen={context?.loadSidekickOptions}
-      onRefreshSidekicks={context?.refreshSidekicks}
-      addSidekick={(context || channelRail) && <SidekickPicker workstreamId={id} substreamId={selectedSubstreamId} />}
-      sidekicks={context ? context.sidekicks : railSidekicks}
-      sidekickFailure={context?.sidekickFailure}
-      participantsPending={context === undefined && railParticipants === undefined}
-      workstream={{
-        ...(context?.detail ?? {
+  const channelAppearance = rowAppearance ?? parent.data?.appearance ?? sharedParent?.appearance;
+  const { active: spaceDirectory } = useSpaceDirectories();
+  // The Space the Channel menu names: the one this route came through, or the
+  // Channel's first that is not General. General is no place anybody chose.
+  const menuSpace = useMemo(() => {
+    const spaces = spaceDirectory.data?.items ?? [];
+    const candidates = [linkSpaceId, ...linkSpaceIds].flatMap((spaceId) => spaces.find((space) => space.id === spaceId) ?? []);
+    return candidates.find((space) => space.systemRole !== 'general');
+  }, [linkSpaceId, linkSpaceIds, spaceDirectory.data?.items]);
+  const breakoutMarks = useMemo<BreakoutMark[] | undefined>(() => railChildren?.map((child) => ({
+    substreamId: child.substreamId,
+    title: child.title,
+    appearance: child.appearance,
+    originTurnId: child.originTurnId ?? null,
+    lastActivityAt: ('lastActivityAt' in child ? child.lastActivityAt : undefined) ?? child.updatedAt,
+    createdAt: child.createdAt,
+    unreadCount: 'unreadCount' in child ? child.unreadCount : undefined,
+    youAreMentioned: 'youAreMentioned' in child ? child.youAreMentioned : undefined,
+    unseen: 'unseen' in child ? child.unseen : undefined,
+    needsAttention: child.needsAttention,
+  })), [railChildren]);
+  const breakoutAge = (breakout: BreakoutMark): React.ReactNode => breakout.lastActivityAt
+    ? <RelativeTime value={breakout.lastActivityAt} />
+    : null;
+
+  // Which panes are on screen. The right slot is one place: a Breakout open
+  // beside its Channel takes it, and a panel either conversation opens takes
+  // it from the other, which is hidden but stays mounted.
+  const openBreakoutId = selectedSubstreamId !== '0' ? selectedSubstreamId : null;
+  const creatingHere = creation?.parentId === id;
+  const breakoutPaneOpen = openBreakoutId !== null || creatingHere;
+  const railScope = useUiStore((state) => state.railScope);
+  const storeRailOpen = useUiStore((state) => state.railOpen);
+  const closeRail = useUiStore((state) => state.closeRail);
+  const breakoutScope = openBreakoutId === null ? null : `${id}:${openBreakoutId}`;
+  const breakoutOwnsRail = storeRailOpen && breakoutScope !== null && railScope === breakoutScope;
+  const mainOwnsRail = storeRailOpen && railScope === id;
+  const splitMode: SplitConversationMode = !breakoutPaneOpen ? 'main'
+    : !mainVisible || breakoutOwnsRail ? 'breakout'
+      : mainOwnsRail ? 'main' : 'split';
+  const breakoutWidthKey = layoutKey(session?.workspace?.id ?? 'unbound', session?.user.id ?? 'unbound', 'breakout-width');
+  const [breakoutWidth, setBreakoutWidth] = useState<number | null>(() => {
+    const stored = Number.parseFloat(readLayout(breakoutWidthKey) ?? '');
+    return Number.isFinite(stored) ? stored : null;
+  });
+  const changeBreakoutWidth = useCallback((width: number): void => {
+    setBreakoutWidth(width);
+    writeLayout(breakoutWidthKey, String(width));
+  }, [breakoutWidthKey]);
+  const [scrollToTurn, setScrollToTurn] = useState<{ turnId: string; nonce: number } | null>(null);
+  const showInChannel = (turnId: string | null | undefined): void => {
+    if (breakoutOwnsRail) closeRail();
+    if (turnId) setScrollToTurn((current) => ({ turnId, nonce: (current?.nonce ?? 0) + 1 }));
+  };
+  const openBreakout = (substreamId: string): void => {
+    // A panel the Channel has open would hide the Breakout being asked for.
+    if (mainOwnsRail) closeRail();
+    selectSubstream(substreamId);
+  };
+
+  const mainActions = (conversationScoped ? mainVisible : parent.data) ? {
+    onMakePublic: conversationScoped || parent.data?.systemKind ? undefined : makePublic,
+    publicDisabled: parent.data?.scope === 'workspace' || substreamPending,
+    onShare: (target: ConversationRowTarget) => setSharingSubstream(target.substreamId),
+    onCopyLink: session?.workspace ? copyRowLink : undefined,
+    onRename: (target: ConversationRowTarget) => { ++menuOperation.current; setRenameTarget({ ...target, parentId: id }); setRenameTitle(target.title); setSubstreamMenuFailure(null); },
+    onArchive: conversationScoped ? undefined : (target: ConversationRowTarget) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuFailure(null); },
+  } : undefined;
+  const substreamActions = {
+    onShare: (target: ConversationRowTarget) => setSharingSubstream(target.substreamId),
+    onCopyLink: session?.workspace ? copyRowLink : undefined,
+    onRename: (child: ConversationRowTarget) => { ++menuOperation.current; setRenameTarget({ ...child, parentId: id }); setRenameTitle(child.title); setSubstreamMenuFailure(null); },
+    onArchive: (child: ConversationRowTarget) => { ++menuOperation.current; setArchiveTarget({ ...child, parentId: id }); setSubstreamMenuFailure(null); },
+  };
+
+  /**
+   * The Channel's pill: its mark, its name, and the menu that replaced the
+   * Channel sidebar. Drawn from the Main surface's own context when it is the
+   * Main surface's header, and from what the socket already holds when it is
+   * stacked above a Breakout that has taken the Channel's place.
+   */
+  const channelLevel = (context: ConversationHeaderContext | null, onSelect?: () => void): TitlePillLevel => {
+    const detail = context?.detail ?? parent.data;
+    const title = parent.data?.title ?? detail?.title ?? railTitle ?? '';
+    const naming = (detail?.titleStatus ?? row?.titleStatus) === 'naming';
+    const glyph = <WorkstreamGlyph appearance={channelAppearance} id={id} size={24} />;
+    const appearanceChange = conversationScoped ? undefined : mainConnection.setAppearance;
+    return {
+      key: `channel:${id}`,
+      icon: glyph,
+      ...(!onSelect && appearanceChange ? {
+        iconAction: <AppearancePicker
+          appearance={channelAppearance}
+          id={id}
+          key={id}
+          label={`Change ${title} icon and color`}
+          onChange={appearanceChange}
+          renderGlyph={(appearance) => <WorkstreamGlyph appearance={appearance} id={id} size={24} />}
+        />,
+      } : {}),
+      title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
+      label: `Channel menu: ${title}`,
+      ...(onSelect ? { onSelect } : {}),
+      menu: <ChannelMenu
+        actions={mainActions}
+        addSidekick={(context || channelRail) && <SidekickPicker substreamId="0" workstreamId={id} />}
+        breakouts={breakoutMarks}
+        onImportUpdates={api && importedSourceUpdatable(importedSource.data) ? () => setImportUpdateOpen(true) : undefined}
+        onOpenArtifact={context?.openArtifact}
+        onOpenBreakout={openBreakout}
+        onParticipants={context?.openParticipantDialog}
+        onRefreshSidekicks={context?.refreshSidekicks}
+        onSidekickMenuOpen={context?.loadSidekickOptions}
+        openSubstreamId={openBreakoutId}
+        participantsPending={context === null && railParticipants === undefined}
+        presentUserIds={context?.presentUserIds ?? []}
+        renderAge={breakoutAge}
+        sidekickFailure={context?.sidekickFailure}
+        sidekicks={context ? context.sidekicks : railSidekicks}
+        space={menuSpace ? {
+          icon: <SpaceIcon size={16} space={menuSpace} />,
+          name: menuSpace.name,
+          onOpen: () => void navigate(`/spaces/${menuSpace.id}`),
+        } : undefined}
+        workstream={{
           id,
-          participants: railParticipants ?? [],
-          resources: channelRail?.resources ?? [],
-          scope: row?.scope ?? sharedParent?.scope,
-        }),
-        title: parent.data?.title ?? context?.detail.title ?? railTitle ?? '',
-        appearance: rowAppearance ?? parent.data?.appearance ?? sharedParent?.appearance,
-        needsAttention: selectedSubstreamId === '0' ? (context ? conversationNeedsViewer(context.detail) : undefined) : parent.data ? conversationNeedsViewer(parent.data) : sharedParent?.conversations.find((child) => child.substreamId === '0')?.needsAttention,
-        privateChildren: railChildren,
-      }}
-      creatingSubstream={creation?.parentId === id && launching !== null
-        ? { reservedSubstreamId: reservedChildId }
-        : null}
-      presentUserIds={context?.presentUserIds ?? []}
-      onParticipants={context?.openParticipantDialog}
-      selectedSubstreamId={creation?.parentId === id ? PENDING_SUBSTREAM_DRAFT_ID : selectedSubstreamId}
-      onSelectSubstream={selectSubstream}
-      onNewSubstream={() => startCreation(null)}
-      onOpenArtifact={context?.openArtifact}
-      onFocusTranscript={context?.focusTranscript ?? (() => undefined)}
-      mainActions={(conversationScoped ? selectedSubstreamId === '0' : parent.data) ? {
-        onMakePublic: conversationScoped || parent.data?.systemKind ? undefined : makePublic,
-        publicDisabled: parent.data?.scope === 'workspace' || substreamPending,
-        onShare: (target) => setSharingSubstream(target.substreamId),
-        onCopyLink: session?.workspace ? copyRowLink : undefined,
-        onRename: (target) => { ++menuOperation.current; setRenameTarget({ ...target, parentId: id }); setRenameTitle(target.title); setSubstreamMenuFailure(null); },
-        onArchive: conversationScoped ? undefined : (target) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuFailure(null); },
-      } : undefined}
-      substreamActions={{
-        onShare: (target) => setSharingSubstream(target.substreamId),
-        onCopyLink: session?.workspace ? copyRowLink : undefined,
-        onRename: (child) => { ++menuOperation.current; setRenameTarget({ ...child, parentId: id }); setRenameTitle(child.title); setSubstreamMenuFailure(null); },
-        onArchive: (child) => { ++menuOperation.current; setArchiveTarget({ ...child, parentId: id }); setSubstreamMenuFailure(null); },
-      }}
-    />
-  );
+          title,
+          appearance: channelAppearance,
+          scope: detail?.scope ?? row?.scope ?? sharedParent?.scope,
+          participants: detail?.participants ?? railParticipants ?? [],
+          resources: detail?.resources ?? channelRail?.resources ?? [],
+        }}
+      />,
+    };
+  };
+
+  const openBreakoutMark = breakoutMarks?.find((breakout) => breakout.substreamId === openBreakoutId);
+  const breakoutLevel = (context: ConversationHeaderContext): TitlePillLevel => {
+    const title = context.detail.title;
+    const naming = context.detail.titleStatus === 'naming';
+    const breakoutId = openBreakoutId ?? '';
+    return {
+      key: `breakout:${breakoutId}`,
+      icon: <WorkstreamMark appearance={selectedAppearance} id={breakoutId} size={20} />,
+      ...(conversationScoped ? {} : {
+        iconAction: <AppearancePicker
+          appearance={selectedAppearance}
+          id={breakoutId}
+          key={breakoutId}
+          label={`Change ${title} icon and color`}
+          onChange={context.setAppearance}
+          renderGlyph={(appearance) => <WorkstreamMark appearance={appearance} id={breakoutId} size={20} />}
+        />,
+      }),
+      title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
+      label: `Breakout menu: ${title}`,
+      menu: <BreakoutMenu
+        actions={substreamActions}
+        breakout={{ substreamId: breakoutId, title }}
+        channel={{ id, title: railTitle ?? '', appearance: channelAppearance }}
+        onParticipants={context.openParticipantDialog}
+        onShowInChannel={mainVisible ? () => showInChannel(openBreakoutMark?.originTurnId) : undefined}
+        participants={context.detail.participants}
+        presentUserIds={context.presentUserIds}
+        scope={(() => {
+          const child = railChildren?.find((candidate) => candidate.substreamId === breakoutId);
+          return child && 'scope' in child ? child.scope : undefined;
+        })()}
+      />,
+    };
+  };
+
+  const mainPane = mainVisible ? <ConversationSurface
+    breakouts={breakoutMarks}
+    honorsSearchTarget={openBreakoutId === null}
+    key={`main:${id}`}
+    onOpenBreakout={openBreakout}
+    onStartSubstream={startCreation}
+    openBreakoutId={openBreakoutId}
+    parentId={id}
+    parentKind="workstream"
+    renderHeader={(context) => <TitlePillHeader current={channelLevel(context)} />}
+    scrollToTurn={scrollToTurn}
+    sidebarScope={conversationScoped ? 'conversation' : 'workstream'}
+    substreamId="0"
+    workstreamContext={conversationScoped ? undefined : parent.data}
+  /> : null;
+
+  const closeBreakout = <TitlePillClose label="Close breakout" onClose={() => selectSubstream('0')} />;
+  const breakoutPane = !breakoutPaneOpen ? null : creatingHere ? <ConversationSurface
+    honorsSearchTarget={false}
+    key={`launch:${id}`}
+    paneKey="launch"
+    parentId={id}
+    parentKind="workstream"
+    sidebarScope={conversationScoped ? 'conversation' : 'workstream'}
+    substreamId="0"
+    substreamLaunch={{
+      throughTurnId: creation.throughTurnId,
+      launching,
+      ...(creationError ? { error: creationError } : {}),
+      onCancel: resetCreation,
+      onCreate: createSubstream,
+    }}
+    workstreamContext={conversationScoped ? undefined : parent.data}
+  /> : <ConversationSurface
+    key={`breakout:${id}:${openBreakoutId}`}
+    parentId={id}
+    parentKind="workstream"
+    renderHeader={(context) => <TitlePillHeader
+      ancestors={splitMode === 'breakout' ? [channelLevel(null, mainVisible ? closeRail : undefined)] : []}
+      current={breakoutLevel(context)}
+      trailing={mainVisible ? closeBreakout : undefined}
+    />}
+    sidebarScope={conversationScoped ? 'conversation' : 'workstream'}
+    substreamId={openBreakoutId ?? '0'}
+    workstreamContext={conversationScoped ? undefined : parent.data}
+  />;
+
   return (
     <>
     {api && session?.workspace && sharingSubstream !== null && <ShareConversationDialog api={api} workspaceId={session.workspace.id} parentId={id} substreamId={sharingSubstream} open onOpenChange={(open) => { if (!open) setSharingSubstream(null); }} />}
     {api && importedSourceUpdatable(importedSource.data) && <SessionImportUpdateDialog key={id} api={api} open={importUpdateOpen}
       onClose={() => setImportUpdateOpen(false)} source={importedSource.data} workstreamId={id} />}
-    <ConversationSurface
-      parentId={id}
-      parentKind="workstream"
-      workstreamContext={conversationScoped ? undefined : parent.data}
-      sidebarScope={conversationScoped ? 'conversation' : 'workstream'}
-      onStartSubstream={startCreation}
-      substreamLaunch={creation?.parentId === id ? {
-        throughTurnId: creation.throughTurnId,
-        launching,
-        ...(creationError ? { error: creationError } : {}),
-        onCancel: resetCreation,
-        onCreate: createSubstream,
-      } : null}
-      renderOpeningSidebar={() => (railTitle === undefined || railChildren === undefined ? null : renderRail(undefined))}
-      renderSidebar={renderRail}
-      renderHeader={(context) => (
-        <WorkstreamHeader
-          actions={api && session?.workspace ? <>
-            {selectedSubstreamId === '0' && importedSourceUpdatable(importedSource.data) && <IconButton label="Import updates" onClick={() => setImportUpdateOpen(true)}><IconCloudDownload aria-hidden="true" size={18} stroke={1.8} /></IconButton>}
-            <ShareConversationButton api={api} workspaceId={session.workspace.id}
-              parentId={id} substreamId={selectedSubstreamId} />
-          </> : null}
-          currentUserId={session?.user.id ?? null}
-          grokBotMode
-          substreamId={selectedSubstreamId}
-          onAddParticipant={context.openParticipantDialog}
-          onOpenRail={context.openRail}
-          onRename={context.rename}
-          onAppearanceChange={conversationScoped ? undefined : selectedSubstreamId === '0'
-            ? mainConnection.setAppearance
-            : context.setAppearance}
-          presentUserIds={context.presentUserIds}
-          socketState={context.socketState}
-          workspaceTarget={session?.workspace ? {
-            region: session.workspace.region,
-            workspaceId: session.workspace.id,
-          } : null}
-          spaceId={linkSpaceId}
-          onCopyLinkFailure={() => setSubstreamMenuFailure('copy_link')}
-          workstream={{ ...context.detail, appearance: selectedAppearance }}
-        />
-      )}
-      substreamId={selectedSubstreamId}
+    <SplitConversationLayout
+      breakout={breakoutPane}
+      breakoutWidth={breakoutWidth}
+      main={mainPane}
+      mode={splitMode}
+      onBreakoutWidthChange={changeBreakoutWidth}
     />
     <Modal
       footer={<>

@@ -1950,10 +1950,11 @@ export class WorkspaceSpaceStorage {
         title: string;
         appearance_json: string | null;
         scope: "personal" | "workspace";
+        system_role: "general" | null;
         created_at: number;
         workstream_id: string;
       } & Record<string, SqlStorageValue>>(
-        `SELECT space.space_id, space.title, space.appearance_json, space.scope, space.created_at,
+        `SELECT space.space_id, space.title, space.appearance_json, space.scope, space.system_role, space.created_at,
                 membership.workstream_id
            FROM space_channel_memberships membership
            JOIN spaces space ON space.space_id = membership.space_id
@@ -1980,6 +1981,7 @@ export class WorkspaceSpaceStorage {
             iconKey: icon && SPACE_ICON_KEY_SET.has(icon) ? icon : SPACE_ICON_FALLBACK,
             colorKey: color && SPACE_COLOR_KEY_SET.has(color) ? color : SPACE_COLOR_FALLBACK,
             scope: row.scope,
+            systemRole: row.system_role,
           }),
           workstreamIds: [row.workstream_id],
         });

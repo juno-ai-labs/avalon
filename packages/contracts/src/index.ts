@@ -524,6 +524,10 @@ export const WorkstreamPrivateChildSchema = z.strictObject({
   createdByUserId: UserIdSchema,
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
+  /** The Main transcript turn the breakout was branched through; null when it was not branched from a turn. */
+  originTurnId: z.string().min(1).nullable().optional(),
+  /** When the breakout last had activity; absent until its directory state has arrived. */
+  lastActivityAt: TimestampSchema.optional(),
 });
 
 /**
