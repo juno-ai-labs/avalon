@@ -210,7 +210,10 @@ in its order, add a description with every key, and move a key to
 `RETIRED_APPEARANCE_ICON_KEYS` rather than deleting it. New keys are new wire
 values: a desktop build that predates them parses appearances against its own
 enum and rejects the whole payload, and raising `MINIMUM_SERVED_CLIENT_CONTRACT`
-in the same deploy would turn away every shipped build instead.
+in the same deploy would turn away every shipped build instead. This change
+accepted that breakage and relies on auto-update to move people to a build that
+knows the new keys. Shipping a reader that tolerates unknown keys first was
+considered and not taken; it is the way to make a later catalog change free.
 
 ### 2026-09-21 — Breakouts own persisted appearances
 
