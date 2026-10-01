@@ -42,6 +42,34 @@ export function sessionSourceUrlProvider(value: string, sessionId: string): 'cha
   return sessionShareUrl(value).provider;
 }
 
+/**
+ * The conversation a browser URL names, for an import's provenance: its
+ * provider, the id in its path, and the URL without query or fragment.
+ *
+ * Accepts the signed-in routes (`chatgpt.com/c/<id>`, `claude.ai/chat/<id>`)
+ * and the public share routes (`/share/<id>`). The id comes from the path and
+ * never from the agent that reads the page, so a model cannot attach an
+ * import to a different conversation than the one the person opened.
+ */
+export function browserConversationSource(value: string): {
+  provider: "chatgpt" | "claude"; sessionId: string; url: string;
+} {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new ApiError(422, "invalid_session_source", "Open a ChatGPT or Claude conversation in Rally's browser");
+  }
+  const route = url.protocol === "https:" && !url.username && !url.password && !url.port
+    ? /^\/(c|chat|share)\/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\/?$/iu.exec(url.pathname) : null;
+  const provider = route && url.hostname === "chatgpt.com" && (route[1] === "c" || route[1] === "share") ? "chatgpt"
+    : route && url.hostname === "claude.ai" && (route[1] === "chat" || route[1] === "share") ? "claude" : null;
+  if (!route || !provider) {
+    throw new ApiError(422, "invalid_session_source", "Open a ChatGPT or Claude conversation in Rally's browser");
+  }
+  return { provider, sessionId: route[2]!.toLowerCase(), url: `https://${url.hostname}/${route[1]}/${route[2]!.toLowerCase()}` };
+}
+
 function sourceFile(value: unknown, kind: ConversationFile["kind"]): ConversationFile {
   const file = object(value);
   // A reader that copied different bytes than the named file — a preview in
