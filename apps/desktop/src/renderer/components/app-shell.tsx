@@ -1023,7 +1023,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             setSearchPreview({ identity: searchIdentity, preview: { name: result.title, ...(target.mimeType ? { mimeType: target.mimeType } : {}), loadContent: (signal) => api.getSearchResourcePreviewContent(target.resourceId, signal) } });
           }
         }} />}
-      <AttachmentLightbox key={searchIdentity} preview={searchPreview?.identity === searchIdentity ? searchPreview.preview : null} onClose={() => setSearchPreview(null)} />
+      <AttachmentLightbox key={`lightbox:${searchIdentity}`} preview={searchPreview?.identity === searchIdentity ? searchPreview.preview : null} onClose={() => setSearchPreview(null)} />
     </>
   );
 }

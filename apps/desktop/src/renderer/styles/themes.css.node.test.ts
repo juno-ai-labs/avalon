@@ -111,7 +111,7 @@ describe('window background', () => {
 describe('token references', () => {
   // Properties the stylesheet defines for its own use rather than taking from a
   // theme. Each is set by a rule in this same file.
-  const RULE_LOCAL = ['--attachment-file-card-height', '--attachment-media-size', '--pill-overhang', '--rail-slot',
+  const RULE_LOCAL = ['--attachment-file-card-height', '--attachment-media-size', '--rail-slot',
     // Runtime layout geometry, not theme-selectable design tokens.
     '--rail-max-slot',
     '--composer-line-height', '--composer-text-padding', '--system-message-lines',
@@ -188,7 +188,7 @@ describe('token references', () => {
     // than about the appearance, so it cannot be a theme token.
     '--glyph-ink',
     '--markdown-table-columns', '--arrival-index',
-    '--workstream-sidebar-width', '--conversation-min-width',
+    '--conversation-min-width',
     '--citation-card-played',
     // The open Breakout's pane width, set by SplitConversationLayout from the
     // width the reader dragged it to.
