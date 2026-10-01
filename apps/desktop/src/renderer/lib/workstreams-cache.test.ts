@@ -329,6 +329,19 @@ describe('a Channel listed before its create answers', () => {
     expect(rows(client).map((row) => row.id)).toEqual([summary().id]);
   });
 
+  // A create can fail after its Space placement commits; the listing that
+  // described the row is not sent again, so dropping it hides a real Channel.
+  it('stays, settled, when its create fails after the server listed it', () => {
+    const client = listedPending();
+    mergeCachedWorkstreamPage(client, [{ ...summary(), id: pendingId, title: 'Named by Rally' }]);
+
+    expect(discardPendingWorkstream(client, pendingId)).toBe(true);
+
+    const row = rows(client).find((candidate) => candidate.id === pendingId);
+    expect(row).toMatchObject({ title: 'Named by Rally' });
+    expect(row?.pending).toBeUndefined();
+  });
+
   it('leaves when its create fails, and takes nothing else with it', () => {
     const client = listedPending();
 

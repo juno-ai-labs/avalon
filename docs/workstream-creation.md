@@ -145,7 +145,9 @@ So a server row for a pending id brings its fields and leaves the row pending
 `releasePendingWorkstreams`: the create's confirm or discard, or an
 authoritative eviction of the id. Confirm keeps a row the server has already
 described, which is newer than the create's answer, and otherwise takes the
-answer. A pending row is drawn dimmed and inert, skipped by background sockets
+answer. Discard drops only a row the server never described: one it did
+describe exists even though its create failed (a failure after the Space
+placement commits, or a lost answer), so it stays, settled. A pending row is drawn dimmed and inert, skipped by background sockets
 and the landing route, and never persisted. A route that shows one
 (`WorkstreamScreen`) draws the opening skeleton with a caption and mounts
 nothing that dials or reads the room; the route's active socket skips it too.
@@ -617,8 +619,8 @@ retry and error sheet out of the window that holds the conversation.
 not "the server has not listed it". A window that lists a row for a create it
 does not make (import) must also deliver the answer, or the row stays pending
 until the window reloads; main ends an import as failed when its window closes
-mid-create, and a create that landed anyway is listed by the next directory
-answer. Other members, whose windows never listed the row,
+mid-create. A failed create whose Channel the server had already listed keeps
+its row, because that listing is not sent again. Other members, whose windows never listed the row,
 can still dial the room during the gap; their background socket retries and
 nothing is shown. The import id travels with its receipt key: a changed name
 or Space takes both anew.

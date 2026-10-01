@@ -69,8 +69,8 @@ or a shared link (`/share/<id>`). It reads that conversation (see
 the Channel's name, pre-filled with the chat's title, and its Space. While the
 import runs, the main window shows the new Channel as importing; after it, main
 opens the Channel through the same deep-link path a menu-bar pick uses, and
-closes the import window along with its tabs. This window is the only way to import; the web host, which has no
-browser, offers no import.
+closes the import window along with its tabs. This window is the only way to
+import; the web host, which has no browser, offers no import.
 
 **Tabs.** Both hosts use one tab strip. A tab shows its page's icon (an https
 or image-data icon only), or a spinner while loading, and its title, with the

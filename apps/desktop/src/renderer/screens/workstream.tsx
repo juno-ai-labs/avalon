@@ -150,12 +150,8 @@ type RailContext = Parameters<NonNullable<React.ComponentProps<typeof Conversati
 
 /**
  * A work stream: the shared conversation surface under the work-stream header.
- *
- * A pending row is a Channel whose create is still running, possibly in
- * another window (an import lists its Channel and opens it before the room
- * exists). Its room refuses connections and reads until the create answers,
- * so nothing here mounts for it: no socket, no detail read, only a skeleton
- * that says what it is waiting for.
+ * A pending row mounts nothing that dials or reads its room, only a captioned
+ * skeleton; see `keepPendingWorkstreams`.
  */
 export function WorkstreamScreen(): React.JSX.Element {
   const { id = '' } = useParams();

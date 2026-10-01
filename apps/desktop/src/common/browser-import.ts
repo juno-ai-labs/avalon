@@ -16,11 +16,9 @@ export type BrowserImportContext = z.infer<typeof BrowserImportContextSchema>;
 export const BrowserImportedWorkstreamIdSchema = z.string().regex(/^[A-Za-z0-9-]{1,64}$/u);
 
 /**
- * The import window's create, as the main window lists it. `importing` is
- * sent before the request, under the id the Channel will be created with, so
- * the main window can list it as pending and hold its socket until the room
- * exists; `imported` and `failed` end it. The main window is told nothing it
- * could not act on without the import window: no content, only the row.
+ * The import window's create, as the main window lists it: `importing` before
+ * the request, under the Channel's id; `imported` or `failed` after. Carries
+ * only the row, no content. See `BrowserImportProgress` in the renderer.
  */
 export const BrowserImportProgressSchema = z.discriminatedUnion('phase', [
   z.strictObject({

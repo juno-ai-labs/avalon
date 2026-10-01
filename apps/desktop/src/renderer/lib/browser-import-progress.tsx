@@ -18,7 +18,8 @@ import {
  * no socket and reads nothing, because its room refuses both until the create
  * answers. The success that follows confirms the row, and the deep link sent
  * after it lands on the route already open. A failure takes the row away and
- * goes back to where this window was, if it is still showing the import.
+ * goes back to where this window was, if it is still showing the import;
+ * a row the server has already listed exists, so it stays and is opened.
  */
 export function BrowserImportProgress(): null {
   const queryClient = useQueryClient();
@@ -55,8 +56,10 @@ export function BrowserImportProgress(): null {
       void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
       return;
     }
-    discardPendingWorkstream(queryClient, progress.workstreamId);
-    if (pathRef.current === route) void navigate(previous ?? '/', { replace: true });
+    if (discardPendingWorkstream(queryClient, progress.workstreamId) || pathRef.current !== route) return;
+    // Pop the entry `importing` pushed, so Back does not land on it again.
+    if (previous !== undefined) void navigate(-1);
+    else void navigate('/', { replace: true });
   }), [navigate, queryClient]);
 
   return null;
