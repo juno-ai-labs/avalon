@@ -130,13 +130,11 @@ export function renderComparisonPage(comparison: Comparison): string {
   const sections = parts.map(({ heading, tokens }, index) => {
     const { eyebrow, nav, kind } = sectionKind(heading);
     const id = anchor(nav);
-    const body = kind === 'table'
-      ? renderTable(tokens.find((token) => token.type !== 'space'), name, file)
-      : renderPoints(tokens) + CTA;
+    const body = kind === 'table' ? renderTable(tokens.find((token) => token.type !== 'space'), name, file) : renderPoints(tokens);
     return {
       id, nav,
       html: `<section class="section${index % 2 === 0 ? ' raised' : ''}" id="${id}" aria-labelledby="${id}-title">\n`
-        + `<p class="eyebrow">${escapeHtml(eyebrow)}</p>\n<h2 id="${id}-title" class="display">${inline(heading)}</h2>\n${body}\n</section>`,
+        + `<p class="eyebrow">${escapeHtml(eyebrow)}</p>\n<h2 id="${id}-title" class="display">${inline(heading)}</h2>\n${body}${index === parts.length - 1 ? CTA : ''}\n</section>`,
     };
   });
 
