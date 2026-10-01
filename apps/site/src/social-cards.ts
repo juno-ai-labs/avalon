@@ -29,6 +29,7 @@ const text = fontFile('barlow/files/barlow-latin-400-normal.woff');
 const medium = fontFile('barlow/files/barlow-latin-500-normal.woff');
 const hero = readFileSync(new URL('./assets/hero-sunrise.webp', import.meta.url));
 const markPath = /<path d="([^"]+)"/u.exec(readFileSync(new URL('../public/brand/rally-mark-ink.svg', import.meta.url), 'utf8'))?.[1];
+if (!markPath) throw new Error('social-cards: rally-mark-ink.svg no longer has the single <path d> the cards draw');
 
 const PAPER = '#f7f7f7';
 const MUTED = '#9b9b9b';
