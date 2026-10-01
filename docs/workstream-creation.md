@@ -44,7 +44,9 @@ and composer dock:
 - **Not launching** — the header is the **Participants** bar, the body row is
   empty, and the dock carries only the composer. The dock spans the body and
   dock rows and centres itself in them, so the composer sits in the middle of
-  the pane below the bar. The retired Welcome back dashboard,
+  the pane below the bar. The mention and command lists, which open upward,
+  cap their height at the room left above it, so a short window scrolls them
+  rather than running them under the bar. The retired Welcome back dashboard,
   attention list, and suggested-work shelf no longer sit between opening Rally
   and starting a work stream.
 - **Launching** — the root additionally carries `workstream-screen`, the header
@@ -581,7 +583,10 @@ creation the same way an eased header did.
 
 **Consequences:** The composer is no longer the fixed point of the hand-off; it
 moves once, on submit. A later change that wants it to stay put has to bring
-the settled conversation's composer up, not this one down.
+the settled conversation's composer up, not this one down. Centred, the field
+has half the pane above it, so the upward lists cap themselves at that room
+through a size container on the screen; a change to the bar's height, the
+dock's bottom padding or a list's offset has to move that cap's constant too.
 
 Shipped in [#1038](https://github.com/juno-ai-labs/avalon/pull/1038).
 
