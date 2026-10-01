@@ -119,9 +119,15 @@ ${main}
 
 const renderMarkdown = (markdown: string): string => marked.parse(markdown, { async: false });
 
-/** The post's first paragraph as Markdown, or nothing if the body has none. */
+/**
+ * The post's first paragraph as HTML, or nothing if the body has none. It is
+ * rendered with the whole body's link definitions, so a reference link whose
+ * `[label]: url` sits further down still resolves.
+ */
 function firstParagraph(body: string): string {
-  return marked.lexer(body).find((token) => token.type === 'paragraph')?.raw ?? '';
+  const tokens = marked.lexer(body);
+  const paragraph = tokens.find((token) => token.type === 'paragraph');
+  return paragraph ? marked.parser(Object.assign([paragraph], { links: tokens.links })) : '';
 }
 
 /**
@@ -135,7 +141,7 @@ export function renderBlogIndex(posts: readonly BlogPost[]): string {
     const href = `/blog/${slug}/`;
     const content = index === 0
       ? `<div class="blog-body">${renderMarkdown(body)}</div>`
-      : `<div class="blog-body">${renderMarkdown(firstParagraph(body))}</div>`
+      : `<div class="blog-body">${firstParagraph(body)}</div>`
         + `<a class="changelog-more" href="${href}" aria-label="Read more: ${escapeHtml(title)}">Read more <span aria-hidden="true">→</span></a>`;
     return `<article class="changelog-entry"><div class="changelog-date"><time datetime="${date}">${longDate(date)}</time></div>`
       + `<div class="changelog-content"><h2 class="changelog-title"><a href="${href}">${escapeHtml(title)}</a></h2>${content}</div></article>`;
