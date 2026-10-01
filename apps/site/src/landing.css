@@ -193,8 +193,10 @@ h1{white-space:pre-line;max-width:56rem;margin:0 auto;font-size:4.5rem}
 /* One blog post under /blog/<slug>/; the body styles also serve the changelog. */
 .blog{max-width:48rem;margin:auto;padding:56px var(--gutter) 128px}
 .blog-title{margin:40px 0 0;font-size:4.5rem;white-space:normal;text-align:left}
+/* Post titles are outlined, like the Help Center's chapter numerals. */
+.blog-title,.changelog-title{color:transparent;-webkit-text-stroke:1px var(--paper)}
 .blog-meta{margin-top:20px;font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
-.blog-body{margin-top:48px;padding-top:48px;border-top:1px solid var(--hairline);font-size:19px;line-height:1.7;color:var(--soft)}
+.blog-body{margin-top:48px;padding-top:48px;border-top:1px solid var(--hairline);font-size:19px;line-height:1.7;color:var(--paper)}
 .blog-body p+p{margin-top:1.25em}
 .blog-body a{color:var(--paper);border-bottom:1px solid oklch(.97 0 0/.25)}
 .blog-body h2,.blog-body h3{margin:2em 0 .6em;font-family:var(--display-font);font-weight:500;line-height:1.15;color:var(--paper)}
@@ -210,8 +212,9 @@ h1{white-space:pre-line;max-width:56rem;margin:0 auto;font-size:4.5rem}
 .changelog-date time{position:sticky;top:calc(var(--header) + 24px);display:flex;align-items:center;justify-content:flex-end;gap:20px;margin-right:-4px;font-family:var(--mono);font-size:11px;line-height:40px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
 .changelog-date time::after{content:'';flex-shrink:0;width:7px;height:7px;border-radius:50%;background:var(--paper)}
 .changelog-content{padding:0 0 112px 48px;border-left:1px solid var(--hairline)}
-.changelog-title{font-family:var(--display-font);font-size:2.75rem;font-weight:500;line-height:1.1;text-transform:uppercase;letter-spacing:.02em}
-.changelog-title a:hover{text-decoration:underline;text-underline-offset:6px;text-decoration-thickness:1px}
+.changelog-title{font-family:var(--display-font);font-size:3.5rem;font-weight:500;line-height:1.1;text-transform:uppercase;letter-spacing:.02em}
+.changelog-title a{transition:color .15s}
+.changelog-title a:hover{color:var(--paper)}
 .changelog-content .blog-body{margin-top:32px;padding-top:0;border-top:0}
 .changelog-more{display:inline-flex;gap:8px;margin-top:24px;font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--paper)}
 .changelog-more:hover{text-decoration:underline;text-underline-offset:4px}
