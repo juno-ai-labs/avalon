@@ -168,9 +168,16 @@ landing page it links from. Sharing the stylesheet and the footer marker keeps
 them from drifting again, and the eight copies of the footer link list, which
 had already diverged in order and tagline, collapse into `trustPages`.
 
-**What a future change must respect:** `trust.css` assumes `landing.css`
-loads first for fonts, tokens, the header, buttons and `.eyebrow`. A trust
-page that links only `trust.css` renders unstyled.
+**Considered and rejected:** Restyling `information.css` in place and keeping
+each page's own header and footer. That matches the look today but leaves nine
+copies of the chrome to drift, which is how the footers diverged.
+
+**Consequences:** `trust.css` assumes `landing.css` loads first for fonts,
+tokens, the header, buttons and `.eyebrow`. A trust page that links only
+`trust.css` renders unstyled. A change to the landing's header, footer or tokens
+now also changes the Trust Center.
+
+Shipped in #1046.
 
 ### 2026-10-01: Comparison pages, their social cards, and a column footer are added
 
