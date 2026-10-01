@@ -51,5 +51,5 @@ export function searchEntries(entries: SearchEntry[], query: string): SearchHit[
     if (!matchedAll) continue;
     hits.push({ entry, score, heading, snippet: snippet(entry.x || entry.d, terms) });
   }
-  return hits.sort((a, b) => b.score - a.score).slice(0, 12);
+  return hits.sort((a, b) => b.score - a.score);
 }

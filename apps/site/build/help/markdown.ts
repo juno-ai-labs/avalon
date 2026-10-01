@@ -92,7 +92,13 @@ function rewriteLinks(tree: HastRoot, options: RenderMarkdownOptions, problems: 
     if (!attribute) return;
     const value = node.properties[attribute];
     if (typeof value !== 'string' || !value) return;
-    if (/^[a-z][a-z0-9+.-]*:/iu.test(value) || value.startsWith('//')) {
+    const remote = /^[a-z][a-z0-9+.-]*:/iu.test(value) || value.startsWith('//');
+    if (remote && node.tagName === 'img') {
+      // The site CSP allows images from 'self' and data: only, so the resolver
+      // decides whether a remote image can ship at all.
+      const resolved = options.resolveHref(value, 'image');
+      if ('error' in resolved) problems.push(resolved.error);
+    } else if (remote) {
       if (node.tagName === 'a' && /^https?:/iu.test(value)) {
         node.properties.rel = ['noopener'];
         node.properties.className = [...className(node), 'external'];

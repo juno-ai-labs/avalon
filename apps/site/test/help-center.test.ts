@@ -152,12 +152,13 @@ describe('help center build', () => {
 
   it('fails on a link to a missing page, a missing heading, or a missing image', () => {
     const root = tree({
-      'index.md': page('Manual', '[gone](01-start/09-gone.md) [anchor](01-start/index.md#nowhere) ![x](missing.png)'),
+      'index.md': page('Manual', '[gone](01-start/09-gone.md) [anchor](01-start/index.md#nowhere) ![x](missing.png) ![y](https://example.com/y.png)'),
       '01-start/index.md': page('Start', '## Somewhere'),
     });
     expect(problemsOf(() => buildHelp(root, { assets }))).toEqual([
       'index.md: link "01-start/09-gone.md" points at a page that does not exist',
       'index.md: image "missing.png" points at a file that does not exist',
+      'index.md: image "https://example.com/y.png" is on another site, which the site\'s Content-Security-Policy blocks; save the image in the help folder and link it relatively',
       'index.md: link "01-start/index.md#nowhere" names a heading that 01-start/index.md does not have (it has: somewhere)',
     ]);
   });
@@ -179,6 +180,11 @@ describe('help center search', () => {
   it('ranks title matches above body matches and needs every word', () => {
     expect(searchEntries(entries, 'sidekick').map((hit) => hit.entry.t)).toEqual(['Sidekicks', 'Channels']);
     expect(searchEntries(entries, 'sidekick invoices')).toEqual([]);
+  });
+
+  it('returns every match rather than a fixed number', () => {
+    const many = Array.from({ length: 30 }, (_, index) => entry(`Page ${index}`, 'Mentions sidekick once.'));
+    expect(searchEntries(many, 'sidekick')).toHaveLength(30);
   });
 
   it('points a heading match at its section', () => {
