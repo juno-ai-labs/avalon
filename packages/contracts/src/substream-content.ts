@@ -1,5 +1,6 @@
 import { HttpsUrlSchema } from "./url-schemas";
 import { SpaceIdSchema } from "./spaces";
+import { WorkstreamIdSchema } from "./identifiers";
 import { z } from "zod";
 
 /** Source bytes and unavailable references are explicit; a URL is never proof of retrieval. */
@@ -73,6 +74,12 @@ export const SessionImportPreviewSchema = z.strictObject({
 export const SessionImportRequestSchema = SessionImportPreviewSchema.extend({
   title: z.string().min(1).max(180),
   clientMessageId: z.string().uuid(),
+  /**
+   * The id the caller already listed this Channel under, as `POST /workstreams`
+   * takes it. Creation semantics, like `spaceIds`: not part of the imported
+   * content's identity.
+   */
+  workstreamId: WorkstreamIdSchema.optional(),
   spaceIds: z.array(SpaceIdSchema)
     .refine((ids) => new Set(ids).size === ids.length, "Space ids must be unique")
     .default([]),

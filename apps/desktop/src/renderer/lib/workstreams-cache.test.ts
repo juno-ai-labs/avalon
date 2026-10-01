@@ -246,17 +246,53 @@ describe('a Channel listed before its create answers', () => {
     ]);
   });
 
-  it('is replaced in place by the server row with its id, from a page or from the create answer', () => {
-    const fromPage = listedPending();
-    mergeCachedWorkstreamPage(fromPage, [{ ...summary(), id: pendingId, title: 'Named by Rally' }]);
-    expect(rows(fromPage).filter((row) => row.id === pendingId))
-      .toEqual([expect.objectContaining({ title: 'Named by Rally' })]);
-    expect(rows(fromPage).find((row) => row.id === pendingId)?.pending).toBeUndefined();
+  it('is described in place by the server row with its id, and stays pending until its create answers', () => {
+    const client = listedPending();
 
-    const fromAnswer = listedPending();
-    confirmPendingWorkstream(fromAnswer, pendingId, { ...summary(), id: pendingId, title: 'Created' });
-    expect(rows(fromAnswer).find((row) => row.id === pendingId))
-      .toEqual(expect.not.objectContaining({ pending: true }));
+    mergeCachedWorkstreamPage(client, [{ ...summary(), id: pendingId, title: 'Named by Rally' }]);
+
+    expect(rows(client).filter((row) => row.id === pendingId))
+      .toEqual([expect.objectContaining({ title: 'Named by Rally', pending: true })]);
+  });
+
+  it('takes the create answer when the server has not described it yet', () => {
+    const client = listedPending();
+
+    confirmPendingWorkstream(client, pendingId, { ...summary(), id: pendingId, title: 'Created' });
+
+    const row = rows(client).find((candidate) => candidate.id === pendingId);
+    expect(row).toMatchObject({ title: 'Created' });
+    expect(row?.pending).toBeUndefined();
+  });
+
+  // The page arrived after the create committed, so it is the newer of the two.
+  it('keeps the server\'s description over the create answer, and stops being pending', () => {
+    const client = listedPending();
+    mergeCachedWorkstreamPage(client, [{ ...summary(), id: pendingId, title: 'Named by Rally' }]);
+
+    confirmPendingWorkstream(client, pendingId, { ...summary(), id: pendingId, title: 'Created' });
+
+    const row = rows(client).find((candidate) => candidate.id === pendingId);
+    expect(row).toMatchObject({ title: 'Named by Rally' });
+    expect(row?.pending).toBeUndefined();
+    expect(row?.pendingListed).toBeUndefined();
+  });
+
+  // An import is created by another window, which hands over only the id.
+  it('settles as it is when confirmed without a row', () => {
+    const client = new QueryClient();
+    addPendingWorkstream(client, {
+      id: pendingId, title: 'Imported chat', origin: 'import', spaceIds: ['space-1'], scope: 'personal',
+      harnessStatus: 'completed', createdAt: '2026-09-24T10:00:00.000Z',
+    });
+    expect(rows(client)[0]).toMatchObject({ pending: true, pendingOrigin: 'import' });
+
+    confirmPendingWorkstream(client, pendingId);
+
+    const [row] = rows(client);
+    expect(row).toMatchObject({ id: pendingId, title: 'Imported chat' });
+    expect(row?.pending).toBeUndefined();
+    expect(row?.pendingOrigin).toBeUndefined();
   });
 
   // A server from before `workstreamId` creates the Channel under its own id.
@@ -291,6 +327,19 @@ describe('a Channel listed before its create answers', () => {
     confirmPendingWorkstream(client, pendingId, { ...summary(), id: pendingId, title: 'Created' });
 
     expect(rows(client).map((row) => row.id)).toEqual([summary().id]);
+  });
+
+  // A create can fail after its Space placement commits; the listing that
+  // described the row is not sent again, so dropping it hides a real Channel.
+  it('stays, settled, when its create fails after the server listed it', () => {
+    const client = listedPending();
+    mergeCachedWorkstreamPage(client, [{ ...summary(), id: pendingId, title: 'Named by Rally' }]);
+
+    expect(discardPendingWorkstream(client, pendingId)).toBe(true);
+
+    const row = rows(client).find((candidate) => candidate.id === pendingId);
+    expect(row).toMatchObject({ title: 'Named by Rally' });
+    expect(row?.pending).toBeUndefined();
   });
 
   it('leaves when its create fails, and takes nothing else with it', () => {

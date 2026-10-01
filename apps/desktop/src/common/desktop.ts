@@ -20,7 +20,7 @@ import type {
 import type { DesktopSettingsSection } from './settings';
 import type { ThemeChoice } from './themes';
 import type { EmbeddedBrowserBounds, EmbeddedBrowserCommand, EmbeddedBrowserResult, EmbeddedBrowserState } from './embedded-browser';
-import type { BrowserImportContext } from './browser-import';
+import type { BrowserImportContext, BrowserImportProgress } from './browser-import';
 import type {
   WorkspaceSyncPublication,
   WorkspaceSyncRelayEvent,
@@ -491,6 +491,14 @@ export interface RallyDesktopBridge {
   onBrowserImportContextChanged: (listener: () => void) => () => void;
   /** The import window's hand-off: the main window opens the Channel and this window closes. */
   completeBrowserImport: (workstreamId: string) => Promise<void>;
+  /**
+   * The import window's create starting or failing, relayed to the main
+   * window. `completeBrowserImport` relays its success and opens the Channel;
+   * `imported` here only settles the row when that hand-off failed.
+   */
+  reportBrowserImport: (progress: BrowserImportProgress) => Promise<void>;
+  /** The main window's view of an import in the other window. */
+  onBrowserImportProgress: (listener: (progress: BrowserImportProgress) => void) => () => void;
   /**
    * Renders one of Rally's messages as a picture or a PDF and offers to save
    * it. Resolves with `saved: false` when the person dismissed the dialog, and

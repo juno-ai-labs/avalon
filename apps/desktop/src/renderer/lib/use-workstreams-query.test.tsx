@@ -107,7 +107,7 @@ describe('useWorkstreamsQuery', () => {
   // The refetch writes its answer itself rather than through
   // `setCachedWorkstreams`, and prefers the resident copy of a row it fetched,
   // so both halves of the pending rule have to hold here on their own.
-  it('keeps a Channel whose create is in flight across a refetch, and takes the fetched row for it once listed', async () => {
+  it('keeps a Channel whose create is in flight across a refetch, and takes the fetched fields for it once listed while it stays pending', async () => {
     const { result, rerender } = renderHook(() => useWorkstreamsQuery(), { wrapper });
     landConnectPayload(rerender);
     await waitFor(() => expect(result.current.data).toHaveLength(1));
@@ -128,7 +128,8 @@ describe('useWorkstreamsQuery', () => {
     await act(async () => { await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }); });
     await waitFor(() => expect(result.current.data?.find((row) => row.id === 'workstream-new'))
       .toEqual(expect.objectContaining({ title: 'Named' })));
-    expect(result.current.data?.find((row) => row.id === 'workstream-new')?.pending).toBeUndefined();
+    // Listed is not created: the room may still be written. Its create ends it.
+    expect(result.current.data?.find((row) => row.id === 'workstream-new')?.pending).toBe(true);
   });
 
   it('stores the list under the unparameterized key producers write to', async () => {

@@ -19,7 +19,7 @@ import type { MessageExportResult } from '../common/message-export';
 import type { DesktopReleaseChannel } from '../common/release-channels';
 import type { DesktopRealtimeSocketEvent } from '../common/realtime-socket';
 import type { EmbeddedBrowserResult, EmbeddedBrowserState } from '../common/embedded-browser';
-import type { BrowserImportContext } from '../common/browser-import';
+import type { BrowserImportContext, BrowserImportProgress } from '../common/browser-import';
 import {
   REALTIME_SOCKET_IPC_CHANNELS,
   parseRealtimeSocketEvent,
@@ -237,6 +237,13 @@ const bridge: RallyDesktopBridge = {
     return () => ipcRenderer.removeListener('browser-import:context-changed', handler);
   },
   completeBrowserImport: (workstreamId) => ipcRenderer.invoke('browser-import:imported', workstreamId) as Promise<void>,
+  reportBrowserImport: (progress) => ipcRenderer.invoke('browser-import:progress', progress) as Promise<void>,
+  onBrowserImportProgress: (listener) => {
+    // Main parsed it from the import window before relaying it here.
+    const handler = (_event: unknown, progress: BrowserImportProgress): void => listener(progress);
+    ipcRenderer.on('browser-import:progress', handler);
+    return () => ipcRenderer.removeListener('browser-import:progress', handler);
+  },
   exportMessage: (request) => ipcRenderer.invoke('message-export:save', request) as Promise<MessageExportResult>,
   connectCanva: (operationId) => ipcRenderer.invoke('canva:connect', operationId) as Promise<{ url: string; attemptId: string }>,
   openExternal: (url) => ipcRenderer.invoke('system:open-external', url) as Promise<void>,

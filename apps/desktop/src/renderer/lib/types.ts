@@ -206,6 +206,17 @@ export interface WorkstreamSummary {
    * is drawn and cannot be acted on. See `addPendingWorkstream`.
    */
   pending?: true;
+  /**
+   * Client only: what is creating this pending row when it is not the
+   * launcher. An import's row opens on an "Importing" screen until it lands.
+   */
+  pendingOrigin?: 'import';
+  /**
+   * Client only: the server has described this pending row, so its fields are
+   * the server's and newer than the create's own answer. See
+   * `confirmPendingWorkstream`.
+   */
+  pendingListed?: true;
 }
 
 /**

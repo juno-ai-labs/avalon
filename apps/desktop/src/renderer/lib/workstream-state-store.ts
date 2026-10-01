@@ -282,10 +282,9 @@ export function applyVersionedWorkstreamState(
       patched.participantUserIds = [];
       patched.participantExtraCount = 0;
     }
-    // The server has described this Channel, so it exists: the row a create in
-    // flight listed early is now the server's own, whichever answer got here
-    // first. See `addPendingWorkstream`.
-    if (commonApplied && patched.pending) delete patched.pending;
+    // Described, not created: it stays pending until its create answers. See
+    // `keepPendingWorkstreams`.
+    if (commonApplied && patched.pending) patched.pendingListed = true;
     // The other half of `carriesNewPlacements`: the row is here, so take the
     // placements off it even though the rest of the common half is not this
     // payload's to write.

@@ -1529,7 +1529,7 @@ export class RallyApi {
   async importSession(
     preview: SessionImportPreview,
     clientMessageId: string,
-    input: { title: string; spaceIds: string[] } = { title: preview.title, spaceIds: [] },
+    input: { title: string; spaceIds: string[]; workstreamId?: string } = { title: preview.title, spaceIds: [] },
   ): Promise<string> {
     const result = await this.request('/workstreams/import', {
       method: 'POST', body: { ...preview, ...input, clientMessageId }, schema: createWorkstreamResponseSchema,

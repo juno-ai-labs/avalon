@@ -62,24 +62,40 @@ export function setCachedWorkstreams(
 }
 
 /**
- * Carry every pending row of `current` that `next` leaves out.
+ * Keep every pending row of `current` pending in `next`.
  *
- * A pending row is a Channel this window has asked for and the server has not
- * listed yet, so no answer from the server can contain it. A directory page, a
- * connect payload or a refetch that replaces the list would otherwise take it
- * off screen while its create is still in flight. It leaves when a row with its
- * id arrives, which is the server's version of the same Channel, or through
- * `releasePendingWorkstreams`. The refetch writes its answer without
- * going through `setCachedWorkstreams`, so it calls this too.
+ * A pending row is a Channel this window has asked for and whose create has
+ * not answered. A directory page, a connect payload or a refetch that replaces
+ * the list would otherwise take it off screen while its create is in flight.
+ *
+ * The server can list the Channel before the create answers: its Space
+ * placement publishes the row, and the conversation is written after that, so
+ * for a moment the Channel is listed with a room that refuses connections. A
+ * row for a pending id is therefore taken as the server's description of it,
+ * and stays pending. It leaves pending only through
+ * `releasePendingWorkstreams`: the create's confirm or discard, or an
+ * eviction. The refetch writes its answer without going through
+ * `setCachedWorkstreams`, so it calls this too.
  */
 export function keepPendingWorkstreams(
   current: WorkstreamSummary[] | undefined,
   next: WorkstreamSummary[] | undefined,
 ): WorkstreamSummary[] | undefined {
   if (next === undefined || !current?.some((row) => row.pending)) return next;
+  const pending = new Map(current.filter((row) => row.pending).map((row) => [row.id, row]));
   const listed = new Set(next.map((row) => row.id));
-  const kept = current.filter((row) => row.pending && !listed.has(row.id));
-  return kept.length === 0 ? next : [...kept, ...next];
+  const kept = [...pending.values()].filter((row) => !listed.has(row.id));
+  const described = next.map((row) => {
+    const held = pending.get(row.id);
+    if (!held || row.pending) return row;
+    return {
+      ...row,
+      pending: true as const,
+      pendingListed: true as const,
+      ...(held.pendingOrigin ? { pendingOrigin: held.pendingOrigin } : {}),
+    };
+  });
+  return kept.length === 0 ? described : [...kept, ...described];
 }
 
 /**
@@ -101,13 +117,16 @@ function releasePendingWorkstreams(
 /**
  * List a Channel under the id the caller has given it, before its create is
  * sent. The server creates it under the same id, so the row it lists later
- * replaces this one in place: same key, same slot, nothing to reconcile.
+ * describes this one in place: same key, same slot, nothing to reconcile. It
+ * stays pending until the create confirms or discards it.
  * Without a chosen title it is `naming`, the skeleton the server's own row
  * shows until Rally names it.
  */
 export function addPendingWorkstream(queryClient: QueryClient, input: {
   id: string;
   title?: string;
+  /** What is creating it, when that is not the launcher; see `pendingOrigin`. */
+  origin?: WorkstreamSummary['pendingOrigin'];
   spaceIds: string[];
   scope: WorkstreamSummary['scope'];
   harnessStatus: WorkstreamSummary['harnessStatus'];
@@ -133,6 +152,7 @@ export function addPendingWorkstream(queryClient: QueryClient, input: {
     nextPendingWakeup: null,
     pinPosition: null,
     pending: true,
+    ...(input.origin ? { pendingOrigin: input.origin } : {}),
   };
   setCachedWorkstreams(queryClient, (current) => [
     row,
@@ -140,17 +160,32 @@ export function addPendingWorkstream(queryClient: QueryClient, input: {
   ]);
 }
 
-/** The create that listed this row failed; the Channel does not exist. */
-export function discardPendingWorkstream(queryClient: QueryClient, workstreamId: string): void {
-  releasePendingWorkstreams(queryClient, (current) =>
-    current.filter((row) => !(row.pending && row.id === workstreamId)));
+/**
+ * The create that listed this row failed. A row the server never described is
+ * a Channel that does not exist, and goes. One it did describe exists anyway (a
+ * create can fail after its Space placement commits, or its answer can be
+ * lost), so it stays as the server described it. Answers whether it stayed.
+ */
+export function discardPendingWorkstream(queryClient: QueryClient, workstreamId: string): boolean {
+  let kept = false;
+  releasePendingWorkstreams(queryClient, (current) => current.flatMap((row) => {
+    if (!(row.pending && row.id === workstreamId)) return [row];
+    if (!row.pendingListed) return [];
+    kept = true;
+    return [settledRow(row)];
+  }));
+  return kept;
 }
 
 /**
  * The create answered: replace the pending row with the Channel as the server
  * created it, so the row is actionable now rather than at the next directory
- * push. A server row that already arrived is newer than the create response
- * and is left alone.
+ * push. A server row that already arrived is newer than the create response:
+ * it is kept, and only stops being pending.
+ *
+ * Without `row` (a create made in another window, which hands over only the
+ * id) the held row stops being pending as it is, and the next directory answer
+ * describes it.
  *
  * Found by the id it was listed under rather than the answer's: a server from
  * before `workstreamId` existed creates the Channel under an id of its own,
@@ -159,15 +194,27 @@ export function discardPendingWorkstream(queryClient: QueryClient, workstreamId:
 export function confirmPendingWorkstream(
   queryClient: QueryClient,
   pendingId: string,
-  row: WorkstreamSummary,
+  row?: WorkstreamSummary,
 ): void {
   releasePendingWorkstreams(queryClient, (current) => {
-    const listed = current.some((existing) => existing.id === row.id && !existing.pending);
+    const elsewhere = row !== undefined && row.id !== pendingId;
+    const listedElsewhere = elsewhere && current.some((existing) => existing.id === row.id);
     return current.flatMap((existing) => {
       if (!(existing.pending && existing.id === pendingId)) return [existing];
-      return listed ? [] : [row];
+      if (listedElsewhere) return [];
+      if (row && (elsewhere || !existing.pendingListed)) return [row];
+      return [settledRow(existing)];
     });
   });
+}
+
+/** The row without the client-only fields that say its create is in flight. */
+function settledRow(row: WorkstreamSummary): WorkstreamSummary {
+  const settled = { ...row };
+  delete settled.pending;
+  delete settled.pendingOrigin;
+  delete settled.pendingListed;
+  return settled;
 }
 
 /**
