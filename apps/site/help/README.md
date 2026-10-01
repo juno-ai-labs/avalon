@@ -70,7 +70,9 @@ The alert kinds are `NOTE`, `TIP`, `IMPORTANT`, `WARNING` and `CAUTION`.
   doesn't exist. Heading anchors are the heading text lowercased with spaces as
   hyphens, as on GitHub.
 - **Images** sit next to the pages that use them (an `images/` folder in the
-  chapter is tidy) and are linked relatively. Always write alt text.
+  chapter is tidy) and are linked relatively. Always write alt text. An image
+  on another site fails the build: the site's security policy only loads images
+  it serves itself.
 - Mermaid blocks show as code; diagrams are not drawn.
 
 ## Preview and check
