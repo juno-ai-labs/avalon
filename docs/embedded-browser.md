@@ -140,11 +140,12 @@ to each website separately from Chrome or another app. Website fingerprinting,
 CAPTCHAs, and provider policy can still prevent sign-in or access.
 Electron's native popup from this `WebContentsView` stayed blank in a live
 local-window test, so the rail opens its destination as a new tab instead.
-Passkeys do not work on macOS or Linux: Electron has no passkey prompt and
-no authenticator answers there, so visited pages run without WebAuthn and a
-site offers its other sign-in methods. A page that calls
-`navigator.credentials.get({ publicKey })` without checking for
-`PublicKeyCredential` still waits forever.
+WebAuthn is off in visited pages on macOS and Linux. Electron draws no
+passkey prompt there, so a request no plugged-in security key can answer, such
+as a synced passkey, hung with nothing on screen. With it off, a site offers
+its other sign-in methods, and security keys, which did work, no longer do.
+A page that calls `navigator.credentials.get({ publicKey })` without checking
+for `PublicKeyCredential` still waits forever.
 
 The native view cannot be layered under renderer dialogs, so the renderer hides
 it for dialogs and menus. Agent access has no transport yet; the command types
