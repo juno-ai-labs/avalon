@@ -5,5 +5,5 @@
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src/**/*.ts", "build/**/*.ts", "test/**/*.ts", "vite.config.ts", "vitest.config.ts"]
+  "include": ["src/**/*.ts", "build/**/*.ts", "worker/**/*.ts", "test/**/*.ts", "vite.config.ts", "vitest.config.ts"]
 }

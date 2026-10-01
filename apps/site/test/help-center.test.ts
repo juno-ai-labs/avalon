@@ -7,6 +7,7 @@ import { HelpContentError, loadHelpSite } from '../build/help/content';
 import { renderMarkdown } from '../build/help/markdown';
 import { buildHelp } from '../build/help/site';
 import { searchEntries, type SearchEntry } from '../src/help-search';
+import { markdownPathFor, prefersMarkdown } from '../worker/index';
 
 const roots: string[] = [];
 
@@ -101,13 +102,13 @@ describe('help center markdown', () => {
       { depth: 2, id: 'setup', text: 'Setup' },
       { depth: 3, id: 'setup-1', text: 'Setup' },
     ]);
-    expect(html).toContain('<h4 id="deep">Deep<a class="heading-anchor" href="#deep" aria-label="Link to “Deep”">#</a></h4>');
+    expect(html).toContain('<h4 id="deep">Deep<a class="anchor" href="#deep" aria-hidden="true" tabindex="-1">#</a></h4>');
   });
 
   it('wraps tables and code blocks, and highlights code by its language', () => {
     const { html } = render('| a |\n| - |\n| b |\n\n```js\nconst x = 1;\n```');
-    expect(html).toContain('<div class="table-wrap"><table>');
-    expect(html).toContain('<div class="code-block"><div class="code-head"><span class="code-language">js</span><button type="button" class="code-copy" hidden>Copy</button></div><pre><code class="hljs language-js"><span class="hljs-keyword">const</span>');
+    expect(html).toContain('<div class="table"><table>');
+    expect(html).toContain('<div class="code" data-lang="js"><pre><code class="hl language-js"><span class="hl-keyword">const</span>');
   });
 
   it('resolves relative links and marks external ones', () => {
@@ -138,13 +139,14 @@ describe('help center build', () => {
       'help/start/index.html',
       'help/start/install.md',
       'help/start/install/index.html',
+      'help/start/llms.txt',
     ]);
     expect(outputs.get('help/start/install/index.html')).toContain('<img src="/help/_assets/window-e90137d39d.png" alt="The window" loading="lazy" decoding="async">');
     expect(outputs.get('help/start/index.html')).toContain('<a href="/help/start/install/#before-you-begin">install</a>');
     expect(outputs.get('help/start/install.md')).toBe(
-      '# Install\n\n> About install.\n\n## Before you begin\n\n![The window](https://rallywith.ai/help/_assets/window-e90137d39d.png)\n\nBack to [the start](https://rallywith.ai/help/start.md).\n',
+      '> Rally Help Center. Index of every page: https://rallywith.ai/help/llms.txt\n> This chapter\'s pages: https://rallywith.ai/help/start/llms.txt\n\n# Install\n\n> About install.\n\n## Before you begin\n\n![The window](https://rallywith.ai/help/_assets/window-e90137d39d.png)\n\nBack to [the start](https://rallywith.ai/help/start.md).\n',
     );
-    expect(outputs.get('help/llms.txt')).toContain('## Chapter 1: Start\n\n- [Start](https://rallywith.ai/help/start.md): About start.\n- [1.1 Install](https://rallywith.ai/help/start/install.md): About install.');
+    expect(outputs.get('help/llms.txt')).toContain('## Chapter 1: Start\n\nAbout start. Index of this chapter: https://rallywith.ai/help/start/llms.txt\n\n- [Start](https://rallywith.ai/help/start.md): About start.\n- [1.1 Install](https://rallywith.ai/help/start/install.md): About install.');
   });
 
   it('fails on a link to a missing page, a missing heading, or a missing image', () => {
@@ -182,5 +184,27 @@ describe('help center search', () => {
     expect(searchEntries(entries, 'schedules').map((hit) => [hit.entry.t, hit.heading])).toEqual([
       ['Channels', ['schedules', 'Schedules']],
     ]);
+  });
+});
+
+describe('help center content negotiation', () => {
+  it('serves Markdown only to clients that rank it above HTML', () => {
+    expect(prefersMarkdown('text/markdown, text/html')).toBe(true);
+    expect(prefersMarkdown('text/markdown;q=1.0, text/html;q=0.7, */*;q=0.1')).toBe(true);
+    expect(prefersMarkdown('text/html, text/markdown')).toBe(false);
+    expect(prefersMarkdown('text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8')).toBe(false);
+    expect(prefersMarkdown('*/*')).toBe(false);
+    expect(prefersMarkdown('text/markdown;q=0')).toBe(false);
+    expect(prefersMarkdown(null)).toBe(false);
+  });
+
+  it('maps a page URL to its Markdown copy and leaves files alone', () => {
+    expect(markdownPathFor('/help')).toBe('/help/index.md');
+    expect(markdownPathFor('/help/')).toBe('/help/index.md');
+    expect(markdownPathFor('/help/sidekicks/')).toBe('/help/sidekicks.md');
+    expect(markdownPathFor('/help/sidekicks/schedules')).toBe('/help/sidekicks/schedules.md');
+    expect(markdownPathFor('/help/llms.txt')).toBeNull();
+    expect(markdownPathFor('/help/_assets/window-1.png')).toBeNull();
+    expect(markdownPathFor('/trust/')).toBeNull();
   });
 });
