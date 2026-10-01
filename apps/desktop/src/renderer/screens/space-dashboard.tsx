@@ -79,12 +79,16 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   // next attempt rather than by closing the modal: a person who reopens it
   // should still see what they were told to move.
   const [blockedChannelIds, setBlockedChannelIds] = useState<string[]>([]);
-  // Icon and colour choices in flight. The route replaces both keys at once, so
-  // each request is built from the last choice rather than from the Space as
-  // rendered, and they are sent one after another: a colour clicked before the
-  // icon's answer arrives must not send the old icon back.
-  const appearanceQueue = useRef<Promise<unknown>>(Promise.resolve());
-  const intendedAppearance = useRef<{ iconKey: SpaceIconKey; colorKey: SpaceColorKey; pending: number } | null>(null);
+  // Presentation changes in flight: a rename and every icon or colour choice.
+  // The route replaces name, icon and colour together, so each request is built
+  // from the last change rather than from the Space as rendered, and they are
+  // sent one after another. Otherwise a colour clicked before a rename's answer
+  // arrives sends the old name back, and the rename sends the old icon. Held per
+  // Space: a change still settling for one Space is never the base for another.
+  const presentationQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const intendedPresentation = useRef<{
+    spaceId: string; name: string; iconKey: SpaceIconKey; colorKey: SpaceColorKey; pending: number;
+  } | null>(null);
   const [participantsOpen, setParticipantsOpen] = useState(false);
   const [editParticipants, setEditParticipants] = useState<Set<string>>(new Set());
   const [pendingScope, setPendingScope] = useState<'personal' | 'workspace' | null>(null);
@@ -176,26 +180,30 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
       } : current);
     }
   };
-  const changeAppearance = (patch: WorkstreamAppearancePatch): Promise<void> => {
-    const base = intendedAppearance.current ?? { iconKey: space.iconKey, colorKey: space.colorKey, pending: 0 };
-    const next = { iconKey: patch.icon ?? base.iconKey, colorKey: patch.color ?? base.colorKey, pending: base.pending + 1 };
-    intendedAppearance.current = next;
-    const sent = appearanceQueue.current.then(() => api!.updateSpacePresentation(space.id, {
-      name: space.name, iconKey: next.iconKey, colorKey: next.colorKey,
+  const updatePresentation = (
+    change: Partial<{ name: string; iconKey: SpaceIconKey; colorKey: SpaceColorKey }>,
+  ): Promise<SpaceSummary> => {
+    const spaceId = space.id;
+    const held = intendedPresentation.current?.spaceId === spaceId ? intendedPresentation.current : null;
+    const base = held ?? { spaceId, name: space.name, iconKey: space.iconKey, colorKey: space.colorKey, pending: 0 };
+    const next = { ...base, ...change, pending: base.pending + 1 };
+    intendedPresentation.current = next;
+    const sent = presentationQueue.current.then(() => api!.updateSpacePresentation(spaceId, {
+      name: next.name, iconKey: next.iconKey, colorKey: next.colorKey,
     }));
-    appearanceQueue.current = sent.catch(() => undefined);
-    const settle = (): void => {
-      const current = intendedAppearance.current;
-      if (current && --current.pending === 0) intendedAppearance.current = null;
-    };
-    return sent.then((updated) => { settle(); applySpace(updated); }, (cause: unknown) => {
-      // A refused choice leaves the Space as the server holds it, so the next
-      // click starts from that rather than from the choice that failed.
-      settle();
-      intendedAppearance.current = null;
-      throw cause;
+    presentationQueue.current = sent.catch(() => undefined);
+    // Once nothing is left in flight the server's answer is the base again,
+    // including after a refusal: a later change then starts from what the
+    // Space holds rather than from the change that failed.
+    return sent.finally(() => {
+      const current = intendedPresentation.current;
+      if (current?.spaceId === spaceId && --current.pending === 0) intendedPresentation.current = null;
     });
   };
+  const changeAppearance = (patch: WorkstreamAppearancePatch): Promise<void> => updatePresentation({
+    ...(patch.icon ? { iconKey: patch.icon } : {}),
+    ...(patch.color ? { colorKey: patch.color } : {}),
+  }).then(applySpace);
   /**
    * Make one change, and say whether it landed.
    *
@@ -288,7 +296,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
           onAppearanceChange={changeAppearance}
           onRename={(name) => void save(
             'name',
-            () => api!.updateSpacePresentation(space.id, { name, iconKey: space.iconKey, colorKey: space.colorKey }),
+            () => updatePresentation({ name }),
             'The space name could not be saved.',
           )}
           {...(isGeneral || reachedThroughChannel ? {} : {

@@ -345,6 +345,52 @@ describe('the Space dashboard', () => {
     });
   });
 
+  it('sends a rename made while an icon is saving with that icon, after it', async () => {
+    let answerIcon!: () => void;
+    api.updateSpacePresentation.mockImplementationOnce((_id: string, input: { name: string; iconKey: string; colorKey: string }) =>
+      new Promise((resolve) => { answerIcon = () => resolve(makeSpace({ ...input, revision: 2 })); }));
+    renderSpace();
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Change icon and color for Hiring' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Rocket' }));
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    fireEvent.doubleClick(screen.getByRole('button', { name: 'Hiring' }));
+    const field = screen.getByRole('textbox', { name: 'Space name' });
+    fireEvent.change(field, { target: { value: 'Recruiting' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    await act(async () => {});
+    expect(api.updateSpacePresentation).toHaveBeenCalledTimes(1);
+
+    await act(async () => answerIcon());
+    await waitFor(() => expect(api.updateSpacePresentation).toHaveBeenCalledTimes(2));
+    expect(api.updateSpacePresentation).toHaveBeenLastCalledWith(hiring.id, {
+      name: 'Recruiting',
+      iconKey: 'rocket',
+      colorKey: 'green',
+    });
+  });
+
+  it('keeps saving a later choice when an earlier one is refused', async () => {
+    let refuseIcon!: () => void;
+    api.updateSpacePresentation.mockImplementationOnce(() =>
+      new Promise((_resolve, reject) => { refuseIcon = () => reject(new Error('offline')); }));
+    renderSpace();
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Change icon and color for Hiring' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Rocket' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Purple' }));
+    await waitFor(() => expect(api.updateSpacePresentation).toHaveBeenCalledTimes(1));
+    await act(async () => refuseIcon());
+
+    await waitFor(() => expect(api.updateSpacePresentation).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Star' }));
+    await waitFor(() => expect(api.updateSpacePresentation).toHaveBeenLastCalledWith(hiring.id, {
+      name: 'Hiring',
+      iconKey: 'star',
+      colorKey: 'purple',
+    }));
+  });
+
   it('renames the space from the header', async () => {
     renderSpace();
 
