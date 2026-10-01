@@ -102,6 +102,85 @@ const CAPPED_READS = `
 `;
 
 /**
+ * ChatGPT's share page hydrates from a React Router loader stream rather than
+ * `/backend-anon/share/<id>`. The conversation JSON is already in the document;
+ * recover it when the old anonymous route refuses.
+ */
+const CHATGPT_SHARE_FROM_PAGE = `
+    const conversationFromSharePage = (conversationId) => {
+      const isGraph = (value) => value && typeof value === 'object' && (Array.isArray(value) || Object.getPrototypeOf(value) === Object.prototype);
+      const conversationIn = (node, seen) => {
+        if (!isGraph(node) || seen.has(node)) return null;
+        seen.add(node);
+        if (typeof node.conversation_id === 'string' && node.mapping && node.current_node
+          && (node.conversation_id === conversationId || node.backing_conversation_id === conversationId)) return node;
+        for (const value of (Array.isArray(node) ? node : Object.values(node))) {
+          const found = conversationIn(value, seen);
+          if (found) return found;
+        }
+        return null;
+      };
+      const decodeTurbo = (values) => {
+        const memo = new Map();
+        const decode = (idx) => {
+          if (typeof idx !== 'number') return idx;
+          if (idx < 0) return undefined;
+          if (memo.has(idx)) return memo.get(idx);
+          const value = values[idx];
+          if (value && typeof value === 'object' && !Array.isArray(value)
+            && Object.keys(value).every((key) => /^_\\d+$/.test(key))) {
+            const object = {};
+            memo.set(idx, object);
+            for (const [key, pointer] of Object.entries(value)) object[decode(Number(key.slice(1)))] = decode(pointer);
+            return object;
+          }
+          if (Array.isArray(value)) {
+            const list = [];
+            memo.set(idx, list);
+            for (const item of value) list.push(typeof item === 'number' ? decode(item) : item);
+            return list;
+          }
+          memo.set(idx, value);
+          return value;
+        };
+        return decode(0);
+      };
+      const parseQuoted = (text, start) => {
+        if (text[start] !== '"') return null;
+        for (let i = start + 1; i < text.length; i += 1) {
+          if (text[i] === '\\\\') { i += 1; continue; }
+          if (text[i] === '"') {
+            try { return JSON.parse(text.slice(start, i + 1)); } catch { return null; }
+          }
+        }
+        return null;
+      };
+      try {
+        for (const script of document.querySelectorAll('script')) {
+          const text = script.textContent || '';
+          const marker = 'streamController.enqueue(';
+          for (let search = 0;;) {
+            const at = text.indexOf(marker, search);
+            if (at < 0) break;
+            search = at + marker.length;
+            const encoded = parseQuoted(text, search);
+            if (typeof encoded !== 'string') continue;
+            try {
+              const values = JSON.parse(encoded);
+              if (!Array.isArray(values) || !values.length) continue;
+              const found = conversationIn(decodeTurbo(values), new Set());
+              if (found) {
+                try { return JSON.parse(JSON.stringify(found)); } catch {}
+              }
+            } catch {}
+          }
+        }
+      } catch {}
+      return null;
+    };
+`;
+
+/**
  * A file the page may not fetch itself — another origin that does not allow
  * it — loaded instead with the tab's own session through DevTools' network
  * loader, which is not subject to the page's CORS rules.
@@ -167,8 +246,9 @@ function chatGptReader(conversation: BrowserConversation): string {
   // A person's own conversation and its files come from ChatGPT's signed-in
   // API, with the access token its own client takes from the same-origin
   // session endpoint; cookies alone can return a misleading guest 404. A shared
-  // one comes from the same routes' anonymous counterparts, which address files
-  // by the share rather than the conversation. Both return the same JSON.
+  // one is rendered from the page's React Router loader stream; the old
+  // anonymous share route is a fallback. Files still come from the
+  // anonymous counterparts of the routes below, addressed by the share.
   const id = conversation.id;
   const routes = conversation.shared ? {
     conversation: `'/backend-anon/share/${id}'`,
@@ -196,11 +276,18 @@ function chatGptReader(conversation: BrowserConversation): string {
     const sameOrigin = (url) => new URL(url, location.href).origin === location.origin;${CAPPED_READS}
     const fileRoute = ${routes.file};
     const sandboxRoute = ${routes.sandbox};
-    const response = await fetch(${routes.conversation}, { credentials: 'include', headers });
-    if (!response.ok) throw new Failure('ChatGPT could not return this conversation.');
-    const data = await response.json();
-    if (data.conversation_id !== ${JSON.stringify(conversation.id)} || !data.mapping || !data.current_node)
-      throw new Failure('ChatGPT returned an incomplete conversation.');
+    const conversationId = ${JSON.stringify(conversation.id)};
+    const complete = (candidate) => candidate && candidate.mapping && candidate.current_node
+      && (candidate.conversation_id === conversationId || candidate.backing_conversation_id === conversationId);
+    let data = null;
+    ${conversation.shared ? `${CHATGPT_SHARE_FROM_PAGE}
+    data = conversationFromSharePage(conversationId);` : ''}
+    if (!complete(data)) {
+      const response = await fetch(${routes.conversation}, { credentials: 'include', headers });
+      if (!response.ok) throw new Failure('ChatGPT could not return this conversation.');
+      try { data = await response.json(); } catch { data = null; }
+    }
+    if (!complete(data)) throw new Failure('ChatGPT returned an incomplete conversation.');
     // The conversation names its files but does not contain them. Fetch the
     // bytes of each file on the shown branch while this page is signed in, and
     // hand them to the decoder beside the reference they belong to. A file
