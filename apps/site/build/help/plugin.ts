@@ -1,5 +1,7 @@
 import { extname } from 'node:path';
 import type { Plugin, Rollup } from 'vite';
+import { loadHelpSite } from './content';
+import { ogImagePath, renderOgImage, renderOgImages } from './og';
 import { buildHelp, type HelpOutputs } from './site';
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -48,6 +50,15 @@ export function helpCenter({ contentRoot, entryName, entrySource }: { contentRoo
           response.end((error as Error).message);
           return;
         }
+        if (path.startsWith('/help/_og/')) {
+          const page = loadHelpSite(contentRoot, { includeDrafts: true }).pages.find((candidate) => ogImagePath(candidate) === path);
+          if (!page) return next();
+          renderOgImage(page).then((png) => {
+            response.setHeader('Content-Type', 'image/png');
+            response.end(png);
+          }, next);
+          return;
+        }
         const key = path.slice(1);
         const body = outputs.get(path.endsWith('/') ? `${key}index.html` : key) ?? outputs.get(`${key}/index.html`);
         if (body === undefined) return next();
@@ -55,7 +66,7 @@ export function helpCenter({ contentRoot, entryName, entrySource }: { contentRoo
         response.end(body);
       });
     },
-    generateBundle(_options, bundle) {
+    async generateBundle(_options, bundle) {
       const entry = Object.values(bundle).find(
         (output): output is Rollup.OutputChunk => output.type === 'chunk' && output.isEntry && output.name === entryName,
       );
@@ -63,6 +74,7 @@ export function helpCenter({ contentRoot, entryName, entrySource }: { contentRoo
       const styles = [...(entry.viteMetadata?.importedCss ?? [])].map((file) => `/${file}`);
       const outputs = buildHelp(contentRoot, { assets: { styles, scripts: [`/${entry.fileName}`] } });
       for (const [fileName, source] of outputs) this.emitFile({ type: 'asset', fileName, source });
+      for (const [fileName, source] of await renderOgImages(loadHelpSite(contentRoot))) this.emitFile({ type: 'asset', fileName, source });
     },
   };
 }
