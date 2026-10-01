@@ -1,6 +1,6 @@
 /**
  * Builds the blog from GitHub-flavored Markdown at build time: one file per
- * post in `content/blog/`, named `YYYY-MM-DD-<slug>.md`, front matter plus a
+ * post in `content/blog/`, named `YYYY-MM-DD-<title>.md`, front matter plus a
  * Markdown body, rendered to `/blog/<slug>/`, and a `/blog/` changelog that
  * shows the newest post in full and every older one as its first paragraph.
  * Node only: Vite and the tests call it, the browser never does.
@@ -11,7 +11,7 @@ import { parse as parseYaml } from 'yaml';
 import { escapeHtml, longDate } from './comparison-pages';
 
 export interface BlogPost {
-  /** Path segment under `/blog/`: the file name after its date. */
+  /** Path segment under `/blog/`, from the front matter. */
   slug: string;
   title: string;
   description: string;
@@ -26,17 +26,17 @@ export interface BlogPost {
 const ORIGIN = 'https://rallywith.ai';
 /** The index shares the home page's card; each post has its own, drawn at build time. */
 const HOME_IMAGE = `${ORIGIN}/rally-social-v01.jpg`;
-const FIELDS = ['title', 'description', 'author'] as const;
+const FIELDS = ['slug', 'title', 'description', 'author'] as const;
 
 /**
- * Parses one post. The file name, `YYYY-MM-DD-<slug>.md`, is the only place
- * the date and slug live, so front matter that repeats either is refused
- * rather than left to drift from the name.
+ * Parses one post. The file name, `YYYY-MM-DD-<title>.md`, is the only place
+ * the date lives, so front matter that repeats it is refused rather than left
+ * to drift from the name. The slug comes from the front matter, so a file can
+ * be renamed without moving its URL.
  */
 export function parseBlogPost(source: string, file: string): BlogPost {
-  const name = /^(\d{4}-\d{2}-\d{2})-([a-z0-9-]+)\.md$/u.exec(file);
-  // The slug is the URL segment, so it keeps to what a path and the dev server accept.
-  if (!name) throw new Error(`${file}: file name must be YYYY-MM-DD-<slug>.md, the slug in lowercase letters, digits and hyphens`);
+  const name = /^(\d{4}-\d{2}-\d{2})-[a-z0-9-]+\.md$/u.exec(file);
+  if (!name) throw new Error(`${file}: file name must be YYYY-MM-DD-<title>.md, the title in lowercase letters, digits and hyphens`);
   const date = name[1] ?? '';
   // The day must exist: `Date` would quietly turn 2026-02-30 into March 2.
   if (new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date) {
@@ -48,19 +48,28 @@ export function parseBlogPost(source: string, file: string): BlogPost {
   for (const field of FIELDS) {
     if (data[field] === undefined || data[field] === '') throw new Error(`${file}: front matter is missing "${field}"`);
   }
-  for (const field of ['date', 'slug']) {
-    if (field in data) throw new Error(`${file}: "${field}" comes from the file name, not the front matter`);
-  }
+  if ('date' in data) throw new Error(`${file}: "date" comes from the file name, not the front matter`);
+  // The slug is the URL segment, so it keeps to what a path and the dev server accept.
+  const slug = String(data.slug);
+  if (!/^[a-z0-9-]+$/u.test(slug)) throw new Error(`${file}: slug "${slug}" must be lowercase letters, digits and hyphens`);
   return {
-    slug: name[2] ?? '', title: String(data.title), description: String(data.description),
+    slug, title: String(data.title), description: String(data.description),
     date, author: String(data.author), body: match[2] ?? '', source,
   };
 }
 
 export function loadBlogPosts(directory: URL): BlogPost[] {
+  const files = new Map<string, string>();
   return readdirSync(directory)
     .filter((name) => name.endsWith('.md'))
-    .map((name) => parseBlogPost(readFileSync(new URL(name, directory), 'utf8'), name))
+    .map((name) => {
+      const post = parseBlogPost(readFileSync(new URL(name, directory), 'utf8'), name);
+      // Two posts on one slug would build one page over the other.
+      const other = files.get(post.slug);
+      if (other) throw new Error(`${name}: slug "${post.slug}" is already used by ${other}`);
+      files.set(post.slug, name);
+      return post;
+    })
     .sort((a, b) => b.date.localeCompare(a.date) || a.slug.localeCompare(b.slug));
 }
 
