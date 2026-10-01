@@ -5,7 +5,10 @@ import { parseDesktopTarget } from '../src/auth-handoff';
 import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
 import { isIosDevice, legacyIosWorkstreamHandoff } from '../src/workstream-link';
+import { parseComparison, renderComparisonPage } from '../src/comparison-pages';
 import { comparisons, renderSiteChrome } from '../src/site-chrome';
+import { renderComparisonCard } from '../src/social-cards';
+import sharp from 'sharp';
 import { normalizedTelemetryPathname, SITE_ACTION_LINKS, siteActionForLink, sitePageForPath } from '../src/telemetry';
 
 const readProjectFile = (path: string): string =>
@@ -151,7 +154,41 @@ describe('public Rally site', () => {
     const table = renderSiteChrome('<!-- rally:comparison-table -->');
     expect([...table.matchAll(/<th scope="row"><a class="compare-name" href="([^"]+)">([^<]+)</gu)]
       .map(([, href, name]) => `${name} ${href}`)).toEqual(comparisons.map(({ name, slug }) => `${name} /compare/${slug}/`));
-    expect(table).toContain('<td data-label="What it is">Team chat, now with AI summaries and Slackbot.</td>');
     expect(() => renderSiteChrome('<!-- rally:nope -->')).toThrow('Unknown site chrome marker: nope');
+  });
+
+  it('renders a comparison page from GitHub-flavored Markdown', () => {
+    const source = [
+      '---', 'slug: acme', 'name: Acme', 'maker: Acme Inc', 'order: 1', 'title: "Rally vs Acme"',
+      'description: "Acme compared."', 'updated: 2026-10-01', 'kind: "A tool."', 'edge: "Rally is better."', '---',
+      '**Short answer:** Pick Rally.', '',
+      '## Side by side', '', '| | Rally | Acme |', '| --- | --- | --- |', '| Pricing | $100 | Per seat |', '',
+      '## Where Acme shines', '', '### Fast', '', 'It is quick.', '',
+      '## Where Rally wins', '', '### Together', '', 'Teams share it.', '', '> A pun.', '',
+      '## Which one should you pick?', '', '### Pick Acme if', '', '- Solo', '', '### Pick Rally if', '', '- Team', '',
+      '## Questions', '', '### Is Rally per seat?', '', 'No. One price per organization.', '',
+      '## Sources', '', '- [Acme pricing](https://acme.example/pricing), Acme, checked 2026-10-01', '',
+    ].join('\n');
+    const page = renderComparisonPage(parseComparison(source, 'acme.md'));
+    expect(page).toContain('<p class="compare-answer"><strong>Short answer:</strong> Pick Rally.</p>');
+    expect(page).toContain('<tr><th scope="row">Pricing</th><td class="versus-rally" data-label="Rally">$100</td><td data-label="Acme">Per seat</td></tr>');
+    expect(page).toContain('<ul class="points"><li><h3>Together</h3><p>Teams share it.</p>\n</li></ul><div class="compare-aside"><p>A pun.</p>\n</div>');
+    expect(page).toContain('<div class="verdict verdict-rally"><h3>Pick Rally if</h3><ul>\n<li>Team</li>\n</ul>\n</div>');
+    expect(page).toContain('<details><summary>Is Rally per seat?</summary><p>No. One price per organization.</p>\n</details>');
+    expect(page).toContain('{"@type":"Question","name":"Is Rally per seat?","acceptedAnswer":{"@type":"Answer","text":"No. One price per organization."}}');
+    expect(page).toContain('<time datetime="2026-10-01">October 1, 2026</time>');
+    expect(page).toContain('<!-- rally:site-footer -->');
+    expect(page).toContain('<meta property="og:image" content="https://rallywith.ai/compare/acme/social.png" />');
+    expect(page).toContain('<meta name="twitter:image:alt" content="Rally vs Acme: Rally is better." />');
+    expect(() => renderComparisonPage(parseComparison(source.replace('## Where Acme shines', '## Odds and ends'), 'acme.md')))
+      .toThrow('Unknown comparison section "Odds and ends"');
+    expect(() => parseComparison(source.replace('maker: Acme Inc\n', ''), 'acme.md'))
+      .toThrow('acme.md: front matter is missing "maker"');
+  });
+
+  it('draws a 1200 by 630 opaque PNG unfurl card for a comparison', async () => {
+    const card = await renderComparisonCard({ slug: 'acme', name: 'A very long product name indeed', edge: 'Rally is better. '.repeat(20) });
+    const { format, width, height, hasAlpha } = await sharp(card).metadata();
+    expect({ format, width, height, hasAlpha }).toEqual({ format: 'png', width: 1200, height: 630, hasAlpha: false });
   });
 });
