@@ -5,7 +5,6 @@ import {
   SharedNavigationSpaceSchema,
   SharedNavigationWorkstreamSchema,
   SharedWorkstreamSchema,
-  type SharedNavigationDirectory,
 } from "@rally/contracts/scope-grants";
 import { ScopeGrantCandidatesSchema } from "../durable-objects/scope-grant-directory";
 import { workspaceDOName } from "../durable-objects/names";
@@ -45,31 +44,7 @@ export async function listSharedDirectory(env: Env, workspaceId: WorkspaceId, us
 }
 
 /** Guest browser hierarchy; canonical Channel owners still decide every label released. */
-/**
- * The navigation fields added after strict clients shipped: a Breakout's
- * origin turn and a Space's system role. Shipped desktop and browser builds
- * parse this response with strict schemas, so a caller receives them only when
- * it asks with `?origins=1`.
- */
-export function withoutOriginFields(directory: SharedNavigationDirectory): SharedNavigationDirectory {
-  return {
-    spaces: directory.spaces.map((space) => {
-      const shipped = { ...space };
-      delete shipped.systemRole;
-      return shipped;
-    }),
-    workstreams: directory.workstreams.map((workstream) => ({
-      ...workstream,
-      conversations: workstream.conversations.map((conversation) => {
-        const shipped = { ...conversation };
-        delete shipped.originTurnId;
-        return shipped;
-      }),
-    })),
-  };
-}
-
-export async function listSharedNavigationDirectory(env: Env, workspaceId: WorkspaceId, userId: UserId, includeAttention = false, includeOrigins = false) {
+export async function listSharedNavigationDirectory(env: Env, workspaceId: WorkspaceId, userId: UserId, includeAttention = false) {
   const relationship = await readWorkspaceRelationship(env.DB, workspaceId, userId);
   if (relationship?.status !== "active") {
     return SharedNavigationDirectorySchema.parse({ spaces: [], workstreams: [] });
@@ -99,6 +74,5 @@ export async function listSharedNavigationDirectory(env: Env, workspaceId: Works
     || current.revision !== relationship.revision) {
     return SharedNavigationDirectorySchema.parse({ spaces: [], workstreams: [] });
   }
-  const directory = SharedNavigationDirectorySchema.parse({ spaces, workstreams });
-  return includeOrigins ? directory : withoutOriginFields(directory);
+  return SharedNavigationDirectorySchema.parse({ spaces, workstreams });
 }
