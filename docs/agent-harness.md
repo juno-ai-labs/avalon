@@ -890,6 +890,21 @@ suspension, checkpoint and completion protections. Rally routes and persists
 messages through existing harness ports. Missing loop capabilities belong in
 the Bind runtime library, not a parallel loop or a runtime patch in Rally.
 
+### Agent profiles
+
+A conversation provisioned with an `agent_profile` (a column on its
+`workstream` row, set once by `provisionWorkstreamObject`) does one fixed job.
+`runWorkstreamHarness` reads it from the conversation's identity and, for a
+profiled run, replaces three things wholesale: the system prompt (the
+profile's, not the work-stream prompt), the model route (the profile's
+Flagship role, `resolveAgentModelRouting`), and the tool surface — exactly the
+profile's plugins as always-active core plugins, through `profileHarnessTools`,
+with no built-in or connector plugin, no plugin discovery and no skills. The
+registry is `apps/api/src/services/agent-profiles.ts`; `session_import`, the
+conversation importer, is its first entry, and its tools are [desktop
+actions](desktop-actions.md). A stored profile this Worker does not know fails
+the run as `agent_profile_unknown` rather than running with every tool.
+
 ### Scoped durable memory
 
 Query-based memory search resolves the run's scopes with `resolveMemoryAccess`,
@@ -1409,6 +1424,19 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-01 — A conversation can be provisioned to do one fixed job
+
+The conversation importer needed an agent loop whose only tools drive the
+person's browser, whose prompt is its own, and whose model must read
+screenshots. Nothing let a run narrow its tool surface: `defaultPluginIds` only
+preloads, and every run assembled the full built-in and connector set. Agent
+profiles are that narrowing, stored on the conversation so a profile cannot
+change under a running conversation and a run never decides its own surface.
+The alternatives were an input field on the activation (any activation path
+could then forget it) and a new Durable Object for the import (rejected: the
+loop and its durability already live here). A future profile must stay
+fail-closed — an unknown profile is a failed run, never the default surface.
 
 ### 2026-09-27 — A run's result reaches a conversation only by conversation_post
 
