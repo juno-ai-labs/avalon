@@ -8,12 +8,13 @@ installing Rally to running Sidekicks across an Organization, and each page
 assumes the ones before it.
 
 Every page is built for two readers. People get a three-column page: chapters on
-the left, the rendered Markdown in the middle, and an outline of the page's H1 to
-H3 headings on the right. Language models get the same content as Markdown at a
-predictable URL, an [`llms.txt`](https://llmstxt.org/) index, and the whole
-manual in one file. How to write a page, and the voice the manual is written in,
-is in [`apps/site/help/README.md`](../apps/site/help/README.md); this document
-covers the machinery.
+the left, the rendered Markdown in the middle, and on the right an outline of the
+page's H1 to H3 headings with the page's Markdown actions under it. Language
+models get the same content as Markdown at a predictable URL, an
+[`llms.txt`](https://llmstxt.org/) index, and the whole manual in one file. How
+to write a page, and the voice the manual is written in, is in
+[`apps/site/help/README.md`](../apps/site/help/README.md); this document covers
+the machinery.
 
 ## Where the code lives
 
