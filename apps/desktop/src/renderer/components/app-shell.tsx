@@ -32,6 +32,7 @@ import { INACTIVE_SPACES_QUERY_KEY, PERSONAL_ORDER_QUERY_KEY, SIDEBAR_LIST_QUERY
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { usePersonalOrder, useSpaceDirectories, useSpacesReady } from '../lib/use-space-directories';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
+import { activeRealtimeWorkstreamId } from '../lib/workspace-workstream-sockets';
 import { useWorkspaceSocket, type SidebarConnect, type WorkspaceSocketState } from '../lib/workspace-socket';
 import { useOpenFirstWorkstream, openWorkstreamId } from '../lib/workstream-landing';
 import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store';
@@ -796,9 +797,12 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   } = useWorkspaceSocket();
 
   const activeWorkstreamId = openWorkstreamId(location.pathname);
+  // A pending Channel may not be in the Organization's directory yet, and the
+  // workspace socket closes for good on presence naming a Channel it cannot see.
+  const foregroundWorkstreamId = activeRealtimeWorkstreamId(activeWorkstreamId, workstreams.data);
   useEffect(() => {
-    setForegroundWorkstreamId(activeWorkstreamId);
-  }, [activeWorkstreamId, setForegroundWorkstreamId]);
+    setForegroundWorkstreamId(foregroundWorkstreamId);
+  }, [foregroundWorkstreamId, setForegroundWorkstreamId]);
   useEffect(() => {
     return () => setForegroundWorkstreamId(null);
   }, [setForegroundWorkstreamId]);
