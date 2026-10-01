@@ -89,6 +89,9 @@ h1 em,h2 em{font-style:normal;color:var(--muted)}
 .legal-nav a:hover{color:oklch(.97 0 0/.8)}
 .legal-nav a[aria-current]{color:var(--paper);border-color:var(--paper)}
 .legal-document{min-width:0;padding:0 0 128px var(--gutter);border-left:1px solid var(--hairline)}
+/* Security keeps its card layout but sits in the same column beside the rail. */
+.legal-shell>.trust-center{min-width:0;max-width:none;margin:0;padding:0 0 0 var(--gutter);border-left:1px solid var(--hairline)}
+.legal-shell>.trust-center>.trust-hero{padding-top:24px}
 .legal-document>header{padding-bottom:48px;margin-bottom:16px;border-bottom:1px solid var(--hairline)}
 .legal-document h1{font-size:3.75rem}
 .legal-lede{max-width:46rem;margin-top:24px;color:var(--soft);font-size:20px;line-height:1.6}
@@ -116,6 +119,6 @@ h1 em,h2 em{font-style:normal;color:var(--muted)}
 .legal-table td:first-child{color:var(--paper)}
 
 @media(max-width:1050px){.trust-center h1{font-size:3.75rem}.legal-document h1{font-size:3rem}.trust-center h2{font-size:2.5rem}.trust-provider-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.trust-provider-grid article:last-child:nth-child(n){grid-column:auto}.trust-provider-grid article:last-child:nth-child(odd){grid-column:1/-1}}
-@media(max-width:900px){.legal-shell{display:block}.legal-nav{position:static;padding:24px 0 0}.legal-nav>p{padding:0 0 8px}.legal-nav ul{display:flex;flex-wrap:wrap;gap:0 20px}.legal-nav a{padding:8px 0;border-bottom:0}.legal-nav a[aria-current]{text-decoration:underline;text-underline-offset:6px}.legal-document{padding-left:0;border-left:0}}
+@media(max-width:900px){.legal-shell{display:block}.legal-nav{position:static;padding:24px 0 0}.legal-nav>p{padding:0 0 8px}.legal-nav ul{display:flex;flex-wrap:wrap;gap:0 20px}.legal-nav a{padding:8px 0;border-bottom:0}.legal-nav a[aria-current]{text-decoration:underline;text-underline-offset:6px}.legal-document,.legal-shell>.trust-center{padding-left:0;border-left:0}}
 @media(max-width:768px){.trust-section-heading>p{margin-top:20px}.trust-section-heading,.trust-control-grid,.trust-provider-grid{grid-template-columns:minmax(0,1fr)}.trust-resource-list>a{grid-template-columns:minmax(0,1fr) auto;gap:6px 16px;padding:20px 0}.trust-resource-list span{grid-column:1/-1}.trust-reporting{padding:28px}.trust-section{padding-bottom:88px}}
 @media(max-width:640px){.trust-center h1,.legal-document h1{font-size:2.5rem}.trust-center h2{font-size:2.25rem}.trust-hero{padding:40px 0 64px}.trust-hero-copy>p:not(.trust-kicker),.legal-lede{font-size:18px}.trust-control-card,.trust-provider-grid article{padding:24px}.trust-resource-list strong{font-size:22px}.trust-faq-list summary{font-size:19px}.legal-section h2{font-size:26px}}
