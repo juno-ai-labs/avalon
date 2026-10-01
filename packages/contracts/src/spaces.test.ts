@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { APPEARANCE_ICON_SECTIONS } from "./appearance-icons";
 import {
   PROJECT_COLOR_KEYS,
   PROJECT_COLOR_KEYS_STORABLE,
@@ -19,6 +20,7 @@ import {
   SPACE_ICON_KEYS,
   SpaceColorKeySchema,
   SpaceErrorCodeSchema,
+  SpaceIconKeySchema,
   SpaceSnapshotSchema,
   SpaceSummarySchema,
   UpdateSpaceAudienceRequestSchema,
@@ -56,20 +58,33 @@ describe("space contracts", () => {
     expect(PROJECT_COLOR_KEYS_STORABLE).toBe(SPACE_COLOR_KEYS_STORABLE);
   });
 
-  it("given the V1 picker, when its registries are read, then it offers exactly 25 icons and 14 colours", () => {
-    // The stored vocabulary, pinned. A key that leaves this list is a value
-    // somebody's Space already holds and a read that starts throwing on it.
-    expect(SPACE_ICON_KEYS).toEqual([
-      "briefcase", "target", "calendar-days", "list-checks", "clipboard-list",
-      "file-text", "folder", "lightbulb", "star", "flag", "rocket",
-      "chart-no-axes-combined", "calculator", "coins", "users", "user-search",
-      "handshake", "megaphone", "palette", "image", "pen-tool", "package",
-      "building-2", "globe-2", "heart",
+  it("given the picker, when its registries are read, then it offers 253 icons in eight sections and 14 colours", () => {
+    expect(SPACE_ICON_KEYS).toHaveLength(253);
+    expect(APPEARANCE_ICON_SECTIONS.map((section) => [section.label, section.keys.length])).toEqual([
+      ["Planning", 23], ["Docs & writing", 23], ["Learning", 23], ["People & talk", 46],
+      ["Data & money", 23], ["Build & tech", 23], ["Places & nature", 46], ["Life & fun", 46],
     ]);
     expect(SPACE_COLOR_KEYS).toEqual([
       "rose", "red", "orange", "amber", "lime", "green", "emerald", "cyan",
       "blue", "indigo", "violet", "purple", "fuchsia", "pink",
     ]);
+  });
+
+  it("given an icon an earlier picker offered, when a stored appearance is parsed, then it still reads", () => {
+    // Every key the 25-icon Space picker and the work-stream catalog ever
+    // offered, pinned. A key leaving this list is a value somebody already
+    // holds and a read that starts throwing on it.
+    const everOffered = [
+      "briefcase", "target", "calendar-days", "list-checks", "clipboard-list",
+      "file-text", "folder", "lightbulb", "star", "flag", "rocket",
+      "chart-no-axes-combined", "calculator", "coins", "users", "user-search",
+      "handshake", "megaphone", "palette", "image", "pen-tool", "package",
+      "building-2", "globe-2", "heart", "aperture", "atom", "boxes", "circle-dot",
+      "circuit-board", "component", "dices", "orbit", "sparkles", "spline",
+      "wand-sparkles", "workflow",
+    ];
+    for (const key of everOffered) expect(SpaceIconKeySchema.safeParse(key).success).toBe(true);
+    expect((SPACE_ICON_KEYS as readonly string[]).includes("pen-tool")).toBe(false);
   });
 
   it("given a colour retired from the picker, when a stored appearance is parsed, then it still reads", () => {
@@ -85,7 +100,7 @@ describe("space contracts", () => {
     const base = { name: "Hiring", iconKey: "briefcase", colorKey: "blue", scope: "personal" };
 
     expect(CreateSpaceRequestSchema.safeParse(base).success).toBe(true);
-    expect(CreateSpaceRequestSchema.safeParse({ ...base, iconKey: "code" }).success).toBe(false);
+    expect(CreateSpaceRequestSchema.safeParse({ ...base, iconKey: "not-an-icon" }).success).toBe(false);
     expect(CreateSpaceRequestSchema.safeParse({ ...base, colorKey: "#123456" }).success).toBe(false);
     expect(CreateSpaceRequestSchema.safeParse({ ...base, name: "   " }).success).toBe(false);
     expect(CreateSpaceRequestSchema.safeParse({ ...base, scope: "organization" }).success).toBe(false);

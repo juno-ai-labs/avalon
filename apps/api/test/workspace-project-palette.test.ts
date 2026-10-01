@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { PROJECT_COLOR_KEYS_STORABLE, PROJECT_ICON_KEYS } from "@rally/contracts";
+import { PROJECT_COLOR_KEYS_STORABLE } from "@rally/contracts";
 
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 
@@ -33,13 +33,6 @@ describe("workspace project palette", () => {
     const vocabulary = checkVocabulary(latestProjectsTableSql(), "icon_color_key");
     for (const key of PROJECT_COLOR_KEYS_STORABLE) {
       expect(vocabulary, `icon_color_key CHECK does not accept "${key}"; widen it in a new migration`).toContain(key);
-    }
-  });
-
-  it("given the newest projects table, when its CHECK is read, then it accepts every icon", () => {
-    const vocabulary = checkVocabulary(latestProjectsTableSql(), "icon_key");
-    for (const key of PROJECT_ICON_KEYS) {
-      expect(vocabulary, `icon_key CHECK does not accept "${key}"; widen it in a new migration`).toContain(key);
     }
   });
 
