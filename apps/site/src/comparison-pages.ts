@@ -30,7 +30,6 @@ export interface Comparison {
 }
 
 const ORIGIN = 'https://rallywith.ai';
-const CTA = '<div class="compare-cta"><a class="button" href="/#pricing">See Rally pricing</a><a class="button button-outline" href="/#compare">Compare Rally with other tools</a></div>';
 const FIELDS = ['slug', 'name', 'maker', 'order', 'title', 'description', 'updated', 'kind', 'edge'] as const;
 
 export function parseComparison(source: string, file: string): Comparison {
@@ -91,7 +90,8 @@ function splitAt(tokens: Token[], depth: number): { before: Token[]; parts: Part
   return { before, parts };
 }
 
-function renderTable(token: Token | undefined, name: string, file: string): string {
+function renderTable(tokens: Token[], name: string, file: string): string {
+  const [token, ...rest] = tokens.filter((each) => each.type !== 'space');
   if (token?.type !== 'table') throw new Error(`${file}: "Side by side" must hold a table`);
   const table = token as Tokens.Table;
   const rows = table.rows.map(([label, rally, rival]) =>
@@ -101,7 +101,7 @@ function renderTable(token: Token | undefined, name: string, file: string): stri
   return `<div class="versus-table-wrap"><table class="versus-table">`
     + `<caption class="visually-hidden">Rally compared with ${escapeHtml(name)}</caption>`
     + `<thead><tr><th scope="col"><span class="visually-hidden">Question</span></th><th scope="col" class="versus-rally">Rally</th><th scope="col">${escapeHtml(name)}</th></tr></thead>`
-    + `<tbody>${rows}</tbody></table></div>`;
+    + `<tbody>${rows}</tbody></table></div>${blocks(rest)}`;
 }
 
 function renderPoints(tokens: Token[]): string {
@@ -133,11 +133,11 @@ export function renderComparisonPage(comparison: Comparison): string {
   const sections = parts.map(({ heading, tokens }, index) => {
     const { eyebrow, nav, kind } = sectionKind(heading);
     const id = anchor(nav);
-    const body = kind === 'table' ? renderTable(tokens.find((token) => token.type !== 'space'), name, file) : renderPoints(tokens);
+    const body = kind === 'table' ? renderTable(tokens, name, file) : renderPoints(tokens);
     return {
       id, nav,
       html: `<section class="section${index % 2 === 0 ? ' raised' : ''}" id="${id}" aria-labelledby="${id}-title">\n`
-        + `<p class="eyebrow">${escapeHtml(eyebrow)}</p>\n<h2 id="${id}-title" class="display">${inline(heading)}</h2>\n${body}${index === parts.length - 1 ? CTA : ''}\n</section>`,
+        + `<p class="eyebrow">${escapeHtml(eyebrow)}</p>\n<h2 id="${id}-title" class="display">${inline(heading)}</h2>\n${body}\n</section>`,
     };
   });
 
