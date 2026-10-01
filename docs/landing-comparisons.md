@@ -50,8 +50,9 @@ the page without parsing HTML.
 `renderComparisonPage` lexes the body with `marked` and maps each `##` section
 to the landing page's layout: the table becomes `versus-table` with
 `data-label`s for the phone layout, `###` items become `points` cards, and a
-blockquote there becomes the dad-joke aside. A blockquote in the short answer or
-after the table renders in place as a plain quote.
+blockquote there becomes the dad-joke aside. A blockquote in the short answer
+renders in place as a plain quote, and anything after the table (a quote, a
+paragraph, a list) renders in place below it.
 An unknown `##` heading, a missing required section, or a missing front matter
 field throws, so the build fails instead of shipping a broken page.
 
@@ -155,8 +156,8 @@ section, the footer, and one rival page at 1440px and 390px, and open
 
 **What changed:** The "See Rally pricing" and "Compare Rally with other tools"
 buttons no longer close each comparison page. A blockquote in the short answer
-now has its own quiet style, and one after the "Side by side" table renders
-instead of being dropped.
+now has its own quiet style, and anything after the "Side by side" table
+renders instead of being dropped.
 
 **Why:** The team asked for the buttons to go; the header and footer already
 link to pricing and the other comparisons. The ChatGPT page put a blockquote
