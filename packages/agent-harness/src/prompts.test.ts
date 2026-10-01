@@ -100,7 +100,7 @@ describe("prompt renderers", () => {
           objective: "Draft an email to Danny sharing the Rally download link.",
           openingMessage: "Draft an email to Danny sharing the Rally download link, and ask him to add Alex to the Tuesday call.",
         }),
-        hash: "53a2c550d0b62face82c3bc7e117714744525f3839aa41530373c5cc36198cfe",
+        hash: "58c06749cd8a319206c03b6a87aabcbc46ddd7a207e96cd63e99032e9229637c",
       },
       workstreamNameFromConversation: {
         actual: renderWorkstreamNameMessages({
@@ -111,7 +111,7 @@ describe("prompt renderers", () => {
             { author: "person", text: "Use founder@example.com and mention the Tuesday call." },
           ],
         }),
-        hash: "5f5a0cdb5391684e5603096838d93cca88a78049b903515bcafb19eb98b172ee",
+        hash: "fc647657ab314349b1b9dc8f5dcf085859b2dda4a630fc29f6bd72dedf859e32",
       },
       workstreamDescription: {
         actual: renderWorkstreamDescriptionMessages({

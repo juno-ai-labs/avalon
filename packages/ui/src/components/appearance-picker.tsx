@@ -1,7 +1,8 @@
 import { projectColorCells } from '../lib/project-palette';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { WORKSTREAM_ICON_KEYS, type WorkstreamAppearance, type WorkstreamAppearancePatch } from '@rally/contracts';
+import { GENERATED_WORKSTREAM_ICON_KEYS, type WorkstreamAppearance, type WorkstreamAppearancePatch } from '@rally/contracts';
 import { useEffect, useRef, useState } from 'react';
+import { IconCatalog } from './icon-catalog';
 import { WORKSTREAM_ICON_COMPONENTS, workstreamAppearance } from './workstream-glyph';
 
 function label(key: string): string {
@@ -59,7 +60,7 @@ export function AppearancePicker({ id, appearance, label: triggerLabel, renderGl
       setPending(pending.filter((choice) => !settled(choice, appearance)));
     }
   }, [appearance, pending]);
-  const selected = { icon: appearance?.icon ?? WORKSTREAM_ICON_KEYS[generated.iconIndex]!, color: appearance?.color ?? generated.color, ...preview };
+  const selected = { icon: appearance?.icon ?? GENERATED_WORKSTREAM_ICON_KEYS[generated.iconIndex]!, color: appearance?.color ?? generated.color, ...preview };
   const change = (patch: WorkstreamAppearancePatch): void => {
     const revision = ++sequence.current;
     setPending((current) => [...current, { revision, patch, baseline: appearance, saved: false }]);
@@ -94,12 +95,12 @@ export function AppearancePicker({ id, appearance, label: triggerLabel, renderGl
         <DropdownMenu.Separator className="appearance-picker-divider" />
         <DropdownMenu.Label className="appearance-picker-label">Icon</DropdownMenu.Label>
         <DropdownMenu.RadioGroup value={selected.icon ?? ''} className="appearance-picker-icons" aria-label="Icon">
-          {WORKSTREAM_ICON_KEYS.map((icon) => {
+          <IconCatalog renderIcon={(icon) => {
             const Icon = WORKSTREAM_ICON_COMPONENTS[icon];
             return <DropdownMenu.RadioItem key={icon} value={icon} aria-label={label(icon)} title={label(icon)} className="appearance-picker-choice" onSelect={(event) => { event.preventDefault(); change({ icon }); }}>
-              <Icon size={20} strokeWidth={1.8}  />
+              <Icon size={20} strokeWidth={1.8} />
             </DropdownMenu.RadioItem>;
-          })}
+          }} />
         </DropdownMenu.RadioGroup>
         {error && <p role="alert" className="appearance-picker-error">{error}</p>}
       </DropdownMenu.Content>

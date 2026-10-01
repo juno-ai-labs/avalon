@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { IdSchema, UserIdSchema, WorkstreamIdSchema } from "./identifiers";
+import { PICKABLE_APPEARANCE_ICON_KEYS, STORABLE_APPEARANCE_ICON_KEYS } from "./appearance-icons";
 import { PALETTE_KEYS, PALETTE_RING } from "./palette";
 
 /**
@@ -24,33 +25,11 @@ export {
   type PaletteKey,
 } from "./palette";
 
-export const SPACE_ICON_KEYS = [
-  "briefcase",
-  "target",
-  "calendar-days",
-  "list-checks",
-  "clipboard-list",
-  "file-text",
-  "folder",
-  "lightbulb",
-  "star",
-  "flag",
-  "rocket",
-  "chart-no-axes-combined",
-  "calculator",
-  "coins",
-  "users",
-  "user-search",
-  "handshake",
-  "megaphone",
-  "palette",
-  "image",
-  "pen-tool",
-  "package",
-  "building-2",
-  "globe-2",
-  "heart",
-] as const;
+/**
+ * The icons a Space can be given: the one shared catalog, the same keys a
+ * Channel, a Breakout and a Sidekick choose from. See `appearance-icons.ts`.
+ */
+export const SPACE_ICON_KEYS = PICKABLE_APPEARANCE_ICON_KEYS;
 
 /**
  * What the picker offers for a Space or Channel: the ring, and nothing
@@ -83,7 +62,11 @@ export const SpaceIdSchema = z.string().uuid().brand<"SpaceId">();
 export type SpaceId = z.infer<typeof SpaceIdSchema>;
 export const asSpaceId = (value: string): SpaceId => SpaceIdSchema.parse(value);
 
-export const SpaceIconKeySchema = z.enum(SPACE_ICON_KEYS);
+/**
+ * Validated against every key ever offered, not today's menu, so a Space whose
+ * icon left the catalog keeps parsing; the same split as the colours below.
+ */
+export const SpaceIconKeySchema = z.enum(STORABLE_APPEARANCE_ICON_KEYS);
 export type SpaceIconKey = z.infer<typeof SpaceIconKeySchema>;
 export const SpaceColorKeySchema = z.enum(SPACE_COLOR_KEYS_STORABLE);
 export type SpaceColorKey = z.infer<typeof SpaceColorKeySchema>;

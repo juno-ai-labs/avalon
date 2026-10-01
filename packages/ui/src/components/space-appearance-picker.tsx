@@ -1,9 +1,10 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { SPACE_ICON_KEYS, type SpaceColorKey, type SpaceIconKey } from '@rally/contracts';
+import { type SpaceColorKey, type SpaceIconKey } from '@rally/contracts';
 import clsx from 'clsx';
 
 import { projectColorCells } from '../lib/project-palette';
-import { SPACE_ICONS } from './space-icons';
+import { APPEARANCE_ICON_COMPONENTS } from './appearance-icons';
+import { IconCatalog } from './icon-catalog';
 
 /**
  * A catalog key as a person reads it: `list-checks` becomes `List Checks`.
@@ -29,7 +30,7 @@ export interface SpaceAppearance {
  * list, so a Space is recognised by the same two choices wherever it appears.
  */
 export function SpaceIcon({ space, size = 15 }: { space: SpaceAppearance; size?: number }): React.JSX.Element {
-  const Icon = SPACE_ICONS[space.iconKey];
+  const Icon = APPEARANCE_ICON_COMPONENTS[space.iconKey];
   return (
     <Icon
       aria-hidden="true"
@@ -69,9 +70,8 @@ export function SpaceAppearancePicker({
     <div className="space-appearance-picker">
       <fieldset>
         <legend>Icon</legend>
-        <div className="space-icon-grid">
-          {SPACE_ICON_KEYS.map((key) => {
-            const Icon = SPACE_ICONS[key];
+        <IconCatalog className="space-icon-catalog" renderIcon={(key) => {
+            const Icon = APPEARANCE_ICON_COMPONENTS[key];
             return (
               <button
                 aria-label={label(key)}
@@ -84,8 +84,7 @@ export function SpaceAppearancePicker({
                 <Icon aria-hidden="true" size={17} stroke={`var(--av-sys-color-project-${colorKey})`} />
               </button>
             );
-          })}
-        </div>
+          }} />
       </fieldset>
       <fieldset>
         <legend>Color</legend>
