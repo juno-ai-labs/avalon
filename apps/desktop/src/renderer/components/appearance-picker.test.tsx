@@ -23,17 +23,17 @@ function openPicker(): void {
 }
 
 describe('appearance picker', () => {
-  it('lays the catalog out in sections with a tab for each, and saves a choice from any of them', async () => {
+  it('lays the catalog out in eight sections with a tab for each, and saves a choice from any of them', async () => {
     const onChange = vi.fn().mockResolvedValue(undefined);
     render(<WorkstreamAppearancePicker id="room" appearance={{ icon: 'atom', color: 'blue' }} onChange={onChange} />);
     openPicker();
     await screen.findByRole('menu');
     expect(within(screen.getByRole('menu')).getAllByRole('button').map((tab) => tab.getAttribute('aria-label'))).toEqual([
-      'Planning', 'Docs & writing', 'Learning', 'People', 'Talk', 'Data & money',
-      'Build & tech', 'Places & travel', 'Nature', 'Life & culture', 'Fun',
+      'Planning', 'Docs & writing', 'Learning', 'People & talk', 'Data & money',
+      'Build & tech', 'Places & nature', 'Life & fun',
     ]);
     expect(screen.getByRole('button', { name: 'Planning' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('region', { name: 'Fun' })).toContainElement(screen.getByRole('menuitemradio', { name: 'Drum' }));
+    expect(screen.getByRole('region', { name: 'Life & fun' })).toContainElement(screen.getByRole('menuitemradio', { name: 'Drum' }));
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'Drum' }));
     await waitFor(() => expect(onChange).toHaveBeenCalledWith({ icon: 'drum' }));
     expect(screen.getAllByRole('menuitemradio')).toHaveLength(253 + 14);

@@ -22,7 +22,7 @@ own storage and its own glyph treatment.
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/contracts/src/appearance-icons.ts` | The one icon catalog for a Channel, a Breakout, a Space and a Sidekick: its eleven sections, the pickable keys, the retired keys that stay storable, the id-derived default marks, and one short model-visible description per pickable key. |
+| `packages/contracts/src/appearance-icons.ts` | The one icon catalog for a Channel, a Breakout, a Space and a Sidekick: its eight sections, the pickable keys, the retired keys that stay storable, the id-derived default marks, and one short model-visible description per pickable key. |
 | `packages/contracts/src/workstream-appearance.ts` | The catalog under the names callers import (`WORKSTREAM_ICON_KEYS` for the menu, `WORKSTREAM_ICON_KEYS_STORABLE` for the schema), the default key, color keys, and partial updates. |
 | `packages/ui/src/components/appearance-icons.ts` | `APPEARANCE_ICON_COMPONENTS`, the Lucide glyph for every storable key. |
 | `packages/ui/src/components/icon-catalog.tsx` | `IconCatalog`: section tabs over one scrolling grid with a heading per section. Both pickers render their cells through it. |
@@ -82,9 +82,9 @@ The socket connection queues rapid clicks in order, retaining their original
 work-stream address even if the picker unmounts. A click changes only its own field, so
 a color change does not overwrite another user's icon.
 
-The icon catalog is 253 Lucide icons in eleven sections of 23 — Planning, Docs &
-writing, Learning, People, Talk, Data & money, Build & tech, Places & travel,
-Nature, Life & culture, and Fun — and a Space picks from the same one. The
+The icon catalog is 253 Lucide icons in eight sections — Planning, Docs &
+writing, Learning, Data & money and Build & tech at 23 each, and People & talk,
+Places & nature and Life & fun at 46 — and a Space picks from the same one. The
 picker shows a tab per section along its top, as Slack's emoji picker does; a
 tab scrolls the grid to its section and the tab follows the scroll back. Icons
 work like colours: the picker offers `WORKSTREAM_ICON_KEYS`, while the schema
@@ -188,8 +188,10 @@ including scrolling, and check another connected window and reopening.
 ### 2026-10-01 — One 253-icon catalog in sections, for every surface with an appearance
 
 **What changed:** The catalog went from 37 keys (12 work-stream symbols plus the
-25 Space icons) to 253 Lucide icons in eleven sections of 23, in
-`appearance-icons.ts`. A Channel, a Breakout, a Space and a Sidekick all pick
+25 Space icons) to 253 Lucide icons in eight sections, in
+`appearance-icons.ts`. Eleven sections of 23 came first; three pairs were
+merged (People with Talk, Places with Nature, Life with Fun), keeping every
+icon. Eight was a product decision whose reasoning was not recorded here. A Channel, a Breakout, a Space and a Sidekick all pick
 from it. Both pickers render it through `IconCatalog`, which puts a tab per
 section above one scrolling grid. Every description was rewritten to a short
 phrase — a sentence of six or seven words on average — and the model reads them

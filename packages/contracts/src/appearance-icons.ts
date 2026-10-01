@@ -44,18 +44,12 @@ export const APPEARANCE_ICON_SECTIONS = [
   },
   {
     id: "people",
-    label: "People",
+    label: "People & talk",
     keys: [
       "user", "user-round", "users", "users-round", "user-plus", "user-check", "user-search",
       "handshake", "heart-handshake", "contact-round", "id-card", "baby", "person-standing",
       "accessibility", "hand", "hand-heart", "thumbs-up", "smile", "laugh", "crown",
       "venetian-mask", "cake", "hand-metal",
-    ],
-  },
-  {
-    id: "talk",
-    label: "Talk",
-    keys: [
       "message-square", "message-circle", "messages-square", "speech", "mail", "mail-open",
       "send", "phone", "phone-call", "megaphone", "mic", "video", "webcam", "at-sign", "bell",
       "bell-ring", "radio", "podcast", "rss", "reply", "share-2", "link", "ear",
@@ -82,17 +76,11 @@ export const APPEARANCE_ICON_SECTIONS = [
   },
   {
     id: "places",
-    label: "Places & travel",
+    label: "Places & nature",
     keys: [
       "house", "building", "building-2", "store", "landmark", "factory", "hospital", "church",
       "castle", "globe", "earth", "map-pin", "map", "compass", "navigation", "plane", "car",
       "bus", "train-front", "ship", "bike", "tent", "luggage",
-    ],
-  },
-  {
-    id: "nature",
-    label: "Nature",
-    keys: [
       "sun", "moon", "star", "sparkles", "cloud", "cloud-rain", "cloud-lightning", "snowflake",
       "rainbow", "flame", "droplet", "waves", "mountain-snow", "leaf", "sprout", "tree-pine",
       "tree-palm", "flower", "paw-print", "cat", "dog", "bird", "fish",
@@ -100,17 +88,11 @@ export const APPEARANCE_ICON_SECTIONS = [
   },
   {
     id: "life",
-    label: "Life & culture",
+    label: "Life & fun",
     keys: [
       "palette", "brush", "camera", "image", "film", "clapperboard", "music", "headphones",
       "guitar", "tv", "coffee", "utensils", "pizza", "wine", "gift", "trophy", "heart",
       "dumbbell", "heart-pulse", "shopping-bag", "shopping-cart", "shirt", "zap",
-    ],
-  },
-  {
-    id: "fun",
-    label: "Fun",
-    keys: [
       "party-popper", "ghost", "gamepad-2", "dices", "joystick", "skull", "wand-sparkles",
       "drama", "ferris-wheel", "balloon", "tickets", "popcorn", "ice-cream-cone", "lollipop",
       "cookie", "donut", "origami", "turtle", "rabbit", "squirrel", "piano", "drum", "disc-3",
@@ -258,7 +240,7 @@ export const APPEARANCE_ICON_DESCRIPTIONS: Record<PickableAppearanceIconKey, str
   presentation: "A presentation board on a stand.",
   shapes: "A triangle, a square and a circle grouped together.",
 
-  // People
+  // People & talk
   user: "One person, head and shoulders.",
   "user-round": "One person, head and rounded shoulders.",
   users: "Two people, one in front of the other.",
@@ -283,7 +265,6 @@ export const APPEARANCE_ICON_DESCRIPTIONS: Record<PickableAppearanceIconKey, str
   cake: "A layered birthday cake with candles.",
   "hand-metal": "A hand making the rock-on sign.",
 
-  // Talk
   "message-square": "A square speech bubble.",
   "message-circle": "A round speech bubble.",
   "messages-square": "Two overlapping square speech bubbles.",
@@ -358,7 +339,7 @@ export const APPEARANCE_ICON_DESCRIPTIONS: Record<PickableAppearanceIconKey, str
   "shield-check": "A shield with a tick on it.",
   rocket: "A rocket lifting off on a diagonal.",
 
-  // Places & travel
+  // Places & nature
   house: "A house with a pitched roof and a door.",
   building: "A tall office building with rows of windows.",
   "building-2": "Two office buildings side by side, one taller.",
@@ -383,7 +364,6 @@ export const APPEARANCE_ICON_DESCRIPTIONS: Record<PickableAppearanceIconKey, str
   tent: "A camping tent.",
   luggage: "A suitcase standing upright on wheels.",
 
-  // Nature
   sun: "A sun: a circle with short rays.",
   moon: "A crescent moon.",
   star: "A five-pointed star.",
@@ -408,7 +388,7 @@ export const APPEARANCE_ICON_DESCRIPTIONS: Record<PickableAppearanceIconKey, str
   bird: "A bird in profile.",
   fish: "A fish swimming sideways.",
 
-  // Life & culture
+  // Life & fun
   palette: "An artist's paint palette with wells of paint.",
   brush: "A paintbrush on a diagonal.",
   camera: "A camera with a round lens.",
@@ -433,7 +413,6 @@ export const APPEARANCE_ICON_DESCRIPTIONS: Record<PickableAppearanceIconKey, str
   shirt: "A T-shirt.",
   zap: "A lightning bolt.",
 
-  // Fun
   "party-popper": "A party popper bursting with confetti.",
   ghost: "A cartoon ghost with a wavy hem.",
   "gamepad-2": "A video game controller.",
