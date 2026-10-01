@@ -51,7 +51,7 @@ visited page, in its own origin and session, and recognizes one route:
 | Route | Read |
 | --- | --- |
 | `chatgpt.com/c/<id>` | ChatGPT's conversation endpoint, with the access token from the page's same-origin `/api/auth/session`. A cookie-only request can return a guest 404 even when the page is signed in. |
-| `chatgpt.com/share/<id>` | The same conversation JSON from the anonymous share route, `/backend-anon/share/<id>`; its files come from the anonymous counterparts of the routes below, addressed by the share. Works signed out. |
+| `chatgpt.com/share/<id>` | The conversation JSON ChatGPT already rendered into the share page: the React Router loader stream (and `__reactRouterContext` after hydration). `/backend-anon/share/<id>` and `/backend-api/share/<id>` are fallbacks when that snapshot is missing — the authenticated route needs the access token from `/api/auth/session` when the person is signed in. Files still come from the anonymous download routes, addressed by the share, and import as unavailable when those refuse. Works signed out. |
 | `claude.ai/chat/<id>` | The conversation from the organization named by the page's `lastActiveOrg` cookie, falling back to each organization the account lists. The response holds every edited branch, so the reader keeps only the path from `current_leaf_message_uuid` back through `parent_message_uuid` — the conversation the person sees. |
 | `claude.ai/share/<id>` | The share's snapshot from claude.ai's `chat_snapshots` endpoint. |
 
@@ -274,7 +274,9 @@ HTML/code artifacts remain stored files; importing does not launch a site.
   URLs, visible-format refusal, attachment-only messages, copied uploads and
   Artifacts, sandbox files, Deep Research reports, citations and extracted-text labeling.
 - `apps/desktop/src/renderer/lib/browser-conversation-import.test.ts`: route
-  recognition, reads through a tab, and that each generated page script parses.
+  recognition, reads through a tab, that each generated page script parses, and
+  that a shared ChatGPT conversation is recovered from the page payload when
+  `/backend-anon/share/<id>` refuses.
 - `test/session-import-files.test.ts`: constrained origins, redirect refusal,
   frozen download bytes and the existing file size policy.
 - `test-workers/conversation-creation.test.ts`: real upload/R2 bytes, role-specific
@@ -293,6 +295,16 @@ HTML/code artifacts remain stored files; importing does not launch a site.
   Electron window: DOM tests cannot prove what a provider's page returns.
 
 ## Changelog
+
+### 2026-10-01 — Read a shared ChatGPT conversation from the page that rendered it
+
+**What changed:** Importing `chatgpt.com/share/<id>` recovers the conversation JSON ChatGPT already put in the share page's React Router loader payload, then falls back to `/backend-anon/share/<id>` and `/backend-api/share/<id>`. A signed-in session token is used when the page has one; it is not required. Files still come from the anonymous download routes.
+
+**Why:** ChatGPT's share page stopped fetching `/backend-anon/share/<id>` from the client — the snapshot is SSR'd into the document — so Rally's reader got a non-OK response and showed "ChatGPT could not return this conversation" while the same page was displaying the chat. That is the failure that landed on 2026-10-01 for a share that had imported the day before. No Rally importer code had changed; the provider's unofficial route did.
+
+**Considered and rejected:** Scraping the visible DOM, which is virtualized and would silently drop earlier turns. Teaching the reader ChatGPT's sentinel/proof-of-work handshake so the old route would accept a raw `fetch`, which chases an anti-bot surface the page itself no longer uses. Waiting for a signed-in `/c/<id>` tab instead of a share link, which abandons the public-link path the import window already offers.
+
+**Consequences:** A share import now depends on ChatGPT still shipping `mapping` and `current_node` in that loader payload (or on one of the two leftover HTTP routes still answering). Client-side navigation to a different share can leave a stale stream in the document; the reader matches the URL's share id and then hits the HTTP fallbacks. File copies on a share still fail closed when the anonymous download routes refuse.
 
 ### 2026-09-24 — Create from a sidebar list's empty space
 
