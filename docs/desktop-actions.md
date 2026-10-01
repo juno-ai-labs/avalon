@@ -88,7 +88,10 @@ tools, and the desktop executor. It does not own the browser itself
 [agent profile](agent-harness.md)), or what any one user of the protocol does
 with an answer — the import's finish and fail actions are handled by
 [session import](session-import.md). Today only a run whose conversation's
-creator has that conversation's socket open in a desktop can be answered; a
+creator has that conversation's socket open in a desktop can be answered. The
+import window is the one non-conversation window the desktop's main process lets
+open a realtime socket, and it closes that socket when the window navigates,
+crashes or closes. A
 Channel's main loop reaching the person's main window is a later consumer of the
 same frames. Per Rally's policy, no action asks the person to confirm it.
 

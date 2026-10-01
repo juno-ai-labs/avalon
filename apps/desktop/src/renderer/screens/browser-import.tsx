@@ -27,7 +27,7 @@ interface PendingImport {
 
 /** What the window says when a run ends without importing. */
 function endedMessage(result: SessionImportRunResult): string | null {
-  if (result.kind === 'imported') return null;
+  if (result.kind === 'imported' || result.kind === 'cancelled') return null;
   if (result.kind === 'failed') return SESSION_IMPORT_FAILURE_COPY[result.reason];
   if (result.kind === 'unfinished') return 'The import did not finish. Try again, or cancel.';
   return result.message;
