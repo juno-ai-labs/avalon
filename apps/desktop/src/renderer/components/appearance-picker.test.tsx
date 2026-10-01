@@ -28,11 +28,11 @@ describe('appearance picker', () => {
     render(<WorkstreamAppearancePicker id="room" appearance={{ icon: 'atom', color: 'blue' }} onChange={onChange} />);
     openPicker();
     await screen.findByRole('menu');
-    expect(within(screen.getByRole('menu')).getAllByRole('button').map((tab) => tab.getAttribute('aria-label'))).toEqual([
+    expect(within(screen.getByRole('menu')).getAllByRole('menuitem').map((tab) => tab.getAttribute('aria-label'))).toEqual([
       'Planning', 'Docs & writing', 'Learning', 'People & talk', 'Data & money',
       'Build & tech', 'Places & nature', 'Life & fun',
     ]);
-    expect(screen.getByRole('button', { name: 'Planning' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('menuitem', { name: 'Planning' })).toHaveAttribute('aria-current', 'true');
     expect(screen.getByRole('region', { name: 'Life & fun' })).toContainElement(screen.getByRole('menuitemradio', { name: 'Drum' }));
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'Drum' }));
     await waitFor(() => expect(onChange).toHaveBeenCalledWith({ icon: 'drum' }));

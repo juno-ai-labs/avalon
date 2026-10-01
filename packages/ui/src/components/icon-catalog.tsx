@@ -1,4 +1,5 @@
 import { APPEARANCE_ICON_SECTIONS, type AppearanceIconSectionId, type PickableAppearanceIconKey } from '@rally/contracts';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import clsx from 'clsx';
 import { useRef, useState } from 'react';
 import { APPEARANCE_ICON_COMPONENTS } from './appearance-icons';
@@ -22,7 +23,7 @@ const SECTION_TAB_ICON: Record<AppearanceIconSectionId, PickableAppearanceIconKe
  * The icon catalog laid out to be chosen from: a row of section tabs over one
  * scrolling grid, with a heading per section, the way Slack lays out emoji.
  *
- * Presentational. It owns only the layout and the jump between sections; each
+ * Presentational, and drawn inside a Radix dropdown menu. It owns only the layout and the jump between sections; each
  * cell is the caller's, through {@link renderIcon} — in `AppearancePicker`, a
  * menu radio item that saves on click, for a Channel, a Breakout, a Space and a
  * Sidekick alike.
@@ -65,17 +66,20 @@ export function IconCatalog({ renderIcon, className }: {
     <div className="icon-catalog-tabs">
       {APPEARANCE_ICON_SECTIONS.map((section) => {
         const Icon = APPEARANCE_ICON_COMPONENTS[SECTION_TAB_ICON[section.id]];
-        return <button
+        // Menu items rather than buttons: the picker is a menu, and a menu's
+        // keyboard navigation reaches only its registered items, so a plain
+        // button here could not be focused from the keyboard. Selecting one
+        // jumps and keeps the menu open.
+        return <DropdownMenu.Item
           key={section.id}
-          type="button"
           className="icon-catalog-tab"
           aria-label={section.label}
-          aria-pressed={active === section.id}
+          aria-current={active === section.id ? 'true' : undefined}
           title={section.label}
-          onClick={() => jump(section.id)}
+          onSelect={(event) => { event.preventDefault(); jump(section.id); }}
         >
           <Icon aria-hidden="true" size={16} strokeWidth={1.8} />
-        </button>;
+        </DropdownMenu.Item>;
       })}
     </div>
     <div ref={scroller} className="icon-catalog-scroll" onScroll={follow}>
