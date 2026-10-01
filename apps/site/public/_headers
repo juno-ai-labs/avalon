@@ -36,9 +36,6 @@
 /site.webmanifest
   Cache-Control: public, max-age=86400
 
-/compare/social.png
-  Cache-Control: public, max-age=86400
-
 /compare/*/social.png
   Cache-Control: public, max-age=86400
 
