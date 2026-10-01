@@ -71,7 +71,8 @@ opens.
 
 - The top part, **Color**, has 14 round swatches in two rows, in rainbow order:
   Rose, Red, Orange, Amber, Lime, Green and Emerald, then Cyan, Blue, Indigo,
-  Violet, Purple, Fuchsia and Pink.
+  Violet, Purple, Fuchsia and Pink. The second row runs right to left, so Cyan
+  sits under Emerald and Pink under Rose.
 - Below it, **Icon** is a scrolling grid of 37 icons. Twelve are abstract shapes
   (such as Atom, Orbit and Sparkles) and 25 are everyday things (such as Rocket,
   Calendar Days, Coins, Megaphone and Heart). Hover any swatch or icon to see its

@@ -100,8 +100,8 @@ writes the receipt down before the action and again after it. When a run is
 retried, Rally checks its receipts and skips anything it already did, so a
 retry does not send the same email twice.
 
-You can read these receipts. Click any activity row in the conversation to
-see what Rally sent to the tool and what came back, as described in
+Click any activity row in the conversation to see what Rally sent to the tool
+(**Input**) and what came back (**Result**), as described in
 [While Rally works](../02-working-in-a-channel/03-while-rally-works.md).
 
 ### When Rally cannot tell

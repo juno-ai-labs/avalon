@@ -99,7 +99,7 @@ Who may change things depends on each person's role in the Organization.
 | Role | In short |
 | --- | --- |
 | **Owner** | The person who created the Organization. Can do everything an administrator can. |
-| **Administrator** | Runs the Organization. Can change roles, and is the only kind of member who can take someone else out of a Space. |
+| **Administrator** | Runs the Organization. Can change roles and, like the owner, can take someone else out of a Space. |
 | **Member** | Can create Spaces and Channels, and add people to Spaces. |
 | **Guest** | Someone from outside the Organization who was shared into particular conversations by email. Sees only those, cannot create Spaces, and has no **Manage access**. |
 
@@ -110,7 +110,7 @@ refuse. Roles, and how to change them, are covered in
 
 ## When access narrows
 
-Rally applies a narrowing straight away, including to people who have the
+Rally applies a narrowing within moments, including to people who have the
 Channel open at that moment. Nobody keeps reading a conversation because they
 happened to have it on screen.
 
@@ -123,8 +123,8 @@ conversation** or **Remove from breakout**.
   open Rally moves them to the next Channel in their list.
 - If they are removed from a Breakout, the Breakout closes and they land back in
   the Channel.
-- Removing someone from a Channel's main conversation also ends their access to
-  Sidekicks that belong to that Channel.
+- Removing someone from a Channel's main conversation also means they can no longer
+  open or manage Sidekicks that belong to that Channel, unless they created them.
 - You cannot remove the last participant.
 
 **A Channel becomes private.** People who could read it only because it was

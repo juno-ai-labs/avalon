@@ -84,7 +84,7 @@ conversation that the guest should not read.
 
 Some facts about how access ends, which hold however it is done:
 
-- Once access is removed, the guest stops seeing the conversation straight away,
+- Once access is removed, the guest stops seeing the conversation within moments,
   even if they have it open, and cannot reopen it.
 - A withdrawn invitation link stops working. The person following it is told
   only that the link cannot be used, not why.
