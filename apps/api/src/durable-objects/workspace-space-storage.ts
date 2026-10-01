@@ -12,7 +12,7 @@ import {
   SpaceSummarySchema,
   asSpaceId,
   asWorkstreamId,
-  SPACE_ICON_KEYS,
+  STORABLE_APPEARANCE_ICON_KEYS,
   SPACE_COLOR_KEYS_STORABLE,
   type ContainerOrder,
   type OrderedContainer,
@@ -101,7 +101,7 @@ export const SPACE_BOOTSTRAP_PAGE_SIZE = 50;
 const SPACE_ICON_FALLBACK = "briefcase";
 const SPACE_COLOR_FALLBACK = "blue";
 
-const SPACE_ICON_KEY_SET: ReadonlySet<string> = new Set(SPACE_ICON_KEYS);
+const SPACE_ICON_KEY_SET: ReadonlySet<string> = new Set(STORABLE_APPEARANCE_ICON_KEYS);
 const SPACE_COLOR_KEY_SET: ReadonlySet<string> = new Set(SPACE_COLOR_KEYS_STORABLE);
 
 /**

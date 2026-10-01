@@ -42,7 +42,7 @@ them; the product design is in
 | `apps/api/src/routes/spaces.ts` | `/spaces` mutations and the two paginated reads. |
 | `apps/api/src/routes/workspace.ts` | `PUT /workspace/order`, the one write for all three hand-arranged lists. It is a workspace route because two of the three containers are not Spaces. |
 | `apps/api/src/queues/activity-consumer.ts` | The `space_default`, `space_intent_resume` and `space_bootstrap` handlers. |
-| `packages/ui/src/components/space-row.tsx`, `space-appearance-picker.tsx`, `space-dashboard.tsx`, `space-icons.ts` | The shared presentation both hosts draw a Space with. `docs/shared-ui.md` owns the split. |
+| `packages/ui/src/components/space-row.tsx`, `space-appearance-picker.tsx`, `space-dashboard.tsx` | The shared presentation both hosts draw a Space with. `docs/shared-ui.md` owns the split. |
 | `apps/desktop/src/renderer/components/spaces-sidebar.tsx`, `sidebar.tsx` | The first-level **Spaces** sidebar and adjacent selected-Space **Channels** sidebar. Selecting a Space keeps the Spaces rail open while filtering the middle rail; selecting a Channel in that middle rail compacts Spaces and opens the destination while leaving Channels at the person's chosen width. |
 | `apps/desktop/src/renderer/lib/deep-link-navigation.ts` | The renderer-local signal that distinguishes an externally opened Channel from ordinary in-app navigation so both hierarchy rails reveal it once. |
 | `apps/desktop/src/renderer/screens/space-dashboard.tsx` | The `/spaces/:spaceId` dashboard. |
