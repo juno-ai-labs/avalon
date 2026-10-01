@@ -32,6 +32,19 @@ function chromeUserAgent(): string {
   return `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36`;
 }
 
+/**
+ * Electron has no passkey prompt, and outside Windows no authenticator answers
+ * a WebAuthn request, so `navigator.credentials.get()` stays pending past its
+ * own timeout and a sign-in page spins on "Verifying it's you" for good.
+ * Without `PublicKeyCredential` a site sees no WebAuthn support and offers
+ * another sign-in method instead. Windows keeps it, since Chromium hands the
+ * request to Windows' own WebAuthn API, which draws its own prompt; that path
+ * has not been tried in Rally. Security keys go too on macOS and Linux.
+ */
+function disabledBlinkFeatures(): string | undefined {
+  return process.platform === 'win32' ? undefined : 'WebAuth';
+}
+
 function browserPartition(userId: string): string {
   return `persist:rally-browser-${userId}`;
 }
@@ -131,6 +144,7 @@ export class EmbeddedBrowser {
       webSecurity: true,
       allowRunningInsecureContent: false,
       spellcheck: true,
+      disableBlinkFeatures: disabledBlinkFeatures(),
       // There is deliberately no preload in visited pages.
     } });
     this.registerView(view, popupOf);
