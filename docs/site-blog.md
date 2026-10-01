@@ -31,8 +31,8 @@ treats `blog/index.html` and each `blog/<slug>/index.html` as build inputs that
 exist only in memory, exactly as it does for the comparison pages, and the dev
 server renders the same HTML for the same paths. A post's body goes through
 `marked` with its default GitHub-flavored Markdown. The `/blog/` index is a
-changelog: a date rail on the left, with each date sticky beside its post, and
-the posts on the right. The newest post shows in full; each older one shows its
+changelog: each date sits right-aligned in a left column, then a dot on a rail
+that runs down the left edge of the posts. Dates stay sticky beside their post. The newest post shows in full; each older one shows its
 title, its first paragraph, and a Read more link. The index uses the home page's
 social card; each post gets its own. The header does not link to the blog; the
 footer does. The footer's Blog column links to the index and the newest
@@ -84,7 +84,7 @@ screenshot `/blog/` and a post at desktop and phone widths, and open a built
 
 **What changed:** Post files are named `YYYY-MM-DD-<slug>.md`, and the date and
 slug moved out of the front matter into the name. `/blog/` became a changelog
-in the style of Linear's: a date rail on the left, the newest post in full, and
+in the style of Linear's: dates on the left, a dot and rail against the posts, the newest post in full, and
 older posts as a title, first paragraph and Read more link. Blog left the
 header nav; the footer column stays.
 
