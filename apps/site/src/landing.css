@@ -140,7 +140,6 @@ h1{white-space:pre-line;max-width:56rem;margin:0 auto;font-size:4.5rem}
 /* Comparison table: the landing section and the /compare/ hub share it. */
 .compare-table-wrap{margin-top:48px;border:1px solid var(--hairline);border-radius:2px}
 .compare-table{width:100%;border-collapse:collapse;font-size:var(--small);line-height:1.55}
-.compare-caption{padding:16px 24px;border-bottom:1px solid var(--hairline);caption-side:top;text-align:left;font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
 .compare-table thead th{padding:12px 24px;border-bottom:1px solid var(--hairline);text-align:left;font-family:var(--mono);font-size:11px;font-weight:400;letter-spacing:.18em;text-transform:uppercase;color:oklch(.97 0 0/.55)}
 .compare-table tbody tr{border-bottom:1px solid var(--hairline);transition:background .15s}
 .compare-table tbody tr:last-child{border-bottom:0}
@@ -154,9 +153,8 @@ h1{white-space:pre-line;max-width:56rem;margin:0 auto;font-size:4.5rem}
 .compare-more a{display:inline-flex;gap:6px;color:var(--paper);border-bottom:1px solid oklch(.97 0 0/.25);transition:border-color .15s}
 .compare-more a:hover{border-color:var(--paper)}
 .compare-aside{margin-top:24px;font-size:var(--small);color:var(--muted)}
-.compare-aside a{margin-left:8px;color:var(--paper);border-bottom:1px solid oklch(.97 0 0/.25)}
+.compare-aside a{color:var(--paper);border-bottom:1px solid oklch(.97 0 0/.25)}
 @media(max-width:900px){
-.compare-caption{display:block}
 .compare-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 .compare-table,.compare-table tbody,.compare-table tr,.compare-table tbody th,.compare-table td{display:block}
 .compare-table tbody tr{padding:24px}

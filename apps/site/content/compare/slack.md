@@ -6,8 +6,8 @@ order: 8
 title: "Rally vs Slack (2026): keep the chat, add a room for the work"
 description: "Slack is where your team talks, with Slackbot as a personal AI agent. Rally is where your team and one AI do the work together, and it works from Slack."
 updated: 2026-10-01
-kind: "Team chat with Slackbot, a personal AI agent, built in."
-edge: "One shared AI the whole team works with, in a place where the work and its context stay put."
+kind: "Team chat with other humans."
+edge: "No more need to copy-paste AI prompts with each other, everyone works together."
 ---
 
 **Short answer:** Keep Slack, and add Rally for the work itself. Slack is the best place for quick team chat, and Slackbot is now a capable personal AI agent. But Slackbot works with one person at a time. In Rally, your whole team and one AI share the same conversation and files inside a Space, so the next person can carry on without a recap. You can reach Rally from Slack too. Mention @Rally, DM it, or type /rally, and progress posts back to the thread. The price is per organization, not per person.

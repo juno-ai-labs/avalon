@@ -6,8 +6,8 @@ order: 2
 title: "Rally vs Grok Bot (2026): one shared AI or a roster of bots"
 description: "Grok Bot lets you build named agents on a cloud computer. Rally gives your team one shared AI and a place to work, at a flat monthly price."
 updated: 2026-10-01
-kind: "An app for building named AI agents that run on a cloud computer."
-edge: "One AI the whole team shares, with each project kept in its own Space and a bill that doesn't move."
+kind: "A legion of AI agents that run on a single shared cloud computer."
+edge: "A single AI the whole team communicates with together."
 ---
 
 **Short answer:** It depends on who's doing the work. Grok Bot suits someone who wants to build named agents, give each a job, and watch them work a cloud computer. Rally suits a team that wants one AI everyone talks to, in a shared place where each project keeps its own files and history. If you love tinkering with bots, Grok Bot is a treat. If you'd rather the AI organize itself around your team, with a bill you can predict before the month starts, go with Rally.
