@@ -161,8 +161,6 @@ describe('the right sidebar does not follow a channel switch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     session.current = null;
-    // jsdom has no layout; exercise the expanded sidebar's conversation link.
-    // Compact mode deliberately omits that redundant navigation row.
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000);
     useUiStore.setState({ railOpen: false, railVariant: 'context', inspector: null });
     api.getWorkspaceMembers.mockResolvedValue([]);
@@ -183,33 +181,31 @@ describe('the right sidebar does not follow a channel switch', () => {
   it('does not show or retain Main for a guest opening a child', async () => {
     session.current = { user: { id: 'guest', email: 'guest@example.test' }, workspace: { id: 'workspace', region: 'global', accessClass: 'guest' } };
     renderScreen(true);
-    await screen.findByRole('heading', { name: 'Shared child' });
-    expect(screen.queryByRole('button', { name: /Go to conversation:/ })).not.toBeInTheDocument();
+    await screen.findByRole('button', { name: 'Breakout menu: Shared child' });
+    expect(screen.queryByRole('button', { name: /^Channel menu:/u })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Close breakout' })).not.toBeInTheDocument();
     expect(retainedSocket).toHaveBeenCalledWith(api, firstWorkstreamId, false, 'workstream', '0');
   });
 
   it('closes the inspector rail, and drops the document it was showing', async () => {
     renderScreen();
-    await screen.findByRole('button', { name: 'Go to conversation: First channel', current: 'page' });
-    expect(screen.getByRole('complementary', { name: 'Channel sidebar' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Go to conversation: First channel', current: 'page' }));
-    expect(screen.getByRole('log')).toHaveFocus();
+    await screen.findByRole('button', { name: 'Channel menu: First channel' });
 
     act(() => { useUiStore.setState({ railOpen: true, inspector: { type: 'resource', id: 'resource-in-the-first-stream' } }); });
 
     switchWorkstream();
 
-    await screen.findByRole('button', { name: 'Go to conversation: Second channel', current: 'page' });
+    await screen.findByRole('button', { name: 'Channel menu: Second channel' });
     expect(useUiStore.getState().railOpen).toBe(false);
     expect(useUiStore.getState().inspector).toBeNull();
   });
 
   it('does not offer resource management before or after switching channels', async () => {
     renderScreen();
-    await screen.findByRole('button', { name: 'Go to conversation: First channel', current: 'page' });
+    await screen.findByRole('button', { name: 'Channel menu: First channel' });
     expect(screen.queryByRole('button', { name: 'Manage resources' })).toBeNull();
     act(() => switchWorkstream());
-    await screen.findByRole('button', { name: 'Go to conversation: Second channel', current: 'page' });
+    await screen.findByRole('button', { name: 'Channel menu: Second channel' });
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Manage resources' })).toBeNull();
   });
@@ -219,13 +215,13 @@ describe('the right sidebar does not follow a channel switch', () => {
   // as long as it lasted.
   it('keeps the retained inspector dormant even with stale open state and across a route switch', async () => {
     renderScreen();
-    await screen.findByRole('button', { name: 'Go to conversation: First channel', current: 'page' });
+    await screen.findByRole('button', { name: 'Channel menu: First channel' });
     act(() => { useUiStore.setState({ railOpen: true, inspector: null }); });
     expect(document.querySelector('.rail-surface')).toBeNull();
 
     switchWorkstream();
 
-    await screen.findByRole('button', { name: 'Go to conversation: Second channel', current: 'page' });
+    await screen.findByRole('button', { name: 'Channel menu: Second channel' });
     expect(document.querySelector('.rail-surface')).toBeNull();
     // What AppShell lays the feed out against, so a leaking value here reserves
     // the sidebar's width over a work stream that has no sidebar.

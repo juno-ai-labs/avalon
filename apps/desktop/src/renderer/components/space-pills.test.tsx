@@ -97,6 +97,17 @@ describe('SpacePills', () => {
     expect(pill('Launch')).toHaveAttribute('aria-pressed', 'false');
   });
 
+  it('brings the selected pill into the strip\'s view', () => {
+    const scrolled: Element[] = [];
+    Element.prototype.scrollIntoView = function scrollIntoView(this: Element) { scrolled.push(this); };
+    try {
+      renderPills({ selectedSpaceId: 'hiring' });
+      expect(scrolled).toEqual([pill('Hiring')]);
+    } finally {
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    }
+  });
+
   it('filters by a Space or by All without navigating', () => {
     const { onSelect } = renderPills({ selectedSpaceId: 'launch' });
 

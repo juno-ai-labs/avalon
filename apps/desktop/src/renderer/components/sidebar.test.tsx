@@ -881,8 +881,8 @@ describe('Sidebar channel markers', () => {
     expect(markerOf('Completed mention')).toBe('You were mentioned');
     expect(markerOf('Completed unseen')).toBe('New to you');
     expect(markerOf('Scheduled mention')).toBe('You were mentioned');
-    expect(within(screen.getByRole('link', { name: /Board decision/u })).getByText('1 conversation needs attention')).toBeInTheDocument();
-    expect(within(screen.getByRole('link', { name: /Completed mention/u })).getByText('1 conversation needs attention')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Board decision, 1 conversation needs attention' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Completed mention, 1 conversation needs attention' })).toBeInTheDocument();
     expect(within(screen.getByRole('link', { name: /Missing sidebar row/u })).queryByText(/needs attention/u)).not.toBeInTheDocument();
     expect(document.querySelector('.sidebar-automation-marker')).toBeNull();
     expect(screen.queryByRole('img', { name: /Automation-generated/u })).not.toBeInTheDocument();
@@ -909,14 +909,13 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    const launch = screen.getByRole('link', { name: 'Launch' });
-    expect(within(launch).getByText('3 conversations need attention')).toBeInTheDocument();
+    const launch = screen.getByRole('link', { name: 'Launch, 3 conversations need attention' });
     // The count is not drawn as a badge any more; a Breakout's news is the
     // row's unread marker.
     expect(within(launch).queryByText('3')).not.toBeInTheDocument();
     expect(markerOf('Launch')).toBe('Unread');
-    expect(within(screen.getByRole('link', { name: 'Shared channel' })).getByText('1 conversation needs attention')).toBeInTheDocument();
-    expect(within(screen.getByRole('link', { name: 'Roadmap' })).queryByText(/needs attention/u)).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Shared channel, 1 conversation needs attention' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Roadmap' })).toBeInTheDocument();
     expect(markerOf('Roadmap')).toBeNull();
   });
 
@@ -4203,7 +4202,7 @@ describe('the sidebar Space filter', () => {
     renderFiltered({ workstreams: [{ ...alpha, breakoutAttentionCount: 1 }, bravo] });
 
     expect(markerOf('Alpha')).toBe('Unread');
-    expect(within(screen.getByRole('link', { name: 'Alpha' })).getByText('1 conversation needs attention')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Alpha, 1 conversation needs attention' })).toBeInTheDocument();
     expect(markerOf('Bravo')).toBeNull();
   });
 
@@ -4239,7 +4238,7 @@ describe('the sidebar Space filter', () => {
   });
 
   it('unpins under All from every Space that pins the Channel', async () => {
-    const onPinWorkstream = vi.fn(async () => true);
+    const onPinWorkstream = vi.fn<(target: WorkstreamSummary, spaceId: string, pinned: boolean) => Promise<boolean>>(async () => true);
     renderFiltered({
       onPinWorkstream,
       workstreams: [{ ...charlie, spacePins: [{ spaceId: hiring.id, position: 0 }, { spaceId: launch.id, position: 3 }] }],
