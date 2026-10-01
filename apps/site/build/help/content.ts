@@ -55,6 +55,14 @@ export interface HelpSite {
   pages: HelpPage[];
 }
 
+/** "Chapter 3", or "3.2" for the second page of chapter three. */
+export function pageNumber(page: HelpPage): string {
+  const chapter = page.chapter;
+  if (!chapter) return '';
+  if (page.kind === 'chapter') return `Chapter ${chapter.number}`;
+  return `${chapter.number}.${chapter.pages.indexOf(page) + 1}`;
+}
+
 export class HelpContentError extends Error {
   constructor(readonly problems: string[]) {
     super(`The help center has ${problems.length} problem(s):\n${problems.map((problem) => `  - ${problem}`).join('\n')}`);

@@ -6,8 +6,8 @@ import remarkGfm from 'remark-gfm';
 import remarkParse from 'remark-parse';
 import { unified } from 'unified';
 import { visit } from 'unist-util-visit';
-import { HelpContentError, loadHelpSite, type HelpChapter, type HelpPage, type HelpSite } from './content';
-import { escapeHtml, pageNumber, renderLayout, SITE_ORIGIN, type HelpPageAssets } from './layout';
+import { HelpContentError, loadHelpSite, pageNumber, type HelpChapter, type HelpPage, type HelpSite } from './content';
+import { escapeHtml, renderLayout, SITE_ORIGIN, type HelpPageAssets } from './layout';
 import { renderMarkdown, type HelpHeading, type HrefResolution } from './markdown';
 
 /** Output path relative to the published root (no leading slash) to its body. */

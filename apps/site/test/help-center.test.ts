@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { HelpContentError, loadHelpSite } from '../build/help/content';
 import { renderMarkdown } from '../build/help/markdown';
+import { ogImagePath, renderOgImage } from '../build/help/og';
 import { buildHelp } from '../build/help/site';
 import { searchEntries, type SearchEntry } from '../src/help-search';
 import { markdownPathFor, prefersMarkdown } from '../worker/index';
@@ -206,5 +207,37 @@ describe('help center content negotiation', () => {
     expect(markdownPathFor('/help/llms.txt')).toBeNull();
     expect(markdownPathFor('/help/_assets/window-1.png')).toBeNull();
     expect(markdownPathFor('/trust/')).toBeNull();
+  });
+});
+
+describe('help center social cards', () => {
+  const site = () => loadHelpSite(tree({
+    'index.md': page('Manual'),
+    '01-start/index.md': page('Start'),
+    '01-start/01-install.md': page('Install'),
+  }));
+
+  it('names each card after its page and changes the name when the words change', () => {
+    const before = site().pages.map(ogImagePath);
+    expect(before.map((path) => path.replace(/-[0-9a-f]{10}\.png$/u, ''))).toEqual(['/help/_og/help', '/help/_og/start', '/help/_og/start--install']);
+    const renamed = loadHelpSite(tree({
+      'index.md': page('Manual'),
+      '01-start/index.md': page('Start'),
+      '01-start/01-install.md': page('Install Rally'),
+    }));
+    expect(ogImagePath(renamed.pages[2]!)).not.toBe(before[2]);
+    expect(ogImagePath(renamed.pages[1]!)).toBe(before[1]);
+  });
+
+  it('renders a 1200 by 630 PNG', async () => {
+    const png = Buffer.from(await renderOgImage(site().pages[2]!));
+    expect(png.subarray(1, 4).toString('ascii')).toBe('PNG');
+    expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([1200, 630]);
+  });
+
+  it('puts the card in the page head', () => {
+    const html = buildHelp(tree({ 'index.md': page('Manual') }), { assets }).get('help/index.html');
+    expect(html).toMatch(/<meta property="og:image" content="https:\/\/rallywith\.ai\/help\/_og\/help-[0-9a-f]{10}\.png">/u);
+    expect(html).toContain('<meta property="og:image:alt" content="Manual: About manual.">');
   });
 });
