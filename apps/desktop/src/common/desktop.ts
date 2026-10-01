@@ -493,9 +493,10 @@ export interface RallyDesktopBridge {
   completeBrowserImport: (workstreamId: string) => Promise<void>;
   /**
    * The import window's create starting or failing, relayed to the main
-   * window; `completeBrowserImport` relays its success.
+   * window. `completeBrowserImport` relays its success and opens the Channel;
+   * `imported` here only settles the row when that hand-off failed.
    */
-  reportBrowserImport: (progress: Exclude<BrowserImportProgress, { phase: 'imported' }>) => Promise<void>;
+  reportBrowserImport: (progress: BrowserImportProgress) => Promise<void>;
   /** The main window's view of an import in the other window. */
   onBrowserImportProgress: (listener: (progress: BrowserImportProgress) => void) => () => void;
   /**
