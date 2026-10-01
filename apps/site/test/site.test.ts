@@ -145,8 +145,7 @@ describe('public Rally site', () => {
     };
     expect(column('Compared to')).toEqual([
       '/compare/claude-tag/', '/compare/grok-bot/', '/compare/viktor/', '/compare/chatgpt/',
-      '/compare/claude-cowork/', '/compare/instinct/', '/compare/notion-ai/', '/compare/slack/',
-      '/compare/microsoft-teams/', '/compare/',
+      '/compare/claude-cowork/', '/compare/slack/', '/compare/',
     ]);
     expect(column('Trust Center')).toEqual([
       '/trust/', '/trust/security/', '/trust/privacy/', '/trust/terms/', '/trust/dpa/',
@@ -206,13 +205,12 @@ describe('public Rally site', () => {
   it('derives every hub list, count, sitemap and llms.txt entry from the comparison files', () => {
     const hub = renderSiteChrome('<!-- rally:comparison-count -->|<!-- rally:comparison-count-title -->|<!-- rally:comparison-names -->|<!-- rally:comparison-item-list -->');
     const [count, title, names, list] = hub.split('|');
-    expect([count, title]).toEqual(['nine', 'Nine']);
-    expect(names).toBe('Claude Tag, Grok Bot, Viktor, ChatGPT, Claude Cowork, Instinct, Notion AI, Slack, and Microsoft Teams');
+    expect([count, title]).toEqual(['six', 'Six']);
+    expect(names).toBe('Claude Tag, Grok Bot, Viktor, ChatGPT, Claude Cowork, and Slack');
     expect((JSON.parse(list ?? '') as { itemListElement: { url: string }[] }).itemListElement.map(({ url }) => url))
       .toEqual(comparisons.map(({ slug }) => `https://rallywith.ai/compare/${slug}/`));
-    expect(renderSiteChrome('<!-- rally:comparison-table -->')).toContain('Rally compared with nine AI and team tools, as of October 2026');
     expect([...renderComparisonSitemap().matchAll(/<loc>([^<]+)<\/loc>/gu)].map(([, loc]) => loc))
       .toEqual(['https://rallywith.ai/compare/', ...comparisons.map(({ slug }) => `https://rallywith.ai/compare/${slug}/`)]);
-    expect(renderLlmsTxt()).toContain('- [Rally vs Slack](https://rallywith.ai/compare/slack/): Team chat with Slackbot, a personal AI agent, built in\n');
+    expect(renderLlmsTxt()).toContain('- [Rally vs Slack](https://rallywith.ai/compare/slack/): Team chat with other humans\n');
   });
 });

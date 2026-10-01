@@ -1,7 +1,7 @@
 # Landing comparisons and site footer
 
 The public site's "Compared to" pages and the column footer they share with the
-landing page. `rallywith.ai/compare/` lists nine rival products in one table, and
+landing page. `rallywith.ai/compare/` lists six rival products in one table, and
 each rival has its own page at `/compare/<slug>/` that answers "Rally vs X"
 for a person or an AI search engine. The landing page carries the same table as
 its "Compared to" section. The footer lists every comparison in one column and

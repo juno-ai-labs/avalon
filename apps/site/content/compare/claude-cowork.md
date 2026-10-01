@@ -6,7 +6,7 @@ order: 5
 title: "Rally vs Claude Cowork (2026): one AI for the team or one for you"
 description: "Claude Cowork is Anthropic's agent that does work for one person across files and apps. Rally is where a whole team and one AI work together."
 updated: 2026-10-01
-kind: "Anthropic's agent that works through one person's files and apps."
+kind: "Anthropic's AI assistant."
 edge: "Coworkers and one AI share a conversation and the project's history, on one quota for the whole organization."
 ---
 

@@ -7,7 +7,7 @@ title: "Rally vs Viktor (2026): an AI hire in Slack or a room to work in"
 description: "Viktor is an AI employee in Slack and Teams, paid in credits. Rally is a shared place where your team and one AI work together, priced per organization."
 updated: 2026-10-01
 kind: "An AI employee you @mention in Slack or Microsoft Teams."
-edge: "Your team and the AI work from the same project history, on a monthly bill that doesn't change."
+edge: "Rally knows how to be polite and not pester you constantly."
 ---
 
 **Short answer:** Viktor is a good call if you want to hand errands to an AI hire inside Slack or Teams and you're comfortable paying per task in credits. When the work needs more than one person, Rally is the better fit. In Rally your team and the AI sit in the same Channel, with the project's files and decisions right there, so a teammate can step in without a briefing. It still answers you in Slack when you mention it. And the price is flat per organization, so nobody thinks twice before asking.
