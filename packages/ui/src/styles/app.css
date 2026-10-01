@@ -7519,13 +7519,31 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
   text-align: center;
 }
 
+/* While composing, the dock spans the body and dock rows and centres in them;
+   launching drops it back into the dock row. Not animated, and the padding is
+   the settled dock's so the inherited padding transition has nothing to move —
+   see docs/workstream-creation.md "What moves". */
 .new-chat-screen:not(.is-launching) > .launch-dock {
-  background: linear-gradient(to top, var(--av-sys-color-surface-default) 72%, transparent);
-  bottom: 0;
-  left: 0;
+  align-self: center;
+  grid-row: 2 / 4;
   padding: 0 16px 16px;
-  position: absolute;
-  right: 0;
+}
+
+/* Centred, the field has only half the pane above it, and the mention and
+   command lists open upward: in a short window a full list ran under the
+   Participants bar. The screen is a size container so the lists can cap
+   themselves at the room they have. Both are positioned against the composer,
+   so `50%` is half its height whatever the draft's length, and with the dock
+   centred under the bar the room above a list is half the screen less half the
+   composer, half the bar, half the dock's bottom padding, the list's own offset
+   and a gap — 48px at most, for the command list. The 280px is each list's own
+   ceiling, restated because `min()` is the only way to keep it. */
+.new-chat-screen:not(.is-launching) {
+  container-type: size;
+}
+
+.new-chat-screen:not(.is-launching) :is(.mention-popover, .command-popover) {
+  max-height: min(280px, calc(50cqh - 50% - 48px));
 }
 
 
