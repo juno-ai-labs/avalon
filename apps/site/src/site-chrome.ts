@@ -10,7 +10,7 @@ import { escapeHtml as escape, loadComparisons, type Comparison } from './compar
 /** Every rival, read from `content/compare/*.md` and sorted by `order`. */
 export const comparisons: readonly Comparison[] = loadComparisons(new URL('../content/compare/', import.meta.url));
 
-/** Every blog post, read from `content/blog/*.md`, newest first. */
+/** Every blog post, read from `content/blog/YYYY-MM-DD-<title>.md`, newest first. */
 export const blogPosts: readonly BlogPost[] = loadBlogPosts(new URL('../content/blog/', import.meta.url));
 
 export const trustPages: readonly { href: string; name: string }[] = [
@@ -30,7 +30,7 @@ const DOWNLOAD = 'https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg';
 /** The header's links and download button, the same on every marketing page. */
 export function renderSiteNav(): string {
   return '<nav aria-label="Primary"><a class="header-link" href="/#features">Features</a><a class="header-link" href="/#pricing">Pricing</a>'
-    + '<a class="header-link" href="/#compare">Compare</a><a class="header-link" href="/blog/">Blog</a>'
+    + '<a class="header-link" href="/#compare">Compare</a>'
     + `<a class="button button-small" data-site-action="download-header" href="${DOWNLOAD}" download>Download for Mac</a></nav>`;
 }
 

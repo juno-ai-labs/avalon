@@ -1,12 +1,15 @@
 import "../../../tests/isolated-region";
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parseDesktopTarget } from '../src/auth-handoff';
 import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
 import { isIosDevice, legacyIosWorkstreamHandoff } from '../src/workstream-link';
 import { parseComparison, renderComparisonPage } from '../src/comparison-pages';
-import { parseBlogPost, renderBlogIndex, renderBlogPost } from '../src/blog-pages';
+import { loadBlogPosts, parseBlogPost, renderBlogIndex, renderBlogPost } from '../src/blog-pages';
 import { blogPosts, comparisons, renderBlogSitemap, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from '../src/site-chrome';
 import { renderComparisonCard } from '../src/social-cards';
 import sharp from 'sharp';
@@ -199,30 +202,73 @@ describe('public Rally site', () => {
     expect(renderLlmsTxt()).toContain('- [Rally vs Slack](https://rallywith.ai/compare/slack/): Team chat with other humans\n');
   });
 
-  it('puts Blog between Compare and the download button in the shared header', () => {
+  it('lists the section links and the download button in the shared header, without Blog', () => {
     const nav = renderSiteChrome('<!-- rally:site-nav -->');
     expect([...nav.matchAll(/<a [^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/gu)].map(([, href, label]) => `${label} ${href}`)).toEqual([
-      'Features /#features', 'Pricing /#pricing', 'Compare /#compare', 'Blog /blog/',
+      'Features /#features', 'Pricing /#pricing', 'Compare /#compare',
       'Download for Mac https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg',
     ]);
   });
 
-  it('renders a blog post and the blog index from Markdown', () => {
+  it('renders a blog post from a dated Markdown file and refuses a bad name or front matter', () => {
     const source = [
-      '---', 'slug: hello', 'title: "Hello"', 'description: "A first post."', 'date: 2026-10-01', 'author: "The Rally team"', '---',
+      '---', 'slug: hello', 'title: "Hello"', 'description: "A first post."', 'author: "The Rally team"', '---',
       '', 'First paragraph.', '', 'Second **paragraph**.', '',
     ].join('\n');
-    const post = parseBlogPost(source, 'hello.md');
+    const post = parseBlogPost(source, '2026-10-01-hello-there.md');
     const page = renderBlogPost(post);
     expect(page).toContain('<h1 class="display blog-title">Hello</h1>');
     expect(page).toContain('<p class="blog-meta"><time datetime="2026-10-01">October 1, 2026</time> · The Rally team</p>');
     expect(page).toContain('<div class="blog-body"><p>First paragraph.</p>\n<p>Second <strong>paragraph</strong>.</p>\n</div>');
     expect(page).toContain('<link rel="canonical" href="https://rallywith.ai/blog/hello/" />');
     expect(page).toContain('<meta property="og:image" content="https://rallywith.ai/blog/hello/social.png" />');
-    expect(renderBlogIndex([post])).toContain('<a class="blog-entry" href="/blog/hello/"><time datetime="2026-10-01">October 1, 2026</time><span class="blog-entry-title">Hello</span>');
-    expect(() => parseBlogPost(source.replace('date: 2026-10-01\n', ''), 'hello.md')).toThrow('hello.md: front matter is missing "date"');
-    expect(() => parseBlogPost(source.replace('2026-10-01', '2026-02-30'), 'hello.md')).toThrow('hello.md: date "2026-02-30" is not a real YYYY-MM-DD day');
-    expect(() => parseBlogPost(source.replace('slug: hello', 'slug: hello_world'), 'hello.md')).toThrow('hello.md: slug "hello_world" must be lowercase letters, digits and hyphens');
+    expect(() => parseBlogPost(source, 'hello.md')).toThrow('hello.md: file name must be YYYY-MM-DD-<title>.md');
+    expect(() => parseBlogPost(source, '2026-10-01-hello_world.md')).toThrow('2026-10-01-hello_world.md: file name must be YYYY-MM-DD-<title>.md');
+    expect(() => parseBlogPost(source.replace('slug: hello', 'slug: hello_world'), '2026-10-01-hello.md'))
+      .toThrow('2026-10-01-hello.md: slug "hello_world" must be lowercase letters, digits and hyphens');
+    expect(() => parseBlogPost(source.replace('slug: hello\n', ''), '2026-10-01-hello.md')).toThrow('2026-10-01-hello.md: front matter is missing "slug"');
+    expect(() => parseBlogPost(source, '2026-02-30-hello.md')).toThrow('2026-02-30-hello.md: date "2026-02-30" is not a real YYYY-MM-DD day');
+    expect(() => parseBlogPost(source, '2026-13-01-hello.md')).toThrow('2026-13-01-hello.md: date "2026-13-01" is not a real YYYY-MM-DD day');
+    expect(() => parseBlogPost(source.replace('author: "The Rally team"\n', ''), '2026-10-01-hello.md')).toThrow('2026-10-01-hello.md: front matter is missing "author"');
+    expect(() => parseBlogPost(source.replace('---\nslug', '---\ndate: 2026-10-02\nslug'), '2026-10-01-hello.md'))
+      .toThrow('2026-10-01-hello.md: "date" comes from the file name, not the front matter');
+  });
+
+  it('refuses two blog posts that share a slug', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'blog-'));
+    try {
+      const front = ['---', 'slug: same', 'title: "T"', 'description: "D."', 'author: "A"', '---', '', 'Body.', ''].join('\n');
+      writeFileSync(join(directory, '2026-10-01-first.md'), front);
+      writeFileSync(join(directory, '2026-10-02-second.md'), front);
+      expect(() => loadBlogPosts(pathToFileURL(`${directory}/`))).toThrow('2026-10-02-second.md: slug "same" is already used by 2026-10-01-first.md');
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('renders the blog index as a changelog: the newest post in full, older posts as a first paragraph and a link', () => {
+    const post = (file: string, title: string, body: string) =>
+      parseBlogPost(['---', `slug: ${title.toLowerCase()}`, `title: "${title}"`, 'description: "D."', 'author: "The Rally team"', '---', '', body].join('\n'), file);
+    const index = renderBlogIndex([
+      post('2026-10-08-newer.md', 'Newer', 'Newer opening.\n\n- [x] Shipped\n\nNewer close.\n'),
+      post('2026-10-01-older.md', 'Older', '## A heading\n\nOlder opening with **bold**.\n\nOlder close.\n'),
+    ]);
+    const entries = index.split('<article class="changelog-entry">').slice(1);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toContain('<time datetime="2026-10-08">October 8, 2026</time>');
+    expect(entries[0]).toContain('<h2 class="changelog-title"><a href="/blog/newer/">Newer</a></h2>');
+    expect(entries[0]).toContain('<p>Newer close.</p>');
+    expect(entries[0]).toContain('<input checked="" disabled="" type="checkbox"> Shipped');
+    expect(entries[0]).not.toContain('Read more');
+    expect(entries[1]).toContain('<div class="blog-body"><p>Older opening with <strong>bold</strong>.</p>\n</div>');
+    expect(entries[1]).not.toContain('Older close.');
+    expect(entries[1]).not.toContain('A heading');
+    expect(entries[1]).toContain('<a class="changelog-more" href="/blog/older/" aria-label="Read more: Older">Read more');
+    const referenced = renderBlogIndex([
+      post('2026-10-08-newer.md', 'Newer', 'Newer.\n'),
+      post('2026-10-01-older.md', 'Older', 'See [the details][d].\n\nMore.\n\n[d]: https://example.com/d\n'),
+    ]);
+    expect(referenced).toContain('<p>See <a href="https://example.com/d">the details</a>.</p>');
   });
 
   it('lists the blog index and every post in the blog sitemap', () => {
