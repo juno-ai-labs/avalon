@@ -4,10 +4,14 @@
  * `vite.config.ts` swaps in the markup, so the list of rivals and Trust Center
  * pages lives in one place instead of in every page that shows it. Node only.
  */
+import { loadBlogPosts, type BlogPost } from './blog-pages';
 import { escapeHtml as escape, loadComparisons, type Comparison } from './comparison-pages';
 
 /** Every rival, read from `content/compare/*.md` and sorted by `order`. */
 export const comparisons: readonly Comparison[] = loadComparisons(new URL('../content/compare/', import.meta.url));
+
+/** Every blog post, read from `content/blog/*.md`, newest first. */
+export const blogPosts: readonly BlogPost[] = loadBlogPosts(new URL('../content/blog/', import.meta.url));
 
 export const trustPages: readonly { href: string; name: string }[] = [
   { href: '/trust/', name: 'Overview' },
@@ -21,6 +25,15 @@ export const trustPages: readonly { href: string; name: string }[] = [
 ];
 
 const ORIGIN = 'https://rallywith.ai';
+const DOWNLOAD = 'https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg';
+
+/** The header's links and download button, the same on every marketing page. */
+export function renderSiteNav(): string {
+  return '<nav aria-label="Primary"><a class="header-link" href="/#features">Features</a><a class="header-link" href="/#pricing">Pricing</a>'
+    + '<a class="header-link" href="/#compare">Compare</a><a class="header-link" href="/blog/">Blog</a>'
+    + `<a class="button button-small" data-site-action="download-header" href="${DOWNLOAD}" download>Download for Mac</a></nav>`;
+}
+
 const footerColumn = (id: string, title: string, links: readonly string[]): string =>
   `<nav class="footer-column" aria-labelledby="${id}"><h2 class="footer-heading" id="${id}">${title}</h2><ul class="footer-links">${links.map((link) => `<li>${link}</li>`).join('')}</ul></nav>`;
 
@@ -33,12 +46,18 @@ export function renderSiteFooter(): string {
     '<a href="/help/connecting-your-tools/">Connectors</a>',
     '<a data-site-action="support-contact-footer" href="mailto:help@rallywith.ai?subject=Rally%20support">help@rallywith.ai</a>',
   ];
+  // The index, then the newest post, so the column stays one line per link as posts accumulate.
+  const blog = [
+    '<a href="/blog/">All posts</a>',
+    ...blogPosts.slice(0, 1).map(({ slug, title }) => `<a href="/blog/${slug}/">${escape(title)}</a>`),
+  ];
   return `<footer class="rally-footer"><div class="footer-grid">`
     + `<div class="footer-brand"><a class="wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark-ink.svg" width="24" height="24" alt=""><span>rally</span></a>`
     + `<p class="footer-tagline">Made for people who work with AI, not on it.</p></div>`
     + footerColumn('footer-compared', 'Compared to', compared)
     + footerColumn('footer-trust', 'Trust Center', trust)
     + footerColumn('footer-help', 'Help', help)
+    + footerColumn('footer-blog', 'Blog', blog)
     + `</div><p class="footer-legal"><small>© 2026 Juno AI Labs · Rally</small></p></footer>`;
 }
 
@@ -55,13 +74,21 @@ export function renderComparisonTable(): string {
     + `<tbody>${rows}</tbody></table></div>`;
 }
 
-/** A sitemap of the comparison pages, which `robots.txt` lists beside the main one. */
-export function renderComparisonSitemap(): string {
-  const urls = comparisons.map(({ slug, updated }) => ({ loc: `${ORIGIN}/compare/${slug}/`, lastmod: updated }));
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n`
+const sitemap = (urls: readonly { loc: string; lastmod: string }[]): string =>
+  `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n`
     + urls.map(({ loc, lastmod }) => `  <url>\n    <loc>${loc}</loc>\n    <lastmod>${lastmod}</lastmod>\n  </url>\n`).join('')
     + '</urlset>\n';
-}
+
+/** A sitemap of the comparison pages, which `robots.txt` lists beside the main one. */
+export const renderComparisonSitemap = (): string =>
+  sitemap(comparisons.map(({ slug, updated }) => ({ loc: `${ORIGIN}/compare/${slug}/`, lastmod: updated })));
+
+/** A sitemap of the blog index and every post, which `robots.txt` lists beside the main one. */
+export const renderBlogSitemap = (): string => {
+  const posts = blogPosts.map(({ slug, date }) => ({ loc: `${ORIGIN}/blog/${slug}/`, lastmod: date }));
+  // The index changes when its newest post does; with no posts there is nothing to list.
+  return sitemap(blogPosts[0] ? [{ loc: `${ORIGIN}/blog/`, lastmod: blogPosts[0].date }, ...posts] : posts);
+};
 
 /** `/llms.txt`: a plain index of the site for AI tools. */
 export function renderLlmsTxt(): string {
@@ -80,6 +107,12 @@ Written by the Rally team, so biased, and dated on each page. Each page's Markdo
 
 ${comparisons.map(({ slug, name, kind }) => `- [Rally vs ${name}](${ORIGIN}/compare/${slug}/): ${kind.replace(/\.$/u, '')}`).join('\n')}
 
+## Blog
+
+Each post's Markdown source is published beside it at \`index.md\`.
+
+${blogPosts.map(({ slug, title, description }) => `- [${title}](${ORIGIN}/blog/${slug}/): ${description}`).join('\n')}
+
 ## Trust Center
 
 ${trustPages.map(({ href, name }) => `- [${name}](${ORIGIN}${href})`).join('\n')}
@@ -87,6 +120,7 @@ ${trustPages.map(({ href, name }) => `- [${name}](${ORIGIN}${href})`).join('\n')
 }
 
 const markers: Record<string, () => string> = {
+  'site-nav': renderSiteNav,
   'site-footer': renderSiteFooter,
   'comparison-table': renderComparisonTable,
 };
