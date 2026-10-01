@@ -56,9 +56,12 @@ field throws, so the build fails instead of shipping a broken page.
 
 ### Shared footer and table
 
-A page that wants shared markup holds a marker comment. `<!-- rally:site-footer -->`
+A page that wants shared markup holds a marker comment. `<!-- rally:site-nav -->`
+becomes the header's links and download button, `<!-- rally:site-footer -->`
 becomes the column footer and `<!-- rally:comparison-table -->` becomes the
-table of rivals, so no page lists rivals by hand. Markers work anywhere in the
+table of rivals, so no page lists rivals or header links by hand. The nav's
+section links point at `/#features` and friends, so the same markup works on
+the landing page and on every other page. Markers work anywhere in the
 file, attribute values and JSON included. The plugin runs with `order: 'pre'`, before the access-copy
 and telemetry plugins. An unknown marker throws. Both read `comparisons`,
 which is sorted by each file's `order`.
@@ -146,6 +149,25 @@ section, the footer, and one rival page at 1440px and 390px, and open
 `dist/compare/*/social.png`.
 
 ## Changelog
+
+### 2026-10-01: The header's links become a shared marker
+
+**What changed:** The landing page and the comparison pages each carried their
+own copy of the header nav. Both now hold `<!-- rally:site-nav -->`, rendered by
+`renderSiteNav`, which adds a Blog link between Compare and Download for Mac.
+The plugin that renders comparison pages is renamed `rally-markdown-pages` and
+also renders the blog, described in [`site-blog.md`](site-blog.md).
+
+**Why:** Adding the Blog link meant editing two copies of the nav, and the copies
+already differed only in whether links started with `/`. One renderer keeps them
+identical.
+
+**Considered and rejected:** Keeping per-page navs with relative `#features`
+links on the landing page. The absolute `/#features` form works on every page,
+and on the landing page it scrolls without a reload.
+
+**Consequences:** A header link goes in `renderSiteNav`, never in a page. The
+Trust Center pages still write their own nav, so a link added there is separate.
 
 ### 2026-10-01: Trust Center pages take the landing's chrome
 
