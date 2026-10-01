@@ -30,7 +30,6 @@ export interface Comparison {
 }
 
 const ORIGIN = 'https://rallywith.ai';
-const DOWNLOAD = 'https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg';
 const CTA = '<div class="compare-cta"><a class="button" href="/#pricing">See Rally pricing</a><a class="button button-outline" href="/#compare">Compare Rally with other tools</a></div>';
 const FIELDS = ['slug', 'name', 'maker', 'order', 'title', 'description', 'updated', 'kind', 'edge'] as const;
 
@@ -209,7 +208,7 @@ export function renderComparisonPage(comparison: Comparison): string {
 <a class="skip-link" href="#content">Skip to content</a>
 <header class="site-header"><div class="site-header-inner">
 <a class="wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark-ink.svg" width="24" height="24" alt="">rally</a>
-<nav aria-label="Primary"><a class="header-link" href="/#features">Features</a><a class="header-link" href="/#pricing">Pricing</a><a class="header-link" href="/#compare">Compare</a><a class="button button-small" data-site-action="download-header" href="${DOWNLOAD}" download>Download for Mac</a></nav>
+<!-- rally:site-nav -->
 </div></header>
 <main id="content">
 <article class="compare-page">

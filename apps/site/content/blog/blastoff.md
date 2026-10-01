@@ -1,0 +1,27 @@
+---
+slug: blastoff
+title: "Blastoff"
+description: "Today we’re introducing Rally: you, your coworkers, and an AI agent in the same chat."
+date: 2026-10-01
+author: "The Rally team"
+---
+
+Today we’re introducing Rally.
+
+Rally puts you, your coworkers, and an AI agent in the same chat. Anyone can ask it to research, write, or build something. Teammates can jump in to steer the work or pick up where someone else left off. Rally follows the conversation and knows when to respond and when to listen.
+
+AI has made individual work faster. Bringing that work back to a team often means copying answers into chat, collecting feedback across multiple applications, and returning to a private assistant to explain what changed. Your coworker does the same with theirs. Output travels while context and intent stay scattered.
+
+Rally tears down the wall between isolated AI chats and team discussion by putting everyone in the same conversation. A teammate can question an assumption, add missing information, or ask for a revision directly. Rally can act on that feedback with the discussion already in view.
+
+Here’s how early customers are using it.
+
+Mary, a recruiter, used Rally to research a new role, create a market map, and build a website to share with her team and client. A colleague had suggestions based on similar searches. Mary added him to the Channel, and he asked Rally for changes directly—building on the existing work without copying it into another chat.
+
+Ellen and a fellow researcher developed a grant proposal together in a Channel. To find supporting statistics, Ellen opened a Breakout: a private conversation with Rally that shares the live context of the original discussion. She researched the data, then merged the results back into the Channel and added them to the proposal.
+
+We use Rally ourselves to write product requirements, work through launch metrics, and hand off coding sessions between teammates.
+
+Models will keep improving, getting work done faster and better. People will still need to review it, contribute their experience, resolve disagreements, and decide how to move forward together.
+
+We built Rally to help with that process. Bring your coworkers into the conversation and get work done with AI, together.
