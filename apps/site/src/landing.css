@@ -197,6 +197,12 @@ h1{white-space:pre-line;max-width:56rem;margin:0 auto;font-size:4.5rem}
 .blog-body{margin-top:48px;padding-top:48px;border-top:1px solid var(--hairline);font-size:19px;line-height:1.7;color:var(--soft)}
 .blog-body p+p{margin-top:1.25em}
 .blog-body a{color:var(--paper);border-bottom:1px solid oklch(.97 0 0/.25)}
+.blog-body h2,.blog-body h3{margin:2em 0 .6em;font-family:var(--display-font);font-weight:500;line-height:1.15;color:var(--paper)}
+.blog-body h2{font-size:32px;text-transform:uppercase;letter-spacing:.02em}
+.blog-body h3{font-size:24px}
+.blog-body :is(ul,ol,blockquote,pre){margin:1.25em 0}
+.blog-body li+li{margin-top:.4em}
+.blog-body strong{color:var(--paper);font-weight:500}
 .blog-list{margin:48px 0 0;padding:0;list-style:none;border-top:1px solid var(--hairline)}
 .blog-list li{border-bottom:1px solid var(--hairline)}
 .blog-entry{display:grid;gap:8px;padding:28px 0;transition:background .15s}

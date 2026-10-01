@@ -59,6 +59,10 @@ export function loadComparisons(directory: URL): Comparison[] {
     .sort((a, b) => a.order - b.order);
 }
 
+/** A `YYYY-MM-DD` day as "October 1, 2026", read in UTC so the day never shifts. */
+export const longDate = (day: string): string =>
+  new Date(`${day}T00:00:00Z`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+
 export const escapeHtml = (text: string): string =>
   text.replace(/[&<>"']/gu, (character) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -138,7 +142,7 @@ export function renderComparisonPage(comparison: Comparison): string {
   });
 
   const answer = blocks(before).replace(/^<p>/u, '<p class="compare-answer">');
-  const date = new Date(`${updated}T00:00:00Z`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  const date = longDate(updated);
   const rally = {
     '@type': 'SoftwareApplication', '@id': `${ORIGIN}/#rally`, name: 'Rally', url: `${ORIGIN}/`,
     applicationCategory: 'BusinessApplication', operatingSystem: 'macOS',
