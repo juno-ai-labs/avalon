@@ -447,8 +447,8 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
     /* Both states are one element tree, and the launching one carries
        `workstream-screen` so it inherits that screen's own geometry rather than
        an approximation of it. The composer is never unmounted between them: it
-       is the element the eye holds on to while everything around it changes,
-       and remounting it would break the hand-off into two separate objects. */
+       moves from the middle of the pane to the dock, and remounting it would
+       break the hand-off into two separate objects. */
     <div className={clsx(
       'workstream-launch-screen new-chat-screen',
       launching && 'workstream-screen is-launching',
