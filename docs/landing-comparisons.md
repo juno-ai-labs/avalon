@@ -49,8 +49,9 @@ the page without parsing HTML.
 
 `renderComparisonPage` lexes the body with `marked` and maps each `##` section
 to the landing page's layout: the table becomes `versus-table` with
-`data-label`s for the phone layout, `###` items become `points` cards, a
-blockquote becomes the dad-joke aside, and the pricing and landing-table buttons follow.
+`data-label`s for the phone layout, `###` items become `points` cards, and a
+blockquote there becomes the dad-joke aside. A blockquote in the short answer or
+after the table renders in place as a plain quote.
 An unknown `##` heading, a missing required section, or a missing front matter
 field throws, so the build fails instead of shipping a broken page.
 
@@ -142,13 +143,25 @@ What the pages report to PostHog is in
 
 `pnpm --filter @rally/site exec vitest run test/site.test.ts` renders the footer
 and the table and asserts their links, renders a fixture Markdown page and
-asserts its table, cards, buttons, meta tags and validation errors, draws a card and checks it is a 1200x630 opaque PNG, and runs the
+asserts its table, cards, quotes, meta tags and validation errors, draws a card and checks it is a 1200x630 opaque PNG, and runs the
 tracking check over the rendered landing page. Layout and the cards are verified
 visually: build, serve `dist` with `vite preview`, screenshot the landing
 section, the footer, and one rival page at 1440px and 390px, and open
 `dist/compare/*/social.png`.
 
 ## Changelog
+
+### 2026-10-01: Drop the closing buttons, render quotes anywhere
+
+**What changed:** The "See Rally pricing" and "Compare Rally with other tools"
+buttons no longer close each comparison page. A blockquote in the short answer
+now has its own quiet style, and one after the "Side by side" table renders
+instead of being dropped.
+
+**Why:** The team asked for the buttons to go; the header and footer already
+link to pricing and the other comparisons. The ChatGPT page put a blockquote
+under its short answer, which rendered with browser defaults, and the table
+section silently discarded anything after the table.
 
 ### 2026-10-01: The header's links become a shared marker
 
