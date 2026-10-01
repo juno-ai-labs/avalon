@@ -17,7 +17,7 @@ const comparisonEntries = new Map(comparisons.map((comparison) => [
   `${projectRoot}compare/${comparison.slug}/index.html`, comparison,
 ]));
 // Every HTML page rendered from Markdown, by published path: the comparison
-// pages, the blog index, and each blog post from `content/blog/<slug>.md`.
+// pages, the blog index, and each blog post from `content/blog/YYYY-MM-DD-<slug>.md`.
 const renderedPages = new Map<string, () => string>([
   ...[...comparisonEntries].map(([path, comparison]) => [path, () => renderComparisonPage(comparison)] as const),
   [`${projectRoot}blog/index.html`, () => renderBlogIndex(blogPosts)],
