@@ -465,6 +465,37 @@ test('reports a missing release object without writing it', async () => {
   assert.equal(found, false);
 });
 
+test('reports a missing release object even when its body cannot be cancelled', async () => {
+  const found = await downloadReleaseObject({
+    destination: '/nonexistent/never-written',
+    fetchImplementation: async () => new Response(new ReadableStream({
+      cancel() { throw new Error('cancel failed'); },
+    }), { status: 404 }),
+    label: 'r2://rally-desktop-releases/stable/darwin/arm64/absent.zip',
+    source: 'Cloudflare',
+    url: 'https://api.cloudflare.com/client/v4/accounts/a/r2/buckets/b/objects/k',
+  });
+  assert.equal(found, false);
+});
+
+test('names the status of a refused download whose body cannot be read', async () => {
+  await assert.rejects(
+    downloadReleaseObject({
+      destination: '/nonexistent/never-written',
+      fetchImplementation: async () => new Response(new ReadableStream({
+        pull() { throw new Error('read failed'); },
+      }), { status: 503 }),
+      label: 'r2://rally-desktop-releases/stable/darwin/arm64/Rally.zip',
+      source: 'Cloudflare',
+      url: 'https://api.cloudflare.com/client/v4/accounts/a/r2/buckets/b/objects/k',
+    }),
+    {
+      message: 'Could not inspect r2://rally-desktop-releases/stable/darwin/arm64/Rally.zip; '
+        + 'Cloudflare returned HTTP 503: unreadable response body',
+    },
+  );
+});
+
 test('names the object and status when a release object download is refused', async () => {
   await assert.rejects(
     downloadReleaseObject({
