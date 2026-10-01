@@ -115,7 +115,9 @@ same as desktop.
 - App-window navigation and popup creation are denied by default; Rally's own
   OAuth opens in the system browser. The embedded browser's isolated web
   contents handle website links and redirects within their own session, with
-  non-web destinations rejected.
+  non-web destinations rejected. Visited pages may use passkeys
+  (`publickey-credentials-get` and `publickey-credentials-create`); every other
+  site permission stays denied.
 - The main window and the import window may drive their own browser tabs,
   including page script and DevTools commands; no other window may. Those
   commands act with the person's website sign-ins, so a script injected into

@@ -25,6 +25,17 @@ export function isEmbeddedBrowserWebContents(contents: WebContents): boolean {
   return embeddedBrowserContents.has(contents);
 }
 
+/**
+ * Passkeys (Touch ID, fingerprint, a phone, a security key) are how Google and
+ * similar sign-in pages ask for a credential. Every other site permission stays
+ * denied: this is a browser for reading a page, not a camera, mic, or location
+ * prompt.
+ */
+function allowsEmbeddedBrowserPermission(permission: string): boolean {
+  return permission === 'publickey-credentials-get'
+    || permission === 'publickey-credentials-create';
+}
+
 function chromeUserAgent(): string {
   const platform = process.platform === 'darwin'
     ? 'Macintosh; Intel Mac OS X 10_15_7'
@@ -76,8 +87,10 @@ export class EmbeddedBrowser {
     // Use the bundled Chromium version and ordinary browser language settings.
     // This removes Electron's UA token; it cannot make every fingerprint match Chrome.
     this.browserSession.setUserAgent(chromeUserAgent(), app.getLocale());
-    this.browserSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-    this.browserSession.setPermissionCheckHandler(() => false);
+    this.browserSession.setPermissionRequestHandler((_contents, permission, callback) => {
+      callback(allowsEmbeddedBrowserPermission(permission));
+    });
+    this.browserSession.setPermissionCheckHandler((_contents, permission) => allowsEmbeddedBrowserPermission(permission));
     window.once('closed', () => this.dispose());
   }
 

@@ -54,7 +54,7 @@ async function runGeneratedReader(
   extras: {
     fetch: (input: string, init?: RequestInit) => Promise<{ ok: boolean; json: () => Promise<unknown> }>;
     location: { origin: string; pathname: string; href: string };
-    document: { querySelectorAll: (selector: string) => Array<{ textContent: string }> };
+    document: { querySelectorAll: (selector: string) => unknown[] };
   },
 ) {
   const run = new Function('fetch', 'location', 'document', `return ${expression}`);
@@ -76,6 +76,10 @@ describe('browser conversation import', () => {
   it('recognizes only signed-in ChatGPT and Claude conversation routes', () => {
     expect(browserConversation(tab('a', 'Chat', 'https://chatgpt.com/c/6ab43c03-6b2c-83e8-9eba-f1c51fa1e7a0/')))
       .toEqual({ provider: 'chatgpt', id: '6ab43c03-6b2c-83e8-9eba-f1c51fa1e7a0', url: 'https://chatgpt.com/c/6ab43c03-6b2c-83e8-9eba-f1c51fa1e7a0', title: 'Chat', shared: false });
+    expect(browserConversation(tab('g', 'Project chat', 'https://chatgpt.com/g/g-p-675ca102ae588191be096de7a00adb52-ai-self-mastery/c/6ab43c03-6b2c-83e8-9eba-f1c51fa1e7a0')))
+      .toEqual({ provider: 'chatgpt', id: '6ab43c03-6b2c-83e8-9eba-f1c51fa1e7a0',
+        url: 'https://chatgpt.com/g/g-p-675ca102ae588191be096de7a00adb52-ai-self-mastery/c/6ab43c03-6b2c-83e8-9eba-f1c51fa1e7a0',
+        title: 'Project chat', shared: false });
     expect(browserConversation(tab('b', '', 'https://claude.ai/chat/4f2b7c1e-9a3d-4e8b-b1c2-0d9e8f7a6b5c?x=1')))
       .toMatchObject({ provider: 'claude', url: 'https://claude.ai/chat/4f2b7c1e-9a3d-4e8b-b1c2-0d9e8f7a6b5c', title: 'Claude conversation' });
     expect(browserConversation(tab('c', 'Share', 'https://chatgpt.com/share/6ab43c03-6b2c-83e8-9eba-f1c51fa1e7a0')))
@@ -188,6 +192,37 @@ describe('browser conversation import', () => {
       .resolves.toEqual({ error: 'ChatGPT could not return this conversation.' });
     await expect(runGeneratedReader(expression, { fetch: sessionThen({}), location, document }))
       .resolves.toEqual({ error: 'ChatGPT returned an incomplete conversation.' });
+  });
+
+  it('imports a signed-in ChatGPT conversation from the page when the conversation API refuses', async () => {
+    const url = 'https://chatgpt.com/c/6ab43c03-6b2c-83e8-9eba-f1c51fa1e7a0';
+    const conversation = sharedChatGptConversation();
+    const fetch = vi.fn(async (input: string) => String(input).includes('/api/auth/session')
+      ? jsonResponse({})
+      : jsonResponse(null, true));
+    const expression = await generatedReader(url);
+    const fromScript = await runGeneratedReader(expression, {
+      fetch, location: chatgptLocation(url),
+      document: { querySelectorAll: (selector: string) => selector === 'script' ? [{ textContent: capturedShareEnqueue }] : [] },
+    });
+    expectImportedConversation(fromScript, conversation);
+    expect(fetch.mock.calls.some((call) => String(call[0]).includes('/backend-api/conversation/'))).toBe(false);
+  });
+
+  it('imports a signed-in ChatGPT conversation from the React tree when scripts and the API refuse', async () => {
+    const url = 'https://chatgpt.com/c/6ab43c03-6b2c-83e8-9eba-f1c51fa1e7a0';
+    const conversation = sharedChatGptConversation();
+    const fetch = vi.fn<(input: string) => Promise<{ ok: boolean; json: () => Promise<unknown> }>>(
+      async () => jsonResponse(null, true),
+    );
+    const root = { __reactFiber$test: { memoizedProps: { conversation }, memoizedState: null, child: null, sibling: null } };
+    const expression = await generatedReader(url);
+    const fromFiber = await runGeneratedReader(expression, {
+      fetch, location: chatgptLocation(url),
+      document: { querySelectorAll: (selector: string) => selector.includes('#root') ? [root] : [] },
+    });
+    expectImportedConversation(fromFiber, conversation);
+    expect(fetch.mock.calls.some((call) => String(call[0]).includes('/backend-api/conversation/'))).toBe(false);
   });
 
   it('opens a closed source for the read and closes that tab afterwards', async () => {

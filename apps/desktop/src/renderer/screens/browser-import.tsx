@@ -54,7 +54,9 @@ export function BrowserImportWindow(): React.JSX.Element {
 
   const conversation = active ? browserConversation(active) : null;
   const starting = active === undefined || active.url === 'about:blank';
-  useEmbeddedBrowserPlacement(pageRef, !starting && browserError === null);
+  // The native page sits above the renderer, so a Rally sheet or the read-failure
+  // banner would otherwise open underneath ChatGPT and look like Import did nothing.
+  useEmbeddedBrowserPlacement(pageRef, !starting && browserError === null && pending === null && failure === null);
 
   useEffect(() => {
     let live = true;

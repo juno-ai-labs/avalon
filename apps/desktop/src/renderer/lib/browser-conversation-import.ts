@@ -15,7 +15,7 @@ export interface BrowserConversation {
 const uuid = '([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})';
 /** The conversation routes each provider's own web client shows: the person's own, and shared links. */
 const conversationRoutes: Array<{ provider: BrowserConversationProvider; hostname: string; path: RegExp; shared: boolean; fallbackTitle: string }> = [
-  { provider: 'chatgpt', hostname: 'chatgpt.com', path: new RegExp(`^/c/${uuid}/?$`, 'iu'), shared: false, fallbackTitle: 'ChatGPT conversation' },
+  { provider: 'chatgpt', hostname: 'chatgpt.com', path: new RegExp(`^(?:/g/[^/]+)?/c/${uuid}/?$`, 'iu'), shared: false, fallbackTitle: 'ChatGPT conversation' },
   { provider: 'chatgpt', hostname: 'chatgpt.com', path: new RegExp(`^/share/${uuid}/?$`, 'iu'), shared: true, fallbackTitle: 'Shared ChatGPT conversation' },
   { provider: 'claude', hostname: 'claude.ai', path: new RegExp(`^/chat/${uuid}/?$`, 'iu'), shared: false, fallbackTitle: 'Claude conversation' },
   { provider: 'claude', hostname: 'claude.ai', path: new RegExp(`^/share/${uuid}/?$`, 'iu'), shared: true, fallbackTitle: 'Shared Claude conversation' },
@@ -102,12 +102,14 @@ const CAPPED_READS = `
 `;
 
 /**
- * ChatGPT's share page hydrates from a React Router loader stream rather than
- * `/backend-anon/share/<id>`. The conversation JSON is already in the document;
- * recover it when the old anonymous route refuses.
+ * ChatGPT already rendered the conversation the person is looking at. Recover
+ * that JSON from the page when a raw `fetch` of ChatGPT's unofficial routes
+ * refuses — the share page SSRs it into a React Router loader stream, and a
+ * signed-in `/c/<id>` (or `/g/.../c/<id>`) chat holds it in router state or
+ * the React tree. Files still come from the download routes.
  */
-const CHATGPT_SHARE_FROM_PAGE = `
-    const conversationFromSharePage = (conversationId) => {
+const CHATGPT_CONVERSATION_FROM_PAGE = `
+    const conversationFromPage = (conversationId) => {
       const isGraph = (value) => value && typeof value === 'object' && (Array.isArray(value) || Object.getPrototypeOf(value) === Object.prototype);
       const conversationIn = (node, seen) => {
         if (!isGraph(node) || seen.has(node)) return null;
@@ -119,6 +121,22 @@ const CHATGPT_SHARE_FROM_PAGE = `
           if (found) return found;
         }
         return null;
+      };
+      const snapshot = (node) => {
+        const seen = new WeakSet();
+        try {
+          return JSON.parse(JSON.stringify(node, (_key, value) => {
+            if (value && typeof value === 'object') {
+              if (seen.has(value)) return undefined;
+              seen.add(value);
+            }
+            return value;
+          }));
+        } catch { return null; }
+      };
+      const take = (node) => {
+        const found = conversationIn(node, new Set());
+        return found ? snapshot(found) : null;
       };
       const decodeTurbo = (values) => {
         const memo = new Map();
@@ -168,12 +186,28 @@ const CHATGPT_SHARE_FROM_PAGE = `
             try {
               const values = JSON.parse(encoded);
               if (!Array.isArray(values) || !values.length) continue;
-              const found = conversationIn(decodeTurbo(values), new Set());
-              if (found) {
-                try { return JSON.parse(JSON.stringify(found)); } catch {}
-              }
+              const found = take(decodeTurbo(values));
+              if (found) return found;
             } catch {}
           }
+        }
+      } catch {}
+      try {
+        const found = take(window.__reactRouterContext) || take(window.__staticRouterHydrationData);
+        if (found) return found;
+      } catch {}
+      try {
+        const walkFiber = (fiber, seen) => {
+          if (!fiber || typeof fiber !== 'object' || seen.has(fiber)) return null;
+          seen.add(fiber);
+          return take(fiber.memoizedProps) || take(fiber.memoizedState)
+            || walkFiber(fiber.child, seen) || walkFiber(fiber.sibling, seen);
+        };
+        for (const node of document.querySelectorAll('#root, #__next, body > div')) {
+          const key = Object.keys(node).find((name) => name.startsWith('__reactFiber') || name.startsWith('__reactContainer'));
+          if (!key) continue;
+          const found = walkFiber(node[key], new Set());
+          if (found) return found;
         }
       } catch {}
       return null;
@@ -243,12 +277,13 @@ async function attachCrossOriginFiles(bridge: ReaderBridge, tabId: string, text:
  * Neither returns a credential: only the conversation JSON crosses IPC.
  */
 function chatGptReader(conversation: BrowserConversation): string {
-  // A person's own conversation and its files come from ChatGPT's signed-in
-  // API, with the access token its own client takes from the same-origin
-  // session endpoint; cookies alone can return a misleading guest 404. A shared
-  // one is rendered from the page's React Router loader stream; the old
-  // anonymous share route is a fallback. Files still come from the
-  // anonymous counterparts of the routes below, addressed by the share.
+  // The page already rendered the conversation. Recover that JSON first: a raw
+  // fetch of ChatGPT's unofficial routes is what their sentinel/proof-of-work
+  // handshake refuses, while the same tab is displaying the chat. Files still
+  // come from the signed-in download routes (or a share's anonymous ones).
+  // A person's own conversation also tries ChatGPT's session token so those
+  // file routes, and the conversation endpoint as a fallback, can run; cookies
+  // alone can return a misleading guest 404.
   const id = conversation.id;
   const routes = conversation.shared ? {
     conversation: `'/backend-anon/share/${id}'`,
@@ -263,25 +298,26 @@ function chatGptReader(conversation: BrowserConversation): string {
     if (location.origin !== 'https://chatgpt.com' || location.pathname.replace(/\\/$/, '') !== ${JSON.stringify(new URL(conversation.url).pathname)})
       throw new Failure(${JSON.stringify(conversation.shared ? 'Open this shared ChatGPT conversation, then try again.' : 'Sign in to ChatGPT and open this conversation, then try again.')});
     const headers = {};
+    const conversationId = ${JSON.stringify(conversation.id)};
+    const complete = (candidate) => candidate && candidate.mapping && candidate.current_node
+      && (candidate.conversation_id === conversationId || candidate.backing_conversation_id === conversationId);
+    ${CHATGPT_CONVERSATION_FROM_PAGE}
+    let data = conversationFromPage(conversationId);
     if (${!conversation.shared}) {
       const sessionResponse = await fetch('/api/auth/session', { credentials: 'include' });
-      if (!sessionResponse.ok) throw new Failure('Sign in to ChatGPT, then try again.');
-      const browserSession = await sessionResponse.json();
-      if (typeof browserSession.accessToken !== 'string' || !browserSession.accessToken)
+      if (sessionResponse.ok) {
+        const browserSession = await sessionResponse.json();
+        if (typeof browserSession.accessToken === 'string' && browserSession.accessToken)
+          headers.Authorization = 'Bearer ' + browserSession.accessToken;
+      }
+      if (!complete(data) && !headers.Authorization)
         throw new Failure('Sign in to ChatGPT, then try again.');
-      headers.Authorization = 'Bearer ' + browserSession.accessToken;
     }
     // A signed download link on another origin needs no cookies, and the
     // browser refuses a cross-origin read that sends them.
     const sameOrigin = (url) => new URL(url, location.href).origin === location.origin;${CAPPED_READS}
     const fileRoute = ${routes.file};
     const sandboxRoute = ${routes.sandbox};
-    const conversationId = ${JSON.stringify(conversation.id)};
-    const complete = (candidate) => candidate && candidate.mapping && candidate.current_node
-      && (candidate.conversation_id === conversationId || candidate.backing_conversation_id === conversationId);
-    let data = null;
-    ${conversation.shared ? `${CHATGPT_SHARE_FROM_PAGE}
-    data = conversationFromSharePage(conversationId);` : ''}
     if (!complete(data)) {
       const response = await fetch(${routes.conversation}, { credentials: 'include', headers });
       if (!response.ok) throw new Failure('ChatGPT could not return this conversation.');
