@@ -31,9 +31,8 @@ carries.
 
 Each rival is one Markdown file whose front matter holds `slug`, `name`,
 `maker`, `order`, `title`, `description`, `updated`, `kind` and `edge`, and
-whose body is a short answer followed by `## Side by side`, `## Where <name>
-shines`, `## Where Rally wins`, `## Which one should you pick?`,
-`## Questions` and `## Sources`. The file reads as an ordinary document on
+whose body is a short answer followed by `## Side by side` and
+`## Where Rally wins`. The file reads as an ordinary document on
 GitHub, so editing copy needs no HTML.
 
 `vite.config.ts` registers `compare/<slug>/index.html` as a build input for each
@@ -52,8 +51,7 @@ the page without parsing HTML.
 `renderComparisonPage` lexes the body with `marked` and maps each `##` section
 to the landing page's layout: the table becomes `versus-table` with
 `data-label`s for the phone layout, `###` items become `points` cards, a
-blockquote becomes the dad-joke aside, the two pick lists become `verdicts`,
-and `### question` / answer pairs become `<details>` plus `FAQPage` JSON-LD.
+blockquote becomes the dad-joke aside, and the pricing and hub buttons follow.
 An unknown `##` heading, a missing required section, or a missing front matter
 field throws, so the build fails instead of shipping a broken page.
 
@@ -101,9 +99,8 @@ element is (`compare-answer`, `versus-table`, `footer-heading`).
 - **A file's name is its slug.** `loadComparisons` throws when they differ, which
   fails the build.
 - **The section headings are a fixed vocabulary.** `renderComparisonPage` throws
-  on an unknown `##` heading, a missing one of the six, or a pick section
-  without `### Pick Rally if`, which is the card it highlights. Guard: the Markdown test
-  in `apps/site/test/site.test.ts`.
+  on an unknown `##` heading or a missing one of the two. Guard: the Markdown
+  test in `apps/site/test/site.test.ts`.
 - **The footer's help@ link keeps `data-site-action="support-contact-footer"`.**
   It lives in `renderSiteFooter`, so the tracking test renders the landing page
   through `renderSiteChrome` before it looks for ids. Guard: `tags every tracked
@@ -111,10 +108,10 @@ element is (`compare-answer`, `versus-table`, `footer-heading`).
 - **Each page's date is true.** `updated` and the sitemap `lastmod` say when the
   claims were last checked against the rival's public pages. Bump both only after
   re-checking. No automated guard.
-- **Claims about a rival are sourced.** Every rival fact must be backed by a link
-  under `## Sources`. Biased framing is fine; a wrong fact is not. Rally claims
-  stay to what the landing page and support pages say. No automated guard;
-  reviewed by hand.
+- **Claims about a rival are checkable.** The pages no longer list sources, so
+  whoever edits a rival fact checks it against that rival's public pages first.
+  Biased framing is fine; a wrong fact is not. Rally claims stay to what the
+  landing page and support pages say. No automated guard; reviewed by hand.
 
 ## Boundary
 
@@ -145,14 +142,32 @@ What the pages report to PostHog is in
 
 `pnpm --filter @rally/site exec vitest run test/site.test.ts` renders the footer
 and the table and asserts their links, renders a fixture Markdown page and
-asserts its table, cards, FAQ markup and JSON-LD, meta tags and validation
-errors, draws a card and checks it is a 1200x630 opaque PNG, and runs the
+asserts its table, cards, buttons, meta tags and validation errors, draws a card and checks it is a 1200x630 opaque PNG, and runs the
 tracking check over the rendered landing page. Layout and the cards are verified
 visually: build, serve `dist` with `vite preview`, screenshot the landing
 section, the footer, one rival page, and the hub at 1440px and 390px, and open
 `dist/compare/*/social.png`.
 
 ## Changelog
+
+### 2026-10-01: Comparison pages keep only the table and Rally's case
+
+**What changed:** Each rival page drops "Where <name> shines", "Which one
+should you pick?", "Questions" and "Sources", along with the `FAQPage` JSON-LD
+and the verdict and sources styles. The pricing and hub buttons that sat under
+the verdicts now follow "Where Rally wins". Instinct, Notion AI and Microsoft
+Teams are removed, leaving six rivals, and the comparison table loses its
+dated caption.
+
+**Why:** The team wanted shorter pages that make Rally's case and stop there.
+
+**Considered and rejected:** Keeping the sections in the Markdown and hiding
+them in the renderer: copy nobody shows still has to be kept true.
+
+**Consequences:** The pages no longer carry the FAQ markup or source links
+that the first entry gave as the reason AI search engines cite them. If that
+traffic matters later, bring back `## Questions` first; the hub keeps its own
+FAQ.
 
 ### 2026-10-01: Comparison pages, their social cards, and a column footer are added
 
