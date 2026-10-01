@@ -9,3 +9,4 @@ export * from "./workstream-description";
 export * from "./icon-catalog";
 export * from "./workstream-name";
 export * from "./work-opportunity";
+export * from "./session-import";

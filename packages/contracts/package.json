@@ -38,7 +38,8 @@
     "./zod-diagnostics": "./src/zod-diagnostics.ts",
     "./platform-diagnostics": "./src/platform-diagnostics.ts",
     "./browser-session": "./src/browser-session.ts",
-    "./client-session": "./src/client-session.ts"
+    "./client-session": "./src/client-session.ts",
+    "./desktop-actions": "./src/desktop-actions.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

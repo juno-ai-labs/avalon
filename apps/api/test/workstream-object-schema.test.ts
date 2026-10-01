@@ -98,6 +98,7 @@ const EXPECTED_TABLES = [
   "conversation_search_links",
   "delivered_loop_inputs",
   "description_refresh_state",
+  "desktop_actions",
   "due_work",
   "durable_inbox_receipts",
   "durable_outbox",

@@ -65,8 +65,11 @@ function modelId(value: string | undefined): string {
 export function defaultAgentModelRouting(env: Env, role: AgentModelRole): AgentModelRouting {
   const fallbackModels = splitModelIds(env.OPENROUTER_FALLBACK_MODELS);
   switch (role) {
+    // The import reads screenshots, so its default must accept images; the
+    // primary conversation model does.
     case "workstream":
     case "inline_child":
+    case "session_import":
       return { model: modelId(env.OPENROUTER_PRIMARY_MODEL), fallbackModels };
     case "workstream_naming":
       return { model: modelId(env.OPENROUTER_CLASSIFIER_MODEL), fallbackModels };
