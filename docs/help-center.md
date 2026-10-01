@@ -9,13 +9,12 @@ assumes the ones before it.
 
 Every page is built for two readers. People get a three-column page: chapters on
 the left, the rendered Markdown in the middle, and on the right an outline of the
-page's H1 to H3 headings above the "Copy page as Markdown" and "View as Markdown"
-links. Below 1180px the outline drops and those links move under the article.
-The `llms.txt` link sits in the site footer. Language models get the same content as Markdown at a
-predictable URL, an [`llms.txt`](https://llmstxt.org/) index, and the whole
-manual in one file. How to write a page, and the voice the manual is written in,
-is in [`apps/site/help/README.md`](../apps/site/help/README.md); this document
-covers the machinery.
+page's H1 to H3 headings with the page's Markdown actions under it. Language
+models get the same content as Markdown at a predictable URL, an
+[`llms.txt`](https://llmstxt.org/) index, and the whole manual in one file. How
+to write a page, and the voice the manual is written in, is in
+[`apps/site/help/README.md`](../apps/site/help/README.md); this document covers
+the machinery.
 
 ## Where the code lives
 
