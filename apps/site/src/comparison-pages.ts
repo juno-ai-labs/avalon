@@ -43,8 +43,7 @@ export function parseComparison(source: string, file: string): Comparison {
   return {
     slug: String(data.slug), name: String(data.name), maker: String(data.maker), order: Number(data.order),
     title: String(data.title), description: String(data.description),
-    // YAML reads an unquoted date as a Date; the page wants the day as written.
-    updated: data.updated instanceof Date ? data.updated.toISOString().slice(0, 10) : String(data.updated),
+    updated: String(data.updated),
     kind: String(data.kind), edge: String(data.edge), body: match[2] ?? '', source,
   };
 }
@@ -60,7 +59,7 @@ export function loadComparisons(directory: URL): Comparison[] {
     .sort((a, b) => a.order - b.order);
 }
 
-const escape = (text: string): string =>
+export const escapeHtml = (text: string): string =>
   text.replace(/[&<>"']/gu, (character) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   })[character] ?? character);
@@ -97,10 +96,10 @@ function renderTable(token: Token | undefined, name: string, file: string): stri
   const rows = table.rows.map(([label, rally, rival]) =>
     `<tr><th scope="row">${inline(label?.text ?? '')}</th>`
     + `<td class="versus-rally" data-label="Rally">${inline(rally?.text ?? '')}</td>`
-    + `<td data-label="${escape(name)}">${inline(rival?.text ?? '')}</td></tr>`).join('');
+    + `<td data-label="${escapeHtml(name)}">${inline(rival?.text ?? '')}</td></tr>`).join('');
   return `<div class="versus-table-wrap"><table class="versus-table">`
-    + `<caption class="visually-hidden">Rally compared with ${escape(name)}</caption>`
-    + `<thead><tr><th scope="col"><span class="visually-hidden">Question</span></th><th scope="col" class="versus-rally">Rally</th><th scope="col">${escape(name)}</th></tr></thead>`
+    + `<caption class="visually-hidden">Rally compared with ${escapeHtml(name)}</caption>`
+    + `<thead><tr><th scope="col"><span class="visually-hidden">Question</span></th><th scope="col" class="versus-rally">Rally</th><th scope="col">${escapeHtml(name)}</th></tr></thead>`
     + `<tbody>${rows}</tbody></table></div>`;
 }
 
@@ -112,10 +111,11 @@ function renderPoints(tokens: Token[]): string {
     + asides.map((aside) => `<div class="compare-aside">${blocks(aside.tokens)}</div>`).join('');
 }
 
-function renderVerdicts(tokens: Token[]): string {
+function renderVerdicts(tokens: Token[], file: string): string {
   const { parts } = splitAt(tokens, 3);
-  return `<div class="verdicts">${parts.map(({ heading, tokens: body }, index) =>
-    `<div class="verdict${index === parts.length - 1 ? ' verdict-rally' : ''}"><h3>${inline(heading)}</h3>${blocks(body)}</div>`).join('')}</div>`
+  if (!parts.some(({ heading }) => heading === 'Pick Rally if')) throw new Error(`${file}: "Which one should you pick?" needs a "### Pick Rally if"`);
+  return `<div class="verdicts">${parts.map(({ heading, tokens: body }) =>
+    `<div class="verdict${heading === 'Pick Rally if' ? ' verdict-rally' : ''}"><h3>${inline(heading)}</h3>${blocks(body)}</div>`).join('')}</div>`
     + `<div class="compare-cta"><a class="button" href="/#pricing">See Rally pricing</a><a class="button button-outline" href="/compare/">Compare Rally with other tools</a></div>`;
 }
 
@@ -140,7 +140,7 @@ export function renderComparisonPage(comparison: Comparison): string {
   const path = `/compare/${slug}/`;
   const { before, parts } = splitAt(marked.lexer(comparison.body), 2);
   if (before.length === 0) throw new Error(`${file}: the short answer must come before the first heading`);
-  const required = ['Side by side', 'Where Rally wins', 'Questions', 'Sources'];
+  const required = ['Side by side', `Where ${name} shines`, 'Where Rally wins', 'Which one should you pick?', 'Questions', 'Sources'];
   for (const heading of required) {
     if (!parts.some((part) => part.heading === heading)) throw new Error(`${file}: missing "## ${heading}"`);
   }
@@ -152,7 +152,7 @@ export function renderComparisonPage(comparison: Comparison): string {
     let body: string;
     if (kind === 'table') body = renderTable(tokens.find((token) => token.type !== 'space'), name, file);
     else if (kind === 'points') body = renderPoints(tokens);
-    else if (kind === 'verdicts') body = renderVerdicts(tokens);
+    else if (kind === 'verdicts') body = renderVerdicts(tokens, file);
     else if (kind === 'faq') {
       faq = questions(tokens);
       body = `<div class="faq">${faq.map(({ question, answer }) =>
@@ -161,7 +161,7 @@ export function renderComparisonPage(comparison: Comparison): string {
     return {
       id, nav,
       html: `<section class="section${index % 2 === 0 ? ' raised' : ''}" id="${id}" aria-labelledby="${id}-title">\n`
-        + `<p class="eyebrow">${escape(eyebrow)}</p>\n<h2 id="${id}-title" class="display">${inline(heading)}</h2>\n${body}\n</section>`,
+        + `<p class="eyebrow">${escapeHtml(eyebrow)}</p>\n<h2 id="${id}-title" class="display">${inline(heading)}</h2>\n${body}\n</section>`,
     };
   });
 
@@ -213,27 +213,27 @@ export function renderComparisonPage(comparison: Comparison): string {
     <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
     <link rel="manifest" href="/site.webmanifest" />
-    <title>${escape(title)}</title>
-    <meta name="description" content="${escape(description)}" />
+    <title>${escapeHtml(title)}</title>
+    <meta name="description" content="${escapeHtml(description)}" />
     <link rel="canonical" href="${ORIGIN}${path}" />
     <link rel="alternate" type="text/markdown" href="${ORIGIN}${path}index.md" />
     <meta property="og:type" content="article" />
     <meta property="og:site_name" content="Rally" />
-    <meta property="og:title" content="${escape(title)}" />
-    <meta property="og:description" content="${escape(description)}" />
+    <meta property="og:title" content="${escapeHtml(title)}" />
+    <meta property="og:description" content="${escapeHtml(description)}" />
     <meta property="og:url" content="${ORIGIN}${path}" />
     <meta property="og:image" content="${ORIGIN}${path}social.png" />
     <meta property="og:image:secure_url" content="${ORIGIN}${path}social.png" />
     <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Rally vs ${escape(name)}: ${escape(comparison.edge)}" />
+    <meta property="og:image:alt" content="Rally vs ${escapeHtml(name)}: ${escapeHtml(comparison.edge)}" />
     <meta property="article:modified_time" content="${updated}" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="${escape(title)}" />
-    <meta name="twitter:description" content="${escape(description)}" />
+    <meta name="twitter:title" content="${escapeHtml(title)}" />
+    <meta name="twitter:description" content="${escapeHtml(description)}" />
     <meta name="twitter:image" content="${ORIGIN}${path}social.png" />
-    <meta name="twitter:image:alt" content="Rally vs ${escape(name)}: ${escape(comparison.edge)}" />
+    <meta name="twitter:image:alt" content="Rally vs ${escapeHtml(name)}: ${escapeHtml(comparison.edge)}" />
     <link rel="stylesheet" href="/src/landing.css" />
     <script type="module" src="/src/section-nav.ts"></script>
     <script type="application/ld+json">${json}</script>
@@ -247,14 +247,14 @@ export function renderComparisonPage(comparison: Comparison): string {
 <main id="content">
 <article class="compare-page">
 <header class="compare-hero">
-<nav class="breadcrumbs" aria-label="Breadcrumb"><ol><li><a href="/">Rally</a></li><li><a href="/compare/">Compared to</a></li><li aria-current="page">Rally vs ${escape(name)}</li></ol></nav>
-<h1 class="display compare-title">Rally <span class="compare-versus">vs</span> ${escape(name)}</h1>
+<nav class="breadcrumbs" aria-label="Breadcrumb"><ol><li><a href="/">Rally</a></li><li><a href="/compare/">Compared to</a></li><li aria-current="page">Rally vs ${escapeHtml(name)}</li></ol></nav>
+<h1 class="display compare-title">Rally <span class="compare-versus">vs</span> ${escapeHtml(name)}</h1>
 ${answer}
 <p class="compare-meta">Updated <time datetime="${updated}">${date}</time> · Written by the Rally team. Yes, we’re biased. We tried to keep it fair anyway.</p>
 </header>
 <div class="sections">
 <nav class="section-nav" aria-label="On this page" data-section-nav><ol>${sections.map(({ id, nav }, index) =>
-    `<li><a href="#${id}"><span>${String(index + 1).padStart(2, '0')}</span>${escape(nav)}</a></li>`).join('')}</ol></nav>
+    `<li><a href="#${id}"><span>${String(index + 1).padStart(2, '0')}</span>${escapeHtml(nav)}</a></li>`).join('')}</ol></nav>
 <div class="section-list">
 ${sections.map(({ html }) => html).join('\n\n')}
 </div>

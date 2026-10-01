@@ -1,7 +1,7 @@
 import { renderAccessCopy } from './src/access-copy';
 import { renderComparisonPage } from './src/comparison-pages';
 import { renderComparisonCard, renderSocialCard } from './src/social-cards';
-import { comparisons, renderSiteChrome } from './src/site-chrome';
+import { comparisonCount, comparisons, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from './src/site-chrome';
 import { defineConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
@@ -14,12 +14,28 @@ const projectRoot = fileURLToPath(new URL('.', import.meta.url));
 const comparisonEntries = new Map(comparisons.map((comparison) => [
   `${projectRoot}compare/${comparison.slug}/index.html`, comparison,
 ]));
+const count = comparisonCount();
 const hubCard = {
-  eyebrow: 'Nine tools, one table',
+  eyebrow: `${count} tools, one table`,
   headline: [{ text: 'Rally,' }, { text: 'compared.' }],
-  body: 'How Rally stacks up against nine AI and team tools, from Claude Tag to Microsoft Teams.',
+  body: `How Rally stacks up against ${count} AI and team tools, from ${comparisons[0]?.name ?? ''} to ${comparisons.at(-1)?.name ?? ''}.`,
   address: 'rallywith.ai/compare',
 };
+
+// Everything else the comparison data produces, by published path. The build
+// emits each one and the dev server answers for the same paths, so the two
+// can't disagree. Cards are drawn from each page's own front matter, so a card
+// can never disagree with the page it links to.
+const generatedFiles = new Map<string, { type: string; render: () => string | Promise<Buffer> }>([
+  ...comparisons.flatMap((comparison) => [
+    [`compare/${comparison.slug}/social.png`, { type: 'image/png', render: () => renderComparisonCard(comparison) }],
+    // The page's own Markdown, for agents that would rather not parse HTML.
+    [`compare/${comparison.slug}/index.md`, { type: 'text/markdown; charset=utf-8', render: () => comparison.source }],
+  ] as const),
+  ['compare/social.png', { type: 'image/png', render: () => renderSocialCard(hubCard) }],
+  ['compare/sitemap.xml', { type: 'application/xml', render: renderComparisonSitemap }],
+  ['llms.txt', { type: 'text/plain; charset=utf-8', render: renderLlmsTxt }],
+]);
 const rootPackage = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string };
 
 export default defineConfig({
@@ -37,25 +53,16 @@ export default defineConfig({
         const comparison = comparisonEntries.get(id);
         return comparison ? renderComparisonPage(comparison) : null;
       },
-      // Each page's unfurl image is drawn from its own front matter, so the
-      // card can never disagree with the page it links to.
       async generateBundle() {
-        for (const comparison of comparisons) {
-          this.emitFile({ type: 'asset', fileName: `compare/${comparison.slug}/social.png`, source: await renderComparisonCard(comparison) });
-          // The page's own Markdown, for agents that would rather not parse HTML.
-          this.emitFile({ type: 'asset', fileName: `compare/${comparison.slug}/index.md`, source: comparison.source });
-        }
-        this.emitFile({ type: 'asset', fileName: 'compare/social.png', source: await renderSocialCard(hubCard) });
+        for (const [fileName, { render }] of generatedFiles) this.emitFile({ type: 'asset', fileName, source: await render() });
       },
       configureServer(server) {
         server.middlewares.use((request, response, next) => {
-          const image = /^\/compare\/(?:([a-z0-9-]+)\/)?social\.png$/u.exec(request.url?.split('?')[0] ?? '');
-          if (!image) return next();
-          const comparison = image[1] ? comparisons.find(({ slug }) => slug === image[1]) : undefined;
-          if (image[1] && !comparison) return next();
-          (comparison ? renderComparisonCard(comparison) : renderSocialCard(hubCard)).then((png) => {
-            response.setHeader('Content-Type', 'image/png');
-            response.end(png);
+          const file = generatedFiles.get(request.url?.split('?')[0]?.slice(1) ?? '');
+          if (!file) return next();
+          Promise.resolve(file.render()).then((body) => {
+            response.setHeader('Content-Type', file.type);
+            response.end(body);
           }, next);
         });
         server.middlewares.use((request, response, next) => {
