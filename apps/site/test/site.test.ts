@@ -145,8 +145,7 @@ describe('public Rally site', () => {
     };
     expect(column('Compared to')).toEqual([
       '/compare/claude-tag/', '/compare/grok-bot/', '/compare/viktor/', '/compare/chatgpt/',
-      '/compare/claude-cowork/', '/compare/instinct/', '/compare/notion-ai/', '/compare/slack/',
-      '/compare/microsoft-teams/', '/compare/',
+      '/compare/claude-cowork/', '/compare/slack/',
     ]);
     expect(column('Trust Center')).toEqual([
       '/trust/', '/trust/security/', '/trust/privacy/', '/trust/terms/', '/trust/dpa/',
@@ -167,34 +166,23 @@ describe('public Rally site', () => {
       'description: "Acme compared."', 'updated: 2026-10-01', 'kind: "A tool."', 'edge: "Rally is better."', '---',
       '**Short answer:** Pick Rally.', '',
       '## Side by side', '', '| | Rally | Acme |', '| --- | --- | --- |', '| Pricing | $100 | Per seat |', '',
-      '## Where Acme shines', '', '### Fast', '', 'It is quick.', '',
       '## Where Rally wins', '', '### Together', '', 'Teams share it.', '', '> A pun.', '',
-      '## Which one should you pick?', '', '### Pick Acme if', '', '- Solo', '', '### Pick Rally if', '', '- Team', '',
-      '## Questions', '', '### Is Rally per seat?', '', 'No. One price per organization.', '',
-      '## Sources', '', '- [Acme pricing](https://acme.example/pricing), Acme, checked 2026-10-01', '',
     ].join('\n');
     const page = renderComparisonPage(parseComparison(source, 'acme.md'));
     expect(page).toContain('<p class="compare-answer"><strong>Short answer:</strong> Pick Rally.</p>');
     expect(page).toContain('<tr><th scope="row">Pricing</th><td class="versus-rally" data-label="Rally">$100</td><td data-label="Acme">Per seat</td></tr>');
     expect(page).toContain('<ul class="points"><li><h3>Together</h3><p>Teams share it.</p>\n</li></ul><div class="compare-aside"><p>A pun.</p>\n</div>');
-    expect(page).toContain('<div class="verdict verdict-rally"><h3>Pick Rally if</h3><ul>\n<li>Team</li>\n</ul>\n</div>');
-    expect(page).toContain('<details><summary>Is Rally per seat?</summary><p>No. One price per organization.</p>\n</details>');
-    expect(page).toContain('{"@type":"Question","name":"Is Rally per seat?","acceptedAnswer":{"@type":"Answer","text":"No. One price per organization."}}');
+    expect(page).toContain('<a class="button button-outline" href="/#compare">Compare Rally with other tools</a>');
     expect(page).toContain('<time datetime="2026-10-01">October 1, 2026</time>');
     expect(page).toContain('<!-- rally:site-footer -->');
     expect(page).toContain('<meta property="og:image" content="https://rallywith.ai/compare/acme/social.png" />');
     expect(page).toContain('<meta name="twitter:image:alt" content="Rally vs Acme: Rally is better." />');
-    expect(() => renderComparisonPage(parseComparison(source.replace('## Sources', '## Odds and ends\n\nExtra.\n\n## Sources'), 'acme.md')))
+    expect(() => renderComparisonPage(parseComparison(`${source}\n## Odds and ends\n\nExtra.\n`, 'acme.md')))
       .toThrow('Unknown comparison section "Odds and ends"');
     expect(() => parseComparison(source.replace('maker: Acme Inc\n', ''), 'acme.md'))
       .toThrow('acme.md: front matter is missing "maker"');
-    const swapped = source.replace('### Pick Acme if\n\n- Solo\n\n### Pick Rally if\n\n- Team', '### Pick Rally if\n\n- Team\n\n### Pick Acme if\n\n- Solo');
-    expect(renderComparisonPage(parseComparison(swapped, 'acme.md')))
-      .toContain('<div class="verdicts"><div class="verdict verdict-rally"><h3>Pick Rally if</h3>');
-    expect(() => renderComparisonPage(parseComparison(source.replace(/## Which one should you pick\?[\s\S]*?(?=## Questions)/u, ''), 'acme.md')))
-      .toThrow('acme.md: missing "## Which one should you pick?"');
-    expect(() => renderComparisonPage(parseComparison(source.replace('### Pick Rally if', '### Pick us if'), 'acme.md')))
-      .toThrow('acme.md: "Which one should you pick?" needs a "### Pick Rally if"');
+    expect(() => renderComparisonPage(parseComparison(source.replace(/## Where Rally wins[\s\S]*/u, ''), 'acme.md')))
+      .toThrow('acme.md: missing "## Where Rally wins"');
   });
 
   it('draws a 1200 by 630 opaque PNG unfurl card for a comparison', async () => {
@@ -203,16 +191,9 @@ describe('public Rally site', () => {
     expect({ format, width, height, hasAlpha }).toEqual({ format: 'png', width: 1200, height: 630, hasAlpha: false });
   });
 
-  it('derives every hub list, count, sitemap and llms.txt entry from the comparison files', () => {
-    const hub = renderSiteChrome('<!-- rally:comparison-count -->|<!-- rally:comparison-count-title -->|<!-- rally:comparison-names -->|<!-- rally:comparison-item-list -->');
-    const [count, title, names, list] = hub.split('|');
-    expect([count, title]).toEqual(['nine', 'Nine']);
-    expect(names).toBe('Claude Tag, Grok Bot, Viktor, ChatGPT, Claude Cowork, Instinct, Notion AI, Slack, and Microsoft Teams');
-    expect((JSON.parse(list ?? '') as { itemListElement: { url: string }[] }).itemListElement.map(({ url }) => url))
-      .toEqual(comparisons.map(({ slug }) => `https://rallywith.ai/compare/${slug}/`));
-    expect(renderSiteChrome('<!-- rally:comparison-table -->')).toContain('Rally compared with nine AI and team tools, as of October 2026');
+  it('derives every sitemap and llms.txt entry from the comparison files', () => {
     expect([...renderComparisonSitemap().matchAll(/<loc>([^<]+)<\/loc>/gu)].map(([, loc]) => loc))
-      .toEqual(['https://rallywith.ai/compare/', ...comparisons.map(({ slug }) => `https://rallywith.ai/compare/${slug}/`)]);
-    expect(renderLlmsTxt()).toContain('- [Rally vs Slack](https://rallywith.ai/compare/slack/): Team chat with Slackbot, a personal AI agent, built in\n');
+      .toEqual(comparisons.map(({ slug }) => `https://rallywith.ai/compare/${slug}/`));
+    expect(renderLlmsTxt()).toContain('- [Rally vs Slack](https://rallywith.ai/compare/slack/): Team chat with other humans\n');
   });
 });
