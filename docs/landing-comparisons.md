@@ -169,6 +169,8 @@ and on the landing page it scrolls without a reload.
 **Consequences:** A header link goes in `renderSiteNav`, never in a page. The
 Trust Center pages still write their own nav, so a link added there is separate.
 
+Shipped in #1052.
+
 ### 2026-10-01: Trust Center pages take the landing's chrome
 
 **What changed:** The eight `/trust/` pages drop their own light header,

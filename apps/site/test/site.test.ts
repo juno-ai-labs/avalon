@@ -7,7 +7,7 @@ import { classifyDesktopHandoffTarget } from '../src/desktop-open';
 import { isIosDevice, legacyIosWorkstreamHandoff } from '../src/workstream-link';
 import { parseComparison, renderComparisonPage } from '../src/comparison-pages';
 import { parseBlogPost, renderBlogIndex, renderBlogPost } from '../src/blog-pages';
-import { comparisons, renderBlogSitemap, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from '../src/site-chrome';
+import { blogPosts, comparisons, renderBlogSitemap, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from '../src/site-chrome';
 import { renderComparisonCard } from '../src/social-cards';
 import sharp from 'sharp';
 import { normalizedTelemetryPathname, SITE_ACTION_LINKS, siteActionForLink, sitePageForPath } from '../src/telemetry';
@@ -152,7 +152,7 @@ describe('public Rally site', () => {
       '/trust/', '/trust/security/', '/trust/privacy/', '/trust/terms/', '/trust/dpa/',
       '/trust/subprocessors/', '/trust/cookies/', '/trust/acceptable-use/',
     ]);
-    expect(column('Blog')).toEqual(['/blog/', '/blog/blastoff/']);
+    expect(column('Blog')).toEqual(['/blog/', `/blog/${blogPosts[0]?.slug ?? ''}/`]);
   });
 
   it('renders one comparison table row per rival and refuses an unknown marker', () => {
@@ -221,10 +221,13 @@ describe('public Rally site', () => {
     expect(page).toContain('<meta property="og:image" content="https://rallywith.ai/blog/hello/social.png" />');
     expect(renderBlogIndex([post])).toContain('<a class="blog-entry" href="/blog/hello/"><time datetime="2026-10-01">October 1, 2026</time><span class="blog-entry-title">Hello</span>');
     expect(() => parseBlogPost(source.replace('date: 2026-10-01\n', ''), 'hello.md')).toThrow('hello.md: front matter is missing "date"');
+    expect(() => parseBlogPost(source.replace('2026-10-01', '2026-02-30'), 'hello.md')).toThrow('hello.md: date "2026-02-30" is not a real YYYY-MM-DD day');
+    expect(() => parseBlogPost(source.replace('slug: hello', 'slug: hello_world'), 'hello.md')).toThrow('hello.md: slug "hello_world" must be lowercase letters, digits and hyphens');
   });
 
   it('lists the blog index and every post in the blog sitemap', () => {
     expect([...renderBlogSitemap().matchAll(/<loc>([^<]+)<\/loc>/gu)].map(([, loc]) => loc))
-      .toEqual(['https://rallywith.ai/blog/', 'https://rallywith.ai/blog/blastoff/']);
+      .toEqual(['https://rallywith.ai/blog/', ...blogPosts.map(({ slug }) => `https://rallywith.ai/blog/${slug}/`)]);
+    expect(blogPosts.map(({ slug }) => slug)).toContain('blastoff');
   });
 });

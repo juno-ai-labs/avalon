@@ -7,7 +7,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { marked } from 'marked';
 import { parse as parseYaml } from 'yaml';
-import { escapeHtml } from './comparison-pages';
+import { escapeHtml, longDate } from './comparison-pages';
 
 export interface BlogPost {
   /** Path segment under `/blog/`, and the Markdown file's name. */
@@ -34,9 +34,13 @@ export function parseBlogPost(source: string, file: string): BlogPost {
   for (const field of FIELDS) {
     if (data[field] === undefined || data[field] === '') throw new Error(`${file}: front matter is missing "${field}"`);
   }
-  // YAML reads an unquoted date as a Date; keep the day as written.
-  const date = data.date instanceof Date ? data.date.toISOString().slice(0, 10) : String(data.date);
-  if (!/^\d{4}-\d{2}-\d{2}$/u.test(date)) throw new Error(`${file}: date "${date}" is not YYYY-MM-DD`);
+  // The day must exist: `Date` would quietly turn 2026-02-30 into March 2.
+  const date = String(data.date);
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(date) || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date) {
+    throw new Error(`${file}: date "${date}" is not a real YYYY-MM-DD day`);
+  }
+  // The slug is the URL segment, so it keeps to what a path and the dev server accept.
+  if (!/^[a-z0-9-]+$/u.test(String(data.slug))) throw new Error(`${file}: slug "${String(data.slug)}" must be lowercase letters, digits and hyphens`);
   return {
     slug: String(data.slug), title: String(data.title), description: String(data.description),
     date, author: String(data.author), body: match[2] ?? '', source,
@@ -53,9 +57,6 @@ export function loadBlogPosts(directory: URL): BlogPost[] {
     })
     .sort((a, b) => b.date.localeCompare(a.date) || a.slug.localeCompare(b.slug));
 }
-
-const longDate = (date: string): string =>
-  new Date(`${date}T00:00:00Z`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 
 /** The document both blog pages share: head, site header, and footer. */
 function page({ path, title, description, type, image, extraHead, main }: {
