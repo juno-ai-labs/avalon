@@ -314,8 +314,14 @@ export class EmbeddedBrowser {
       const result = await this.cdp(contents, 'Accessibility.getFullAXTree');
       return { kind: 'snapshot', url: contents.getURL(), title: contents.getTitle(), tree: result };
     } else if (command.action === 'screenshot') {
-      const image = await contents.capturePage();
-      return { kind: 'screenshot', mimeType: 'image/jpeg', data: image.toJPEG(80).toString('base64') };
+      // At the page's own size in DIPs, so a point read off the image is the
+      // point `click` and `scroll` send: input events are in DIPs, while the
+      // capture is in device pixels.
+      const view = this.tab(command.tabId).view.getBounds();
+      const captured = await contents.capturePage();
+      const image = view.width > 0 && view.height > 0 ? captured.resize({ width: view.width, height: view.height }) : captured;
+      const size = image.getSize();
+      return { kind: 'screenshot', mimeType: 'image/jpeg', data: image.toJPEG(80).toString('base64'), width: size.width, height: size.height };
     } else if (command.action === 'click') {
       contents.sendInputEvent({ type: 'mouseDown', x: command.x, y: command.y, button: 'left', clickCount: 1 });
       contents.sendInputEvent({ type: 'mouseUp', x: command.x, y: command.y, button: 'left', clickCount: 1 });

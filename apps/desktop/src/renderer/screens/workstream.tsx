@@ -838,7 +838,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   return (
     <>
     {api && session?.workspace && sharingSubstream !== null && <ShareConversationDialog api={api} workspaceId={session.workspace.id} parentId={id} substreamId={sharingSubstream} open onOpenChange={(open) => { if (!open) setSharingSubstream(null); }} />}
-    {api && importedSourceUpdatable(importedSource.data) && <SessionImportUpdateDialog key={id} api={api} open={importUpdateOpen}
+    {api && importedSourceUpdatable(importedSource.data) && <SessionImportUpdateDialog key={id} open={importUpdateOpen}
       onClose={() => setImportUpdateOpen(false)} source={importedSource.data} workstreamId={id} />}
     <SplitConversationLayout
       breakout={breakoutPane}

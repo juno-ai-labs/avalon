@@ -1,7 +1,9 @@
 import { ManagedScopeGrantsSchema, RevokeScopeGrantSchema, ScopeGrantMutationResultSchema } from "@rally/contracts/scope-grants";
 import { ScopeSharingOptionsSchema, ScopeInvitationsListSchema, ScopeInvitationResultSchema, type ScopeGrantTarget, type CreateScopeInvitations } from "@rally/contracts/scope-grants";
 import { SharedDirectorySchema, SharedNavigationDirectorySchema, WorkspaceRelationshipSchema, PromoteWorkspaceGuestSchema } from "@rally/contracts/scope-grants";
-import { SessionImportPreviewSchema, type SessionImportPreview, type SessionImportPreviewRequestSchema } from "@rally/contracts";
+import { SessionImportRunSchema, type SessionImportPreview } from "@rally/contracts";
+
+type SessionImportRun = z.infer<typeof SessionImportRunSchema>;
 import {
   AutomationDetailSchema as WireAutomationDetailSchema,
   AutomationExecutionPrincipalClaimSchema,
@@ -1535,19 +1537,33 @@ export class RallyApi {
     return page.items.map(mapWorkstreamSummary);
   }
 
-  async previewSessionImport(input: z.infer<typeof SessionImportPreviewRequestSchema>): Promise<SessionImportPreview> {
-    return this.request('/workstreams/import/preview', { method: 'POST', body: input, schema: SessionImportPreviewSchema });
+  /** Reserve a Channel for a conversation import and start the agent that reads it. */
+  async startSessionImport(input: { sourceUrl: string; title: string; spaceIds: string[]; clientMessageId: string }): Promise<SessionImportRun> {
+    return this.request('/workstreams/import/runs', { method: 'POST', body: input, schema: SessionImportRunSchema });
   }
 
-  async importSession(
+  /** Start the import agent again on a Channel imported before. */
+  async startSessionImportUpdate(workstreamId: string): Promise<SessionImportRun> {
+    return this.request(`/workstreams/${encodeURIComponent(workstreamId)}/import/runs`, { method: 'POST', body: {}, schema: SessionImportRunSchema });
+  }
+
+  /** Open a reserved Channel with the conversation the agent read. */
+  async completeSessionImport(
+    workstreamId: string,
     preview: SessionImportPreview,
-    clientMessageId: string,
-    input: { title: string; spaceIds: string[]; workstreamId?: string } = { title: preview.title, spaceIds: [] },
+    input: { clientMessageId: string; spaceIds: string[] },
   ): Promise<string> {
-    const result = await this.request('/workstreams/import', {
-      method: 'POST', body: { ...preview, ...input, clientMessageId }, schema: createWorkstreamResponseSchema,
+    const result = await this.request(`/workstreams/${encodeURIComponent(workstreamId)}/import/complete`, {
+      method: 'POST', body: { ...preview, ...input }, schema: createWorkstreamResponseSchema,
     });
     return result.workstream.id;
+  }
+
+  /** Stop an import's agent; a new Channel that never opened is discarded with it. */
+  async discardSessionImport(workstreamId: string, input: { substreamId: string; clientMessageId: string | null }): Promise<void> {
+    await this.requestVoid(`/workstreams/${encodeURIComponent(workstreamId)}/import/discard`, {
+      method: 'POST', body: input,
+    });
   }
 
   async importedSessionSource(workstreamId: string): Promise<{ provider: 'chatgpt' | 'claude' | 'claude_code'; sessionId: string; url: string | null } | null> {
