@@ -177,6 +177,7 @@ describe('public Rally site', () => {
     expect(page).toContain('<p class="compare-answer"><strong>Short answer:</strong> Pick Rally.</p>\n<blockquote>\n<p>Import a chat.</p>\n</blockquote>');
     expect(page).toContain('</tbody></table></div><blockquote>\n<p>Prices as of today.</p>\n</blockquote>');
     expect(page).not.toContain('See Rally pricing');
+    expect(page).not.toContain('Compare Rally with other tools');
     expect(page).toContain('<time datetime="2026-10-01">October 1, 2026</time>');
     expect(page).toContain('<!-- rally:site-footer -->');
     expect(page).toContain('<meta property="og:image" content="https://rallywith.ai/compare/acme/social.png" />');
