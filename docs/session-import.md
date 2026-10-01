@@ -306,6 +306,8 @@ HTML/code artifacts remain stored files; importing does not launch a site.
 
 **Consequences:** A share import now depends on ChatGPT still shipping `mapping` and `current_node` in that loader payload (or on one of the two leftover HTTP routes still answering). Client-side navigation to a different share can leave a stale stream in the document; the reader matches the URL's share id and then hits the HTTP fallbacks. File copies on a share still fail closed when the anonymous download routes refuse.
 
+Shipped in #1042.
+
 ### 2026-09-24 — Create from a sidebar list's empty space
 
 **What changed:** Right-clicking empty space in the channels sidebar opens the
