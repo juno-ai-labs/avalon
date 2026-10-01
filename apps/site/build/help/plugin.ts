@@ -33,12 +33,32 @@ export function helpCenter({ contentRoot, entryName, entrySource }: { contentRoo
         if (file.startsWith(contentRoot)) server.ws.send({ type: 'full-reload' });
       });
       server.middlewares.use((request, response, next) => {
-        const path = decodeURIComponent((request.url ?? '').split('?')[0] ?? '');
+        let path: string;
+        try {
+          path = decodeURIComponent((request.url ?? '').split('?')[0] ?? '');
+        } catch {
+          return next();
+        }
         if (!/^\/help(?:\/|$)/u.test(path)) return next();
         if (path === '/help') {
           response.statusCode = 301;
           response.setHeader('Location', '/help/');
           response.end();
+          return;
+        }
+        if (path.startsWith('/help/_og/')) {
+          // A card needs only the page list, not the whole rendered site.
+          let page;
+          try {
+            page = loadHelpSite(contentRoot, { includeDrafts: true }).pages.find((candidate) => ogImagePath(candidate) === path);
+          } catch {
+            return next();
+          }
+          if (!page) return next();
+          renderOgImage(page).then((png) => {
+            response.setHeader('Content-Type', 'image/png');
+            response.end(png);
+          }, next);
           return;
         }
         let outputs: HelpOutputs;
@@ -48,15 +68,6 @@ export function helpCenter({ contentRoot, entryName, entrySource }: { contentRoo
           response.statusCode = 500;
           response.setHeader('Content-Type', 'text/plain; charset=utf-8');
           response.end((error as Error).message);
-          return;
-        }
-        if (path.startsWith('/help/_og/')) {
-          const page = loadHelpSite(contentRoot, { includeDrafts: true }).pages.find((candidate) => ogImagePath(candidate) === path);
-          if (!page) return next();
-          renderOgImage(page).then((png) => {
-            response.setHeader('Content-Type', 'image/png');
-            response.end(png);
-          }, next);
           return;
         }
         const key = path.slice(1);
