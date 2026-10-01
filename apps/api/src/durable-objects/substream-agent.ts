@@ -169,6 +169,8 @@ import { WorkstreamObjectStore } from "./workstream-object-storage";
 import type { SequencedSemanticRealtimeReference } from "./workstream-semantic-realtime-outbox";
 import { WorkstreamTerminalStorage } from "./workstream-terminal-storage";
 import { WorkstreamToolReceiptStorage } from "./workstream-tool-receipt-storage";
+import { DESKTOP_ACTION_MAX_OUTCOME_BYTES, WorkstreamDesktopActionStorage } from "./workstream-desktop-action-storage";
+import type { DesktopAction, DesktopActionOutcome } from "@rally/contracts/desktop-actions";
 import {
   type ToolReceiptOperationRequest,
   ToolReceiptOperationRequestSchema,
@@ -1007,6 +1009,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private resources!: WorkstreamResourceStorage;
   private identityRows!: WorkstreamIdentityStorage;
   private harnessRuns!: WorkstreamHarnessRunStorage;
+  private desktopActions!: WorkstreamDesktopActionStorage;
+  /**
+   * The tools in this isolate waiting on a desktop, by action id. Memory only:
+   * the action and its answer are durable rows, and a tool re-entered after
+   * eviction reads its answer there rather than from a waiter that is gone.
+   */
+  private readonly desktopActionWaiters = new Map<string, (outcome: DesktopActionOutcome) => void>();
   /** Schema, repositories, and identity required to admit and snapshot a feed. */
   private readonly storageReady: Promise<void>;
   private runtimeRecovery: Promise<void> | null = null;
@@ -1106,6 +1115,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.resources = new WorkstreamResourceStorage(state.storage);
       this.identityRows = new WorkstreamIdentityStorage(state.storage);
       this.harnessRuns = new WorkstreamHarnessRunStorage(state.storage);
+      this.desktopActions = new WorkstreamDesktopActionStorage(state.storage);
       await this.objectStore.waitUntilReady();
       this.semanticRealtimePending = this.objectStore.nextSemanticRealtimeDueAt() !== null;
       // Existing one-room-per-workstream objects become the main child during
@@ -5652,6 +5662,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       transcript: resident((body) => this.transcriptOperationOutcome(body)),
       toolReceipt: resident((body) => this.toolReceiptOperationOutcome(body)),
       residentContext: resident((body) => this.residentContextOperationOutcome(body)),
+      desktopAction: (request) => this.requestDesktopAction(request),
       terminal: (operation, args) => this.runTerminalOperation({
         workspaceId,
         workstreamId,
@@ -6099,7 +6110,114 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       await this.createSocketMessage(socket, attachment, parsed.data, requestReceivedAt);
       return;
     }
+    if (parsed.data.type === "answer_desktop_action") {
+      this.answerDesktopAction(socket, attachment, parsed.data.actionId, parsed.data.outcome);
+      return;
+    }
     await this.mutateSocketSubstream(socket, attachment, parsed.data);
+  }
+
+  /**
+   * Who may answer this conversation's desktop actions: the person it was
+   * created for. A desktop action runs in that person's own browser session,
+   * so an answer from anyone else is not theirs to give.
+   */
+  private answersDesktopActions(userId: string): boolean {
+    const creator = this.identityRows.identity()?.created_by_user_id ?? null;
+    return creator !== null && creator === userId;
+  }
+
+  /**
+   * Record a tool's desktop action, publish it, and wait for the answer.
+   *
+   * The row is written before the request is published, so an answer can
+   * never arrive for an action this object has no record of. A call whose
+   * earlier attempt was already answered returns that answer without asking
+   * again; one still pending is published again, because the desktop that
+   * received it before may have gone.
+   */
+  private async requestDesktopAction(input: {
+    runId: string;
+    toolCallId: string;
+    action: DesktopAction;
+    signal: AbortSignal;
+  }): Promise<DesktopActionOutcome> {
+    input.signal.throwIfAborted();
+    const recorded = this.desktopActions.request({
+      id: uuidV7(Date.now()),
+      runId: input.runId,
+      toolCallId: input.toolCallId,
+      action: input.action,
+      now: Date.now(),
+    });
+    if (recorded.status === "answered") return recorded.outcome;
+    const { request } = recorded;
+    return await new Promise<DesktopActionOutcome>((resolve, reject) => {
+      const stopWaiting = () => {
+        this.desktopActionWaiters.delete(request.id);
+        this.desktopActions.abandon(request.id);
+        reject(input.signal.reason instanceof Error ? input.signal.reason : new Error("desktop_action_abandoned"));
+      };
+      input.signal.addEventListener("abort", stopWaiting, { once: true });
+      this.desktopActionWaiters.set(request.id, (outcome) => {
+        input.signal.removeEventListener("abort", stopWaiting);
+        this.desktopActionWaiters.delete(request.id);
+        resolve(outcome);
+      });
+      // Published after the waiter exists, so an answer that comes back before
+      // this call returns still finds it.
+      void this.publishAgentRuntimeEvent({ type: "desktop_action_requested", request }).catch((error: unknown) => {
+        // The row is pending and is offered again to the next subscriber, so a
+        // lost publication delays the action rather than losing it.
+        logWarn(this.env, "desktop_action_publication_failed", {
+          workstream_id: this.objectStore.identity()?.parentId ?? null,
+          substream_id: this.externalSubstreamId(),
+          action_id: request.id,
+          reason: diagnosticErrorCode(error, "desktop_action_publication_failed"),
+        });
+      });
+    });
+  }
+
+  private answerDesktopAction(
+    socket: WebSocket,
+    attachment: SocketAttachment,
+    actionId: string,
+    answered: DesktopActionOutcome,
+  ): void {
+    if (!this.answersDesktopActions(attachment.userId)) {
+      this.sendError(socket, "desktop_action_forbidden", "Only the person this conversation works for can answer its desktop actions.");
+      return;
+    }
+    // Every answer is recorded before it is used, so one the row cannot hold
+    // becomes a failure the model can act on rather than a write that throws.
+    const outcome: DesktopActionOutcome = textEncoder.encode(JSON.stringify(answered)).byteLength > DESKTOP_ACTION_MAX_OUTCOME_BYTES
+      ? { ok: false, code: "result_too_large", message: `The answer is over ${DESKTOP_ACTION_MAX_OUTCOME_BYTES} bytes.` }
+      : answered;
+    const result = this.desktopActions.answer({
+      id: actionId,
+      outcome,
+      answeredByUserId: attachment.userId,
+      now: Date.now(),
+    });
+    if (result === "unknown") {
+      this.sendError(socket, "desktop_action_not_found", "No desktop action has that id.");
+      return;
+    }
+    if (result === "answered") this.desktopActionWaiters.get(actionId)?.(outcome);
+  }
+
+  /**
+   * Offer a subscriber the actions still waiting on a desktop. Not sequenced
+   * events: each is a re-send of one already published, so it carries the
+   * subscriber's delivered sequence and a desktop acts on it by id.
+   */
+  private offerPendingDesktopActions(socket: WebSocket, userId: string, deliveredThrough: number): void {
+    if (!this.answersDesktopActions(userId)) return;
+    const occurredAt = new Date().toISOString();
+    for (const request of this.desktopActions.pending()) {
+      socket.send(JSON.stringify({ type: "desktop_action_requested", request, sequence: deliveredThrough, occurredAt }));
+    }
   }
 
   private assertPrivateChildNotArchived(): void {
@@ -6113,7 +6231,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     socket: WebSocket,
     attachment: SocketAttachment,
     command: Exclude<z.infer<typeof ClientSocketEventSchema>,
-      { type: "subscribe" | "mark_opened" | "request_snapshot" | "load_transcript_range" | "create_message" }>,
+      { type: "subscribe" | "mark_opened" | "request_snapshot" | "load_transcript_range" | "create_message" | "answer_desktop_action" }>,
   ): Promise<void> {
     await inSpan("workstream.room.substream_command", {
       "rally.component": "substream_do",
@@ -6135,7 +6253,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     socket: WebSocket,
     attachment: SocketAttachment,
     command: Exclude<z.infer<typeof ClientSocketEventSchema>,
-      { type: "subscribe" | "mark_opened" | "request_snapshot" | "load_transcript_range" | "create_message" }>,
+      { type: "subscribe" | "mark_opened" | "request_snapshot" | "load_transcript_range" | "create_message" | "answer_desktop_action" }>,
     span: TracedSpan,
   ): Promise<void> {
     try {
@@ -7863,6 +7981,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       subscribed: true,
     } satisfies SocketAttachment);
     if (preparedTicketId) this.deletePreparedSocketAdmission(preparedTicketId);
+    this.offerPendingDesktopActions(socket, attachment.userId, deliveredThrough);
     return true;
   }
 

@@ -11,6 +11,7 @@ export * from "./agent-communication";
 import { AgentExchangeSchema } from "./agent-communication";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
 import { DemoSeedSchema } from "./demo-seed";
+import { DesktopActionOutcomeSchema, DesktopActionRequestSchema } from "./desktop-actions";
 import {
   ActivitySourceBindingKeySchema,
   HarnessRunIdSchema,
@@ -250,6 +251,7 @@ export const AGENT_MODEL_ROLES = [
   "work_opportunity_admission",
   "work_opportunity_ranking",
   "workstream_description",
+  "session_import",
 ] as const;
 export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
 
@@ -261,6 +263,7 @@ export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
   work_opportunity_admission: "agent-model-work-opportunity-admission",
   work_opportunity_ranking: "agent-model-work-opportunity-ranking",
   workstream_description: "agent-model-workstream-description",
+  session_import: "agent-model-session-import",
 };
 
 /** One task's primary OpenRouter model and its ordered fallback route. */
@@ -2276,6 +2279,15 @@ export const ClientSocketEventSchema = z.discriminatedUnion("type", [
   }),
   z.strictObject({ type: z.literal("stop_harness"), operationId: IdSchema }),
   z.strictObject({ type: z.literal("retry_harness"), operationId: IdSchema }),
+  /**
+   * The desktop's answer to a `desktop_action_requested` it executed. The
+   * first answer to an action wins; a repeat is acknowledged and ignored.
+   */
+  z.strictObject({
+    type: z.literal("answer_desktop_action"),
+    actionId: z.string().min(1),
+    outcome: DesktopActionOutcomeSchema,
+  }),
 ]);
 
 /** Workspace-owned query surfaces kept coherent by the one WorkspaceDO socket. */
@@ -3169,6 +3181,11 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({ type: z.literal("tool_failed"), invocation: ToolInvocationSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("elicitation_created"), elicitation: ElicitationSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("elicitation_answered"), elicitation: ElicitationSchema }),
+  /**
+   * Work a running tool asks of the person's desktop. Sent when the tool asks,
+   * and again to a socket that subscribes while it is still unanswered.
+   */
+  ServerEventBaseSchema.extend({ type: z.literal("desktop_action_requested"), request: DesktopActionRequestSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("participant_added"), participant: ParticipantSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("participant_removed"), userId: IdSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("resource_attached"), resource: WorkstreamResourceSchema }),
