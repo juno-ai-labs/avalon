@@ -1,7 +1,8 @@
 /**
  * Builds the blog from GitHub-flavored Markdown at build time: one file per
- * post in `content/blog/`, front matter plus a plain Markdown body, rendered
- * to `/blog/<slug>/`, and a `/blog/` page listing every post, newest first.
+ * post in `content/blog/`, named `YYYY-MM-DD-<title>.md`, front matter plus a
+ * Markdown body, rendered to `/blog/<slug>/`, and a `/blog/` changelog that
+ * shows the newest post in full and every older one as its first paragraph.
  * Node only: Vite and the tests call it, the browser never does.
  */
 import { readdirSync, readFileSync } from 'node:fs';
@@ -10,11 +11,11 @@ import { parse as parseYaml } from 'yaml';
 import { escapeHtml, longDate } from './comparison-pages';
 
 export interface BlogPost {
-  /** Path segment under `/blog/`, and the Markdown file's name. */
+  /** Path segment under `/blog/`, from the front matter. */
   slug: string;
   title: string;
   description: string;
-  /** `YYYY-MM-DD`: the day the post was published. */
+  /** `YYYY-MM-DD`: the day the post was published, from the file name. */
   date: string;
   author: string;
   body: string;
@@ -25,34 +26,51 @@ export interface BlogPost {
 const ORIGIN = 'https://rallywith.ai';
 /** The index shares the home page's card; each post has its own, drawn at build time. */
 const HOME_IMAGE = `${ORIGIN}/rally-social-v01.jpg`;
-const FIELDS = ['slug', 'title', 'description', 'date', 'author'] as const;
+const FIELDS = ['slug', 'title', 'description', 'author'] as const;
 
+/**
+ * Parses one post. The file name, `YYYY-MM-DD-<title>.md`, is the only place
+ * the date lives, so front matter that repeats it is refused rather than left
+ * to drift from the name. The slug comes from the front matter, so a file can
+ * be renamed without moving its URL.
+ */
 export function parseBlogPost(source: string, file: string): BlogPost {
+  const name = /^(\d{4}-\d{2}-\d{2})-[a-z0-9-]+\.md$/u.exec(file);
+  if (!name) throw new Error(`${file}: file name must be YYYY-MM-DD-<title>.md, the title in lowercase letters, digits and hyphens`);
+  const date = name[1] ?? '';
+  // The day must exist: `Date` would quietly turn 2026-02-30 into March 2.
+  const day = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(day.getTime()) || day.toISOString().slice(0, 10) !== date) {
+    throw new Error(`${file}: date "${date}" is not a real YYYY-MM-DD day`);
+  }
   const match = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/u.exec(source);
   if (!match) throw new Error(`${file}: missing front matter`);
   const data = parseYaml(match[1] ?? '') as Record<string, unknown>;
   for (const field of FIELDS) {
     if (data[field] === undefined || data[field] === '') throw new Error(`${file}: front matter is missing "${field}"`);
   }
-  // The day must exist: `Date` would quietly turn 2026-02-30 into March 2.
-  const date = String(data.date);
-  if (!/^\d{4}-\d{2}-\d{2}$/u.test(date) || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date) {
-    throw new Error(`${file}: date "${date}" is not a real YYYY-MM-DD day`);
-  }
+  if ('date' in data) throw new Error(`${file}: "date" comes from the file name, not the front matter`);
   // The slug is the URL segment, so it keeps to what a path and the dev server accept.
-  if (!/^[a-z0-9-]+$/u.test(String(data.slug))) throw new Error(`${file}: slug "${String(data.slug)}" must be lowercase letters, digits and hyphens`);
+  const slug = String(data.slug);
+  if (!/^[a-z0-9-]+$/u.test(slug)) throw new Error(`${file}: slug "${slug}" must be lowercase letters, digits and hyphens`);
   return {
-    slug: String(data.slug), title: String(data.title), description: String(data.description),
+    slug, title: String(data.title), description: String(data.description),
     date, author: String(data.author), body: match[2] ?? '', source,
   };
 }
 
 export function loadBlogPosts(directory: URL): BlogPost[] {
+  const files = new Map<string, string>();
+  // Sorted so a duplicate slug always names the earlier file as the one already using it.
   return readdirSync(directory)
     .filter((name) => name.endsWith('.md'))
+    .sort()
     .map((name) => {
       const post = parseBlogPost(readFileSync(new URL(name, directory), 'utf8'), name);
-      if (`${post.slug}.md` !== name) throw new Error(`${name}: slug "${post.slug}" does not match the file name`);
+      // Two posts on one slug would build one page over the other.
+      const other = files.get(post.slug);
+      if (other) throw new Error(`${name}: slug "${post.slug}" is already used by ${other}`);
+      files.set(post.slug, name);
       return post;
     })
     .sort((a, b) => b.date.localeCompare(a.date) || a.slug.localeCompare(b.slug));
@@ -102,13 +120,38 @@ ${main}
 `;
 }
 
+const renderMarkdown = (markdown: string): string => marked.parse(markdown, { async: false });
+
+/**
+ * The post's first paragraph as HTML, or nothing if the body has none. It is
+ * rendered with the whole body's link definitions, so a reference link whose
+ * `[label]: url` sits further down still resolves.
+ */
+function firstParagraph(body: string): string {
+  const tokens = marked.lexer(body);
+  const paragraph = tokens.find((token) => token.type === 'paragraph');
+  return paragraph ? marked.parser(Object.assign([paragraph], { links: tokens.links })) : '';
+}
+
+/**
+ * `/blog/` as a changelog: a date rail on the left and the posts on the right,
+ * newest first. The newest post shows in full; each older one shows its first
+ * paragraph and a link to the rest.
+ */
 export function renderBlogIndex(posts: readonly BlogPost[]): string {
-  const items = posts.map(({ slug, title, description, date }) =>
-    `<li><a class="blog-entry" href="/blog/${slug}/"><time datetime="${date}">${longDate(date)}</time>`
-    + `<span class="blog-entry-title">${escapeHtml(title)}</span><span class="blog-entry-summary">${escapeHtml(description)}</span></a></li>`).join('');
+  const entries = posts.map((post, index) => {
+    const { slug, title, date, body } = post;
+    const href = `/blog/${slug}/`;
+    const content = index === 0
+      ? `<div class="blog-body">${renderMarkdown(body)}</div>`
+      : `<div class="blog-body">${firstParagraph(body)}</div>`
+        + `<a class="changelog-more" href="${href}" aria-label="Read more: ${escapeHtml(title)}">Read more <span aria-hidden="true">→</span></a>`;
+    return `<article class="changelog-entry"><div class="changelog-date"><time datetime="${date}">${longDate(date)}</time></div>`
+      + `<div class="changelog-content"><h2 class="changelog-title"><a href="${href}">${escapeHtml(title)}</a></h2>${content}</div></article>`;
+  }).join('\n');
   return page({
     path: '/blog/', title: 'Blog · Rally', description: 'News and writing from the team building Rally.', type: 'website', image: HOME_IMAGE, extraHead: '',
-    main: `<div class="blog">\n<p class="eyebrow">Blog</p>\n<h1 class="display blog-title">From the Rally team</h1>\n<ol class="blog-list">${items}</ol>\n</div>`,
+    main: `<div class="changelog">\n<h1 class="display changelog-heading">Blog</h1>\n<div class="changelog-entries">\n${entries}\n</div>\n</div>`,
   });
 }
 
@@ -132,6 +175,6 @@ export function renderBlogPost(post: BlogPost): string {
     main: `<article class="blog">\n<nav class="breadcrumbs" aria-label="Breadcrumb"><ol><li><a href="/">Rally</a></li><li><a href="/blog/">Blog</a></li><li aria-current="page">${escapeHtml(title)}</li></ol></nav>\n`
       + `<h1 class="display blog-title">${escapeHtml(title)}</h1>\n`
       + `<p class="blog-meta"><time datetime="${date}">${longDate(date)}</time> · ${escapeHtml(author)}</p>\n`
-      + `<div class="blog-body">${marked.parse(post.body, { async: false })}</div>\n</article>`,
+      + `<div class="blog-body">${renderMarkdown(post.body)}</div>\n</article>`,
   });
 }
