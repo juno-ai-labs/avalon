@@ -1,7 +1,7 @@
 import type { SpaceSummary } from '@rally/contracts';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { useEffect, useId, useMemo, useState, type ReactElement } from 'react';
+import { cloneElement, useEffect, useId, useMemo, useState, type MouseEvent, type ReactElement } from 'react';
 
 import { Button, DropdownSelect, InlineError, Modal, Tip } from './primitives';
 
@@ -15,7 +15,8 @@ type CreationKind = 'channel' | 'space';
  * menu, is not empty space. `offer` narrows the items to the channel ones or
  * the Space one. `lockedSpaceId` is the
  * Space the reader is looking at: both the channel form and the import window
- * start on it and do not offer another.
+ * start on it and do not offer another. `trigger="direct"` skips the menu: the
+ * child opens the one form `offer` names, for a button that only ever does that.
  */
 export function NewWorkstreamMenu({
   children,
@@ -36,7 +37,7 @@ export function NewWorkstreamMenu({
   canCreateSpace?: boolean;
   lockedSpaceId?: string | null;
   offer?: 'all' | 'channel' | 'space';
-  trigger?: 'dropdown' | 'context';
+  trigger?: 'dropdown' | 'context' | 'direct';
   tooltipSide?: 'bottom' | 'right';
   spaces?: SpaceSummary[];
   onCreateChannel: (input: { name: string; spaceId: string }) => Promise<void>;
@@ -118,8 +119,17 @@ export function NewWorkstreamMenu({
     {offer !== 'channel' && <Item className="menu-item" disabled={!canCreateSpace} onSelect={() => open('space')}>Create New Space</Item>}
   </>;
 
+  const direct = trigger === 'direct' && offer !== 'all'
+    ? <Tip describesTrigger={false} label={tooltipLabel} side={tooltipSide}>
+      {cloneElement(children as ReactElement<{ disabled?: boolean; onClick?: (event: MouseEvent) => void }>, {
+        disabled: offer === 'space' ? !canCreateSpace : selectableSpaces.length === 0,
+        onClick: () => open(offer),
+      })}
+    </Tip>
+    : null;
+
   return <>
-    {trigger === 'context' ? <ContextMenu.Root>
+    {direct ?? (trigger === 'context' ? <ContextMenu.Root>
       <ContextMenu.Trigger asChild disabled={disabled} onContextMenu={(event) => {
         // Claims the click so the menu stays shut; a row's own menu has
         // already claimed it the same way. A portalled menu or dialog opened
@@ -139,7 +149,7 @@ export function NewWorkstreamMenu({
       <DropdownMenu.Portal>
         <DropdownMenu.Content className="menu-content new-workstream-menu" align="start" sideOffset={6}>{items}</DropdownMenu.Content>
       </DropdownMenu.Portal>
-    </DropdownMenu.Root>}
+    </DropdownMenu.Root>)}
     <Modal
       footer={<>
         <Button disabled={saving} onClick={close}>Cancel</Button>

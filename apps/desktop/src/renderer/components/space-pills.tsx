@@ -1,73 +1,40 @@
-import { IconArchive, IconDeviceDesktopDown, IconRestore } from '@tabler/icons-react';
+import { IconArchive, IconRestore } from '@tabler/icons-react';
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import * as Tooltip from '@radix-ui/react-tooltip';
 import type { ContainerOrder, PersonalOrder, SpaceSummary } from '@rally/contracts';
 import { SpaceIcon } from '@rally/ui/components/space-icon';
-import { SidebarNavigationRowContent } from '@rally/ui/components/navigation';
+import { SpacePill, SpacePillAddButton, SpacePillStrip } from '@rally/ui/components/space-pills';
 import { SidebarRefreshRow } from '@rally/ui/components/sidebar-refresh-row';
-import {
-  ResizableSidebar,
-  SidebarCollapseFooter,
-  SidebarHeader,
-  SidebarHorizontalLine,
-  SidebarList,
-  SidebarRow,
-  SidebarScroll,
-} from '@rally/ui/components/resizable-sidebar';
-import {
-  COLLAPSED_SIDEBAR_WIDTH,
-  MAX_SIDEBAR_WIDTH,
-  MIN_SIDEBAR_WIDTH,
-  SIDEBAR_COLLAPSE_DRAG_THRESHOLD,
-  SIDEBAR_EXPAND_DRAG_THRESHOLD,
-} from '@rally/ui/lib/sidebar-geometry';
 import clsx from 'clsx';
-import { Plus } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 
-import { useListMotion } from '../lib/use-list-motion';
-import { useSemanticScroll } from '../lib/desktop-layout';
-import { desktopBridge } from '../lib/platform';
-import { useDownloadedUpdate } from '../lib/use-downloaded-update';
 import { committedOrder, moveWithin, orderByStoredIds, storedOrderFor } from '../lib/personal-order';
 import { blockedChannelLabel, spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
 import type { WorkstreamSummary } from '../lib/types';
 import { NewWorkstreamMenu } from './new-workstream-menu';
 import { AcknowledgedErrorDialog, type AcknowledgedError } from './acknowledged-error-dialog';
-import { Button, IconButton, InlineError, Modal, Tip } from './primitives';
-import { SidebarSearch } from './sidebar-search';
-import { SidebarSkeletonRows } from './sidebar-skeleton';
+import { Button, InlineError, Modal } from './primitives';
 
-interface SpacesSidebarProps {
-  scrollStateKey: string;
-  accountSlotRef: (element: HTMLDivElement | null) => void;
-  availableWidth: number;
-  sidekickSlotRef: (element: HTMLDivElement | null) => void;
-  collapsed: boolean;
-  constrained: boolean;
-  width: number;
-  currentPath: string;
+interface SpacePillsProps {
   inactiveSpaces: SpaceSummary[];
   loading?: boolean;
   readOnly?: boolean;
+  /** Every active Space, General included; General is never drawn as a pill. */
   spaces: SpaceSummary[];
+  /** The Space the list is filtered to, or null for All. */
   selectedSpaceId: string | null;
   revealSelection?: { revision: number; spaceId: string } | null;
   ready: boolean;
   outOfDate: boolean;
-  onCollapsedChange: (collapsed: boolean) => void;
-  onWidthChange: (width: number) => void;
   onCreateChannel: (input: { name: string; spaceId: string }) => Promise<void>;
   onCreateSpace: (name: string) => Promise<void>;
-  onOpenSearch?: () => void;
   onOrderPreviewChange: (order: string[] | null) => void;
   onArchive?: ((spaceId: string) => Promise<void>) | undefined;
   onMoveChannel: (sourceSpaceId: string, targetSpaceId: string, workstreamId: string) => Promise<void>;
   onReorder: (order: ContainerOrder) => Promise<void>;
   onRetry: () => void;
   onRestore: (spaceId: string) => Promise<void>;
-  onSelect: (spaceId: string) => void;
+  onSelect: (spaceId: string | null) => void;
   ordering: PersonalOrder;
   workstreams: WorkstreamSummary[];
 }
@@ -78,22 +45,15 @@ const CHANNEL_DROP_ACCEPTED_FLASH_MS = 780;
 const SPACE_DRAG_TYPE = 'application/x-rally-space-id';
 
 /**
- * The first level of the Organization hierarchy.
+ * The Organization's Spaces as filters across the top of the sidebar.
  *
- * This is deliberately navigation only. WorkspaceDO's Space directory remains
- * the authority; selecting a row tells the adjacent Channel sidebar which
- * placement list to draw. Keeping the rails separate avoids turning a Space
- * row into a second, accordion-shaped owner of Channel state.
+ * Navigation only, as the Spaces rail it replaces was: WorkspaceDO's Space
+ * directory stays the authority, and a pill only says which placement list
+ * the Channel list below draws. **All** is every Channel the reader holds.
+ * General is the Organization's default home rather than a place anybody
+ * chose, so it has no pill: its Channels are under All.
  */
-export function SpacesSidebar({
-  accountSlotRef,
-  scrollStateKey,
-  availableWidth,
-  sidekickSlotRef,
-  collapsed,
-  constrained,
-  width,
-  currentPath,
+export function SpacePills({
   inactiveSpaces,
   loading = false,
   readOnly = false,
@@ -102,11 +62,8 @@ export function SpacesSidebar({
   revealSelection = null,
   ready,
   outOfDate,
-  onCollapsedChange,
-  onWidthChange,
   onCreateChannel,
   onCreateSpace,
-  onOpenSearch,
   onOrderPreviewChange,
   onArchive,
   onMoveChannel,
@@ -116,15 +73,10 @@ export function SpacesSidebar({
   onSelect,
   ordering,
   workstreams,
-}: SpacesSidebarProps): React.JSX.Element {
+}: SpacePillsProps): React.JSX.Element {
   const navigate = useNavigate();
-  const downloadedUpdate = useDownloadedUpdate();
-  const sidebarRef = useRef<HTMLElement>(null);
-  const scrollRef = useRef<HTMLElement | null>(null);
-  useSemanticScroll(scrollRef, scrollStateKey, '[data-space-id]', ready && !loading);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   const revealedRevision = useRef<number | null>(null);
-  const onNewChannelRoute = /^\/spaces\/[^/]+\/workstreams\/new$/u.test(currentPath);
-  const commandRef = useRef<HTMLDivElement | null>(null);
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
   const dragOrderRef = useRef<string[] | null>(null);
   const [failure, setFailure] = useState<AcknowledgedError | null>(null);
@@ -142,10 +94,6 @@ export function SpacesSidebar({
   const [blockedChannelIds, setBlockedChannelIds] = useState<string[]>([]);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [restoreFailed, setRestoreFailed] = useState(false);
-  // The compact Create control is a row inserted above Search. Search keeps
-  // its second grid track while the first track opens; list motion draws the
-  // Create control's leftward entrance and stand-in exit independently.
-  useListMotion(commandRef, collapsed);
   useEffect(() => () => {
     if (acceptedChannelDropTimer.current !== null) {
       clearTimeout(acceptedChannelDropTimer.current.handle);
@@ -156,19 +104,27 @@ export function SpacesSidebar({
     storedOrderFor(ordering, { kind: 'organization' }),
     (space) => space.id,
   ), [ordering, spaces]);
-  const storedIds = storedSpaces.map((space) => space.id);
-  const orderedSpaces = dragOrder === null
+  const storedIds: string[] = storedSpaces.map((space) => space.id);
+  const orderedSpaces = (dragOrder === null
     ? storedSpaces
-    : orderByStoredIds(spaces, dragOrder, (space) => space.id);
+    : orderByStoredIds(spaces, dragOrder, (space) => space.id))
+    .filter((space) => space.systemRole !== 'general');
   useLayoutEffect(() => {
     if (revealSelection === null || revealedRevision.current === revealSelection.revision) return;
-    const row = scrollRef.current?.querySelector<HTMLElement>(
+    const pill = scrollRef.current?.querySelector<HTMLElement>(
       `[data-space-id="${revealSelection.spaceId}"]`,
     );
-    if (!row) return;
+    if (!pill) return;
     revealedRevision.current = revealSelection.revision;
-    row.scrollIntoView?.({ block: 'center', behavior: 'auto' });
+    pill.scrollIntoView?.({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
   }, [orderedSpaces, revealSelection]);
+  // The selected pill is brought into the strip's view, so a filter chosen
+  // from a route, a new Space or a restore is never one the reader cannot see.
+  useLayoutEffect(() => {
+    if (selectedSpaceId === null) return;
+    scrollRef.current?.querySelector<HTMLElement>(`[data-space-id="${selectedSpaceId}"]`)
+      ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
+  }, [selectedSpaceId]);
   const restorableSpaces = inactiveSpaces.filter((space) => space.reach !== 'through_channel');
   const currentArchiveTarget = archiveTarget === null
     ? null
@@ -182,35 +138,19 @@ export function SpacesSidebar({
           || currentArchiveTarget.systemRole === 'general'
         ? 'This space is no longer available to archive.'
         : null;
-  const effectiveWidth = collapsed ? COLLAPSED_SIDEBAR_WIDTH : width;
-  const resize = useCallback((requested: number): void => {
-    if (collapsed) {
-      if (requested < SIDEBAR_EXPAND_DRAG_THRESHOLD || constrained) return;
-      onWidthChange(Math.min(MAX_SIDEBAR_WIDTH, requested, availableWidth));
-      onCollapsedChange(false);
-      return;
-    }
-    if (requested < SIDEBAR_COLLAPSE_DRAG_THRESHOLD) {
-      onCollapsedChange(true);
-      return;
-    }
-    if (constrained) return;
-    onWidthChange(Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, requested, availableWidth)));
-  }, [availableWidth, collapsed, constrained, onCollapsedChange, onWidthChange]);
-  const toggle = useCallback((): void => {
-    if (!collapsed) {
-      onCollapsedChange(true);
-      return;
-    }
-    if (constrained) return;
-    onWidthChange(Math.min(width, availableWidth));
-    onCollapsedChange(false);
-  }, [availableWidth, collapsed, constrained, onCollapsedChange, onWidthChange, width]);
 
   const previewOrder = (order: string[] | null): void => {
     dragOrderRef.current = order;
     setDragOrder(order);
     onOrderPreviewChange(order);
+  };
+
+  // The stored order keeps General's place; only the pills a reader can see
+  // move, so a drag never has to say where a hidden Space goes.
+  const withHiddenSpaces = (visibleIds: string[]): string[] => {
+    const visible = new Set(visibleIds);
+    let next = 0;
+    return storedIds.map((id) => visible.has(id) ? visibleIds[next++]! : id);
   };
 
   const commitOrder = async (ids: string[]): Promise<void> => {
@@ -258,6 +198,7 @@ export function SpacesSidebar({
     try {
       await onArchive(archiveTarget.id);
       setArchiveTarget(null);
+      if (selectedSpaceId === archiveTarget.id) onSelect(null);
     } catch (cause) {
       setBlockedChannelIds(spaceRefusalChannelIds(cause));
       setArchiveFailure(spaceFailureSentence(cause, 'The space could not be archived.'));
@@ -266,114 +207,45 @@ export function SpacesSidebar({
     }
   };
 
+  const addButton = !readOnly && ready && <ContextMenu.Root>
+    <ContextMenu.Trigger asChild disabled={restorableSpaces.length === 0}>
+      <span className="space-pill-add-slot">
+        <NewWorkstreamMenu offer="space" onCreateChannel={onCreateChannel} onCreateSpace={onCreateSpace} tooltipLabel="New space" trigger="direct">
+          <SpacePillAddButton />
+        </NewWorkstreamMenu>
+      </span>
+    </ContextMenu.Trigger>
+    <ContextMenu.Portal>
+      <ContextMenu.Content className="menu-content sidebar-context-menu" collisionPadding={8}>
+        <ContextMenu.Item className="menu-item" onSelect={() => { setRestoreFailed(false); setRecoveryOpen(true); }}>
+          <IconRestore aria-hidden="true" size={16} stroke={1.8} /> Restore archived space
+        </ContextMenu.Item>
+      </ContextMenu.Content>
+    </ContextMenu.Portal>
+  </ContextMenu.Root>;
+
   return (
     <>
-      <ResizableSidebar
-        aria-label="Spaces sidebar"
-        className="spaces-sidebar"
-        compact={collapsed}
-        constrained={constrained}
-        onResize={resize}
-        onToggle={toggle}
-        resizeLabel="Resize spaces sidebar"
-        sidebarRef={sidebarRef}
-        width={effectiveWidth}
-      >
-        <SidebarHeader aria-label="Space actions" className="spaces-sidebar-titlebar window-drag">
-          <div className="spaces-sidebar-titlebar-actions window-no-drag">
-          {downloadedUpdate !== null && <IconButton className="spaces-sidebar-update" label={`Restart to update to Rally ${downloadedUpdate}`} onClick={() => void desktopBridge().installDownloadedUpdate()}>
-            <IconDeviceDesktopDown size={16} stroke={1.8} />
-          </IconButton>}
-          {!readOnly && ready && restorableSpaces.length > 0 && <IconButton className="spaces-sidebar-restore" label="Restore archived space" onClick={() => { setRestoreFailed(false); setRecoveryOpen(true); }}>
-            <IconRestore size={16} stroke={1.8} />
-          </IconButton>}
-          {!readOnly && ready && <NewWorkstreamMenu
-            canCreateSpace
-            tooltipLabel="New channel or space"
-            spaces={spaces}
-            onCreateChannel={onCreateChannel}
-            onCreateSpace={onCreateSpace}
-          >
-            <button
-              aria-hidden={collapsed}
-              aria-label="New channel or space"
-              className={clsx('sidebar-new-button window-no-drag', onNewChannelRoute && 'is-active')}
-              tabIndex={collapsed ? -1 : undefined}
-              type="button"
-            >
-              <Plus aria-hidden="true" size={16} />
-            </button>
-          </NewWorkstreamMenu>}
-          </div>
-        </SidebarHeader>
-        {ready && <div className="sidebar-commandbar spaces-sidebar-commandbar window-no-drag" ref={commandRef}>
-          {!readOnly && collapsed && <NewWorkstreamMenu
-            tooltipSide="right"
-            tooltipLabel="New channel or space"
-            canCreateSpace
-            spaces={spaces}
-            onCreateChannel={onCreateChannel}
-            onCreateSpace={onCreateSpace}
-          >
-            <button
-              aria-label="New channel or space"
-              className={clsx('sidebar-new-button sidebar-rail-new-button window-no-drag', onNewChannelRoute && 'is-active')}
-              data-motion-insert=""
-              data-motion-key="action:new"
-              type="button"
-            >
-              <Plus aria-hidden="true" size={19} strokeWidth={1.6} />
-            </button>
-          </NewWorkstreamMenu>}
-          <Tip describesTrigger={false} label="Search" side={collapsed ? 'right' : 'bottom'}>
-            <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search organization" />
-          </Tip>
-        </div>}
-        {!readOnly && ready && spaces.length > 1 && <p className="sr-only" id="spaces-reorder-help">
-          Hold Alt and press the Up or Down Arrow key to reorder a space.
-        </p>}
-        {/* Right-clicking empty space in the Space list offers a new Space. */}
-        <NewWorkstreamMenu disabled={readOnly || !ready} offer="space" trigger="context"
-          onCreateChannel={onCreateChannel} onCreateSpace={onCreateSpace}>
-        <SidebarScroll
-          as="nav"
-          aria-describedby={!readOnly && ready && spaces.length > 1 ? 'spaces-reorder-help' : undefined}
-          aria-label="Spaces"
-          className="spaces-sidebar-scroll"
-          scrollRef={scrollRef}
-        >
-          <SidebarList>
-          {!ready ? (
-            <p className="spaces-sidebar-empty">Rally is opening this organization. Spaces appear once every channel has one.</p>
-          ) : loading && spaces.length === 0 ? (
-            <SidebarSkeletonRows count={4} hint="some" mark="tile" />
-          ) : spaces.length === 0 ? (
-            <p className="spaces-sidebar-empty">No spaces yet</p>
-          ) : <>
-            {outOfDate && <SidebarRefreshRow onRefresh={onRetry} />}
-            {orderedSpaces.map((space, index) => (
-            <Tooltip.Root key={space.id} delayDuration={300}>
-              <ContextMenu.Root>
+      <SpacePillStrip leading={addButton || undefined} ref={scrollRef}>
+        {!ready ? (
+          <span className="space-pill-strip-note">Opening this organization…</span>
+        ) : loading && spaces.length === 0 ? (
+          <span aria-hidden="true" className="skeleton-bar space-pill-skeleton" />
+        ) : <>
+          {outOfDate && <SidebarRefreshRow onRefresh={onRetry} />}
+          <SpacePill onClick={() => onSelect(null)} selected={selectedSpaceId === null}>All</SpacePill>
+          {orderedSpaces.map((space, index) => (
+            <ContextMenu.Root key={space.id}>
               <ContextMenu.Trigger asChild>
-              <Tooltip.Trigger asChild>
-                <SidebarRow
-                  as={readOnly ? 'button' : NavLink}
-                  {...(readOnly ? { type: 'button' as const } : { to: `/spaces/${space.id}` })}
-                  aria-label={space.name}
+                <SpacePill
                   aria-description={space.scope === 'workspace' ? 'Public space' : undefined}
-                  badge={{
-                    count: space.attentionCount ?? 0,
-                    label: `${space.attentionCount ?? 0} ${space.attentionCount === 1 ? 'conversation needs' : 'conversations need'} attention in ${space.name}`,
-                  }}
                   className={clsx(
-                    'spaces-sidebar-row',
-                    selectedSpaceId === space.id && 'is-active',
                     channelDropTargetId === space.id && 'is-channel-drop-target',
                     acceptedChannelDropTargetId === space.id && 'is-channel-drop-accepted',
                   )}
                   data-space-id={space.id}
-                  data-layout-id={space.id}
                   draggable={!readOnly}
+                  onClick={() => onSelect(space.id)}
                   onDragEnd={(event: DragEvent<HTMLElement>) => {
                     const next = committedOrder(dragOrder, storedIds, (event.dataTransfer?.dropEffect ?? 'none') !== 'move');
                     draggingSpaceId.current = null;
@@ -394,11 +266,12 @@ export function SpacesSidebar({
                     event.preventDefault();
                     const dragged = draggingSpaceId.current;
                     if (!dragged || dragged === space.id) return;
-                    previewOrder(moveWithin(
-                      dragOrderRef.current ?? orderedSpaces.map((item) => item.id),
+                    const visible: string[] = orderedSpaces.map((item) => item.id);
+                    previewOrder(withHiddenSpaces(moveWithin(
+                      (dragOrderRef.current ?? storedIds).filter((id) => visible.includes(id)),
                       dragged,
                       index,
-                    ));
+                    )));
                   }}
                   onDragOver={(event: DragEvent<HTMLElement>) => {
                     const reordersSpace = event.dataTransfer.types.includes(SPACE_DRAG_TYPE);
@@ -417,7 +290,7 @@ export function SpacesSidebar({
                   onDragStart={(event: DragEvent<HTMLElement>) => {
                     if (readOnly) return;
                     draggingSpaceId.current = space.id;
-                    previewOrder(orderedSpaces.map((item) => item.id));
+                    previewOrder(storedIds);
                     event.dataTransfer.effectAllowed = 'move';
                     event.dataTransfer.setData(SPACE_DRAG_TYPE, space.id);
                   }}
@@ -435,7 +308,7 @@ export function SpacesSidebar({
                     setChannelDropTargetId(null);
                     setFailure(null);
                     event.dataTransfer.dropEffect = 'move';
-                    // The row leaves the source rail optimistically, so the
+                    // The row leaves the source list optimistically, so the
                     // destination acknowledges the same drop immediately. A
                     // server refusal still restores the placement and opens
                     // the failure dialog; the pulse describes the gesture,
@@ -459,24 +332,24 @@ export function SpacesSidebar({
                   }}
                   onKeyDown={(event: KeyboardEvent<HTMLElement>) => {
                     if (readOnly) return;
-                    if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+                    if (!event.altKey || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
                     event.preventDefault();
-                    const nextIndex = index + (event.key === 'ArrowUp' ? -1 : 1);
-                    if (nextIndex < 0 || nextIndex >= orderedSpaces.length) return;
-                    void commitOrder(moveWithin(orderedSpaces.map((item) => item.id), space.id, nextIndex));
+                    const visible = orderedSpaces.map((item) => item.id);
+                    const nextIndex = index + (event.key === 'ArrowLeft' ? -1 : 1);
+                    if (nextIndex < 0 || nextIndex >= visible.length) return;
+                    void commitOrder(withHiddenSpaces(moveWithin(visible, space.id, nextIndex)));
                   }}
-                  onClick={() => onSelect(space.id)}
+                  selected={selectedSpaceId === space.id}
                 >
-                  <SidebarNavigationRowContent
-                    activity={space.scope === 'workspace' ? 'Public space' : undefined}
-                    icon={<span className="spaces-sidebar-mark"><SpaceIcon size={22} space={space} /></span>}
-                    title={space.name}
-                  />
-                </SidebarRow>
-              </Tooltip.Trigger>
+                  {space.name}
+                </SpacePill>
               </ContextMenu.Trigger>
               {space.reach !== 'through_channel' && space.systemRole !== 'general' && onArchive !== undefined && <ContextMenu.Portal>
                 <ContextMenu.Content className="menu-content sidebar-context-menu" collisionPadding={8}>
+                  <ContextMenu.Item className="menu-item" onSelect={() => void navigate(`/spaces/${space.id}`)}>
+                    <SpaceIcon size={16} space={space} /> Open space
+                  </ContextMenu.Item>
+                  <ContextMenu.Separator className="menu-separator" />
                   <ContextMenu.Item className="menu-item menu-item-danger" onSelect={() => {
                     setArchiveFailure(null);
                     setBlockedChannelIds([]);
@@ -486,44 +359,13 @@ export function SpacesSidebar({
                   </ContextMenu.Item>
                 </ContextMenu.Content>
               </ContextMenu.Portal>}
-              </ContextMenu.Root>
-              <Tooltip.Portal>
-                <Tooltip.Content
-                  align="center"
-                  className="sidebar-workstream-preview-surface spaces-sidebar-preview-surface"
-                  collisionPadding={8}
-                  side="right"
-                  sideOffset={8}
-                >
-                  <div className="sidebar-workstream-preview">
-                    <div className="sidebar-workstream-preview-header">
-                      <span className="sidebar-workstream-preview-identity">
-                        <SpaceIcon size={16} space={space} />
-                        <span className="sidebar-workstream-preview-name">{space.name}</span>
-                      </span>
-                    </div>
-                    {space.scope === 'workspace' && <p className="sidebar-workstream-preview-scope">Organization space</p>}
-                  </div>
-                </Tooltip.Content>
-              </Tooltip.Portal>
-            </Tooltip.Root>
-            ))}
-          </>}
-          </SidebarList>
-        </SidebarScroll>
-        </NewWorkstreamMenu>
-        <div className="spaces-sidekick-slot" ref={sidekickSlotRef} />
-        <SidebarHorizontalLine className="spaces-sidebar-footer-line" />
-        <SidebarCollapseFooter
-          collapseLabel="Collapse spaces"
-          compact={collapsed}
-          constrained={constrained}
-          constrainedTitle="Widen the window to expand spaces"
-          expandLabel="Expand spaces"
-          leading={<div className="spaces-account-slot" ref={accountSlotRef} />}
-          onToggle={toggle}
-        />
-      </ResizableSidebar>
+            </ContextMenu.Root>
+          ))}
+        </>}
+      </SpacePillStrip>
+      {!readOnly && ready && orderedSpaces.length > 1 && <p className="sr-only" id="spaces-reorder-help">
+        Hold Alt and press the Left or Right Arrow key to reorder a space.
+      </p>}
       <AcknowledgedErrorDialog
         error={failure}
         onAcknowledge={() => setFailure(null)}
@@ -555,7 +397,7 @@ export function SpacesSidebar({
           <Button key={space.id} onClick={() => {
             setRestoreFailed(false);
             void onRestore(space.id)
-              .then(() => { setRecoveryOpen(false); void navigate(`/spaces/${space.id}`); })
+              .then(() => { setRecoveryOpen(false); onSelect(space.id); })
               .catch(() => setRestoreFailed(true));
           }}><SpaceIcon space={space} /> {space.name}</Button>
         ))}</div>

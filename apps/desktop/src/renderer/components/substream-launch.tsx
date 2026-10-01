@@ -352,5 +352,5 @@ export function SubstreamLaunchSurface({
  * draft it keys survives leaving the surface and coming back to it — the same
  * promise every other composer in Rally makes about words somebody typed.
  */
-export { PENDING_SUBSTREAM_DRAFT_ID } from '@rally/ui/components/workstream-sidebar';
-import { PENDING_SUBSTREAM_DRAFT_ID } from '@rally/ui/components/workstream-sidebar';
+export { PENDING_SUBSTREAM_DRAFT_ID } from '@rally/ui/components/conversation-menus';
+import { PENDING_SUBSTREAM_DRAFT_ID } from '@rally/ui/components/conversation-menus';

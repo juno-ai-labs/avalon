@@ -12,7 +12,7 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | Path | Responsibility |
 | --- | --- |
 | `apps/browser/src/worker.tsx` | Static entry, asset delivery and regional service forwarding. |
-| `apps/browser/src/mac-download.tsx` | The Mac app download, pinned above the account menu in whichever rail holds it. |
+| `apps/browser/src/mac-download.tsx` | The Mac app download, pinned above the account menu in the sidebar, or floating with it when there is no sidebar. |
 | `apps/browser/src/entry.tsx` | Email/OTP and explicit magic-link redemption, invitation acceptance, session restore and workspace list. |
 | `apps/browser/src/invitation.ts` | Tokenized and addressed invitation fragments, and exact canonical scope destinations. |
 | `apps/browser/src/transport.ts` | Same-origin entry requests and runtime response validation. |
@@ -128,17 +128,19 @@ Failed network requests remain visible and can recover on focus or reconnect;
 generation used for sign-out and cross-tab restoration. Long session deadlines
 are split into timer-range-safe waits by `session-timer.ts`.
 
-The shared navigation uses the same adjacent Space and Channel rails, contextual
-Channel sidebar, header, resource rows, Sidekick controls and account trigger as
-desktop, from `@rally/ui`. The browser's versioned navigation directory contains
+The shared navigation uses the same single sidebar, Space pills, Channel rows,
+title pills and menus, split Breakout pane, resource rows, Sidekick controls and
+account trigger as desktop, from `@rally/ui` ([`desktop-shell.md`](desktop-shell.md)).
+It asks for the navigation directory with `?origins=1`, which adds each
+Breakout's `originTurnId` and each Space's `systemRole`; General gets no pill. The browser's versioned navigation directory contains
 only authorized containment plus the associative presentation metadata above it:
 name, icon, colour and public/private scope for Space, Channel and Breakout.
 The Channel's canonical parent in WorkspaceDO independently re-authorizes every
 Channel and Breakout;
 the metadata grants no parent transcript, roster, defaults or write capability.
 A child-only share names and styles its Channel so the Breakout can be placed
-correctly, but still omits Main and every unshared Breakout. Selecting a Space
-filters the Channel rail. On legacy paths it opens the first active authorized
+correctly, but still omits Main and every unshared Breakout; such a Breakout opens
+alone, in Main's place. Selecting a Space pill filters the Channel list. On legacy paths it opens the first active authorized
 conversation across its Channels, falling back to archived content only when
 none is active. Canonical Space roots show a read-only overview of the Space
 and its shared Channels; selecting a Space on the canonical host opens that
@@ -150,11 +152,11 @@ It holds one workspace socket per tab, through `watchWorkspaceReach`, and reads
 the shared navigation again when that socket reports this person's reach
 changed ([`realtime-sockets.md`](realtime-sockets.md)).
 
-A rail that would list exactly one row is hidden: one Space hides the Spaces
-rail, one Channel the Channels rail. The account menu moves to the next rail
-inward, and with both hidden it also floats at the bottom left for when no
-Breakout rail is mounted. With both hidden, the lone Channel opens directly.
-Both rails stay while the directory is loading, failed or empty.
+The sidebar is hidden when there is nothing to choose: one Channel and at most
+one Space (`browserSidebarVisible`). The lone Channel then opens directly and the
+account menu floats at the bottom left. The sidebar stays while the directory is
+loading, failed or empty. Its width is the reader's preference clamped by
+`browserSidebarWidth`; it does not collapse.
 
 ### Shared collaboration transport
 
