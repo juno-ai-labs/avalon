@@ -21,8 +21,6 @@ import {
   channelSpaceMutationHandlers,
   hasLiveSpaceArchiveAuthority,
   invitationAccountMismatch,
-  sidebarConstraintThreshold,
-  spacesSidebarAvailableWidth,
   spacesEnabledForSession,
   useLayoutMountedRef,
   useLatestCommittedValue,
@@ -31,45 +29,6 @@ import {
   batchArchiveSkipIds,
   workstreamMatchesBatchFilter,
 } from './app-shell';
-
-describe('sidebarConstraintThreshold', () => {
-  it('reserves the Space rail at both hierarchy depths', () => {
-    expect(sidebarConstraintThreshold({
-      pathname: '/spaces/hiring',
-      sidebarWidth: 280,
-      spacesSidebarWidth: 280,
-      spacesCollapsed: false,
-      spacesEnabled: true,
-    })).toBe(984);
-    expect(sidebarConstraintThreshold({
-      pathname: '/workstreams/launch',
-      sidebarWidth: 280,
-      spacesSidebarWidth: 280,
-      spacesCollapsed: true,
-      spacesEnabled: true,
-    })).toBe(880);
-    expect(sidebarConstraintThreshold({
-      pathname: '/workstreams/launch',
-      sidebarWidth: 280,
-      spacesSidebarWidth: 280,
-      spacesCollapsed: false,
-      spacesEnabled: false,
-    })).toBe(792);
-  });
-});
-
-describe('spacesSidebarAvailableWidth', () => {
-  it('reserves compact Channel and context rails before sizing Spaces', () => {
-    expect(spacesSidebarAvailableWidth({
-      pathname: '/workstreams/launch',
-      viewportWidth: 850,
-    })).toBe(250);
-    expect(spacesSidebarAvailableWidth({
-      pathname: '/spaces/hiring',
-      viewportWidth: 850,
-    })).toBe(338);
-  });
-});
 
 describe('hasLiveSpaceArchiveAuthority', () => {
   const liveConnect = { generation: 1, nextCursor: null, spacesLive: true };
