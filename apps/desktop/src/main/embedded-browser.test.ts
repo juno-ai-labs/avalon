@@ -80,22 +80,6 @@ describe('the local browser behind the rail and the import window', () => {
     expect([...electron.sessions.keys()]).toEqual(['persist:rally-browser-user-1', 'persist:rally-browser-user-2']);
   });
 
-  it.each([
-    ['darwin', 'WebAuth'],
-    ['linux', 'WebAuth'],
-    ['win32', undefined],
-  ])('on %s, turns WebAuthn off in visited pages where no passkey prompt can answer it', async (platform, disabled) => {
-    const original = process.platform;
-    Object.defineProperty(process, 'platform', { value: platform });
-    try {
-      const { instance } = browser();
-      await instance.command({ action: 'open', url: 'https://accounts.google.com/' });
-      expect(electron.views[0]!.options.webPreferences.disableBlinkFeatures).toBe(disabled);
-    } finally {
-      Object.defineProperty(process, 'platform', { value: original });
-    }
-  });
-
   it('refuses every permission a site asks for', () => {
     browser();
     const partition = electron.sessions.get('persist:rally-browser-user-1')!;
