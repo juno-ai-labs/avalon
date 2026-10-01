@@ -66,10 +66,10 @@ instead of the native view. Import is enabled while the active tab shows a
 ChatGPT or claude.ai conversation — the person's own (`/c/<id>`, `/chat/<id>`)
 or a shared link (`/share/<id>`). It reads that conversation (see
 [session import](session-import.md)), then a sheet asks for
-the Channel's name, pre-filled with the chat's title, and its Space. After the
-import, main opens the new Channel in the main window through the same
-deep-link path a menu-bar pick uses, and closes the import window along with
-its tabs. This window is the only way to import; the web host, which has no
+the Channel's name, pre-filled with the chat's title, and its Space. While the
+import runs, the main window shows the new Channel as importing; after it, main
+opens the Channel through the same deep-link path a menu-bar pick uses, and
+closes the import window along with its tabs. This window is the only way to import; the web host, which has no
 browser, offers no import.
 
 **Tabs.** Both hosts use one tab strip. A tab shows its page's icon (an https

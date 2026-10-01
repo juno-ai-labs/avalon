@@ -1736,6 +1736,7 @@ pre {
    Turns sit `--space-8` apart: the stack gap plus the action row a settled
    turn lays out beneath itself. */
 .conversation-opening-messages { align-content: start; display: grid; gap: var(--space-8); }
+.conversation-opening-caption { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); margin: 0; text-align: center; }
 .conversation-opening-message { display: grid; max-width: min(88%, var(--turn-width-cap), calc(100% - 82px)); }
 .conversation-opening-byline {
   align-items: center;

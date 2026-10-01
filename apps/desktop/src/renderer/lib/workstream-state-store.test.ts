@@ -48,7 +48,9 @@ function version(commonWaterline: number, viewerWaterline: number, generation = 
 describe('applyVersionedWorkstreamState', () => {
   // The directory lists a new Channel through this path, merged over the row
   // the create listed early; once the server describes it, it is not pending.
-  it('makes a row listed ahead of its create the server\'s own once its common half applies', () => {
+  // The server lists a Channel when its Space placement commits, before its
+  // room is written; only the create's answer says the room is ready.
+  it('takes the server\'s fields onto a row listed ahead of its create and keeps it pending', () => {
     const queryClient = new QueryClient();
     setCachedWorkstreams(queryClient, [summary({ pending: true, title: '' })]);
     const seed = summary({ title: 'Launch plan' });
@@ -63,8 +65,7 @@ describe('applyVersionedWorkstreamState', () => {
     });
 
     const [row] = queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY) ?? [];
-    expect(row).toMatchObject({ title: 'Launch plan' });
-    expect(row?.pending).toBeUndefined();
+    expect(row).toMatchObject({ title: 'Launch plan', pending: true, pendingListed: true });
   });
 
   it('merges independently ordered common and viewer rows from either socket', () => {

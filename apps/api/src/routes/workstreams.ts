@@ -179,11 +179,13 @@ workstreamRoutes.post("/import", zValidator("json", SessionImportRequestSchema),
     throw new ApiError(422, "invalid_session_source", "The source.url does not belong to source.provider");
   }
   const conversation = await prepareSessionImport(c.env, getAuth(c), body, body.clientMessageId);
-  // Placement is creation semantics, not imported-history identity. Keeping it
-  // out also preserves the content hash written by Workers from before the
-  // optional field existed, when an uncertain import is retried across rollout.
-  const { spaceIds, ...contentIdentity } = body;
+  // Placement and the caller-named id are creation semantics, not
+  // imported-history identity. Keeping them out also preserves the content
+  // hash written by Workers from before either optional field existed, when
+  // an uncertain import is retried across rollout.
+  const { spaceIds, workstreamId, ...contentIdentity } = body;
   const result = await new WorkstreamObjectCreationService(c.env, getAuth(c), requestDeferral(c)).createPrepared({
+    ...(workstreamId ? { workstreamId } : {}),
     objective: body.title,
     title: body.title,
     clientMessageId: body.clientMessageId,
