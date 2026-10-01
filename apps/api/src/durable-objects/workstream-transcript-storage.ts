@@ -5056,7 +5056,7 @@ export class WorkstreamTranscriptStorage {
         now,
         now,
       );
-      startReadCursorAtLatest(this.sql, userId, now);
+      startReadCursorAtLatest(this.sql, userId, now, false);
     }
     if (participantUserIds.includes(authorUserId)) this.sql.exec(
       `INSERT INTO member_attention
