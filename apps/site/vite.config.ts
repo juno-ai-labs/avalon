@@ -1,4 +1,5 @@
 import { renderAccessCopy } from './src/access-copy';
+import { comparisons, renderSiteChrome } from './src/site-chrome';
 import { defineConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
@@ -13,6 +14,7 @@ export default defineConfig({
   },
   plugins: [
     { name: 'rally-access-copy', transformIndexHtml: renderAccessCopy },
+    { name: 'rally-site-chrome', transformIndexHtml: { order: 'pre', handler: renderSiteChrome } },
     {
       // The technology schematic is its own entry so three.js stays out of the
       // landing page. `technology-loader.ts` adds its script when the figure
@@ -60,6 +62,8 @@ export default defineConfig({
         desktopOpen: `${projectRoot}open/index.html`,
         workstreamLink: `${projectRoot}app/workstreams/index.html`,
         slack: `${projectRoot}slack/index.html`,
+        compare: `${projectRoot}compare/index.html`,
+        ...Object.fromEntries(comparisons.map(({ slug }) => [`compare-${slug}`, `${projectRoot}compare/${slug}/index.html`])),
         trust: `${projectRoot}trust/index.html`,
         trustSecurity: `${projectRoot}trust/security/index.html`,
         trustTerms: `${projectRoot}trust/terms/index.html`,

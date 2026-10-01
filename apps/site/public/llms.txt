@@ -1,0 +1,32 @@
+# Rally
+
+> Rally is a shared place where a team and one AI work together. Spaces and Channels keep each project's files and history, Breakouts hold private side work, connectors read and write tools like Gmail, Google Drive, Slack, Notion, and GitHub, and Sidekicks run jobs on a schedule or when something happens. Pricing is per organization with no seat limit: Start is $100 a month, Grow is $250 a month. macOS beta. Made by Juno AI Labs Inc.
+
+## Product
+
+- [Rally home](https://rallywith.ai/): what Rally is, features, pricing, team, and technology
+- [Support](https://rallywith.ai/support/): getting started and connector setup
+
+## Compared to
+
+Written by the Rally team, so biased, and dated on each page.
+
+- [All comparisons](https://rallywith.ai/compare/): one table of nine tools
+- [Rally vs Claude Tag](https://rallywith.ai/compare/claude-tag/): Anthropic's Claude in Slack threads
+- [Rally vs Grok Bot](https://rallywith.ai/compare/grok-bot/): xAI's build-your-own agent crew
+- [Rally vs Viktor](https://rallywith.ai/compare/viktor/): an AI coworker in Slack or Teams, paid in credits
+- [Rally vs ChatGPT](https://rallywith.ai/compare/chatgpt/): OpenAI's personal AI chat
+- [Rally vs Claude Cowork](https://rallywith.ai/compare/claude-cowork/): Anthropic's personal desktop agent
+- [Rally vs Instinct](https://rallywith.ai/compare/instinct/): an invite-only personal errand agent
+- [Rally vs Notion AI](https://rallywith.ai/compare/notion-ai/): AI inside Notion pages and databases
+- [Rally vs Slack](https://rallywith.ai/compare/slack/): team chat with AI summaries
+- [Rally vs Microsoft Teams](https://rallywith.ai/compare/microsoft-teams/): chat and meetings with Copilot
+
+## Trust Center
+
+- [Overview](https://rallywith.ai/trust/)
+- [Security](https://rallywith.ai/trust/security/)
+- [Privacy Policy](https://rallywith.ai/trust/privacy/)
+- [Terms of Service](https://rallywith.ai/trust/terms/)
+- [Data Processing Addendum](https://rallywith.ai/trust/dpa/)
+- [Sub-processors](https://rallywith.ai/trust/subprocessors/)
