@@ -39,6 +39,9 @@
 /compare/*/social.png
   Cache-Control: public, max-age=86400
 
+/blog/*/social.png
+  Cache-Control: public, max-age=86400
+
 /rally-social-v01.jpg
   Cache-Control: public, max-age=86400
 

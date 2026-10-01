@@ -113,3 +113,13 @@ export function renderComparisonCard({ slug, name, edge }: { slug: string; name:
     address: `rallywith.ai/compare/${slug}`,
   });
 }
+
+/** The card for one blog post. */
+export function renderBlogCard({ slug, title, description }: { slug: string; title: string; description: string }): Promise<Buffer> {
+  return renderSocialCard({
+    eyebrow: 'Rally blog',
+    headline: [{ text: title }],
+    body: description,
+    address: `rallywith.ai/blog/${slug}`,
+  });
+}

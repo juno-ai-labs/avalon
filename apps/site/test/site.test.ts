@@ -6,7 +6,8 @@ import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
 import { isIosDevice, legacyIosWorkstreamHandoff } from '../src/workstream-link';
 import { parseComparison, renderComparisonPage } from '../src/comparison-pages';
-import { comparisons, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from '../src/site-chrome';
+import { parseBlogPost, renderBlogIndex, renderBlogPost } from '../src/blog-pages';
+import { comparisons, renderBlogSitemap, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from '../src/site-chrome';
 import { renderComparisonCard } from '../src/social-cards';
 import sharp from 'sharp';
 import { normalizedTelemetryPathname, SITE_ACTION_LINKS, siteActionForLink, sitePageForPath } from '../src/telemetry';
@@ -151,6 +152,7 @@ describe('public Rally site', () => {
       '/trust/', '/trust/security/', '/trust/privacy/', '/trust/terms/', '/trust/dpa/',
       '/trust/subprocessors/', '/trust/cookies/', '/trust/acceptable-use/',
     ]);
+    expect(column('Blog')).toEqual(['/blog/', '/blog/blastoff/']);
   });
 
   it('renders one comparison table row per rival and refuses an unknown marker', () => {
@@ -195,5 +197,34 @@ describe('public Rally site', () => {
     expect([...renderComparisonSitemap().matchAll(/<loc>([^<]+)<\/loc>/gu)].map(([, loc]) => loc))
       .toEqual(comparisons.map(({ slug }) => `https://rallywith.ai/compare/${slug}/`));
     expect(renderLlmsTxt()).toContain('- [Rally vs Slack](https://rallywith.ai/compare/slack/): Team chat with other humans\n');
+  });
+
+  it('puts Blog between Compare and the download button in the shared header', () => {
+    const nav = renderSiteChrome('<!-- rally:site-nav -->');
+    expect([...nav.matchAll(/<a [^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/gu)].map(([, href, label]) => `${label} ${href}`)).toEqual([
+      'Features /#features', 'Pricing /#pricing', 'Compare /#compare', 'Blog /blog/',
+      'Download for Mac https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg',
+    ]);
+  });
+
+  it('renders a blog post and the blog index from Markdown', () => {
+    const source = [
+      '---', 'slug: hello', 'title: "Hello"', 'description: "A first post."', 'date: 2026-10-01', 'author: "The Rally team"', '---',
+      '', 'First paragraph.', '', 'Second **paragraph**.', '',
+    ].join('\n');
+    const post = parseBlogPost(source, 'hello.md');
+    const page = renderBlogPost(post);
+    expect(page).toContain('<h1 class="display blog-title">Hello</h1>');
+    expect(page).toContain('<p class="blog-meta"><time datetime="2026-10-01">October 1, 2026</time> · The Rally team</p>');
+    expect(page).toContain('<div class="blog-body"><p>First paragraph.</p>\n<p>Second <strong>paragraph</strong>.</p>\n</div>');
+    expect(page).toContain('<link rel="canonical" href="https://rallywith.ai/blog/hello/" />');
+    expect(page).toContain('<meta property="og:image" content="https://rallywith.ai/blog/hello/social.png" />');
+    expect(renderBlogIndex([post])).toContain('<a class="blog-entry" href="/blog/hello/"><time datetime="2026-10-01">October 1, 2026</time><span class="blog-entry-title">Hello</span>');
+    expect(() => parseBlogPost(source.replace('date: 2026-10-01\n', ''), 'hello.md')).toThrow('hello.md: front matter is missing "date"');
+  });
+
+  it('lists the blog index and every post in the blog sitemap', () => {
+    expect([...renderBlogSitemap().matchAll(/<loc>([^<]+)<\/loc>/gu)].map(([, loc]) => loc))
+      .toEqual(['https://rallywith.ai/blog/', 'https://rallywith.ai/blog/blastoff/']);
   });
 });
