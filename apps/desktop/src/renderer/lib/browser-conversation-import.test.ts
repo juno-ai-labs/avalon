@@ -6,6 +6,72 @@ const tab = (id: string, title: string, url: string): EmbeddedBrowserTab => ({
   id, title, url, loading: false, canGoBack: false, canGoForward: false, favicon: null,
 });
 
+const sharedChatGptConversation = () => ({
+  conversation_id: '6ab43c03-6b2c-83e8-9eba-f1c51fa1e7a0',
+  current_node: 'node-a',
+  title: 'Branch · Launch Email management',
+  mapping: {
+    'node-a': {
+      id: 'node-a',
+      parent: null,
+      message: { id: 'node-a', author: { role: 'assistant' }, content: { content_type: 'text', parts: ['hello'] } },
+    },
+  },
+});
+
+const chatgptLocation = (url: string) => {
+  const parsed = new URL(url);
+  return { origin: parsed.origin, pathname: parsed.pathname, href: url };
+};
+
+function jsonResponse(body: unknown, failed = false, malformed = false) {
+  return {
+    ok: !failed,
+    json: async () => {
+      if (malformed) throw new SyntaxError('Unexpected token');
+      return body ?? {};
+    },
+  };
+}
+
+/**
+ * Trimmed enqueue in the format ChatGPT's share HTML used on 2026-10-01
+ * (`chatgpt.com/share/6ab55fb7-…`): objects as `{_<keyIdx>:<valueIdx>}`, `-5`
+ * for null. Conversation fields reduced to one mapping node; ids match the
+ * test share URL.
+ */
+const capturedShareEnqueue = 'streamController.enqueue("[{\\"_32\\":1,\\"_33\\":-5,\\"_34\\":-5},{\\"_31\\":2},{\\"_30\\":3},{\\"_29\\":4},{\\"_6\\":5,\\"_8\\":7,\\"_10\\":9,\\"_28\\":11},\\"6ab43c03-6b2c-83e8-9eba-f1c51fa1e7a0\\",\\"conversation_id\\",\\"node-a\\",\\"current_node\\",\\"Branch \\\\u00b7 Launch Email management\\",\\"title\\",{\\"_7\\":12},{\\"_13\\":7,\\"_14\\":-5,\\"_27\\":15},\\"id\\",\\"parent\\",{\\"_13\\":7,\\"_19\\":16,\\"_26\\":20},{\\"_18\\":17},\\"assistant\\",\\"role\\",\\"author\\",{\\"_22\\":21,\\"_25\\":23},\\"text\\",\\"content_type\\",[24],\\"hello\\",\\"parts\\",\\"content\\",\\"message\\",\\"mapping\\",\\"data\\",\\"serverResponse\\",\\"routes/share.$shareId.($action)\\",\\"loaderData\\",\\"actionData\\",\\"errors\\"]");';
+
+async function generatedReader(url: string): Promise<string> {
+  const commandEmbeddedBrowser = vi.fn(async (): Promise<EmbeddedBrowserResult> => ({ kind: 'value', value: { text: '{}' } }));
+  const bridge = { getEmbeddedBrowserState: vi.fn().mockResolvedValue({ activeTabId: 't', tabs: [tab('t', 'Chat', url)] }), commandEmbeddedBrowser };
+  await readBrowserConversation(bridge, url);
+  return (commandEmbeddedBrowser.mock.calls[0] as unknown as [{ expression: string }])[0].expression;
+}
+
+async function runGeneratedReader(
+  expression: string,
+  extras: {
+    fetch: (input: string, init?: RequestInit) => Promise<{ ok: boolean; json: () => Promise<unknown> }>;
+    location: { origin: string; pathname: string; href: string };
+    document: { querySelectorAll: (selector: string) => Array<{ textContent: string }> };
+  },
+) {
+  const run = new Function('fetch', 'location', 'document', `return ${expression}`);
+  return run(extras.fetch, extras.location, extras.document) as Promise<{ text?: string; error?: string | null }>;
+}
+
+function expectImportedConversation(result: { text?: string; error?: string | null }, conversation: ReturnType<typeof sharedChatGptConversation>) {
+  expect(result.error ?? null).toBeNull();
+  const parsed = JSON.parse(result.text ?? '');
+  expect(parsed).toMatchObject({
+    conversation_id: conversation.conversation_id,
+    current_node: conversation.current_node,
+    title: conversation.title,
+    mapping: { 'node-a': { message: { content: { parts: ['hello'] } } } },
+  });
+}
+
 describe('browser conversation import', () => {
   it('recognizes only signed-in ChatGPT and Claude conversation routes', () => {
     expect(browserConversation(tab('a', 'Chat', 'https://example.com/research-note/')))
@@ -75,6 +141,53 @@ describe('browser conversation import', () => {
     const bridge = { getEmbeddedBrowserState: vi.fn().mockResolvedValue({ activeTabId: active.id, tabs: [background, active] }), commandEmbeddedBrowser };
     await readBrowserConversation(bridge, url);
     expect(commandEmbeddedBrowser).toHaveBeenCalledWith(expect.objectContaining({ action: 'evaluate', tabId: active.id }));
+  });
+
+  it('imports a shared ChatGPT conversation from the page when the share API refuses', async () => {
+    const url = 'https://example.com/research-note';
+    const conversation = sharedChatGptConversation();
+    const fetch = vi.fn(async () => jsonResponse(null, true));
+    const expression = await generatedReader(url);
+    const fromScript = await runGeneratedReader(expression, {
+      fetch, location: chatgptLocation(url),
+      document: { querySelectorAll: () => [{ textContent: capturedShareEnqueue }] },
+    });
+    expectImportedConversation(fromScript, conversation);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('falls back to ChatGPT’s share API, then reports the page’s refusal', async () => {
+    const url = 'https://example.com/research-note';
+    const conversation = sharedChatGptConversation();
+    const expression = await generatedReader(url);
+    const emptyPage = { location: chatgptLocation(url), document: { querySelectorAll: () => [] } };
+    const page = { fetch: vi.fn(async () => jsonResponse(conversation)), ...emptyPage };
+    expectImportedConversation(await runGeneratedReader(expression, page), conversation);
+    expect(page.fetch).toHaveBeenCalledTimes(1);
+    expect(page.fetch).toHaveBeenCalledWith('/backend-anon/share/6ab43c03-6b2c-83e8-9eba-f1c51fa1e7a0', expect.objectContaining({ credentials: 'include' }));
+
+    const refused = { fetch: vi.fn(async () => jsonResponse(null, true)), ...emptyPage };
+    await expect(runGeneratedReader(expression, refused)).resolves.toEqual({ error: 'ChatGPT could not return this conversation.' });
+
+    const incomplete = { fetch: vi.fn(async () => jsonResponse({})), ...emptyPage };
+    await expect(runGeneratedReader(expression, incomplete)).resolves.toEqual({ error: 'ChatGPT returned an incomplete conversation.' });
+
+    const malformed = { fetch: vi.fn(async () => jsonResponse(null, false, true)), ...emptyPage };
+    await expect(runGeneratedReader(expression, malformed)).resolves.toEqual({ error: 'ChatGPT returned an incomplete conversation.' });
+  });
+
+  it('tells a refused ChatGPT conversation apart from an incomplete one', async () => {
+    const url = 'https://example.com/research-note';
+    const expression = await generatedReader(url);
+    const location = chatgptLocation(url);
+    const document = { querySelectorAll: () => [] };
+    const sessionThen = (conversation: unknown, failed = false) => vi.fn(async (input: string) => String(input).includes('/api/auth/session')
+      ? jsonResponse({ accessToken: 'tok' })
+      : jsonResponse(conversation, failed));
+    await expect(runGeneratedReader(expression, { fetch: sessionThen(null, true), location, document }))
+      .resolves.toEqual({ error: 'ChatGPT could not return this conversation.' });
+    await expect(runGeneratedReader(expression, { fetch: sessionThen({}), location, document }))
+      .resolves.toEqual({ error: 'ChatGPT returned an incomplete conversation.' });
   });
 
   it('opens a closed source for the read and closes that tab afterwards', async () => {
