@@ -11,7 +11,8 @@ const harness = vi.hoisted(() => {
   };
   const api = {
     previewSessionImport: vi.fn(async () => ({ title: 'Launch plan' })),
-    importSession: vi.fn(async () => 'workstream-1'),
+    // The server creates the Channel under the id the caller names.
+    importSession: vi.fn(async (_preview: unknown, _key: string, input: { workstreamId?: string }) => input.workstreamId ?? 'workstream-1'),
   };
   const bridge = {
     getRuntimeConfig: vi.fn(async () => ({ platform: 'linux' })),
@@ -66,9 +67,10 @@ describe('browser import window', () => {
   it('names the Channel to the main window before creating it under that id', async () => {
     await submit();
 
-    await waitFor(() => expect(harness.bridge.completeBrowserImport).toHaveBeenCalledWith('workstream-1'));
+    await waitFor(() => expect(harness.bridge.completeBrowserImport).toHaveBeenCalled());
     expect(harness.bridge.reportBrowserImport).toHaveBeenCalledTimes(1);
     const [[announced]] = harness.bridge.reportBrowserImport.mock.calls as unknown as [[{ phase: string; workstreamId: string; title: string; spaceId: string }]];
+    expect(harness.bridge.completeBrowserImport).toHaveBeenCalledWith(announced.workstreamId);
     expect(announced).toMatchObject({ phase: 'importing', title: 'Launch plan', spaceId: 'space-a' });
     expect(harness.api.importSession).toHaveBeenCalledWith(
       expect.anything(),
@@ -88,6 +90,19 @@ describe('browser import window', () => {
     expect(await screen.findByText('The main window did not answer.')).toBeInTheDocument();
     const [[announced], [settled]] = harness.bridge.reportBrowserImport.mock.calls as unknown as [[{ workstreamId: string }], [{ phase: string; workstreamId: string }]];
     expect(settled).toEqual({ phase: 'imported', workstreamId: announced.workstreamId });
+  });
+
+  // A receipt reserved before `workstreamId` existed replays under its own id.
+  it('takes the announced row away when the Channel was created under another id', async () => {
+    harness.api.importSession.mockResolvedValueOnce('workstream-legacy');
+
+    await submit();
+
+    await waitFor(() => expect(harness.bridge.completeBrowserImport).toHaveBeenCalledWith('workstream-legacy'));
+    const [[announced], [dropped]] = harness.bridge.reportBrowserImport.mock.calls as unknown as [[{ workstreamId: string }], [{ phase: string; workstreamId: string }]];
+    expect(dropped).toEqual({ phase: 'failed', workstreamId: announced.workstreamId });
+    expect(harness.bridge.reportBrowserImport.mock.invocationCallOrder[1])
+      .toBeLessThan(harness.bridge.completeBrowserImport.mock.invocationCallOrder[0]!);
   });
 
   it('tells the main window the Channel is gone when the create fails, and keeps the sheet', async () => {
