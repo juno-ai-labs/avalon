@@ -340,8 +340,7 @@ article > footer { margin-top: 72px; }
 /* Narrower screens: drop the outline, then fold the chapters behind a button. */
 @media (max-width: 1180px) {
   /* The outline goes; the Markdown actions move under the article. */
-  .shell { grid-template-columns: var(--help-sidebar) minmax(0, 1fr); grid-template-areas: 'nav main' '. toc'; gap: 0 48px; }
-  #chapters { grid-row: 1 / span 2; }
+  .shell { grid-template-columns: var(--help-sidebar) minmax(0, 1fr); grid-template-areas: 'nav main' 'nav toc'; gap: 0 48px; }
   .toc { position: static; max-height: none; overflow: visible; padding: 0 0 56px; }
   .toc > p, .toc > ol { display: none; }
   .toc ol + .actions { margin-top: 0; }

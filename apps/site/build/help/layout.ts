@@ -181,7 +181,7 @@ ${extras}
 ${sidebar(site, page)}
 ${outline(page, headings)}
 </div>
-<footer class="foot"><a class="brand" href="/"><img src="/brand/rally-mark-ink.svg" width="18" height="18" alt="">rally</a><nav aria-label="More"><a href="/help/">Help Center</a><a href="/trust/">Trust Center</a><a href="/trust/privacy/">Privacy</a><a href="mailto:help@rallywith.ai?subject=Rally%20support">Contact</a><a href="/help/llms.txt">llms.txt</a></nav><p>© 2026 Juno AI Labs · Rally</p></footer>
+<footer class="foot"><a class="brand" href="/"><img src="/brand/rally-mark-ink.svg" width="18" height="18" alt="">rally</a><nav aria-label="More"><a href="/help/">Help Center</a><a href="/trust/">Trust Center</a><a href="/trust/privacy/">Privacy</a><a data-site-action="support-contact-footer" href="mailto:help@rallywith.ai?subject=Rally%20support">Contact</a><a href="/help/llms.txt">llms.txt</a></nav><p>© 2026 Juno AI Labs · Rally</p></footer>
 </body>
 </html>
 `;
