@@ -16,3 +16,8 @@ Both families are licensed under the SIL Open Font License 1.1, which must ship
 with the fonts. The licence is in
 [`public/fonts/OFL.txt`](../../public/fonts/OFL.txt) so the build publishes it at
 `/fonts/OFL.txt` alongside the site that serves the fonts.
+
+The social cards drawn at build time (`src/social-cards.ts`) read the same faces
+from the `@fontsource/barlow` and `@fontsource/barlow-semi-condensed` dev
+dependencies instead, as WOFF rather than WOFF2, because `opentype.js` cannot
+decompress WOFF2. Keep those packages on the version in the table above.

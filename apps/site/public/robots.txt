@@ -2,3 +2,4 @@ User-agent: *
 Allow: /
 
 Sitemap: https://rallywith.ai/sitemap.xml
+Sitemap: https://rallywith.ai/compare/sitemap.xml
