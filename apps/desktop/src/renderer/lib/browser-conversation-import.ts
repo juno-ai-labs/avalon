@@ -103,18 +103,17 @@ const CAPPED_READS = `
 
 /**
  * ChatGPT's share page hydrates from a React Router loader stream rather than
- * `/backend-anon/share/<id>`. The conversation JSON is already in the document
- * (and in `__reactRouterContext` after hydration); recover it when the old
- * anonymous route refuses.
+ * `/backend-anon/share/<id>`. The conversation JSON is already in the document;
+ * recover it when the old anonymous route refuses.
  */
 const CHATGPT_SHARE_FROM_PAGE = `
-    const conversationFromSharePage = (shareId) => {
+    const conversationFromSharePage = (conversationId) => {
       const isGraph = (value) => value && typeof value === 'object' && (Array.isArray(value) || Object.getPrototypeOf(value) === Object.prototype);
       const conversationIn = (node, seen) => {
         if (!isGraph(node) || seen.has(node)) return null;
         seen.add(node);
         if (typeof node.conversation_id === 'string' && node.mapping && node.current_node
-          && (node.conversation_id === shareId || node.backing_conversation_id === shareId)) return node;
+          && (node.conversation_id === conversationId || node.backing_conversation_id === conversationId)) return node;
         for (const value of (Array.isArray(node) ? node : Object.values(node))) {
           const found = conversationIn(value, seen);
           if (found) return found;
@@ -156,12 +155,6 @@ const CHATGPT_SHARE_FROM_PAGE = `
         }
         return null;
       };
-      try {
-        const fromContext = conversationIn(window.__reactRouterContext, new Set());
-        if (fromContext) {
-          try { return JSON.parse(JSON.stringify(fromContext)); } catch {}
-        }
-      } catch {}
       try {
         for (const script of document.querySelectorAll('script')) {
           const text = script.textContent || '';
@@ -253,9 +246,8 @@ function chatGptReader(conversation: BrowserConversation): string {
   // A person's own conversation and its files come from ChatGPT's signed-in
   // API, with the access token its own client takes from the same-origin
   // session endpoint; cookies alone can return a misleading guest 404. A shared
-  // one is rendered from the page's React Router loader payload; the old
-  // anonymous share route is a fallback, then `/backend-api/share/<id>` with a
-  // session token when the person is signed in. Files still come from the
+  // one is rendered from the page's React Router loader stream; the old
+  // anonymous share route is a fallback. Files still come from the
   // anonymous counterparts of the routes below, addressed by the share.
   const id = conversation.id;
   const routes = conversation.shared ? {
@@ -278,36 +270,24 @@ function chatGptReader(conversation: BrowserConversation): string {
       if (typeof browserSession.accessToken !== 'string' || !browserSession.accessToken)
         throw new Failure('Sign in to ChatGPT, then try again.');
       headers.Authorization = 'Bearer ' + browserSession.accessToken;
-    } else {
-      try {
-        const sessionResponse = await fetch('/api/auth/session', { credentials: 'include' });
-        if (sessionResponse.ok) {
-          const browserSession = await sessionResponse.json();
-          if (typeof browserSession.accessToken === 'string' && browserSession.accessToken)
-            headers.Authorization = 'Bearer ' + browserSession.accessToken;
-        }
-      } catch {}
     }
     // A signed download link on another origin needs no cookies, and the
     // browser refuses a cross-origin read that sends them.
     const sameOrigin = (url) => new URL(url, location.href).origin === location.origin;${CAPPED_READS}
     const fileRoute = ${routes.file};
     const sandboxRoute = ${routes.sandbox};
-    const shareId = ${JSON.stringify(conversation.id)};
+    const conversationId = ${JSON.stringify(conversation.id)};
     const complete = (candidate) => candidate && candidate.mapping && candidate.current_node
-      && (candidate.conversation_id === shareId || candidate.backing_conversation_id === shareId);
+      && (candidate.conversation_id === conversationId || candidate.backing_conversation_id === conversationId);
     let data = null;
     ${conversation.shared ? `${CHATGPT_SHARE_FROM_PAGE}
-    data = conversationFromSharePage(shareId);` : ''}
+    data = conversationFromSharePage(conversationId);` : ''}
     if (!complete(data)) {
       const response = await fetch(${routes.conversation}, { credentials: 'include', headers });
-      data = response.ok ? await response.json() : null;
+      if (!response.ok) throw new Failure('ChatGPT could not return this conversation.');
+      try { data = await response.json(); } catch { data = null; }
     }
-    if (${conversation.shared} && !complete(data)) {
-      const sharedApi = await fetch('/backend-api/share/' + shareId, { credentials: 'include', headers });
-      data = sharedApi.ok ? await sharedApi.json() : null;
-    }
-    if (!complete(data)) throw new Failure('ChatGPT could not return this conversation.');
+    if (!complete(data)) throw new Failure('ChatGPT returned an incomplete conversation.');
     // The conversation names its files but does not contain them. Fetch the
     // bytes of each file on the shown branch while this page is signed in, and
     // hand them to the decoder beside the reference they belong to. A file
