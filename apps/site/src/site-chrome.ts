@@ -10,7 +10,7 @@ import { escapeHtml as escape, loadComparisons, type Comparison } from './compar
 /** Every rival, read from `content/compare/*.md` and sorted by `order`. */
 export const comparisons: readonly Comparison[] = loadComparisons(new URL('../content/compare/', import.meta.url));
 
-/** Every blog post, read from `content/blog/YYYY-MM-DD-<slug>.md`, newest first. */
+/** Every blog post, read from `content/blog/YYYY-MM-DD-<title>.md`, newest first. */
 export const blogPosts: readonly BlogPost[] = loadBlogPosts(new URL('../content/blog/', import.meta.url));
 
 export const trustPages: readonly { href: string; name: string }[] = [

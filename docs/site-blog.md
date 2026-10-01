@@ -15,7 +15,7 @@ image, and the same site-chrome markers supply the header and footer.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/site/content/blog/YYYY-MM-DD-<slug>.md` | One post. The file name gives the date and slug; front matter gives `title`, `description` and `author`; the rest is the body. |
+| `apps/site/content/blog/YYYY-MM-DD-<title>.md` | One post. The file name gives the date; front matter gives `slug`, `title`, `description` and `author`; the rest is the body. |
 | `apps/site/src/blog-pages.ts` | Loads and validates posts; renders the changelog index and each post. |
 | `apps/site/src/landing.css` | The `.changelog` index layout and the `.blog` post layout. |
 | `apps/site/src/site-chrome.ts` | `blogPosts`, the footer's Blog column, the blog sitemap, and the blog part of `llms.txt`. |
@@ -24,8 +24,8 @@ image, and the same site-chrome markers supply the header and footer.
 
 ## How it works
 
-`loadBlogPosts` reads every `.md` file in `content/blog/`, takes the date and
-slug from its name, validates its front matter, and sorts by date, newest
+`loadBlogPosts` reads every `.md` file in `content/blog/`, takes the date from
+its name, validates its front matter (slug included), and sorts by date, newest
 first. The `rally-markdown-pages` plugin
 treats `blog/index.html` and each `blog/<slug>/index.html` as build inputs that
 exist only in memory, exactly as it does for the comparison pages, and the dev
@@ -45,14 +45,18 @@ post only, so it stays two links long however many posts accumulate.
   else lists posts, so a post added anywhere else would be a link the build
   never emits. Guard: the blog sitemap test checks the sitemap against the
   loaded posts.
-- **The file name is the only source of a post's date and slug.** A name not
-  shaped `YYYY-MM-DD-<slug>.md`, with the slug in lowercase letters, digits and
-  hyphens, throws, and so does front matter that sets `date` or `slug`, so the
-  two can never disagree. `parseBlogPost` throws, which fails the build. Guard:
-  the blog rendering test.
+- **The file name is the only source of a post's date.** A name not shaped
+  `YYYY-MM-DD-<title>.md`, the title in lowercase letters, digits and hyphens,
+  throws, and so does front matter that sets `date`, so the two can never
+  disagree. `parseBlogPost` throws, which fails the build. Guard: the blog
+  rendering test.
+- **The front matter `slug` is the URL, and no two posts share one.** It is
+  lowercase letters, digits and hyphens, so a path and the dev server accept
+  it. A shared slug would build one page over the other, so `loadBlogPosts`
+  throws. Guard: the blog rendering and duplicate-slug tests.
 - **The date is a real day.** An impossible day such as 2026-02-30 throws
   instead of rendering as a different date. Guard: the blog rendering test.
-- **Renaming a file's slug moves its URL.** Changing only the date keeps it.
+- **Renaming a file keeps its URL;** changing its `slug` moves it.
 
 ## Boundary
 
@@ -82,8 +86,8 @@ screenshot `/blog/` and a post at desktop and phone widths, and open a built
 
 ### 2026-10-01: Dated file names, a changelog index, and no header link
 
-**What changed:** Post files are named `YYYY-MM-DD-<slug>.md`, and the date and
-slug moved out of the front matter into the name. `/blog/` became a changelog
+**What changed:** Post files are named `YYYY-MM-DD-<title>.md`, and the date
+moved out of the front matter into the name. The slug stays in front matter. `/blog/` became a changelog
 in the style of Linear's: dates on the left, a dot and rail against the posts, the newest post in full, and
 older posts as a title, first paragraph and Read more link. Blog left the
 header nav; the footer column stays.
@@ -91,9 +95,11 @@ header nav; the footer column stays.
 **Why:** The team asked for dated file names so the folder sorts by date, for an
 index that reads the latest post without a click, and for a quieter header.
 
-**Considered and rejected:** Keeping `date` and `slug` in front matter beside
-the name. Two copies of the same fact drift, so front matter that repeats
-either now throws. Using the front matter `description` as the summary was
+**Considered and rejected:** Keeping `date` in front matter beside the name.
+Two copies of the same fact drift, so front matter that repeats it now throws.
+Taking the slug from the name too was tried and reverted: the team wanted the
+URL set in front matter, so renaming a file never moves a published page. The
+cost is that the name no longer keeps slugs unique, so the loader checks. Using the front matter `description` as the summary was
 rejected in favour of the body's first paragraph, which is what the reader
 would see next anyway.
 
