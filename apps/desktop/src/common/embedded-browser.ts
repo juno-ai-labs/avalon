@@ -46,7 +46,7 @@ export type EmbeddedBrowserCommand =
 export type EmbeddedBrowserResult =
   | { kind: 'state'; state: EmbeddedBrowserState }
   | { kind: 'snapshot'; url: string; title: string; tree: unknown }
-  | { kind: 'screenshot'; mimeType: 'image/jpeg'; data: string }
+  | { kind: 'screenshot'; mimeType: 'image/jpeg'; data: string; width: number; height: number }
   | { kind: 'value'; value: unknown };
 
 const tabId = z.string().uuid();
