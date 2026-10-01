@@ -6,7 +6,7 @@ import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
 import { isIosDevice, legacyIosWorkstreamHandoff } from '../src/workstream-link';
 import { parseComparison, renderComparisonPage } from '../src/comparison-pages';
-import { comparisons, renderSiteChrome } from '../src/site-chrome';
+import { comparisons, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from '../src/site-chrome';
 import { renderComparisonCard } from '../src/social-cards';
 import sharp from 'sharp';
 import { normalizedTelemetryPathname, SITE_ACTION_LINKS, siteActionForLink, sitePageForPath } from '../src/telemetry';
@@ -180,15 +180,35 @@ describe('public Rally site', () => {
     expect(page).toContain('<!-- rally:site-footer -->');
     expect(page).toContain('<meta property="og:image" content="https://rallywith.ai/compare/acme/social.png" />');
     expect(page).toContain('<meta name="twitter:image:alt" content="Rally vs Acme: Rally is better." />');
-    expect(() => renderComparisonPage(parseComparison(source.replace('## Where Acme shines', '## Odds and ends'), 'acme.md')))
+    expect(() => renderComparisonPage(parseComparison(source.replace('## Sources', '## Odds and ends\n\nExtra.\n\n## Sources'), 'acme.md')))
       .toThrow('Unknown comparison section "Odds and ends"');
     expect(() => parseComparison(source.replace('maker: Acme Inc\n', ''), 'acme.md'))
       .toThrow('acme.md: front matter is missing "maker"');
+    const swapped = source.replace('### Pick Acme if\n\n- Solo\n\n### Pick Rally if\n\n- Team', '### Pick Rally if\n\n- Team\n\n### Pick Acme if\n\n- Solo');
+    expect(renderComparisonPage(parseComparison(swapped, 'acme.md')))
+      .toContain('<div class="verdicts"><div class="verdict verdict-rally"><h3>Pick Rally if</h3>');
+    expect(() => renderComparisonPage(parseComparison(source.replace(/## Which one should you pick\?[\s\S]*?(?=## Questions)/u, ''), 'acme.md')))
+      .toThrow('acme.md: missing "## Which one should you pick?"');
+    expect(() => renderComparisonPage(parseComparison(source.replace('### Pick Rally if', '### Pick us if'), 'acme.md')))
+      .toThrow('acme.md: "Which one should you pick?" needs a "### Pick Rally if"');
   });
 
   it('draws a 1200 by 630 opaque PNG unfurl card for a comparison', async () => {
     const card = await renderComparisonCard({ slug: 'acme', name: 'A very long product name indeed', edge: 'Rally is better. '.repeat(20) });
     const { format, width, height, hasAlpha } = await sharp(card).metadata();
     expect({ format, width, height, hasAlpha }).toEqual({ format: 'png', width: 1200, height: 630, hasAlpha: false });
+  });
+
+  it('derives every hub list, count, sitemap and llms.txt entry from the comparison files', () => {
+    const hub = renderSiteChrome('<!-- rally:comparison-count -->|<!-- rally:comparison-count-title -->|<!-- rally:comparison-names -->|<!-- rally:comparison-item-list -->');
+    const [count, title, names, list] = hub.split('|');
+    expect([count, title]).toEqual(['nine', 'Nine']);
+    expect(names).toBe('Claude Tag, Grok Bot, Viktor, ChatGPT, Claude Cowork, Instinct, Notion AI, Slack, and Microsoft Teams');
+    expect((JSON.parse(list ?? '') as { itemListElement: { url: string }[] }).itemListElement.map(({ url }) => url))
+      .toEqual(comparisons.map(({ slug }) => `https://rallywith.ai/compare/${slug}/`));
+    expect(renderSiteChrome('<!-- rally:comparison-table -->')).toContain('Rally compared with nine AI and team tools, as of October 2026');
+    expect([...renderComparisonSitemap().matchAll(/<loc>([^<]+)<\/loc>/gu)].map(([, loc]) => loc))
+      .toEqual(['https://rallywith.ai/compare/', ...comparisons.map(({ slug }) => `https://rallywith.ai/compare/${slug}/`)]);
+    expect(renderLlmsTxt()).toContain('- [Rally vs Slack](https://rallywith.ai/compare/slack/): Team chat with Slackbot, a personal AI agent, built in\n');
   });
 });
