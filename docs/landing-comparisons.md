@@ -163,6 +163,17 @@ link to pricing and the other comparisons. The ChatGPT page put a blockquote
 under its short answer, which rendered with browser defaults, and the table
 section silently discarded anything after the table.
 
+**Considered and rejected:** Moving every blockquote into the closing aside, as
+"Where Rally wins" does. The ChatGPT quote belongs next to the short answer it
+qualifies, not at the foot of a later section.
+
+**Consequences:** A comparison page ends at its last section; a call to action
+there needs a new decision, not a restored constant. A blockquote's place in the
+Markdown is where it renders, except in "Where Rally wins", where it is still
+the aside.
+
+Shipped in #1054.
+
 ### 2026-10-01: The header's links become a shared marker
 
 **What changed:** The landing page and the comparison pages each carried their
