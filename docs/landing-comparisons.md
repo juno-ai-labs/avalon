@@ -1,7 +1,7 @@
 # Landing comparisons and site footer
 
 The public site's "Compared to" pages and the column footer they share with the
-landing page. The landing page's "Compared to" section lists six rival
+landing page and the Trust Center. The landing page's "Compared to" section lists six rival
 products in one table, and each rival has its own page at `/compare/<slug>/`
 that answers "Rally vs X" for a person or an AI search engine. There is no
 `/compare/` index page: `_redirects` sends it to `/#compare`. The footer lists every comparison in one column and
@@ -112,8 +112,9 @@ element is (`compare-answer`, `versus-table`, `footer-heading`).
 ## Boundary
 
 The module owns the comparison pages, their social cards, the landing page's
-comparison section, and the footer on those pages. It does not own the Trust
-Center or Support pages' own footers (`legal-footer` in `information.css`), the
+comparison section, and the footer on those pages. The Trust Center pages
+use this footer through the same marker; their own styling is `trust.css`,
+which loads after `landing.css`. It does not own the
 home page's social card (`scripts/generate-brand-assets.py`), or the
 access-copy headline, which [`private-access.md`](private-access.md) owns.
 What the pages report to PostHog is in
@@ -145,6 +146,30 @@ section, the footer, and one rival page at 1440px and 390px, and open
 `dist/compare/*/social.png`.
 
 ## Changelog
+
+### 2026-10-01: Trust Center pages take the landing's chrome
+
+**What changed:** The eight `/trust/` pages drop their own light header,
+footer and Arial stylesheet. They load `landing.css`, use the landing's
+`site-header`, and replace their hand-written `legal-footer` with
+`<!-- rally:site-footer -->`. `information.css` becomes `trust.css`, holding
+only the Trust Center's layouts, written against the landing's tokens.
+
+**Why:** The Trust Center looked like a different company's site from the
+landing page it links from. Sharing the stylesheet and the footer marker keeps
+them from drifting again, and the eight copies of the footer link list, which
+had already diverged in order and tagline, collapse into `trustPages`.
+
+**Considered and rejected:** Restyling `information.css` in place and keeping
+each page's own header and footer. That matches the look today but leaves nine
+copies of the chrome to drift, which is how the footers diverged.
+
+**Consequences:** `trust.css` assumes `landing.css` loads first for fonts,
+tokens, the header, buttons and `.eyebrow`. A trust page that links only
+`trust.css` renders unstyled. A change to the landing's header, footer or tokens
+now also changes the Trust Center.
+
+Shipped in #1046.
 
 ### 2026-10-01: Comparison pages keep only the table and Rally's case, and the hub is removed
 
