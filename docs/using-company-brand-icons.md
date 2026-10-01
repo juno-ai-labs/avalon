@@ -77,7 +77,10 @@ download row wears it. The table holds company marks, whatever links to them.
 
 The public landing is static HTML and has no React runtime, so it cannot go
 through `ConnectorMark`. It inlines `@thesvg/react/apple`'s `mono` path on the
-download button, painted in `currentColor`. A Lucide or Tabler stand-in is still
+download button, painted in `currentColor`, and the `github` and `hugging-face`
+`mono` paths on the Team section's founder links. LinkedIn ships no `mono`
+variant, so its link there inlines the `default` path with the hard-coded
+`#0A66C2` fill swapped for `currentColor`. A Lucide or Tabler stand-in is still
 not a company mark there, and adding React to the site just to mount one
 component is not the fallback. No automated test pins the
 inlined `d` against the pack.
