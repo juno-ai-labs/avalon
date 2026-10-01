@@ -1,77 +1,9 @@
-import type { ConversationFile, PreparedConversation, SessionImportPreview } from '@rally/contracts';
+import type { PreparedConversation, SessionImportPreview } from '@rally/contracts';
 import { workstreamImportHash } from '../durable-objects/workstream-import-hash';
 import type { AuthContext, Env } from '../env';
-import { numericEnv } from '../env';
 import { stableUuid } from '../lib/stable-uuid';
 import { ApiError } from '../lib/api-error';
 import { ResourceService } from './resource-service';
-
-function unavailable(file: ConversationFile, reason: string): ConversationFile {
-  return { ...file, source: { kind: 'unavailable', reference: file.source.kind === 'remote' ? file.source.url : file.name, reason } };
-}
-
-/** Recognized provider file origins only. Redirects never expand this authority. */
-export function importFileUrlAllowed(value: string, provider: SessionImportPreview['source']['provider']): boolean {
-  const url = new URL(value);
-  if (url.protocol !== 'https:' || url.username || url.password || url.port) return false;
-  return provider === 'chatgpt'
-    ? (url.hostname === 'files.oaiusercontent.com' || url.hostname === 'cdn.openai.com') && url.pathname !== '/'
-    : url.hostname === 'claude.ai' && /^\/api\/chat_snapshots\/[^/]+\/files\//.test(url.pathname);
-}
-
-/** Resolve transport in the preview, so the submitted content is stable across creation retries. */
-export async function resolveSessionImportFiles(env: Env, preview: SessionImportPreview, fetcher: typeof fetch = fetch): Promise<SessionImportPreview> {
-  const maximum = numericEnv(env, 'MAX_ATTACHMENT_BYTES', 25_000_000);
-  const messages = [];
-  for (const message of preview.content.messages) {
-    const files: ConversationFile[] = [];
-    for (const file of message.files ?? []) {
-      if (file.source.kind !== 'remote') { files.push(file); continue; }
-      if (!importFileUrlAllowed(file.source.url, preview.source.provider)) {
-        files.push(unavailable(file, 'The source requires an authenticated or unsupported download. Add the original file instead.'));
-        continue;
-      }
-      try {
-        const response = await fetcher(file.source.url, { redirect: 'manual' });
-        if (!response.ok || !response.body) {
-          await response.body?.cancel();
-          files.push(unavailable(file, 'The download is unavailable or requires login. Add the original file instead.'));
-          continue;
-        }
-        const reader = response.body.getReader();
-        const chunks: Uint8Array[] = [];
-        let size = 0;
-        try {
-          while (true) {
-            const next = await reader.read();
-            if (next.done) break;
-            size += next.value.byteLength;
-            if (size > maximum) throw new ApiError(413, 'attachment_too_large', 'The file exceeds the workspace attachment size limit.');
-            chunks.push(next.value);
-          }
-        } finally { await reader.cancel(); }
-        const bytes = new Uint8Array(size);
-        let offset = 0;
-        for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-        let binary = '';
-        for (const byte of bytes) binary += String.fromCharCode(byte);
-        // Provider endpoints sometimes return a login/challenge document with 200.
-        // Reject known transport pages, while allowing ordinary HTML artifacts.
-        const document = new TextDecoder().decode(bytes);
-        if (/\b(?:cf-chl-|_cf_chl_opt|challenge-platform\/)/i.test(document)
-          || /<title[^>]*>\s*(?:Just a moment|Access denied|Log in to (?:ChatGPT|Claude)|Sign in to (?:ChatGPT|Claude))\b/i.test(document)) {
-          files.push(unavailable(file, 'The download returned a login or challenge page. Add the original file instead.'));
-          continue;
-        }
-        files.push({ ...file, source: { kind: 'inline', encoding: 'base64', data: btoa(binary) } });
-      } catch (error) {
-        files.push(unavailable(file, error instanceof ApiError ? error.message : 'The file could not be downloaded. Add the original file instead.'));
-      }
-    }
-    messages.push({ ...message, ...(files.length ? { files } : {}) });
-  }
-  return { ...preview, content: { messages } };
-}
 
 /** Import bytes with upload semantics; artifacts are files, never fabricated executions. */
 export async function prepareSessionImport(env: Env, auth: AuthContext, preview: SessionImportPreview, operationId: string,
