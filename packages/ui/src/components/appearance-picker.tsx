@@ -98,7 +98,7 @@ export function AppearancePicker({ id, appearance, label: triggerLabel, renderGl
           <IconCatalog renderIcon={(icon) => {
             const Icon = WORKSTREAM_ICON_COMPONENTS[icon];
             return <DropdownMenu.RadioItem key={icon} value={icon} aria-label={label(icon)} title={label(icon)} className="appearance-picker-choice" onSelect={(event) => { event.preventDefault(); change({ icon }); }}>
-              <Icon size={20} strokeWidth={1.8} />
+              <Icon size={20} strokeWidth={1.8} stroke={`var(--av-sys-color-project-${selected.color})`} />
             </DropdownMenu.RadioItem>;
           }} />
         </DropdownMenu.RadioGroup>
