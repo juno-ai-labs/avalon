@@ -5,6 +5,7 @@ import { parseDesktopTarget } from '../src/auth-handoff';
 import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
 import { isIosDevice, legacyIosWorkstreamHandoff } from '../src/workstream-link';
+import { comparisons, renderSiteChrome } from '../src/site-chrome';
 import { normalizedTelemetryPathname, SITE_ACTION_LINKS, siteActionForLink, sitePageForPath } from '../src/telemetry';
 
 const readProjectFile = (path: string): string =>
@@ -117,7 +118,7 @@ describe('public Rally site', () => {
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete/?ticket=${ticket}&region=global&attempt=${attempt}`))).toBeNull();
   });
   it('tags every tracked landing link with a known id, one per installer link', () => {
-    const page = readProjectFile('index.html');
+    const page = renderSiteChrome(readProjectFile('index.html'));
     const ids = [...page.matchAll(/data-site-action="([^"]+)"/gu)].map(([, id]) => id);
     // A misspelled id is ignored at runtime, which would silently stop counting that link.
     for (const id of ids) expect(siteActionForLink(id), id).not.toBeNull();
@@ -127,5 +128,30 @@ describe('public Rally site', () => {
     for (const link of page.match(/<a [^>]*Rally\.dmg[^>]*>/gu) ?? []) {
       expect(link).toMatch(/data-site-action="download-[a-z-]+"/u);
     }
+  });
+
+  it('lists every comparison and Trust Center page in the footer columns', () => {
+    const footer = renderSiteChrome('<!-- rally:site-footer -->');
+    const column = (title: string): string[] => {
+      const nav = footer.match(new RegExp(`<h2[^>]*>${title}</h2><ul class="footer-links">(.*?)</ul>`, 'u'))?.[1] ?? '';
+      return [...nav.matchAll(/href="([^"]+)"/gu)].flatMap(([, href]) => (href ? [href] : []));
+    };
+    expect(column('Compared to')).toEqual([
+      '/compare/claude-tag/', '/compare/grok-bot/', '/compare/viktor/', '/compare/chatgpt/',
+      '/compare/claude-cowork/', '/compare/instinct/', '/compare/notion-ai/', '/compare/slack/',
+      '/compare/microsoft-teams/', '/compare/',
+    ]);
+    expect(column('Trust Center')).toEqual([
+      '/trust/', '/trust/security/', '/trust/privacy/', '/trust/terms/', '/trust/dpa/',
+      '/trust/subprocessors/', '/trust/cookies/', '/trust/acceptable-use/',
+    ]);
+  });
+
+  it('renders one comparison table row per rival and refuses an unknown marker', () => {
+    const table = renderSiteChrome('<!-- rally:comparison-table -->');
+    expect([...table.matchAll(/<th scope="row"><a class="compare-name" href="([^"]+)">([^<]+)</gu)]
+      .map(([, href, name]) => `${name} ${href}`)).toEqual(comparisons.map(({ name, slug }) => `${name} /compare/${slug}/`));
+    expect(table).toContain('<td data-label="What it is">Team chat, now with AI summaries and Slackbot.</td>');
+    expect(() => renderSiteChrome('<!-- rally:nope -->')).toThrow('Unknown site chrome marker: nope');
   });
 });
