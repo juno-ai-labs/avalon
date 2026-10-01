@@ -1,8 +1,9 @@
 import { renderAccessCopy } from './src/access-copy';
 import { helpCenter } from './build/help/plugin';
+import { renderBlogIndex, renderBlogPost } from './src/blog-pages';
 import { renderComparisonPage } from './src/comparison-pages';
-import { renderComparisonCard } from './src/social-cards';
-import { comparisons, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from './src/site-chrome';
+import { renderBlogCard, renderComparisonCard } from './src/social-cards';
+import { blogPosts, comparisons, renderBlogSitemap, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from './src/site-chrome';
 import { defineConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
@@ -15,7 +16,14 @@ const projectRoot = fileURLToPath(new URL('.', import.meta.url));
 const comparisonEntries = new Map(comparisons.map((comparison) => [
   `${projectRoot}compare/${comparison.slug}/index.html`, comparison,
 ]));
-// Everything else the comparison data produces, by published path. The build
+// Every HTML page rendered from Markdown, by published path: the comparison
+// pages, the blog index, and each blog post from `content/blog/<slug>.md`.
+const renderedPages = new Map<string, () => string>([
+  ...[...comparisonEntries].map(([path, comparison]) => [path, () => renderComparisonPage(comparison)] as const),
+  [`${projectRoot}blog/index.html`, () => renderBlogIndex(blogPosts)],
+  ...blogPosts.map((post) => [`${projectRoot}blog/${post.slug}/index.html`, () => renderBlogPost(post)] as const),
+]);
+// Everything else the comparison and blog data produce, by published path. The build
 // emits each one and the dev server answers for the same paths, so the two
 // can't disagree. Cards are drawn from each page's own front matter, so a card
 // can never disagree with the page it links to.
@@ -25,7 +33,12 @@ const generatedFiles = new Map<string, { type: string; render: () => string | Pr
     // The page's own Markdown, for agents that would rather not parse HTML.
     [`compare/${comparison.slug}/index.md`, { type: 'text/markdown; charset=utf-8', render: () => comparison.source }],
   ] as const),
+  ...blogPosts.flatMap((post) => [
+    [`blog/${post.slug}/social.png`, { type: 'image/png', render: () => renderBlogCard(post) }],
+    [`blog/${post.slug}/index.md`, { type: 'text/markdown; charset=utf-8', render: () => post.source }],
+  ] as const),
   ['compare/sitemap.xml', { type: 'application/xml', render: renderComparisonSitemap }],
+  ['blog/sitemap.xml', { type: 'application/xml', render: renderBlogSitemap }],
   ['llms.txt', { type: 'text/plain; charset=utf-8', render: renderLlmsTxt }],
 ]);
 const rootPackage = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string };
@@ -42,12 +55,9 @@ export default defineConfig({
     { name: 'rally-access-copy', transformIndexHtml: renderAccessCopy },
     { name: 'rally-site-chrome', transformIndexHtml: { order: 'pre', handler: renderSiteChrome } },
     {
-      name: 'rally-comparison-pages',
-      resolveId: (id) => (comparisonEntries.has(id) ? id : null),
-      load: (id) => {
-        const comparison = comparisonEntries.get(id);
-        return comparison ? renderComparisonPage(comparison) : null;
-      },
+      name: 'rally-markdown-pages',
+      resolveId: (id) => (renderedPages.has(id) ? id : null),
+      load: (id) => renderedPages.get(id)?.() ?? null,
       async generateBundle() {
         for (const [fileName, { render }] of generatedFiles) this.emitFile({ type: 'asset', fileName, source: await render() });
       },
@@ -61,10 +71,10 @@ export default defineConfig({
           }, next);
         });
         server.middlewares.use((request, response, next) => {
-          const slug = /^\/compare\/([a-z0-9-]+)\/(?:index\.html)?$/u.exec(request.url?.split('?')[0] ?? '')?.[1];
-          const comparison = slug ? comparisonEntries.get(`${projectRoot}compare/${slug}/index.html`) : undefined;
-          if (!comparison || !request.url) return next();
-          server.transformIndexHtml(request.url, renderComparisonPage(comparison)).then((html) => {
+          const path = /^\/((?:compare|blog)\/(?:[a-z0-9-]+\/)?)(?:index\.html)?$/u.exec(request.url?.split('?')[0] ?? '')?.[1];
+          const render = path ? renderedPages.get(`${projectRoot}${path}index.html`) : undefined;
+          if (!render || !request.url) return next();
+          server.transformIndexHtml(request.url, render()).then((html) => {
             response.setHeader('Content-Type', 'text/html');
             response.end(html);
           }, next);
@@ -120,6 +130,8 @@ export default defineConfig({
         workstreamLink: `${projectRoot}app/workstreams/index.html`,
         slack: `${projectRoot}slack/index.html`,
         ...Object.fromEntries([...comparisonEntries].map(([path, { slug }]) => [`compare-${slug}`, path])),
+        blog: `${projectRoot}blog/index.html`,
+        ...Object.fromEntries(blogPosts.map(({ slug }) => [`blog-${slug}`, `${projectRoot}blog/${slug}/index.html`])),
         trust: `${projectRoot}trust/index.html`,
         trustSecurity: `${projectRoot}trust/security/index.html`,
         trustTerms: `${projectRoot}trust/terms/index.html`,
