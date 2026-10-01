@@ -143,8 +143,8 @@ local-window test, so the rail opens its destination as a new tab instead.
 Passkeys do not work on macOS or Linux: Electron has no passkey prompt and
 no authenticator answers there, so visited pages run without WebAuthn and a
 site offers its other sign-in methods. A page that calls
-`navigator.credentials` without checking for `PublicKeyCredential` still waits
-forever.
+`navigator.credentials.get({ publicKey })` without checking for
+`PublicKeyCredential` still waits forever.
 
 The native view cannot be layered under renderer dialogs, so the renderer hides
 it for dialogs and menus. Agent access has no transport yet; the command types
@@ -159,6 +159,9 @@ DOM tests alone cannot verify the native view's bounds or layering.
 The development client commonly runs with a non-default renderer zoom factor;
 check that the guest page starts exactly below the rail toolbar and does not
 cover the conversation.
+WebAuthn being off has no unit test, since a mocked `WebContentsView` cannot
+show whether Electron honors the flag. On macOS or Linux, evaluate
+`typeof PublicKeyCredential` in a guest tab and expect `'undefined'`.
 
 ## Changelog
 
@@ -187,6 +190,8 @@ through DevTools for every tab and frame is more machinery than this needs.
 Windows keeps WebAuthn on the assumption that Windows' own prompt serves it;
 that has not been tried in Rally, and a hang there would look like this one.
 Adding passkey support later means removing this flag in the same change.
+
+Shipped in #1056.
 
 ### 2026-09-25 — Closing the only blank tab closes the rail
 
