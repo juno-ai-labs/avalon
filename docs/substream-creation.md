@@ -38,7 +38,7 @@ execution independently. See [prepared conversations](session-import.md).
 | `apps/api/src/durable-objects/substream-context-transfer.ts` | Frame-sized initial-context snapshot transfer. |
 | `apps/api/src/services/substream-initial-context.ts` | Inert seed to model-context conversion. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | Main/child navigation, the creation state machine and its cache seeding, rename and archive dialogs, and `railChildren`, which draws the open substream's row under its own name. |
-| `apps/desktop/src/renderer/components/workstream-sidebar.tsx` | The center rail's rows, including the placeholder row a substream being created holds. |
+| `packages/ui/src/components/conversation-menus.tsx` | The Channel and Breakout title-pill menus that carry each conversation's row actions (rename, share, copy link, archive); the Channel menu lists the Breakouts. See [`desktop-shell.md`](desktop-shell.md). |
 | `apps/desktop/src/renderer/components/substream-launch.tsx` | The launch surface: branch provenance, the composer that starts a substream, its model pin, and the optimistic turn while one is being created. |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Renders that surface in place of the conversation's own three rows, and `branchProvenance`, which chooses the turns it fades. |
 | `apps/desktop/src/renderer/lib/launched-conversation.ts` | The optimistic opening transcript and the child detail both launchers seed. |
@@ -192,9 +192,12 @@ admitted into a conversation leaves a pending input — the run row is written
 when the child's loop claims it, after the response. There is no id to seed, so
 the child's own timer starts when its room reports the run.
 
-Every section of the center sidebar belongs to the parent work stream. Switching
-substreams changes the conversation, not the sidebar's artifact inventory,
-parent participant roster or management target. The right side of the conversation title bar shows a participant facepile for the
+The center sidebar is gone: a Breakout opens in a right pane beside Main, and
+its launch surface opens there too, as a second Main surface keyed
+`paneKey="launch"` ([`desktop-shell.md`](desktop-shell.md)). Every section of
+the Channel's title menu belongs to the parent work stream. Opening a Breakout
+changes the right pane, not the menu's artifact inventory, parent participant
+roster or management target. The right side of the conversation title bar shows a participant facepile for the
 selected conversation. Main participants appear in both the sidebar and Main
 title bar; a child title bar manages only that child. The parent socket remains retained on
 direct child links. This shared chrome does not publish private child resources

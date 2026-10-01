@@ -43,13 +43,13 @@ them; the product design is in
 | `apps/api/src/routes/workspace.ts` | `PUT /workspace/order`, the one write for all three hand-arranged lists. It is a workspace route because two of the three containers are not Spaces. |
 | `apps/api/src/queues/activity-consumer.ts` | The `space_default`, `space_intent_resume` and `space_bootstrap` handlers. |
 | `packages/ui/src/components/space-row.tsx`, `space-icon.tsx`, `space-dashboard.tsx` | The shared presentation both hosts draw a Space with. `docs/shared-ui.md` owns the split. |
-| `apps/desktop/src/renderer/components/spaces-sidebar.tsx`, `sidebar.tsx` | The first-level **Spaces** sidebar and adjacent selected-Space **Channels** sidebar. Selecting a Space keeps the Spaces rail open while filtering the middle rail; selecting a Channel in that middle rail compacts Spaces and opens the destination while leaving Channels at the person's chosen width. |
+| `apps/desktop/src/renderer/components/space-pills.tsx`, `sidebar.tsx` | The Space pills across the top of the one sidebar, and the Channel list they filter. **All** lists every Channel; General has no pill. See [`desktop-shell.md`](desktop-shell.md). |
 | `apps/desktop/src/renderer/lib/deep-link-navigation.ts` | The renderer-local signal that distinguishes an externally opened Channel from ordinary in-app navigation so both hierarchy rails reveal it once. |
 | `apps/desktop/src/renderer/screens/space-dashboard.tsx` | The `/spaces/:spaceId` dashboard. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.tsx` | **Manage access**: `GET /workstreams/:id/access`, rendered as one union of sources. |
 | `apps/desktop/src/renderer/lib/sidebar-list-store.ts`, `use-space-directories.ts`, `workspace-socket.tsx`, `workspace-directory-cache.ts` | The client's Space state: one versioned receiver, the two socket-owned directories, `spacesReady`, this person's whole ordering, and the local cache slice. |
 | `apps/desktop/src/renderer/lib/personal-order.ts` | `orderByStoredIds`, the one rule every hand-arranged list in the client is drawn by, and `storedOrderFor`, which finds one container's arrangement in it. |
-| `packages/ui/src/components/workstream-sidebar.tsx` | The Breakout rail: Main first, case-insensitive alphabetical Breakouts beneath it, and creation last. |
+| `packages/ui/src/components/conversation-menus.tsx` | The Channel menu's Breakout list, newest activity first; a Breakout opens beside Main. |
 
 ## How it works
 

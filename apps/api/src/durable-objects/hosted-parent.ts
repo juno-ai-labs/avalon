@@ -275,14 +275,17 @@ export function visiblePrivateChildren(
   if (parentIds.length === 0) return result;
   const rows = sql.exec<{
     parent_id: string; substream_id: string; title: string; effect_json: string | null; user_effect_json: string | null;
-    created_by_user_id: string; created_at: number; updated_at: number;
+    created_by_user_id: string; created_at: number; updated_at: number; origin_turn_id: string | null;
   }>(
     `SELECT child.parent_id, child.substream_id, child.title, directory.effect_json,
             viewer.effect_json AS user_effect_json,
-            child.created_by_user_id, child.created_at, child.updated_at
+            child.created_by_user_id, child.created_at, child.updated_at,
+            json_extract(preparation.request_json, '$.sourceThroughTurnId') AS origin_turn_id
        FROM parent_children child
        JOIN parent_breakout_members member
          ON member.parent_id = child.parent_id AND member.substream_id = child.substream_id
+       LEFT JOIN parent_breakout_preparations preparation
+         ON preparation.parent_id = child.parent_id AND preparation.substream_id = child.substream_id
        LEFT JOIN parent_child_projections directory
          ON directory.parent_id = child.parent_id AND directory.substream_id = child.substream_id
        LEFT JOIN parent_child_viewer_projections viewer
@@ -302,7 +305,11 @@ export function visiblePrivateChildren(
       ...(child.effect_json
         ? (() => {
           const common = WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(child.effect_json));
-          return { ...(common.appearance ? { appearance: common.appearance } : {}), harnessStatus: harnessStatus(common.state) };
+          return {
+            ...(common.appearance ? { appearance: common.appearance } : {}),
+            harnessStatus: harnessStatus(common.state),
+            lastActivityAt: Date.parse(common.lastActivityAt),
+          };
         })()
         : {}),
       ...(child.user_effect_json
@@ -314,6 +321,7 @@ export function visiblePrivateChildren(
       createdByUserId: UserIdSchema.parse(child.created_by_user_id),
       createdAt: child.created_at,
       updatedAt: child.updated_at,
+      originTurnId: child.origin_turn_id,
     });
     result.set(child.parent_id, list);
   }
@@ -353,8 +361,8 @@ export function visibleBackgroundAgentCounts(
 
 /** What a workspace-socket Channel row adds for its viewer. */
 export interface ChannelViewerState {
-  privateChildren: Array<Omit<ListVisiblePrivateChildrenResult["children"][number], "createdAt" | "updatedAt">
-    & { createdAt: string; updatedAt: string }>;
+  privateChildren: Array<Omit<ListVisiblePrivateChildrenResult["children"][number], "createdAt" | "updatedAt" | "lastActivityAt">
+    & { createdAt: string; updatedAt: string; lastActivityAt?: string }>;
   privateChildrenWaterline: number;
   backgroundAgentCounts: Record<string, number>;
   /** `channels.rail_waterline`: when it passes the rail a client holds, it asks again. */
@@ -393,8 +401,9 @@ export function channelViewerStates(
   for (const parentId of hosted) {
     const listed = children.get(parentId) ?? [];
     result.set(parentId, {
-      privateChildren: listed.map((child) => ({
+      privateChildren: listed.map(({ lastActivityAt, ...child }) => ({
         ...child, createdAt: new Date(child.createdAt).toISOString(), updatedAt: new Date(child.updatedAt).toISOString(),
+        ...(lastActivityAt === undefined ? {} : { lastActivityAt: new Date(lastActivityAt).toISOString() }),
       })),
       privateChildrenWaterline: waterlines.get(parentId) ?? 0,
       backgroundAgentCounts: visibleBackgroundAgentCounts(agents.get(parentId) ?? new Map(),
@@ -2326,8 +2335,14 @@ export class HostedParent {
       : null;
     const conversations = this.sql.exec<{
       substream_id: string; title: string | null; archived_at: number | null; audience: "restricted" | "inherits_workstream";
+      origin_turn_id: string | null;
     }>(
-      "SELECT substream_id, title, archived_at, audience FROM parent_children WHERE parent_id = ? ORDER BY substream_id",
+      `SELECT child.substream_id, child.title, child.archived_at, child.audience,
+              json_extract(preparation.request_json, '$.sourceThroughTurnId') AS origin_turn_id
+         FROM parent_children child
+         LEFT JOIN parent_breakout_preparations preparation
+           ON preparation.parent_id = child.parent_id AND preparation.substream_id = child.substream_id
+        WHERE child.parent_id = ? ORDER BY child.substream_id`,
       this.parentId,
     ).toArray().filter((child) => this.canReadConversation(request, asSubstreamId(child.substream_id), relationship, facts))
       .map((child) => {
@@ -2339,6 +2354,7 @@ export class HostedParent {
           archived: metadata.archived_at !== null || child.archived_at !== null,
           title: child.substream_id === "0" ? "Main" : child.title ?? "Shared breakout",
           scope: child.substream_id === "0" || child.audience === "inherits_workstream" ? metadata.scope : "personal",
+          ...(child.substream_id === "0" ? {} : { originTurnId: child.origin_turn_id }),
           ...(appearance ? { appearance } : {}),
           ...(viewerProjections ? { needsAttention: conversationNeedsViewer({
             harnessStatus: common ? harnessStatus(common.state) : "completed",
@@ -3243,8 +3259,9 @@ export class HostedParent {
       systemKind: row.system_kind,
       nextPendingWakeup,
       nextTerminalActionAt: iso(row.next_terminal_action_at),
-      privateChildren: privateChildren.map((child) => ({
+      privateChildren: privateChildren.map(({ lastActivityAt, ...child }) => ({
         ...child, createdAt: iso(child.createdAt), updatedAt: iso(child.updatedAt),
+        ...(lastActivityAt === undefined ? {} : { lastActivityAt: iso(lastActivityAt) }),
       })),
       viewer: {
         isParticipant: viewer?.isParticipant ?? false,

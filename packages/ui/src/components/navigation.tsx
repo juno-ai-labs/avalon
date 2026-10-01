@@ -29,6 +29,34 @@ export function SidebarNavigationRowContent({ icon, title, marks, titlePrefix, a
   </>;
 }
 
+/**
+ * A Channel's row in the single sidebar: the glyph, the title with its last
+ * activity time beside it, the Space it lives in underneath, and one activity
+ * dot at the row's leading edge. The host decides each value; an empty
+ * `subtitle` leaves a one-line row rather than an empty second line.
+ */
+export function ChannelRowContent({ id, title, appearance, naming, marks, titlePrefix, time, subtitle, marker }: {
+  id: string; title: string; appearance?: WorkstreamAppearance; naming?: boolean;
+  marks?: ReactNode; titlePrefix?: ReactNode;
+  time?: ReactNode; subtitle?: ReactNode; marker?: ReactNode;
+}): React.JSX.Element {
+  return <>
+    {marker ? <span className="channel-row-marker">{marker}</span> : null}
+    <span className="sidebar-row-icon">
+      <WorkstreamGlyph appearance={appearance} id={id} size={40} />{marks}
+    </span>
+    <span className="sidebar-row-main channel-row-main">
+      <span className="channel-row-heading">
+        <span className="sidebar-row-title"><span className="sidebar-row-title-copy">
+          {titlePrefix}{naming ? <TitleSkeleton /> : title}
+        </span></span>
+        {time ? <span className="channel-row-time">{time}</span> : null}
+      </span>
+      {subtitle ? <span className="sidebar-row-activity channel-row-subtitle">{subtitle}</span> : null}
+    </span>
+  </>;
+}
+
 export function NavigationRowContent({ id, title, appearance, naming, marks, titlePrefix, activity }: {
   id: string; title: string; appearance?: WorkstreamAppearance; naming?: boolean;
   marks?: ReactNode; titlePrefix?: ReactNode; activity?: ReactNode;

@@ -643,6 +643,24 @@ describe("substream preparation on workerd", () => {
     });
   });
 
+  it("lists each breakout with the Main turn it was branched through, and null for one branched through none", async () => {
+    const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
+    await service.prepare(WORKSTREAM_ID, {
+      operationId: "00000000-0000-7000-8000-00000000ce50", title: "Through a turn", throughTurnId: "source-turn-1",
+    });
+    const throughTurn = await service.confirm(WORKSTREAM_ID, "00000000-0000-7000-8000-00000000ce50");
+    await service.prepare(WORKSTREAM_ID, {
+      operationId: "00000000-0000-7000-8000-00000000ce51", title: "Through nothing", throughTurnId: null,
+    });
+    const throughNothing = await service.confirm(WORKSTREAM_ID, "00000000-0000-7000-8000-00000000ce51");
+
+    const listed = (await listVisiblePrivateChildren(parent(), {
+      workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, userId: CREATOR_ID,
+    })).children;
+    expect(listed.find((child) => child.substreamId === throughTurn.substreamId)?.originTurnId).toBe("source-turn-1");
+    expect(listed.find((child) => child.substreamId === throughNothing.substreamId)?.originTurnId).toBeNull();
+  });
+
   it("creates the child with the message that started it, named from it and waiting on nothing else", async () => {
     const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
     const operationId = "00000000-0000-7000-8000-00000000ce40";

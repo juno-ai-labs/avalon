@@ -250,7 +250,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       if (result.status !== "accepted" || !target) throw new Error("This invitation is unavailable. Ask the sender for a new invitation.");
       await browserRequest(invitation.region, "/workspace/select", BrowserSessionSchema, { workspaceId: target.workspaceId });
       if (read !== sessionRead.current) return;
-      const navigation = await browserRequest(invitation.region, `/api/${target.workspaceId}/sharing/navigation`, SharedNavigationDirectorySchema);
+      const navigation = await browserRequest(invitation.region, `/api/${target.workspaceId}/sharing/navigation?origins=1`, SharedNavigationDirectorySchema);
       const spaceIds = Object.fromEntries(result.invitation.targets.flatMap((entry) => {
         const space = navigation.spaces.filter((item) => item.workstreamIds.includes(entry.parentId))
           .sort((left, right) => Number(left.scope === 'personal') - Number(right.scope === 'personal') || left.id.localeCompare(right.id))[0];

@@ -44,6 +44,14 @@ Unpinning issues `DELETE /workstreams/:id/pin?spaceId=...`, removes
 only that placement's row, and rewrites that Space's survivors so the positions
 stay a dense `0..n-1` run.
 
+The sidebar's **All** filter has no run of its own. Its Pinned section shows every
+Channel pinned in any Space: General's run first, then the rest by their first
+pin (`allPinPosition` in `sidebar.tsx`). Pinning there writes to General when the
+Channel is placed in General, and otherwise to its first Space. Unpinning there
+clears every Space that pins it. A drag rearranges All's section only while
+every row in it is a General pin, because only then is it one run.
+[`desktop-shell.md`](desktop-shell.md) owns the filter.
+
 ### Ordering
 
 Positions are unique and ascending per person and Space, and `unpin` and `reorderPins`
