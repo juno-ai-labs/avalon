@@ -6,7 +6,7 @@ import remarkGfm from 'remark-gfm';
 import remarkParse from 'remark-parse';
 import { unified } from 'unified';
 import { visit } from 'unist-util-visit';
-import { HelpContentError, loadHelpSite, type HelpPage, type HelpSite } from './content';
+import { HelpContentError, loadHelpSite, type HelpChapter, type HelpPage, type HelpSite } from './content';
 import { escapeHtml, pageNumber, renderLayout, SITE_ORIGIN, type HelpPageAssets } from './layout';
 import { renderMarkdown, type HelpHeading, type HrefResolution } from './markdown';
 
@@ -124,25 +124,45 @@ function publishedMarkdown(page: HelpPage, resolveHref: (href: string, kind: 'li
   });
   let body = page.body;
   for (const edit of edits.sort((a, b) => b.start - a.start)) body = body.slice(0, edit.start) + edit.text + body.slice(edit.end);
-  return `# ${page.frontMatter.title}\n\n> ${page.frontMatter.description}\n\n${body.trim()}\n`;
+  // The pointer comes first so an agent that truncates the page still learns
+  // where the rest of the manual is.
+  const chapterIndex = page.chapter ? `\n> This chapter's pages: ${SITE_ORIGIN}/help/${page.chapter.slug}/llms.txt` : '';
+  return `> Rally Help Center. Index of every page: ${SITE_ORIGIN}/help/llms.txt${chapterIndex}\n\n`
+    + `# ${page.frontMatter.title}\n\n> ${page.frontMatter.description}\n\n${body.trim()}\n`;
 }
 
+const llmsLine = (page: HelpPage): string =>
+  `- [${page.kind === 'page' ? `${pageNumber(page)} ` : ''}${page.frontMatter.title}](${SITE_ORIGIN}${page.markdownUrl}): ${page.frontMatter.description}`;
+
 function llmsIndex(site: HelpSite): string {
-  const line = (page: HelpPage): string =>
-    `- [${page.kind === 'page' ? `${pageNumber(page)} ` : ''}${page.frontMatter.title}](${SITE_ORIGIN}${page.markdownUrl}): ${page.frontMatter.description}`;
   const chapters = site.chapters.map((chapter) =>
-    [`## Chapter ${chapter.number}: ${chapter.intro.frontMatter.title}`, '', line(chapter.intro), ...chapter.pages.map(line)].join('\n'));
+    [`## Chapter ${chapter.number}: ${chapter.intro.frontMatter.title}`, '', `${chapter.intro.frontMatter.description} Index of this chapter: ${SITE_ORIGIN}/help/${chapter.slug}/llms.txt`, '', llmsLine(chapter.intro), ...chapter.pages.map(llmsLine)].join('\n'));
   return [
     '# Rally Help Center',
     '',
     `> ${site.home.frontMatter.description}`,
     '',
-    'Rally is a desktop workspace where people and AI agents work together in Spaces, Channels and Breakouts. This is its user manual. Every page is also published as Markdown at the URL listed below; the whole manual in one file is at '
-      + `${SITE_ORIGIN}/help/llms-full.txt.`,
+    'Rally is a desktop app where people and AI agents work together in Spaces, Channels and Breakouts. This is its user manual, written as a book: chapters run from installing Rally to running Sidekicks across an Organization.',
     '',
-    line(site.home),
+    `Every page is Markdown at the URL listed below, and any page URL answers \`Accept: text/markdown\` with the same Markdown. Each chapter has its own index at /help/<chapter>/llms.txt. The whole manual in one file: ${SITE_ORIGIN}/help/llms-full.txt`,
+    '',
+    llmsLine(site.home),
     '',
     ...chapters.flatMap((chapter) => [chapter, '']),
+  ].join('\n');
+}
+
+function chapterLlmsIndex(chapter: HelpChapter): string {
+  return [
+    `# Rally Help Center, Chapter ${chapter.number}: ${chapter.intro.frontMatter.title}`,
+    '',
+    `> ${chapter.intro.frontMatter.description}`,
+    '',
+    `Part of the Rally manual. The index of every chapter is ${SITE_ORIGIN}/help/llms.txt.`,
+    '',
+    llmsLine(chapter.intro),
+    ...chapter.pages.map(llmsLine),
+    '',
   ].join('\n');
 }
 
@@ -194,6 +214,7 @@ export function buildHelp(root: string, options: BuildHelpOptions): HelpOutputs 
 
   for (const [file, published] of assets) outputs.set(published.slice(1), readFileSync(file));
   outputs.set('help/llms.txt', llmsIndex(site));
+  for (const chapter of site.chapters) outputs.set(`help/${chapter.slug}/llms.txt`, chapterLlmsIndex(chapter));
   outputs.set('help/llms-full.txt', `${llmsIndex(site)}\n${markdownCopies.join('\n---\n\n')}`);
   outputs.set('help/search-index.json', JSON.stringify(search));
   outputs.set('help/sitemap.xml', sitemap(site));

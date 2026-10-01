@@ -120,7 +120,7 @@ function headings(tree: HastRoot): HelpHeading[] {
     const text = toString(node).trim();
     const id = typeof node.properties.id === 'string' && node.properties.id ? slugger.slug(node.properties.id, true) : slugger.slug(text);
     node.properties.id = id;
-    node.children.push(element('a', { className: ['heading-anchor'], href: `#${id}`, ariaLabel: `Link to “${text}”` }, [{ type: 'text', value: '#' }]));
+    node.children.push(element('a', { className: ['anchor'], href: `#${id}`, ariaHidden: 'true', tabIndex: -1 }, [{ type: 'text', value: '#' }]));
     const depth = Number(level);
     if (depth <= 3) found.push({ depth: depth as 1 | 2 | 3, id, text });
     return SKIP;
@@ -128,21 +128,22 @@ function headings(tree: HastRoot): HelpHeading[] {
   return found;
 }
 
-/** Wraps tables so they scroll on their own, and gives code blocks a header. */
+/**
+ * Wraps tables so they scroll on their own, and code blocks so the script can
+ * add a copy button. The language label is drawn from `data-lang` in CSS.
+ */
 function chrome(tree: HastRoot): void {
   visit(tree, 'element', (node, index, parent) => {
     if (!parent || index === undefined) return;
     if (node.tagName === 'table') {
-      parent.children[index] = element('div', { className: ['table-wrap'] }, [node]);
+      parent.children[index] = element('div', { className: ['table'] }, [node]);
       return SKIP;
     }
     if (node.tagName !== 'pre' || !isElement(node.children[0], 'code')) return;
     const language = className(node.children[0]).find((name) => name.startsWith('language-'))?.slice('language-'.length);
-    const head = element('div', { className: ['code-head'] }, [
-      element('span', { className: ['code-language'] }, [{ type: 'text', value: language ?? '' }]),
-      element('button', { type: 'button', className: ['code-copy'], hidden: true }, [{ type: 'text', value: 'Copy' }]),
-    ]);
-    parent.children[index] = element('div', { className: ['code-block'] }, [head, node]);
+    const properties: Element['properties'] = { className: ['code'] };
+    if (language) properties.dataLang = language;
+    parent.children[index] = element('div', properties, [node]);
     return SKIP;
   });
 }
@@ -157,7 +158,7 @@ export function renderMarkdown(source: string, options: RenderMarkdownOptions): 
     .use(remarkRehype, { allowDangerousHtml: true })
     .use(rehypeRaw)
     .use(rehypeSanitize, schema)
-    .use(rehypeHighlight, { detect: false, plainText: PLAIN_LANGUAGES })
+    .use(rehypeHighlight, { detect: false, plainText: PLAIN_LANGUAGES, prefix: 'hl-' })
     .use(() => (tree: HastRoot) => {
       alerts(tree);
       rewriteLinks(tree, options, problems);
