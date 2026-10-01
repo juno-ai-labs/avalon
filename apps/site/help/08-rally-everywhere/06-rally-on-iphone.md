@@ -34,10 +34,11 @@ yet, ask the Rally team at help@rallywith.ai.
 - **Invitations** shows invitations waiting for you, with who sent them. Accept
   one to join.
 - **Create an organization** lets you start a new one. Type a name and tap
-  **Create**. The screen also has a **Region** menu. Rally publishes a single
-  Global deployment (see [Where your data lives](../11-privacy-and-security/02-what-rally-shares.md#where-your-data-lives)),
-  so leave it on **United States** unless the Rally team has told you
-  otherwise.
+  **Create**. The screen also has a **Region** menu offering **United States**
+  and **European Union**. Leave it on **United States**: Rally runs one
+  deployment (see [Where your data lives](../11-privacy-and-security/02-what-rally-shares.md#where-your-data-lives)),
+  and an Organization created with **European Union** chosen is refused. The
+  menu is left over from an earlier version of the app.
 
 The phone holds one Organization at a time. To get to a different one, come
 back to this screen. The guided setup you met on the Mac in [chapter

@@ -164,10 +164,10 @@ export function renderLayout({ site, page, html, headings, assets }: LayoutInput
 ${head}
 </head>
 <body class="help">
-<a class="skip" href="#chapters">Skip to chapters</a>
+<a class="skip" href="#content">Skip to content</a>
 <header class="top"><button class="menu" type="button" aria-controls="chapters" aria-expanded="false" aria-label="Chapters"><i></i></button><a class="brand" href="/"><img src="/brand/rally-mark-ink.svg" width="22" height="22" alt="">rally</a><a class="section" href="/help/">Help</a><button class="find" type="button" data-search>Search the manual<kbd>/</kbd></button><nav class="links" aria-label="Rally"><a href="/help/help-and-glossary/contact-support/">Contact support</a><a class="cta" href="/">rallywith.ai</a></nav></header>
 <div class="shell">
-<main id="content">
+<main id="content" tabindex="-1">
 <article class="${page.kind}" data-md="${page.markdownUrl}">
 ${articleHeader(page)}
 <div class="prose">${html}</div>

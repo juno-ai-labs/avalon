@@ -251,3 +251,5 @@ CI does not already have.
 **Consequences:** Anything a page needs that GitHub Markdown can't express
 needs a change to the renderer, not a custom component in the page. Adding a
 front matter key means adding it to `KNOWN_KEYS` in `content.ts`.
+
+Shipped in #1041.
