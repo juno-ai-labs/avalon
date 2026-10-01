@@ -97,8 +97,9 @@ The browser remembers sites you sign in to, from one session to the next, so
 you can sign in once and stay signed in. This is useful for reading pages that
 need an account.
 
-It is also how Rally reads a conversation you import from Claude or ChatGPT:
-it reads it through this browser, using your sign-in there. See
+The import window for bringing in a conversation from Claude or ChatGPT is
+the same kind of browser, and it shares your sign-ins with the panel. Sign in
+to claude.ai or ChatGPT in either one and you are signed in in both. See
 [Bring in a conversation from Claude or ChatGPT](../02-working-in-a-channel/08-import-from-claude-or-chatgpt.md).
 
 Some sign-ins will not work here. Sites that sign you in through a separate
@@ -121,8 +122,7 @@ CAPTCHA, for example). Signing in to Rally itself, and connecting an app in
 - **Only web addresses.** Links starting `http` or `https` open here. Anything
   else does not.
 - **It is your browser, not Rally's.** The agent cannot click around in it for
-  you. Apart from reading imported conversations, it is there for you to read
-  and check things.
+  you. It is there for you to read and check things.
 
 ## Making the side panel wider
 

@@ -97,7 +97,7 @@ Right-click a Breakout in the Channel sidebar for its menu:
 - **Archive breakout** retires it.
 
 Right-clicking the main conversation row gives a similar menu for the Channel
-itself, with **Make public to organization** at the top if the Channel is not
+itself, with **Make public to organization** at the top, greyed out if the Channel is
 already open to everyone. That item makes the whole Channel visible to your
 Organization; [Who can see what](04-who-can-see-what.md) explains what that
 means and how to undo it.
@@ -126,8 +126,7 @@ private.
 
 A few details:
 
-- Only artifacts Rally made in the Breakout can be attached this way. Things you
-  brought into the Breakout from elsewhere can be added to the Channel directly.
+- Only artifacts Rally made in the Breakout can be attached this way.
 - If the Channel already has that artifact, the item is greyed out.
 - Rally attaches one thing at a time.
 

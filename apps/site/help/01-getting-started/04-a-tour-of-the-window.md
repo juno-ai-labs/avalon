@@ -20,7 +20,7 @@ This page walks along the ladder one rung at a time. Each part has a chapter of 
 The narrow column at the far left lists your Organization's Spaces, each with its own icon and colour. A new Organization has just one, **General**, so this rail looks a little lonely at first.
 
 - **Click a Space** to open its overview and show its Channels in the next column.
-- **Hover** over a Space for a card with its name. A Space the whole Organization can see is marked **Public space**.
+- **Hover** over a Space for a card with its name. A Space the whole Organization can see is marked **Organization space** in that card.
 - **A number badge** on a Space counts the conversations in it that need your attention, such as a question from Rally or a mention from a teammate. [Status dots and badges](../02-working-in-a-channel/06-status-dots-and-badges.md) explains every one.
 - **Drag a Space** up or down to reorder the rail. The order is yours alone: it follows you to your other devices, and nobody else's rail changes. From the keyboard, select a Space and hold <kbd>⌥ Option</kbd> while pressing <kbd>↑</kbd> or <kbd>↓</kbd>.
 

@@ -101,8 +101,8 @@ see [Organization settings](../10-running-an-organization/03-organization-settin
 
 The Terminal is not switched on in every region, and the Rally team can pause
 it for safety. When it is unavailable, Rally's code tools fail with a message
-saying the sandbox is unavailable, and administrators see **Terminal
-unavailable** in **Settings → Internet access**. Rally then answers in the
+saying the sandbox is unavailable, and **Settings → Internet access** shows
+**Terminal unavailable**. Rally then answers in the
 conversation as best it can without running code.
 
 ## Working on GitHub repositories

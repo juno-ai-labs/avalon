@@ -94,7 +94,7 @@ Every Space has an **audience**, chosen from the menu under its name:
 | Audience | Who can see the Space and its Channels |
 | --- | --- |
 | **Space participants** | Only the people listed as the Space's participants. |
-| **Everyone in the organization** | Everyone in the Organization. The Space is marked **Public space** when you hover over it in the rail. |
+| **Everyone in the organization** | Everyone in the Organization. The Space is labelled **Public space** in the rail. |
 
 This is not only about the Space's page. **The audience reaches every Channel in
 the Space.** A Channel in an Organization-wide Space can be seen and found by
@@ -136,7 +136,7 @@ The rules:
   owner or administrator. For everyone else, a ticked box beside another person
   cannot be unticked.
 - You cannot take yourself out of a private Space. Rally refuses with **You
-  can't make a space private without yourself in it.**
+  can’t make a space private without yourself in it.**
 - A Space must keep at least one participant.
 
 In an Organization-wide Space, the participant list is mostly a record of who
