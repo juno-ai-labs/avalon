@@ -263,6 +263,11 @@ describe('public Rally site', () => {
     expect(entries[1]).not.toContain('Older close.');
     expect(entries[1]).not.toContain('A heading');
     expect(entries[1]).toContain('<a class="changelog-more" href="/blog/older/" aria-label="Read more: Older">Read more');
+    const referenced = renderBlogIndex([
+      post('2026-10-08-newer.md', 'Newer', 'Newer.\n'),
+      post('2026-10-01-older.md', 'Older', 'See [the details][d].\n\nMore.\n\n[d]: https://example.com/d\n'),
+    ]);
+    expect(referenced).toContain('<p>See <a href="https://example.com/d">the details</a>.</p>');
   });
 
   it('lists the blog index and every post in the blog sitemap', () => {
