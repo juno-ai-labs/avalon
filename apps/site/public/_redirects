@@ -57,7 +57,7 @@
 /support/connectors/custom-mcp  /help/connecting-your-tools/custom-mcp-server/  301
 /support/*  /help/  301
 
-# The /compare/ hub page and three rival pages were removed; the table lives
+# The /compare/ hub page and four rival pages were removed; the table lives
 # on the landing page. Exact paths only, so each remaining /compare/<slug>/
 # page still serves.
 /compare/  /#compare  301
@@ -68,3 +68,5 @@
 /compare/notion-ai  /#compare  301
 /compare/microsoft-teams/  /#compare  301
 /compare/microsoft-teams  /#compare  301
+/compare/claude-cowork/  /#compare  301
+/compare/claude-cowork  /#compare  301
