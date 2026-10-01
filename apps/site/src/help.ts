@@ -8,22 +8,28 @@ import { searchEntries, words, type SearchEntry } from './help-search';
 
 const body = document.body;
 
+function element<K extends keyof HTMLElementTagNameMap>(tag: K, attributes: Record<string, string> = {}, ...children: Array<Node | string>): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag);
+  for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value);
+  node.append(...children);
+  return node;
+}
+
 function setupMenu(): void {
-  const button = document.querySelector<HTMLButtonElement>('.help-menu-button');
-  const sidebar = document.getElementById('help-sidebar');
-  if (!button || !sidebar) return;
+  const button = document.querySelector<HTMLButtonElement>('.menu');
+  const chapters = document.getElementById('chapters');
+  if (!button || !chapters) return;
   const toggle = (open: boolean): void => {
-    body.classList.toggle('help-nav-open', open);
+    body.classList.toggle('nav-open', open);
     button.setAttribute('aria-expanded', String(open));
   };
-  button.addEventListener('click', () => toggle(!body.classList.contains('help-nav-open')));
-  sidebar.addEventListener('click', (event) => {
+  button.addEventListener('click', () => toggle(!body.classList.contains('nav-open')));
+  chapters.addEventListener('click', (event) => {
     if ((event.target as Element).closest('a')) toggle(false);
   });
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && body.classList.contains('help-nav-open')) toggle(false);
+    if (event.key === 'Escape' && body.classList.contains('nav-open')) toggle(false);
   });
-  sidebar.querySelector('[aria-current="page"]')?.scrollIntoView({ block: 'center' });
 }
 
 function flash(button: HTMLButtonElement, label: string): void {
@@ -43,14 +49,15 @@ async function copy(button: HTMLButtonElement, text: () => Promise<string> | str
 }
 
 function setupCopy(): void {
-  for (const button of document.querySelectorAll<HTMLButtonElement>('.code-copy')) {
-    const code = button.closest('.code-block')?.querySelector('code');
+  for (const block of document.querySelectorAll<HTMLElement>('.prose .code')) {
+    const code = block.querySelector('code');
     if (!code) continue;
-    button.hidden = false;
+    const button = element('button', { type: 'button', class: 'copy' }, 'Copy');
     button.addEventListener('click', () => void copy(button, () => code.textContent ?? ''));
+    block.prepend(button);
   }
-  const pageButton = document.querySelector<HTMLButtonElement>('[data-copy-markdown]');
-  const url = document.querySelector<HTMLElement>('[data-markdown-url]')?.dataset.markdownUrl;
+  const pageButton = document.querySelector<HTMLButtonElement>('[data-copy-page]');
+  const url = document.querySelector<HTMLElement>('[data-md]')?.dataset.md;
   if (!pageButton || !url) return;
   pageButton.hidden = false;
   pageButton.addEventListener('click', () => void copy(pageButton, async () => {
@@ -63,7 +70,7 @@ function setupCopy(): void {
 /** Marks the outline entry for the section the reader is in. */
 function setupOutline(): void {
   const links = new Map<string, HTMLAnchorElement>();
-  for (const link of document.querySelectorAll<HTMLAnchorElement>('.help-toc a[href^="#"]')) {
+  for (const link of document.querySelectorAll<HTMLAnchorElement>('.toc a[href^="#"]')) {
     links.set(decodeURIComponent(link.hash.slice(1)), link);
   }
   const headings = [...links.keys()]
@@ -94,6 +101,7 @@ function setupOutline(): void {
   update();
 }
 
+// The index is built with the site and fetched the first time search opens.
 let index: Promise<SearchEntry[]> | undefined;
 const loadIndex = (): Promise<SearchEntry[]> => {
   index ??= fetch('/help/search-index.json').then((response) => {
@@ -114,29 +122,29 @@ function highlighted(text: string, terms: string[]): DocumentFragment {
   }
   const pattern = new RegExp(`(${terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')).join('|')})`, 'giu');
   for (const [position, part] of text.split(pattern).entries()) {
-    if (position % 2 === 1) {
-      const mark = document.createElement('mark');
-      mark.textContent = part;
-      fragment.append(mark);
-    } else if (part) fragment.append(part);
+    if (position % 2 === 1) fragment.append(element('mark', {}, part));
+    else if (part) fragment.append(part);
   }
   return fragment;
 }
 
-function setupSearch(): void {
-  const dialog = document.querySelector<HTMLDialogElement>('.help-search');
-  const input = dialog?.querySelector<HTMLInputElement>('.help-search-input');
-  const list = dialog?.querySelector<HTMLOListElement>('.help-search-results');
-  const empty = dialog?.querySelector<HTMLElement>('.help-search-empty');
-  if (!dialog || !input || !list || !empty) return;
+function searchDialog(): { dialog: HTMLDialogElement; input: HTMLInputElement } {
+  const input = element('input', { type: 'search', placeholder: 'Search the manual', 'aria-label': 'Search the manual', autocomplete: 'off', spellcheck: 'false' });
+  const close = element('button', { type: 'submit', 'aria-label': 'Close search' }, 'Esc');
+  const list = element('ol', { role: 'listbox', 'aria-label': 'Results' });
+  const empty = element('p', { class: 'empty', hidden: '' });
+  const dialog = element('dialog', { class: 'search', 'aria-label': 'Search the manual' },
+    element('form', { method: 'dialog', role: 'search' }, input, close), list, empty);
+  body.append(dialog);
   let selected = 0;
 
+  const options = (): HTMLAnchorElement[] => [...list.querySelectorAll<HTMLAnchorElement>('[role="option"]')];
   const select = (next: number): void => {
-    const options = [...list.querySelectorAll<HTMLElement>('[role="option"]')];
-    if (options.length === 0) return;
-    selected = (next + options.length) % options.length;
-    options.forEach((option, position) => option.setAttribute('aria-selected', String(position === selected)));
-    options[selected]?.scrollIntoView({ block: 'nearest' });
+    const all = options();
+    if (all.length === 0) return;
+    selected = (next + all.length) % all.length;
+    all.forEach((option, position) => option.setAttribute('aria-selected', String(position === selected)));
+    all[selected]?.scrollIntoView({ block: 'nearest' });
   };
 
   const render = async (): Promise<void> => {
@@ -146,7 +154,7 @@ function setupSearch(): void {
       entries = await loadIndex();
     } catch {
       list.replaceChildren();
-      empty.textContent = 'Search could not load. The chapters on the left still work.';
+      empty.textContent = 'Search could not load. The chapters still work.';
       empty.hidden = false;
       return;
     }
@@ -154,27 +162,11 @@ function setupSearch(): void {
     const terms = words(query);
     const hits = searchEntries(entries, query);
     list.replaceChildren(...hits.map((hit) => {
-      const item = document.createElement('li');
-      const link = document.createElement('a');
-      link.setAttribute('role', 'option');
-      link.href = hit.heading ? `${hit.entry.u}#${hit.heading[0]}` : hit.entry.u;
-      const meta = document.createElement('span');
-      meta.className = 'help-search-meta';
-      meta.textContent = hit.entry.c || 'Help Center';
-      const title = document.createElement('strong');
-      title.append(highlighted(hit.entry.t, terms));
-      if (hit.heading) {
-        const section = document.createElement('span');
-        section.className = 'help-search-section';
-        section.append(' › ', highlighted(hit.heading[1], terms));
-        title.append(section);
-      }
-      const text = document.createElement('span');
-      text.className = 'help-search-snippet';
-      text.append(highlighted(hit.snippet, terms));
-      link.append(meta, title, text);
-      item.append(link);
-      return item;
+      const title = element('strong', {}, highlighted(hit.entry.t, terms));
+      if (hit.heading) title.append(element('span', {}, ' › ', highlighted(hit.heading[1], terms)));
+      const link = element('a', { role: 'option', href: hit.heading ? `${hit.entry.u}#${hit.heading[0]}` : hit.entry.u },
+        element('small', {}, hit.entry.c || 'Help Center'), title, element('span', { class: 'snippet' }, highlighted(hit.snippet, terms)));
+      return element('li', {}, link);
     }));
     empty.textContent = 'Nothing matched. Try fewer words, or a different one.';
     empty.hidden = hits.length > 0 || terms.length === 0;
@@ -182,29 +174,31 @@ function setupSearch(): void {
     select(0);
   };
 
-  const open = (): void => {
-    if (dialog.open) return;
-    dialog.showModal();
-    input.select();
-    void loadIndex().catch(() => undefined);
-  };
-
-  for (const button of document.querySelectorAll('[data-help-search-open]')) button.addEventListener('click', open);
   input.addEventListener('input', () => void render());
   input.addEventListener('keydown', (event) => {
     if (event.key === 'ArrowDown') { event.preventDefault(); select(selected + 1); }
     if (event.key === 'ArrowUp') { event.preventDefault(); select(selected - 1); }
     if (event.key === 'Enter') {
-      const target = list.querySelectorAll<HTMLAnchorElement>('[role="option"]')[selected];
+      const target = options()[selected];
       if (target) { event.preventDefault(); dialog.close(); location.href = target.href; }
     }
   });
   dialog.addEventListener('click', (event) => {
-    if (event.target === dialog) dialog.close();
+    if (event.target === dialog || (event.target as Element).closest('a')) dialog.close();
   });
-  list.addEventListener('click', (event) => {
-    if ((event.target as Element).closest('a')) dialog.close();
-  });
+  return { dialog, input };
+}
+
+function setupSearch(): void {
+  let search: ReturnType<typeof searchDialog> | undefined;
+  const open = (): void => {
+    search ??= searchDialog();
+    if (search.dialog.open) return;
+    search.dialog.showModal();
+    search.input.select();
+    void loadIndex().catch(() => undefined);
+  };
+  for (const button of document.querySelectorAll('[data-search]')) button.addEventListener('click', open);
   document.addEventListener('keydown', (event) => {
     const typing = (event.target as Element | null)?.closest('input, textarea, [contenteditable="true"]');
     if ((event.key === 'k' && (event.metaKey || event.ctrlKey)) || (event.key === '/' && !typing)) {
@@ -214,9 +208,7 @@ function setupSearch(): void {
   });
 }
 
-if (typeof document !== 'undefined' && document.body?.classList.contains('help')) {
-  setupMenu();
-  setupCopy();
-  setupOutline();
-  setupSearch();
-}
+setupMenu();
+setupCopy();
+setupOutline();
+setupSearch();
