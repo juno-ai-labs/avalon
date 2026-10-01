@@ -213,6 +213,11 @@ export function loadHelpSite(root: string, options: { includeDrafts?: boolean | 
     }
     chapter.pages.sort((a, b) => pageOrder.get(a)! - pageOrder.get(b)!);
     if (visible(intro)) chapters.push(chapter);
+    else if (chapter.pages.length > 0) {
+      // A draft opener hides its chapter, so finished pages in it would vanish
+      // from the build without a word.
+      problems.push(`${entry.name}/index.md: is a draft, which would hide ${chapter.pages.length} finished page(s) in this chapter; mark them draft too, or publish the opener`);
+    }
   }
   // Folder numbers only order; readers see chapters counted from one, so a
   // chapter can be slotted in as 25- without renumbering its neighbours.
