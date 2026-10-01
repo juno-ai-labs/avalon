@@ -1,7 +1,7 @@
 # Landing comparisons and site footer
 
 The public site's "Compared to" pages and the column footer they share with the
-landing page and the Trust Center. The landing page's "Compared to" section lists six rival
+landing page and the Trust Center. The landing page's "Compared to" section lists five rival
 products in one table, and each rival has its own page at `/compare/<slug>/`
 that answers "Rally vs X" for a person or an AI search engine. There is no
 `/compare/` index page: `_redirects` sends it to `/#compare`. The footer lists every comparison in one column and
