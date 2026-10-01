@@ -1,0 +1,121 @@
+/* Trust Center pages. Loads after landing.css and reuses its tokens, fonts,
+   header, footer, buttons and eyebrow, so the two read as one site. */
+.trust-center,.legal-shell{max-width:1400px;margin:auto;padding:0 var(--gutter)}
+.trust-center h1,.legal-document h1{max-width:none;margin:32px 0 0;font-family:var(--display-font);font-weight:500;line-height:1;letter-spacing:.02em;text-transform:uppercase;white-space:normal;text-align:left}
+.trust-center h1{font-size:4.5rem}
+h1 em,h2 em{font-style:normal;color:var(--muted)}
+.trust-center h2{font-family:var(--display-font);font-size:3rem;font-weight:500;line-height:1;letter-spacing:.02em;text-transform:uppercase}
+.trust-center h3{font-family:var(--display-font);font-size:24px;font-weight:500;line-height:1.15}
+.site-header nav a[aria-current]{color:var(--paper)}
+
+/* Page tabs: the landing's mono labels on a hairline. */
+.trust-tabs{display:flex;gap:4px 28px;overflow-x:auto;scrollbar-width:none;border-bottom:1px solid var(--hairline);font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase}
+.trust-tabs a{flex-shrink:0;padding:20px 0 18px;border-bottom:1px solid transparent;margin-bottom:-1px;color:oklch(.97 0 0/.55);transition:color .15s,border-color .15s}
+.trust-tabs a:hover{color:var(--paper)}
+.trust-tabs a[aria-current]{color:var(--paper);border-color:var(--paper)}
+
+.trust-hero{padding:56px 0 88px;border-bottom:1px solid var(--hairline)}
+.trust-hero-copy{max-width:64rem}
+.trust-kicker{display:flex;align-items:center;gap:12px;font-family:var(--mono);font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:var(--muted)}
+.trust-kicker::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--green)}
+.trust-hero-copy>p:not(.trust-kicker){max-width:46rem;margin-top:28px;color:var(--soft);font-size:20px;line-height:1.6}
+.trust-contact-row{display:flex;flex-wrap:wrap;gap:12px;margin-top:36px}
+.trust-contact-row a{display:inline-flex;align-items:center;gap:10px;padding:12px 24px;border:1px solid oklch(.97 0 0/.25);border-radius:2px;font-size:var(--small);font-weight:500;transition:background .15s}
+.trust-contact-row a:first-child{background:var(--paper);border-color:var(--paper);color:var(--ink)}
+.trust-contact-row a:hover{background:var(--wash)}
+.trust-contact-row a:first-child:hover{background:var(--paper);opacity:.85}
+
+/* Numbered sections, each opening on the landing's eyebrow rule. */
+.trust-section{padding:0 0 112px}
+.trust-section-heading{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:0 64px;align-items:end;margin-bottom:48px}
+.trust-section-heading>div{display:contents}
+.trust-section-heading>div>p{grid-column:1/-1;display:flex;align-items:center;gap:12px;padding:24px 0 16px;margin-bottom:40px;border-bottom:1px solid var(--hairline);font-family:var(--mono);font-size:11px;letter-spacing:.24em;text-transform:uppercase}
+.trust-section-heading>div>p::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--paper)}
+.trust-section-heading>p{color:var(--muted);line-height:1.65}
+
+/* Control and provider cards: the landing's tile grid, hairlines as gutters. */
+.trust-control-grid,.trust-provider-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;overflow:hidden;border:1px solid var(--hairline);border-radius:2px;background:var(--hairline)}
+.trust-provider-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+.trust-control-card,.trust-provider-grid article{min-width:0;padding:32px;background:var(--ink)}
+.trust-control-wide{grid-column:1/-1}
+.trust-provider-grid article:last-child:nth-child(3n+1){grid-column:1/-1}
+.trust-provider-grid article:last-child:nth-child(3n+2){grid-column:span 2}
+.trust-control-card header{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px 16px}
+.trust-control-card header>span:first-child{font-family:var(--mono);font-size:11px;letter-spacing:.18em;color:#f59e0b}
+.trust-status{margin-left:auto;padding:2px 8px;border:1px solid oklch(.5 .12 160/.5);border-radius:2px;background:oklch(.5 .12 160/.1);font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:oklch(.78 .12 160)}
+.trust-control-card ul{margin:20px 0 0;padding:20px 0 0;border-top:1px solid var(--hairline);list-style:none;font-size:var(--small);line-height:1.65;color:var(--muted)}
+.trust-control-card li{display:flex;gap:12px}
+.trust-control-card li+li{margin-top:12px}
+.trust-control-card li::before{content:'+';font-family:var(--mono);color:var(--paper)}
+.trust-provider-grid article>span{font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.trust-provider-grid h3{margin-top:16px}
+.trust-provider-grid p{margin-top:12px;font-size:var(--small);line-height:1.65;color:var(--muted)}
+.trust-text-link{display:inline-flex;gap:8px;margin-top:24px;font-size:var(--small);color:var(--paper);border-bottom:1px solid oklch(.97 0 0/.25);transition:border-color .15s}
+.trust-text-link:hover{border-color:var(--paper)}
+
+/* Document directory: one row per page. */
+.trust-resource-list{border-top:1px solid var(--hairline)}
+.trust-resource-list>a{display:grid;grid-template-columns:220px minmax(0,1fr) auto;gap:24px;align-items:center;padding:24px 16px;border-bottom:1px solid var(--hairline);transition:background .15s}
+.trust-resource-list>a:hover{background:var(--wash)}
+.trust-resource-list span{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.trust-resource-list strong{font-family:var(--display-font);font-size:28px;font-weight:500;line-height:1.15}
+.trust-resource-list i{font-family:var(--mono);font-style:normal;color:var(--muted);transition:color .15s,transform .15s}
+.trust-resource-list>a:hover i{color:var(--paper);transform:translateX(4px)}
+
+/* FAQ: the comparison pages' accordion. */
+.trust-faq-list{border-top:1px solid var(--hairline)}
+.trust-faq-list details{border-bottom:1px solid var(--hairline)}
+.trust-faq-list summary{display:flex;justify-content:space-between;gap:24px;padding:20px 0;cursor:pointer;list-style:none;font-family:var(--display-font);font-size:22px;font-weight:500;line-height:1.25}
+.trust-faq-list summary::-webkit-details-marker{display:none}
+.trust-faq-list summary span{font-family:var(--mono);font-size:16px;color:var(--muted);transition:transform .15s}
+.trust-faq-list details[open] summary span{transform:rotate(45deg)}
+.trust-faq-list summary:focus-visible{outline:2px solid var(--paper);outline-offset:4px}
+.trust-faq-list details p{max-width:48rem;padding:0 0 24px;color:var(--muted)}
+
+/* Contact panel: the landing's green callout, at section scale. */
+.trust-reporting{margin:0 0 112px;padding:48px;border:1px solid var(--hairline);border-left:3px solid var(--green);border-radius:2px;background:oklch(.5 .12 160/.1)}
+.trust-reporting>p:first-child{font-family:var(--mono);font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:var(--muted)}
+.trust-reporting h2{margin-top:24px}
+.trust-reporting>p:not(:first-child){max-width:46rem;margin-top:24px;color:var(--soft)}
+.trust-reporting>a{display:inline-flex;align-items:center;gap:10px;margin-top:32px;padding:12px 24px;border:1px solid var(--paper);border-radius:2px;background:var(--paper);color:var(--ink);font-size:var(--small);font-weight:500;transition:opacity .15s}
+.trust-reporting>a:hover{opacity:.85}
+
+/* Policy documents: the landing's side rail beside a long-form column. */
+.legal-shell{display:grid;grid-template-columns:max-content minmax(0,1fr)}
+.legal-nav{position:sticky;top:calc(var(--header) + 24px);align-self:start;padding:32px 8px 0 0}
+.legal-nav>p{padding:0 12px 12px;font-family:var(--mono);font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:var(--paper)}
+.legal-nav ul{margin:0;padding:0;list-style:none}
+.legal-nav a{display:block;padding:12px 40px 12px 12px;border-bottom:1px solid var(--hairline);color:oklch(.97 0 0/.55);font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;transition:color .15s,border-color .15s}
+.legal-nav a:hover{color:oklch(.97 0 0/.8)}
+.legal-nav a[aria-current]{color:var(--paper);border-color:var(--paper)}
+.legal-document{min-width:0;padding:0 0 128px var(--gutter);border-left:1px solid var(--hairline)}
+.legal-document>header{padding-bottom:48px;margin-bottom:16px;border-bottom:1px solid var(--hairline)}
+.legal-document h1{font-size:3.75rem}
+.legal-lede{max-width:46rem;margin-top:24px;color:var(--soft);font-size:20px;line-height:1.6}
+.legal-meta{display:flex;flex-wrap:wrap;gap:8px 24px;margin-top:24px;font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.legal-section{max-width:48rem;padding:40px 0 0;color:var(--soft);line-height:1.7}
+.legal-section h2{margin-bottom:20px;font-family:var(--display-font);font-size:30px;font-weight:500;line-height:1.15;color:var(--paper)}
+.legal-section h3{margin:28px 0 12px;font-family:var(--display-font);font-size:22px;font-weight:500;line-height:1.2;color:var(--paper)}
+.legal-section p+p,.legal-section p+ul,.legal-section ul+p,.legal-section ol+p,.legal-section p+ol{margin-top:16px}
+.legal-section ul,.legal-section ol{margin:16px 0 0;padding-left:20px}
+.legal-section li+li{margin-top:10px}
+.legal-section li::marker{color:var(--muted)}
+.legal-section strong{font-weight:500;color:var(--paper)}
+.legal-section a{color:var(--paper);border-bottom:1px solid oklch(.97 0 0/.25);overflow-wrap:anywhere;transition:border-color .15s}
+.legal-section a:hover{border-color:var(--paper)}
+.legal-section code{font-family:var(--mono);font-size:13px}
+.legal-callout{margin:24px 0;padding:24px 28px;border:1px solid var(--hairline);border-left:3px solid var(--green);border-radius:2px;background:oklch(.5 .12 160/.1)}
+.legal-callout.warm{border-left-color:#f59e0b;background:oklch(.75 .16 70/.08)}
+.legal-callout p+p{margin-top:12px}
+.legal-table-wrap{max-width:none;margin:24px 0;overflow-x:auto;border:1px solid var(--hairline);border-radius:2px}
+.legal-table{width:100%;min-width:600px;border-collapse:collapse;font-size:var(--small);line-height:1.55}
+.legal-table th,.legal-table td{padding:16px 20px;border-bottom:1px solid var(--hairline);text-align:left;vertical-align:top}
+.legal-table tr:last-child td{border-bottom:0}
+.legal-table th{font-family:var(--mono);font-size:11px;font-weight:400;letter-spacing:.18em;text-transform:uppercase;color:oklch(.97 0 0/.55)}
+.legal-table td{color:var(--muted)}
+.legal-table td:first-child{color:var(--paper)}
+
+@media(max-width:1050px){.trust-center h1{font-size:3.75rem}.legal-document h1{font-size:3rem}.trust-center h2{font-size:2.5rem}.trust-provider-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.trust-provider-grid article:last-child:nth-child(n){grid-column:auto}.trust-provider-grid article:last-child:nth-child(odd){grid-column:1/-1}}
+@media(max-width:900px){.legal-shell{display:block}.legal-nav{position:static;padding:24px 0 0}.legal-nav>p{padding:0 0 8px}.legal-nav ul{display:flex;flex-wrap:wrap;gap:0 20px}.legal-nav a{padding:8px 0;border-bottom:0}.legal-nav a[aria-current]{text-decoration:underline;text-underline-offset:6px}.legal-document{padding-left:0;border-left:0}}
+@media(max-width:768px){.trust-section-heading>p{margin-top:20px}.trust-section-heading,.trust-control-grid,.trust-provider-grid{grid-template-columns:minmax(0,1fr)}.trust-resource-list>a{grid-template-columns:minmax(0,1fr) auto;gap:6px 16px;padding:20px 0}.trust-resource-list span{grid-column:1/-1}.trust-reporting{padding:28px}.trust-section{padding-bottom:88px}}
+@media(max-width:640px){.trust-center h1,.legal-document h1{font-size:2.5rem}.trust-center h2{font-size:2.25rem}.trust-hero{padding:40px 0 64px}.trust-hero-copy>p:not(.trust-kicker),.legal-lede{font-size:18px}.trust-control-card,.trust-provider-grid article{padding:24px}.trust-resource-list strong{font-size:22px}.trust-faq-list summary{font-size:19px}.legal-section h2{font-size:26px}}
