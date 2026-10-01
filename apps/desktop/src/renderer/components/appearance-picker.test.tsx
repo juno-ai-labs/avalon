@@ -39,6 +39,15 @@ describe('appearance picker', () => {
     expect(screen.getAllByRole('menuitemradio')).toHaveLength(253 + 14);
   });
 
+  it('draws the catalog in the chosen colour, and redraws it when the colour changes', async () => {
+    render(<WorkstreamAppearancePicker id="room" appearance={{ icon: 'atom', color: 'blue' }} onChange={vi.fn().mockResolvedValue(undefined)} />);
+    openPicker();
+    const drum = await screen.findByRole('menuitemradio', { name: 'Drum' });
+    expect(drum.querySelector('svg')).toHaveAttribute('stroke', 'var(--av-sys-color-project-blue)');
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Green' }));
+    expect(drum.querySelector('svg')).toHaveAttribute('stroke', 'var(--av-sys-color-project-green)');
+  });
+
   it('draws an icon the catalog no longer offers, and offers nothing in its place', async () => {
     render(<WorkstreamAppearancePicker id="room" appearance={{ icon: 'workflow', color: 'blue' }} onChange={vi.fn()} />);
     openPicker();
