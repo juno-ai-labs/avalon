@@ -6,8 +6,8 @@ order: 4
 title: "Rally vs ChatGPT (2026): when the work needs a second person"
 description: "ChatGPT is a superb personal assistant. Rally puts your whole team and one AI in the same conversation, with the project's history right there."
 updated: 2026-10-01
-kind: "OpenAI's AI assistant, used mostly as one person in one chat."
-edge: "Your team and one AI work in the same conversation, and the bill stays put when someone new joins."
+kind: "OpenAI's AI assistant."
+edge: "Your team and AI in the same conversation."
 ---
 
 **Short answer:** ChatGPT when it's you and the AI. Rally when the work belongs to a team. ChatGPT is the best known assistant around, and it keeps adding team features like shared projects and the new Space. Most of the work still happens one person to one chat, though. In Rally, your team and one AI talk in the same Channel, and the files and past decisions sit right beside the conversation. Whoever picks the work up next finds it where it was left. The price covers the whole organization.

@@ -23,7 +23,7 @@ export const trustPages: readonly { href: string; name: string }[] = [
 const ORIGIN = 'https://rallywith.ai';
 const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
 
-/** How many rivals there are, as a word while that reads well ("nine"). */
+/** How many rivals there are, as a word while that reads well ("six"). */
 export const comparisonCount = (): string => WORDS[comparisons.length] ?? String(comparisons.length);
 
 /** "Claude Tag, Grok Bot, …, and Microsoft Teams". */
@@ -59,9 +59,6 @@ export function renderSiteFooter(): string {
     + `</div><p class="footer-legal"><small>© 2026 Juno AI Labs · Rally</small></p></footer>`;
 }
 
-const month = (day: string): string =>
-  new Date(`${day}T00:00:00Z`).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
-
 /** Every rival in one table, each row linking to its own page. */
 export function renderComparisonTable(): string {
   const rows = comparisons.map(({ slug, name, maker, kind, edge }) =>
@@ -71,7 +68,6 @@ export function renderComparisonTable(): string {
     + `<td class="compare-more"><a href="/compare/${slug}/" aria-label="Rally vs ${escape(name)}, full comparison">Rally vs ${escape(name)} <span aria-hidden="true">→</span></a></td></tr>`,
   ).join('');
   return `<div class="compare-table-wrap"><table class="compare-table">`
-    + `<caption class="compare-caption">Rally compared with ${comparisonCount()} AI and team tools, as of ${month(comparisonsUpdated())}</caption>`
     + `<thead><tr><th scope="col">Tool</th><th scope="col">What it is</th><th scope="col">Why teams pick Rally</th><th scope="col"><span class="visually-hidden">Full comparison</span></th></tr></thead>`
     + `<tbody>${rows}</tbody></table></div>`;
 }
