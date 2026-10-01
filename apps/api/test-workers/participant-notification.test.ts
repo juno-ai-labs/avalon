@@ -727,6 +727,20 @@ describe("adding somebody to a work stream", () => {
     });
   });
 
+  it("leaves the only message unread for somebody added to a one-message Channel", async () => {
+    const stub = agentStub();
+    await openWorkstream(stub);
+
+    await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
+
+    expect(await openedByInvitee(stub)).toMatchObject({
+      latestAttentionSequenceNumber: 1,
+      readThroughSequenceNumber: 0,
+      firstUnreadSequenceNumber: 1,
+      hasUnread: true,
+    });
+  });
+
   it("moves a re-added person's cursor forward and drops their old unread mark", async () => {
     const stub = agentStub();
     await provisionWorkstream(stub);
