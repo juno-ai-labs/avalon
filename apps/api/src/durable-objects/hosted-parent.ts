@@ -624,6 +624,13 @@ const OWN_PARENT_ROW_SQL = `SELECT m.parent_kind, m.revision, m.authority_genera
   m.updated_at AS source_updated_at
   FROM parent_metadata m WHERE m.parent_id = ?`;
 
+/**
+ * The membership version a reserved child's creator holds. A reserved child
+ * keeps no roster on the parent, so the code that launches one seats its
+ * creator in the child at this version and the parent admits them at it.
+ */
+export const RESERVED_CHILD_MEMBERSHIP_VERSION = 1;
+
 export class HostedParent {
   constructor(
     private readonly host: HostedParentHost,
@@ -1341,8 +1348,12 @@ export class HostedParent {
     if (substreamId !== "0") {
       const child = first(this.sql.exec<{
         status: "reserved" | "ready" | "failed"; version: number | null; archived_at: number | null;
+        created_by_user_id: string | null; preparing: number;
       }>(
-        `SELECT child.status, child.archived_at, member.version
+        `SELECT child.status, child.archived_at, child.created_by_user_id, member.version,
+                EXISTS (SELECT 1 FROM parent_breakout_preparations preparation
+                         WHERE preparation.parent_id = child.parent_id
+                           AND preparation.substream_id = child.substream_id) AS preparing
            FROM parent_children child
            LEFT JOIN parent_breakout_members member
              ON member.parent_id = child.parent_id AND member.substream_id = child.substream_id
@@ -1351,17 +1362,101 @@ export class HostedParent {
         request.userId, this.parentId, substreamId,
       ));
       // Membership of the child alone admits; reading the Channel is neither
-      // required nor enough.
+      // required nor enough. A reserved child is in no listing and admits only
+      // the person it was reserved for: a conversation import's agent runs in
+      // one, and the desktop that answers its browser actions is theirs.
+      // A Breakout being prepared is also `reserved`, and stays closed until
+      // it is ready; only a hidden child, which has no preparation, admits.
+      const reservedFor = child?.status === "reserved" && child.preparing === 0
+        && child.created_by_user_id !== null && child.created_by_user_id === request.userId;
       return ConversationParentAuthorizeViewerResultSchema.parse({
-        authorized: child?.status === "ready" && child.version !== null,
+        authorized: (child?.status === "ready" && child.version !== null) || reservedFor,
         archived: row.archived_at !== null || child?.archived_at != null,
         childStatus: child?.status ?? null,
-        membershipVersion: child?.version ?? 0,
+        // A reserved child has no roster here; its one member was seated at
+        // version 1 by whoever launched it (`SessionImportRunService.launch`).
+        membershipVersion: child?.version ?? (reservedFor ? RESERVED_CHILD_MEMBERSHIP_VERSION : 0),
       });
     }
     // Archive is reported, not folded in: archived Channels stay readable.
     const authorized = row.scope === "workspace" || this.isParticipant(request.userId);
     return ConversationParentAuthorizeViewerResultSchema.parse({ authorized, archived: row.archived_at !== null });
+  }
+
+  /**
+   * Archive a Channel whose main conversation was reserved and never opened,
+   * so it leaves every listing.
+   *
+   * Only for the conversation-import reservation (see
+   * `WorkstreamObjectCreationService.reserveImport`), and only while the main
+   * conversation has never delivered an effect here: once it has, it owns the
+   * Channel's directory and archiving is its own operation. The archive is the
+   * same `directory_common` projection a reservation writes, with `archivedAt`
+   * set, so the directory and every subscriber learn it the ordinary way. The
+   * rows stay: an archived Channel is a state every surface already handles,
+   * and nothing reopens it because the caller has already retired the create
+   * key that would.
+   */
+  discardReservedMain(input: { workspaceId: string; parentId: string; userId: string }):
+    { status: "discarded" } | { status: "refused"; code: "not_found" | "not_creator" | "already_open" } {
+    if (input.parentId !== this.parentId) throw new Error("conversation_parent_identity_mismatch");
+    return this.tx(() => {
+      const metadata = this.metadataRow();
+      if (!metadata) return { status: "refused", code: "not_found" } as const;
+      this.assertParent(input.workspaceId, input.parentId);
+      if (metadata.created_by_user_id !== input.userId) return { status: "refused", code: "not_creator" } as const;
+      const opened = first(this.sql.exec<{ found: number }>(
+        `SELECT 1 AS found FROM parent_child_receipts WHERE parent_id = ? AND substream_id = '0' LIMIT 1`,
+        this.parentId,
+      ));
+      if (opened) return { status: "refused", code: "already_open" } as const;
+      if (metadata.archived_at !== null) return { status: "discarded" } as const;
+      const now = Date.now();
+      const at = new Date(now).toISOString();
+      this.enqueueProjection("common", {
+        kind: "directory_common",
+        title: metadata.title,
+        description: metadata.description,
+        preview: metadata.preview,
+        scope: metadata.scope,
+        state: "idle",
+        systemKind: metadata.system_kind,
+        lastActivityAt: new Date(metadata.last_activity_at).toISOString(),
+        completedAt: null,
+        archivedAt: at,
+        emailAddress: metadata.email_address,
+        createdByUserId: metadata.created_by_user_id,
+        titleStatus: metadata.title_status,
+        createdAt: new Date(metadata.source_created_at || now).toISOString(),
+        updatedAt: at,
+      }, now);
+      this.sql.exec(
+        `UPDATE parent_children SET archived_at = COALESCE(archived_at, ?), updated_at = ?
+          WHERE parent_id = ? AND substream_id = '0'`,
+        now, now, this.parentId,
+      );
+      return { status: "discarded" } as const;
+    });
+  }
+
+  /**
+   * Reserve a child that stays `reserved`: in no listing, with no roster here,
+   * admitting only the person it is reserved for (`authorizeViewer`). For a
+   * conversation that works on that person's behalf and is never shown as a
+   * Breakout — a conversation import's agent is the first. The caller seats
+   * its creator in the child at `RESERVED_CHILD_MEMBERSHIP_VERSION`.
+   */
+  async reserveHiddenChild(
+    input: Omit<ConversationParentReserveChildRequest, "authorityGeneration" | "directory" | "kind">
+      & { createdByUserId: UserId },
+  ): Promise<ConversationParentReserveChildResult> {
+    const reserved = await this.reserveAgentChild(input);
+    this.sql.exec(
+      `UPDATE parent_children SET status = 'reserved', updated_at = ?
+        WHERE parent_id = ? AND substream_id = ? AND kind = 'child' AND created_by_user_id = ?`,
+      Date.now(), this.parentId, input.substreamId, input.createdByUserId,
+    );
+    return reserved;
   }
 
   /** Reserve against current parent authority without a caller-side preflight RPC. */

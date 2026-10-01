@@ -5540,6 +5540,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).reserveChild(input));
   }
 
+  async reserveHiddenChild(input: Parameters<HostedParent["reserveHiddenChild"]>[0]) {
+    return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).reserveHiddenChild(input));
+  }
+
+  async discardReservedMain(input: Parameters<HostedParent["discardReservedMain"]>[0]) {
+    return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).discardReservedMain(input));
+  }
+
   async reserveAgentChild(input: Parameters<HostedParent["reserveAgentChild"]>[0]) {
     return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).reserveAgentChild(input));
   }

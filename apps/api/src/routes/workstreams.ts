@@ -1,7 +1,14 @@
-import { workstreamImportHash } from "../durable-objects/workstream-import-hash";
-import { prepareSessionImport, resolveSessionImportFiles } from "../services/session-import-files";
-import { SessionImportPreviewSchema, SessionImportPreviewRequestSchema, SessionImportRequestSchema, SessionImportUpdateRequestSchema, SessionImportSourceResponseSchema, SessionImportUpdateResponseSchema } from "@rally/contracts";
-import { previewSessionImport, sessionSourceUrlProvider } from "../services/session-import";
+import { prepareSessionImport } from "../services/session-import-files";
+import {
+  SessionImportDiscardRequestSchema,
+  SessionImportRequestSchema,
+  SessionImportRunSchema,
+  SessionImportSourceResponseSchema,
+  SessionImportStartRequestSchema,
+  SessionImportUpdateRequestSchema,
+  SessionImportUpdateResponseSchema,
+} from "@rally/contracts";
+import { SessionImportRunService, assertImportIdentity } from "../services/session-import-run-service";
 import { SidekickAttachmentsSchema } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono, type Context } from "hono";
@@ -12,7 +19,6 @@ import {
   ApplyWorkstreamBatchRequestSchema,
   ChannelAccessSchema,
   CreateWorkstreamRequestSchema,
-  asSpaceId,
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
@@ -167,33 +173,33 @@ workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
     query.limit, query.before, query.includeSystem === "true",
   )));
 });
-workstreamRoutes.post("/import/preview", zValidator("json", SessionImportPreviewRequestSchema), async (c) => {
-  return c.json(SessionImportPreviewSchema.parse(await resolveSessionImportFiles(c.env, await previewSessionImport(c.req.valid("json")))));
+/**
+ * Start a conversation import: reserve the Channel and start the agent that
+ * reads the conversation in the person's Rally browser. The desktop then
+ * drives the agent's browser actions on the returned conversation's socket.
+ */
+workstreamRoutes.post("/import/runs", zValidator("json", SessionImportStartRequestSchema), async (c) => {
+  const result = await new SessionImportRunService(c.env, getAuth(c), requestDeferral(c)).start(c.req.valid("json"));
+  return c.json(SessionImportRunSchema.parse(result), 201);
 });
-workstreamRoutes.post("/import", zValidator("json", SessionImportRequestSchema), async (c) => {
-  const body = c.req.valid("json");
-  if (!body.source.sessionId || body.content.messages.some((message) => !message.sourceMessageId)) {
-    throw new ApiError(422, "session_import_identity_missing", "Preview the selected conversation again before importing it");
-  }
-  if (body.source.url && sessionSourceUrlProvider(body.source.url, body.source.sessionId) !== body.source.provider) {
-    throw new ApiError(422, "invalid_session_source", "The source.url does not belong to source.provider");
-  }
-  const conversation = await prepareSessionImport(c.env, getAuth(c), body, body.clientMessageId);
-  // Placement and the caller-named id are creation semantics, not
-  // imported-history identity. Keeping them out also preserves the content
-  // hash written by Workers from before either optional field existed, when
-  // an uncertain import is retried across rollout.
-  const { spaceIds, workstreamId, ...contentIdentity } = body;
-  const result = await new WorkstreamObjectCreationService(c.env, getAuth(c), requestDeferral(c)).createPrepared({
-    ...(workstreamId ? { workstreamId } : {}),
-    objective: body.title,
-    title: body.title,
-    clientMessageId: body.clientMessageId,
-    participantUserIds: [],
-    scope: "personal",
-    spaceIds: spaceIds.map(asSpaceId),
-  }, conversation, { reason: "session_import", contentIdentityHash: workstreamImportHash(contentIdentity) });
+/** Run the import agent again on a Channel imported before. */
+workstreamRoutes.post("/:id/import/runs", zValidator("param", idParam), async (c) => {
+  const result = await new SessionImportRunService(c.env, getAuth(c), requestDeferral(c)).startUpdate(c.req.valid("param").id);
+  return c.json(SessionImportRunSchema.parse(result), 201);
+});
+/** Open a reserved Channel with the conversation the agent read. */
+workstreamRoutes.post("/:id/import/complete", zValidator("param", idParam), zValidator("json", SessionImportRequestSchema), async (c) => {
+  const result = await new SessionImportRunService(c.env, getAuth(c), requestDeferral(c))
+    .complete(c.req.valid("param").id, c.req.valid("json"));
   return c.json(CreatedWorkstreamSchema.parse(result), 201);
+});
+/** Stop an import's agent; for a Channel that never opened, archive it too. */
+workstreamRoutes.post("/:id/import/discard", zValidator("param", idParam), zValidator("json", SessionImportDiscardRequestSchema), async (c) => {
+  const body = c.req.valid("json");
+  await new SessionImportRunService(c.env, getAuth(c), requestDeferral(c)).discard({
+    workstreamId: c.req.valid("param").id, substreamId: body.substreamId, clientMessageId: body.clientMessageId,
+  });
+  return c.body(null, 204);
 });
 workstreamRoutes.get("/:id/import/source", zValidator("param", idParam), async (c) => {
   const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
@@ -202,12 +208,7 @@ workstreamRoutes.get("/:id/import/source", zValidator("param", idParam), async (
 workstreamRoutes.post("/:id/import/update", zValidator("param", idParam),
   zValidator("json", SessionImportUpdateRequestSchema), async (c) => {
     const body = c.req.valid("json");
-    if (!body.source.sessionId || body.content.messages.some((message) => !message.sourceMessageId)) {
-      throw new ApiError(422, "session_import_identity_missing", "Preview the selected conversation again before updating it");
-    }
-    if (body.source.url && sessionSourceUrlProvider(body.source.url, body.source.sessionId) !== body.source.provider) {
-      throw new ApiError(422, "invalid_session_source", "The source.url does not belong to source.provider");
-    }
+    assertImportIdentity(body);
     const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
     const checkpoint = await client.importedSessionCheckpoint();
     const recorded = await client.importedSessionSource();
