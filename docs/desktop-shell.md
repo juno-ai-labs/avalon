@@ -127,7 +127,7 @@ surface only closes, fades or restores a panel it owns.
 | Breakout open, no panel | `split`: Channel, resize edge, Breakout |
 | Breakout opened a panel | `breakout`: the Breakout takes the Channel's place, the panel takes the right |
 | Channel opened a panel | `main`: the Breakout is hidden |
-| Reader cannot open Main | `breakout`, always |
+| Reader cannot open Main | `breakout`, always, and no Channel pill is stacked: a Breakout grant says nothing about Main |
 
 A hidden pane stays mounted, so returning to the split neither reconnects nor
 loses scroll. When the Breakout has the Channel's place, the Channel's pill

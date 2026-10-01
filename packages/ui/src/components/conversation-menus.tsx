@@ -222,17 +222,29 @@ export function ChannelMenu({
  */
 export function BreakoutMenu({
   actions,
+  addSidekick,
   breakout,
   channel,
+  onOpenSidekick,
   onParticipants,
+  onRefreshSidekicks,
   onShowInChannel,
+  onSidekickMenuOpen,
   origin,
   participants,
   participantsPending = false,
   presentUserIds,
   scope,
+  sidekickFailure,
+  sidekicks,
 }: {
   actions?: ConversationRowActions | undefined;
+  addSidekick?: ReactNode;
+  onOpenSidekick?: (id: string) => void;
+  onRefreshSidekicks?: (() => void) | undefined;
+  onSidekickMenuOpen?: () => void;
+  sidekickFailure?: SidekickSectionFailure | undefined;
+  sidekicks?: SidekickRow[] | undefined;
   breakout: ConversationRowTarget;
   channel: { id: string; title: string; appearance?: SidebarPresentation['appearance'] };
   onParticipants?: (() => void) | undefined;
@@ -271,6 +283,17 @@ export function BreakoutMenu({
     {actions?.onMakePublic && <TitleMenuItem disabled={actions.publicDisabled} icon={<IconWorld aria-hidden="true" size={16} stroke={1.8} />} onSelect={actions.onMakePublic}>Make public to organization</TitleMenuItem>}
     {actions?.onCopyLink && <TitleMenuItem icon={<IconLink aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => actions.onCopyLink?.(breakout)}>Copy breakout link</TitleMenuItem>}
     {actions?.onShare && <TitleMenuItem icon={<IconShare2 aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => actions.onShare?.(breakout)}>Share</TitleMenuItem>}
+    {(sidekicks !== undefined || addSidekick) && <div className="title-menu-sidekicks">
+      <SidekickSection
+        failure={sidekickFailure}
+        items={sidekicks}
+        layoutId="section:sidekicks"
+        onMenuOpen={onSidekickMenuOpen}
+        onOpen={onOpenSidekick}
+        onRefresh={onRefreshSidekicks}
+      />
+      {addSidekick}
+    </div>}
     {actions?.onArchive && <>
       <TitleMenuSeparator />
       <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => actions.onArchive?.(breakout)}>Archive breakout</TitleMenuItem>

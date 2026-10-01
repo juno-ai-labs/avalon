@@ -18,6 +18,7 @@ import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { reportTelemetryProductIntent, telemetryVisibility, uuidV7 } from '../lib/telemetry';
 import { holdCreationTraceUntilSendReady, startPerfTrace } from '../lib/perf-trace';
 
+import { desktopBridge } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { AppearancePicker } from '../components/appearance-picker';
@@ -169,8 +170,11 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   // retained Main connection rather than deriving its inventory from the child.
   // A child grant proves nothing about Main; keep that host scoped to its child.
   // Main is on screen beside any Breakout, unless the reader holds only some of
-  // this Channel's conversations and Main is not among them.
-  const mainVisible = !directoryEntry || !mainOmitted(directoryEntry);
+  // this Channel's conversations and Main is not among them. A reader scoped
+  // to conversations is shown Main only once the directory says they hold it:
+  // a Breakout grant proves nothing about Main.
+  const mainVisible = selectedSubstreamId === '0'
+    || (conversationScoped ? Boolean(directoryEntry && !mainOmitted(directoryEntry)) : true);
   const mainConnection = useRetainedWorkstreamSocket(api, id, Boolean(api && id && (!conversationScoped || mainVisible)), 'workstream', '0');
   const navigate = useNavigate();
   const parent = useQuery<WorkstreamDetail | undefined>({
@@ -693,6 +697,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         onImportUpdates={api && importedSourceUpdatable(importedSource.data) ? () => setImportUpdateOpen(true) : undefined}
         onOpenArtifact={context?.openArtifact}
         onOpenBreakout={openBreakout}
+        onOpenSidekick={(sidekickId) => void desktopBridge().openSidekicks(sidekickId)}
         onParticipants={context?.openParticipantDialog}
         onRefreshSidekicks={context?.refreshSidekicks}
         onSidekickMenuOpen={context?.loadSidekickOptions}
@@ -745,8 +750,14 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         channel={{ id, title: railTitle ?? '', appearance: channelAppearance }}
         onParticipants={context.openParticipantDialog}
         onShowInChannel={mainVisible ? () => showInChannel(openBreakoutMark?.originTurnId) : undefined}
+        addSidekick={<SidekickPicker substreamId={breakoutId} workstreamId={id} />}
+        onOpenSidekick={(sidekickId) => void desktopBridge().openSidekicks(sidekickId)}
+        onRefreshSidekicks={context.refreshSidekicks}
+        onSidekickMenuOpen={context.loadSidekickOptions}
         participants={context.detail.participants}
         presentUserIds={context.presentUserIds}
+        sidekickFailure={context.sidekickFailure}
+        sidekicks={context.sidekicks}
         scope={(() => {
           const child = railChildren?.find((candidate) => candidate.substreamId === breakoutId);
           return child && 'scope' in child ? child.scope : undefined;
@@ -758,7 +769,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const mainPane = mainVisible ? <ConversationSurface
     breakouts={breakoutMarks}
     honorsSearchTarget={openBreakoutId === null}
-    key={`main:${id}`}
     onOpenBreakout={openBreakout}
     onStartSubstream={startCreation}
     openBreakoutId={openBreakoutId}
@@ -789,11 +799,10 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     }}
     workstreamContext={conversationScoped ? undefined : parent.data}
   /> : <ConversationSurface
-    key={`breakout:${id}:${openBreakoutId}`}
     parentId={id}
     parentKind="workstream"
     renderHeader={(context) => <TitlePillHeader
-      ancestors={splitMode === 'breakout' ? [channelLevel(null, mainVisible ? closeRail : undefined)] : []}
+      ancestors={splitMode === 'breakout' && mainVisible ? [channelLevel(null, closeRail)] : []}
       current={breakoutLevel(context)}
       trailing={mainVisible ? closeBreakout : undefined}
     />}

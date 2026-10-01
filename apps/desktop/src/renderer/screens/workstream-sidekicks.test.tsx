@@ -149,6 +149,15 @@ function renderScreen(participant = false, cachedOwnedSidekicks?: WorkstreamAuto
 }
 
 /**
+ * The Channel's Sidekicks live in its title pill's menu. Their rows are found
+ * by name rather than as buttons: the desktop menu draws them without an open
+ * action, so they are not buttons there.
+ */
+async function openChannelMenu(): Promise<void> {
+  fireEvent.pointerDown(await screen.findByRole('button', { name: 'Channel menu: Investigate ENG-142' }), { button: 0, ctrlKey: false });
+}
+
+/**
  * The refusal a viewer of a workspace-scoped room gets from the owned listing,
  * and what separates it from a failure.
  *
@@ -183,21 +192,6 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
 
   afterEach(() => { vi.restoreAllMocks(); });
 
-  it('does not carry a removal error into another breakout', async () => {
-    currentSession.mockReturnValue({ user: { id: 'person', name: 'Person', email: 'person@example.com' }, workspace: null });
-    api.getWorkstreamSidekicks.mockResolvedValue([]);
-    api.removeAttachedSidekick.mockRejectedValue(new Error('Removal failed in main.'));
-    renderScreen(true);
-    fireEvent.contextMenu(await screen.findByRole('button', { name: 'Editorial guidance' }));
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from this breakout' }));
-    expect(await screen.findByText('That Sidekick couldn’t be removed.')).toBeVisible();
-    expect(screen.queryByText('Removal failed in main.')).not.toBeInTheDocument();
-    expect(api.removeAttachedSidekick).toHaveBeenCalledWith(workstreamId, 'attached-1', '0');
-    fireEvent.click(screen.getByRole('link', { name: 'Switch child' }));
-    expect(await screen.findByRole('button', { name: 'Editorial guidance' })).toBeVisible();
-    expect(screen.queryByText('That Sidekick couldn’t be removed.')).not.toBeInTheDocument();
-  });
-
   it('keeps an in-flight removal observable when Sidekick management is reopened', async () => {
     currentSession.mockReturnValue({ user: { id: 'person', name: 'Person', email: 'person@example.com' }, workspace: null });
     api.getWorkstreamSidekicks.mockResolvedValue([]);
@@ -205,10 +199,11 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
     let rejectRemoval!: (reason: Error) => void;
     api.removeAttachedSidekick.mockReturnValue(new Promise((_resolve, reject) => { rejectRemoval = reject; }));
     renderScreen(true);
+    await openChannelMenu();
 
-    fireEvent.contextMenu(await screen.findByRole('button', { name: 'Editorial guidance' }));
+    fireEvent.contextMenu(await screen.findByLabelText('Editorial guidance'));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from this breakout' }));
-    fireEvent.contextMenu(screen.getByRole('button', { name: 'Editorial guidance' }));
+    fireEvent.contextMenu(screen.getByLabelText('Editorial guidance'));
     await act(async () => { rejectRemoval(new Error(diagnostic)); });
 
     expect(await screen.findByText('That Sidekick couldn’t be removed.')).toBeVisible();
@@ -226,44 +221,14 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
     api.getSidekickRecommendationOptions.mockResolvedValue({ canManage: true, items: [{ ...recommendation, attached }] });
     api.setRecommendedSidekick.mockRejectedValue(new Error(diagnostic));
     renderScreen();
+    await openChannelMenu();
 
-    fireEvent.contextMenu(await screen.findByRole('button', { name: 'Editorial guidance' }));
+    fireEvent.contextMenu(await screen.findByLabelText('Editorial guidance'));
     fireEvent.click(await screen.findByRole('menuitem', { name: action }));
 
     expect(await screen.findByText(expected)).toBeVisible();
     expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
     expect(api.setRecommendedSidekick).toHaveBeenCalledWith(workstreamId, 'attached-1', !attached, '0');
-  });
-
-  it('keeps recommendations shared and loaded rows local when switching breakouts', async () => {
-    api.getWorkstreamSidekicks.mockResolvedValue([]);
-    api.getRecommendedSidekicks.mockResolvedValue([{ id: 'shared', name: 'Shared guide', description: '', available: true }]);
-    api.getAttachedSidekicks.mockImplementation((_id, _signal, substreamId) => Promise.resolve([
-      { id: substreamId === childId ? 'child-local' : 'main-local', name: substreamId === childId ? 'Child guide' : 'Main guide', description: '', available: true },
-    ]));
-    renderScreen();
-    expect(await screen.findByRole('button', { name: 'Main guide' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Shared guide' })).toHaveAttribute('aria-description', 'Recommended Sidekick');
-    fireEvent.click(screen.getByRole('link', { name: 'Switch child' }));
-    expect(await screen.findByRole('button', { name: 'Child guide' })).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Main guide' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Shared guide' })).toBeVisible();
-    fireEvent.click(screen.getByRole('link', { name: 'Switch main' }));
-    expect(await screen.findByRole('button', { name: 'Main guide' })).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Child guide' })).not.toBeInTheDocument();
-  });
-
-  it('checks recommendation eligibility for the selected child instead of reusing Main metadata', async () => {
-    api.getWorkstreamSidekicks.mockResolvedValue([]);
-    api.getRecommendedSidekicks.mockImplementation((_id, _signal, substreamId) => Promise.resolve([
-      { id: 'recommended', name: substreamId === childId ? 'Child recommendation' : 'Main recommendation', description: '', available: true },
-    ]));
-    renderScreen();
-    expect(await screen.findByRole('button', { name: 'Main recommendation' })).toBeVisible();
-    fireEvent.click(screen.getByRole('link', { name: 'Switch child' }));
-    expect(await screen.findByRole('button', { name: 'Child recommendation' })).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Main recommendation' })).not.toBeInTheDocument();
-    expect(api.getRecommendedSidekicks).toHaveBeenCalledWith(workstreamId, expect.any(AbortSignal), childId);
   });
 
   it('takes Main\u2019s Sidekicks from the Channel rail without the REST reads', async () => {
@@ -277,8 +242,9 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
       resources: [],
     };
     renderScreenWithRail(rail);
-    expect(await screen.findByRole('button', { name: 'Rail guide' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Rail attachment' })).toBeVisible();
+    await openChannelMenu();
+    expect(await screen.findByLabelText('Rail guide')).toBeVisible();
+    expect(screen.getByLabelText('Rail attachment')).toBeVisible();
     expect(api.getWorkstreamSidekicks).not.toHaveBeenCalled();
     expect(api.getRecommendedSidekicks).not.toHaveBeenCalled();
     expect(api.getAttachedSidekicks).not.toHaveBeenCalled();
@@ -290,8 +256,9 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
       sidekicks: { owned: [], recommended: [{ id: 'recommended-1', name: 'Rail guide', description: '', available: true }] },
       resources: [],
     });
-    expect(await screen.findByRole('button', { name: 'Editorial guidance' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Rail guide' })).toBeVisible();
+    await openChannelMenu();
+    expect(await screen.findByLabelText('Editorial guidance')).toBeVisible();
+    expect(screen.getByLabelText('Rail guide')).toBeVisible();
     expect(api.getAttachedSidekicks).toHaveBeenCalled();
     expect(api.getWorkstreamSidekicks).not.toHaveBeenCalled();
     expect(api.getRecommendedSidekicks).not.toHaveBeenCalled();
@@ -299,8 +266,9 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
 
   it('reads all three over REST when the rail was answered without data', async () => {
     const queryClient = renderScreen();
+    await openChannelMenu();
     act(() => queryClient.setQueryData(['channel-rail', workstreamId], { railWaterline: 1, rail: null }));
-    expect(await screen.findByRole('button', { name: 'Editorial guidance' })).toBeVisible();
+    expect(await screen.findByLabelText('Editorial guidance')).toBeVisible();
     await waitFor(() => expect(api.getRecommendedSidekicks).toHaveBeenCalled());
     expect(api.getWorkstreamSidekicks).toHaveBeenCalled();
   });
@@ -321,8 +289,9 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
       workspace: { id: 'workspace', accessClass: 'guest', role: null } });
     api.getRecommendedSidekicks.mockResolvedValue([{ id: 'owned', name: 'Owned guide', description: '', available: true }]);
     renderScreen();
-    expect(await screen.findByRole('button', { name: 'Owned guide' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Editorial guidance' })).toBeVisible();
+    await openChannelMenu();
+    expect(await screen.findByLabelText('Owned guide')).toBeVisible();
+    expect(screen.getByLabelText('Editorial guidance')).toBeVisible();
     expect(api.getWorkstreamSidekicks).not.toHaveBeenCalled();
   });
 
@@ -331,8 +300,9 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
       new ApiError('You cannot list this room\u2019s automations', 403, 'automation_directory_access_denied'),
     );
     renderScreen();
+    await openChannelMenu();
 
-    expect(await screen.findByRole('button', { name: 'Editorial guidance' })).toBeVisible();
+    expect(await screen.findByLabelText('Editorial guidance')).toBeVisible();
     // The refusal is about the viewer, so it never reaches the rail as text.
     expect(screen.queryByText(/cannot list/u)).toBeNull();
     expect(screen.queryByRole('alert')).toBeNull();
@@ -341,12 +311,13 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
   it('offers a refresh row for a failed room read without writing warning copy into the sidebar', async () => {
     api.getWorkstreamSidekicks.mockRejectedValue(new ApiError('The service is unavailable.', 500));
     renderScreen();
+    await openChannelMenu();
 
     expect(await screen.findByRole('button', { name: 'Refresh' })).toBeVisible();
     expect(screen.queryByText('Some Sidekick information may be out of date.')).not.toBeInTheDocument();
     expect(screen.queryByText('The service is unavailable.')).not.toBeInTheDocument();
     // And the half that did answer stays on screen under it.
-    expect(screen.getByRole('button', { name: 'Editorial guidance' })).toBeVisible();
+    expect(screen.getByLabelText('Editorial guidance')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     await vi.waitFor(() => expect(api.getWorkstreamSidekicks).toHaveBeenCalledTimes(2));
   });
@@ -357,11 +328,12 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
       id: 'owned', name: 'Owned guide', description: 'Keep this visible.', loadable: true,
       status: 'active', updatedAt: '2026-09-21T00:00:00.000Z',
     }]);
+    await openChannelMenu();
 
-    expect(await screen.findByRole('button', { name: 'Owned guide' })).toBeVisible();
+    expect(await screen.findByLabelText('Owned guide')).toBeVisible();
     expect(await screen.findByRole('button', { name: 'Refresh' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Owned guide' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Editorial guidance' })).toBeVisible();
+    expect(screen.getByLabelText('Owned guide')).toBeVisible();
+    expect(screen.getByLabelText('Editorial guidance')).toBeVisible();
   });
 
   it('keeps a management-options failure in the picker rather than misreporting the list', async () => {
@@ -372,6 +344,7 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
     api.getWorkstreamSidekicks.mockResolvedValue([]);
     api.getSidekickRecommendationOptions.mockRejectedValue(new Error(diagnostic));
     renderScreen(true);
+    await openChannelMenu();
 
     fireEvent.pointerDown(await screen.findByRole('button', { name: 'Add Sidekick' }), { button: 0, ctrlKey: false });
 

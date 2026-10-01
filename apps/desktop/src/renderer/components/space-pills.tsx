@@ -238,6 +238,7 @@ export function SpacePills({
             <ContextMenu.Root key={space.id}>
               <ContextMenu.Trigger asChild>
                 <SpacePill
+                  aria-describedby={!readOnly && ready && orderedSpaces.length > 1 ? 'spaces-reorder-help' : undefined}
                   aria-description={space.scope === 'workspace' ? 'Public space' : undefined}
                   className={clsx(
                     channelDropTargetId === space.id && 'is-channel-drop-target',
@@ -344,11 +345,12 @@ export function SpacePills({
                   {space.name}
                 </SpacePill>
               </ContextMenu.Trigger>
-              {space.reach !== 'through_channel' && space.systemRole !== 'general' && onArchive !== undefined && <ContextMenu.Portal>
+              <ContextMenu.Portal>
                 <ContextMenu.Content className="menu-content sidebar-context-menu" collisionPadding={8}>
                   <ContextMenu.Item className="menu-item" onSelect={() => void navigate(`/spaces/${space.id}`)}>
                     <SpaceIcon size={16} space={space} /> Open space
                   </ContextMenu.Item>
+                  {space.reach !== 'through_channel' && onArchive !== undefined && <>
                   <ContextMenu.Separator className="menu-separator" />
                   <ContextMenu.Item className="menu-item menu-item-danger" onSelect={() => {
                     setArchiveFailure(null);
@@ -357,8 +359,9 @@ export function SpacePills({
                   }}>
                     <IconArchive aria-hidden="true" size={16} stroke={1.8} /> Archive space
                   </ContextMenu.Item>
+                  </>}
                 </ContextMenu.Content>
-              </ContextMenu.Portal>}
+              </ContextMenu.Portal>
             </ContextMenu.Root>
           ))}
         </>}
