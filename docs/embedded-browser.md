@@ -116,19 +116,19 @@ as Google Chrome.
 
 The browser owns local website state, navigation, page inspection, and page
 input. The Rally renderer owns the controls and layout; it cannot receive a
-`WebContents` or an arbitrary IPC channel. The API agent loop does not yet call
-the browser. When that is added, a small typed desktop-action request and
-result can carry browser commands, then later a settings-page navigation action.
-That transport should identify the owning user and live desktop session and
-use the same main-process browser command path rather than introducing another
-page controller. Agent tool receipts and retry policy remain the harness's
-responsibility.
+`WebContents` or an arbitrary IPC channel. An API agent loop reaches the browser
+through [desktop actions](desktop-actions.md): a typed request on the
+conversation's socket that the window's renderer executes through this same
+`command()` path, on one tab, never through another page controller. Tool
+receipts and retry policy stay with the harness.
 
-Conversation reading, conversion, and re-import are owned by
-[session import](session-import.md). The browser supplies a signed-in page and
-two primitives the readers build on: page script (`evaluate`) and, for a file on
-an origin the page may not read, DevTools' network loader (`cdp`) with the tab's
-own session. It does not decide what a source conversation means.
+What a conversation import reads, and how, is owned by [session
+import](session-import.md): its agent drives this browser through those actions.
+The browser supplies the signed-in page and its primitives — page script
+(`evaluate`), the accessibility tree (`snapshot`), a screenshot sized in DIPs so
+its pixels are input coordinates, input, and DevTools' network loader (`cdp`)
+for a file on an origin the page may not read. It does not decide what a
+conversation means.
 
 ## Failure modes and limits
 
@@ -193,6 +193,16 @@ that has not been tried in Rally, and a hang there would look like this one.
 Adding passkey support later means removing this flag in the same change.
 
 Shipped in #1056.
+
+### 2026-10-01 — Size screenshots in DIPs for an agent that clicks
+
+The agent-to-desktop boundary this document planned now exists as [desktop
+actions](desktop-actions.md), and its first user, the conversation importer,
+clicks where a screenshot shows something. `capturePage` returns device pixels
+while `sendInputEvent` takes DIPs, so on a high-density display every click
+landed at twice the coordinates. The screenshot command now resizes the capture
+to the view's DIP bounds and returns its width and height; a future change to
+either command must keep the two in the same units.
 
 ### 2026-09-25 — Closing the only blank tab closes the rail
 

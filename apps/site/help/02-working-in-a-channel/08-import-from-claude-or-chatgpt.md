@@ -27,7 +27,14 @@ allowed to add Channels to.
 6. The **Import channel** window asks for a **Space** and a **Name of channel**.
    The name starts as the chat's own title, and you can change it (up to 180
    characters).
-7. Click **Import**. The new Channel opens and the import window closes.
+7. Click **Import**. Rally reads the conversation in the window while you
+   watch: the bar above the page says **Reading the conversation…** and counts
+   its steps. A long chat with many files can take a few minutes. When it is
+   done, the new Channel opens and the import window closes.
+
+The Channel appears in your sidebar as soon as the import starts, but it opens
+only once the import has finished. To stop an import, click **Cancel**; the
+half-made Channel is removed from your sidebar.
 
 The **Import** button stays greyed out until you are looking at an actual
 conversation. Hover it and it says **Open a Claude or ChatGPT chat to import
@@ -46,6 +53,8 @@ first.**, make a Space you can add to (see
   left behind and listed as unavailable.
 - Not the behind-the-scenes steps, such as the assistant's thinking or the
   tools it used. Only what you could see in the chat comes across.
+- A file Rally found but could not copy is listed in the Channel as
+  unavailable, with the reason, so you know it is missing.
 
 There is no preview before importing, so open the right chat before you click.
 
@@ -67,8 +76,10 @@ instead of importing a second copy.
 2. Click the Channel's name in its title pill, choose **More**, then **Import
    updates**.
 3. The **Import source updates** window says Rally will read the conversation
-   again through its browser and add its updates to this Channel. Click
-   **Import updates**. It says **Importing…** while it works.
+   again in its browser. Click **Import updates**. The import window opens on
+   the original conversation.
+4. Click **Import updates** in the import window. Rally reads the conversation
+   again, the same way as the first time.
 
 When it finishes, the window closes and any new messages appear in the Channel.
 There is no summary. If nothing had changed, nothing is added.
@@ -79,10 +90,9 @@ There is no summary. If nothing had changed, nothing is added.
   the Channel came from and rereads that one. There is no way to point it at a
   different chat. To bring in another conversation, import it as a new Channel.
 - Through Rally's browser, with your sign-in. Rally reads the conversation in
-  its own built-in browser. If you already have it open in a tab, Rally reads
-  that tab. If not, it opens the link in the background, reads it and closes it
-  again. Sign in to Claude or ChatGPT once in Rally's browser and updates work
-  from then on. Shared links need no sign-in. (More on the browser in
+  the import window, so if the site asks you to sign in again you can do it
+  right there. Sign in to Claude or ChatGPT once in Rally's browser and updates
+  work from then on. Shared links need no sign-in. (More on the browser in
   [Research and the built-in browser](../04-working-with-rally/02-research-and-the-web.md).)
 - New messages go at the end. They land after anything you and your
   teammates have written in Rally since the import. Nothing already in the
@@ -102,19 +112,19 @@ There is no summary. If nothing had changed, nothing is added.
 > of Rally, including from Claude Code files on your Mac, can still be read but
 > cannot be updated.
 
-### When an update will not go through
+### When an import will not go through
 
-If something goes wrong, the window stays open with a message in red. Fix the
-cause and click **Import updates** again. Trying again never adds the same
-messages twice.
+If Rally cannot finish, the import window stays open with a message at the top.
+Fix the cause and click **Import** (or **Import updates**) again. Trying again
+never adds the same messages twice.
 
 | Message | What to do |
 | --- | --- |
-| Sign in to Claude and open this conversation, then try again. (or the same for ChatGPT) | Sign in to that service in Rally's browser, then click again. |
+| Sign in to the conversation’s site in this window, then import again. | Sign in to Claude or ChatGPT in the import window, then click again. |
+| This tab does not show a conversation. Open one, then import again. | Open the chat itself, not the home page or a list of chats. |
+| The conversation’s page would not load. Reload it, then import again. | Reload the page in the window and try again. |
+| The import did not finish. Try again, or cancel. | Click again. Rally starts reading from the beginning. |
 | The source removed or reordered earlier messages. Import this branch into a new channel | See below. |
-| The source must match the conversation originally imported into this channel. | Rally found a different conversation. Updates only come from the original one. |
-| The source was updated concurrently; retry the import | Click **Import updates** again. |
-| The conversation could not be read. Reload the page and try again. | Reload the conversation in Rally's browser and try again. |
 
 ### Why Rally refuses a branched conversation
 
@@ -126,8 +136,9 @@ guess, it refuses. To keep the new branch, import it as a new Channel with
 **Import Channel from Claude or ChatGPT**.
 
 Rally reads Claude and ChatGPT through their ordinary web pages, the same ones
-you see. If one of those services changes its website, asks for a CAPTCHA or
-changes its sign-in rules, importing can stop working until Rally catches up.
+you see, working out each page as it goes. If one of those services asks for a
+CAPTCHA or changes its sign-in rules, importing can stop until you get past it
+in the window.
 For a Claude conversation where you edited or regenerated a reply, Rally reads
 the version you currently have on screen.
 
