@@ -58,12 +58,11 @@ describe("space contracts", () => {
     expect(PROJECT_COLOR_KEYS_STORABLE).toBe(SPACE_COLOR_KEYS_STORABLE);
   });
 
-  it("given the picker, when its registries are read, then it offers 253 icons in eleven sections and 14 colours", () => {
+  it("given the picker, when its registries are read, then it offers 253 icons in eight sections and 14 colours", () => {
     expect(SPACE_ICON_KEYS).toHaveLength(253);
     expect(APPEARANCE_ICON_SECTIONS.map((section) => [section.label, section.keys.length])).toEqual([
-      ["Planning", 23], ["Docs & writing", 23], ["Learning", 23], ["People", 23], ["Talk", 23],
-      ["Data & money", 23], ["Build & tech", 23], ["Places & travel", 23], ["Nature", 23],
-      ["Life & culture", 23], ["Fun", 23],
+      ["Planning", 23], ["Docs & writing", 23], ["Learning", 23], ["People & talk", 46],
+      ["Data & money", 23], ["Build & tech", 23], ["Places & nature", 46], ["Life & fun", 46],
     ]);
     expect(SPACE_COLOR_KEYS).toEqual([
       "rose", "red", "orange", "amber", "lime", "green", "emerald", "cyan",

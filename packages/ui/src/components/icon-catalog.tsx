@@ -12,13 +12,10 @@ const SECTION_TAB_ICON: Record<AppearanceIconSectionId, PickableAppearanceIconKe
   docs: 'file-text',
   learning: 'lightbulb',
   people: 'users',
-  talk: 'message-square',
   data: 'chart-column',
   build: 'code',
   places: 'map-pin',
-  nature: 'leaf',
   life: 'palette',
-  fun: 'party-popper',
 };
 
 /**
