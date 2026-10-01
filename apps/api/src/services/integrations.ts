@@ -175,8 +175,11 @@ import {
 import { createClassifierDiagnosticSink } from "./classifier-diagnostics";
 import {
   AGENT_MODEL_FLAG_KEYS,
+  resolveAgentModelRouting,
   resolveWorkstreamModelRouting,
 } from "./agent-model-flags";
+import { agentProfileFor, type AgentProfile } from "./agent-profiles";
+import { localWorkstreamAuthority } from "../runtime/local-authorities";
 import { createAzureModelPricingResolver } from "./openrouter-pricing-cache";
 import { createAvalonMultimodalGenerationPlugin } from "./multimodal-generation/plugin";
 import {
@@ -2656,6 +2659,14 @@ export async function runWorkstreamHarness(
     ? { title: identity.title, objective: identity.description }
     : null;
   if (!workstream) return { status: "failed", error: { code: "workstream_not_found", message: "Work stream not found" } };
+  // A conversation provisioned for one fixed job replaces the prompt, model
+  // role and whole tool surface below; see `agent-profiles.ts`.
+  let profile: AgentProfile | null;
+  try {
+    profile = agentProfileFor(identity?.agent_profile);
+  } catch {
+    return { status: "failed", error: { code: "agent_profile_unknown", message: "This conversation names an agent profile this Worker does not have" } };
+  }
   const initialRun = await initialRunPreparation.get();
   if (!initialRun) return { status: "failed", error: { code: "harness_run_not_found", message: "Harness run not found" } };
   if (initialRun.status === "cancelled") return { status: "stopped" };
@@ -2716,10 +2727,16 @@ export async function runWorkstreamHarness(
   });
   const attemptLease = runtime.lease;
   const runs = createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId);
-  const modelRoutingPreparation = new Preparation(() => resolveWorkstreamModelRouting(env, {
-    workspaceId: input.workspaceId,
-    workstreamId: input.parentId,
-  }));
+  const modelRoutingPreparation = new Preparation(() => profile
+    ? resolveAgentModelRouting(env, profile.role, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.parentId,
+      ...(input.executionPrincipal.type === "user" ? { userId: input.executionPrincipal.userId } : {}),
+    })
+    : resolveWorkstreamModelRouting(env, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.parentId,
+    }));
   const contextWindowPreparation = new Preparation(() =>
     runtime?.persistentLoop?.contextWindowTokensByModel() ?? Promise.resolve({}));
   const attachmentGroundingPreparation = new Preparation(async () => {
@@ -2771,10 +2788,13 @@ export async function runWorkstreamHarness(
   const promptPreparation = new Preparation(() => loadRunPromptContext(
     env, input, attemptLease, workstream, runDefinitionPreparation,
   ));
-  const toolsPreparation = new Preparation(() => loadHarnessTools(
-    env, input, runAuthoritySnapshot, runtime?.runtimeResourceAttacher,
-    runDefinitionPreparation, inventoryPreparation, attemptLease,
-  ));
+  const toolsPreparation = new Preparation(() => profile
+    ? Promise.resolve(profileHarnessTools(profile.plugins(input,
+      localWorkstreamAuthority(env, input.workspaceId, input.parentId, "desktopAction"))))
+    : loadHarnessTools(
+      env, input, runAuthoritySnapshot, runtime?.runtimeResourceAttacher,
+      runDefinitionPreparation, inventoryPreparation, attemptLease,
+    ));
   promptPreparation.get();
   toolsPreparation.get();
   const requiresCanonicalBootstrap = !runtime.persistentLoop
@@ -3340,7 +3360,7 @@ export async function runWorkstreamHarness(
       executionPrincipal: input.executionPrincipal,
       traceContext: {
         source: "workstream",
-        feature: AGENT_MODEL_FLAG_KEYS.workstream,
+        feature: AGENT_MODEL_FLAG_KEYS[profile?.role ?? "workstream"],
         workspaceId: input.workspaceId,
         workstreamId: input.parentId,
         substreamId: input.substreamId ?? "0",
@@ -3357,7 +3377,7 @@ export async function runWorkstreamHarness(
           ? input.executionPrincipal.userId
           : input.executionPrincipal.workspaceId,
       },
-      systemPrompt: promptContext.systemPrompt,
+      systemPrompt: profile ? profile.systemPrompt() : promptContext.systemPrompt,
       // A persistent loop bootstraps from canonical transcript history once.
       // Activation-only wrappers cross the separately fenced durable boundary
       // below; a resumed execution must never replace the Bind head with a
@@ -3436,12 +3456,14 @@ export async function runWorkstreamHarness(
       // nothing else. What a surface may *do* is settled by the tool loop, so
       // withholding a skill would only hide advice, never authority, and
       // a future general skill would be hidden along with it.
-      skills: [...BUILT_IN_SKILLS, ...sidekickCatalog.map((entry) => ({ ...entry.skill,
+      skills: profile ? [] : [...BUILT_IN_SKILLS, ...sidekickCatalog.map((entry) => ({ ...entry.skill,
         recommended: sidekickSnapshot.recommendedRefs?.includes(entry.durableRef) ?? false,
       }))],
       // Built-in refs share this snapshot and pass through unchanged on retry.
-      skillActivationHints: sidekickSnapshot.activeRefs.map((ref) =>
+      skillActivationHints: profile ? [] : sidekickSnapshot.activeRefs.map((ref) =>
         sidekickCatalog.find((entry) => entry.durableRef === ref)?.ref ?? ref),
+      // A profile's surface is exactly its own plugins: nothing to discover.
+      ...(profile ? { pluginDiscovery: false } : {}),
       persistSkillActivation: async (loadedRef) => {
         const entry = sidekickCatalog.find((entry) => entry.ref === loadedRef);
         const source = entry?.source;
@@ -5697,6 +5719,35 @@ async function loadHarnessTools(
     connectionByTool,
     idempotencyByTool,
     modeByTool,
+  };
+}
+
+/**
+ * The tool inventory of a profiled run: the profile's plugins, always active,
+ * and nothing else — no built-ins, no connectors, so no credential to freeze
+ * or reauthorize. The same shape `loadHarnessTools` returns, so everything
+ * downstream of it runs unchanged.
+ */
+function profileHarnessTools(corePlugins: HarnessPlugin[]): Awaited<ReturnType<typeof loadHarnessTools>> {
+  const coreTools = corePlugins.flatMap((plugin) => plugin.tools);
+  const wired = corePlugins.flatMap((plugin) => plugin.tools.map((tool) => ({
+    wireName: stableWireToolName(plugin.shortWireName, tool.definition.name),
+    definition: tool.definition,
+  })));
+  return {
+    coreTools,
+    corePlugins,
+    tools: coreTools,
+    plugins: [],
+    builtinPluginIds: new Set(),
+    loadedAutomationPluginIds: new Set(),
+    frozenConnections: new Map(),
+    pluginSurfaceHashes: new Map(),
+    legacyPluginSurfaceHashes: new Map(),
+    prePaginationSurfaceHashes: new Map(),
+    connectionByTool: new Map(),
+    idempotencyByTool: new Map(wired.map((tool) => [tool.wireName, tool.definition.idempotency])),
+    modeByTool: new Map(wired.map((tool) => [tool.wireName, tool.definition.mode])),
   };
 }
 
