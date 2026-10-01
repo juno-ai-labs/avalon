@@ -1,17 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import type { HarnessToolContext } from "@rally/agent-harness";
+import { asHarnessRunId, asUserId } from "@rally/contracts";
 import { agentProfileFor } from "../src/services/agent-profiles";
 import { createBrowserPlugin, DesktopActionToolError } from "../src/services/desktop-actions/browser-plugin";
 import type { DesktopActionExecutor } from "../src/services/desktop-actions/executor";
 import { createSessionImportPlugin } from "../src/services/desktop-actions/session-import-plugin";
 
+const RUN_ID = asHarnessRunId("00000000-0000-7000-8000-0000000000e1");
 const context: HarnessToolContext = {
   workspaceId: "w", workstreamId: "p", harnessRunId: "run-1", toolCallId: "call-1",
-  executionPrincipal: { type: "user", userId: "u" }, signal: new AbortController().signal,
+  executionPrincipal: { type: "user", userId: asUserId("00000000-0000-7000-8000-0000000000e2") }, signal: new AbortController().signal,
 };
 
 function tool(name: string, executor: DesktopActionExecutor | undefined) {
-  const plugins = [createBrowserPlugin({ harnessRunId: "run-1" }, executor), createSessionImportPlugin({ harnessRunId: "run-1" }, executor)];
+  const plugins = [createBrowserPlugin({ harnessRunId: RUN_ID }, executor), createSessionImportPlugin({ harnessRunId: RUN_ID }, executor)];
   const found = plugins.flatMap((plugin) => plugin.tools).find((candidate) => candidate.definition.name === name);
   if (!found) throw new Error(`no tool ${name}`);
   return found;
@@ -21,7 +23,7 @@ describe("desktop action tools", () => {
   it("asks the desktop for exactly the action, under the call's own receipt", async () => {
     const executor = vi.fn<DesktopActionExecutor>(async () => ({ ok: true, result: { url: "https://claude.ai/chat/1", title: "Chat", value: 2, stored: [] } }));
     const result = await tool("browser_evaluate", executor).execute({ script: "return 2" }, context);
-    expect(executor).toHaveBeenCalledWith({ runId: "run-1", toolCallId: "call-1", action: { kind: "browser.evaluate", script: "return 2" }, signal: context.signal });
+    expect(executor).toHaveBeenCalledWith({ runId: RUN_ID, toolCallId: "call-1", action: { kind: "browser.evaluate", script: "return 2" }, signal: context.signal });
     expect(result.output).toEqual({ url: "https://claude.ai/chat/1", title: "Chat", value: 2, stored: [] });
   });
 
