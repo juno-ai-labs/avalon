@@ -86,7 +86,7 @@ a placeholder row for the unsent draft.
 
 ### What moves
 
-Two things animate, and they are the whole transition:
+Two things change, and they are the whole transition:
 
 - **The composer drops to the dock.** It is the same DOM element throughout,
   the same width and the same capsule on both sides. Its one change is place:
@@ -582,6 +582,8 @@ creation the same way an eased header did.
 **Consequences:** The composer is no longer the fixed point of the hand-off; it
 moves once, on submit. A later change that wants it to stay put has to bring
 the settled conversation's composer up, not this one down.
+
+Shipped in [#1038](https://github.com/juno-ai-labs/avalon/pull/1038).
 
 ### 2026-09-25 — A Channel is placed and reserved in one WorkspaceDO call
 
