@@ -3,14 +3,14 @@ slug: claude-tag
 name: Claude Tag
 maker: Anthropic
 order: 1
-title: "Rally vs Claude Tag (2026): a home for team AI or @Claude in Slack"
-description: "Claude Tag brings Claude into your Slack channels, billed by usage. Rally gives your team and one AI a shared place to work, at one flat price."
+title: "Rally vs Claude Tag: a home for team & AI or @Claude in Slack"
+description: "Claude Tag brings Claude into your Slack channels. Rally gives your team and AI a shared place to wor."
 updated: 2026-10-01
 kind: "Anthropic's Claude as a taggable teammate in Slack."
 edge: "Rally has a much simpler setup around connectors and a much less noisy behavior."
 ---
 
-**Short answer:** If your company already runs on Claude Team or Enterprise and lives in Slack, Claude Tag is a strong, natural add. Anyone in a channel can hand @Claude real work and watch it happen. Rally is the better pick when you want the work to have a home of its own. Spaces hold the files and decisions, Breakouts give you room to think in private, and the organization pays the same amount every month. You can still reach Rally from Slack when that's handier.
+If you already have both Claude Team and Slack, Claude Tag seems a perfect fit. In fact, we believe it's a great fit for software development startups since Claude Tag was an internal project made public. Rally becomes the stronger product when real-time multi-human collaboration is how you want to work as a team.
 
 ## Side by side
 
