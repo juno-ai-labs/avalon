@@ -4,9 +4,9 @@ description: Leave an Organization, remove someone from one, and understand what
 ---
 
 People move on from teams, and teams sometimes wind down. This page covers
-leaving an Organization yourself, what happens when someone's access ends, and
-closing an Organization when the last person leaves. Read it before you click
-anything red.
+leaving an Organization, what happens when someone's access ends, and closing
+an Organization when the last person leaves. Read it before you click anything
+red.
 
 ## Leave an Organization
 
@@ -101,8 +101,9 @@ list change roles (see [Roles](01-roles.md)); taking away administrator rights
 does not remove anyone.
 
 To remove a person, write to [help@rallywith.ai](mailto:help@rallywith.ai),
-naming the Organization and the person. A few rules apply however it is done: an administrator cannot remove
-the owner, and nobody removes themselves (they leave instead, as above).
+naming the Organization and the person. Two rules apply however it is done: an
+administrator cannot remove the owner, and nobody removes themselves (they
+leave instead, as above).
 
 For someone who has not joined yet, revoke their invitation instead, as
 described in [Inviting people](02-inviting-people.md).
@@ -160,6 +161,6 @@ need a new invitation and must accept it like anyone else. The drafts and
 saved copies Rally deleted from their computer when they were removed do not
 come back.
 
-Very occasionally, a late notice about the old removal can close a rejoined
+Once in a while, a late notice about the old removal can close a rejoined
 person's windows once. Rally reconnects them, and their access is not
 affected.

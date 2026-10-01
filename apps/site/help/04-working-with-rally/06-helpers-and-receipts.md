@@ -4,9 +4,10 @@ description: How Rally splits big jobs between helper agents, reaches other conv
 nav_title: Helpers and receipts
 ---
 
-The last page of this chapter is about Rally working at a larger scale: calling
-in helpers for big jobs, reaching beyond the conversation it is in, and
-keeping careful records so that a hiccup never turns into a duplicate email.
+Some jobs are too big for one conversation, and some go wrong halfway. This
+page covers the helpers Rally calls in, the other conversations it can reach,
+and the records it keeps so that a dropped connection never turns into a
+duplicate email.
 
 ## Helpers: background agents
 
@@ -125,17 +126,15 @@ Most of the time when a tool says no, it also says why, in words Rally can act
 on: a file changed since Rally last read it, an edit matched more than one
 place, or a connection needs renewing. So you will often see a row fail and
 the next one succeed, as Rally reads the file again, narrows its edit or asks
-you to reconnect. That is Rally tidying up after itself, which is more than
-can be said for most colleagues and the office kitchen.
+you to reconnect. A failed row followed by a working one is Rally
+correcting itself, not a problem for you to chase.
 
 These messages never contain passwords or the other app's internal details.
 
 ## What comes next
 
-That is the agent: how it thinks, what it can reach for, what it remembers,
-and how it keeps its promises. So far most of its work has been on the web, on
-its own computer and in Rally itself. The next chapter connects it to the
-tools your team already uses, so it can read your email, update your issues
-and file things in your Drive.
+So far Rally has worked on the web, on its own computer and inside Rally. The
+next chapter connects it to the apps your team already uses, so it can read
+your email, update your issues and file things in your Drive.
 
 Next: [Connecting your other tools](../05-connecting-your-tools/index.md).

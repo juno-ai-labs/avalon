@@ -9,7 +9,7 @@ autumn, with every message, file and artifact version. That is the point of
 it, and it also means you should know how long things stay and how to have
 them removed. This page summarizes section 8 of the
 [Privacy Policy](https://rallywith.ai/trust/privacy/) (effective September 21,
-2026) and explains what the buttons in the app really do.
+2026) and explains what the buttons in the app do.
 
 > [!NOTE]
 > The Privacy Policy still uses some of Rally's old names. Where it says
@@ -30,10 +30,10 @@ them removed. This page summarizes section 8 of the
 
 Two more points from the policy:
 
-- **Backups.** When something is deleted from Rally's live systems, a copy can
+- Backups. When something is deleted from Rally's live systems, a copy can
   remain in encrypted backups for a while. Backups are kept apart and expire on
   a normal rotation.
-- **Anonymous figures.** Rally may keep information that has been stripped of
+- Anonymous figures. Rally may keep information that has been stripped of
   anything that could reasonably identify a person.
 
 ## Archiving is not deleting
@@ -43,21 +43,21 @@ Throughout this manual you have met **Archive**: for Channels and Breakouts in
 for Spaces, for Sidekicks and for resources. In every case archiving takes
 something out of sight. It does not erase it.
 
-- **A Channel.** Archiving takes it out of the sidebar for everyone who can see
+- A Channel. Archiving takes it out of the sidebar for everyone who can see
   it, and nobody, you included, can open it again. Any run in progress stops,
   scheduled follow-ups stop, and mail to its address is refused. As the dialog
   says: **Nothing is deleted, but Rally has no way to bring a channel back.**
-- **A Breakout.** The same: it is kept, and there is no control in the app to
+- A Breakout. The same: it is kept, and there is no control in the app to
   restore it.
-- **A Space.** Archiving removes it from the Spaces rail. Spaces are the one
+- A Space. Archiving removes it from the Spaces rail. Spaces are the one
   thing you can restore from the app.
-- **A Sidekick.** Its schedules stop, and its conversation and run history stay
+- A Sidekick. Its schedules stop, and its conversation and run history stay
   stored but can no longer be viewed. It cannot be unarchived.
-- **A resource.** It leaves the Channel's list. The original file in Google
+- A resource. It leaves the Channel's list. The original file in Google
   Drive, Slack or wherever it came from is not touched.
 
-So archive when you want something gone from view. If you need the content
-itself erased, ask for deletion as described below.
+Archive when you want something gone from view. If you need the content
+erased, ask for deletion as described below.
 
 ## Disconnecting a tool
 
@@ -109,7 +109,7 @@ ask for real erasure.
 ## Asking for your data to be deleted
 
 There is no button in the app that erases your account or an Organization's
-data. To ask for deletion, email **help@rallywith.ai**. Say what you want
+data. To ask for deletion, email help@rallywith.ai. Say what you want
 deleted and which Organization it belongs to. Do not send passwords or the
 content itself.
 
@@ -118,12 +118,12 @@ live: to see, correct, export or restrict what Rally holds about you.
 
 What happens next:
 
-- **Rally checks who you are** before acting, and for content inside an
+- Rally checks who you are before acting, and for content inside an
   Organization, that you have the authority to ask.
-- **Content belongs to the Organization.** Rally handles an Organization's work
+- Content belongs to the Organization. Rally handles an Organization's work
   on its behalf, so a request about that work usually goes to the people who run
   your Organization first. If you are not an owner or administrator, talk to one.
-- **Some records may be kept** where the law allows or requires it, such as
+- Some records may be kept where the law allows or requires it, such as
   security and legal records.
 
 Chapter 12 has more on writing to the support team, including what to put in

@@ -5,10 +5,9 @@ description: Get a written summary, on the days and times you choose, of everyth
 
 [Notifications](04-notifications.md) tell you about the things aimed at you, the
 moment they happen. The digest is the other half: a short written summary,
-delivered when you choose, of everything that moved since your last one. It is
-a catch-up you did not have to ask for. Think of it as a morning newspaper
-about your own work, except it is written for exactly one reader and never
-has a crossword.
+delivered when you choose, of everything that moved since your last one. It
+reads like a morning paper about your own work, written for one reader and
+without the crossword.
 
 ## What is in it
 
@@ -22,18 +21,17 @@ one:
 It puts the things that need you first. A digest by email arrives from **Rally
 <notifications@rallywith.ai>** with a subject like "Your Juno Labs digest ·" followed by the
 date, a preview line such as "2 need you · 7 updates in Juno Labs", a section
-of items for you, and an **Open Rally** button.
+of items for you, and a button that opens Rally.
 
-A few things it leaves out, on purpose:
+What it leaves out, on purpose:
 
-- **Private conversations between other people** are not in your digest, and
-  **your own Breakouts** are not included either.
-- **Noise.** Each connected tool holds back its own busy-work, such as every
+- Private conversations between other people.
+- Noise. Each connected tool holds back its own busy-work, such as every
   automated build check, so the digest stays readable.
-- **Quiet days.** If nothing happened since the last one, Rally sends nothing.
-  No "nothing to report" emails.
+- Quiet days. If nothing happened since the last one, Rally sends nothing. No
+  "nothing to report" emails.
 
-Your very first digest looks back over the previous three days. After that, each
+Your first digest looks back over the previous three days. After that, each
 one starts where the last one ended.
 
 Reading a digest does not mark anything as read in Rally. Your unread dots and
@@ -65,8 +63,8 @@ To be switched on, a digest needs at least one day, one time and one place to
 go. If something is missing, Rally will not save it.
 
 > [!TIP]
-> Want a digest at the start and the end of the day? Add two times, say 8:30
-> and 17:30. Rally only ever covers what is new since the last one, so the
+> For a digest at the start and the end of the day, add two times, say 8:30
+> and 17:30. Each digest covers only what is new since the last one, so the
 > afternoon edition will not repeat the morning's news.
 
 ## Time zones

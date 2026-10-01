@@ -2739,14 +2739,14 @@ export function Sidebar({
               </DropdownMenu.Item>
               <DropdownMenu.Item
                 className="menu-item account-menu-item"
-                onSelect={() => void openPublicPage('/support/').catch(() => undefined)}
+                onSelect={() => void openPublicPage('/help/').catch(() => undefined)}
               >
                 <CircleHelp aria-hidden="true" />
                 <span>Help Center</span>
               </DropdownMenu.Item>
               <DropdownMenu.Item
                 className="menu-item account-menu-item"
-                onSelect={() => void openPublicPage('/support/').catch(() => undefined)}
+                onSelect={() => void openPublicPage('/help/help-and-glossary/contact-support/').catch(() => undefined)}
               >
                 <Megaphone aria-hidden="true" />
                 <span>Send Feedback</span>

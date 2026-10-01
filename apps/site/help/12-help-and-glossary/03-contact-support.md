@@ -18,31 +18,31 @@ website** in the menu bar.
 
 ## What to include
 
-The aim is a first reply that fixes the problem, not one that asks you
+The aim is a first reply that fixes the problem instead of asking you
 questions. These help most:
 
-- **What you were doing.** "I clicked Connect for Linear in Settings →
+- What you were doing. "I clicked Connect for Linear in Settings →
   Connections" is far more useful than "Linear is broken".
-- **What you expected, and what happened instead.**
-- **The exact wording of any message.** Copy it, or take a screenshot. For a
+- What you expected, and what happened instead.
+- The exact wording of any message. Copy it, or take a screenshot. For a
   link that would not open, the sentence in the
   [Rally could not open that link](01-when-a-link-wont-open.md) window is
   exactly what we need.
-- **The Request ID from a Run failed card.** Click the copy button beside it
+- The **Request ID** from a **Run failed** card. Click the copy button beside it
   and paste it into your email. It lets us find that one run among all the
   others. The card is described in
   [While Rally works](../02-working-in-a-channel/03-while-rally-works.md).
-- **Roughly when it happened**, with your time zone.
-- **A link to the Channel**, if the problem is in one. Use **Copy channel link** as
+- Roughly when it happened, with your time zone.
+- A link to the Channel, if the problem is in one. Use **Copy channel link** as
   shown in [Search and links](../03-spaces-and-breakouts/06-search-and-links.md).
   A link grants nothing by itself, so it is safe to send: it only tells us
   where to look.
-- **Your Rally version.** It is under **Settings → Application → About**, or
+- Your Rally version. It is under **Settings → Application → About**, or
   **Rally → About Rally** in the menu bar.
-- **Which device**: the Mac app, the iPhone app, or Rally in a web browser.
-- **Which connector**, if the problem involves one, and whether it is your
+- Which device: the Mac app, the iPhone app, or Rally in a web browser.
+- Which connector, if the problem involves one, and whether it is your
   personal connection or the Organization's.
-- **Screenshots**, once you have covered or cropped out anything private.
+- Screenshots, once you have covered or cropped out anything private.
 
 ## What never to send
 

@@ -3,7 +3,7 @@ title: Opening, docking and downloading
 description: Preview any file, keep an artifact open beside the chat, pop it into its own window, or save it to your Mac.
 ---
 
-Rally gives you four ways to look at a file, depending on how long you want to look at it. A quick glance gets the preview. Reading while you talk gets the docked sidebar. Keeping it in view all afternoon gets its own window. Taking it somewhere else gets a download. This page covers all four.
+Rally gives you four ways to look at a file, depending on how long you want to look at it. A quick glance gets the preview. Reading while you talk gets the docked sidebar. Keeping it in view all afternoon gets its own window. Taking it somewhere else gets a download.
 
 ## The preview
 
@@ -37,13 +37,13 @@ For images and video, the buttons sit in the corner: **Download attachment**, **
 
 ### Flipping through a set of pictures
 
-When a message has several images or videos, the preview becomes a small gallery. Press <kbd>←</kbd> and <kbd>→</kbd> or click the **Previous attachment** and **Next attachment** arrows to move between them. The gallery wraps around, so going past the last one brings you back to the first. A strip of thumbnails runs along the bottom, and a caption such as **photo.png · 2 / 5** tells you where you are.
+When a message has several pictures, the preview becomes a small gallery. Press <kbd>←</kbd> and <kbd>→</kbd> or click the **Previous attachment** and **Next attachment** arrows to move between them. The gallery wraps around, so going past the last one brings you back to the first. A strip of thumbnails runs along the bottom, and a caption such as **photo.png · 2 / 5** tells you where you are.
 
-A few things to know:
+A few details:
 
-- The arrows only appear when there is more than one item.
+- The arrows appear only when there is more than one item.
 - The arrow keys do nothing while you are typing in a text field or have a video or audio player selected, so they do not fight with scrubbing through a clip.
-- The gallery is for pictures and video. The document preview has no arrows.
+- The gallery is for the pictures in one message. The document preview has no arrows.
 
 ### Reduce Transparency
 
@@ -72,10 +72,10 @@ This is the best way to give notes on a draft. You point at the paragraph, Rally
 
 Good to know:
 
-- Rally remembers which artifact you had docked in each Channel and each Breakout, on this Mac, and brings it back the next time you open Rally.
+- Rally remembers which artifact you had docked in each Channel and each Breakout, on this device, and brings it back the next time you open Rally.
 - The button is greyed out for files Rally cannot show, and for sites when the live view of sites is not available to you (see [Live sites](03-live-sites.md)).
 - If you open a web link while an artifact is docked, Rally's built-in browser covers the panel. Close the browser and the artifact is back. The browser itself is covered in [Research and the built-in browser](../04-working-with-rally/02-research-and-the-web.md).
-- The docked sidebar is a Mac app feature.
+- The docked sidebar works in the Mac app and in the web browser version.
 
 ## Giving an artifact its own window
 

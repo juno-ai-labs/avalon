@@ -19,8 +19,8 @@ when you click a Space in the rail on the left, you see only its Channels. The
 rest of the Organization's work is still there, on other shelves, out of your
 way.
 
-Spaces do a second job, and it is the one that matters most. **A Space decides
-who can see what is on it.** Some Spaces are open to everyone in the
+Spaces also do a second job, and it matters more than the first: a Space
+decides who can see what is on it. Some Spaces are open to everyone in the
 Organization. Others are open only to the people listed as its participants. Put
 a Channel on a private shelf and the rest of the Organization does not see it in
 their sidebar, cannot open it and cannot find it in search. Once that clicks,
@@ -37,16 +37,16 @@ Conversations wander. Halfway through planning a launch, someone wonders whether
 the pricing page needs rewriting, and suddenly the Channel is about the pricing
 page. A **Breakout** is where that tangent goes instead. It is a side
 conversation inside a Channel, private to you when it starts, with Rally already
-briefed on everything said so far. You can try an idea, draft something rough, or
-bring in one colleague, and the main conversation carries on undisturbed. Think
-of it as writing in the margin rather than tearing a page out of the notebook.
+briefed on everything said so far. Draft something rough, or bring in one
+colleague to argue it through. The main conversation carries on undisturbed. You have
+written in the margin instead of tearing a page out of the notebook.
 
 Breakouts used to be called **Substreams**, a name that sounded like plumbing and
 has been retired with full honours.
 
 ## And then finding things again
 
-Shelves only help if you can find things on them. The chapter ends with search,
+The chapter ends with search,
 which looks through every message, link, artifact and file you are allowed to
 read, and with links that drop a teammate into exactly the right Channel or
 Breakout.

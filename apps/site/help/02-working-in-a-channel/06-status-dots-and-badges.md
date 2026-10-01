@@ -115,8 +115,7 @@ region.
 
 The same self-updating times you met on messages (see
 [People in the room](05-people-in-the-room.md#times-that-keep-themselves-current))
-also turn up elsewhere: at the end of each row on a Space's page, as **Last
-activity** in a Channel's details panel, in search results, and on a Sidekick's
+also turn up elsewhere: at the end of each row on a Space's page, in search results, and on a Sidekick's
 page for its next run and its recent runs.
 
 Next: give a Channel a name and a face, in [Names, icons and colours](07-name-icon-and-colour.md).

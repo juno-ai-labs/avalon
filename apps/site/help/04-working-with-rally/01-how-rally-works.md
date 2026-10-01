@@ -3,9 +3,8 @@ title: How Rally works
 description: "Meet the agent: how it decides what to do, which tools it reaches for, and why it rarely stops to ask."
 ---
 
-You have already given Rally a few jobs by now. This page lifts the lid: who
-the agent is, how it chooses what to do, where its abilities come from, and
-how to ask for things so you get what you meant.
+You have given Rally a few jobs by now. This page lifts the lid on how it
+chooses what to do, and how to ask so you get what you meant.
 
 ## One Rally per conversation
 
@@ -44,7 +43,7 @@ arithmetic, Rally runs actual code on its own computer instead of doing sums in
 its head (more in [Code, data and the Terminal](03-code-files-and-the-terminal.md)).
 
 **It asks only when it must.** If a detail is missing and no tool can find it,
-Rally asks you. If a decision really is yours, it puts a question card in the
+Rally asks you. If a decision is yours, it puts a question card in the
 conversation, as described in
 [While Rally works](../02-working-in-a-channel/03-while-rally-works.md).
 
@@ -59,7 +58,7 @@ your documents) it goes to the apps you have connected instead.
 
 ## Rally never asks you to approve each tool
 
-This is a deliberate choice, and worth saying plainly. Rally does not pop up
+This is deliberate. Rally does not pop up
 "Allow Rally to send this email?" or "Approve this change?" before each action.
 There is no approval queue and no setting that adds one. When you ask Rally to
 do something, you have given it the go-ahead.
@@ -89,7 +88,7 @@ these:
 | **Memory** | Remember things from one conversation to the next. |
 | One per connected app | Work in Gmail, GitHub, Linear, Notion and the rest. |
 
-Rally does not carry everything around at once. It keeps a short catalogue of
+Rally does not carry everything at once. It keeps a short catalogue of
 what is available and loads a plugin when a request needs it. You see this as
 a row that says **Loading a plugin**. Loading a plugin never gives Rally more
 access than it already had.
@@ -150,7 +149,7 @@ A few things to know:
   memory. If something is critical, say it again, put it in a file, or ask
   Rally to remember it (see
   [Memory and coming back later](05-memory-and-coming-back-later.md)).
-- Very rarely, a conversation is simply too big for Rally to take in at all.
+- Rarely, a conversation is too big for Rally to take in at all.
   You then see a message that begins **This conversation is longer than the
   selected model will accept. Start a new work stream to continue**. "Work
   stream" is the old name
@@ -162,15 +161,13 @@ A few things to know:
 
 Two things people often look for:
 
-- **A model picker.** You cannot choose which AI model Rally uses. Rally takes
-  care of that.
+- **A model picker.** You cannot choose which AI model Rally uses.
 - **A meter.** There is no price, token count or credit counter in the
   Channel, the message box or the conversation.
 
 ## Asking well
 
-Rally does its best with whatever you give it, but a good request saves a
-round trip. Some habits that help:
+A good request saves a round trip. These habits help:
 
 - **Say what done looks like.** "A one-page summary I can paste into an
   email" beats "summarize this".

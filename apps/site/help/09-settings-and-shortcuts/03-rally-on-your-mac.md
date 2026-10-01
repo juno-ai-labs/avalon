@@ -3,8 +3,8 @@ title: Rally on your Mac
 description: Keep Rally in the menu bar, start it at login, and understand its windows and menus.
 ---
 
-Rally is a Mac app, and it tries to behave like one. This page covers the habits
-it has as a resident of your Mac: an icon in the menu bar, starting when you log
+Rally is a Mac app, and it tries to behave like one. This page covers its Mac
+habits: an icon in the menu bar, starting when you log
 in, staying open when you close its window, and the menus along the top of the
 screen. The settings for the first two are in **Settings → Application**.
 
@@ -16,19 +16,19 @@ its mark there too, unless you tell it not to.
 
 Click the Rally mark and you get:
 
-- **Your recent Channels**, up to ten, grouped under the same date headings the
-  sidebar uses. Click one to open it in Rally. Very long names are shortened to
+- **Your recent Channels**, up to ten, grouped under date headings such as
+  **Today** and **Yesterday**. Click one to open it in Rally. Long names are shortened to
   fit, and a Channel Rally has not finished naming yet shows as **Untitled
   channel**.
 - **Open Rally**, which brings the main window forward.
-- **Quit Rally**, which really does quit it.
+- **Quit Rally**, which quits it properly.
 
 If you have no recent Channels, the menu says **No recent channels**. If you are
 signed out, it says **Sign in to Rally**. The list refreshes when you click the
 icon, so it is always current.
 
-Why bother? It is the fastest way back into something you were working on an
-hour ago, from any app, without hunting for the Rally window. It also gives
+The menu is the fastest way back into something you were working on an hour
+ago, from any app, without hunting for the Rally window. It also gives
 Rally somewhere to live when no window is open, which matters more than it
 sounds (see [Closing the window is not quitting](#closing-the-window-is-not-quitting)).
 
@@ -78,7 +78,7 @@ expected the app to go away.
 To bring a window back, click Rally in the Dock, click **Open Rally** in the menu
 bar, or open Rally again from Applications.
 
-To really quit, do one of these:
+To quit for good, do one of these:
 
 - Press <kbd>⌘</kbd> <kbd>Q</kbd>.
 - Choose **Rally → Quit Rally** from the menu bar at the top of the screen.

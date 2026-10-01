@@ -55,11 +55,15 @@ Organization has already connected still work when you chat from the phone.
 ### Privacy, leaving and signing out
 
 At the bottom are links to the **Privacy Policy** and **Terms of Service**,
-**Leave this organization**, **Account deletion** and **Sign out**. Leaving asks
-you to confirm first. What leaving does is in [Leaving, removing and
-closing](../10-running-an-organization/05-leaving-and-removing.md), and what
-account deletion does is in [What Rally keeps, and deleting your
-data](../11-privacy-and-security/03-what-rally-keeps.md).
+**Leave this organization**, an **Account deletion** section and **Sign out**.
+Leaving asks you to confirm first. What leaving does is in [Leaving, removing and
+closing](../10-running-an-organization/05-leaving-and-removing.md).
+
+**Delete account on this device** is not a full erasure: it leaves the current
+Organization, signs you out and removes the sign-in from the phone. To have your
+identity and Organization data erased, use **Request data deletion** in the same
+section. [What Rally keeps, and deleting your
+data](../11-privacy-and-security/03-what-rally-keeps.md) has the details.
 
 ## Reading comfortably
 

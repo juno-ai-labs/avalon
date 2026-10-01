@@ -15,7 +15,7 @@ Two things have to happen, once each.
 
 **An owner or administrator installs Rally in Slack.** This is the **Connect for
 organization** button on the **Slack** card in **Settings → Connections**, and
-[the Slack page in chapter 5](../05-connecting-your-tools/06-slack.md) walks
+[the Slack page in chapter 5](../05-connecting-your-tools/07-slack.md) walks
 through it. It needs a paid Slack plan, and one Slack workspace connects to one
 Rally Organization. After the install, your Slack workspace has a new member: a
 bot called **Rally**.
@@ -30,8 +30,8 @@ access and your own connected tools, and show the work under your name.
    its **Home** tab.
 2. Click the green **Connect Rally** button.
 3. A pop-up called **Connect Rally** appears. Click **Open Rally**.
-4. The Rally app opens on your Mac and finishes the link. Make sure you are
-   signed in to the Organization that installed Rally in Slack.
+4. The Rally app opens on your Mac and finishes the link. You need to be signed
+   in to the Organization that installed Rally in Slack.
 
 Rally may then carry straight on and ask you to approve your own Slack
 connection as well. That part is optional and is explained on the
@@ -40,9 +40,9 @@ connection as well. That part is optional and is explained on the
 Rally can also send you a private prompt with the same button, when a task
 needs your Rally account to continue.
 
-Things to know:
+A few things about the link:
 
-- The link works once and expires after 15 minutes. If it has expired, or you
+- It works once and expires after 15 minutes. If it has expired, or you
   clicked it twice, click **Connect Rally** again for a fresh one. Each new link
   retires the old ones.
 - Your Rally account must belong to the Organization that installed Rally in
@@ -67,7 +67,7 @@ Slack offers a few starter ideas, such as **Morning email briefing**, **Analyze 
 business idea** and **Investigate an issue**.
 
 Rally starts the task and replies in a thread under your message. To keep
-going, reply in that thread. You do not need to mention Rally again.
+going, reply in that thread. No need to mention Rally again.
 
 - If a task is still running and you send a new message at the top level, Rally
   does not start a second job. It asks you, once, to reply in the thread of your
@@ -80,11 +80,9 @@ going, reply in that thread. You do not need to mention Rally again.
 Type **@Rally** and your request in any Slack channel, private channel or group
 message that Rally has been invited to. Rally replies in a thread under your
 message, and that whole thread becomes one task. Anyone in the thread can carry
-on without another mention, which makes it a good way to pull Rally into a
-team discussion and let everyone see the result.
+on without another mention, so the whole team sees the work and the result.
 
-- Rally only pays attention to threads it is part of. It ignores the rest of
-  the channel.
+- Rally reads the threads it is part of and ignores the rest of the channel.
 - Each message runs with the access of the person who sent it. Linked members
   work as themselves; everyone else gets the Organization's shared tools.
 - If Rally asks a question of one particular person, only that person can
@@ -111,9 +109,8 @@ Or type `/rally` on its own and a pop-up called **Start a Rally task** asks
 
 Either way, Slack shows you a private note, "Rally queued your request. I'll
 continue in your Agent conversation.", and the work continues in your direct
-messages with Rally, not in the channel where you typed the command. That makes
-`/rally` handy when you want Rally's help without starting a conversation in
-front of everyone.
+messages with Rally, not in the channel where you typed the command. Use
+`/rally` when you want Rally's help without an audience.
 
 ### Use a shortcut
 
@@ -126,13 +123,13 @@ Rally adds two shortcuts to Slack.
   with that message already filled in. Add what you want done and click
   **Start**.
 
-The second one is the quickest way to turn a bug report or a customer question
-into a job for Rally. Two clicks, and nobody has to retype anything.
+The second one turns a bug report or a customer question into a job for Rally
+in two clicks, and nobody retypes anything.
 
 ## Watching Rally work
 
-Rally does not type its answer into Slack word by word. Instead, it puts a
-single emoji on the message that started the task, and changes it as the work
+Rally does not type its answer into Slack word by word. It puts a single emoji
+on the message that started the task, and changes it as the work
 moves along.
 
 | Emoji | Meaning |
@@ -144,11 +141,11 @@ moves along.
 | Warning sign (`:warning:`) | The task failed. |
 | Stop sign (`:octagonal_sign:`) | The task was stopped. |
 
-Rally only ever has one of its own emoji on a message, and it never touches
+Rally keeps one of its own emoji on a message at a time, and it never touches
 yours. When you send a new request in the same thread, the emoji moves to that
-message. It is, in effect, a very small progress bar that went to art school.
+message. It is, in effect, a tiny progress bar that went to art school.
 
-When the answer is ready, Rally posts it in the thread in one go. A very long
+When the answer is ready, Rally posts it in the thread in one go. A long
 answer is split over several messages, breaking between paragraphs and keeping
 code blocks whole. Each answer has two buttons, **Open task** to see the full
 Channel in Rally, and **Give feedback** to tell the team whether it helped. A
@@ -159,14 +156,14 @@ important facts and actions before relying on them.
 
 Rally's **Home** tab in Slack is your own small dashboard.
 
-- **Before you link**, it says **Meet Rally**, with the **Connect Rally** button
+- Before you link, it says **Meet Rally**, with the **Connect Rally** button
   and some example requests.
-- **After you link**, it says **Welcome** and your name, with three buttons:
+- After you link, it says **Welcome** and your name, with three buttons:
   **Start a task** (opens the task pop-up), **Create automation** and
   **Notifications**. Below them, **Needs attention & recent tasks** lists your
   running tasks and anything waiting on you, and **Automations** lists your
   scheduled helpers with their next run time.
-- **Owners and administrators** also see a **Workspace administration** card
+- Owners and administrators also see a **Workspace administration** card
   showing whether the Slack connection is healthy, with a **Manage** button that
   opens **Settings → Connections** in the Mac app.
 
@@ -174,7 +171,7 @@ Rally's **Home** tab in Slack is your own small dashboard.
 > The Home tab still uses the old word: an "automation" here is a
 > [Sidekick](../07-sidekicks/01-what-a-sidekick-is.md). **Create automation**
 > opens Rally on your Mac so you can make one, and the **Automations** list
-> shows your Sidekicks. Same helpers, older name tag.
+> shows your Sidekicks.
 
 The **Notifications** button opens a pop-up with **Notify me in Slack** choices.
 How Rally tells you about mentions and new Channels is covered properly in
@@ -190,8 +187,8 @@ When Rally joins, it creates a matching [Space](../03-spaces-and-breakouts/01-sp
 in your Organization for that Slack room, and posts one line: "Rally is here.
 Mention @Rally in a thread to start work on it; each thread becomes a Channel in
 this conversation's Rally Space." From then on, every Slack thread where
-someone mentions Rally becomes its own Channel inside that Space. Your Slack
-room gets a tidy home in Rally, with one Channel per job.
+someone mentions Rally becomes its own Channel inside that Space, one Channel
+per job.
 
 - A public Slack channel makes a public Space everyone in the Organization can
   see. A private Slack channel or group message makes a private Space for the
@@ -219,7 +216,7 @@ page](https://rallywith.ai/support/connectors/slack/):
 4. Try your mention, command or shortcut again.
 
 There is a public overview of all this at
-[rallywith.ai/slack](https://rallywith.ai/slack/), handy for sending to a Slack
+[rallywith.ai/slack](https://rallywith.ai/slack/). Send it to a Slack
 administrator who wants to know what they are agreeing to. Its **Open
 Connections in Rally** button opens the right screen in the Mac app.
 

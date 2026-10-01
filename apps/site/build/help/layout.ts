@@ -165,7 +165,7 @@ ${head}
 </head>
 <body class="help">
 <a class="skip" href="#chapters">Skip to chapters</a>
-<header class="top"><button class="menu" type="button" aria-controls="chapters" aria-expanded="false" aria-label="Chapters"><i></i></button><a class="brand" href="/"><img src="/brand/rally-mark-ink.svg" width="22" height="22" alt="">rally</a><a class="section" href="/help/">Help</a><button class="find" type="button" data-search>Search the manual<kbd>/</kbd></button><nav class="links" aria-label="Rally"><a href="/support/contact/">Contact support</a><a class="cta" href="/">rallywith.ai</a></nav></header>
+<header class="top"><button class="menu" type="button" aria-controls="chapters" aria-expanded="false" aria-label="Chapters"><i></i></button><a class="brand" href="/"><img src="/brand/rally-mark-ink.svg" width="22" height="22" alt="">rally</a><a class="section" href="/help/">Help</a><button class="find" type="button" data-search>Search the manual<kbd>/</kbd></button><nav class="links" aria-label="Rally"><a href="/help/help-and-glossary/contact-support/">Contact support</a><a class="cta" href="/">rallywith.ai</a></nav></header>
 <div class="shell">
 <main id="content">
 <article class="${page.kind}" data-md="${page.markdownUrl}">
@@ -178,7 +178,7 @@ ${extras}
 ${sidebar(site, page)}
 ${outline(page, headings)}
 </div>
-<footer class="foot"><a class="brand" href="/"><img src="/brand/rally-mark-ink.svg" width="18" height="18" alt="">rally</a><nav aria-label="More"><a href="/help/">Help Center</a><a href="/trust/">Trust Center</a><a href="/trust/privacy/">Privacy</a><a href="/support/contact/">Contact</a></nav><p>© 2026 Juno AI Labs · Rally</p></footer>
+<footer class="foot"><a class="brand" href="/"><img src="/brand/rally-mark-ink.svg" width="18" height="18" alt="">rally</a><nav aria-label="More"><a href="/help/">Help Center</a><a href="/trust/">Trust Center</a><a href="/trust/privacy/">Privacy</a><a href="/help/help-and-glossary/contact-support/">Contact</a></nav><p>© 2026 Juno AI Labs · Rally</p></footer>
 </body>
 </html>
 `;

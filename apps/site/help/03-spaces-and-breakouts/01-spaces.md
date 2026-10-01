@@ -28,8 +28,8 @@ General is a little different from the Spaces you make yourself:
 2. Choose **Create New Space**.
 3. In **Create a new space**, type a **Name of space** and click **Create**.
 
-Rally opens the new Space's page straight away. A new Space starts **private to
-its participants**, which at that moment means you, with a blue briefcase for an
+Rally opens the new Space's page straight away. A new Space starts private to
+its participants, which at that moment means you, with a blue briefcase for an
 icon. Give it a better icon and decide who else belongs from its page, as
 described below.
 
@@ -49,7 +49,7 @@ Across the top sit the Space's controls:
 - **The icon.** Click it to open **Space icon and color**, and pick an icon and a
   colour. They show in the rail, so pick something you can spot at a glance.
 - **The name.** Double-click it to rename the Space. From the keyboard, focus
-  the name and press <kbd>F2</kbd> or <kbd>Enter</kbd>. Press <kbd>Enter</kbd>
+  the name and press <kbd>F2</kbd> or <kbd>Return</kbd>. Press <kbd>Return</kbd>
   to save or <kbd>Esc</kbd> to cancel; clicking away also saves. Names can be up
   to 180 characters, which is plenty, even for a committee.
 - **The audience menu** (**Space participants** or **Everyone in the
@@ -80,9 +80,9 @@ list keeps itself up to date as messages arrive and runs finish, and a **Load
 more** button appears at the bottom when there are a lot. The dots are explained
 in [Status dots and badges](../02-working-in-a-channel/06-status-dots-and-badges.md).
 
-Once you have read something and Rally has finished, it drops off the list. That
-is the point: this is a to-do list, not an index. The full set of Channels is
-always in the Channels rail and in search. When nothing is waiting, the page
+Once you have read something and Rally has finished, it drops off the list. The
+list is for things waiting on you. Every Channel is still in the Channels rail
+and in search. When nothing is waiting, the page
 says **Nothing here needs you right now**, which is the nicest thing a piece of
 software can say to you. A Space with no Channels at all says **No channels
 yet**.
@@ -94,10 +94,10 @@ Every Space has an **audience**, chosen from the menu under its name:
 | Audience | Who can see the Space and its Channels |
 | --- | --- |
 | **Space participants** | Only the people listed as the Space's participants. |
-| **Everyone in the organization** | Everyone in the Organization. The Space is labelled **Public space** in the rail. |
+| **Everyone in the organization** | Everyone in the Organization. The Space is labelled **Public space** in the rail, and **Organization space** in the card you see when you hover it. |
 
-This is not only about the Space's page. **The audience reaches every Channel in
-the Space.** A Channel in an Organization-wide Space can be seen and found by
+The audience covers every Channel in the Space as well as the Space's page. A
+Channel in an Organization-wide Space can be seen and found by
 everyone in the Organization. The full rules, including what happens when a
 Channel sits in more than one Space, are in
 [Who can see what](04-who-can-see-what.md).
@@ -120,7 +120,7 @@ own right, or through another Space, stays open. The dialog says so: **Channels
 stay public if another source still says so.**
 
 Rally may refuse to widen a Space if one of its Channels holds something the
-wider audience is not allowed to read. The message names the problem; move that
+wider audience is not allowed to read. The message names the problem. Move that
 Channel out of the Space first.
 
 ### Add and remove participants

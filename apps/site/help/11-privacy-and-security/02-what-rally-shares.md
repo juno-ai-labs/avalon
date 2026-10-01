@@ -4,17 +4,16 @@ description: The product analytics switch, the outside companies that help run R
 nav_title: What Rally shares
 ---
 
-Rally is not a single program on your Mac. Part of it runs on your computer,
-and most of the work happens on Rally's servers and with a handful of outside
-companies that provide the hosting, the AI models, email and web search. This
-page explains what information goes where, and the one switch you control on
-your own Mac.
+Only part of Rally runs on your Mac. Most of the work happens on Rally's
+servers and with a handful of outside companies that provide the hosting, the
+AI models, email and web search. This page covers what information goes
+where, and the one switch you control on your own Mac.
 
 ## The Product analytics switch
 
-The desktop app can report how it is used and when it goes wrong. That helps
-the Rally team find bugs and see which features people rely on. You decide how
-much of it is sent.
+The desktop app can report how it is used and when it goes wrong, which is how
+the Rally team finds bugs and learns which features people rely on. You decide
+how much of that is sent.
 
 ### What it sends when it is on
 
@@ -22,12 +21,12 @@ Open **Settings → Application** and look under **Privacy & diagnostics**. The
 **Product analytics** switch is on unless you turn it off. While it is on,
 Rally shares:
 
-- **Product usage**: which features you use and when, described as events such
+- Product usage: which features you use and when, described as events such
   as opening a Channel, not as the contents of what you wrote.
-- **Error reports**: details of errors in the app, cleaned of sensitive
+- Error reports: details of errors in the app, cleaned of sensitive
   information first, with a short trail of the steps that led up to the error.
   Rally calls these steps *breadcrumbs*.
-- **Crash reports**: the technical record macOS produces when the app crashes.
+- Crash reports: the technical record macOS produces when the app crashes.
 
 These reports can include your name and email address as they appear on your
 verified account, so the Rally team can contact you about a problem you hit.
@@ -36,22 +35,22 @@ verified account, so the Rally team can contact you about a problem you hit.
 
 Turn the switch off and the detailed reporting above stops. Rally still sends a
 small set of essential reliability signals, such as whether the app could
-connect, which carry no content from your conversations or files. Rally needs
-these to keep the service working, and they cannot be turned off.
+connect. They carry no content from your conversations or files. Rally needs
+them to keep the service working, and they cannot be turned off.
 
 ### Things to know about the switch
 
-- **It follows your account.** The choice is saved to your Rally account and
+- It follows your account. The choice is saved to your Rally account and
   applies on your other devices too. While Rally is saving it you see
   **Waiting to sync this account preference.**
-- **Turning it off takes effect at once on this Mac.** Crash reports stop being
+- Turning it off takes effect at once on this Mac. Crash reports stop being
   sent for the rest of this launch, and the page says **Crash upload has
   stopped for this launch. Restart Rally to remove local native crash dumps and
   apply the current setting.** Restart Rally when convenient to clear out any
   crash reports already saved on the Mac.
-- **Turning it back on is confirmed first.** Rally checks with its servers
+- Turning it back on is confirmed first. Rally checks with its servers
   before it starts sending again. If it cannot confirm, the setting stays off.
-- **It lives in the Mac app.** Where Rally cannot change the setting, the switch
+- It lives in the Mac app. Where Rally cannot change the setting, the switch
   is greyed out and you see **Product analytics is managed in the Rally desktop
   app.**
 
@@ -95,12 +94,12 @@ because you told it to, and they are your own suppliers, not Rally's.
 
 To do a task, Rally sends the model the part of the work it needs: your
 request, the relevant parts of the conversation and files, the results of the
-tools it has used so far, and its instructions. It keeps that context to what
-the task requires.
+tools it has used so far, and its instructions. Nothing else from your
+Organization goes along.
 
-Some things never go to the model. The keys and passwords that let Rally reach
-your connected tools are stored encrypted and are never put into what the
-model reads.
+The keys and passwords that let Rally reach your connected tools never go to
+the model. They are stored encrypted and kept out of everything the model
+reads.
 
 Rally does not use your content to train a general-purpose model of its own,
 and it does not sell personal information.
@@ -128,21 +127,20 @@ deployment, so do not plan on your data being kept in one particular country.
 
 ## Protections that work without you
 
-Some of Rally's security happens automatically in the Mac app. You do not need
-to set any of it, but it can help to know it is there, especially if your IT
-team asks.
+Some of Rally's security happens automatically in the Mac app. There is
+nothing to set, but your IT team may ask about it.
 
-- **Each window is fenced off.** The parts of Rally that display content run in
+- Each window is fenced off. The parts of Rally that display content run in
   a restricted sandbox and cannot reach your Mac's system directly.
-- **Unexpected pages are blocked.** If something inside a Rally window tries to
+- Unexpected pages are blocked. If something inside a Rally window tries to
   send it to an unexpected web address, or to open a pop-up, Rally refuses.
-- **Exports are made in isolation.** When you save a message as an image or PDF
+- Exports are made in isolation. When you save a message as an image or PDF
   (see [Saving and sharing what Rally wrote](../06-things-rally-makes/05-saving-and-exporting.md)),
   Rally draws it in a separate, hidden window set aside for that job.
-- **Live connections use short-lived passes.** The connection that streams new
+- Live connections use short-lived passes. The connection that streams new
   messages to you uses a signed pass that expires quickly and works only for
   what it was issued for.
-- **Your connections' keys are encrypted.** The credentials for your connected
+- Your connections' keys are encrypted. The credentials for your connected
   tools are stored encrypted on Rally's servers and are blanked out of Rally's logs.
 
 These describe controls that exist in Rally today. They are not a security

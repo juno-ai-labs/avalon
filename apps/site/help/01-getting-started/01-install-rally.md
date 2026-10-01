@@ -31,7 +31,7 @@ A teammate, or an invitation email, may give you a personal link that looks like
 - A link that came with an invitation stops working if that invitation is cancelled, declined or replaced by a newer one.
 - If the download breaks halfway, start it again from the button. It cannot pick up where it left off.
 
-If the page says **This link is incomplete or invalid. Ask the sender for a new link.**, do exactly that. The same goes for a link that has been used up or has expired. If the page says it is busy or the installer is briefly unavailable, wait a moment and use its retry button. And if all else fails, the public **Download for Mac** button on [rallywith.ai](https://rallywith.ai) gets you the same app.
+If the page says **This link is incomplete or invalid. Ask the sender for a new link.**, do exactly that. The same goes for a link that has been used up or has expired. If the page says it is busy or the installer is briefly unavailable, wait a moment and use its retry button. If nothing works, the public **Download for Mac** button on [rallywith.ai](https://rallywith.ai) gets you the same app.
 
 ## The introduction
 
@@ -64,10 +64,10 @@ There is no separate sign-up. If this is your first time, signing in creates you
 
 ### Where your data lives
 
-You may notice there is no question about which country or region to use. That is not an oversight: Rally runs a single service, and every Organization is created there. For the details of how your data is handled, see [What Rally shares, and with whom](../11-privacy-and-security/02-what-rally-shares.md).
+The Mac app does not ask where in the world to keep your data. Every Organization you create lives in Rally's single Global deployment. For the details of how your data is handled, see [What Rally shares, and with whom](../11-privacy-and-security/02-what-rally-shares.md).
 
 ## Other ways in
 
 The Mac app is the place to begin, and it is the one this chapter describes. Once you are set up, you can also follow your Channels from [your iPhone](../08-rally-everywhere/06-rally-on-iphone.md), and people you share a conversation with can join it from [a web browser](../08-rally-everywhere/08-rally-in-a-browser.md).
 
-Signed in? Next, [create or join an Organization](02-create-or-join-an-organization.md).
+Once you are signed in, [create or join an Organization](02-create-or-join-an-organization.md).

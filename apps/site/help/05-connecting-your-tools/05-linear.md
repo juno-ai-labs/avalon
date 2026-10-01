@@ -49,4 +49,4 @@ With the Organization connection in place, a change in Linear, such as a new iss
 
 Refresh the connection that failed. A healthy personal Linear connection does not repair a broken Organization one, and the other way round.
 
-Next, [Notion](05-notion.md).
+Next, [Notion](06-notion.md).

@@ -26,9 +26,9 @@ can:
 So "@Rally what did the design channel decide about the logo last week?" works,
 as long as Rally can see the design channel.
 
-Two limits are worth knowing. The bot's search covers public channels only. And
-it only searches when you have asked it something; it cannot quietly search
-Slack in the background.
+The bot has two limits. Its search covers public channels only. And it
+searches only when you have asked it something, never quietly in the
+background.
 
 ## Your own Slack connection
 
@@ -51,7 +51,7 @@ also carry on into the same step.
 - Disconnecting it removes Rally's access to your Slack. It does not delete any
   work in Rally.
 
-[The Slack page in chapter 5](../05-connecting-your-tools/06-slack.md) covers
+[The Slack page in chapter 5](../05-connecting-your-tools/07-slack.md) covers
 connecting and refreshing in more detail.
 
 > [!WARNING]
@@ -69,7 +69,7 @@ right where it spoke. Rally reacts to your reply with the usual eyes emoji to
 show it heard you.
 
 - Your reply runs with the Sidekick's own access, not yours.
-- If the Sidekick is paused or deleted, your reply gets the stop sign and
+- If the Sidekick is paused or archived, your reply gets the stop sign and
   nothing happens.
 - Guests in your Slack workspace, and people in channels shared with another
   company through Slack Connect, cannot continue a Sidekick's run this way.
@@ -81,10 +81,10 @@ how to tell a Sidekick to post in Slack in the first place.
 
 Paste a link to a Rally Channel into Slack and it opens out into a small card.
 The card shows the Channel's title, when it last had activity, and whether a
-Sidekick started it. While the Channel is running, waiting for input or has
-failed, the card also shows a status badge, and the badge updates as the status
-changes. Your team can see at a glance that the report is still cooking before
-anyone clicks.
+Sidekick started it. While the Channel is running, waiting for input, has
+failed or was stopped, the card also shows a status badge, and the badge updates as the status
+changes. Your team can see that the report is still cooking before anyone
+clicks.
 
 To get a link, use **Copy channel link** in Rally, as described in [Search and
 links](../03-spaces-and-breakouts/06-search-and-links.md).
@@ -93,12 +93,12 @@ links](../03-spaces-and-breakouts/06-search-and-links.md).
   normal access in Rally.
 - A Channel from a different Organization, an archived Channel, or any link
   pasted into a Slack Connect channel shows a plain card with no details.
-- Very old Rally links that start with `rallywithai://` do not get a card.
+- Old Rally links that start with `rallywithai://` do not get a card.
 
 ## A recipe: your morning email briefing in Slack
 
-This is the example Rally itself suggests, and a good first Sidekick for anyone
-who starts the day buried in email. Send Rally this, in Slack or in the app:
+This is the example Rally itself suggests, and a good first Sidekick if you
+start the day buried in email. Send Rally this, in Slack or in the app:
 
 ```text
 Check my Gmail every morning at 9 AM and send me the stack-ranked top 3 emails in Slack.
@@ -110,7 +110,7 @@ subject, why it matters, what Rally suggests you do, and a link to open it in
 Gmail. The **Morning email briefing** starter in Rally's Slack messages tab
 sends the same request.
 
-- You need your own [Gmail connection](../05-connecting-your-tools/02-google.md)
+- You need your own [Gmail connection](../05-connecting-your-tools/02-google-mail-and-calendar.md)
   and a linked Slack account (see [Connect
   Rally](01-rally-in-slack.md#linking-your-slack-account-with-connect-rally)).
 - On a morning with nothing worth telling you, it stays quiet rather than
@@ -126,15 +126,15 @@ Your inbox will not get any smaller, but at least it will arrive in order.
 
 What Rally's Slack app does with what it sees in Slack:
 
-- **Rally does not copy Slack.** It keeps no mirror or searchable index of your
+- Rally does not copy Slack. It keeps no mirror or searchable index of your
   Slack workspace. It keeps the work done in a task, such as your request, its
   answer and anything Rally wrote down while working.
-- **The bot reads only conversations it is in.** It is there because someone
+- The bot reads only conversations it is in. It is there because someone
   invited it, or because a Sidekick that watches a public Slack channel needed
   it to join.
-- **Bot search is public channels only.**
-- **Your personal connection uses your own Slack permissions,** and only yours.
-- **Disconnecting stops new access.** It does not delete work in Rally that
+- Bot search covers public channels only.
+- Your personal connection uses your own Slack permissions, and only yours.
+- Disconnecting stops new access. It does not delete work in Rally that
   already includes Slack content. To remove the Rally app from Slack entirely, a
   Slack administrator removes it in Slack's App Management.
 

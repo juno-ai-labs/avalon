@@ -13,8 +13,8 @@ of its own to do that on. Rally calls it the **Terminal**.
 The Terminal is a small Linux computer that Rally borrows while it works. It
 is a **sandbox**, which means it is sealed off: it is not your Mac, it cannot
 see your files unless you give them to Rally, and nothing Rally does in it can
-touch your own computer. Think of it as a workshop out the back where Rally can
-make a mess and then bring you the finished piece.
+touch your own computer. It is a workshop out the back, where Rally can make a
+mess and bring you the finished piece.
 
 On it, Rally can write and run programs in Python, JavaScript, TypeScript and
 shell scripts, and use a SQLite database. It can install extra tools when it
@@ -70,13 +70,12 @@ a test web server, does not.
 
 ## What it cannot do
 
-The sandbox is a modest machine with a fixed size, and some limits are worth
-knowing:
+The sandbox is a modest machine with a fixed size:
 
 - **Big jobs can run out of room.** It has 2 processors, 4 GB of memory and
   8 GB of disk. A job that needs more stops partway, and Rally tells you it
   failed.
-- **One command runs at most 15 minutes.** A very long calculation has to be
+- **One command runs at most 15 minutes.** A long calculation has to be
   split up.
 - **Nothing interactive.** Rally cannot run a program that sits waiting for
   someone to type, or leave a server running in the background.
@@ -139,7 +138,7 @@ Some ground rules Rally keeps to:
   rules.
 
 Which repositories Rally may touch is controlled from the GitHub connection.
-See [GitHub](../05-connecting-your-tools/03-github.md).
+See [GitHub](../05-connecting-your-tools/04-github.md).
 
 > [!TIP]
 > Treat Rally's pull request like one from a new colleague: read the diff and

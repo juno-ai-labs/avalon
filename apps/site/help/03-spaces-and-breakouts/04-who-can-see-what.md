@@ -24,8 +24,7 @@ Space limited to its participants and it begins private.
 
 ## Where access comes from
 
-Here is the idea that makes the rest of this page make sense. **A person can read
-a Channel if any one of these lets them in:**
+A person can read a Channel if any one of these lets them in:
 
 - **The Channel itself.** Either the Channel is public to the Organization, or
   the person is one of its participants.
@@ -33,7 +32,7 @@ a Channel if any one of these lets them in:**
   lets everyone read every Channel in it. A Space limited to its participants
   lets those participants read every Channel in it.
 
-It takes only one open door. That has two consequences worth remembering:
+One open door is enough. Two things follow from that:
 
 - A Channel that is "private" in its own setting is still readable by everyone if
   it sits in an Organization-wide Space.
@@ -68,7 +67,7 @@ A few rows you may meet:
 
 - **A space you can't see.** The Channel is also in a Space you are not part of.
   You can see that it exists, but you cannot change it.
-- A Space you only reach through this very Channel has no **Remove from space**
+- A Space you only reach through this Channel has no **Remove from space**
   button.
 - **Access from this space is still being applied.** or **This channel has left
   this space; its access is still being withdrawn.** A change is still taking
@@ -103,9 +102,8 @@ Who may change things depends on each person's role in the Organization.
 | **Member** | Can create Spaces and Channels, and add people to Spaces. |
 | **Guest** | Someone from outside the Organization who was shared into particular conversations by email. Sees only those, cannot create Spaces, and has no **Manage access**. |
 
-Rally draws its buttons according to your role, and checks every change again
-when you make it, so a button that has stopped applying to you will
-refuse. Roles, and how to change them, are covered in
+Rally shows buttons according to your role and checks every change again when
+you make it, so a button that has stopped applying to you will refuse. Roles, and how to change them, are covered in
 [Roles: owners, administrators, members and guests](../10-running-an-organization/01-roles.md).
 
 ## When access narrows
