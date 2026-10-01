@@ -108,7 +108,7 @@ is no button anywhere that deletes a Channel.
 | A Channel | Right-click it in the Channels rail and choose **Archive channel**. |
 | A Breakout | Right-click it in the Channel sidebar and choose **Archive breakout**. See [Breakouts](03-breakouts.md). |
 | A Space | Right-click it and choose **Archive space**. See [Spaces](01-spaces.md#archive-and-restore-a-space). |
-| A Sidekick | Use **Archive Sidekick** in the Sidekicks window. See [The Sidekicks window](../07-sidekicks/04-the-sidekicks-window.md). |
+| A Sidekick | Click **…** on the Sidekick and choose **Archive Sidekick**. See [The Sidekicks window](../07-sidekicks/04-the-sidekicks-window.md). |
 
 > [!WARNING]
 > Archiving a Channel affects everyone, not only you. It leaves the sidebar for
@@ -130,7 +130,7 @@ and the Channels rail each have a button at the bottom to collapse them
 (**Collapse spaces**, **Collapse channels**) and to bring them back.
 
 When the window is too narrow to show everything, Rally collapses the Channels
-rail for you, and its button says **Widen the window to expand channels**.
+rail for you, and the tooltip on its button says **Widen the window to expand channels**.
 
 ## When something goes wrong
 

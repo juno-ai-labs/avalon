@@ -151,8 +151,9 @@ A few things to know:
   Rally to remember it (see
   [Memory and coming back later](05-memory-and-coming-back-later.md)).
 - Very rarely, a conversation is simply too big for Rally to take in at all.
-  You then see **This conversation is longer than the selected model will
-  accept. Start a new work stream to continue**. "Work stream" is the old name
+  You then see a message that begins **This conversation is longer than the
+  selected model will accept. Start a new work stream to continue**. "Work
+  stream" is the old name
   for a Channel. Start a new Channel and tell Rally what it needs to know.
 - Rally does not reach into your other Channels to fill gaps. Each
   conversation stands on its own.

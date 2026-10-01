@@ -1,0 +1,142 @@
+---
+title: Keyboard shortcuts
+description: Every key combination Rally knows, in one place.
+---
+
+This is the page to print and prop against your monitor. Rally has no screen
+that lists its shortcuts and no way to change them, so this is where they are
+all written down. They are grouped by where your cursor is when you press them,
+because the same keys can do different things in different places.
+
+The symbols are the ones on a Mac keyboard: <kbd>⌘</kbd> is Command,
+<kbd>⌥</kbd> is Option, <kbd>⇧</kbd> is Shift and <kbd>⌃</kbd> is Control.
+
+## Anywhere in Rally
+
+| Keys | What they do |
+| --- | --- |
+| <kbd>⌘</kbd> <kbd>,</kbd> | Open [Settings](01-the-settings-window.md). |
+| <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>F</kbd> | Open **Search organization**, to find any message, Channel, file or link. See [Search and links](../03-spaces-and-breakouts/06-search-and-links.md). |
+| <kbd>⌘</kbd> <kbd>B</kbd> | Collapse or expand the Channels rail, for more room to read. |
+| <kbd>⌘</kbd> <kbd>W</kbd> | Close the front window. |
+| <kbd>⌘</kbd> <kbd>Q</kbd> | Quit Rally. (Closing the window does not; see [Rally on your Mac](03-rally-on-your-mac.md#closing-the-window-is-not-quitting).) |
+| <kbd>Esc</kbd> | In the Settings and Sidekicks windows, close the window, as long as nothing else is open and you are not mid-way through typing. |
+
+<kbd>⌘</kbd> <kbd>B</kbd> only folds the Channels rail. The Spaces rail stays
+where it is. If the window is too narrow, the rail stays folded whatever you
+press; widen the window first.
+
+## In the search pop-up
+
+Once **Search organization** is open:
+
+| Keys | What they do |
+| --- | --- |
+| <kbd>↑</kbd> <kbd>↓</kbd> | Move through the results. Going past the last one loads more. |
+| <kbd>Enter</kbd> | Open the highlighted result. |
+| <kbd>⌘</kbd> <kbd>1</kbd> to <kbd>⌘</kbd> <kbd>9</kbd> | Open the first to ninth result directly. |
+| <kbd>←</kbd> <kbd>→</kbd> | With a filter tab selected, move to the next or previous filter. |
+
+When the pop-up opens, your last search is already selected, so you can type
+straight over it.
+
+> [!TIP]
+> The number shortcuts are not marked on the results, so few people find them.
+> <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>F</kbd>, a few letters, <kbd>⌘</kbd>
+> <kbd>1</kbd> is about the quickest way to anywhere in Rally.
+
+## In the message box
+
+These work in the message box of any Channel or Breakout, and when you start a
+new one. [The message box](../02-working-in-a-channel/01-the-message-box.md)
+covers lists, mentions and slash commands in more detail.
+
+| Keys | What they do |
+| --- | --- |
+| <kbd>Enter</kbd> | Send the message (or create the Channel or Breakout, on the new one screen). |
+| <kbd>⇧</kbd> <kbd>Enter</kbd> | Start a new line without sending. |
+| <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>8</kbd> | Turn the line, or the selected lines, into a bulleted list. |
+| <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>7</kbd> | Turn them into a numbered list. |
+| <kbd>Enter</kbd>, inside a list | Start the next item of the list. |
+| <kbd>Tab</kbd>, inside a list | Indent the item. |
+| <kbd>⇧</kbd> <kbd>Tab</kbd>, inside a list | Move the item back out. |
+| <kbd>⌘</kbd> <kbd>Z</kbd> | Undo. Straight after <kbd>Enter</kbd> in a list, it takes back only the new bullet. |
+| <kbd>Esc</kbd> | Close the @-mention or slash-command list. |
+| <kbd>Enter</kbd> or <kbd>Tab</kbd>, in the slash-command list | Accept the first suggestion. |
+
+The list keys are the same as in Slack and Google Docs, so if you already use
+them there, your hands are ahead of you. They follow the physical 7 and 8 keys,
+so they work on keyboards laid out for other languages too.
+
+If you type in a language that uses an input method, such as Japanese or
+Chinese, <kbd>Enter</kbd> finishes the word you are composing rather than sending
+the message half-written.
+
+## Adding people to a new Channel
+
+On the new Channel screen, in the **Add people** box:
+
+| Keys | What they do |
+| --- | --- |
+| <kbd>⌘</kbd> <kbd>1</kbd> to <kbd>⌘</kbd> <kbd>9</kbd> | Add the first to ninth suggested person. Each suggestion shows its little key hint. |
+| <kbd>↑</kbd> <kbd>↓</kbd> and <kbd>Enter</kbd> | Move through the suggestions and add the highlighted one. |
+| <kbd>Backspace</kbd> | In an empty box, remove the last person you added. |
+| <kbd>Esc</kbd> | Close the list of suggestions. Press it again to close the new Channel. |
+
+## Answering Rally's questions
+
+When Rally stops to ask you something with a card of options (see
+[While Rally works](../02-working-in-a-channel/03-while-rally-works.md)):
+
+| Keys | What they do |
+| --- | --- |
+| <kbd>A</kbd>, <kbd>B</kbd>, <kbd>C</kbd>… | Pick or unpick that option. |
+| <kbd>1</kbd>, <kbd>2</kbd>, <kbd>3</kbd>… | The same, by number instead of letter. |
+| <kbd>⌘</kbd> <kbd>Enter</kbd> | **Submit** your answer. The button shows this hint. |
+
+The letter and number keys work only when you are not typing in a text box
+inside the card, so you can still write an "Other" answer containing the letter
+A.
+
+## In the built-in browser
+
+When a web page is open in Rally's built-in browser (see
+[Research and the built-in browser](../04-working-with-rally/02-research-and-the-web.md)),
+the keys are the ones Safari and Chrome use. They work whether you last clicked
+Rally's browser controls or the page itself.
+
+| Keys | What they do |
+| --- | --- |
+| <kbd>⌘</kbd> <kbd>T</kbd> | Open a new tab. |
+| <kbd>⌘</kbd> <kbd>W</kbd> | Close the current tab. (Inside the browser this closes the tab, not the window.) |
+| <kbd>⌘</kbd> <kbd>L</kbd> | Jump to the address bar. |
+| <kbd>⌘</kbd> <kbd>R</kbd> | Reload the page. |
+| <kbd>⌘</kbd> <kbd>[</kbd> | Go back. |
+| <kbd>⌘</kbd> <kbd>]</kbd> | Go forward. |
+| <kbd>⌃</kbd> <kbd>Tab</kbd> or <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>]</kbd> | Next tab. |
+| <kbd>⌃</kbd> <kbd>⇧</kbd> <kbd>Tab</kbd> or <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>[</kbd> | Previous tab. |
+| <kbd>⌘</kbd> <kbd>1</kbd> to <kbd>⌘</kbd> <kbd>8</kbd> | Go to that tab. |
+| <kbd>⌘</kbd> <kbd>9</kbd> | Go to the last tab, however many there are. |
+
+With a tab button selected, <kbd>←</kbd> and <kbd>→</kbd> move between tabs,
+<kbd>Home</kbd> and <kbd>End</kbd> jump to the first and last, and
+<kbd>Delete</kbd> or <kbd>Backspace</kbd> closes that tab.
+
+## In the sidebar and panels
+
+| Keys | What they do |
+| --- | --- |
+| <kbd>⌥</kbd> <kbd>↑</kbd> / <kbd>⌥</kbd> <kbd>↓</kbd> | Move a selected pinned Channel, or a Space, up or down. See [Arranging your Channels](../03-spaces-and-breakouts/02-arranging-channels.md). |
+| <kbd>←</kbd> <kbd>→</kbd>, on a panel's edge | With the edge of the right-hand panel selected, make the panel narrower or wider. |
+| <kbd>Enter</kbd>, on a panel's edge | Put the right-hand panel back to its usual width. |
+
+The arrows on their own only move the selection up and down the sidebar. Only
+pinned Channels can be reordered; the rest keep their own order.
+
+## On computers other than a Mac
+
+Rally is made for the Mac, and this page is written for it. If you meet Rally on
+another kind of computer, <kbd>Ctrl</kbd> takes the place of <kbd>⌘</kbd> for
+most of these shortcuts. Two exceptions use the Command key only and do nothing
+elsewhere: <kbd>⌘</kbd> <kbd>B</kbd> for the Channels rail, and <kbd>⌘</kbd>
+<kbd>1</kbd> to <kbd>9</kbd> in **Add people**.
