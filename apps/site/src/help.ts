@@ -129,9 +129,15 @@ function highlighted(text: string, terms: string[]): DocumentFragment {
 }
 
 function searchDialog(): { dialog: HTMLDialogElement; input: HTMLInputElement } {
-  const input = element('input', { type: 'search', placeholder: 'Search the manual', 'aria-label': 'Search the manual', autocomplete: 'off', spellcheck: 'false' });
+  // A combobox owning a listbox: arrow keys move aria-activedescendant, so a
+  // screen reader announces the result that Return will open.
+  const input = element('input', {
+    type: 'search', role: 'combobox', placeholder: 'Search the manual', 'aria-label': 'Search the manual',
+    'aria-controls': 'help-search-results', 'aria-expanded': 'false', 'aria-autocomplete': 'list',
+    autocomplete: 'off', spellcheck: 'false',
+  });
   const close = element('button', { type: 'submit', 'aria-label': 'Close search' }, 'Esc');
-  const list = element('ol', { role: 'listbox', 'aria-label': 'Results' });
+  const list = element('ol', { id: 'help-search-results', role: 'listbox', 'aria-label': 'Results' });
   const empty = element('p', { class: 'empty', hidden: '' });
   const dialog = element('dialog', { class: 'search', 'aria-label': 'Search the manual' },
     element('form', { method: 'dialog', role: 'search' }, input, close), list, empty);
@@ -144,7 +150,9 @@ function searchDialog(): { dialog: HTMLDialogElement; input: HTMLInputElement } 
     if (all.length === 0) return;
     selected = (next + all.length) % all.length;
     all.forEach((option, position) => option.setAttribute('aria-selected', String(position === selected)));
-    all[selected]?.scrollIntoView({ block: 'nearest' });
+    const current = all[selected];
+    if (current) input.setAttribute('aria-activedescendant', current.id);
+    current?.scrollIntoView({ block: 'nearest' });
   };
 
   const render = async (): Promise<void> => {
@@ -161,15 +169,17 @@ function searchDialog(): { dialog: HTMLDialogElement; input: HTMLInputElement } 
     if (query !== input.value) return;
     const terms = words(query);
     const hits = searchEntries(entries, query);
-    list.replaceChildren(...hits.map((hit) => {
+    list.replaceChildren(...hits.map((hit, position) => {
       const title = element('strong', {}, highlighted(hit.entry.t, terms));
       if (hit.heading) title.append(element('span', {}, ' › ', highlighted(hit.heading[1], terms)));
-      const link = element('a', { role: 'option', href: hit.heading ? `${hit.entry.u}#${hit.heading[0]}` : hit.entry.u },
+      const link = element('a', { id: `help-search-option-${position}`, role: 'option', 'aria-selected': 'false', href: hit.heading ? `${hit.entry.u}#${hit.heading[0]}` : hit.entry.u },
         element('small', {}, hit.entry.c || 'Help Center'), title, element('span', { class: 'snippet' }, highlighted(hit.snippet, terms)));
       return element('li', {}, link);
     }));
     empty.textContent = 'Nothing matched. Try fewer words, or a different one.';
     empty.hidden = hits.length > 0 || terms.length === 0;
+    input.setAttribute('aria-expanded', String(hits.length > 0));
+    if (hits.length === 0) input.removeAttribute('aria-activedescendant');
     selected = 0;
     select(0);
   };

@@ -122,6 +122,7 @@ html { scroll-padding-top: calc(var(--help-header) + 24px); -webkit-text-size-ad
 .help .draft { margin-left: 8px; padding: 0 6px; border: 1px solid var(--help-warning); border-radius: 3px; background: none; color: var(--help-warning); font: 10px/1.6 var(--help-font-mono); letter-spacing: .1em; text-transform: uppercase; vertical-align: middle; }
 .skip { position: absolute; top: 8px; left: 8px; z-index: 60; transform: translateY(-200%); padding: 10px 14px; background: var(--help-ink); color: var(--help-bg) !important; }
 .skip:focus { transform: none; }
+.help main:focus { outline: none; }
 .eyebrow, .toc > p, .contents h2, .pager span, .top .section, #chapters .home { font-family: var(--help-font-mono); font-size: var(--help-tiny); letter-spacing: .2em; text-transform: uppercase; color: var(--help-muted); }
 
 /* Header. */

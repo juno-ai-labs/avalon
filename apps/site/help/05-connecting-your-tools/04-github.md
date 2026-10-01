@@ -67,7 +67,7 @@ Work through these before reinstalling anything:
 
 1. Check that the Rally GitHub App is still installed on the right GitHub account or organization, in GitHub's own settings.
 2. Check that the repository is included in that installation, and in Rally's list under **Repository access** if you use **Selected repositories**.
-3. Check the **Status** column in **Settings → Connections**. If it says **Reconnect required**, click **Refresh**, or ask an owner or administrator to for the Organization connection.
+3. Check the **Status** column in **Settings → Connections**. If it says **Reconnect required**, click **Refresh**, or ask an owner or administrator to do so for the Organization connection.
 
 Deleting the GitHub connection in Rally leaves the Rally GitHub App installed on GitHub. Remove it in GitHub's settings if you no longer want it there.
 
