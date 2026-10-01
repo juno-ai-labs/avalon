@@ -2,67 +2,12 @@
  * Shared markup for the public marketing pages: the column footer and the
  * comparison table. Pages hold a marker comment and the Vite plugin in
  * `vite.config.ts` swaps in the markup, so the list of rivals and Trust Center
- * pages lives here once instead of in every page that shows it.
+ * pages lives in one place instead of in every page that shows it. Node only.
  */
+import { loadComparisons, type Comparison } from './comparison-pages';
 
-export interface Comparison {
-  /** Path segment under `/compare/`, and the page's directory name. */
-  slug: string;
-  name: string;
-  maker: string;
-  /** What the product is, in one plain line. */
-  kind: string;
-  /** Why a team would pick Rally instead, in one plain line. */
-  edge: string;
-}
-
-export const comparisons: readonly Comparison[] = [
-  {
-    slug: 'claude-tag', name: 'Claude Tag', maker: 'Anthropic',
-    kind: 'Claude as a teammate you tag in Slack threads.',
-    edge: 'Rally gives the team its own room with Spaces, private Breakouts, and the right model for each job, not one vendor’s.',
-  },
-  {
-    slug: 'grok-bot', name: 'Grok Bot', maker: 'xAI',
-    kind: 'A crew of named Grok agents you build, equip, and add to Slack.',
-    edge: 'One AI that sets up its own Sidekicks, so nobody has to build and babysit a bot roster.',
-  },
-  {
-    slug: 'viktor', name: 'Viktor', maker: 'Viktor',
-    kind: 'An AI coworker you message in Slack or Teams, paid in credits.',
-    edge: 'Viktor takes tasks. Rally is where the whole team and the AI work from the same context, at one flat price.',
-  },
-  {
-    slug: 'chatgpt', name: 'ChatGPT', maker: 'OpenAI',
-    kind: 'A personal AI chat, mostly one person at a time.',
-    edge: 'Coworkers see the work, add to it, and pick it up. No more pasting answers into Slack.',
-  },
-  {
-    slug: 'claude-cowork', name: 'Claude Cowork', maker: 'Anthropic',
-    kind: 'A desktop agent that works through one person’s files and apps.',
-    edge: 'Cowork works on your laptop. Rally works where the whole team can see it.',
-  },
-  {
-    slug: 'instinct', name: 'Instinct', maker: 'Spear Street Technology',
-    kind: 'An invite-only personal agent for errands and life admin.',
-    edge: 'Rally is built for team work. It won’t book your dentist, but it will get the launch plan out the door.',
-  },
-  {
-    slug: 'notion-ai', name: 'Notion AI', maker: 'Notion',
-    kind: 'AI inside your Notion pages, wiki, and databases.',
-    edge: 'Rally reads your Notion and the rest of your tools, and the conversation is shared, not tucked in a page sidebar.',
-  },
-  {
-    slug: 'slack', name: 'Slack', maker: 'Salesforce',
-    kind: 'Team chat, now with AI summaries and Slackbot.',
-    edge: 'Slack is where you talk about work. Rally is where people and AI do it together, and it still posts back to Slack.',
-  },
-  {
-    slug: 'microsoft-teams', name: 'Microsoft Teams', maker: 'Microsoft',
-    kind: 'Chat and meetings, with Copilot sold per seat on top.',
-    edge: 'No license maze. One price per organization, no seat limit, and it works with Google tools too.',
-  },
-];
+/** Every rival, read from `content/compare/*.md` and sorted by `order`. */
+export const comparisons: readonly Comparison[] = loadComparisons(new URL('../content/compare/', import.meta.url));
 
 export const trustPages: readonly { href: string; name: string }[] = [
   { href: '/trust/', name: 'Overview' },

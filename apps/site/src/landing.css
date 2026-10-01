@@ -202,6 +202,12 @@ h1{white-space:pre-line;max-width:56rem;margin:0 auto;font-size:4.5rem}
 .faq summary:focus-visible{outline:2px solid var(--paper);outline-offset:4px}
 .faq details p{max-width:48rem;padding:0 0 24px;color:var(--muted)}
 .compare-cta{display:flex;flex-wrap:wrap;gap:16px;margin-top:40px}
+.sources ul{margin:32px 0 0;padding:0;list-style:none;font-size:var(--small);color:var(--muted)}
+.sources li{padding:12px 0;border-bottom:1px solid var(--hairline)}
+.sources a{color:var(--soft);border-bottom:1px solid oklch(.97 0 0/.25);overflow-wrap:anywhere}
+.sources a:hover{color:var(--paper);border-color:var(--paper)}
+.points a,.faq a,.compare-answer a{border-bottom:1px solid oklch(.97 0 0/.25)}
+.compare-aside p{margin:0}
 @media(max-width:1050px){.compare-title{font-size:3.75rem}}
 @media(max-width:768px){.points,.verdicts{grid-template-columns:minmax(0,1fr)}
 .versus-table,.versus-table tbody{display:block}

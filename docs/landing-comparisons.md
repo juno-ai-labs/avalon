@@ -16,113 +16,160 @@ carries.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/site/src/site-chrome.ts` | The single list of rivals (`comparisons`) and Trust Center pages (`trustPages`), and the renderers for the footer and the comparison table. |
-| `apps/site/vite.config.ts` | The `rally-site-chrome` plugin that swaps markers for markup, and one build input per comparison page, derived from `comparisons`. |
-| `apps/site/compare/index.html` | The hub page: answer, table, method, FAQ. |
-| `apps/site/compare/<slug>/index.html` | One page per rival. Static HTML. |
+| `apps/site/content/compare/<slug>.md` | One rival's page as GitHub-flavored Markdown: front matter plus fixed `##` sections. The only place its copy lives. |
+| `apps/site/src/comparison-pages.ts` | Reads and validates the Markdown (`loadComparisons`, `parseComparison`) and renders one page's HTML (`renderComparisonPage`). |
+| `apps/site/src/social-cards.ts` | Draws 1200x630 unfurl cards: `renderSocialCard` for any page, `renderComparisonCard` for a rival. |
+| `apps/site/src/site-chrome.ts` | `comparisons` (the loaded list), `trustPages`, and the renderers for the footer and the comparison table. |
+| `apps/site/vite.config.ts` | `rally-site-chrome` swaps markers for markup; `rally-comparison-pages` turns each Markdown file into `/compare/<slug>/` and its `social.png`, in the build and the dev server. |
+| `apps/site/compare/index.html` | The hub page: answer, table, method, FAQ. Static HTML. |
 | `apps/site/src/landing.css` | Footer, table, and comparison page styles, in the landing page's tokens. |
 | `apps/site/public/sitemap.xml`, `public/llms.txt` | Crawler and agent entry points that list the pages. |
 
 ## How it works
 
+### Pages from Markdown
+
+Each rival is one Markdown file whose front matter holds `slug`, `name`,
+`maker`, `order`, `title`, `description`, `updated`, `kind` and `edge`, and
+whose body is a short answer followed by `## Side by side`, `## Where <name>
+shines`, `## Where Rally wins`, `## Which one should you pick?`,
+`## Questions` and `## Sources`. The file reads as an ordinary document on
+GitHub, so editing copy needs no HTML.
+
+`vite.config.ts` registers `compare/<slug>/index.html` as a build input for each
+file, though no such file exists. The plugin's `resolveId` and `load` hooks
+answer for those paths with `renderComparisonPage`, and Vite then treats the
+result like any other HTML entry: scripts are bundled, `transformIndexHtml`
+runs, and the page lands at `dist/compare/<slug>/index.html`. In development a
+middleware renders the same HTML for `/compare/<slug>/`. The build also publishes
+the file itself at `/compare/<slug>/index.md`, linked from the page as
+`rel="alternate" type="text/markdown"` and from `llms.txt`, so an agent can read
+the page without parsing HTML.
+
+`renderComparisonPage` lexes the body with `marked` and maps each `##` section
+to the landing page's layout: the table becomes `versus-table` with
+`data-label`s for the phone layout, `###` items become `points` cards, a
+blockquote becomes the dad-joke aside, the two pick lists become `verdicts`,
+and `### question` / answer pairs become `<details>` plus `FAQPage` JSON-LD.
+An unknown `##` heading, a missing required section, or a missing front matter
+field throws, so the build fails instead of shipping a broken page.
+
+### Shared footer and table
+
 A page that wants shared markup holds a marker comment. `<!-- rally:site-footer -->`
 becomes the column footer and `<!-- rally:comparison-table -->` becomes the
-table of rivals. The plugin runs in `transformIndexHtml` with `order: 'pre'`,
-so the markers are gone before the access-copy and telemetry plugins see the
-page, in development and in the build alike. An unknown marker throws, which
-fails the build rather than shipping a page with a hole in it.
+table of rivals. The plugin runs with `order: 'pre'`, before the access-copy
+and telemetry plugins. An unknown marker throws. Both read `comparisons`,
+which is sorted by each file's `order`.
 
-The table and the footer both read `comparisons`, so adding a rival is one entry
-there plus its page. The table is a real `<table>` with a caption and scoped
-headers because AI crawlers and screen readers both parse tables well; below
-900px CSS turns each row into a stacked card labelled from `data-label`.
+### Social cards
+
+Every rival page sets `og:image` and `twitter:image` to
+`/compare/<slug>/social.png`, and the hub to `/compare/social.png`. The build
+draws each card in `generateBundle` from the page's own `name` and `edge`, so a
+card can never disagree with its page. The card is the landing hero image under
+a dark gradient, with the Rally mark, a "Compared to" eyebrow, "RALLY / VS
+NAME" in Barlow Semi Condensed, and the `edge` line. The headline size shrinks
+to fit the longest name.
+
+Text is converted to SVG paths with `opentype.js` from the `@fontsource` WOFF
+files and rasterized with `sharp`. Rendering text through sharp's own text input
+was tried first and silently fell back to DejaVu Sans; paths remove any
+dependency on the build machine's fonts.
+
+### Page shape
 
 Each comparison page follows one shape so a reader can line two of them up:
-
-1. A one-paragraph **short answer** under the title. AI search engines quote the
-   first direct answer on a page, so it comes first.
-2. **Side by side**: the same eight questions on every page (who it's for,
-   shared conversation, shared context, private work, tools, running on its own,
-   models, pricing), Rally's column first.
-3. **Where the rival shines**: honest credit. A comparison that admits
-   strengths reads as trustworthy to people and to the engines that rank it.
-4. **Where Rally wins**, ending with one dad joke.
-5. **Which to pick**: two short lists.
-6. **FAQ** as `<details>`, mirrored in `FAQPage` JSON-LD.
-
-Every page carries JSON-LD (`WebPage` or `CollectionPage`, the Rally
-`SoftwareApplication` with its two plan prices, `BreadcrumbList`, `FAQPage`), a
-visible "Updated" date in a `<time>` element, and `article:modified_time`. The
-pages reuse the landing page's header, `section-nav.ts` for the left rail, and
-the landing stylesheet. Class names are whole words that say what the element is
-(`compare-answer`, `versus-table`, `footer-heading`) so the markup stays legible
-to an agent reading the HTML.
+a short answer first (AI search engines quote the first direct answer on a
+page), the same eight side-by-side questions with Rally's column first, honest
+credit to the rival, Rally's case with one dad joke, two pick lists, an FAQ,
+and sources. The copy leads with whatever Rally does well against the rival's
+most common user frustrations, without naming them. Class names are whole words
+that say what the element is (`compare-answer`, `versus-table`,
+`footer-heading`) so the markup stays legible to an agent.
 
 ## Invariants
 
-- **One list of rivals.** `comparisons` in `site-chrome.ts` feeds the footer,
-  the table, and the build inputs. A rival added anywhere else drifts: a
-  footer link to a page the build never emits is a 404. Guard: the site tests
+- **One source per rival.** The Markdown file feeds the page, its card, the
+  footer, the table, and the build inputs. A footer link to a page the build
+  never emits is a 404, so nothing else may list rivals. Guard: the site tests
   render the footer and table and assert the exact links.
-- **Every comparison page has a directory under `compare/`.** The build input is
-  derived from `comparisons`, so a missing file fails `vite build`. No other guard.
+- **A file's name is its slug.** `loadComparisons` throws when they differ, which
+  fails the build.
+- **The section headings are a fixed vocabulary.** `renderComparisonPage` throws
+  on an unknown `##` heading or a missing required one. Guard: the Markdown test
+  in `apps/site/test/site.test.ts`.
 - **The footer's help@ link keeps `data-site-action="support-contact-footer"`.**
-  It now lives in `renderSiteFooter`, not in `index.html`, so the tracking test
-  renders the landing page through `renderSiteChrome` before it looks for ids.
-  Guard: `tags every tracked landing link` in `apps/site/test/site.test.ts`.
-- **Each page's date is true.** The "Updated" date, `dateModified`, and the
-  sitemap `lastmod` say when the claims were last checked against the rivals'
-  public pages. Bump all three only after re-checking. No automated guard.
-- **Claims about a rival stay to what its own pages say.** Biased framing is
-  fine; a wrong fact is not. No automated guard; reviewed by hand.
+  It lives in `renderSiteFooter`, so the tracking test renders the landing page
+  through `renderSiteChrome` before it looks for ids. Guard: `tags every tracked
+  landing link`.
+- **Each page's date is true.** `updated` and the sitemap `lastmod` say when the
+  claims were last checked against the rival's public pages. Bump both only after
+  re-checking. No automated guard.
+- **Claims about a rival are sourced.** Every rival fact must be backed by a link
+  under `## Sources`. Biased framing is fine; a wrong fact is not. Rally claims
+  stay to what the landing page and support pages say. No automated guard;
+  reviewed by hand.
 
 ## Boundary
 
-The module owns the comparison pages, the landing page's comparison section, and
-the footer on those pages. It does not own the Trust Center or Support pages'
-own footers (`legal-footer` in `information.css`), which keep their layout, or
-the access-copy headline, which [`private-access.md`](private-access.md) owns.
+The module owns the comparison pages, their social cards, the landing page's
+comparison section, and the footer on those pages. It does not own the Trust
+Center or Support pages' own footers (`legal-footer` in `information.css`), the
+home page's social card (`scripts/generate-brand-assets.py`), or the
+access-copy headline, which [`private-access.md`](private-access.md) owns.
 What the pages report to PostHog is in
 [`landing-page-tracking.md`](landing-page-tracking.md).
 
 ## Failure modes and limits
 
-- A marker with a typo throws in the plugin, so `vite build` and `vite dev` fail
-  loudly.
+- A marker typo, an unknown section, a missing field, or a slug that doesn't
+  match its file name throws, so `vite build` and `vite dev` fail loudly.
+- An `edge` too long for two lines at 34px is cut with an ellipsis on the card;
+  the page itself shows it in full.
+- Cards are about 185 KB each, well under the 5 MB X and 8 MB Facebook limits.
+  `_headers` caches them for a day, like the home card, so an edited card can
+  take a day to refresh in unfurl caches.
 - The comparison pages classify as `landing` in site telemetry because
-  `sitePageForPath` has no `compare` class. Their page views therefore appear
-  beside the home page's with a different `$pathname`; the landing dashboards
-  filter on `$pathname = '/'` and are unaffected.
+  `sitePageForPath` has no `compare` class. Their page views carry their own
+  `$pathname`; the landing dashboards filter on `/` and are unaffected.
 - Rival facts go stale. Each page shows its date so a reader, human or model,
   can judge freshness.
 
 ## Testing
 
 `pnpm --filter @rally/site exec vitest run test/site.test.ts` renders the footer
-and the table and asserts their links and one row's text, and runs the tracking
-check over the rendered landing page. Layout is verified visually: build, serve
-with `vite preview`, and screenshot the landing section, the footer, one rival
-page, and the hub at 1440px and 390px.
+and the table and asserts their links, renders a fixture Markdown page and
+asserts its table, cards, FAQ markup and JSON-LD, meta tags and validation
+errors, draws a card and checks it is a 1200x630 opaque PNG, and runs the
+tracking check over the rendered landing page. Layout and the cards are verified
+visually: build, serve `dist` with `vite preview`, screenshot the landing
+section, the footer, one rival page, and the hub at 1440px and 390px, and open
+`dist/compare/*/social.png`.
 
 ## Changelog
 
-### 2026-10-01: Comparison pages and a column footer are added
+### 2026-10-01: Comparison pages, their social cards, and a column footer are added
 
-**What changed:** The landing page gains a "Compared to" section, the site gains
-`/compare/` and nine "Rally vs X" pages, and the landing footer becomes columns:
-Compared to, Trust Center, and Help.
+**What changed:** The landing page gains a "Compared to" section after
+Technology, the site gains `/compare/` and nine "Rally vs X" pages rendered at
+build time from Markdown, each with its own drawn social card, and the landing
+footer becomes columns: Compared to, Trust Center, and Help.
 
 **Why:** Buyers ask AI search engines "Rally vs Slack" and similar before they
-visit, and comparison pages with a direct answer, a table, and an FAQ are what
-those engines cite. The old footer was one flat row of links that had no room
-for nine more.
+visit, and comparison pages with a direct answer, a table, an FAQ and sources
+are what those engines cite. Links to these pages get shared in Slack and on X,
+where a generic card hides what the page is about. The old footer was one flat
+row of links with no room for nine more.
 
-**Considered and rejected:** Generating the nine pages at build time from data.
-Their prose differs page to page and is edited by people, so static HTML that
-reads like the page is easier to change than strings in TypeScript; only the
-parts that repeat on every page (footer, table) are shared. A copied footer in
-every page was also rejected: eleven copies of the rival list would drift.
+**Considered and rejected:** Hand-written HTML per page, which was the first
+version: copy edits meant editing markup, and nine copies of the same layout
+drift. Committed PNG cards made by a script: they go stale the first time
+someone edits a page's `edge`. Sharp's built-in text rendering for the cards:
+it fell back to the system font without an error. A copied footer in every
+page: eleven copies of the rival list would drift.
 
-**Consequences:** A new rival needs an entry in `comparisons`, a page under
-`compare/`, and a sitemap and `llms.txt` line. A new footer link goes in
-`renderSiteFooter`, never in a page.
+**Consequences:** A new rival is one Markdown file plus a sitemap and
+`llms.txt` line. A new footer link goes in `renderSiteFooter`, never in a page.
+The site build now depends on `sharp`'s native binary and on the `@fontsource`
+packages for the card fonts.

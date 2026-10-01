@@ -9,18 +9,18 @@
 
 ## Compared to
 
-Written by the Rally team, so biased, and dated on each page.
+Written by the Rally team, so biased, and dated on each page. Each page's Markdown source is published beside it at `index.md`, for example https://rallywith.ai/compare/slack/index.md.
 
 - [All comparisons](https://rallywith.ai/compare/): one table of nine tools
-- [Rally vs Claude Tag](https://rallywith.ai/compare/claude-tag/): Anthropic's Claude in Slack threads
-- [Rally vs Grok Bot](https://rallywith.ai/compare/grok-bot/): xAI's build-your-own agent crew
-- [Rally vs Viktor](https://rallywith.ai/compare/viktor/): an AI coworker in Slack or Teams, paid in credits
-- [Rally vs ChatGPT](https://rallywith.ai/compare/chatgpt/): OpenAI's personal AI chat
-- [Rally vs Claude Cowork](https://rallywith.ai/compare/claude-cowork/): Anthropic's personal desktop agent
-- [Rally vs Instinct](https://rallywith.ai/compare/instinct/): an invite-only personal errand agent
-- [Rally vs Notion AI](https://rallywith.ai/compare/notion-ai/): AI inside Notion pages and databases
-- [Rally vs Slack](https://rallywith.ai/compare/slack/): team chat with AI summaries
-- [Rally vs Microsoft Teams](https://rallywith.ai/compare/microsoft-teams/): chat and meetings with Copilot
+- [Rally vs Claude Tag](https://rallywith.ai/compare/claude-tag/): Anthropic's Claude as a taggable teammate in Slack channels (beta)
+- [Rally vs Grok Bot](https://rallywith.ai/compare/grok-bot/): An app for building named AI agents that run on a cloud computer
+- [Rally vs Viktor](https://rallywith.ai/compare/viktor/): An AI employee you @mention in Slack or Microsoft Teams
+- [Rally vs ChatGPT](https://rallywith.ai/compare/chatgpt/): OpenAI's AI assistant, used mostly as one person in one chat
+- [Rally vs Claude Cowork](https://rallywith.ai/compare/claude-cowork/): Anthropic's agent that works through one person's files and apps
+- [Rally vs Instinct](https://rallywith.ai/compare/instinct/): An invite-only personal AI agent you text or call for errands
+- [Rally vs Notion AI](https://rallywith.ai/compare/notion-ai/): AI agents built into Notion's docs, wiki, and databases
+- [Rally vs Slack](https://rallywith.ai/compare/slack/): Team chat with Slackbot, a personal AI agent, built in
+- [Rally vs Microsoft Teams](https://rallywith.ai/compare/microsoft-teams/): Chat and meetings for Microsoft 365, with Copilot on top
 
 ## Trust Center
 
