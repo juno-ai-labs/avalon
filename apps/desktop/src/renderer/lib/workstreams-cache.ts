@@ -160,10 +160,21 @@ export function addPendingWorkstream(queryClient: QueryClient, input: {
   ]);
 }
 
-/** The create that listed this row failed; the Channel does not exist. */
-export function discardPendingWorkstream(queryClient: QueryClient, workstreamId: string): void {
-  releasePendingWorkstreams(queryClient, (current) =>
-    current.filter((row) => !(row.pending && row.id === workstreamId)));
+/**
+ * The create that listed this row failed. A row the server never described is
+ * a Channel that does not exist, and goes. One it did describe exists anyway (a
+ * create can fail after its Space placement commits, or its answer can be
+ * lost), so it stays as the server described it. Answers whether it stayed.
+ */
+export function discardPendingWorkstream(queryClient: QueryClient, workstreamId: string): boolean {
+  let kept = false;
+  releasePendingWorkstreams(queryClient, (current) => current.flatMap((row) => {
+    if (!(row.pending && row.id === workstreamId)) return [row];
+    if (!row.pendingListed) return [];
+    kept = true;
+    return [settledRow(row)];
+  }));
+  return kept;
 }
 
 /**

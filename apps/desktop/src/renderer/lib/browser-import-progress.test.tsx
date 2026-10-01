@@ -19,7 +19,7 @@ vi.mock('./platform', () => ({
 }));
 
 import { BrowserImportProgress } from './browser-import-progress';
-import { WORKSTREAMS_QUERY_KEY, setCachedWorkstreams } from './workstreams-cache';
+import { WORKSTREAMS_QUERY_KEY, mergeCachedWorkstreamPage, setCachedWorkstreams } from './workstreams-cache';
 import { WorkstreamScreen } from '../screens/workstream';
 
 const id = '019a0000-0000-7000-8000-00000000c1a1';
@@ -74,6 +74,19 @@ describe('an import made in the import window, seen from the main window', () =>
     const [row] = rows(client);
     expect(row).toMatchObject({ id, title: 'Launch plan' });
     expect(row?.pending).toBeUndefined();
+  });
+
+  it('keeps a Channel the server listed before the import failed, and stays on it', () => {
+    const client = mount();
+    send({ phase: 'importing', workstreamId: id, title: 'Launch plan', spaceId: 'space-a' });
+    act(() => mergeCachedWorkstreamPage(client, [{ ...rows(client)[0]!, title: 'Listed by the server', pending: undefined }]));
+
+    send({ phase: 'failed', workstreamId: id });
+
+    const [row] = rows(client);
+    expect(row).toMatchObject({ id, title: 'Listed by the server' });
+    expect(row?.pending).toBeUndefined();
+    expect(screen.getByTestId('path')).toHaveTextContent(`/workstreams/${id}`);
   });
 
   it('takes the row away and returns to where the window was when the import fails', () => {

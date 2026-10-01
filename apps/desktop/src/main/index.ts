@@ -508,10 +508,8 @@ let browserImportWindow: BrowserWindow | null = null;
 /** The Spaces the main window offered when it opened the import window. */
 let browserImportContext: BrowserImportContext | null = null;
 /**
- * The Channel the import window has told the main window it is creating, until
- * it says how that ended. Closing the window mid-create ends it as failed, so
- * the main window does not hold a pending row nothing will settle; a create
- * that did land is listed by the next directory answer instead.
+ * The Channel the import window has announced and not yet settled. Closing the
+ * window mid-create ends it as failed, so no pending row is left unsettled.
  */
 let browserImportInFlight: string | null = null;
 /** The Organization whose Spaces the import window offers. */
