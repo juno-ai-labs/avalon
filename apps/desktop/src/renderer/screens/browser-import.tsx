@@ -139,9 +139,13 @@ export function BrowserImportWindow(): React.JSX.Element {
       setSaving(false);
       return;
     }
+    // A receipt reserved by a Worker from before `workstreamId` replays under
+    // the id that Worker minted. The announced row then names nothing: take it
+    // away, and the hand-off below opens the Channel under its real id.
+    if (id !== workstreamId) await bridge.reportBrowserImport({ phase: 'failed', workstreamId }).catch(() => undefined);
     await bridge.completeBrowserImport(id).catch((error: unknown) => {
       // The Channel exists; the main window must not keep waiting on it.
-      void bridge.reportBrowserImport({ phase: 'imported', workstreamId }).catch(() => undefined);
+      if (id === workstreamId) void bridge.reportBrowserImport({ phase: 'imported', workstreamId }).catch(() => undefined);
       setImportFailure(error instanceof Error ? error.message : 'The channel was created but could not be opened.');
       setSaving(false);
     });
