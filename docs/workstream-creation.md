@@ -150,7 +150,10 @@ describe exists even though its create failed (a failure after the Space
 placement commits, or a lost answer), so it stays, settled. A pending row is drawn dimmed and inert, skipped by background sockets
 and the landing route, and never persisted. A route that shows one
 (`WorkstreamScreen`) draws the opening skeleton with a caption and mounts
-nothing that dials or reads the room; the route's active socket skips it too.
+nothing that dials or reads the room; the route's active socket skips it too,
+and so does the foreground presence the workspace socket sends, which the
+Organization rejects (closing that socket for good) for a Channel it does not
+list yet.
 
 A create made in another window lists its row here the same way. Browser
 import does: the import window mints the id and tells main, which relays it to
