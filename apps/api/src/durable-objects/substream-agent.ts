@@ -1479,7 +1479,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
              removed_at = NULL, updated_at = excluded.updated_at`,
           request.userId, request.actorUserId, now, now,
         );
-        if (!wasActive) startReadCursorAtLatest(this.state.storage.sql, request.userId, now);
+        if (!wasActive) {
+          startReadCursorAtLatest(
+            this.state.storage.sql, request.userId, now, request.actorUserId !== request.userId,
+          );
+        }
       } else {
         this.state.storage.sql.exec(
           `UPDATE participants SET status = 'removed', removed_at = ?,

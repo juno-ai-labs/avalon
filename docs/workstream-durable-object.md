@@ -118,7 +118,7 @@ and retry-stable event cutoffs. Owner migration 4 supplies the monotonic counter
 | `packages/contracts/src/workstream-transcript.ts` | Socket-safe ordered turn, block, mention, attachment, external-actor, range, and activity schemas. |
 | `apps/desktop/src/renderer/lib/transcript.ts` | Flattens canonical ordered blocks into participant-visible rows and composes explicitly identified transient overlays at protocol-declared anchors. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Product transactions, message/run admission, read waterlines, compaction inputs, and local regional-effect creation. |
-| `apps/api/src/durable-objects/member-attention.ts` | `startReadCursorAtLatest`: the read waterline every seating path gives a person joining a conversation that already has history. |
+| `apps/api/src/durable-objects/member-attention.ts` | `startReadCursorAtLatest`: the read waterline every seating path gives a person joining a conversation that already has history, leaving the newest message unread when somebody else added them. |
 | `apps/api/src/durable-objects/workstream-object-storage.ts` | SQL repositories for replay, active output, alarms, inbox/outbox receipts, and projection versions. |
 | `apps/api/src/durable-objects/sqlite-migrations.ts` | Shared SQL-only constructor migration runner. |
 | `apps/api/src/durable-objects/migration-reporting.ts` | `withMigrationReport`, which wraps every constructor's migration call and reports the outcome to `avalon-migration-tracker`. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
@@ -252,14 +252,17 @@ transfer that satisfied it are historical deployment evidence, not a runtime
 read or repair path.
 
 A person seated in a conversation that already has history starts with their
-read waterline at its latest attention ordinal, not at
+read waterline just below its latest attention ordinal, not at
 `unread_tracking_start_ordinal`. Every path that turns a participant row active
 (an explicit add, a confirmed mention, narrowing a Channel to yourself, a grant
 projection, a private Breakout membership, an identity admission) calls
 `startReadCursorAtLatest` in the same transaction, and only when the person was
-not already active. The history before they arrived is therefore not unread, the first-unread anchor is null, and the
-feed opens at the tail; the message that seats them, and anything after it,
-still counts. The "you were added" signal stays on
+not already active. When somebody else seated them, the newest message stays
+unread and everything before it is read, so the Channel still badges and the
+feed opens at its tail. When they seated themselves, the cursor sits at the
+latest ordinal, since they are already looking. The message paths also pass the
+latest ordinal: they call it before the seating message takes its own ordinal,
+so that message is the one unread. The "you were added" signal stays on
 `participants.first_opened_at`. The opening message of a new conversation is the
 exception: people named at creation have no row and read it as unread.
 
@@ -1817,6 +1820,26 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-10-01 — A person added by somebody else keeps the newest message unread
+
+**What changed:** `startReadCursorAtLatest` takes `leaveLatestUnread`. An add
+by another person (explicit add, grant projection, private Breakout membership,
+identity admission) now writes the cursor one below the latest attention
+ordinal, so the newest message is unread. Self-seating and the two message
+paths keep the cursor at the latest ordinal.
+
+**Why:** After #1031 a person added to a Channel had nothing unread, so the
+Channel gave no sign it had joined their sidebar. The newest message is the one
+worth surfacing; the rest of the history still is not.
+
+**Considered and rejected:**
+- *Leaving the latest unread on the message paths too.* The seating message is
+  already the newest unread message there, so it would add a second unread with
+  no new signal.
+
+**Consequences:** A new seating path must decide whether the person seated
+themselves. Pass true only when somebody else did.
 
 ### 2026-09-30 — A person added to a conversation starts at its latest message
 
