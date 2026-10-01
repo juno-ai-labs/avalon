@@ -1,5 +1,5 @@
 import { render } from '@testing-library/react';
-import { backgroundRealtimeWorkstreamIds } from '../lib/workspace-workstream-sockets';
+import { activeRealtimeWorkstreamId, backgroundRealtimeWorkstreamIds } from '../lib/workspace-workstream-sockets';
 import { openWorkstreamId } from '../lib/workstream-landing';
 import { QueryClient } from '@tanstack/react-query';
 import { asSpaceId, asSubstreamId, SpaceSummarySchema, type SpaceDirectory } from '@rally/contracts';
@@ -530,6 +530,18 @@ describe('batchArchiveSkipIds', () => {
     };
     expect(batchArchiveSkipIds([older, taken, pinned, alsoTaken], filter)).toEqual([taken.id, alsoTaken.id]);
     expect(batchArchiveSkipIds([], filter)).toEqual([]);
+  });
+});
+
+describe('activeRealtimeWorkstreamId', () => {
+  // The server lists an import's Channel before its room is written.
+  it('opens no socket for a routed Channel whose create is still in flight', () => {
+    const row = summary('completed');
+
+    expect(activeRealtimeWorkstreamId(row.id, [{ ...row, pending: true }])).toBeNull();
+    expect(activeRealtimeWorkstreamId(row.id, [row])).toBe(row.id);
+    expect(activeRealtimeWorkstreamId(row.id, undefined)).toBe(row.id);
+    expect(activeRealtimeWorkstreamId(null, [row])).toBeNull();
   });
 });
 
