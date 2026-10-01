@@ -46,6 +46,8 @@ vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api: harness.api 
 vi.mock('../lib/platform', () => ({ desktopBridge: () => harness.bridge }));
 
 import { BrowserImportWindow } from './browser-import';
+import { useEmbeddedBrowserPlacement } from '../components/embedded-browser-view';
+import { readBrowserConversation } from '../lib/browser-conversation-import';
 
 describe('browser import window', () => {
   it('moves an open sheet to the Space a reused window is locked to', async () => {
@@ -55,6 +57,7 @@ describe('browser import window', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Import' }));
     const sheet = await screen.findByRole('dialog', { name: 'Import channel' });
+    expect(useEmbeddedBrowserPlacement).toHaveBeenLastCalledWith(expect.anything(), false);
     expect(within(sheet).getByRole('combobox', { name: 'Space' })).toHaveTextContent('Alpha');
 
     // Main reuses this window for an import started from Beta's channel list.
@@ -70,5 +73,16 @@ describe('browser import window', () => {
       expect.any(String),
       { title: 'Launch plan', spaceIds: ['space-b'] },
     ));
+  });
+
+  it('shows a read failure on an empty page so ChatGPT cannot cover it', async () => {
+    harness.state.context = { spaces: [{ id: 'space-a', name: 'Alpha' }] };
+    vi.mocked(readBrowserConversation).mockRejectedValueOnce(new Error('ChatGPT could not return this conversation.'));
+    render(<Tooltip.Provider><BrowserImportWindow /></Tooltip.Provider>);
+    await waitFor(() => expect(harness.bridge.getBrowserImportContext).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('ChatGPT could not return this conversation.');
+    expect(screen.queryByRole('dialog', { name: 'Import channel' })).toBeNull();
+    expect(useEmbeddedBrowserPlacement).toHaveBeenLastCalledWith(expect.anything(), false);
   });
 });

@@ -80,13 +80,25 @@ describe('the local browser behind the rail and the import window', () => {
     expect([...electron.sessions.keys()]).toEqual(['persist:rally-browser-user-1', 'persist:rally-browser-user-2']);
   });
 
-  it('refuses every permission a site asks for', () => {
+  it('allows passkeys and refuses every other permission a site asks for', () => {
     browser();
     const partition = electron.sessions.get('persist:rally-browser-user-1')!;
-    const callback = vi.fn();
-    (partition.setPermissionRequestHandler.mock.calls[0]![0] as (c: unknown, p: string, cb: (granted: boolean) => void) => void)(null, 'media', callback);
-    expect(callback).toHaveBeenCalledWith(false);
-    expect((partition.setPermissionCheckHandler.mock.calls[0]![0] as () => boolean)()).toBe(false);
+    const request = partition.setPermissionRequestHandler.mock.calls[0]![0] as (
+      contents: unknown, permission: string, callback: (granted: boolean) => void,
+    ) => void;
+    const check = partition.setPermissionCheckHandler.mock.calls[0]![0] as (
+      contents: unknown, permission: string,
+    ) => boolean;
+    const granted = (permission: string): boolean => {
+      const callback = vi.fn();
+      request(null, permission, callback);
+      return callback.mock.calls[0]![0] as boolean;
+    };
+    expect(granted('publickey-credentials-get')).toBe(true);
+    expect(granted('publickey-credentials-create')).toBe(true);
+    expect(granted('media')).toBe(false);
+    expect(check(null, 'publickey-credentials-get')).toBe(true);
+    expect(check(null, 'media')).toBe(false);
   });
 
   it('opens and navigates only to web pages, and fences a page’s own navigation the same way', async () => {

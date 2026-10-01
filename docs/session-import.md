@@ -50,7 +50,7 @@ visited page, in its own origin and session, and recognizes one route:
 
 | Route | Read |
 | --- | --- |
-| `chatgpt.com/c/<id>` | ChatGPT's conversation endpoint, with the access token from the page's same-origin `/api/auth/session`. A cookie-only request can return a guest 404 even when the page is signed in. |
+| `chatgpt.com/c/<id>` and `chatgpt.com/g/…/c/<id>` | The conversation JSON the page already rendered (loader stream, React Router state, or the React tree), then ChatGPT's conversation endpoint with the access token from `/api/auth/session` as fallback. Files come from ChatGPT's signed-in file download. A cookie-only request can return a guest 404 even when the page is signed in. |
 | `chatgpt.com/share/<id>` | The conversation ChatGPT rendered into the page's React Router loader stream; `/backend-anon/share/<id>` as fallback. Files still come from the anonymous download routes, addressed by the share, and import as unavailable when those refuse. Works signed out. |
 | `claude.ai/chat/<id>` | The conversation from the organization named by the page's `lastActiveOrg` cookie, falling back to each organization the account lists. The response holds every edited branch, so the reader keeps only the path from `current_leaf_message_uuid` back through `parent_message_uuid` — the conversation the person sees. |
 | `claude.ai/share/<id>` | The share's snapshot from claude.ai's `chat_snapshots` endpoint. |
@@ -274,9 +274,11 @@ HTML/code artifacts remain stored files; importing does not launch a site.
   URLs, visible-format refusal, attachment-only messages, copied uploads and
   Artifacts, sandbox files, Deep Research reports, citations and extracted-text labeling.
 - `apps/desktop/src/renderer/lib/browser-conversation-import.test.ts`: route
-  recognition, reads through a tab, that each generated page script parses, and
-  that a shared ChatGPT conversation is recovered from the page's loader stream
-  when `/backend-anon/share/<id>` refuses.
+  recognition, reads through a tab, that each generated page script parses, that
+  a shared ChatGPT conversation is recovered from the page's loader stream when
+  `/backend-anon/share/<id>` refuses, and that a signed-in ChatGPT conversation
+  is recovered from that stream or the React tree when `/backend-api/conversation/<id>`
+  refuses.
 - `test/session-import-files.test.ts`: constrained origins, redirect refusal,
   frozen download bytes and the existing file size policy.
 - `test-workers/conversation-creation.test.ts`: real upload/R2 bytes, role-specific
@@ -295,6 +297,16 @@ HTML/code artifacts remain stored files; importing does not launch a site.
   Electron window: DOM tests cannot prove what a provider's page returns.
 
 ## Changelog
+
+### 2026-10-01 — Read a signed-in ChatGPT conversation from the page that rendered it
+
+**What changed:** Importing `chatgpt.com/c/<id>` and `chatgpt.com/g/…/c/<id>` recovers the conversation JSON ChatGPT already put in the page — the same loader-stream walk as a share, then React Router state, then the React tree — and only then fetches `/backend-api/conversation/<id>`. A missing session token no longer blocks that page read; it is still used for file downloads and the HTTP fallback.
+
+**Why:** After a password login, Import showed Reading then returned to Import with nothing visible. ChatGPT's unofficial conversation route is the same class of refusal as the share route that broke the same day: a raw `fetch` from page script does not carry their sentinel handshake, so the reader reported failure (or the native page covered the banner) while the tab was displaying the chat.
+
+**Considered and rejected:** Teaching the reader ChatGPT's sentinel/proof-of-work handshake, which chases an anti-bot surface the page itself already satisfied in order to render. Waiting on `/api/auth/session` before looking at the page, which turned a token-shape change into a total import failure even when the conversation was on screen.
+
+**Consequences:** A signed-in import now depends on ChatGPT still putting `mapping` and `current_node` in the page (or on `/backend-api/conversation/<id>` still answering with a bearer token). Client-side navigation can leave a stale tree; the reader matches the URL's conversation id and then hits the HTTP fallback. Project and GPT chats under `/g/…/c/<id>` are importable; a slug after the id is not.
 
 ### 2026-10-01 — Read a shared ChatGPT conversation from the page that rendered it
 

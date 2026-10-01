@@ -52,6 +52,10 @@ reload use the same typed command entry point as DOM inspection, screenshots,
 input, page JavaScript, and Chrome DevTools Protocol commands. A website popup
 destination opens in another rail tab. Sign-in flows that require a child
 window to call back through `window.opener` are not yet supported.
+The browser session denies every site permission except passkeys
+(`publickey-credentials-get` and `publickey-credentials-create`), so Google and
+similar pages can show Touch ID or a fingerprint prompt. Camera, microphone,
+location, and notifications stay refused.
 The browser view owns link and redirect navigation. Rally's global app-window
 navigation fence does not send those URLs to the system browser; the browser's
 own URL guard still rejects non-web destinations.
@@ -142,7 +146,9 @@ Electron's native popup from this `WebContentsView` stayed blank in a live
 local-window test, so the rail opens its destination as a new tab instead.
 
 The native view cannot be layered under renderer dialogs, so the renderer hides
-it for dialogs and menus. Agent access has no transport yet; the command types
+it for dialogs and menus. The import window also hides it while the name-and-Space
+sheet is open or a read failure is showing, so ChatGPT cannot sit on top of
+either. Agent access has no transport yet; the command types
 alone do not make a browser action available to a model.
 
 ## Testing
@@ -156,6 +162,31 @@ check that the guest page starts exactly below the rail toolbar and does not
 cover the conversation.
 
 ## Changelog
+
+### 2026-10-01 — Passkeys work, and the native page hides for the import sheet
+
+**What changed:** The embedded browser grants only WebAuthn permissions
+(`publickey-credentials-get` and `publickey-credentials-create`). The import
+window hides the native page while the name-and-Space sheet is open or a read
+failure is showing, instead of relying on the overlay observer alone.
+
+**Why:** Google sign-in on ChatGPT asks for a passkey or Touch ID. Denying every
+permission made `navigator.credentials.get()` fail without an OS prompt, so the
+Google page spun. Separately, the native `WebContentsView` paints above the
+renderer: after a successful read the Import sheet (or a thin error banner)
+opened underneath ChatGPT, which looked like Import did nothing.
+
+**Considered and rejected:** Allowing native `window.open` popups for Google.
+Electron's popup from this `WebContentsView` stayed blank in a live local-window
+test, which is why destinations already open as tabs; a blank popup would not
+show the fingerprint sheet, which is a Chromium permission dialog, not a window.
+Teaching the overlay observer to treat more ARIA roles as occlusion, which still
+races the native view against the first paint of the sheet.
+
+**Consequences:** A visited page can prompt for a passkey. Camera, microphone,
+location, and notifications stay denied. Sign-in that needs `window.opener` is
+still unsupported. A future host that shows a Rally dialog over the page must
+hide the native view the same way, not assume z-index.
 
 ### 2026-09-25 — Closing the only blank tab closes the rail
 
