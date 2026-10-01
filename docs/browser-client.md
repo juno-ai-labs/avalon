@@ -131,8 +131,8 @@ are split into timer-range-safe waits by `session-timer.ts`.
 The shared navigation uses the same single sidebar, Space pills, Channel rows,
 title pills and menus, split Breakout pane, resource rows, Sidekick controls and
 account trigger as desktop, from `@rally/ui` ([`desktop-shell.md`](desktop-shell.md)).
-It asks for the navigation directory with `?origins=1`, which adds each
-Breakout's `originTurnId` and each Space's `systemRole`; General gets no pill. The browser's versioned navigation directory contains
+The navigation directory carries each Breakout's `originTurnId` and each
+Space's `systemRole`; General gets no pill. The browser's versioned navigation directory contains
 only authorized containment plus the associative presentation metadata above it:
 name, icon, colour and public/private scope for Space, Channel and Breakout.
 The Channel's canonical parent in WorkspaceDO independently re-authorizes every

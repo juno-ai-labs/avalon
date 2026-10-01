@@ -174,9 +174,8 @@ own:
 - the feed, composer and panels inside a pane ([`conversation-surfaces.md`](conversation-surfaces.md));
 - what the desktop restores after relaunch ([`desktop-layout.md`](desktop-layout.md)).
 
-The web app reads the shared navigation directory with `?origins=1`. That flag
-is what returns `originTurnId` and a Space's `systemRole`, which shipped strict
-clients would reject.
+The web app reads each Breakout's `originTurnId` and each Space's `systemRole`
+from the shared navigation directory.
 
 ## Failure modes and limits
 
