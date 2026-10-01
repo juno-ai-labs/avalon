@@ -1,9 +1,7 @@
-import { useEffect, useState } from 'react';
-import type { SessionImportPreview } from '@rally/contracts';
-import type { RallyApi } from '../lib/api';
+import { useState } from 'react';
+import { isBrowserConversationUrl } from '../lib/browser-conversation';
 import { desktopBridge } from '../lib/platform';
 import { Button, InlineError, Modal } from './primitives';
-import { isBrowserConversationUrl, readBrowserConversation } from '../lib/browser-conversation-import';
 
 export interface ImportedSource {
   provider: 'chatgpt' | 'claude' | 'claude_code';
@@ -20,70 +18,48 @@ export function importedSourceUpdatable(source: ImportedSource | null | undefine
   return Boolean(source && isBrowserConversationUrl(source.url));
 }
 
-export function SessionImportUpdateDialog({ api, open, onClose, source, workstreamId }: {
-  api: Pick<RallyApi, 'previewSessionImport' | 'updateImportedSession'>;
+/**
+ * Confirm reading a Channel's source conversation again.
+ *
+ * The read happens in the import window, on the recorded conversation, where
+ * the person can see the page, sign in again if the site asks, and watch or
+ * cancel the import agent; this dialog only opens it.
+ */
+export function SessionImportUpdateDialog({ open, onClose, source, workstreamId }: {
   open: boolean;
   onClose: () => void;
   source: ImportedSource;
   workstreamId: string;
 }): React.JSX.Element {
-  const [pendingPreview, setPendingPreview] = useState<SessionImportPreview | null>(null);
-  const [requestId, setRequestId] = useState(() => crypto.randomUUID());
-  const [saving, setSaving] = useState(false);
+  const [opening, setOpening] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (open) return;
-    setPendingPreview(null);
-    setRequestId(crypto.randomUUID());
-    setFailure(null);
-  }, [open]);
-
-  useEffect(() => {
-    setPendingPreview(null);
-    setRequestId(crypto.randomUUID());
-    setFailure(null);
-  }, [workstreamId, source.provider, source.sessionId, source.url]);
-
   const submit = async (): Promise<void> => {
-    if (saving || !source.url) return;
-    setSaving(true);
+    if (opening || !source.url) return;
+    setOpening(true);
     setFailure(null);
     try {
-      let preview = pendingPreview;
-      if (!preview) {
-        // The recorded conversation is read through the browser's account
-        // partition, in the tab showing it or one opened for the read.
-        const read = await readBrowserConversation(desktopBridge(), source.url, { openIfMissing: true });
-        preview = await api.previewSessionImport({ kind: 'export', provider: read.provider, text: read.text, sourceUrl: source.url });
-        if (preview.source.provider !== source.provider || preview.source.sessionId !== source.sessionId) {
-          throw new Error('The source must match the conversation originally imported into this channel.');
-        }
-        setPendingPreview(preview);
-      }
-      await api.updateImportedSession(workstreamId, preview, requestId);
-      setPendingPreview(null);
-      setRequestId(crypto.randomUUID());
+      await desktopBridge().openBrowserImport({ spaces: [], update: { workstreamId, sourceUrl: source.url } });
       onClose();
     } catch (error) {
-      setFailure(error instanceof Error && error.message.trim() ? error.message : 'The source could not be updated.');
+      setFailure(error instanceof Error && error.message.trim() ? error.message : 'The import window could not open.');
     } finally {
-      setSaving(false);
+      setOpening(false);
     }
   };
 
   return <Modal
     footer={<>
-      <Button disabled={saving} onClick={onClose}>Cancel</Button>
-      <Button className="button-primary" disabled={saving || !source.url} onClick={() => void submit()}>
-        {saving ? 'Importing…' : 'Import updates'}
+      <Button disabled={opening} onClick={onClose}>Cancel</Button>
+      <Button className="button-primary" disabled={opening || !source.url} onClick={() => void submit()}>
+        {opening ? 'Opening…' : 'Import updates'}
       </Button>
     </>}
-    onOpenChange={(next) => { if (!next && !saving) onClose(); }}
+    onOpenChange={(next) => { if (!next && !opening) onClose(); }}
     open={open}
     title="Import source updates"
   >
-    <p>Read this conversation again through Rally’s browser and add its updates to this channel.</p>
+    <p>Read this conversation again in Rally’s browser and add what changed to this channel.</p>
     {failure && <InlineError>{failure}</InlineError>}
   </Modal>;
 }
