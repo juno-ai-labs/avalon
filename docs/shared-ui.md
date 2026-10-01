@@ -7,11 +7,11 @@ drawing a second design.
 
 ## Where the code lives
 
-- `packages/ui/src/components`: conversation header, navigation frame and rows,
-  workstream sidebar, resource rows, Sidekick section/picker, account trigger,
-  glyphs, avatars and visual primitives — and the Space surfaces: `space-row.tsx`
-  (`SpaceRow`, `SpaceRowContent`, `SpacePlacementList`),
-  `space-icon.tsx` (`SpaceIcon`),
+- `packages/ui/src/components`: the shell pieces ([`desktop-shell.md`](desktop-shell.md):
+  title pills, the Channel and Breakout menus, Space pills, Breakout chips and
+  ticks, the split layout), navigation frame and rows, resource rows, Sidekick
+  section/picker, account trigger, glyphs, avatars and visual primitives — and
+  the Space surfaces: `space-icon.tsx` (`SpaceIcon`),
   `space-dashboard.tsx` (`SpaceDashboardHeader`, `SpaceDashboardSection`). The
   icon catalog's glyphs are `appearance-icons.ts` (`APPEARANCE_ICON_COMPONENTS`)
   and its sectioned grid is `icon-catalog.tsx` (`IconCatalog`), drawn by

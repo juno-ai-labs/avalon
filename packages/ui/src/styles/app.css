@@ -263,7 +263,6 @@ pre {
 .account-copy span,
 .account-copy strong,
 .automation-tile-name,
-.space-row-link > span,
 .sidebar-row-activity,
 .sidebar-row-title,
 .sidebar-row-title-copy {
@@ -356,7 +355,7 @@ pre {
   100% { --clipped-scroll-fade-end: 0px; }
 }
 
-:is(.sidebar-scroll, .workstream-context-scroll) {
+.sidebar-scroll {
   scroll-padding-block: 24px;
   animation: clipped-scroll-fade-block linear both, clipped-scroll-fade-start linear both, clipped-scroll-fade-end linear both;
   animation-duration: auto, auto, auto;
@@ -1072,7 +1071,6 @@ pre {
    independent so selecting deeper into the hierarchy can collapse only the
    level that has finished its job. */
 .workspace-shell { --spaces-sidebar-width: 0px; }
-.workspace-shell .channels-sidebar { left: var(--spaces-sidebar-width); }
 .workspace-shell:has(> .spaces-sidebar) .main-pane {
   margin-left: calc(var(--spaces-sidebar-width) + var(--av-cmp-sidebar-width));
 }
@@ -1095,19 +1093,6 @@ pre {
   overflow: hidden;
 }
 .spaces-sidebar-titlebar-actions { align-items: center; display: flex; gap: 4px; margin-left: auto; }
-.spaces-sidebar-titlebar-actions > .sidebar-new-button {
-  opacity: 1;
-  transform: translateX(0);
-  transition: color 120ms ease, background 120ms ease, opacity var(--sidebar-layout-motion), transform var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion);
-  visibility: visible;
-}
-.spaces-sidebar.is-compact .spaces-sidebar-titlebar-actions > .sidebar-new-button {
-  opacity: 0;
-  pointer-events: none;
-  transform: translateX(44px);
-  visibility: hidden;
-}
-.spaces-sidebar-commandbar { flex: 0 0 auto; }
 .spaces-sidebar-mark {
   align-items: center;
   background: var(--av-sys-color-surface-raised);
@@ -1117,13 +1102,6 @@ pre {
   flex: 0 0 36px;
   height: 36px;
   justify-content: center;
-}
-.spaces-sidebar-row.is-channel-drop-target {
-  background: color-mix(in srgb, var(--av-sys-color-accent-base) 12%, transparent);
-  box-shadow: inset 0 0 0 2px var(--av-sys-color-focus-quiet);
-}
-.spaces-sidebar-row.is-channel-drop-accepted {
-  animation: spaces-sidebar-channel-drop-accepted 720ms cubic-bezier(.37, 0, .63, 1);
 }
 @keyframes spaces-sidebar-channel-drop-accepted {
   0%, 33.33%, 66.67%, 100% {
@@ -1135,39 +1113,23 @@ pre {
     box-shadow: inset 0 0 0 2px var(--av-sys-color-accent-base);
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  .spaces-sidebar-row.is-channel-drop-accepted {
-    animation: none;
-    background: color-mix(in srgb, var(--av-sys-color-accent-base) 20%, transparent);
-    box-shadow: inset 0 0 0 2px var(--av-sys-color-accent-base);
-  }
-}
+
 .spaces-account-slot,
 .sidebar-account-slot { flex: 1; min-width: 0; }
 .spaces-account-slot .account-trigger,
 .sidebar-account-slot .account-trigger { margin: 0; width: 100%; }
-:is(.spaces-sidebar, .channels-sidebar, .workstream-context-sidebar).is-compact .spaces-account-slot .account-trigger {
+.spaces-sidebar.is-compact .spaces-account-slot .account-trigger {
   gap: 0;
   justify-content: center;
   min-height: 38px;
   padding: 6px;
 }
-:is(.spaces-sidebar, .channels-sidebar, .workstream-context-sidebar).is-compact .spaces-account-slot .account-copy { display: none; }
-.spaces-sidekick-slot { flex: 0 0 auto; min-width: 0; overflow: hidden; }
-.spaces-sidebar.is-compact .spaces-sidekick-slot .sidebar-automation-strip { gap: 0; padding: 8px calc((100% - 54px) / 2) 12px; }
-.spaces-sidebar.is-compact .spaces-sidekick-slot .sidebar-automation-strip > .sidebar-context-target { flex-basis: 54px; max-width: 54px; min-width: 54px; }
-.spaces-sidebar.is-compact .spaces-sidekick-slot .automation-tile { gap: 0; padding: 9px; }
-.spaces-sidebar.is-compact .spaces-sidekick-slot .automation-tile-glyph { height: 36px; width: 36px; }
-.spaces-sidebar.is-compact .spaces-sidekick-slot .automation-tile-name { height: 0; opacity: 0; visibility: hidden; }
-.spaces-sidebar-empty { color: var(--av-sys-color-text-muted); font-size: 12px; padding: 8px; }
+.spaces-sidebar.is-compact .spaces-account-slot .account-copy { display: none; }
 .spaces-sidebar.is-compact .spaces-sidebar-titlebar { justify-content: center; }
 .spaces-sidebar.is-compact .spaces-sidebar-titlebar-actions { margin-left: 0; }
-.spaces-sidebar.is-compact .spaces-sidebar-restore { display: none; }
 .spaces-sidebar-update { color: var(--av-sys-color-accent-base); }
 .spaces-sidebar-update:hover:not(:disabled) { color: var(--av-sys-color-accent-strong); }
 .spaces-sidebar.is-compact .spaces-sidebar-update { display: none; }
-.spaces-sidebar-preview-surface { min-width: 210px; }
-.channels-space-heading { margin-top: 0 !important; }
 
 /* A drag lands the edge on the pointer, so nothing inside may still be
    travelling. The interval going to `0s` turns off every transition the drag
@@ -1197,13 +1159,6 @@ pre {
 .sidebar-resizer:focus-visible > span,
 .sidebar-resizer.is-resizing > span { opacity: 1; }
 
-.sidebar-titlebar {
-  justify-content: flex-end;
-  padding: 0 16px;
-}
-.channels-sidebar-titlebar {
-  min-width: 0;
-}
 .sidebar-title-header-icon {
   display: grid;
   flex: 0 0 28px;
@@ -1211,13 +1166,6 @@ pre {
   place-items: center;
   width: 28px;
 }
-/* Hidden by the attribute in the rail, and faded rather than cut: `display`
-   transitions discretely, holding the element until the fade is over, and the
-   starting style fades it back in when the sidebar expands. */
-.sidebar-titlebar > .sidebar-new-button {
-  transition: color 120ms ease, transform 120ms ease, background 120ms ease, opacity var(--sidebar-layout-motion), display var(--sidebar-layout-motion) allow-discrete;
-}
-.sidebar-titlebar > .sidebar-new-button[hidden] { display: none; opacity: 0; }
 @starting-style {
   .sidebar-titlebar > .sidebar-new-button { opacity: 0; }
 }
@@ -1236,18 +1184,6 @@ pre {
 }
 
 .sidebar-scroll::-webkit-scrollbar { width: 0; }
-
-.sidebar-primary-actions { display: grid; gap: var(--av-sys-space-row-gap); margin-bottom: var(--av-sys-space-group-gap); }
-
-.sidebar-action {
-  align-items: center;
-  border-radius: var(--av-sys-size-radius-sm);
-  color: var(--av-ref-color-neutral-11);
-  display: flex;
-  min-height: var(--av-cmp-row-height);
-  min-width: 0;
-  text-decoration: none;
-}
 
 .sidebar-row {
   align-items: center;
@@ -1309,22 +1245,10 @@ pre {
 .sidebar-row.sidebar-header:hover { background-image: none; }
 .resizable-sidebar.is-compact .sidebar-row.sidebar-header { padding: 9px; }
 
-.sidebar-action {
-  background: transparent;
-  border: 0;
-  font-size: var(--av-sys-font-size-action);
-  gap: 10px;
-  padding: 4px 9px;
-  text-align: left;
-  width: 100%;
-}
-
-.sidebar-action:hover,
 .settings-navigation-group button:hover,
 .settings-search-results > button:hover,
 .settings-search-results > button:focus-visible,
 .sidebar-row:hover { background-image: var(--hover-layer); color: var(--av-sys-color-text-default); }
-.sidebar-action.is-active,
 .settings-navigation-group button[aria-current='page'],
 .sidebar-row.is-active { background: var(--av-cmp-row-background-selected); color: var(--av-sys-color-text-default); }
 
@@ -1365,55 +1289,6 @@ pre {
 .sidebar-section { margin-top: var(--av-sys-space-group-gap); }
 .sidebar-section-heading { align-items: center; display: flex; height: var(--av-cmp-group-label-height); padding: 0 8px; }
 .sidebar-section-heading h2 { flex: 1; min-width: 0; }
-.spaces-section > .sidebar-section-heading { display: grid; grid-template-columns: minmax(0, 1fr) 28px; padding: 0 4px 0 8px; }
-.space-sidebar-action.icon-button { border: 0; border-radius: var(--av-sys-size-radius-sm); height: 22px; justify-self: center; width: 22px; }
-.space-sidebar-action.icon-button:hover:not(:disabled) { background: transparent; border-color: transparent; color: inherit; }
-.space-sidebar-item { border-radius: var(--av-sys-size-radius-sm); }
-.space-sidebar-item[draggable='true'] { cursor: grab; }
-/* Shares `.sidebar-row` for hover fill, radius, and padding so a Space
-   and a Channel read as the same kind of row. The grid adds the accordion
-   column; `height-dense` matches a single-line Channel.
-   Two classes so `display` and `gap` beat the later `.sidebar-row`
-   flex rule rather than racing it on source order. */
-.sidebar-row.space-sidebar-row {
-  align-items: center;
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
-  gap: 0;
-}
-.space-accordion-control {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  color: var(--av-sys-color-text-muted);
-  display: inline-flex;
-  height: 24px;
-  justify-content: center;
-  padding: 0;
-  width: 18px;
-}
-.space-accordion-control svg { transform: rotate(90deg); transition: transform 120ms ease; }
-.space-accordion-control svg.is-expanded { transform: rotate(180deg); }
-.space-row-icon { align-items: center; display: inline-flex; justify-content: center; }
-.space-row-link {
-  align-items: center;
-  color: var(--av-sys-color-text-subtle);
-  display: grid;
-  font-size: 13px;
-  gap: 5px;
-  grid-template-columns: 20px auto auto minmax(0, 1fr);
-  min-width: 0;
-  text-decoration: none;
-}
-.space-row-link > span { overflow: hidden; white-space: nowrap; }
-.space-row-link.is-active { color: var(--av-sys-color-text-default); font-weight: 600; }
-.space-sidebar-empty { color: var(--av-sys-color-text-muted); font-size: 11px; margin: 0; padding: 6px 8px 6px 18px; }
-/* Placements start where the accordion column ends, so they share a
-   leading edge with the Space icon rather than sitting under the name.
-   The 18px is the accordion column in `.space-sidebar-row`; keep them
-   equal. Font, hover, and the title/description pair come from the shared
-   Channel row, not a second style. */
-.space-sidebar-workstreams { padding-left: 18px; }
 .space-create-form { display: grid; gap: 18px; }
 .space-create-form .form-field > input { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-default); font: inherit; outline: 0; padding: 9px 10px; width: 100%; }
 .space-create-form .form-field > input:focus { border-color: var(--av-ref-color-line-6); box-shadow: var(--av-sys-focus-ring-quiet); }
@@ -1549,21 +1424,10 @@ pre {
 .sidebar-context-target.is-draggable { cursor: grab; }
 .sidebar-context-target.is-dragging { cursor: grabbing; opacity: 0.45; }
 .sidebar-context-target.is-dragging .sidebar-row { background: var(--av-sys-color-surface-subtle); }
-/* Every conversation row is navigation first, including a draggable Breakout.
-   Keep the pointer used by Space and Channel rows until a drag actually starts;
-   a standing grab cursor made the same navigation gesture read differently at
-   this level of the hierarchy. */
-.workstream-conversation-row { cursor: pointer; }
-.workstream-conversation-row.is-dragging {
-  cursor: grabbing;
-  opacity: 0.45;
-  background: var(--av-sys-color-surface-subtle);
-}
 
 .sidebar-row:hover { background-image: var(--hover-layer); }
 .sidebar-row:is(.is-active, .is-current) { background: var(--av-cmp-row-background-selected); }
 .sidebar-row:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: -2px; }
-
 
 .sidebar-row-icon {
   align-items: center;
@@ -1595,7 +1459,6 @@ pre {
   margin-left: 3px;
   width: 16px;
 }
-
 
 .sidebar-workstream-timer {
   align-items: center;
@@ -1702,33 +1565,19 @@ pre {
   width: 7ch;
 }
 
-/* A sidebar title whose Space or Channel has not arrived: the 20px mark the
-   header draws, and a name-length bar. The header pulses as one. */
-.skeleton-title-header { animation: skeleton-pulse 1.5s ease-in-out infinite; }
-.skeleton-title-mark { border-radius: 50%; display: block; height: 20px; width: 20px; }
-.skeleton-title-line { height: 0.72em; width: 12ch; }
-.skeleton-section-label { animation: skeleton-pulse 1.5s ease-in-out infinite; height: 8px; margin-block: 5px; width: 16ch; }
 /* A participants row: overlapping small avatars, as `AvatarStack` draws. */
 .skeleton-avatar-stack { display: inline-flex; }
 .skeleton-avatar-stack > .skeleton-bar { border: 2px solid var(--av-sys-color-surface-default); border-radius: 50%; height: 24px; width: 24px; }
 .skeleton-avatar-stack > .skeleton-bar + .skeleton-bar { margin-left: -7px; }
-/* Compact, the settled stack is limited to two. Its size, overlap and centring
-   are the settled stack's own rules, which name the placeholder too. */
-.workstream-context-sidebar.is-compact .skeleton-avatar-stack > .skeleton-bar:nth-child(n+3) { display: none; }
 
 /* The first frame of an opening conversation already has the room's final
    geometry. Its placeholders occupy the channel rail, feed and composer rather
    than replacing all three with a centered status message, so the snapshot can
    fill them in without a full-pane layout change. */
 .conversation-opening-skeleton { min-height: 0; }
-.conversation-opening-header-mark { border-radius: 50%; }
-.conversation-opening-sidebar-scroll { overflow: hidden; }
 .conversation-opening-feed { overflow: hidden; }
 .conversation-opening-header { min-width: 0; }
-.conversation-opening-channel-title { gap: 8px; }
-.conversation-opening-header-mark { height: 20px; width: 20px; }
 .conversation-opening-header-title { height: 0.78em; width: min(24ch, 42%); }
-.conversation-opening-header-action { display: block; height: 28px; width: 68px; }
 /* The feed placeholders are drawn in the settled turn's own units, so the
    snapshot replaces them without the column jumping: a byline at the byline's
    size with no avatar (the feed has none), prose lines one prose line-height
@@ -1789,13 +1638,11 @@ pre {
   max-width: var(--composer-width);
   width: 100%;
 }
-.conversation-opening-sidebar-header,
 .conversation-opening-header,
 .conversation-opening-message,
 .conversation-opening-composer { animation: skeleton-pulse 1.5s ease-in-out infinite; }
 
 @media (prefers-reduced-motion: reduce) {
-  .conversation-opening-sidebar-header,
   .conversation-opening-header,
   .conversation-opening-message,
   .conversation-opening-composer { animation: none; }
@@ -1975,13 +1822,6 @@ pre {
 .mobile-sidebar-trigger { display: none; left: 8px; position: fixed; top: 9px; z-index: 25; }
 .sidebar-scrim { display: none; }
 .mobile-only { display: none; }
-/* `flex: 0 0 auto` because this is the only way back to the navigation once the
-   sidebar has become a drawer, and it shares a flex row with a title that
-   declares `min-width: 0`. Left shrinkable it gives up width before the title
-   truncates: at the window's 860px minimum with the right rail open it measured
-   26px against its 30px box before this row reserved the window-control band,
-   and 22px after. A control that is the only exit is not the one to compress. */
-.header-menu-button { display: none; flex: 0 0 auto; }
 
 /* Deep-link failure window
    Its own renderer, so this is the whole window rather than a layer inside one:
@@ -3347,120 +3187,22 @@ pre {
 
 .conversation-layout { display: flex; height: 100%; min-width: 0; }
 .conversation-layout > .workstream-screen { flex: 1; }
-/* This sidebar is a flex child of the conversation layout rather than a fixed
-   panel measured from a shell property, so `flex-basis` is what sizes it and is
-   what is transitioned. The transcript beside it takes the remaining space and
-   so travels with it for free. Same duration as the navigation's, from the same
-   custom property: collapsing either edge is one gesture with one answer.
-
-   It also *publishes* its width to the shell as `--workstream-sidebar-width`,
-   which `--rail-max-slot` spends. That is a second channel carrying the same
-   number, so it is registered and transitioned over the same interval below —
-   left as a plain custom property it would reach its final value in one frame
-   and step the inspector's width while this sidebar was still travelling, which
-   is the cut this section removes, moved to the other side of the window. The
-   `0px` initial value is what a route without this sidebar reserves. */
-@property --workstream-sidebar-width {
-  syntax: '<length>';
-  inherits: true;
-  initial-value: 0px;
-}
-/* Its contents travel with its edge, as the navigation sidebar's do: every
-   rule below that changes a shape between the two widths declares the same
-   interval, `--sidebar-layout-motion`, restated here so a drag can turn all
-   of them off at once. The same two consequences hold — nothing on screen
-   during the toggle is `display: none` in the rail, and every travelling
-   value is a number in both layouts — and one more: nothing is centred with
-   `justify-content`, which cannot travel and would jump at the first frame.
-   A mark is centred by the row's padding, and content of no fixed width by a
-   transform of `calc(18px - 50%)`, half the 36px content box less half the
-   content's own width. */
-.workstream-context-sidebar { background: var(--av-cmp-sidebar-background); border-right: 1px solid var(--av-cmp-sidebar-border); display: flex; flex: 0 0 280px; flex-direction: column; min-height: 0; min-width: 0; transition: flex-basis var(--sidebar-layout-motion), --sidebar-compact var(--sidebar-layout-motion); }
-/* As above: a drag tracks the pointer, so the gesture opts its own width out,
-   and its contents snap with the edge — the interval for transitions the drag
-   would start, and the `.is-resizing *` rule beside the navigation's for the
-   ones already running. */
-.conversation-layout:has(> .workstream-context-sidebar.is-resizing) { cursor: col-resize; user-select: none; }
-.workstream-context-sidebar.is-compact { flex-basis: 88px; }
 .workstream-context-section h2 { color: var(--av-sys-color-text-muted); font-size: 12px; font-weight: 400; height: 18px; line-height: 18px; overflow: hidden; transition: height var(--sidebar-layout-motion), margin-bottom var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); }
-/* Every row in this rail is the navigation sidebar's work-stream row: same
-   36px leading slot, same title, same fills. Only the mark inside the slot
-   differs — Main and each Breakout have their own stable tinted symbol, while
-   the blue enter mark belongs to the row that starts a new Breakout. */
-/* A not-yet-reserved Breakout has no id from which to derive its stable mark,
-   so its pending row temporarily uses a readable branch rather than the
-   sidebar's hairline colour. */
-.workstream-breakout-icon { color: var(--av-sys-color-text-muted); }
-.workstream-new-breakout-icon { color: var(--av-sys-color-accent-base); }
-.workstream-new-substream,
 .workstream-add-sidekick { color: var(--av-sys-color-text-muted); }
-/* The row of a substream that does not exist yet: a place held, not a
-   destination. It takes the selected background like the conversation it
-   is about to be, and none of the pointer affordances, because there is
-   nothing behind it to click through to. */
-.workstream-pending-substream { cursor: default; }
-.workstream-pending-substream:hover { background: transparent; }
-.workstream-pending-substream.is-current:hover { background: var(--av-cmp-row-background-selected); }
 .workstream-context-section { margin-top: 20px; transition: margin-top var(--sidebar-layout-motion); }
 .workstream-context-section > .sidebar-horizontal-line { height: 0; margin-bottom: 0; opacity: 0; }
 .workstream-context-section h2 { margin: 0 8px 6px; }
-.workstream-context-presence { background: var(--av-sys-color-success-base); border-radius: 50%; flex: 0 0 6px; height: 6px; }
-/* Copy and headings close to nothing and fade; the section rule and its
-   spacing arrive over the same interval. */
-.workstream-context-sidebar.is-compact .workstream-context-section h2 { height: 0; margin-bottom: 0; opacity: 0; visibility: hidden; }
-.workstream-context-sidebar.is-compact .workstream-context-section { margin-top: 14px; }
-.workstream-context-sidebar.is-compact .workstream-context-section > .sidebar-horizontal-line { height: var(--av-sys-size-border-hairline); margin-bottom: 14px; opacity: 1; }
-/* Content of no fixed width — the participants' avatars — is carried to the
-   centre of the 36px content box by a transform that travels, not by
-   `justify-content`, which cannot. */
-.workstream-context-sidebar .workstream-context-row > .avatar-stack,
-.workstream-context-sidebar .workstream-context-row > svg { transition: transform var(--sidebar-layout-motion); }
-.workstream-context-sidebar.is-compact .workstream-context-row > :is(.avatar-stack, .skeleton-avatar-stack),
-.workstream-context-sidebar.is-compact .workstream-context-row > svg { transform: translateX(calc(18px - 50%)); }
-.workstream-context-sidebar.is-compact .workstream-context-presence { bottom: 8px; position: absolute; right: 10px; width: 6px; }
 .workstream-screen { display: grid; grid-template-rows: 55px minmax(0, 1fr) auto; height: 100%; min-width: 0; position: relative; }
 .workstream-header { align-items: center; border-bottom: 1px solid var(--av-sys-color-border-subtle); display: flex; gap: 12px; justify-content: space-between; min-width: 0; padding: 6px 10px 6px 16px; }
 .workstream-header-left,
 .workstream-header-actions { align-items: center; display: flex; min-width: 0; }
 .workstream-header-left { gap: 9px; }
-.header-origin-icon { align-items: center; color: var(--av-ref-color-neutral-10); display: flex; flex: 0 0 auto; }
 .workstream-title-block { display: flex; flex-direction: column; min-width: 0; }
 /* The editor swaps into this row, so the row holds the taller of the two
    states: without it the header grows when editing opens and the whole
    transcript below it steps down and back on every double click. */
 .workstream-title-line { align-items: center; display: flex; gap: 8px; min-height: 22px; min-width: 0; }
 .workstream-title-line h1 { font-size: var(--av-sys-font-size-title); margin: 0; min-width: 0; }
-/* Single-click editing uses a text cursor and the existing hover affordance. */
-/* One length does three jobs here, so it is named rather than repeated: the
-   hover pill's horizontal padding, the overhang that cancels it, and the cap
-   that adds the overhang back. The pill hangs back into the header's padding so
-   that the title's text, rather than its background, lines up with the subtitle
-   under it — and the heading and every column above it are then sized
-   shrink-to-fit from this button's margin box, which that negative margin makes
-   narrower than the button's own border box. A plain `max-width: 100%` settles
-   at the shrunken measurement, and the title loses its last characters to the
-   ellipsis in a header with room to spare. Three literals could drift apart
-   under an edit that only meant to change the padding, and no test in the suite
-   would catch it: the defect lives entirely in resolved layout, which is why it
-   survived this long unnoticed. `max-content` is what makes the cap the binding
-   constraint — a block box left at `width: auto` fills its parent and never
-   grows to a wider max-width. */
-.workstream-title-button { --pill-overhang: 4px; background: transparent; border-radius: var(--av-sys-size-radius-sm); display: block; margin-left: calc(-1 * var(--pill-overhang)); max-width: calc(100% + var(--pill-overhang)); overflow: hidden; padding: 1px var(--pill-overhang); text-align: left; text-overflow: ellipsis; white-space: nowrap; width: max-content; }
-.workstream-title-button:not(:disabled) { cursor: text; }
-.workstream-title-button:hover { background-image: var(--hover-layer); }
-.workstream-title-edit { align-items: center; display: flex; gap: 3px; margin-left: -5px; min-width: 0; }
-.workstream-title-input { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-default); font-size: 13px; font-weight: 600; min-width: 90px; outline: 0; padding: 0 6px; width: 340px; }
-.workstream-title-input:focus { border-color: var(--av-ref-color-line-6); box-shadow: var(--av-sys-focus-ring-quiet); }
-.workstream-title-edit .icon-button { height: 21px; width: 21px; }
-.title-edit-save { background: color-mix(in srgb, var(--av-sys-color-success-base) 14%, var(--av-sys-color-surface-raised)); color: var(--av-sys-color-success-base); }
-.title-edit-save:hover:not(:disabled) { background: color-mix(in srgb, var(--av-sys-color-success-base) 22%, var(--av-sys-color-surface-raised)); border-color: color-mix(in srgb, var(--av-sys-color-success-base) 45%, var(--av-sys-color-border-default)); color: var(--av-sys-color-success-base); }
-.title-edit-cancel { background: color-mix(in srgb, var(--av-sys-color-danger-base) 13%, var(--av-sys-color-surface-raised)); color: var(--av-sys-color-danger-base); }
-.title-edit-cancel:hover:not(:disabled) { background: color-mix(in srgb, var(--av-sys-color-danger-base) 21%, var(--av-sys-color-surface-raised)); border-color: color-mix(in srgb, var(--av-sys-color-danger-base) 45%, var(--av-sys-color-border-default)); color: var(--av-sys-color-danger-base); }
-.title-edit-save:disabled,
-.title-edit-cancel:disabled { opacity: .55; }
-.workstream-subtitle { align-items: center; display: flex; gap: 10px; margin-top: 2px; }
-.workstream-subtitle .inline-error { font-size: 10px; margin: 0; }
-.workstream-subtitle > span:not(.status-indicator) { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: 10px; gap: 4px; }
 .workstream-header-actions { gap: 2px; }
 /* Every control that owns the right sidebar reads as pressed while its panel is
    the one showing there. */
@@ -4244,8 +3986,6 @@ pre {
 .tool-details pre { background: var(--av-sys-color-text-on-inverse); border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-11); font-size: 10px; margin: 0; max-height: 220px; overflow: auto; padding: var(--space-2); white-space: pre-wrap; }
 .tool-warning { color: var(--av-sys-color-danger-soft); font-size: 11px; margin: 0; }
 
-
-
 .agent-work-timing { align-items: center; color: var(--av-ref-color-neutral-9); display: flex; font-size: 11.5px; gap: var(--space-2); margin: 0; min-height: 20px; }
 .agent-work-timing-label { display: inline-block; font-weight: 480; }
 /* The stop positions and `background-size` are load-bearing and duplicated on
@@ -4880,9 +4620,9 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    window has capped. Each breakpoint that changes the room available restates
    it. */
 .workspace-shell {
-  --rail-max-slot: max(280px, calc(100vw - var(--spaces-sidebar-width, 0px) - var(--av-cmp-sidebar-width) - var(--workstream-sidebar-width, 0px) - var(--conversation-min-width)));
+  --rail-max-slot: max(280px, calc(100vw - var(--spaces-sidebar-width, 0px) - var(--av-cmp-sidebar-width) - var(--conversation-min-width)));
   --rail-slot: min(var(--rail-width), var(--rail-max-slot));
-  transition: --rail-width 240ms cubic-bezier(.22, 1, .36, 1), --spaces-sidebar-width var(--sidebar-collapse-motion), --av-cmp-sidebar-width var(--sidebar-collapse-motion), --workstream-sidebar-width var(--sidebar-collapse-motion);
+  transition: --rail-width 240ms cubic-bezier(.22, 1, .36, 1), --spaces-sidebar-width var(--sidebar-collapse-motion), --av-cmp-sidebar-width var(--sidebar-collapse-motion);
 }
 /* A drag has to track the pointer exactly, so for the length of the gesture the
    dragged sidebar's own width channel leaves the transitioned set and the
@@ -4893,9 +4633,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    entries above carry the same 240ms and the same curve. The class is on the
    sidebar, which is what knows it is being dragged, so the shell reads it back
    with `:has()` rather than the drag having to reach up and set a second flag. */
-.workspace-shell:has(.sidebar.is-resizing) { transition-property: --rail-width, --spaces-sidebar-width, --workstream-sidebar-width; }
-.workspace-shell:has(.spaces-sidebar.is-resizing) { transition-property: --rail-width, --av-cmp-sidebar-width, --workstream-sidebar-width; }
-.workspace-shell:has(.workstream-context-sidebar.is-resizing) { transition-property: --rail-width, --spaces-sidebar-width, --av-cmp-sidebar-width; }
+.workspace-shell:has(.sidebar.is-resizing) { transition-property: --rail-width, --spaces-sidebar-width; }
+.workspace-shell:has(.spaces-sidebar.is-resizing) { transition-property: --rail-width, --av-cmp-sidebar-width; }
 /* The column is named `minmax(0, 1fr)` rather than left implicit. An `auto`
    column's minimum is the items' min-content, and a markdown document's
    min-content is its longest unwrapped line — so the panel grew with the file
@@ -5458,8 +5197,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   .workspace-shell:not(.app-shell) .sidebar { background: var(--av-cmp-sidebar-background-solid); box-shadow: var(--av-sys-elevation-shadow-drawer); transform: translateX(-100%); transition: transform 160ms ease; width: 300px; z-index: 70; }
   .workspace-shell:not(.app-shell) .sidebar.is-mobile-open { transform: translateX(0); }
   .workspace-shell:not(.app-shell) .sidebar-scrim { background: var(--av-sys-color-scrim-default); display: block; inset: 0; position: fixed; z-index: 65; }
-  .workspace-shell:not(.app-shell) .mobile-only,
-  .workspace-shell:not(.app-shell) .header-menu-button { display: inline-flex; }
+  .workspace-shell:not(.app-shell) .mobile-only { display: inline-flex; }
   .mobile-sidebar-trigger { display: none; }
   .workspace-shell:not(.app-shell) .sidebar-resizer { display: none; }
   .workspace-shell { --rail-max-slot: calc(100vw - 16px); }
@@ -5572,7 +5310,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
      timeline pace the near and far lengths. The kill switch above would pin
      both animations at their 100% keyframes, so a list that overflows would
      always fade its leading edge and never its trailing one. */
-  :is(.sidebar-scroll, .workstream-context-scroll), .sidebar .sidebar-automation-strip {
+  .sidebar-scroll, .sidebar .sidebar-automation-strip {
     animation-duration: auto !important;
   }
   .status-running .status-dot { opacity: 1; }
@@ -5912,37 +5650,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
    opt-in layer over the existing components: the data and interaction
    contracts stay shared, while the main work-stream surface owns the new
    visual hierarchy. */
-/* Above the scroll box, so search stays fixed however far the list is
-   scrolled. The rail's New channel control always owns row one and Search
-   always owns row two. Growing the first track carries Search down
-   continuously while list motion brings the New channel control in from the
-   side; the removed row's stand-in is drawn in this positioned box. */
-.sidebar-commandbar {
-  display: grid;
-  grid-template-rows: 0px 32px;
-  padding: 4px 12px var(--av-sys-space-group-gap);
-  position: relative;
-  transition: grid-template-rows var(--sidebar-layout-motion), padding var(--sidebar-layout-motion);
-}
-
-.sidebar-new-button {
-  align-items: center;
-  background: transparent;
-  border-radius: var(--av-sys-size-radius-sm);
-  color: var(--av-sys-color-text-muted);
-  display: flex;
-  height: 28px;
-  justify-content: center;
-  transition: color 120ms ease, transform 120ms ease, background 120ms ease;
-  width: 28px;
-}
-
-.sidebar-new-button:hover,
-.sidebar-new-button.is-active {
-  background-image: var(--hover-layer);
-  color: var(--av-sys-color-text-default);
-}
-.sidebar-new-button:active { transform: scale(.94); }
 
 .sidebar-search {
   width: 100%;
@@ -5965,19 +5672,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   padding: 0 4px 0 8px;
 }
 
-/* From a labelled pill to a 54px square as the sidebar collapses: the box,
-   the icon and the label each travel over the layout motion. The label is
-   faded and clipped rather than hidden, and its `visibility` rides the same
-   interval so it leaves the accessibility tree when the fade ends. The icon
-   ends 17.5px in — centred in the square by padding, so it never jumps to a
-   different alignment at the end. */
-.sidebar-commandbar .sidebar-search {
-  grid-row: 2;
-  overflow: hidden;
-  transition: background-color var(--sidebar-layout-motion), box-shadow var(--sidebar-layout-motion), gap var(--sidebar-layout-motion), height var(--sidebar-layout-motion), padding var(--sidebar-layout-motion);
-}
-.sidebar-commandbar .sidebar-search > svg { height: 14px; transition: height var(--sidebar-layout-motion), width var(--sidebar-layout-motion); width: 14px; }
-.sidebar-commandbar .sidebar-search > span { transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); white-space: nowrap; }
 .sidebar-search:focus-within { box-shadow: inset 0 0 0 .5px var(--av-sys-color-border-strong); }
 .sidebar-search:has(input:focus-visible) { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
 .sidebar-search:has(input) { cursor: text; }
@@ -5985,24 +5679,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .sidebar-search input { background: transparent; border: 0; color: var(--av-sys-color-text-default); font: inherit; height: 100%; min-width: 0; outline: 0; padding: 0; width: 100%; }
 .sidebar-search input::placeholder { color: var(--av-sys-color-text-muted); }
 .sidebar-search input::-webkit-search-cancel-button { display: none; }
-
-.sidebar-secondary-actions {
-  display: flex;
-  gap: 4px;
-  margin: 0 1px 14px;
-}
-
-.sidebar-secondary-actions .sidebar-action {
-  background: transparent;
-  color: var(--av-sys-color-text-muted);
-  flex: 1;
-  font-size: 9.5px;
-  justify-content: center;
-  min-height: 25px;
-  padding: 2px 5px;
-}
-
-.sidebar-secondary-actions .sidebar-action:hover { background-image: var(--hover-layer); color: var(--av-sys-color-text-default); }
 
 .workstream-glyph {
   align-items: center;
@@ -6080,61 +5756,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .workstream-header { min-height: 48px; padding: 5px 10px 5px 13px; }
 .workstream-header-left { gap: 8px; }
 .workstream-header .workstream-title-line h1 { font-size: 13px; }
-.workstream-header .workstream-subtitle { margin-top: 0; }
 
-.workstream-screen:has(> .grokbot-workstream-header) { grid-template-rows: 44px minmax(0, 1fr) auto; }
-.grokbot-workstream-header {
-  align-items: center;
-  background: var(--av-sys-color-surface-default);
-  border-bottom: 0;
-  display: grid;
-  gap: 8px;
-  grid-template-columns: minmax(0, 1fr) auto;
-  min-width: 0;
-  padding: 0 12px 0 8px;
-}
-.grokbot-header-navigation { display: none; }
-.grokbot-header-actions { align-items: center; display: flex; gap: 8px; justify-self: end; }
-.grokbot-workstream-header > h1 { display: flex; justify-content: flex-start; min-width: 0; }
-.grokbot-conversation-title {
-  position: relative;
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  color: var(--av-sys-color-text-default);
-  display: flex;
-  font-size: 13px;
-  font-weight: 500;
-  gap: 4px;
-  height: 28px;
-  justify-content: flex-start;
-  line-height: 18px;
-  max-width: 100%;
-  min-width: 0;
-  padding: 4px 6px;
-}
-.grokbot-conversation-title > h1 { font: inherit; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.grokbot-conversation-title .inline-error { position: absolute; top: 100%; left: 0; max-width: 100%; padding: 6px; margin: 0; background: var(--av-sys-color-surface-raised); z-index: 1; }
-.grokbot-conversation-title .workstream-title-input { max-width: 100%; width: min(340px, 35vw); }
-button.grokbot-conversation-title:hover { background-image: var(--hover-layer); color: var(--av-sys-color-text-default); }
-.grokbot-computer-button.icon-button {
-  color: var(--av-sys-color-text-muted);
-  height: 28px;
-  margin-right: -4px;
-  width: 34px;
-}
-.grokbot-computer-button.icon-button:hover {
-  background-image: var(--hover-layer);
-  color: var(--av-sys-color-text-default);
-}
-
-/* Pressed keeps the heavier elevated fill: it has to hold on its own once the
-   pointer has left, which the wash is deliberately too light to do. */
-.grokbot-computer-button.icon-button[aria-pressed='true'] {
-  background: var(--av-sys-color-surface-elevated-hover);
-  color: var(--av-sys-color-text-default);
-}
 .app-shell {
   font-family: var(--av-sys-font-family-ui);
   font-size: var(--av-sys-font-size-base);
@@ -6175,35 +5797,6 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
    `.sidebar-empty`, which only ever shows over an empty list. */
 .app-shell .sidebar.is-compact .sidebar-empty { display: none; }
 .resizable-sidebar.is-compact .sidebar-scroll { padding-inline: calc((100% - 54px) / 2); }
-.app-shell .sidebar.is-compact .sidebar-commandbar,
-.app-shell .spaces-sidebar.is-compact .sidebar-commandbar {
-  grid-template-rows: 54px 54px;
-  padding: 4px calc((100% - 54px) / 2) 0;
-}
-.app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search,
-.app-shell .spaces-sidebar.is-compact .sidebar-commandbar .sidebar-search {
-  background: transparent;
-  box-shadow: none;
-  gap: 0;
-  height: 54px;
-  padding: 0 0 0 17.5px;
-}
-.app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search:hover,
-.app-shell .spaces-sidebar.is-compact .sidebar-commandbar .sidebar-search:hover { background-image: var(--hover-layer); }
-.app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search > span,
-.app-shell .spaces-sidebar.is-compact .sidebar-commandbar .sidebar-search > span { opacity: 0; visibility: hidden; }
-.app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search > svg,
-.app-shell .spaces-sidebar.is-compact .sidebar-commandbar .sidebar-search > svg { height: 19px; width: 19px; }
-/* Only ever rendered in the rail, and styled without reference to it: the
-   list motion draws a copy of this row on its way out after the rail's class
-   has already gone, and the copy has to still look like the row. */
-.sidebar-rail-new-button {
-  border-radius: 10px;
-  grid-row: 1;
-  height: 54px;
-  padding: 9px;
-  width: 54px;
-}
 /* The headings and the group gaps close as the rail narrows. */
 .app-shell .sidebar .sidebar-section-heading,
 .app-shell .sidebar .sidebar-group-heading {
@@ -6657,8 +6250,6 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
   width: 100%;
 }
 
-
-
 /* The field is three quarters of the widest a turn is ever drawn, centred over
    the same column. Full width said nothing about the conversation above it: the
    composer ran to both edges of the pane while every message in it stopped well
@@ -6771,7 +6362,6 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 :is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule:focus-within {
   border-color: var(--av-cmp-composer-border-color);
 }
-
 
 :is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-attachments::-webkit-scrollbar { display: none; }
 
@@ -6960,7 +6550,6 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 [data-theme='dark'] .composer-action-menu-item.menu-item { color: var(--av-sys-color-text-default); }
 [data-theme='dark'] .composer-action-menu-item.menu-item[data-highlighted] { background-image: var(--hover-layer); }
 
-
 .command-popover {
   background: var(--av-sys-color-surface-raised);
   border: 1px solid var(--av-ref-color-line-4);
@@ -7036,11 +6625,6 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
     padding-left: 16px;
     padding-right: 16px;
   }
-}
-
-@media (max-width: 920px) {
-  .grokbot-workstream-header { grid-template-columns: 28px minmax(0, 1fr) auto; padding-left: 8px; }
-  .grokbot-header-navigation { display: block; }
 }
 
 /* Starting a work stream.
@@ -7539,7 +7123,6 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
   max-height: min(280px, calc(50cqh - 50% - 48px));
 }
 
-
 /* The conversation retains its shared feed/composer geometry. The profile is a sibling. */
 .workstream-screen.automation-screen { grid-template-rows: auto minmax(0, 1fr) auto; }
 .automation-header { display: flex; flex-direction: column; gap: 24px; padding: 28px; }
@@ -7743,7 +7326,6 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 .sidekick-recommendation { align-items: center; border: 1px solid var(--av-sys-color-border-default); border-radius: 50%; color: var(--av-sys-color-text-muted); display: inline-flex; flex: 0 0 24px; height: 24px; justify-content: center; margin-right: 8px; }
 .sidekick-recommendation:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
 .sidekick-recommendation-tooltip { max-width: 280px; white-space: normal; }
-.workstream-context-sidebar.is-compact .sidekick-recommendation { display: none; }
 .sidekick-picker-search { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-default); border-radius: 8px; padding: 10px 12px; width: 100%; }
 .sidekick-picker-list { display: grid; gap: 8px; list-style: none; margin: 12px 0 0; padding: 0; }
 .sidekick-picker-list .button { align-items: flex-start; display: flex; flex-direction: column; gap: 4px; text-align: left; white-space: normal; width: 100%; }
@@ -7754,17 +7336,6 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 .sidekick-section-list > li { align-items: center; display: flex; }
 .sidekick-section-list > li > .workstream-context-row { flex: 1; min-width: 0; }
 
-/* The avatars shrink into the square with their overlap; the presence
-   border's own fade is restated so the size rule does not replace it. */
-.workstream-context-sidebar .avatar-stack .avatar { transition: border-color 180ms ease, font-size var(--sidebar-layout-motion), height var(--sidebar-layout-motion), width var(--sidebar-layout-motion); }
-.workstream-context-sidebar .avatar-overflow { transition: font-size var(--sidebar-layout-motion), height var(--sidebar-layout-motion), margin-left var(--sidebar-layout-motion), width var(--sidebar-layout-motion); }
-.workstream-context-sidebar .avatar-stack-item + .avatar-stack-item { transition: margin-left var(--sidebar-layout-motion); }
-.workstream-context-sidebar.is-compact .avatar-stack .avatar,
-.workstream-context-sidebar.is-compact .skeleton-avatar-stack > .skeleton-bar,
-.workstream-context-sidebar.is-compact .avatar-overflow { width: 20px; height: 20px; font-size: 8px; }
-.workstream-context-sidebar.is-compact .avatar-stack-item + .avatar-stack-item,
-.workstream-context-sidebar.is-compact .skeleton-avatar-stack > .skeleton-bar + .skeleton-bar,
-.workstream-context-sidebar.is-compact .avatar-overflow { margin-left: -12px; }
 .sidebar-workstream-public { align-items: center; background: var(--av-sys-color-surface-default); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-muted); display: flex; height: 17px; justify-content: center; position: absolute; right: -1px; top: -2px; width: 17px; }
 .sidebar-footer { display: flex; align-items: center; justify-content: flex-end; flex: 0 0 56px; gap: 4px; margin-top: auto; padding: 8px 12px; transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
 .app-shell .sidebar .sidebar-footer .account-trigger { flex: 1; min-width: 0; width: auto; margin: 0; transition: gap var(--sidebar-layout-motion), min-height var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
@@ -7833,7 +7404,6 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 .attachment-media-tile:has(video) .attachment-video-play { color: var(--av-sys-color-text-on-media); }
 
 /* Drafts reuse feed tiles at card height; the feed retains double-height media. */
-
 
 .pending-attachment { position: relative; flex: 0 0 auto; }
 .pending-attachment.is-file { width: 220px; }
