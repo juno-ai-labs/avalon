@@ -1841,6 +1841,8 @@ worth surfacing; the rest of the history still is not.
 **Consequences:** A new seating path must decide whether the person seated
 themselves. Pass true only when somebody else did.
 
+Shipped in [#1039](https://github.com/juno-ai-labs/avalon/pull/1039).
+
 ### 2026-09-30 — A person added to a conversation starts at its latest message
 
 **What changed:** Seating somebody in a conversation that is not new now writes

@@ -6,6 +6,7 @@ import { asUserId } from "@rally/contracts";
 import { ParticipantAuthorityTransferStorage, type ParticipantProjection } from "../src/durable-objects/participant-authority-transfer";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
 import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
+import { seedWorkstreamRoot } from "./helpers/substream-fixture";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 const removedId = "00000000-0000-4000-8000-000000000002";
@@ -56,6 +57,28 @@ describe("participant authority handoff in real workerd", () => {
       expect(store.applyProjection({ ...active, revision: 4 })).toEqual({ status: "applied" });
       expect(read()).toEqual({ status: "active", participant_epoch: 3, first_opened_at: 60 });
       expect(() => state.storage.sql.exec("DELETE FROM participants WHERE user_id=?", userId)).toThrow("participant_authority_transferred");
+    });
+  });
+
+  it("leaves the newest message unread only when somebody else's grant seats them", async () => {
+    const stub = env.MIGRATION_PROBE_DO!.getByName("participant-projection-read-cursor");
+    await stub.ping();
+    await runInDurableObject(stub, (_instance, state) => {
+      migrate(state, Number.MAX_SAFE_INTEGER);
+      seedWorkstreamRoot(state);
+      // Four messages with attention ordinals 1 to 4.
+      state.storage.sql.exec("UPDATE workstream SET next_attention_ordinal=5 WHERE id=1");
+      const store = new ParticipantAuthorityTransferStorage(state.storage);
+      store.prepare(transferId);
+      store.commit(transferId);
+      const seen = () => state.storage.sql.exec<{ seen: number }>(
+        "SELECT seen_attention_ordinal AS seen FROM member_attention WHERE user_id=?", userId).one().seen;
+      expect(store.applyProjection(projection({ active: true, addedByUserId: asUserId(removedId) }))).toEqual({ status: "applied" });
+      expect(seen()).toBe(3);
+      store.applyProjection(projection({ revision: 2 }));
+      // A null adder is the person seating themselves, so the cursor reaches the newest message.
+      expect(store.applyProjection(projection({ revision: 3, active: true }))).toEqual({ status: "applied" });
+      expect(seen()).toBe(4);
     });
   });
 
