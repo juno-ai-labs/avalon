@@ -1,10 +1,7 @@
 import { spawn } from 'node:child_process';
-import { createWriteStream } from 'node:fs';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -18,6 +15,7 @@ import {
   verifyFeedArtifact,
 } from './release-lib.mjs';
 import {
+  downloadReleaseObject,
   purgeAndVerifyImmutableReleaseUrls,
   purgeCloudflareUrls,
   verifyPublicReleaseArtifactHash,
@@ -179,27 +177,14 @@ function wranglerArgs(command, objectPath, ...args) {
 
 async function getR2Object(key, destination) {
   const encodedKey = key.split('/').map(encodeURIComponent).join('/');
-  const url = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}`
-    + `/r2/buckets/${encodeURIComponent(bucket)}/objects/${encodedKey}`;
-  const response = await fetch(url, {
+  return await downloadReleaseObject({
+    destination,
     headers: { authorization: `Bearer ${apiToken}` },
-    signal: AbortSignal.timeout(5 * 60_000),
+    label: `r2://${bucket}/${key}`,
+    source: 'Cloudflare',
+    url: `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}`
+      + `/r2/buckets/${encodeURIComponent(bucket)}/objects/${encodedKey}`,
   });
-  if (response.status === 404) {
-    await response.body?.cancel();
-    return false;
-  }
-  if (!response.ok || !response.body) {
-    const body = (await response.text()).slice(0, 1_000);
-    throw new Error(
-      `Could not inspect r2://${bucket}/${key}; Cloudflare returned HTTP ${response.status}: ${body}`,
-    );
-  }
-  await pipeline(
-    Readable.fromWeb(response.body),
-    createWriteStream(destination, { mode: 0o600 }),
-  );
-  return true;
 }
 
 async function getPublicObject(key, destination, verificationId) {
@@ -209,25 +194,13 @@ async function getPublicObject(key, destination, verificationId) {
   }
   const url = new URL(publicUrl(key.slice(prefixWithSeparator.length)));
   url.searchParams.set('rally-release-verify', verificationId.slice(0, 24));
-  const response = await fetch(url, {
+  return await downloadReleaseObject({
+    destination,
     headers: { 'cache-control': 'no-cache' },
-    signal: AbortSignal.timeout(5 * 60_000),
+    label: url.toString(),
+    source: 'the public release domain',
+    url,
   });
-  if (response.status === 404) {
-    await response.body?.cancel();
-    return false;
-  }
-  if (!response.ok || !response.body) {
-    const body = (await response.text()).slice(0, 1_000);
-    throw new Error(
-      `Could not inspect ${url}; the public release domain returned HTTP ${response.status}: ${body}`,
-    );
-  }
-  await pipeline(
-    Readable.fromWeb(response.body),
-    createWriteStream(destination, { mode: 0o600 }),
-  );
-  return true;
 }
 
 async function putR2Object(key, source, { contentType, cacheControl, disposition }) {

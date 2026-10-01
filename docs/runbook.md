@@ -1218,7 +1218,11 @@ Before this recovery boundary, a failed attempt can upload one or more
 versioned objects and a freshly notarized retry will not reproduce their bytes.
 While no prepared receipt or live manifest names that version, the publisher
 may replace a mismatched orphan under the pending version, then repeats every
-hash and public-domain verification. Once the prepared receipt or a live
+hash and public-domain verification. Every one of those downloads, from the R2
+API or the public domain, aborts only after 30 seconds with no bytes arriving,
+never on total transfer time: a healthy ~183 MiB zip can take longer than any
+fixed wall-clock deadline, and a 5-minute one failed two notarized 1.479.0
+attempts while hashing the existing orphan. Once the prepared receipt or a live
 manifest names that version, recovery uses the recorded exact bytes; published
 release bytes are never regenerated from a fresh build. If publication stops
 after `release-publication.json` appears, rerun the same release workflow or tag
