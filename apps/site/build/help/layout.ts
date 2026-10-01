@@ -1,4 +1,5 @@
-import type { HelpChapter, HelpPage, HelpSite } from './content';
+import { pageNumber, type HelpChapter, type HelpPage, type HelpSite } from './content';
+import { OG_HEIGHT, OG_WIDTH, ogImagePath } from './og';
 import type { HelpHeading } from './markdown';
 
 export const SITE_ORIGIN = 'https://rallywith.ai';
@@ -32,14 +33,6 @@ const current = (active: boolean): string => (active ? ' aria-current="page"' : 
 const navLabel = (page: HelpPage): string => escapeHtml(page.frontMatter.navTitle ?? page.frontMatter.title);
 
 const draftBadge = (page: HelpPage): string => (page.frontMatter.draft ? ' <mark class="draft">Draft</mark>' : '');
-
-/** "Chapter 3", or "3.2" for the second page of chapter three. */
-export function pageNumber(page: HelpPage): string {
-  const chapter = page.chapter;
-  if (!chapter) return '';
-  if (page.kind === 'chapter') return `Chapter ${chapter.number}`;
-  return `${chapter.number}.${chapter.pages.indexOf(page) + 1}`;
-}
 
 function sidebar(site: HelpSite, page: HelpPage): string {
   const chapters = site.chapters.map((chapter) => {
@@ -151,8 +144,15 @@ export function renderLayout({ site, page, html, headings, assets }: LayoutInput
     `<meta property="og:description" content="${escapeHtml(description)}">`,
     `<meta property="og:url" content="${canonical}">`,
     '<meta property="og:type" content="article">',
-    `<meta property="og:image" content="${SITE_ORIGIN}/og-2026.jpg">`,
+    '<meta property="og:site_name" content="Rally Help Center">',
+    `<meta property="og:image" content="${SITE_ORIGIN}${ogImagePath(page)}">`,
+    `<meta property="og:image:width" content="${OG_WIDTH}">`,
+    `<meta property="og:image:height" content="${OG_HEIGHT}">`,
+    `<meta property="og:image:alt" content="${escapeHtml(`${title}: ${description}`)}">`,
     '<meta name="twitter:card" content="summary_large_image">',
+    `<meta name="twitter:title" content="${escapeHtml(title)}">`,
+    `<meta name="twitter:description" content="${escapeHtml(description)}">`,
+    `<meta name="twitter:image" content="${SITE_ORIGIN}${ogImagePath(page)}">`,
     ...assets.styles.map((href) => `<link rel="stylesheet" href="${href}">`),
     ...assets.scripts.map((src) => `<script type="module" src="${src}"></script>`),
     `<script type="application/ld+json">${structuredData(page)}</script>`,
