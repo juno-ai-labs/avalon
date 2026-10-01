@@ -39,7 +39,8 @@ export function parseBlogPost(source: string, file: string): BlogPost {
   if (!name) throw new Error(`${file}: file name must be YYYY-MM-DD-<title>.md, the title in lowercase letters, digits and hyphens`);
   const date = name[1] ?? '';
   // The day must exist: `Date` would quietly turn 2026-02-30 into March 2.
-  if (new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date) {
+  const day = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(day.getTime()) || day.toISOString().slice(0, 10) !== date) {
     throw new Error(`${file}: date "${date}" is not a real YYYY-MM-DD day`);
   }
   const match = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/u.exec(source);
@@ -60,8 +61,10 @@ export function parseBlogPost(source: string, file: string): BlogPost {
 
 export function loadBlogPosts(directory: URL): BlogPost[] {
   const files = new Map<string, string>();
+  // Sorted so a duplicate slug always names the earlier file as the one already using it.
   return readdirSync(directory)
     .filter((name) => name.endsWith('.md'))
+    .sort()
     .map((name) => {
       const post = parseBlogPost(readFileSync(new URL(name, directory), 'utf8'), name);
       // Two posts on one slug would build one page over the other.

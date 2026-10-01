@@ -108,6 +108,8 @@ post's published `index.md` no longer carries its date in front matter; the
 page and sitemap still do. If the index grows long, pagination belongs in
 `renderBlogIndex`.
 
+Shipped in #1053.
+
 ### 2026-10-01: The blog is added, with Blastoff as its first post
 
 **What changed:** The site gains `/blog/`, a list of posts, and
