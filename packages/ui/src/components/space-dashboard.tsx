@@ -1,10 +1,12 @@
+import type { WorkstreamAppearancePatch } from '@rally/contracts';
 import { UserPlus } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 
 import { isComposingKeyEvent } from '../lib/ime';
 import type { WorkspaceMember } from '../lib/types';
+import { AppearancePicker } from './appearance-picker';
 import { AvatarStack, DropdownSelect, InlineError } from './primitives';
-import { SpaceIcon, type SpaceAppearance } from './space-appearance-picker';
+import { SpaceIcon, type SpaceAppearance } from './space-icon';
 
 /**
  * The Space dashboard's presentation, section by section.
@@ -38,7 +40,8 @@ export function SpaceDashboardHeader({
   editable,
   name,
   nameError,
-  onEditAppearance,
+  id,
+  onAppearanceChange,
   onRename,
   participants,
 }: {
@@ -54,7 +57,14 @@ export function SpaceDashboardHeader({
   editable: boolean;
   name: string;
   nameError?: string | null | undefined;
-  onEditAppearance: () => void;
+  /** The Space's id; the picker keys its pending choices on it. */
+  id: string;
+  /**
+   * Save one icon or colour choice. The header opens the same picker a Channel
+   * does, which saves on every click; the promise settling is what retires the
+   * choice's preview or shows its error.
+   */
+  onAppearanceChange: (patch: WorkstreamAppearancePatch) => Promise<void>;
   onRename: (name: string) => void;
   /**
    * The Space's people, and the control that opens their management. Omitted
@@ -74,12 +84,17 @@ export function SpaceDashboardHeader({
   return (
     <header className="space-dashboard-header window-drag">
       {editable
-        ? <button
-            aria-label={`Change icon and color for ${name}`}
-            className="space-dashboard-icon window-no-drag"
-            onClick={onEditAppearance}
-            type="button"
-          ><SpaceIcon space={appearance} size={24} /></button>
+        ? <AppearancePicker
+            appearance={{ icon: appearance.iconKey, color: appearance.colorKey }}
+            id={id}
+            label={`Change icon and color for ${name}`}
+            onChange={onAppearanceChange}
+            renderGlyph={(chosen) => <SpaceIcon size={24} space={{
+              iconKey: chosen.icon ?? appearance.iconKey,
+              colorKey: chosen.color ?? appearance.colorKey,
+            }} />}
+            triggerClassName="space-dashboard-icon"
+          />
         : <span className="space-dashboard-icon"><SpaceIcon space={appearance} size={24} /></span>}
       <div className="space-dashboard-title">
         {draft === null
