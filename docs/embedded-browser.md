@@ -140,6 +140,12 @@ to each website separately from Chrome or another app. Website fingerprinting,
 CAPTCHAs, and provider policy can still prevent sign-in or access.
 Electron's native popup from this `WebContentsView` stayed blank in a live
 local-window test, so the rail opens its destination as a new tab instead.
+WebAuthn is off in visited pages on macOS and Linux. Electron draws no
+passkey prompt there, so a request no plugged-in security key can answer, such
+as a synced passkey, hung with nothing on screen. With it off, a site offers
+its other sign-in methods, and security keys, which did work, no longer do.
+A page that calls `navigator.credentials.get({ publicKey })` without checking
+for `PublicKeyCredential` still waits forever.
 
 The native view cannot be layered under renderer dialogs, so the renderer hides
 it for dialogs and menus. Agent access has no transport yet; the command types
@@ -154,8 +160,39 @@ DOM tests alone cannot verify the native view's bounds or layering.
 The development client commonly runs with a non-default renderer zoom factor;
 check that the guest page starts exactly below the rail toolbar and does not
 cover the conversation.
+WebAuthn being off has no unit test, since a mocked `WebContentsView` cannot
+show whether Electron honors the flag. On macOS or Linux, evaluate
+`typeof PublicKeyCredential` in a guest tab and expect `'undefined'`.
 
 ## Changelog
+
+### 2026-10-01 — Turn WebAuthn off in visited pages on macOS and Linux
+
+**What changed:** Browser tabs open with `disableBlinkFeatures: 'WebAuth'`
+outside Windows, so `PublicKeyCredential` is undefined in visited pages.
+
+**Why:** Signing in to Google with a passkey during a ChatGPT import spun on
+"Verifying it's you" for good on a Mac. Electron draws no passkey prompt and,
+until `app.configureWebAuthn` is called, has no platform authenticator, so
+`navigator.credentials.get()` stays pending past its own timeout. A local
+Electron 43 run on Linux showed the same: a 3s-timeout request still pending
+after 8s. With the feature off, a site sees no WebAuthn support and offers
+password or phone sign-in.
+
+**Considered and rejected:** `app.configureWebAuthn({ touchID })`. It needs a
+`keychain-access-groups` entitlement, and its passkeys are bound to this Mac and
+held in Rally's own keychain group, so a person's existing iCloud or Chrome
+passkey still would not appear. Using those needs Apple's managed browser
+passkey entitlement. A page script that makes `credentials.get` reject was
+also rejected: visited pages deliberately get no preload, and injecting one
+through DevTools for every tab and frame is more machinery than this needs.
+
+**Consequences:** Security keys stop working in the browser on macOS and Linux.
+Windows keeps WebAuthn on the assumption that Windows' own prompt serves it;
+that has not been tried in Rally, and a hang there would look like this one.
+Adding passkey support later means removing this flag in the same change.
+
+Shipped in #1056.
 
 ### 2026-09-25 — Closing the only blank tab closes the rail
 
