@@ -7,7 +7,7 @@ describe('context rail state', () => {
     useUiStore.setState({
       sidebarOpen: false,
       sidebarWidth: 300,
-      spacesSidebarWidth: 280,
+      sidebarSpaceFilter: null,
       railOpen: false,
       railVariant: 'context',
       railWidth: 360,
@@ -42,10 +42,16 @@ describe('context rail state', () => {
     useUiStore.getState().setSidebarWidth(900);
     expect(useUiStore.getState().sidebarWidth).toBe(400);
     expect(window.localStorage.getItem('rally.sidebar-width')).toBe('400');
+  });
 
-    useUiStore.getState().setSpacesSidebarWidth(200);
-    expect(useUiStore.getState().spacesSidebarWidth).toBe(240);
-    expect(window.localStorage.getItem('rally.spaces-sidebar-width')).toBe('240');
+  it('remembers the sidebar Space filter and forgets it when set back to All', () => {
+    useUiStore.getState().setSidebarSpaceFilter('space-launch');
+    expect(useUiStore.getState().sidebarSpaceFilter).toBe('space-launch');
+    expect(window.localStorage.getItem('rally.sidebar-space-filter')).toBe('space-launch');
+
+    useUiStore.getState().setSidebarSpaceFilter(null);
+    expect(useUiStore.getState().sidebarSpaceFilter).toBeNull();
+    expect(window.localStorage.getItem('rally.sidebar-space-filter')).toBeNull();
   });
 
   it('opens the requested contextual variant and resets stale detail state', () => {
