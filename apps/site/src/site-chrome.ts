@@ -45,9 +45,9 @@ export function renderSiteFooter(): string {
   ];
   const trust = trustPages.map(({ href, name }) => `<a href="${href}">${escape(name)}</a>`);
   const help = [
-    '<a href="/support/">Support</a>',
-    '<a href="/support/getting-started/">Getting started</a>',
-    '<a href="/support/connectors/">Connectors</a>',
+    '<a href="/help/">Help Center</a>',
+    '<a href="/help/getting-started/">Getting started</a>',
+    '<a href="/help/connecting-your-tools/">Connectors</a>',
     '<a data-site-action="support-contact-footer" href="mailto:help@rallywith.ai?subject=Rally%20support">help@rallywith.ai</a>',
   ];
   return `<footer class="rally-footer"><div class="footer-grid">`
@@ -104,7 +104,7 @@ export function renderLlmsTxt(): string {
 ## Product
 
 - [Rally home](${ORIGIN}/): what Rally is, features, pricing, team, and technology
-- [Support](${ORIGIN}/support/): getting started and connector setup
+- [Help Center](${ORIGIN}/help/): the Rally manual, from installing Rally to running an Organization. Its own index of every page, each published as Markdown: ${ORIGIN}/help/llms.txt
 
 ## Compared to
 

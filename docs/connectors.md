@@ -780,7 +780,7 @@ redirect cannot explain: **the Ashby organization must have opted into Ashby
 MCP, and the account signing in must be eligible for it.** Without that, the
 authorization fails provider-side with nothing naming the cause. The personal
 **Connect for me** tooltip says so, and
-<https://rallywith.ai/support/connectors/ashby/> is the setup walkthrough.
+<https://rallywith.ai/help/connecting-your-tools/ashby/> is the setup walkthrough.
 
 Tool names and schemas come from live discovery; all retain conservative write
 execution and receipts without individual tool confirmations.

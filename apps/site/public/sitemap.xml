@@ -31,49 +31,6 @@
     <loc>https://rallywith.ai/trust/cookies/</loc>
   </url>
   <url>
-    <loc>https://rallywith.ai/support/</loc>
+    <loc>https://rallywith.ai/help/</loc>
   </url>
-  <url>
-    <loc>https://rallywith.ai/support/getting-started/</loc>
-  </url>
-  <url>
-    <loc>https://rallywith.ai/support/connectors/</loc>
-  </url>
-  <url>
-    <loc>https://rallywith.ai/support/connectors/google/</loc>
-  </url>
-  <url>
-    <loc>https://rallywith.ai/support/connectors/github/</loc>
-  </url>
-  <url>
-    <loc>https://rallywith.ai/support/connectors/ashby/</loc>
-  </url>
-  <url>
-    <loc>https://rallywith.ai/support/connectors/fireflies/</loc>
-  </url>
-  <url>
-    <loc>https://rallywith.ai/support/connectors/granola/</loc>
-  </url>
-  <url>
-    <loc>https://rallywith.ai/support/connectors/linear/</loc>
-  </url>
-  <url>
-    <loc>https://rallywith.ai/support/connectors/notion/</loc>
-  </url>
-  <url>
-    <loc>https://rallywith.ai/support/connectors/slack/</loc>
-  </url>
-  <url>
-    <loc>https://rallywith.ai/support/connectors/inbound-webhook/</loc>
-  </url>
-  <url>
-    <loc>https://rallywith.ai/support/connectors/x/</loc>
-  </url>
-  <url>
-    <loc>https://rallywith.ai/support/connectors/custom-mcp/</loc>
-  </url>
-  <url>
-    <loc>https://rallywith.ai/support/contact/</loc>
-  </url>
-  <url><loc>https://rallywith.ai/support/connectors/canva/</loc></url>
 </urlset>
