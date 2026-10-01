@@ -61,8 +61,14 @@ function chapterLabel(page: HelpPage): string {
 function hrefResolver(site: HelpSite, byPath: Map<string, HelpPage>, byUrl: Map<string, HelpPage>,
   assets: Map<string, string>, fragments: FragmentCheck[], page: HelpPage, style: 'html' | 'markdown') {
   return (href: string, kind: 'link' | 'image'): HrefResolution => {
-    const { path, suffix } = splitHref(href);
     const where = `${page.sourceName}: ${kind} "${href}"`;
+    if (/^[a-z][a-z0-9+.-]*:/iu.test(href) || href.startsWith('//')) {
+      if (kind === 'image' && !/^data:/iu.test(href)) {
+        return { error: `${where} is on another site, which the site's Content-Security-Policy blocks; save the image in the help folder and link it relatively` };
+      }
+      return { href };
+    }
+    const { path, suffix } = splitHref(href);
     const fragment = suffix.startsWith('#') ? decodeURIComponent(suffix.slice(1)) : '';
     const pageHref = (target: HelpPage): HrefResolution => {
       if (fragment) fragments.push({ from: page, to: target, fragment, href });

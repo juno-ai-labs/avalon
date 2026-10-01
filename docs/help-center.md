@@ -69,7 +69,9 @@ resolves each link against the source file: a `.md` file or a folder becomes the
 target page's URL, a `#fragment` must name a heading the target has, and any
 other file inside `help/` is published under `/help/_assets/` with a content hash
 in its name. An absolute `/help/...` link must name a page. A link that resolves
-to nothing, leaves the folder, or points at a draft fails the build. In the
+to nothing, leaves the folder, or points at a draft fails the build, and so does
+an image on another site, since the site CSP loads images only from `'self'` and
+`data:`. In the
 Markdown copies, the same links become absolute URLs of the targets' Markdown
 copies, so an agent reading one page can follow the manual without HTML.
 
