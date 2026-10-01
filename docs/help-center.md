@@ -168,9 +168,12 @@ Barlow for text, Barlow Semi Condensed for display, and a monospace for labels.
   `/help/*`, so the landing page, downloads and handoff pages stay pure static
   assets with no Worker invocation. Widening it puts a script in front of pages
   whose latency and headers were designed without one.
-- **Search and "Copy page" fetch same-origin files**, which is why the site CSP's
-  `connect-src` includes `'self'`. Removing it breaks both without an error
-  anywhere but the browser console.
+- **Search and "Copy page" fetch same-origin files**, so `connect-src` includes
+  `'self'` on `/help/*` only. `public/_headers` removes the global CSP there
+  (`! Content-Security-Policy`) and sets a copy that differs only in
+  `connect-src`; adding a second CSP instead would be enforced alongside the
+  first, and the stricter would win. Every other page keeps `connect-src` to
+  the two API origins. Change the two CSP lines together.
 
 ## Boundary
 
