@@ -8,12 +8,6 @@ h1 em,h2 em{font-style:normal;color:var(--muted)}
 .trust-center h3{font-family:var(--display-font);font-size:24px;font-weight:500;line-height:1.15}
 .site-header nav a[aria-current]{color:var(--paper)}
 
-/* Page tabs: the landing's mono labels on a hairline. */
-.trust-tabs{display:flex;gap:4px 28px;overflow-x:auto;scrollbar-width:none;border-bottom:1px solid var(--hairline);font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase}
-.trust-tabs a{flex-shrink:0;padding:20px 0 18px;border-bottom:1px solid transparent;margin-bottom:-1px;color:oklch(.97 0 0/.55);transition:color .15s,border-color .15s}
-.trust-tabs a:hover{color:var(--paper)}
-.trust-tabs a[aria-current]{color:var(--paper);border-color:var(--paper)}
-
 .trust-hero{padding:56px 0 88px;border-bottom:1px solid var(--hairline)}
 .trust-hero-copy{max-width:64rem}
 .trust-kicker{display:flex;align-items:center;gap:12px;font-family:var(--mono);font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:var(--muted)}
