@@ -292,9 +292,13 @@ for (const region of configuredRegions) {
   regional.SESSION_SIGNING_KEY ||= randomBytes(48).toString("base64url");
   regional.OAUTH_STATE_ENCRYPTION_KEY ||= randomBytes(32).toString("base64");
   regional.CONNECTOR_CREDENTIALS_KEY ||= randomBytes(32).toString("base64");
-  // Migrate the original generated allowlist without overriding an explicit
-  // developer choice in .env.local. Built Electron renderers use app://rallywithai.
-  if (!("ALLOWED_ORIGINS" in local) && existing.ALLOWED_ORIGINS === "http://localhost:5173") {
+  // The allowlist is the generated default unless .env.local names one. An
+  // existing .dev.vars value is never a developer's choice — the documented
+  // place for that is .env.local — only an earlier default, and keeping it
+  // pins it for good: a file written before the renderer origin became
+  // app://rallywithai refuses every realtime socket (socket_origin_forbidden),
+  // and each Channel shows "Channel could not be opened".
+  if (!("ALLOWED_ORIGINS" in local)) {
     regional.ALLOWED_ORIGINS = safeDefaults.ALLOWED_ORIGINS;
   }
   const serialized = workerKeys
