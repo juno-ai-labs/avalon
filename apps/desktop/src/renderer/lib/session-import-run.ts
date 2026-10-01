@@ -79,6 +79,8 @@ export type SessionImportRunResult =
   | { kind: 'imported'; workstreamId: string }
   | { kind: 'failed'; reason: SessionImportFailureReason }
   | { kind: 'unfinished' }
+  /** The person cancelled; nothing to explain. */
+  | { kind: 'cancelled' }
   | { kind: 'error'; message: string };
 
 /** What the person reads when the agent says the conversation cannot be read. Rally's words, never the page's. */
@@ -123,10 +125,14 @@ export function startSessionImportRun(input: {
   let socket: RealtimeSocket | null = null;
   let run: { workstreamId: string; substreamId: string } | null = null;
   let steps = 0;
+  /** How the run ends once the action that decided it has been answered. */
+  let ending: SessionImportRunResult | null = null;
   const finish = (result: SessionImportRunResult) => {
     if (finished) return;
     finished = true;
     socket?.close(1000, 'import ended');
+    // A new Channel that will never open is discarded rather than left listed.
+    if (result.kind !== 'imported' && result.kind !== 'cancelled') void discard();
     settle(result);
   };
 
@@ -165,11 +171,11 @@ export function startSessionImportRun(input: {
         } catch (error) {
           return { ok: false, code: 'import_rejected', message: error instanceof Error ? error.message : 'Rally refused the import.' };
         }
-        finish({ kind: 'imported', workstreamId: run.workstreamId });
+        ending = { kind: 'imported', workstreamId: run.workstreamId };
         return { ok: true, result: { workstreamId: run.workstreamId, messages: preview.content.messages.length } };
       },
       'session_import.fail': async (action) => {
-        finish({ kind: 'failed', reason: action.reason });
+        ending = { kind: 'failed', reason: action.reason };
         return { ok: true, result: {} };
       },
     },
@@ -189,7 +195,10 @@ export function startSessionImportRun(input: {
       const request = parsed.data;
       queue = queue.then(async () => {
         const outcome = await executor.execute(request.action);
+        // Answered before the run is ended here, so the agent's tool returns
+        // instead of waiting on a socket this window has closed.
         socket?.send(JSON.stringify({ type: 'answer_desktop_action', actionId: request.id, outcome }));
+        if (ending) finish(ending);
       });
     } else if (frame.type === 'tool_started') {
       steps += 1;
@@ -215,13 +224,13 @@ export function startSessionImportRun(input: {
     });
   };
 
-  const discard = async () => {
+  async function discard() {
     if (!run) return;
     await input.api.discardSessionImport(run.workstreamId, {
       substreamId: run.substreamId,
       clientMessageId: input.mode.kind === 'create' ? input.mode.clientMessageId : null,
     }).catch(() => undefined);
-  };
+  }
 
   void (async () => {
     try {
@@ -245,7 +254,7 @@ export function startSessionImportRun(input: {
       if (finished) return;
       cancelled = true;
       await discard();
-      finish({ kind: 'unfinished' });
+      finish({ kind: 'cancelled' });
     },
   };
 }

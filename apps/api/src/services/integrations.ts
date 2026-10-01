@@ -2785,9 +2785,17 @@ export async function runWorkstreamHarness(
   const leaseHeartbeatStartedAtMs = Date.now();
   await liveness.pulse("run_start", true);
   const leaseHeartbeatMs = Date.now() - leaseHeartbeatStartedAtMs;
-  const promptPreparation = new Preparation(() => loadRunPromptContext(
-    env, input, attemptLease, workstream, runDefinitionPreparation,
-  ));
+  // A profiled run's prompt is the profile's own and nothing else: it reads no
+  // memory and no work-stream context, so it pays for neither.
+  const promptPreparation = new Preparation(() => profile
+    ? Promise.resolve({
+      systemPrompt: profile.systemPrompt(),
+      additionalMessages: [],
+      memoryContextHash: null,
+      memoryContextMs: 0,
+      memoryRecallRequired: false,
+    })
+    : loadRunPromptContext(env, input, attemptLease, workstream, runDefinitionPreparation));
   const toolsPreparation = new Preparation(() => profile
     ? Promise.resolve(profileHarnessTools(profile.plugins(input,
       localWorkstreamAuthority(env, input.workspaceId, input.parentId, "desktopAction"))))
@@ -3377,7 +3385,7 @@ export async function runWorkstreamHarness(
           ? input.executionPrincipal.userId
           : input.executionPrincipal.workspaceId,
       },
-      systemPrompt: profile ? profile.systemPrompt() : promptContext.systemPrompt,
+      systemPrompt: promptContext.systemPrompt,
       // A persistent loop bootstraps from canonical transcript history once.
       // Activation-only wrappers cross the separately fenced durable boundary
       // below; a resumed execution must never replace the Bind head with a
