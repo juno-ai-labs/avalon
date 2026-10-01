@@ -177,7 +177,7 @@ export function ConnectorInstallationDetails({ api, connectionId, connectionEnab
           // button that does nothing.
           && installation.registrations.some((registration) => registration.providerId && registration.providerIdVerified)
           && <div className="installation-action"><Button disabled={!online || change.isPending} onClick={() => change.mutate('repair')}>Retry cleanup</Button><p>Asks the provider again to remove the recorded webhook.</p></div>}
-        {needsHelp && <div className="installation-action"><Button onClick={() => void desktopBridge().openExternal('https://rallywith.ai/support/contact/')}>Get help</Button><p>Opens Rally support, for a problem Test does not fix.</p></div>}
+        {needsHelp && <div className="installation-action"><Button onClick={() => void desktopBridge().openExternal('https://rallywith.ai/help/help-and-glossary/contact-support/')}>Get help</Button><p>Opens Rally support, for a problem Test does not fix.</p></div>}
       </section>}
       {test.data && <ConnectionTestOutcome kind={test.data.ok ? 'passed' : 'failed'} message={test.data.message} />}
       {test.error && <ConnectionTestOutcome kind="unavailable" message={test.error.message} />}

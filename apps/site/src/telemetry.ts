@@ -244,7 +244,7 @@ export function sitePageForPath(path: string): SitePage {
   if (path.startsWith('/app/')) return 'workstream_handoff';
   if (path.startsWith('/slack/link')) return 'slack_handoff';
   if (path.startsWith('/open')) return 'desktop_handoff';
-  if (path.startsWith('/support') || path === '/slack/' || path === '/slack') return 'support';
+  if (path.startsWith('/support') || /^\/help(?:\/|$)/u.test(path) || path === '/slack/' || path === '/slack') return 'support';
   if (/^\/trust(?:\/|$)/u.test(path)) return 'legal';
   if (path.startsWith('/download')) return 'download';
   return 'landing';

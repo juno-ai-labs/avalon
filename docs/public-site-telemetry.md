@@ -4,7 +4,9 @@ The landing links directly to the canonical macOS installer and collects no emai
 `/download/` deliberately skips telemetry initialization so its bearer fragment cannot reach analytics.
 The Download for Mac action is a plain installer link. What the landing reports, and the checklist a redesign must keep, is in [`landing-page-tracking.md`](landing-page-tracking.md). Existing page telemetry remains; no form or dialog is initialized on the homepage.
 
-Support and Trust Center pages use `apps/site/src/information.css`, a static companion to the homepage design. Their policy content, contact destinations, and telemetry entry remain unchanged.
+Help center pages under `/help/` report as the `support` page class; [`help-center.md`](help-center.md) owns them.
+
+Trust Center pages use `apps/site/src/information.css`, a static companion to the homepage design. Their policy content, contact destinations, and telemetry entry remain unchanged.
 
 ## Where the code lives
 
