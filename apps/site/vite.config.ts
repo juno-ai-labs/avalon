@@ -1,10 +1,42 @@
 import { renderAccessCopy } from './src/access-copy';
 import { helpCenter } from './build/help/plugin';
+import { renderComparisonPage } from './src/comparison-pages';
+import { renderComparisonCard, renderSocialCard } from './src/social-cards';
+import { comparisonCount, comparisons, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from './src/site-chrome';
 import { defineConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 
 const projectRoot = fileURLToPath(new URL('.', import.meta.url));
+
+// Each rival's page is rendered from `content/compare/<slug>.md`. No HTML file
+// exists on disk: the build resolves these entry paths to rendered HTML, and
+// the dev server renders the same HTML for `/compare/<slug>/`.
+const comparisonEntries = new Map(comparisons.map((comparison) => [
+  `${projectRoot}compare/${comparison.slug}/index.html`, comparison,
+]));
+const count = comparisonCount();
+const hubCard = {
+  eyebrow: `${count} tools, one table`,
+  headline: [{ text: 'Rally,' }, { text: 'compared.' }],
+  body: `How Rally stacks up against ${count} AI and team tools, from ${comparisons[0]?.name ?? ''} to ${comparisons.at(-1)?.name ?? ''}.`,
+  address: 'rallywith.ai/compare',
+};
+
+// Everything else the comparison data produces, by published path. The build
+// emits each one and the dev server answers for the same paths, so the two
+// can't disagree. Cards are drawn from each page's own front matter, so a card
+// can never disagree with the page it links to.
+const generatedFiles = new Map<string, { type: string; render: () => string | Promise<Buffer> }>([
+  ...comparisons.flatMap((comparison) => [
+    [`compare/${comparison.slug}/social.png`, { type: 'image/png', render: () => renderComparisonCard(comparison) }],
+    // The page's own Markdown, for agents that would rather not parse HTML.
+    [`compare/${comparison.slug}/index.md`, { type: 'text/markdown; charset=utf-8', render: () => comparison.source }],
+  ] as const),
+  ['compare/social.png', { type: 'image/png', render: () => renderSocialCard(hubCard) }],
+  ['compare/sitemap.xml', { type: 'application/xml', render: renderComparisonSitemap }],
+  ['llms.txt', { type: 'text/plain; charset=utf-8', render: renderLlmsTxt }],
+]);
 const rootPackage = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string };
 
 export default defineConfig({
@@ -17,6 +49,37 @@ export default defineConfig({
     // are not HTML entries; the plugin writes them, linking the `help` entry.
     helpCenter({ contentRoot: `${projectRoot}help`, entryName: 'help', entrySource: '/src/help.ts' }),
     { name: 'rally-access-copy', transformIndexHtml: renderAccessCopy },
+    { name: 'rally-site-chrome', transformIndexHtml: { order: 'pre', handler: renderSiteChrome } },
+    {
+      name: 'rally-comparison-pages',
+      resolveId: (id) => (comparisonEntries.has(id) ? id : null),
+      load: (id) => {
+        const comparison = comparisonEntries.get(id);
+        return comparison ? renderComparisonPage(comparison) : null;
+      },
+      async generateBundle() {
+        for (const [fileName, { render }] of generatedFiles) this.emitFile({ type: 'asset', fileName, source: await render() });
+      },
+      configureServer(server) {
+        server.middlewares.use((request, response, next) => {
+          const file = generatedFiles.get(request.url?.split('?')[0]?.slice(1) ?? '');
+          if (!file) return next();
+          Promise.resolve(file.render()).then((body) => {
+            response.setHeader('Content-Type', file.type);
+            response.end(body);
+          }, next);
+        });
+        server.middlewares.use((request, response, next) => {
+          const slug = /^\/compare\/([a-z0-9-]+)\/(?:index\.html)?$/u.exec(request.url?.split('?')[0] ?? '')?.[1];
+          const comparison = slug ? comparisonEntries.get(`${projectRoot}compare/${slug}/index.html`) : undefined;
+          if (!comparison || !request.url) return next();
+          server.transformIndexHtml(request.url, renderComparisonPage(comparison)).then((html) => {
+            response.setHeader('Content-Type', 'text/html');
+            response.end(html);
+          }, next);
+        });
+      },
+    },
     {
       // The technology schematic is its own entry so three.js stays out of the
       // landing page. `technology-loader.ts` adds its script when the figure
@@ -65,6 +128,8 @@ export default defineConfig({
         desktopOpen: `${projectRoot}open/index.html`,
         workstreamLink: `${projectRoot}app/workstreams/index.html`,
         slack: `${projectRoot}slack/index.html`,
+        compare: `${projectRoot}compare/index.html`,
+        ...Object.fromEntries([...comparisonEntries].map(([path, { slug }]) => [`compare-${slug}`, path])),
         trust: `${projectRoot}trust/index.html`,
         trustSecurity: `${projectRoot}trust/security/index.html`,
         trustTerms: `${projectRoot}trust/terms/index.html`,
