@@ -16,11 +16,25 @@
     "three": "^0.186.1"
   },
   "devDependencies": {
+    "@types/hast": "^3.0.5",
+    "@types/mdast": "^4.0.4",
     "@types/three": "^0.186.0",
+    "github-slugger": "^2.0.0",
+    "hast-util-to-string": "^3.0.1",
     "jsdom": "latest",
+    "rehype-highlight": "^7.0.2",
+    "rehype-raw": "^7.0.0",
+    "rehype-sanitize": "^6.0.0",
+    "rehype-stringify": "^10.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "remark-rehype": "^11.1.2",
     "typescript": "catalog:",
+    "unified": "^11.0.5",
+    "unist-util-visit": "^5.1.0",
     "vite": "latest",
     "vitest": "catalog:",
-    "wrangler": "latest"
+    "wrangler": "latest",
+    "yaml": "^2.9.1"
   }
 }

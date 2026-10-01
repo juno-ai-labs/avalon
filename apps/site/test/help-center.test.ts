@@ -1,0 +1,186 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterEach, describe, expect, it } from 'vitest';
+import { HelpContentError, loadHelpSite } from '../build/help/content';
+import { renderMarkdown } from '../build/help/markdown';
+import { buildHelp } from '../build/help/site';
+import { searchEntries, type SearchEntry } from '../src/help-search';
+
+const roots: string[] = [];
+
+function tree(files: Record<string, string>): string {
+  const root = mkdtempSync(join(tmpdir(), 'rally-help-'));
+  roots.push(root);
+  for (const [path, body] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), body);
+  }
+  return root;
+}
+
+const page = (title: string, body = '', extra = ''): string =>
+  `---\ntitle: ${title}\ndescription: About ${title.toLowerCase()}.\n${extra}---\n\n${body}`;
+
+const assets = { styles: ['/assets/help.css'], scripts: ['/assets/help.js'] };
+
+const problemsOf = (run: () => unknown): string[] => {
+  try {
+    run();
+  } catch (error) {
+    if (error instanceof HelpContentError) return error.problems;
+    throw error;
+  }
+  return [];
+};
+
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+describe('help center content', () => {
+  it('orders chapters and pages by their number and counts chapters from one', () => {
+    const root = tree({
+      'index.md': page('Manual'),
+      '20-sidekicks/index.md': page('Sidekicks'),
+      '20-sidekicks/10-schedules.md': page('Schedules'),
+      '20-sidekicks/2-create.md': page('Create'),
+      '05-start/index.md': page('Start'),
+    });
+    const site = loadHelpSite(root);
+    expect(site.chapters.map((chapter) => [chapter.number, chapter.slug])).toEqual([[1, 'start'], [2, 'sidekicks']]);
+    expect(site.pages.map((entry) => entry.url)).toEqual([
+      '/help/', '/help/start/', '/help/sidekicks/', '/help/sidekicks/create/', '/help/sidekicks/schedules/',
+    ]);
+    expect(site.pages[3]?.markdownUrl).toBe('/help/sidekicks/create.md');
+  });
+
+  it('names every front matter and layout problem in one error', () => {
+    const root = tree({
+      'index.md': page('Manual'),
+      '01-start/index.md': '---\ntitle: Start\nsumary: typo\n---\n',
+      '01-start/02-install.md': 'No front matter here.',
+      '01-start/notes.md': page('Notes'),
+      '01-start/deeper/03-page.md': page('Too deep'),
+    });
+    expect(problemsOf(() => loadHelpSite(root))).toEqual([
+      '01-start/index.md: unknown front matter key "sumary" (allowed: title, description, nav_title, draft)',
+      '01-start/index.md: front matter needs "description"',
+      '01-start/02-install.md: missing front matter (start the file with ---, title:, description:, ---)',
+      '01-start/deeper/: chapters are one level deep; nested folders may hold images but not pages',
+      '01-start/notes.md: page files are named NN-slug.md, e.g. 02-invite-people.md',
+    ]);
+  });
+
+  it('leaves drafts out of a build and keeps them for a preview', () => {
+    const root = tree({
+      'index.md': page('Manual'),
+      '01-start/index.md': page('Start'),
+      '01-start/01-ready.md': page('Ready'),
+      '01-start/02-soon.md': page('Soon', '', 'draft: true\n'),
+    });
+    expect(loadHelpSite(root).chapters[0]?.pages.map((entry) => entry.frontMatter.title)).toEqual(['Ready']);
+    expect(loadHelpSite(root, { includeDrafts: true }).chapters[0]?.pages.map((entry) => entry.frontMatter.title)).toEqual(['Ready', 'Soon']);
+  });
+});
+
+describe('help center markdown', () => {
+  const render = (source: string) => renderMarkdown(source, { resolveHref: (href) => ({ href: `/resolved/${href}` }) });
+
+  it('turns GitHub alerts into callouts and drops script tags', () => {
+    expect(render('> [!TIP]\n> Press the button.\n\n<script>alert(1)</script>').html).toBe(
+      '<div class="markdown-alert markdown-alert-tip"><p class="markdown-alert-title">Tip</p>\n<p>Press the button.</p>\n</div>\n',
+    );
+  });
+
+  it('gives headings unique ids and reports H1 to H3 for the outline', () => {
+    const { headings, html } = render('# One\n\n## Setup\n\n### Setup\n\n#### Deep');
+    expect(headings).toEqual([
+      { depth: 1, id: 'one', text: 'One' },
+      { depth: 2, id: 'setup', text: 'Setup' },
+      { depth: 3, id: 'setup-1', text: 'Setup' },
+    ]);
+    expect(html).toContain('<h4 id="deep">Deep<a class="heading-anchor" href="#deep" aria-label="Link to “Deep”">#</a></h4>');
+  });
+
+  it('wraps tables and code blocks, and highlights code by its language', () => {
+    const { html } = render('| a |\n| - |\n| b |\n\n```js\nconst x = 1;\n```');
+    expect(html).toContain('<div class="table-wrap"><table>');
+    expect(html).toContain('<div class="code-block"><div class="code-head"><span class="code-language">js</span><button type="button" class="code-copy" hidden>Copy</button></div><pre><code class="hljs language-js"><span class="hljs-keyword">const</span>');
+  });
+
+  it('resolves relative links and marks external ones', () => {
+    const { html } = render('[next](02-next.md) [site](https://example.com) [here](#top)');
+    expect(html).toBe('<p><a href="/resolved/02-next.md">next</a> <a href="https://example.com" rel="noopener" class="external">site</a> <a href="#top">here</a></p>');
+  });
+});
+
+describe('help center build', () => {
+  const site = () => tree({
+    'index.md': page('Manual', 'Start with [chapter one](01-start/index.md).'),
+    '01-start/index.md': page('Start', 'Read [install](01-install.md#before-you-begin).'),
+    '01-start/01-install.md': page('Install', '## Before you begin\n\n![The window](images/window.png)\n\nBack to [the start](./index.md).'),
+    '01-start/images/window.png': 'not really a png',
+  });
+
+  it('publishes each page as HTML and as Markdown with links rewritten for each', () => {
+    const outputs = buildHelp(site(), { assets });
+    expect([...outputs.keys()].sort()).toEqual([
+      'help/_assets/window-e90137d39d.png',
+      'help/index.html',
+      'help/index.md',
+      'help/llms-full.txt',
+      'help/llms.txt',
+      'help/search-index.json',
+      'help/sitemap.xml',
+      'help/start.md',
+      'help/start/index.html',
+      'help/start/install.md',
+      'help/start/install/index.html',
+    ]);
+    expect(outputs.get('help/start/install/index.html')).toContain('<img src="/help/_assets/window-e90137d39d.png" alt="The window" loading="lazy" decoding="async">');
+    expect(outputs.get('help/start/index.html')).toContain('<a href="/help/start/install/#before-you-begin">install</a>');
+    expect(outputs.get('help/start/install.md')).toBe(
+      '# Install\n\n> About install.\n\n## Before you begin\n\n![The window](https://rallywith.ai/help/_assets/window-e90137d39d.png)\n\nBack to [the start](https://rallywith.ai/help/start.md).\n',
+    );
+    expect(outputs.get('help/llms.txt')).toContain('## Chapter 1: Start\n\n- [Start](https://rallywith.ai/help/start.md): About start.\n- [1.1 Install](https://rallywith.ai/help/start/install.md): About install.');
+  });
+
+  it('fails on a link to a missing page, a missing heading, or a missing image', () => {
+    const root = tree({
+      'index.md': page('Manual', '[gone](01-start/09-gone.md) [anchor](01-start/index.md#nowhere) ![x](missing.png)'),
+      '01-start/index.md': page('Start', '## Somewhere'),
+    });
+    expect(problemsOf(() => buildHelp(root, { assets }))).toEqual([
+      'index.md: link "01-start/09-gone.md" points at a page that does not exist',
+      'index.md: image "missing.png" points at a file that does not exist',
+      'index.md: link "01-start/index.md#nowhere" names a heading that 01-start/index.md does not have (it has: somewhere)',
+    ]);
+  });
+
+  it('builds the published help center without a broken link', () => {
+    const root = join(dirname(fileURLToPath(import.meta.url)), '../help');
+    expect(buildHelp(root, { assets }).has('help/index.html')).toBe(true);
+  });
+});
+
+describe('help center search', () => {
+  const entry = (t: string, x: string, h: Array<[string, string]> = []): SearchEntry => ({ t, c: 'Chapter 1 · Start', u: `/help/${t.toLowerCase()}/`, d: '', h, x });
+  const entries = [
+    entry('Sidekicks', 'A sidekick runs on a schedule.'),
+    entry('Channels', 'Talk in a channel. Sidekicks can post here.', [['schedules', 'Schedules']]),
+    entry('Billing', 'Invoices.'),
+  ];
+
+  it('ranks title matches above body matches and needs every word', () => {
+    expect(searchEntries(entries, 'sidekick').map((hit) => hit.entry.t)).toEqual(['Sidekicks', 'Channels']);
+    expect(searchEntries(entries, 'sidekick invoices')).toEqual([]);
+  });
+
+  it('points a heading match at its section', () => {
+    expect(searchEntries(entries, 'schedules').map((hit) => [hit.entry.t, hit.heading])).toEqual([
+      ['Channels', ['schedules', 'Schedules']],
+    ]);
+  });
+});
