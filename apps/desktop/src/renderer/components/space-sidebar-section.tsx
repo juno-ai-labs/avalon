@@ -8,7 +8,7 @@ import {
   type PersonalOrder,
   type SpaceSummary,
 } from '@rally/contracts';
-import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
+import { SpaceIcon } from '@rally/ui/components/space-icon';
 import { SidebarRefreshRow } from '@rally/ui/components/sidebar-refresh-row';
 import { SpacePlacementList, SpaceRow, SpaceRowContent } from '@rally/ui/components/space-row';
 import { SidebarList } from '@rally/ui/components/resizable-sidebar';

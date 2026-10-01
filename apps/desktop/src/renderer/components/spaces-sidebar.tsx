@@ -2,7 +2,7 @@ import { IconArchive, IconDeviceDesktopDown, IconRestore } from '@tabler/icons-r
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { ContainerOrder, PersonalOrder, SpaceSummary } from '@rally/contracts';
-import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
+import { SpaceIcon } from '@rally/ui/components/space-icon';
 import { SidebarNavigationRowContent } from '@rally/ui/components/navigation';
 import { SidebarRefreshRow } from '@rally/ui/components/sidebar-refresh-row';
 import {
