@@ -140,12 +140,22 @@ export async function downloadReleaseObject({
     const response = await fetchImplementation(url, { headers, signal: deadline.signal });
     deadline.refresh();
     if (response.status === 404) {
-      await response.body?.cancel();
+      try {
+        await response.body?.cancel();
+      } catch {
+        // The 404 is authoritative even when stream teardown fails.
+      }
       return false;
     }
     if (!response.ok || !response.body) {
-      const body = (await response.text()).slice(0, 1_000);
-      throw new Error(`Could not inspect ${label}; ${source} returned HTTP ${response.status}: ${body}`);
+      let detail;
+      try {
+        detail = (await response.text()).slice(0, 1_000);
+      } catch {
+        // Preserve the provider's status when its body cannot be read.
+        detail = 'unreadable response body';
+      }
+      throw new Error(`Could not inspect ${label}; ${source} returned HTTP ${response.status}: ${detail}`);
     }
     const { body } = response;
     await pipeline(
