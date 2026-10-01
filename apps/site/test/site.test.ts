@@ -68,6 +68,10 @@ describe('public Rally site', () => {
     expect(sitePageForPath('/trust/privacy/')).toBe('legal');
     expect(sitePageForPath('/support')).toBe('support');
     expect(sitePageForPath('/support/')).toBe('support');
+    expect(sitePageForPath('/help')).toBe('support');
+    expect(sitePageForPath('/help/')).toBe('support');
+    expect(sitePageForPath('/help/sidekicks/triggers-and-schedules/')).toBe('support');
+    expect(sitePageForPath('/helpful')).toBe('landing');
     expect(classifyDesktopHandoffTarget('avalon://workstreams/not-a-uuid')).toEqual({
       handoffType: 'workstream', validity: 'invalid',
     });

@@ -1,4 +1,5 @@
 import { renderAccessCopy } from './src/access-copy';
+import { helpCenter } from './build/help/plugin';
 import { renderComparisonPage } from './src/comparison-pages';
 import { renderComparisonCard, renderSocialCard } from './src/social-cards';
 import { comparisonCount, comparisons, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from './src/site-chrome';
@@ -44,6 +45,9 @@ export default defineConfig({
     __RALLY_SITE_BUILD__: JSON.stringify(process.env.CF_PAGES_COMMIT_SHA?.slice(0, 40) ?? rootPackage.version),
   },
   plugins: [
+    // The help center is Markdown under help/, published at /help/. Its pages
+    // are not HTML entries; the plugin writes them, linking the `help` entry.
+    helpCenter({ contentRoot: `${projectRoot}help`, entryName: 'help', entrySource: '/src/help.ts' }),
     { name: 'rally-access-copy', transformIndexHtml: renderAccessCopy },
     { name: 'rally-site-chrome', transformIndexHtml: { order: 'pre', handler: renderSiteChrome } },
     {
@@ -114,6 +118,7 @@ export default defineConfig({
       input: {
         main: `${projectRoot}index.html`,
         technology: `${projectRoot}src/technology.ts`,
+        help: `${projectRoot}src/help.ts`,
         concepts: `${projectRoot}concepts/index.html`,
         horizonConcepts: `${projectRoot}concepts/horizon/index.html`,
         heroConcepts: `${projectRoot}concepts/hero/index.html`,
@@ -133,22 +138,6 @@ export default defineConfig({
         trustDpa: `${projectRoot}trust/dpa/index.html`,
         trustSubprocessors: `${projectRoot}trust/subprocessors/index.html`,
         trustCookies: `${projectRoot}trust/cookies/index.html`,
-        support: `${projectRoot}support/index.html`,
-        supportGettingStarted: `${projectRoot}support/getting-started/index.html`,
-        supportContact: `${projectRoot}support/contact/index.html`,
-        supportConnectors: `${projectRoot}support/connectors/index.html`,
-        supportGoogle: `${projectRoot}support/connectors/google/index.html`,
-        supportGitHub: `${projectRoot}support/connectors/github/index.html`,
-        supportAshby: `${projectRoot}support/connectors/ashby/index.html`,
-        supportFireflies: `${projectRoot}support/connectors/fireflies/index.html`,
-        supportCanva: `${projectRoot}support/connectors/canva/index.html`,
-        supportGranola: `${projectRoot}support/connectors/granola/index.html`,
-        supportLinear: `${projectRoot}support/connectors/linear/index.html`,
-        supportNotion: `${projectRoot}support/connectors/notion/index.html`,
-        supportSlack: `${projectRoot}support/connectors/slack/index.html`,
-        supportInboundWebhook: `${projectRoot}support/connectors/inbound-webhook/index.html`,
-        supportX: `${projectRoot}support/connectors/x/index.html`,
-        supportCustomMcp: `${projectRoot}support/connectors/custom-mcp/index.html`,
         authHandoff: `${projectRoot}auth/desktop/index.html`,
         notFound: `${projectRoot}404.html`,
       },
