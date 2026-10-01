@@ -31,6 +31,7 @@ export interface Comparison {
 
 const ORIGIN = 'https://rallywith.ai';
 const DOWNLOAD = 'https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg';
+const CTA = '<div class="compare-cta"><a class="button" href="/#pricing">See Rally pricing</a><a class="button button-outline" href="/compare/">Compare Rally with other tools</a></div>';
 const FIELDS = ['slug', 'name', 'maker', 'order', 'title', 'description', 'updated', 'kind', 'edge'] as const;
 
 export function parseComparison(source: string, file: string): Comparison {
@@ -66,9 +67,6 @@ export const escapeHtml = (text: string): string =>
 
 const inline = (text: string): string => marked.parseInline(text, { async: false });
 const blocks = (tokens: Token[]): string => marked.parser(tokens, { async: false });
-const plain = (html: string): string =>
-  html.replace(/<[^>]+>/gu, '').replace(/&(amp|lt|gt|quot|#39);/gu, (_m, entity: string) =>
-    ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" })[entity] ?? '');
 const anchor = (text: string): string => text.toLowerCase().replace(/[^a-z0-9]+/gu, '-').replace(/^-|-$/gu, '');
 
 /** A heading and the tokens under it, up to the next heading of the same depth. */
@@ -111,26 +109,10 @@ function renderPoints(tokens: Token[]): string {
     + asides.map((aside) => `<div class="compare-aside">${blocks(aside.tokens)}</div>`).join('');
 }
 
-function renderVerdicts(tokens: Token[], file: string): string {
-  const { parts } = splitAt(tokens, 3);
-  if (!parts.some(({ heading }) => heading === 'Pick Rally if')) throw new Error(`${file}: "Which one should you pick?" needs a "### Pick Rally if"`);
-  return `<div class="verdicts">${parts.map(({ heading, tokens: body }) =>
-    `<div class="verdict${heading === 'Pick Rally if' ? ' verdict-rally' : ''}"><h3>${inline(heading)}</h3>${blocks(body)}</div>`).join('')}</div>`
-    + `<div class="compare-cta"><a class="button" href="/#pricing">See Rally pricing</a><a class="button button-outline" href="/compare/">Compare Rally with other tools</a></div>`;
-}
-
-function questions(tokens: Token[]): { question: string; answer: string }[] {
-  return splitAt(tokens, 3).parts.map(({ heading, tokens: body }) => ({ question: heading, answer: blocks(body) }));
-}
-
 /** The section types a comparison page is built from, keyed by `##` heading. */
-function sectionKind(heading: string): { eyebrow: string; nav: string; kind: 'table' | 'points' | 'verdicts' | 'faq' | 'sources' } {
+function sectionKind(heading: string): { eyebrow: string; nav: string; kind: 'table' | 'points' } {
   if (heading === 'Side by side') return { eyebrow: 'Side by side', nav: 'Side by side', kind: 'table' };
   if (heading === 'Where Rally wins') return { eyebrow: 'Our side of the story', nav: 'Where Rally wins', kind: 'points' };
-  if (heading.startsWith('Where ')) return { eyebrow: 'Credit where due', nav: heading, kind: 'points' };
-  if (heading.startsWith('Which one')) return { eyebrow: 'Verdict', nav: 'Which to pick', kind: 'verdicts' };
-  if (heading === 'Questions') return { eyebrow: 'Questions', nav: 'Questions', kind: 'faq' };
-  if (heading === 'Sources') return { eyebrow: 'Sources', nav: 'Sources', kind: 'sources' };
   throw new Error(`Unknown comparison section "${heading}"`);
 }
 
@@ -140,24 +122,17 @@ export function renderComparisonPage(comparison: Comparison): string {
   const path = `/compare/${slug}/`;
   const { before, parts } = splitAt(marked.lexer(comparison.body), 2);
   if (before.length === 0) throw new Error(`${file}: the short answer must come before the first heading`);
-  const required = ['Side by side', `Where ${name} shines`, 'Where Rally wins', 'Which one should you pick?', 'Questions', 'Sources'];
+  const required = ['Side by side', 'Where Rally wins'];
   for (const heading of required) {
     if (!parts.some((part) => part.heading === heading)) throw new Error(`${file}: missing "## ${heading}"`);
   }
 
-  let faq: { question: string; answer: string }[] = [];
   const sections = parts.map(({ heading, tokens }, index) => {
     const { eyebrow, nav, kind } = sectionKind(heading);
     const id = anchor(nav);
-    let body: string;
-    if (kind === 'table') body = renderTable(tokens.find((token) => token.type !== 'space'), name, file);
-    else if (kind === 'points') body = renderPoints(tokens);
-    else if (kind === 'verdicts') body = renderVerdicts(tokens, file);
-    else if (kind === 'faq') {
-      faq = questions(tokens);
-      body = `<div class="faq">${faq.map(({ question, answer }) =>
-        `<details><summary>${inline(question)}</summary>${answer}</details>`).join('')}</div>`;
-    } else body = `<div class="sources">${blocks(tokens)}</div>`;
+    const body = kind === 'table'
+      ? renderTable(tokens.find((token) => token.type !== 'space'), name, file)
+      : renderPoints(tokens) + CTA;
     return {
       id, nav,
       html: `<section class="section${index % 2 === 0 ? ' raised' : ''}" id="${id}" aria-labelledby="${id}-title">\n`
@@ -193,11 +168,6 @@ export function renderComparisonPage(comparison: Comparison): string {
           { '@type': 'ListItem', position: 2, name: 'Compared to', item: `${ORIGIN}/compare/` },
           { '@type': 'ListItem', position: 3, name: `Rally vs ${name}`, item: ORIGIN + path },
         ],
-      },
-      {
-        '@type': 'FAQPage', mainEntity: faq.map(({ question, answer: text }) => ({
-          '@type': 'Question', name: plain(question), acceptedAnswer: { '@type': 'Answer', text: plain(text).trim() },
-        })),
       },
     ],
   };

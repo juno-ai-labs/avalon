@@ -25,20 +25,6 @@ edge: "A single AI the whole team communicates with together."
 | Models | One voice, with each job routed to the model family best at it. | Grok models from xAI |
 | Pricing | $100 or $250 per organization a month. No seat limit. | Included in Cursor plans (Teams is $40 per user a month) or a linked SuperGrok plan; weekly allowance, then on-demand |
 
-## Where Grok Bot shines
-
-### Its own computer in the cloud
-
-Every account gets a persistent cloud machine with a browser, files, and a terminal. Bots keep working there after you close your laptop, and they can use websites that have no connector at all.
-
-### Teach it by showing it
-
-You can record yourself doing a task once, and Grok Bot turns that into a skill a bot can repeat on its own. That is a friendly way to hand off the boring stuff.
-
-### Ready-made team roles
-
-Team Bots ship with templates for sales, product and engineering, marketing, and data work. A team can start from one of those and shape it from there.
-
 ## Where Rally wins
 
 ### A price you can plan around
@@ -58,45 +44,3 @@ Spaces hold a project, Channels hold the shared conversations inside it, and Bre
 Everyone in a Channel talks to the same Rally, and it tracks who asked what and who is allowed to see what, across people and connectors. A shared AI can help the whole team without spilling one person's access into another's view.
 
 > Rally is very polite with new projects. It always gives them some Space.
-
-## Which one should you pick?
-
-### Pick Grok Bot if
-
-- You enjoy building agents and giving each one a name and a job
-- You need an agent to drive websites and apps that have no connector
-- Your team already pays for Cursor and wants Grok Bot in the bundle
-
-### Pick Rally if
-
-- You want one AI your whole team talks to, in the same conversation
-- You'd rather the AI set up its own Sidekicks than maintain bots yourself
-- You want each project to keep its own shared memory, with private Breakouts on the side
-- You want the price to stay put as the team grows
-
-## Questions
-
-### Is Rally a good alternative to Grok Bot for a small team?
-
-Yes, if the team wants one shared AI more than a set of personal agents. In Rally, everyone in a Channel talks to the same AI, projects live in Spaces, and private work happens in Breakouts. Pricing is per organization, $100 a month on Start or $250 on Grow, with no seat limit. Grok Bot is the stronger pick for someone who wants to build agents that drive a cloud computer.
-
-### Do I have to build agents in Rally the way I do in Grok Bot?
-
-No. Rally sets up its own Sidekicks when a task calls for one, like writing in your brand voice or posting a weekly digest. They run on a schedule or when something happens, and they run in the cloud, so they keep going with laptops closed. Nobody writes system prompts or skills files.
-
-### Does Rally work in Slack like Grok Team Bots?
-
-Yes. Once the Rally app is in your Slack, you can mention @Rally, DM it, or use /rally. Progress shows up back in Slack, and the full history stays in Rally, inside the Space and Channel where the work belongs. It also connects to Gmail, Google Drive, Notion, GitHub, Linear, Granola, and more.
-
-### How much does Rally cost compared with Grok Bot?
-
-Rally is $100 a month on Start or $250 a month on Grow, per organization, with no seat limit and one shared quota. You can try it for 14 days without a credit card, or 60 days if you invite two coworkers. Grok Bot comes with Cursor plans, including Cursor Teams at $40 per user a month, or a linked SuperGrok plan, with weekly usage and on-demand billing after that.
-
-## Sources
-
-- [Grok Bot overview](https://docs.x.ai/grok-bot), xAI, checked 2026-10-01
-- [Team Bots documentation](https://docs.x.ai/grok-bot/team-bots), xAI, checked 2026-10-01
-- [Team Bots: AI coworkers that learn from your team](https://x.ai/news/team-bots), xAI, checked 2026-10-01
-- [Grok Bot plans and billing](https://cursor.com/help/grok-bot/plans), Cursor, checked 2026-10-01
-- [Cursor pricing](https://cursor.com/pricing), Cursor, checked 2026-10-01
-- [xAI launches Grok Bot AI agents in beta](https://www.vktr.com/collaboration-productivity/xai-launches-grok-bot-ai-agents-in-beta/), VKTR, checked 2026-10-01
