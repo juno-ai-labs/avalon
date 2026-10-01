@@ -288,10 +288,7 @@ article.chapter .prose > p:first-child::first-letter { float: left; margin: 8px 
 
 /* Article footer. */
 article > footer { margin-top: 72px; }
-.actions { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 0; padding-bottom: 20px; border-bottom: 1px solid var(--help-line); color: var(--help-muted); font-size: var(--help-small); }
-.actions a, .actions button { padding: 0; border: 0; background: none; color: inherit; font-size: inherit !important; text-decoration: none; }
-.actions a:hover, .actions button:hover { color: var(--help-ink); }
-.pager { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 24px; }
+.pager { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .pager a { display: flex; flex-direction: column; gap: 4px; padding: 18px 20px; border: 1px solid var(--help-line); border-radius: var(--help-radius); font-weight: 500; text-decoration: none; transition: border-color .15s; }
 .pager a:hover { border-color: var(--help-ink-soft); }
 .pager span { font-weight: 400; letter-spacing: .16em; }
@@ -308,6 +305,10 @@ article > footer { margin-top: 72px; }
 .toc a:hover, .toc a[aria-current] { color: var(--help-ink) !important; }
 .toc a[aria-current]::before { content: ''; position: absolute; left: -1px; top: 4px; bottom: 4px; width: 1px; background: var(--help-ink); }
 .toc .d3 a { padding-left: 28px; }
+.actions { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; color: var(--help-muted); }
+.toc ol + .actions { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--help-line); }
+.actions a, .actions button { padding: 0; border: 0; background: none; color: inherit; font-size: inherit !important; text-align: left; text-decoration: none; }
+.actions a:hover, .actions button:hover { color: var(--help-ink); }
 
 /* Site footer. */
 .foot { max-width: 1480px; margin: 0 auto; padding: 32px var(--help-gutter); display: flex; flex-wrap: wrap; align-items: center; gap: 16px 32px; border-top: 1px solid var(--help-line); color: var(--help-muted); font-size: var(--help-small); }
@@ -338,8 +339,13 @@ article > footer { margin-top: 72px; }
 
 /* Narrower screens: drop the outline, then fold the chapters behind a button. */
 @media (max-width: 1180px) {
-  .shell { grid-template-columns: var(--help-sidebar) minmax(0, 1fr); grid-template-areas: 'nav main'; gap: 48px; }
-  .toc { display: none; }
+  /* The outline goes; the Markdown actions move under the article. */
+  .shell { grid-template-columns: var(--help-sidebar) minmax(0, 1fr); grid-template-areas: 'nav main' '. toc'; gap: 0 48px; }
+  #chapters { grid-row: 1 / span 2; }
+  .toc { position: static; max-height: none; overflow: visible; padding: 0 0 56px; }
+  .toc > p, .toc > ol { display: none; }
+  .toc ol + .actions { margin-top: 0; }
+  .actions { flex-direction: row; flex-wrap: wrap; gap: 8px 20px; padding-top: 20px; border-top: 1px solid var(--help-line); }
 }
 @media (max-width: 860px) {
   :root { --help-gutter: 18px; --help-header: 56px; }

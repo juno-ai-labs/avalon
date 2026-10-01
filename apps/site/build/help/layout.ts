@@ -45,11 +45,14 @@ function sidebar(site: HelpSite, page: HelpPage): string {
   return `<nav id="chapters" aria-label="Chapters"><a class="home" href="/help/"${current(page.kind === 'home')}>Contents</a><ol>${chapters}</ol></nav>`;
 }
 
+// The right column: the outline, when the page has headings, then the page's
+// Markdown actions, which every page has.
 function outline(page: HelpPage, headings: HelpHeading[]): string {
-  if (headings.length === 0) return '<aside class="toc"></aside>';
+  const actions = `<div class="actions"><button type="button" data-copy-page hidden>Copy page as Markdown</button><a href="${page.markdownUrl}">View as Markdown</a></div>`;
+  if (headings.length === 0) return `<aside class="toc" aria-label="Page actions">${actions}</aside>`;
   const items = headings.map((heading) =>
     `<li${heading.depth > 1 ? ` class="d${heading.depth}"` : ''}><a href="#${heading.id}">${escapeHtml(heading.text)}</a></li>`).join('');
-  return `<aside class="toc" aria-label="On this page"><p>On this page</p><ol><li><a href="#top">${escapeHtml(page.frontMatter.title)}</a></li>${items}</ol></aside>`;
+  return `<aside class="toc" aria-label="On this page"><p>On this page</p><ol><li><a href="#top">${escapeHtml(page.frontMatter.title)}</a></li>${items}</ol>${actions}</aside>`;
 }
 
 function chapterContents(chapter: HelpChapter): string {
@@ -165,20 +168,20 @@ ${head}
 </head>
 <body class="help">
 <a class="skip" href="#content">Skip to content</a>
-<header class="top"><button class="menu" type="button" aria-controls="chapters" aria-expanded="false" aria-label="Chapters"><i></i></button><a class="brand" href="/"><img src="/brand/rally-mark-ink.svg" width="22" height="22" alt="">rally</a><a class="section" href="/help/">Help</a><button class="find" type="button" data-search>Search the manual<kbd>/</kbd></button><nav class="links" aria-label="Rally"><a href="/help/help-and-glossary/contact-support/">Contact support</a><a class="cta" href="/">rallywith.ai</a></nav></header>
+<header class="top"><button class="menu" type="button" aria-controls="chapters" aria-expanded="false" aria-label="Chapters"><i></i></button><a class="brand" href="/"><img src="/brand/rally-mark-ink.svg" width="22" height="22" alt="">rally</a><a class="section" href="/help/">Help</a><button class="find" type="button" data-search>Search the manual<kbd>/</kbd></button><nav class="links" aria-label="Rally"><a href="mailto:help@rallywith.ai?subject=Rally%20support">Contact support</a><a class="cta" href="/">rallywith.ai</a></nav></header>
 <div class="shell">
 <main id="content" tabindex="-1">
 <article class="${page.kind}" data-md="${page.markdownUrl}">
 ${articleHeader(page)}
 <div class="prose">${html}</div>
 ${extras}
-<footer><p class="actions"><button type="button" data-copy-page hidden>Copy page as Markdown</button><a href="${page.markdownUrl}">View as Markdown</a><a href="/help/llms.txt">llms.txt</a></p>${pager(site, page)}</footer>
+<footer>${pager(site, page)}</footer>
 </article>
 </main>
 ${sidebar(site, page)}
 ${outline(page, headings)}
 </div>
-<footer class="foot"><a class="brand" href="/"><img src="/brand/rally-mark-ink.svg" width="18" height="18" alt="">rally</a><nav aria-label="More"><a href="/help/">Help Center</a><a href="/trust/">Trust Center</a><a href="/trust/privacy/">Privacy</a><a href="/help/help-and-glossary/contact-support/">Contact</a></nav><p>© 2026 Juno AI Labs · Rally</p></footer>
+<footer class="foot"><a class="brand" href="/"><img src="/brand/rally-mark-ink.svg" width="18" height="18" alt="">rally</a><nav aria-label="More"><a href="/help/">Help Center</a><a href="/trust/">Trust Center</a><a href="/trust/privacy/">Privacy</a><a href="mailto:help@rallywith.ai?subject=Rally%20support">Contact</a><a href="/help/llms.txt">llms.txt</a></nav><p>© 2026 Juno AI Labs · Rally</p></footer>
 </body>
 </html>
 `;
