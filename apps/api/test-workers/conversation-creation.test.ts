@@ -1,7 +1,6 @@
 import { admitConnectorAudience, reconcileConnectorWorkstreamCreator } from "../src/services/connector-workstream-audience";
 import { ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
 import { bootstrapWorkstreamRuntimeEnvironment, provisionWorkstreamObject } from "../src/services/workstream-runtime-database";
-import { parseSessionExport, previewSessionImport } from "../src/services/session-import";
 import { prepareSessionImport } from "../src/services/session-import-files";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import type { SessionImportPreview } from "@rally/contracts";
@@ -283,14 +282,15 @@ describe("creating a work stream", () => {
     expect(boot.transcript.ranges.flatMap((range) => range.turns)).toHaveLength(2);
   });
 
-  it("materializes a shared ChatGPT page read in Rally's browser as idle imported human and assistant turns", async () => {
+  it("materializes an imported conversation as idle imported human and assistant turns", async () => {
     const importEnv = withWorkspaceRuntimeDatabase(creationEnv(), WORKSPACE_ID);
     const url = "https://chatgpt.com/share/00000000-0000-4000-8000-000000000001";
-    const preview = await previewSessionImport({ kind: "export", provider: "chatgpt", sourceUrl: url, text: JSON.stringify({ title: "Generated garden", linear_conversation: [
-      { message: { author: { role: "user" }, content: { content_type: "text", parts: ["Draw my garden"] } } },
-      { message: { author: { role: "assistant" }, content: { content_type: "model_editable_context", model_set_context: "Internal context" } } },
-      { message: { author: { role: "tool" }, channel: "final", metadata: { image_gen_title: "Garden.png" }, content: { content_type: "multimodal_text", parts: [{ content_type: "image_asset_pointer", asset_pointer: "sediment://garden", mime_type: "image/png" }] } } },
-    ] }) });
+    const preview: SessionImportPreview = { title: "Generated garden", source: { provider: "chatgpt", url, sessionId: "00000000-0000-4000-8000-000000000001" },
+      content: { messages: [
+        { role: "user", text: "Draw my garden", sourceMessageId: "m0" },
+        { role: "assistant", text: "", sourceMessageId: "m2", files: [{ name: "Garden.png", mimeType: "image/png", kind: "artifact",
+          source: { kind: "unavailable", reference: "sediment://garden", reason: "The page did not offer this image's bytes." } }] },
+      ] } };
     const prepared = await prepareSessionImport(importEnv, AUTH, preview, "shared-page-import");
     const created = await new WorkstreamObjectCreationService(importEnv, AUTH).createPrepared({ title: preview.title, clientMessageId: "shared-page-import", participantUserIds: [] }, prepared);
     const boot = await new WorkstreamObjectClient(importEnv, AUTH, created.workstream.id).boot();
@@ -298,7 +298,6 @@ describe("creating a work stream", () => {
     expect(turns.map((turn) => turn.actor)).toEqual(["human", "assistant"]);
     expect(JSON.stringify(turns)).toContain("Draw my garden");
     expect(JSON.stringify(turns)).toContain("Unavailable artifact: Garden.png");
-    expect(JSON.stringify(turns)).not.toContain("Internal context");
     expect(JSON.stringify(turns)).toContain("imported_session");
     expect(created.harnessRunId).toBeNull();
   });
@@ -315,10 +314,11 @@ describe("creating a work stream", () => {
       env.DB.prepare("INSERT INTO sessions(id,user_id,workspace_id,region,revoked_at,expires_at) VALUES (?,?,?,'global',NULL,'2099-01-01T00:00:00.000Z')")
         .bind(otherSessionId, otherUserId, WORKSPACE_ID),
     ]);
-    const preview = parseSessionExport("claude", JSON.stringify({ uuid: "session-42", name: "Shared import", chat_messages: [
-      { uuid: "u1", sender: "human", content: [{ type: "text", text: "Original question" }] },
-      { uuid: "a1", sender: "assistant", content: [{ type: "text", text: "Original answer" }] },
-    ] }));
+    const preview: SessionImportPreview = { title: "Shared import", source: { provider: "claude", url: null, sessionId: "session-42" },
+      content: { messages: [
+        { role: "user", text: "Original question", sourceMessageId: "u1" },
+        { role: "assistant", text: "Original answer", sourceMessageId: "a1" },
+      ] } };
     const prepared = await prepareSessionImport(importEnv, AUTH, preview, "shared-import");
     const created = await new WorkstreamObjectCreationService(importEnv, AUTH).createPrepared({
       title: "Shared import", clientMessageId: "shared-import", participantUserIds: [otherUserId],
@@ -337,14 +337,17 @@ describe("creating a work stream", () => {
 
   it("re-imports only source changes after Rally turns and projects the new source reply into the next run", async () => {
     const importEnv = withWorkspaceRuntimeDatabase(creationEnv(), WORKSPACE_ID);
-    const snapshot = (answer: string, continued = false, followup = 'Source follow-up') => parseSessionExport("claude", JSON.stringify({ uuid: "session-42", name: "Source session", chat_messages: [
-      { uuid: "u1", sender: "human", content: [{ type: "text", text: "Original question" }] },
-      { uuid: "a1", sender: "assistant", content: [{ type: "text", text: "Original answer" }] },
-      ...(continued ? [
-        { uuid: "u2", sender: "human", content: [{ type: "text", text: followup }] },
-        { uuid: "a2", sender: "assistant", content: [{ type: "text", text: answer }] },
-      ] : []),
-    ] }));
+    const snapshot = (answer: string, continued = false, followup = 'Source follow-up'): SessionImportPreview => ({
+      title: "Source session", source: { provider: "claude", url: null, sessionId: "session-42" },
+      content: { messages: [
+        { role: "user", text: "Original question", sourceMessageId: "u1" },
+        { role: "assistant", text: "Original answer", sourceMessageId: "a1" },
+        ...(continued ? [
+          { role: "user" as const, text: followup, sourceMessageId: "u2" },
+          { role: "assistant" as const, text: answer, sourceMessageId: "a2" },
+        ] : []),
+      ] },
+    });
     const initial = snapshot("", false);
     const initialPrepared = await prepareSessionImport(importEnv, AUTH, initial, "source-initial");
     const created = await new WorkstreamObjectCreationService(importEnv, AUTH).createPrepared({

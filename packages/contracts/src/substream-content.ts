@@ -62,10 +62,6 @@ export const ImportedMessageProvenanceSchema = z.strictObject({
 });
 export type ImportedMessageProvenance = z.infer<typeof ImportedMessageProvenanceSchema>;
 
-/** A conversation Rally's browser read from the provider's page, signed in or shared. */
-export const SessionImportPreviewRequestSchema = z.strictObject({
-  kind: z.literal("export"), provider: z.enum(["chatgpt", "claude"]), text: z.string().min(1), sourceUrl: HttpsUrlSchema,
-});
 export const SessionImportPreviewSchema = z.strictObject({
   title: z.string().min(1),
   source: SessionSourceSchema,
