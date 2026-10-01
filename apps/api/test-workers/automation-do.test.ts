@@ -660,6 +660,22 @@ describe("AutomationDO", () => {
     expect(JSON.parse((await storedAppearance())!)).toEqual({ icon: "folder", color: "teal" });
   });
 
+  it("keeps a retired icon the Sidekick already wears, and refuses it as a new choice", async () => {
+    await createDraft();
+    const draft = { ...DEFINITION, definitionVersion: 2 as const, triggers: [] };
+    const storedAppearance = () => runInDurableObject(automationStub(), (_instance, state) => state.storage.sql.exec<{ appearance_json: string | null }>(
+      `SELECT appearance_json FROM automation WHERE id = 1`,
+    ).one().appearance_json);
+    const refused = await automationStub().saveDefinition({ ...addressed(), draft, evaluatorRules: null, submittedByRunId: null,
+      appearance: { icon: "workflow", color: "blue" }, actor: actor() }).then(() => null, (error: unknown) => error);
+    expect((refused as Error).message).toContain("icon workflow is kept only when it is the Sidekick's current icon");
+    expect(await storedAppearance()).toBeNull();
+    await automationStub().setAppearance({ ...addressed(), actor: actor(), appearance: { icon: "workflow", color: "blue" } });
+    await automationStub().saveDefinition({ ...addressed(), draft: { ...draft, name: "Edited" }, evaluatorRules: null, submittedByRunId: null,
+      appearance: { icon: "workflow", color: "blue" }, actor: actor() });
+    expect(JSON.parse((await storedAppearance())!)).toEqual({ icon: "workflow", color: "blue" });
+  });
+
   it("hides disabled email while retaining its permanent address", async () => {
     await createDraft();
     await automationStub().saveDefinition({ ...addressed(), draft: DEFINITION, evaluatorRules: null, submittedByRunId: null, actor: actor() });

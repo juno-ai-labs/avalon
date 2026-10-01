@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { AppearancePicker } from './appearance-picker';
 import { WorkstreamGlyph } from './workstream-glyph';
@@ -23,6 +23,39 @@ function openPicker(): void {
 }
 
 describe('appearance picker', () => {
+  it('lays the catalog out in eight sections with a tab for each, and saves a choice from any of them', async () => {
+    const onChange = vi.fn().mockResolvedValue(undefined);
+    render(<WorkstreamAppearancePicker id="room" appearance={{ icon: 'atom', color: 'blue' }} onChange={onChange} />);
+    openPicker();
+    await screen.findByRole('menu');
+    expect(within(screen.getByRole('menu')).getAllByRole('menuitem').map((tab) => tab.getAttribute('aria-label'))).toEqual([
+      'Planning', 'Docs & writing', 'Learning', 'People & talk', 'Data & money',
+      'Build & tech', 'Places & nature', 'Life & fun',
+    ]);
+    expect(screen.getByRole('menuitem', { name: 'Planning' })).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByRole('region', { name: 'Life & fun' })).toContainElement(screen.getByRole('menuitemradio', { name: 'Drum' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Drum' }));
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith({ icon: 'drum' }));
+    expect(screen.getAllByRole('menuitemradio')).toHaveLength(253 + 14);
+  });
+
+  it('draws the catalog in the chosen colour, and redraws it when the colour changes', async () => {
+    render(<WorkstreamAppearancePicker id="room" appearance={{ icon: 'atom', color: 'blue' }} onChange={vi.fn().mockResolvedValue(undefined)} />);
+    openPicker();
+    const drum = await screen.findByRole('menuitemradio', { name: 'Drum' });
+    expect(drum.querySelector('svg')).toHaveAttribute('stroke', 'var(--av-sys-color-project-blue)');
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Green' }));
+    expect(drum.querySelector('svg')).toHaveAttribute('stroke', 'var(--av-sys-color-project-green)');
+  });
+
+  it('draws an icon the catalog no longer offers, and offers nothing in its place', async () => {
+    render(<WorkstreamAppearancePicker id="room" appearance={{ icon: 'workflow', color: 'blue' }} onChange={vi.fn()} />);
+    openPicker();
+    await screen.findByRole('menu');
+    expect(screen.queryByRole('menuitemradio', { name: 'Workflow' })).not.toBeInTheDocument();
+    expect(within(screen.getByRole('group', { name: 'Icon' })).queryAllByRole('menuitemradio', { checked: true })).toHaveLength(0);
+  });
+
   it('keeps the popup open and submits rapid choices without a save', async () => {
     let finish!: () => void;
     const onChange = vi.fn().mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; })).mockResolvedValue(undefined);

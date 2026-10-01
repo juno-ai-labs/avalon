@@ -21,7 +21,7 @@ import {
   PickedAppearanceSchema,
   PROJECT_COLOR_KEYS_STORABLE,
   PROJECT_COLOR_RING,
-  WORKSTREAM_ICON_KEYS,
+  WORKSTREAM_ICON_KEYS_STORABLE,
   type AutomationDraft,
   type PickedAppearance,
 } from "@rally/contracts";
@@ -2376,8 +2376,8 @@ const automationDraftSubmissionJsonSchema = {
     description: { type: "string", description: "One sentence saying what the Sidekick does, for the list beside its name." },
     icon: {
       type: "string",
-      enum: [...WORKSTREAM_ICON_KEYS],
-      description: `The Sidekick's icon, drawn inside its hexagon wherever it is listed, as the exact key of one mark below. Each line is a key and a description of the mark it draws. A Sidekick that already has one keeps it unless the person asks for another: sidekicks_list shows the current one.\n\n${WORKSTREAM_ICON_CATALOG}`,
+      enum: [...WORKSTREAM_ICON_KEYS_STORABLE],
+      description: `The Sidekick's icon, drawn inside its hexagon wherever it is listed, as the exact key of one mark below. Each line is a key and a description of the mark it draws. A Sidekick that already has one keeps it unless the person asks for another: sidekicks_list shows the current one. A new choice is one of the marks below. The other values are accepted only to keep a Sidekick's current icon.\n\n${WORKSTREAM_ICON_CATALOG}`,
     },
     color: {
       type: "string",

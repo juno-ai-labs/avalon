@@ -402,7 +402,7 @@ describe("work-stream naming", () => {
       operation: "rename",
       args: [{
         title: "Avalon download link",
-        icon: "telescope",
+        icon: "satellite-dish",
         from: "naming",
         to: "automatic",
         now: Date.now(),
