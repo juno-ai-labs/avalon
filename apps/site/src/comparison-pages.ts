@@ -165,8 +165,7 @@ export function renderComparisonPage(comparison: Comparison): string {
       {
         '@type': 'BreadcrumbList', itemListElement: [
           { '@type': 'ListItem', position: 1, name: 'Rally', item: `${ORIGIN}/` },
-          { '@type': 'ListItem', position: 2, name: 'Compared to', item: `${ORIGIN}/#compare` },
-          { '@type': 'ListItem', position: 3, name: `Rally vs ${name}`, item: ORIGIN + path },
+          { '@type': 'ListItem', position: 2, name: `Rally vs ${name}`, item: ORIGIN + path },
         ],
       },
     ],

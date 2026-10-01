@@ -156,7 +156,7 @@ Microsoft Teams are removed, leaving six rivals, and the comparison table loses
 its dated caption. The `/compare/` hub page, its social card, and the
 count, names and item-list markers only it used are removed; every link that
 pointed at it now points at the landing table, and `_redirects` sends
-`/compare/` there too.
+`/compare/` and the three removed rival pages there too.
 
 **Why:** The team wanted shorter pages that make Rally's case and stop there,
 and the hub only repeated the landing page's table.
@@ -167,8 +167,10 @@ them in the renderer: copy nobody shows still has to be kept true.
 **Consequences:** The pages no longer carry the FAQ markup or source links
 that the first entry gave as the reason AI search engines cite them. If that
 traffic matters later, bring back `## Questions` first. The `/compare/`
-redirect matches that path exactly, so it must stay exact or it would swallow
-the rival pages.
+redirects match exact paths, so they must stay exact or they would swallow
+the remaining rival pages.
+
+Shipped in #1045.
 
 ### 2026-10-01: Comparison pages, their social cards, and a column footer are added
 
