@@ -140,6 +140,8 @@ export function BrowserImportWindow(): React.JSX.Element {
       return;
     }
     await bridge.completeBrowserImport(id).catch((error: unknown) => {
+      // The Channel exists; the main window must not keep waiting on it.
+      void bridge.reportBrowserImport({ phase: 'imported', workstreamId }).catch(() => undefined);
       setImportFailure(error instanceof Error ? error.message : 'The channel was created but could not be opened.');
       setSaving(false);
     });

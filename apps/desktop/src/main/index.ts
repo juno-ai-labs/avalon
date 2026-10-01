@@ -3407,9 +3407,9 @@ function registerIpc(): void {
   });
   ipcMain.handle('browser-import:progress', (event, raw: unknown) => {
     assertBrowserImportIpcSender(event);
-    const progress = parseBrowserIpc(BrowserImportProgressSchema, raw, 'browser_import_progress');
-    if (progress.phase === 'imported') throw new Error('An import completes through browser-import:imported');
-    relayBrowserImportProgress(progress);
+    // `imported` normally arrives through `browser-import:imported`, which also
+    // opens the Channel; here it only settles the row when that hand-off failed.
+    relayBrowserImportProgress(parseBrowserIpc(BrowserImportProgressSchema, raw, 'browser_import_progress'));
   });
   ipcMain.handle('browser-import:imported', (event, raw: unknown) => {
     assertBrowserImportIpcSender(event);

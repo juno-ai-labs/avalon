@@ -79,6 +79,17 @@ describe('browser import window', () => {
       .toBeLessThan(harness.api.importSession.mock.invocationCallOrder[0]!);
   });
 
+  // The Channel exists, so the main window must settle it rather than wait.
+  it('settles the main window\'s row when the hand-off fails after the create landed', async () => {
+    harness.bridge.completeBrowserImport.mockRejectedValueOnce(new Error('The main window did not answer.'));
+
+    await submit();
+
+    expect(await screen.findByText('The main window did not answer.')).toBeInTheDocument();
+    const [[announced], [settled]] = harness.bridge.reportBrowserImport.mock.calls as unknown as [[{ workstreamId: string }], [{ phase: string; workstreamId: string }]];
+    expect(settled).toEqual({ phase: 'imported', workstreamId: announced.workstreamId });
+  });
+
   it('tells the main window the Channel is gone when the create fails, and keeps the sheet', async () => {
     harness.api.importSession.mockRejectedValueOnce(new Error('The import was refused.'));
 
