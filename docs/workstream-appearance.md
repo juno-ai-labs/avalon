@@ -194,41 +194,23 @@ including scrolling, and check another connected window and reopening.
 
 ### 2026-10-01 — One 253-icon catalog in sections, for every surface with an appearance
 
-**What changed:** The catalog went from 37 keys (12 work-stream symbols plus the
-25 Space icons) to 253 Lucide icons in eight sections, in
-`appearance-icons.ts`. Eleven sections of 23 came first; three pairs were
-merged (People with Talk, Places with Nature, Life with Fun), keeping every
-icon. Eight was a product decision whose reasoning was not recorded here. A Channel, a Breakout, a Space and a Sidekick all pick
-from it. Both pickers render it through `IconCatalog`, which puts a tab per
-section above one scrolling grid. Every description was rewritten to a short
-phrase — a sentence of six or seven words on average — and the model reads them
-under the same section headings. Icons now split pickable from storable the way
-colours already did: the 11 keys that left the menu (`aperture`, `boxes`,
-`circuit-board`, `component`, `orbit`, `spline`, `workflow`,
-`chart-no-axes-combined`, `pen-tool`, `package`, `globe-2`) are still valid
-stored values. `circle-dot`, the naming fallback, is in the Planning section so
-the fallback is something a person can also pick. The Space dashboard dropped
-its own Save-button dialog and opens `AppearancePicker` too, so there is one
-picker; `SpaceAppearancePicker` is gone and `SpaceIcon` moved to
-`space-icon.tsx`.
+**What changed:** One catalog in `appearance-icons.ts` replaced the 37
+work-stream keys and the Space's own 25, and a Space now opens the same picker
+as a Channel. Icons split pickable from storable the way colours do, and each
+description became a short phrase.
 
-**Why:** The old 37 left most work with no fitting mark, and a Space offered
-only its own 25. The descriptions had to get shorter as the list grew: every
-line ships in every naming prompt, so 253 sentence-length descriptions would
-have made each naming call several thousand tokens heavier for no better match.
-Sections exist because a grid of 253 is not scannable without them, and the
-model gets the same grouping so both audiences see one catalog. Retiring keys
-from the menu rather than the vocabulary follows the colour entry below: this
-schema parses on every read, and narrowing it is a read outage for whoever
-holds the key.
+**Why:** The old lists left most work with no fitting mark. Every description
+ships in every naming prompt, so sentence-length lines across 253 icons would
+have made each naming call several thousand tokens heavier. Retiring a key from
+the menu rather than the vocabulary follows the colour entry below: the schema
+parses on every read.
 
-**What a future change has to respect:** the new keys are new wire values. A
-desktop build from before this change parses appearances against the old
-37-key enum, so a socket payload carrying a new key fails its parse there until
-that client updates. There is no minimum-version gate to stop it, and this
-change did not add one. Keep `GENERATED_APPEARANCE_ICON_KEYS` in its order, add
-a description with every key, and move a key to `RETIRED_APPEARANCE_ICON_KEYS`
-rather than deleting it.
+**What a future change has to respect:** keep `GENERATED_APPEARANCE_ICON_KEYS`
+in its order, add a description with every key, and move a key to
+`RETIRED_APPEARANCE_ICON_KEYS` rather than deleting it. New keys are new wire
+values: a desktop build that predates them parses appearances against its own
+enum and rejects the whole payload, and raising `MINIMUM_SERVED_CLIENT_CONTRACT`
+in the same deploy would turn away every shipped build instead.
 
 ### 2026-09-21 — Breakouts own persisted appearances
 

@@ -13,6 +13,7 @@ import {
   AutomationSetEvaluatorRulesInputV1Schema,
   DemoSeedSchema,
   PROJECT_COLOR_RING,
+  WORKSTREAM_ICON_KEYS,
   WorkstreamAppearanceSchema,
   WorkstreamAppearancePatchSchema,
   automationAcceptanceSelections,
@@ -631,16 +632,21 @@ export class SidekickDO extends ConversationParentDurableObject {
     const revision = this.state.storage.transactionSync(() => {
       const latest = this.assertAutomation(request.workspaceId, request.automationId);
       if (latest.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
-      // A colour outside the ring is one nobody can pick any more, so it may
-      // only be the one this Sidekick already wears, kept through an edit.
-      if (request.appearance && !(PROJECT_COLOR_RING as readonly string[]).includes(request.appearance.color)) {
-        const stored = latest.appearance_json
-          ? WorkstreamAppearanceSchema.parse(JSON.parse(latest.appearance_json)).color
-          : null;
-        if (stored !== request.appearance.color) {
-          throw new ApiError(400, "sidekick_color_not_offered",
-            `color ${request.appearance.color} is kept only when it is the Sidekick's current color; choose one of ${PROJECT_COLOR_RING.join(", ")}`);
-        }
+      // A colour outside the ring, or an icon the catalog no longer offers, is
+      // one nobody can pick any more, so it may only be the one this Sidekick
+      // already wears, kept through an edit.
+      const worn = latest.appearance_json
+        ? WorkstreamAppearanceSchema.parse(JSON.parse(latest.appearance_json))
+        : null;
+      if (request.appearance && !(PROJECT_COLOR_RING as readonly string[]).includes(request.appearance.color)
+        && worn?.color !== request.appearance.color) {
+        throw new ApiError(400, "sidekick_color_not_offered",
+          `color ${request.appearance.color} is kept only when it is the Sidekick's current color; choose one of ${PROJECT_COLOR_RING.join(", ")}`);
+      }
+      if (request.appearance && !(WORKSTREAM_ICON_KEYS as readonly string[]).includes(request.appearance.icon)
+        && worn?.icon !== request.appearance.icon) {
+        throw new ApiError(400, "sidekick_icon_not_offered",
+          `icon ${request.appearance.icon} is kept only when it is the Sidekick's current icon; choose one from the icon catalog`);
       }
       const definitionRevision = latest.current_definition_revision + 1;
       this.state.storage.sql.exec(
