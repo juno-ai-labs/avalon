@@ -33,11 +33,7 @@ export function backgroundRealtimeWorkstreamIds(
   ));
 }
 
-/**
- * The Channel the route has open, unless its create is still in flight. A
- * route can show a pending Channel (an import opens its own while the create
- * runs), but its room refuses connections until the create answers.
- */
+/** The Channel the route has open, unless it is pending; see `keepPendingWorkstreams`. */
 export function activeRealtimeWorkstreamId(
   routedWorkstreamId: string | null,
   workstreams: WorkstreamSummary[] | undefined,

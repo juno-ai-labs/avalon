@@ -282,9 +282,8 @@ export function applyVersionedWorkstreamState(
       patched.participantUserIds = [];
       patched.participantExtraCount = 0;
     }
-    // The server has described this Channel, but a create in flight may still
-    // be writing its room: the row stays pending until the create answers, and
-    // carries the server's fields from here on. See `keepPendingWorkstreams`.
+    // Described, not created: it stays pending until its create answers. See
+    // `keepPendingWorkstreams`.
     if (commonApplied && patched.pending) patched.pendingListed = true;
     // The other half of `carriesNewPlacements`: the row is here, so take the
     // placements off it even though the rest of the common half is not this

@@ -128,9 +128,7 @@ export function BrowserImportWindow(): React.JSX.Element {
     const { workstreamId } = pending;
     let id: string;
     try {
-      // Listed first: the Channel appears in its Space while its room is still
-      // being written, and only the main window's pending row keeps it from
-      // being opened before the room accepts a connection.
+      // Before the request, so the main window holds the Channel as pending.
       await bridge.reportBrowserImport({ phase: 'importing', workstreamId, title, spaceId });
       id = await api.importSession(pending.preview, pending.clientMessageId, { title, spaceIds: [spaceId], workstreamId });
     } catch (error) {
