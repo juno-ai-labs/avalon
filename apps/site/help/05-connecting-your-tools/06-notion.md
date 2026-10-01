@@ -39,7 +39,7 @@ Then work through the usual checks:
 
 1. In **Settings → Connections**, check the **Status** of the connection you expected Rally to use.
 2. Check the page is still shared with the Rally integration in Notion.
-3. If the status says **Reconnect required**, click **Refresh**, or ask an owner or administrator to for the Organization connection.
+3. If the status says **Reconnect required**, click **Refresh**, or ask an owner or administrator to do so for the Organization connection.
 
 ## Things to try
 

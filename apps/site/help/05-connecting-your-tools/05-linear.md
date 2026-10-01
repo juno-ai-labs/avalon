@@ -44,7 +44,7 @@ With the Organization connection in place, a change in Linear, such as a new iss
 ## When it stops working
 
 1. In **Settings → Connections**, check the **Status** of the connection you expected Rally to use, personal or Organization.
-2. If it says **Reconnect required**, click **Refresh**, or ask an owner or administrator to for the Organization connection.
+2. If it says **Reconnect required**, click **Refresh**, or ask an owner or administrator to do so for the Organization connection.
 3. Check that the connected Linear account can open the team, project or issue itself.
 
 Refresh the connection that failed. A healthy personal Linear connection does not repair a broken Organization one, and the other way round.
