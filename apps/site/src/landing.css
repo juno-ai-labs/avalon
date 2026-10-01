@@ -137,7 +137,7 @@ h1{white-space:pre-line;max-width:56rem;margin:0 auto;font-size:4.5rem}
 
 .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 
-/* Comparison table: the landing section and the /compare/ hub share it. */
+/* Comparison table on the landing page. */
 .compare-table-wrap{margin-top:48px;border:1px solid var(--hairline);border-radius:2px}
 .compare-table{width:100%;border-collapse:collapse;font-size:var(--small);line-height:1.55}
 .compare-table thead th{padding:12px 24px;border-bottom:1px solid var(--hairline);text-align:left;font-family:var(--mono);font-size:11px;font-weight:400;letter-spacing:.18em;text-transform:uppercase;color:oklch(.97 0 0/.55)}
@@ -187,25 +187,18 @@ h1{white-space:pre-line;max-width:56rem;margin:0 auto;font-size:4.5rem}
 .section.raised .points li{background:var(--raised)}
 .points h3{margin-bottom:10px}
 .points p{font-size:var(--small);line-height:1.65;color:var(--muted)}
-.faq{margin-top:40px;border-top:1px solid var(--hairline)}
-.faq details{border-bottom:1px solid var(--hairline)}
-.faq summary{display:flex;justify-content:space-between;gap:24px;padding:20px 0;cursor:pointer;list-style:none;font-family:var(--display-font);font-size:22px;font-weight:500;line-height:1.25}
-.faq summary::-webkit-details-marker{display:none}
-.faq summary::after{content:'+';font-family:var(--mono);color:var(--muted);transition:transform .15s}
-.faq details[open] summary::after{transform:rotate(45deg)}
-.faq summary:focus-visible{outline:2px solid var(--paper);outline-offset:4px}
-.faq details p{max-width:48rem;padding:0 0 24px;color:var(--muted)}
 .compare-cta{display:flex;flex-wrap:wrap;gap:16px;margin-top:40px}
-.points a,.faq a,.compare-answer a{border-bottom:1px solid oklch(.97 0 0/.25)}
+.points a,.compare-answer a{border-bottom:1px solid oklch(.97 0 0/.25)}
 .compare-aside p{margin:0}
 @media(max-width:1050px){.compare-title{font-size:3.75rem}}
-@media(max-width:768px){.points,.versus-table,.versus-table tbody{display:block}
+@media(max-width:768px){.points{grid-template-columns:minmax(0,1fr)}
+.versus-table,.versus-table tbody{display:block}
 .versus-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 .versus-table tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border-bottom:1px solid var(--hairline)}
 .versus-table tbody th{grid-column:1/-1;padding-bottom:4px;border-bottom:0}
 .versus-table td{border-bottom:0}
 .versus-table td[data-label]::before{content:attr(data-label);display:block;margin-bottom:4px;font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:oklch(.97 0 0/.55)}}
-@media(max-width:640px){.compare-title{font-size:2.5rem}.compare-answer{padding:20px;font-size:17px}.versus-table th,.versus-table td{padding:12px}.faq summary{font-size:19px}}
+@media(max-width:640px){.compare-title{font-size:2.5rem}.compare-answer{padding:20px;font-size:17px}.versus-table th,.versus-table td{padding:12px}}
 
 @media(max-width:1050px){.section h2{font-size:3rem}h1{font-size:3.75rem}.bento{grid-template-columns:repeat(2,minmax(0,1fr))}.card-tall{grid-row:auto}.card-wide,.card-full{grid-column:1/-1}}
 @media(max-width:768px){:root{--gutter:24px}.sections{display:block}.section-nav{display:none}.section-list{border-left:0}.section{padding-bottom:96px}.hero{padding-top:80px}.tiles,.bento,.tiers,.people{grid-template-columns:minmax(0,1fr)}.people{gap:32px}.human{max-width:92%}.ai{max-width:100%}}

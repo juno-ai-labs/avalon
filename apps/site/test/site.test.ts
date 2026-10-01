@@ -172,7 +172,7 @@ describe('public Rally site', () => {
     expect(page).toContain('<p class="compare-answer"><strong>Short answer:</strong> Pick Rally.</p>');
     expect(page).toContain('<tr><th scope="row">Pricing</th><td class="versus-rally" data-label="Rally">$100</td><td data-label="Acme">Per seat</td></tr>');
     expect(page).toContain('<ul class="points"><li><h3>Together</h3><p>Teams share it.</p>\n</li></ul><div class="compare-aside"><p>A pun.</p>\n</div>');
-    expect(page).toContain('<a class="button" href="/#pricing">See Rally pricing</a>');
+    expect(page).toContain('<a class="button button-outline" href="/#compare">Compare Rally with other tools</a>');
     expect(page).toContain('<time datetime="2026-10-01">October 1, 2026</time>');
     expect(page).toContain('<!-- rally:site-footer -->');
     expect(page).toContain('<meta property="og:image" content="https://rallywith.ai/compare/acme/social.png" />');
