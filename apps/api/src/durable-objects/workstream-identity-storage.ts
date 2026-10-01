@@ -458,7 +458,7 @@ export class WorkstreamIdentityStorage {
         input.now,
         input.userId,
       );
-      startReadCursorAtLatest(this.sql, input.userId, input.now);
+      startReadCursorAtLatest(this.sql, input.userId, input.now, input.addedByUserId !== input.userId);
       return { outcome: "readmitted", participationReason: input.reason, addedAt: input.now };
     }
     this.sql.exec(
@@ -472,7 +472,7 @@ export class WorkstreamIdentityStorage {
       input.now,
       input.now,
     );
-    startReadCursorAtLatest(this.sql, input.userId, input.now);
+    startReadCursorAtLatest(this.sql, input.userId, input.now, input.addedByUserId !== input.userId);
     return { outcome: "admitted", participationReason: input.reason, addedAt: input.now };
   }
 

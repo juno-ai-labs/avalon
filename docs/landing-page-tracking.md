@@ -29,6 +29,11 @@ Tagged links on the landing page, by `data-site-action` id:
 
 Not tracked: scrolling, section views, and header nav clicks.
 
+The footer is rendered from `apps/site/src/site-chrome.ts`, so its help@ link and
+its id live there, not in `index.html`. The `/compare/` pages share the header
+(`download-header`) and the footer, and count as page class `landing` with
+their own `$pathname`; see [`landing-comparisons.md`](landing-comparisons.md).
+
 ## Don't lose on a redesign
 
 Check these on every edit to the landing page:
