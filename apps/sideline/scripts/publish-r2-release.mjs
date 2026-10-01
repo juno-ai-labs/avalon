@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -7,9 +8,11 @@ import {
   loadReleaseDirectory,
   normalizeReleasePrefix,
   releaseContentType,
+  sha512File,
   verifyFeedArtifact,
 } from '../../desktop/scripts/release-lib.mjs';
 import {
+  downloadReleaseObject,
   purgeCloudflarePrefix,
   verifyPublicReleaseArtifactHash,
 } from '../../desktop/scripts/release-cache.mjs';
@@ -53,28 +56,29 @@ function objectUrl(key) {
     + `/r2/buckets/${encodeURIComponent(bucket)}/objects/${encoded}`;
 }
 
-async function getObjectResponse(key) {
-  const response = await fetch(objectUrl(key), {
-    headers: { authorization: `Bearer ${apiToken}` },
-    signal: AbortSignal.timeout(5 * 60_000),
-  });
-  if (response.status === 404) { await response.body?.cancel(); return undefined; }
-  if (!response.ok || !response.body) throw new Error(`Could not inspect r2://${bucket}/${key}: HTTP ${response.status}`);
-  return response;
+// Reads go through the shared idle-timeout download so a slow but healthy
+// transfer of a ~150 MiB installer is not aborted by a wall-clock cap.
+const scratchDirectory = await mkdtemp(join(tmpdir(), 'sideline-r2-release-'));
+let downloadCount = 0;
+
+async function withR2Object(key, read) {
+  const destination = join(scratchDirectory, String(downloadCount += 1));
+  try {
+    const found = await downloadReleaseObject({
+      destination,
+      headers: { authorization: `Bearer ${apiToken}` },
+      label: `r2://${bucket}/${key}`,
+      source: 'Cloudflare',
+      url: objectUrl(key),
+    });
+    return found ? await read(destination) : undefined;
+  } finally {
+    await rm(destination, { force: true });
+  }
 }
 
-async function remoteSha512(key) {
-  const response = await getObjectResponse(key);
-  if (!response) return undefined;
-  const hash = createHash('sha512');
-  for await (const chunk of response.body) hash.update(chunk);
-  return hash.digest('base64');
-}
-
-async function remoteText(key) {
-  const response = await getObjectResponse(key);
-  return response ? await response.text() : undefined;
-}
+const remoteSha512 = (key) => withR2Object(key, sha512File);
+const remoteText = (key) => withR2Object(key, (path) => readFile(path, 'utf8'));
 
 async function run(command, args) {
   await new Promise((resolveRun, reject) => {
@@ -98,14 +102,18 @@ async function put(name, path, cacheControl, disposition) {
   await run('pnpm', args);
 }
 
-await publishSidelineRelease({
-  bucket,
-  prefix,
-  publicUrl,
-  purgeChannel: () => purgeCloudflarePrefix({ apiToken, zoneId, prefixUrl: channelPrefixUrl }),
-  put,
-  release,
-  remoteSha512,
-  remoteText,
-  verifyPublic: verifyPublicReleaseArtifactHash,
-});
+try {
+  await publishSidelineRelease({
+    bucket,
+    prefix,
+    publicUrl,
+    purgeChannel: () => purgeCloudflarePrefix({ apiToken, zoneId, prefixUrl: channelPrefixUrl }),
+    put,
+    release,
+    remoteSha512,
+    remoteText,
+    verifyPublic: verifyPublicReleaseArtifactHash,
+  });
+} finally {
+  await rm(scratchDirectory, { recursive: true, force: true });
+}

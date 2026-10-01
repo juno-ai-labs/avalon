@@ -1045,7 +1045,11 @@ Three GitHub Actions workflows carry the mechanical part of this procedure. They
   and its artifact are retained.
   Publication verifies the signed arm64 ZIP, DMG, blockmaps, update manifest,
   and canonical installer under `sideline/stable/darwin/arm64/` in the release
-  R2 bucket before pushing the Sideline tag. The `desktop-release` environment's
+  R2 bucket before pushing the Sideline tag. Its R2 reads use the same
+  idle-only download as Rally's publisher, never a total-time cap. A publish
+  rerun reuses its run's original commit, so after a publisher fix, let the
+  push-triggered run resume the pending version rather than rerunning the
+  failed one. The `desktop-release` environment's
   `CLOUDFLARE_ZONE_ID` must identify the `rallywith.ai` zone that owns
   `downloads.rallywith.ai`; a successful purge against a different zone leaves
   old installer bytes in the CDN. This workflow does not change Rally's release
