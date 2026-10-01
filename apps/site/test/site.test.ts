@@ -145,7 +145,7 @@ describe('public Rally site', () => {
     };
     expect(column('Compared to')).toEqual([
       '/compare/claude-tag/', '/compare/grok-bot/', '/compare/viktor/', '/compare/chatgpt/',
-      '/compare/claude-cowork/', '/compare/slack/',
+      '/compare/slack/',
     ]);
     expect(column('Trust Center')).toEqual([
       '/trust/', '/trust/security/', '/trust/privacy/', '/trust/terms/', '/trust/dpa/',
