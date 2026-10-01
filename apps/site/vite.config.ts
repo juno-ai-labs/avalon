@@ -1,4 +1,5 @@
 import { renderAccessCopy } from './src/access-copy';
+import { helpCenter } from './build/help/plugin';
 import { defineConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
@@ -12,6 +13,9 @@ export default defineConfig({
     __RALLY_SITE_BUILD__: JSON.stringify(process.env.CF_PAGES_COMMIT_SHA?.slice(0, 40) ?? rootPackage.version),
   },
   plugins: [
+    // The help center is Markdown under help/, published at /help/. Its pages
+    // are not HTML entries; the plugin writes them, linking the `help` entry.
+    helpCenter({ contentRoot: `${projectRoot}help`, entryName: 'help', entrySource: '/src/help.ts' }),
     { name: 'rally-access-copy', transformIndexHtml: renderAccessCopy },
     {
       // The technology schematic is its own entry so three.js stays out of the
@@ -51,6 +55,7 @@ export default defineConfig({
       input: {
         main: `${projectRoot}index.html`,
         technology: `${projectRoot}src/technology.ts`,
+        help: `${projectRoot}src/help.ts`,
         concepts: `${projectRoot}concepts/index.html`,
         horizonConcepts: `${projectRoot}concepts/horizon/index.html`,
         heroConcepts: `${projectRoot}concepts/hero/index.html`,
