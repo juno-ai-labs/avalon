@@ -33,7 +33,7 @@ import { SidekickPicker } from '../components/sidekick-picker';
 import { workstreamSidekickRows } from '../components/sidekick-section';
 import { useChannelRail } from '../lib/channel-rails';
 import { PENDING_SUBSTREAM_DRAFT_ID, type LaunchingSubstream, type SubstreamLaunchProps } from '../components/substream-launch';
-import { ConversationSurface, workspaceMemberFromSession } from './conversation-surface';
+import { ConversationOpeningSkeleton, ConversationSurface, workspaceMemberFromSession } from './conversation-surface';
 
 // The feed, composer and rail live in `conversation-surface.tsx`, shared with
 // the automation screen. The helpers below are re-exported so the tests and
@@ -148,8 +148,32 @@ export function WorkstreamHeader({ workspaceTarget, spaceId, onCopyLinkFailure, 
 
 type RailContext = Parameters<NonNullable<React.ComponentProps<typeof ConversationSurface>['renderSidebar']>>[0];
 
-/** A work stream: the shared conversation surface under the work-stream header. */
+/**
+ * A work stream: the shared conversation surface under the work-stream header.
+ *
+ * A pending row is a Channel whose create is still running, possibly in
+ * another window (an import lists its Channel and opens it before the room
+ * exists). Its room refuses connections and reads until the create answers,
+ * so nothing here mounts for it: no socket, no detail read, only a skeleton
+ * that says what it is waiting for.
+ */
 export function WorkstreamScreen(): React.JSX.Element {
+  const { id = '' } = useParams();
+  const row = useCachedWorkstreamSummary(id);
+  if (row?.pending) {
+    return (
+      <ConversationOpeningSkeleton
+        caption
+        label={row.pendingOrigin === 'import' ? 'Importing conversation…' : 'Creating channel…'}
+        parentKind="workstream"
+        sidebar
+      />
+    );
+  }
+  return <OpenWorkstreamScreen />;
+}
+
+function OpenWorkstreamScreen(): React.JSX.Element {
   const { id = '' } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();

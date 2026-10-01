@@ -511,6 +511,10 @@ const browserBridge: RallyDesktopBridge = {
     return () => undefined;
   },
   async completeBrowserImport() {},
+  async reportBrowserImport() {},
+  onBrowserImportProgress() {
+    return () => undefined;
+  },
   async exportMessage() {
     // Rendering a card and choosing where it goes are both main-process work.
     // A browser has neither, and the buttons that call this are hidden there.

@@ -630,7 +630,9 @@ function PendingWorkstreamRow({ workstream }: { workstream: WorkstreamSummary })
     >
       <SidebarRow
         aria-disabled="true"
-        aria-label={naming ? 'Creating channel' : `Creating ${workstream.title}`}
+        aria-label={workstream.pendingOrigin === 'import'
+          ? `Importing ${workstream.title}`
+          : naming ? 'Creating channel' : `Creating ${workstream.title}`}
         as="div"
         className="workstream-row is-pending"
       >

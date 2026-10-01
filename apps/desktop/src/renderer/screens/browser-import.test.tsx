@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BrowserImportContext } from '../../common/browser-import';
 
@@ -21,6 +21,7 @@ const harness = vi.hoisted(() => {
       return () => undefined;
     }),
     completeBrowserImport: vi.fn(async () => undefined),
+    reportBrowserImport: vi.fn(async () => undefined),
   };
   return { api, bridge, state };
 });
@@ -48,6 +49,47 @@ vi.mock('../lib/platform', () => ({ desktopBridge: () => harness.bridge }));
 import { BrowserImportWindow } from './browser-import';
 
 describe('browser import window', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    harness.state.context = { spaces: [{ id: 'space-a', name: 'Alpha' }] };
+  });
+
+  async function submit(): Promise<void> {
+    render(<Tooltip.Provider><BrowserImportWindow /></Tooltip.Provider>);
+    await waitFor(() => expect(harness.bridge.getBrowserImportContext).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Import channel' });
+    await waitFor(() => expect(within(sheet).getByRole('combobox', { name: 'Space' })).toHaveTextContent('Alpha'));
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Import' }));
+  }
+
+  it('names the Channel to the main window before creating it under that id', async () => {
+    await submit();
+
+    await waitFor(() => expect(harness.bridge.completeBrowserImport).toHaveBeenCalledWith('workstream-1'));
+    expect(harness.bridge.reportBrowserImport).toHaveBeenCalledTimes(1);
+    const [[announced]] = harness.bridge.reportBrowserImport.mock.calls as unknown as [[{ phase: string; workstreamId: string; title: string; spaceId: string }]];
+    expect(announced).toMatchObject({ phase: 'importing', title: 'Launch plan', spaceId: 'space-a' });
+    expect(harness.api.importSession).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(String),
+      { title: 'Launch plan', spaceIds: ['space-a'], workstreamId: announced.workstreamId },
+    );
+    expect(harness.bridge.reportBrowserImport.mock.invocationCallOrder[0])
+      .toBeLessThan(harness.api.importSession.mock.invocationCallOrder[0]!);
+  });
+
+  it('tells the main window the Channel is gone when the create fails, and keeps the sheet', async () => {
+    harness.api.importSession.mockRejectedValueOnce(new Error('The import was refused.'));
+
+    await submit();
+
+    expect(await screen.findByText('The import was refused.')).toBeInTheDocument();
+    const [[announced], [failed]] = harness.bridge.reportBrowserImport.mock.calls as unknown as [[{ workstreamId: string }], [{ phase: string; workstreamId: string }]];
+    expect(failed).toEqual({ phase: 'failed', workstreamId: announced.workstreamId });
+    expect(harness.bridge.completeBrowserImport).not.toHaveBeenCalled();
+  });
+
   it('moves an open sheet to the Space a reused window is locked to', async () => {
     harness.state.context = { spaces: [{ id: 'space-a', name: 'Alpha' }, { id: 'space-b', name: 'Beta' }] };
     render(<Tooltip.Provider><BrowserImportWindow /></Tooltip.Provider>);
@@ -68,7 +110,7 @@ describe('browser import window', () => {
     await waitFor(() => expect(harness.api.importSession).toHaveBeenCalledWith(
       expect.anything(),
       expect.any(String),
-      { title: 'Launch plan', spaceIds: ['space-b'] },
+      { title: 'Launch plan', spaceIds: ['space-b'], workstreamId: expect.any(String) },
     ));
   });
 });

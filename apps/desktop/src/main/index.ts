@@ -2,7 +2,7 @@ import { startCanvaConnection } from './canva-loopback';
 import { boundsWithoutConversationDetails, clampWindowBounds, readMainWindowState, writeMainWindowState } from './main-window-state';
 import { EmbeddedBrowser, isEmbeddedBrowserWebContents } from './embedded-browser';
 import { EmbeddedBrowserBoundsSchema, EmbeddedBrowserCommandSchema, type EmbeddedBrowserCommand } from '../common/embedded-browser';
-import { BrowserImportContextSchema, BrowserImportedWorkstreamIdSchema, type BrowserImportContext } from '../common/browser-import';
+import { BrowserImportContextSchema, BrowserImportedWorkstreamIdSchema, BrowserImportProgressSchema, type BrowserImportContext, type BrowserImportProgress } from '../common/browser-import';
 import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import type { ZodType } from 'zod';
 import {
@@ -507,6 +507,13 @@ let sidekicksWindow: BrowserWindow | null = null;
 let browserImportWindow: BrowserWindow | null = null;
 /** The Spaces the main window offered when it opened the import window. */
 let browserImportContext: BrowserImportContext | null = null;
+/**
+ * The Channel the import window has told the main window it is creating, until
+ * it says how that ended. Closing the window mid-create ends it as failed, so
+ * the main window does not hold a pending row nothing will settle; a create
+ * that did land is listed by the next directory answer instead.
+ */
+let browserImportInFlight: string | null = null;
 /** The Organization whose Spaces the import window offers. */
 let browserImportWorkspaceId: string | null = null;
 /**
@@ -2881,6 +2888,17 @@ function sendDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint): vo
   revealWindow(targetWindow);
 }
 
+/**
+ * Tell the main window about the import window's create. Dropped when the main
+ * window is not up: it has listed nothing, and the deep link that follows a
+ * success opens the Channel once it is.
+ */
+function relayBrowserImportProgress(progress: BrowserImportProgress): void {
+  browserImportInFlight = progress.phase === 'importing' ? progress.workstreamId : null;
+  if (!mainWindow || mainWindow.isDestroyed() || !rendererReady) return;
+  mainWindow.webContents.send('browser-import:progress', progress);
+}
+
 function emitDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint = 'deep_link'): boolean {
   const deepLink = acceptedDeepLink(rawUrl);
   if (!deepLink) return false;
@@ -3387,9 +3405,17 @@ function registerIpc(): void {
     assertBrowserImportIpcSender(event);
     return browserImportContext;
   });
+  ipcMain.handle('browser-import:progress', (event, raw: unknown) => {
+    assertBrowserImportIpcSender(event);
+    const progress = parseBrowserIpc(BrowserImportProgressSchema, raw, 'browser_import_progress');
+    if (progress.phase === 'imported') throw new Error('An import completes through browser-import:imported');
+    relayBrowserImportProgress(progress);
+  });
   ipcMain.handle('browser-import:imported', (event, raw: unknown) => {
     assertBrowserImportIpcSender(event);
     const workstreamId = parseBrowserIpc(BrowserImportedWorkstreamIdSchema, raw, 'browser_import_workstream');
+    // Before the deep link, so the row is confirmed by the time the route opens it.
+    relayBrowserImportProgress({ phase: 'imported', workstreamId });
     // The same route a menu-bar pick takes, so the main window opens the new
     // Channel whether or not it was ready, and is brought forward to show it.
     emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`, 'in_app_link');
@@ -4660,6 +4686,7 @@ async function openBrowserImportWindow(context: BrowserImportContext): Promise<v
   window.once('ready-to-show', () => window.show());
   window.on('closed', () => {
     if (browserImportWindow !== window) return;
+    if (browserImportInFlight) relayBrowserImportProgress({ phase: 'failed', workstreamId: browserImportInFlight });
     browserImportWindow = null;
     browserImportContext = null;
     browserImportWorkspaceId = null;

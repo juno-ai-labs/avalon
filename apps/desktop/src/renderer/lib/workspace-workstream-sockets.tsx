@@ -33,6 +33,19 @@ export function backgroundRealtimeWorkstreamIds(
   ));
 }
 
+/**
+ * The Channel the route has open, unless its create is still in flight. A
+ * route can show a pending Channel (an import opens its own while the create
+ * runs), but its room refuses connections until the create answers.
+ */
+export function activeRealtimeWorkstreamId(
+  routedWorkstreamId: string | null,
+  workstreams: WorkstreamSummary[] | undefined,
+): string | null {
+  if (routedWorkstreamId === null) return null;
+  return workstreams?.some((row) => row.id === routedWorkstreamId && row.pending) ? null : routedWorkstreamId;
+}
+
 /** Start the existing pool from the directory, independently of workspace details. */
 export function WorkspaceWorkstreamSockets({ api, enabled = true, children }: PropsWithChildren<{
   api: WorkstreamSocketApi | null;
@@ -40,7 +53,9 @@ export function WorkspaceWorkstreamSockets({ api, enabled = true, children }: Pr
 }>): React.JSX.Element {
   const location = useLocation();
   const workstreams = useCachedWorkstreams();
-  const activeWorkstreamId = enabled ? openWorkstreamId(location.pathname) : null;
+  const activeWorkstreamId = enabled
+    ? activeRealtimeWorkstreamId(openWorkstreamId(location.pathname), workstreams)
+    : null;
   const backgroundIds = useMemo(() => {
     if (!enabled) return [];
     const selected = backgroundRealtimeWorkstreamIds(activeWorkstreamId, workstreams);

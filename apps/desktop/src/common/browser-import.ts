@@ -14,3 +14,22 @@ export type BrowserImportContext = z.infer<typeof BrowserImportContextSchema>;
 
 /** Checked before it becomes part of a deep link; the deep-link parser checks the rest. */
 export const BrowserImportedWorkstreamIdSchema = z.string().regex(/^[A-Za-z0-9-]{1,64}$/u);
+
+/**
+ * The import window's create, as the main window lists it. `importing` is
+ * sent before the request, under the id the Channel will be created with, so
+ * the main window can list it as pending and hold its socket until the room
+ * exists; `imported` and `failed` end it. The main window is told nothing it
+ * could not act on without the import window: no content, only the row.
+ */
+export const BrowserImportProgressSchema = z.discriminatedUnion('phase', [
+  z.strictObject({
+    phase: z.literal('importing'),
+    workstreamId: BrowserImportedWorkstreamIdSchema,
+    title: z.string().min(1).max(180),
+    spaceId: z.string().min(1),
+  }),
+  z.strictObject({ phase: z.literal('imported'), workstreamId: BrowserImportedWorkstreamIdSchema }),
+  z.strictObject({ phase: z.literal('failed'), workstreamId: BrowserImportedWorkstreamIdSchema }),
+]);
+export type BrowserImportProgress = z.infer<typeof BrowserImportProgressSchema>;
