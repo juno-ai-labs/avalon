@@ -1418,35 +1418,8 @@ pre {
 .space-create-form .form-field > input { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-default); font: inherit; outline: 0; padding: 9px 10px; width: 100%; }
 .space-create-form .form-field > input:focus { border-color: var(--av-ref-color-line-6); box-shadow: var(--av-sys-focus-ring-quiet); }
 .space-create-form .dropdown-select-trigger { width: 100%; }
-.space-create-form fieldset,
-.space-appearance-picker fieldset { border: 0; margin: 0; padding: 0; }
-.space-create-form legend,
-.space-appearance-picker legend { color: var(--av-sys-color-text-subtle); font-size: 12px; margin-bottom: 8px; }
-.space-appearance-picker { display: grid; gap: 18px; }
-.space-icon-catalog .icon-catalog-scroll { max-height: 220px; }
-.space-icon-catalog .icon-catalog-heading { background: var(--av-sys-color-surface-elevated); }
-.space-icon-catalog .icon-catalog-grid { display: grid; gap: 6px; grid-template-columns: repeat(9, 32px); }
-.space-icon-catalog .icon-catalog-grid button,
-.space-color-grid button {
-  align-items: center;
-  background: var(--av-sys-color-surface-subtle);
-  border: 1px solid var(--av-sys-color-border-default);
-  border-radius: var(--av-cmp-control-radius);
-  color: var(--av-sys-color-text-subtle);
-  display: inline-flex;
-  height: 32px;
-  justify-content: center;
-  padding: 0;
-  width: 32px;
-}
-.space-icon-catalog .icon-catalog-grid button:hover,
-.space-color-grid button:hover { background-image: var(--hover-layer); }
-.space-icon-catalog .icon-catalog-grid button.is-selected,
-.space-color-grid button.is-selected { border-color: var(--av-sys-color-text-default); box-shadow: 0 0 0 1px var(--av-sys-color-text-default); }
-/* Seven columns is what closes the palette ring across the row break; the
-   count is mirrored by PROJECT_COLOR_COLUMNS in lib/project-palette.ts. */
-.space-color-grid { display: grid; gap: 8px; grid-template-columns: repeat(7, 32px); }
-.space-color-grid button span { border-radius: 50%; box-shadow: inset 0 0 0 1px var(--av-sys-color-project-edge); height: 17px; width: 17px; }
+.space-create-form fieldset { border: 0; margin: 0; padding: 0; }
+.space-create-form legend { color: var(--av-sys-color-text-subtle); font-size: 12px; margin-bottom: 8px; }
 .sidebar-section-heading h2,
 .sidebar-group h3 {
   color: var(--av-ref-color-neutral-9);
@@ -5526,6 +5499,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .space-dashboard-header { align-items: center; display: grid; gap: 14px; grid-template-columns: 44px minmax(0, 1fr) auto; margin-bottom: 40px; }
 .space-dashboard-icon { align-items: center; background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-default); border-radius: 12px; display: inline-flex; height: 42px; justify-content: center; padding: 0; width: 42px; }
 button.space-dashboard-icon { cursor: pointer; }
+/* The tile is also the picker's trigger; keep its frame over the trigger's. */
+.appearance-picker-trigger.space-dashboard-icon { padding: 0; border: 1px solid var(--av-sys-color-border-default); border-radius: 12px; background: var(--av-sys-color-surface-raised); }
 button.space-dashboard-icon:hover { background-image: var(--hover-layer); border-color: var(--av-ref-color-line-4); }
 button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
 .space-dashboard-header h1 { font-size: 26px; margin: 0; }

@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Globe2, Lock } from 'lucide-react';
 import { useState } from 'react';
 import type { ChannelAccess, SpaceSummary } from '@rally/contracts';
-import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
+import { SpaceIcon } from '@rally/ui/components/space-icon';
 
 import { useAppSession } from '../lib/app-session';
 import { spaceFailureCopy, spaceFailureOf, type SpaceFailure } from '../lib/space-failure-copy';

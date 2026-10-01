@@ -1,6 +1,6 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { SpaceSummarySchema, asSpaceId, type SpaceSummary } from '@rally/contracts';
 import { uuidToBase58 } from '@rally/contracts/uuid-base58';
@@ -309,19 +309,40 @@ describe('the Space dashboard', () => {
     await waitFor(() => expect(api.listSpaceChannels).toHaveBeenCalledWith(hiring.id, 'page-2', expect.anything()));
   });
 
-  it('opens the complete icon and color picker from the space icon and saves the choice', async () => {
+  it('opens the channel icon and color picker from the space icon and saves each choice on click', async () => {
     renderSpace();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Change icon and color for Hiring' }));
-    const dialog = screen.getByRole('dialog', { name: 'Space icon and color' });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Rocket' }));
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Change icon and color for Hiring' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Rocket' }));
 
     await waitFor(() => expect(api.updateSpacePresentation).toHaveBeenCalledWith(hiring.id, {
       name: 'Hiring',
       iconKey: 'rocket',
       colorKey: 'green',
     }));
+    expect(screen.getByRole('menu')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+  });
+
+  it('sends a colour chosen before the icon is saved with that icon, after it', async () => {
+    let answerIcon!: () => void;
+    api.updateSpacePresentation.mockImplementationOnce((_id: string, input: { name: string; iconKey: string; colorKey: string }) =>
+      new Promise((resolve) => { answerIcon = () => resolve(makeSpace({ ...input, revision: 2 })); }));
+    renderSpace();
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Change icon and color for Hiring' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Rocket' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Purple' }));
+    await act(async () => {});
+    expect(api.updateSpacePresentation).toHaveBeenCalledTimes(1);
+
+    await act(async () => answerIcon());
+    await waitFor(() => expect(api.updateSpacePresentation).toHaveBeenCalledTimes(2));
+    expect(api.updateSpacePresentation).toHaveBeenLastCalledWith(hiring.id, {
+      name: 'Hiring',
+      iconKey: 'rocket',
+      colorKey: 'purple',
+    });
   });
 
   it('renames the space from the header', async () => {

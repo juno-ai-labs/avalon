@@ -12,7 +12,7 @@ import {
   SidebarScroll,
   SidebarTitleHeader,
 } from '@rally/ui/components/resizable-sidebar';
-import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
+import { SpaceIcon } from '@rally/ui/components/space-icon';
 import { NewWorkstreamMenu } from './new-workstream-menu';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
