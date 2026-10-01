@@ -32,6 +32,14 @@ function chromeUserAgent(): string {
   return `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36`;
 }
 
+/**
+ * Electron draws no passkey prompt, so outside Windows a passkey request hangs;
+ * without WebAuthn a site offers another sign-in. See docs/embedded-browser.md.
+ */
+function disabledBlinkFeatures(): string | undefined {
+  return process.platform === 'win32' ? undefined : 'WebAuth';
+}
+
 function browserPartition(userId: string): string {
   return `persist:rally-browser-${userId}`;
 }
@@ -131,6 +139,7 @@ export class EmbeddedBrowser {
       webSecurity: true,
       allowRunningInsecureContent: false,
       spellcheck: true,
+      disableBlinkFeatures: disabledBlinkFeatures(),
       // There is deliberately no preload in visited pages.
     } });
     this.registerView(view, popupOf);
