@@ -29,7 +29,7 @@ import {
   WireResourceRelationshipTypeSchema,
 } from "./resource-relationships";
 import { HttpsUrlSchema, httpsUrlSchema, HttpUrlSchema, httpUrlSchema, WebSocketUrlSchema } from "./url-schemas";
-import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, WorkstreamIconKeySchema } from "./workstream-appearance";
+import { PickableWorkstreamIconKeySchema, WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, WorkstreamIconKeySchema } from "./workstream-appearance";
 import {
   TranscriptActivitySchema,
   PendingTranscriptInputSchema,
@@ -50,6 +50,7 @@ export * from "./identifiers";
 export * from "./impersonation";
 export * from './onboarding';
 export * from "./workspace-retirement";
+export * from "./appearance-icons";
 export * from "./workstream-appearance";
 export * from "./workstream-transcript";
 
@@ -3513,7 +3514,7 @@ export const WORKSTREAM_NAME_RESULT_MAX_LENGTH = 80;
  */
 export const WorkstreamNameResultSchema = z.object({
   title: z.string().trim().min(1).max(WORKSTREAM_NAME_RESULT_MAX_LENGTH),
-  icon: WorkstreamIconKeySchema.nullish().catch(null),
+  icon: PickableWorkstreamIconKeySchema.nullish().catch(null),
 });
 
 export const ToolDefinitionSchema = z.object({
