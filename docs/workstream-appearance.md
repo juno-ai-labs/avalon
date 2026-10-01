@@ -18,13 +18,23 @@ behaviour and the deterministic default, for every surface that has an
 appearance. Anything else that grows one comes here for those, and brings its
 own storage and its own glyph treatment.
 
+**So does a Space.** The icon tile on its dashboard is this picker's trigger,
+drawn with `SpaceIcon`. A Space's route replaces the name, icon and colour
+together rather than merging a patch, so the dashboard sends one choice at a
+time and builds each request from the last choice rather than from the Space as
+rendered; otherwise a colour clicked before the icon's answer arrived would send
+the old icon back. The route itself is [`spaces.md`](spaces.md)'s.
+
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/contracts/src/workstream-appearance.ts` | Stable icon keys, one model-visible description per key, the default key, color keys, and partial updates. |
-| `apps/desktop/src/renderer/components/appearance-picker.tsx` | `AppearancePicker`: palette, optimistic preview, ordered clicks, and failures, for every surface that has an appearance. The caller supplies the trigger's mark through `renderGlyph` and its accessible name through `label`; nothing else about it differs between a work stream and a Sidekick. |
-| `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `resolveWorkstreamAppearance`, the one resolver from a stored appearance to an icon component and a colour, and the three treatments over it: the filled `WorkstreamGlyph` for navigation, `WorkstreamMark` — the bare tinted symbol — for a surface already inside the work stream, such as the center rail's main conversation row, and `AutomationGlyph`, the rounded hexagon a Sidekick wears. |
+| `packages/contracts/src/appearance-icons.ts` | The one icon catalog for a Channel, a Breakout, a Space and a Sidekick: its eight sections, the pickable keys, the retired keys that stay storable, the id-derived default marks, and one short model-visible description per pickable key. |
+| `packages/contracts/src/workstream-appearance.ts` | The catalog under the names callers import (`WORKSTREAM_ICON_KEYS` for the menu, `WORKSTREAM_ICON_KEYS_STORABLE` for the schema), the default key, color keys, and partial updates. |
+| `packages/ui/src/components/appearance-icons.ts` | `APPEARANCE_ICON_COMPONENTS`, the Lucide glyph for every storable key. |
+| `packages/ui/src/components/icon-catalog.tsx` | `IconCatalog`: section tabs over one scrolling grid with a heading per section. Both pickers render their cells through it. |
+| `packages/ui/src/components/appearance-picker.tsx` | `AppearancePicker`: palette, optimistic preview, ordered clicks, and failures, for every surface that has an appearance. The caller supplies the trigger's mark through `renderGlyph` and its accessible name through `label`; nothing else about it differs between a work stream and a Sidekick. |
+| `packages/ui/src/components/workstream-glyph.tsx` | `resolveWorkstreamAppearance`, the one resolver from a stored appearance to an icon component and a colour, and the three treatments over it: the filled `WorkstreamGlyph` for navigation, `WorkstreamMark` — the bare tinted symbol — for a surface already inside the work stream, such as the center rail's main conversation row, and `AutomationGlyph`, the rounded hexagon a Sidekick wears. |
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | `patchCachedWorkstreamAppearance`, the receipt-time write that puts a committed choice on the sidebar row ahead of the directory projection, and `patchCachedGeneratedIcon`, the naming pass's, which additionally declines a row that already has an icon. Neither touches the cached detail. Built on `patchCachedWorkstream`, the write for any unversioned fact both caches must agree on. |
 | `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | `useCachedWorkstreamAppearance`, the read side: one work stream's appearance off the sidebar row, for a surface that must move with that row rather than with the detail. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Orders the picker's choices on the addressed conversation socket and applies each one to the relevant Channel or Breakout cache row when its receipt arrives. |
@@ -77,11 +87,22 @@ fields and unknown event types so protocol additions cannot hide child discovery
 
 The socket connection queues rapid clicks in order, retaining their original
 work-stream address even if the picker unmounts. A click changes only its own field, so
-a color change does not overwrite another user's icon. The icon registry extends
-the original twelve deterministic symbols with the existing project icons. Each
-key also carries one or two sentences describing the icon, in the same file: the
-naming pass chooses an icon from this catalog and needs to know what each key
-draws. They are model-visible strings, so keep them in plain words — no icon
+a color change does not overwrite another user's icon.
+
+The icon catalog is 253 Lucide icons in eight sections — Planning, Docs &
+writing, Learning, Data & money and Build & tech at 23 each, and People & talk,
+Places & nature and Life & fun at 46 — and a Space picks from the same one. The
+picker shows a tab per section along its top, as Slack's emoji picker does; a
+tab scrolls the grid to its section and the tab follows the scroll back. Icons
+work like colours: the picker offers `WORKSTREAM_ICON_KEYS`, while the schema
+parses `WORKSTREAM_ICON_KEYS_STORABLE`, which adds every key an earlier catalog
+offered (`RETIRED_APPEARANCE_ICON_KEYS`), so a retired icon keeps parsing and
+drawing and simply shows nothing selected in the picker. A model's answer is
+held to the pickable list. The id-derived default still indexes the original
+twelve marks, in their original order, through `GENERATED_APPEARANCE_ICON_KEYS`.
+
+Each pickable key carries a short description of its drawing: the naming pass
+chooses an icon from this catalog and needs to know what each key draws. They are model-visible strings, so keep them in plain words — no icon
 library names — and add one with every key added, which the exhaustive `Record`
 enforces at compile time. **Describe the drawing only.** Name what the icon
 depicts and then how it is drawn — "two coins, one face on and one behind it at
@@ -90,8 +111,9 @@ a mark to a work stream belongs to the naming pass's model, which has the
 request, and a test fails a description that carries usage language. See
 [`workstream-naming.md`](workstream-naming.md). The Sidekick setup chat reads the
 same lines, rendered once by `WORKSTREAM_ICON_CATALOG` in
-`packages/agent-harness/src/prompts/icon-catalog.ts`, so a Channel, a Breakout and
-a Sidekick all choose from one list with one set of descriptions.
+`packages/agent-harness/src/prompts/icon-catalog.ts` under the same section
+headings the picker shows, so a Channel, a Breakout and a Sidekick all choose
+from one list with one set of descriptions.
 Colors store semantic keys such as `blue` and `purple`, never hex or RGB values.
 Both the swatch and glyph resolve `sys.color.project.<key>` through the current
 appearance. The keys that resolve to the same colour in both appearances live
@@ -151,7 +173,8 @@ The scroll viewport is a layout choice, not a cap on the catalog or server data.
 
 ## Testing
 
-The picker component suite covers immediate selection, ordered rapid clicks,
+The picker component suite covers the section tabs, a choice from a later
+section, a retired stored icon that draws but is not offered, immediate selection, ordered rapid clicks,
 staying open, Escape focus restoration, and failed saves — through the work
 stream's own arrangement of it, because the behaviour is the picker's and the
 work stream is one real caller rather than a component built for the test. The socket hook suite
@@ -168,6 +191,29 @@ cover the common cache path. The Sidekick's half is proved in the real-workerd
 legs and asserts the merge, the refusal, and the value on both directory
 listings. Inspect the actual Electron popup in light and dark,
 including scrolling, and check another connected window and reopening.
+
+### 2026-10-01 — One 253-icon catalog in sections, for every surface with an appearance
+
+**What changed:** One catalog in `appearance-icons.ts` replaced the 37
+work-stream keys and the Space's own 25, and a Space now opens the same picker
+as a Channel. Icons split pickable from storable the way colours do, and each
+description became a short phrase.
+
+**Why:** The old lists left most work with no fitting mark. Every description
+ships in every naming prompt, so sentence-length lines across 253 icons would
+have made each naming call several thousand tokens heavier. Retiring a key from
+the menu rather than the vocabulary follows the colour entry below: the schema
+parses on every read.
+
+**What a future change has to respect:** keep `GENERATED_APPEARANCE_ICON_KEYS`
+in its order, add a description with every key, and move a key to
+`RETIRED_APPEARANCE_ICON_KEYS` rather than deleting it. New keys are new wire
+values: a desktop build that predates them parses appearances against its own
+enum and rejects the whole payload, and raising `MINIMUM_SERVED_CLIENT_CONTRACT`
+in the same deploy would turn away every shipped build instead. This change
+accepted that breakage and relies on auto-update to move people to a build that
+knows the new keys. Shipping a reader that tolerates unknown keys first was
+considered and not taken; it is the way to make a later catalog change free.
 
 ### 2026-09-21 — Breakouts own persisted appearances
 

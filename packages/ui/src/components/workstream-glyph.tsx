@@ -18,7 +18,7 @@ import { PROJECT_COLOR_RING, type ProjectColorKey, type WorkstreamAppearance as 
 import clsx from 'clsx';
 import { useId } from 'react';
 import { glyphInk } from '../lib/project-palette';
-import { SPACE_ICONS } from './space-icons';
+import { APPEARANCE_ICON_COMPONENTS } from './appearance-icons';
 
 const WORKSTREAM_ICONS = [
   Aperture,
@@ -35,12 +35,8 @@ const WORKSTREAM_ICONS = [
   Workflow,
 ] as const satisfies readonly LucideIcon[];
 
-export const WORKSTREAM_ICON_COMPONENTS = {
-  aperture: Aperture, atom: Atom, boxes: Boxes, 'circle-dot': CircleDot,
-  'circuit-board': CircuitBoard, component: Component, dices: Dices, orbit: Orbit,
-  sparkles: Sparkles, spline: Spline, 'wand-sparkles': WandSparkles, workflow: Workflow,
-  ...SPACE_ICONS,
-};
+/** Every storable key's glyph; see `appearance-icons.ts`. */
+export const WORKSTREAM_ICON_COMPONENTS = APPEARANCE_ICON_COMPONENTS;
 
 export interface WorkstreamAppearance {
   color: ProjectColorKey;

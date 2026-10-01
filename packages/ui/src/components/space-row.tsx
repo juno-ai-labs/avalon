@@ -4,7 +4,7 @@ import type { SpaceColorKey, SpaceIconKey, SpaceScope } from '@rally/contracts';
 import clsx from 'clsx';
 import type { DragEvent, KeyboardEvent, ReactNode } from 'react';
 
-import { SpaceIcon } from './space-appearance-picker';
+import { SpaceIcon } from './space-icon';
 import { SidebarList, SidebarRow } from './resizable-sidebar';
 
 /**
