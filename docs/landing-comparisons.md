@@ -1,7 +1,7 @@
 # Landing comparisons and site footer
 
 The public site's "Compared to" pages and the column footer they share with the
-landing page. `rallywith.ai/compare/` lists nine rival products in one table, and
+landing page and the Trust Center. `rallywith.ai/compare/` lists nine rival products in one table, and
 each rival has its own page at `/compare/<slug>/` that answers "Rally vs X"
 for a person or an AI search engine. The landing page carries the same table as
 its "Compared to" section. The footer lists every comparison in one column and
@@ -119,8 +119,9 @@ element is (`compare-answer`, `versus-table`, `footer-heading`).
 ## Boundary
 
 The module owns the comparison pages, their social cards, the landing page's
-comparison section, and the footer on those pages. It does not own the Trust
-Center or Support pages' own footers (`legal-footer` in `information.css`), the
+comparison section, and the footer on those pages. The Trust Center pages
+use this footer through the same marker; their own styling is `trust.css`,
+which loads after `landing.css`. It does not own the
 home page's social card (`scripts/generate-brand-assets.py`), or the
 access-copy headline, which [`private-access.md`](private-access.md) owns.
 What the pages report to PostHog is in
@@ -153,6 +154,23 @@ section, the footer, one rival page, and the hub at 1440px and 390px, and open
 `dist/compare/*/social.png`.
 
 ## Changelog
+
+### 2026-10-01: Trust Center pages take the landing's chrome
+
+**What changed:** The eight `/trust/` pages drop their own light header,
+footer and Arial stylesheet. They load `landing.css`, use the landing's
+`site-header`, and replace their hand-written `legal-footer` with
+`<!-- rally:site-footer -->`. `information.css` becomes `trust.css`, holding
+only the Trust Center's layouts, written against the landing's tokens.
+
+**Why:** The Trust Center looked like a different company's site from the
+landing page it links from. Sharing the stylesheet and the footer marker keeps
+them from drifting again, and the eight copies of the footer link list, which
+had already diverged in order and tagline, collapse into `trustPages`.
+
+**What a future change must respect:** `trust.css` assumes `landing.css`
+loads first for fonts, tokens, the header, buttons and `.eyebrow`. A trust
+page that links only `trust.css` renders unstyled.
 
 ### 2026-10-01: Comparison pages, their social cards, and a column footer are added
 
