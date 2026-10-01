@@ -161,10 +161,10 @@ describe('browser conversation import', () => {
     const conversation = sharedChatGptConversation();
     const expression = await generatedReader(url);
     const emptyPage = { location: chatgptLocation(url), document: { querySelectorAll: () => [] } };
-    const page = { fetch: vi.fn(async () => jsonResponse(conversation)), ...emptyPage };
+    const page = { fetch: vi.fn(async (input: string) => jsonResponse(conversation)), ...emptyPage };
     expectImportedConversation(await runGeneratedReader(expression, page), conversation);
     expect(page.fetch).toHaveBeenCalledWith('/backend-anon/share/6ab43c03-6b2c-83e8-9eba-f1c51fa1e7a0', expect.objectContaining({ credentials: 'include' }));
-    expect(page.fetch.mock.calls.every(([input]) => !String(input).includes('/api/auth/session'))).toBe(true);
+    expect(page.fetch.mock.calls.some(([input]) => input.includes('/api/auth/session'))).toBe(false);
 
     const refused = { fetch: vi.fn(async () => jsonResponse(null, true)), ...emptyPage };
     await expect(runGeneratedReader(expression, refused)).resolves.toEqual({ error: 'ChatGPT could not return this conversation.' });
