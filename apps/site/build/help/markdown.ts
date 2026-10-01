@@ -103,10 +103,12 @@ function rewriteLinks(tree: HastRoot, options: RenderMarkdownOptions, problems: 
         node.properties.rel = ['noopener'];
         node.properties.className = [...className(node), 'external'];
       }
-    } else if (!value.startsWith('#')) {
+    } else {
+      // Same-page `#anchor` links go through the resolver too, so they are
+      // checked against this page's headings like any other fragment.
       const resolved = options.resolveHref(value, node.tagName === 'a' ? 'link' : 'image');
       if ('error' in resolved) problems.push(resolved.error);
-      else node.properties[attribute] = resolved.href;
+      else if (!value.startsWith('#')) node.properties[attribute] = resolved.href;
     }
     if (node.tagName === 'img') {
       node.properties.loading = 'lazy';

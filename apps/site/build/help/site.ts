@@ -74,7 +74,11 @@ function hrefResolver(site: HelpSite, byPath: Map<string, HelpPage>, byUrl: Map<
       if (fragment) fragments.push({ from: page, to: target, fragment, href });
       return { href: style === 'html' ? `${target.url}${suffix}` : `${SITE_ORIGIN}${target.markdownUrl}${suffix}` };
     };
-    if (!path) return { href };
+    if (!path) {
+      // Footnote links are generated, not written, and #top is the page title.
+      if (fragment && fragment !== 'top' && !fragment.startsWith('user-content-')) fragments.push({ from: page, to: page, fragment, href });
+      return { href };
+    }
     if (path.startsWith('/')) {
       if (!path.startsWith('/help')) return { href: style === 'html' ? href : `${SITE_ORIGIN}${href}` };
       const target = byUrl.get(path.endsWith('/') ? path : `${path}/`);

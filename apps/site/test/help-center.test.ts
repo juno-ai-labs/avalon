@@ -75,6 +75,17 @@ describe('help center content', () => {
     ]);
   });
 
+  it('refuses a draft chapter opener that would hide finished pages', () => {
+    const root = tree({
+      'index.md': page('Manual'),
+      '01-start/index.md': page('Start', '', 'draft: true\n'),
+      '01-start/01-ready.md': page('Ready'),
+    });
+    expect(problemsOf(() => loadHelpSite(root))).toEqual([
+      '01-start/index.md: is a draft, which would hide 1 finished page(s) in this chapter; mark them draft too, or publish the opener',
+    ]);
+  });
+
   it('leaves drafts out of a build and keeps them for a preview', () => {
     const root = tree({
       'index.md': page('Manual'),
@@ -153,13 +164,14 @@ describe('help center build', () => {
   it('fails on a link to a missing page, a missing heading, or a missing image', () => {
     const root = tree({
       'index.md': page('Manual', '[gone](01-start/09-gone.md) [anchor](01-start/index.md#nowhere) ![x](missing.png) ![y](https://example.com/y.png)'),
-      '01-start/index.md': page('Start', '## Somewhere'),
+      '01-start/index.md': page('Start', '## Somewhere\n\nSee [above](#somewhere), not [here](#elsewhere). A note.[^1]\n\n[^1]: Footnote.'),
     });
     expect(problemsOf(() => buildHelp(root, { assets }))).toEqual([
       'index.md: link "01-start/09-gone.md" points at a page that does not exist',
       'index.md: image "missing.png" points at a file that does not exist',
       'index.md: image "https://example.com/y.png" is on another site, which the site\'s Content-Security-Policy blocks; save the image in the help folder and link it relatively',
       'index.md: link "01-start/index.md#nowhere" names a heading that 01-start/index.md does not have (it has: somewhere)',
+      '01-start/index.md: link "#elsewhere" names a heading that 01-start/index.md does not have (it has: somewhere)',
     ]);
   });
 
