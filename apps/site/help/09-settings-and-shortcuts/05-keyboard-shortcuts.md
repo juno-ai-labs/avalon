@@ -16,7 +16,7 @@ The symbols are the ones on a Mac keyboard: <kbd>⌘</kbd> is Command,
 | Keys | What they do |
 | --- | --- |
 | <kbd>⌘</kbd> <kbd>,</kbd> | Open [Settings](01-the-settings-window.md). |
-| <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>F</kbd> | Open **Search organization**, to find any message, Channel, file or link. See [Search and links](../03-spaces-and-breakouts/06-search-and-links.md). |
+| <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>F</kbd> | Open **Search organization**, to find a message, link, artifact or file. See [Search and links](../03-spaces-and-breakouts/06-search-and-links.md). |
 | <kbd>⌘</kbd> <kbd>B</kbd> | Collapse or expand the Channels rail, for more room to read. |
 | <kbd>⌘</kbd> <kbd>W</kbd> | Close the front window. |
 | <kbd>⌘</kbd> <kbd>Q</kbd> | Quit Rally. (Closing the window does not; see [Rally on your Mac](03-rally-on-your-mac.md#closing-the-window-is-not-quitting).) |
@@ -33,7 +33,7 @@ Once **Search organization** is open:
 | Keys | What they do |
 | --- | --- |
 | <kbd>↑</kbd> <kbd>↓</kbd> | Move through the results. Going past the last one loads more. |
-| <kbd>Enter</kbd> | Open the highlighted result. |
+| <kbd>Return</kbd> | Open the highlighted result. |
 | <kbd>⌘</kbd> <kbd>1</kbd> to <kbd>⌘</kbd> <kbd>9</kbd> | Open the first to ninth result directly. |
 | <kbd>←</kbd> <kbd>→</kbd> | With a filter tab selected, move to the next or previous filter. |
 
@@ -53,23 +53,23 @@ covers lists, mentions and slash commands in more detail.
 
 | Keys | What they do |
 | --- | --- |
-| <kbd>Enter</kbd> | Send the message (or create the Channel or Breakout, on the new one screen). |
-| <kbd>⇧</kbd> <kbd>Enter</kbd> | Start a new line without sending. |
+| <kbd>Return</kbd> | Send the message (or create the Channel or Breakout, on the new one screen). |
+| <kbd>⇧</kbd> <kbd>Return</kbd> | Start a new line without sending. |
 | <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>8</kbd> | Turn the line, or the selected lines, into a bulleted list. |
 | <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>7</kbd> | Turn them into a numbered list. |
-| <kbd>Enter</kbd>, inside a list | Start the next item of the list. |
+| <kbd>⇧</kbd> <kbd>Return</kbd>, inside a list | Start the next item of the list. (Plain <kbd>Return</kbd> still sends.) |
 | <kbd>Tab</kbd>, inside a list | Indent the item. |
 | <kbd>⇧</kbd> <kbd>Tab</kbd>, inside a list | Move the item back out. |
-| <kbd>⌘</kbd> <kbd>Z</kbd> | Undo. Straight after <kbd>Enter</kbd> in a list, it takes back only the new bullet. |
+| <kbd>⌘</kbd> <kbd>Z</kbd> | Undo. Straight after starting a new list item, it takes back only the new bullet. |
 | <kbd>Esc</kbd> | Close the @-mention or slash-command list. |
-| <kbd>Enter</kbd> or <kbd>Tab</kbd>, in the slash-command list | Accept the first suggestion. |
+| <kbd>Return</kbd> or <kbd>Tab</kbd>, in the slash-command list | Accept the first suggestion. |
 
 The list keys are the same as in Slack and Google Docs, so if you already use
 them there, your hands are ahead of you. They follow the physical 7 and 8 keys,
 so they work on keyboards laid out for other languages too.
 
 If you type in a language that uses an input method, such as Japanese or
-Chinese, <kbd>Enter</kbd> finishes the word you are composing rather than sending
+Chinese, <kbd>Return</kbd> finishes the word you are composing rather than sending
 the message half-written.
 
 ## Adding people to a new Channel
@@ -78,8 +78,8 @@ On the new Channel screen, in the **Add people** box:
 
 | Keys | What they do |
 | --- | --- |
-| <kbd>⌘</kbd> <kbd>1</kbd> to <kbd>⌘</kbd> <kbd>9</kbd> | Add the first to ninth suggested person. Each suggestion shows its little key hint. |
-| <kbd>↑</kbd> <kbd>↓</kbd> and <kbd>Enter</kbd> | Move through the suggestions and add the highlighted one. |
+| <kbd>⌘</kbd> <kbd>1</kbd> to <kbd>⌘</kbd> <kbd>9</kbd> | Add the first to ninth suggested person. Each suggestion shows its key hint. |
+| <kbd>↑</kbd> <kbd>↓</kbd> and <kbd>Return</kbd> | Move through the suggestions and add the highlighted one. |
 | <kbd>Backspace</kbd> | In an empty box, remove the last person you added. |
 | <kbd>Esc</kbd> | Close the list of suggestions. Press it again to close the new Channel. |
 
@@ -92,7 +92,7 @@ When Rally stops to ask you something with a card of options (see
 | --- | --- |
 | <kbd>A</kbd>, <kbd>B</kbd>, <kbd>C</kbd>… | Pick or unpick that option. |
 | <kbd>1</kbd>, <kbd>2</kbd>, <kbd>3</kbd>… | The same, by number instead of letter. |
-| <kbd>⌘</kbd> <kbd>Enter</kbd> | **Submit** your answer. The button shows this hint. |
+| <kbd>⌘</kbd> <kbd>Return</kbd> | **Submit** your answer. The button shows this hint. |
 
 The letter and number keys work only when you are not typing in a text box
 inside the card, so you can still write an "Other" answer containing the letter
@@ -127,8 +127,8 @@ With a tab button selected, <kbd>←</kbd> and <kbd>→</kbd> move between tabs,
 | Keys | What they do |
 | --- | --- |
 | <kbd>⌥</kbd> <kbd>↑</kbd> / <kbd>⌥</kbd> <kbd>↓</kbd> | Move a selected pinned Channel, or a Space, up or down. See [Arranging your Channels](../03-spaces-and-breakouts/02-arranging-channels.md). |
-| <kbd>←</kbd> <kbd>→</kbd>, on a panel's edge | With the edge of the right-hand panel selected, make the panel narrower or wider. |
-| <kbd>Enter</kbd>, on a panel's edge | Put the right-hand panel back to its usual width. |
+| <kbd>←</kbd> <kbd>→</kbd>, on a panel's edge | With the edge of the right-hand panel selected, <kbd>←</kbd> makes the panel wider and <kbd>→</kbd> narrower. |
+| <kbd>Return</kbd>, on a panel's edge | Put the right-hand panel back to its usual width. |
 
 The arrows on their own only move the selection up and down the sidebar. Only
 pinned Channels can be reordered; the rest keep their own order.

@@ -4638,7 +4638,7 @@ function unlinkedHome(): Record<string, unknown>[] {
     { type: "divider" },
     { type: "section", text: { type: "mrkdwn", text: "*Try now*\n• Summarize this thread and propose next steps\n• Investigate this issue with workspace tools\n• Draft a status update for this channel\n\nAfter connecting: create personal automations such as “Check my Gmail every morning and send my top 3 emails here.”" } },
     { type: "context", elements: [{ type: "mrkdwn", text: "Rally Agent features require paid Slack and Rally plans." }] },
-    { type: "context", elements: [{ type: "mrkdwn", text: "AI can make mistakes. Review important actions. <https://rallywith.ai/privacy|Privacy> · <https://rallywith.ai/support|Help>" }] },
+    { type: "context", elements: [{ type: "mrkdwn", text: "AI can make mistakes. Review important actions. <https://rallywith.ai/privacy|Privacy> · <https://rallywith.ai/help/|Help>" }] },
   ];
 }
 
@@ -4686,7 +4686,7 @@ function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[],
     { type: "header", text: { type: "plain_text", text: "Workspace administration" } },
     { type: "section", text: { type: "mrkdwn", text: `Slack workspace ${escapeMrkdwn(administration.teamId)} · ${administration.status === "healthy" ? ":large_green_circle: Healthy" : ":warning: Needs attention"}` }, accessory: { type: "button", text: { type: "plain_text", text: "Manage" }, url: desktopHandoffUrl(webBase, connectionsTarget), action_id: "rally_open_admin" } },
   );
-  blocks.push({ type: "divider" }, { type: "context", elements: [{ type: "mrkdwn", text: "Rally Agent features require paid Slack and Rally plans. Personal Slack tools use your own Slack permissions when connected. <https://rallywith.ai/privacy|Privacy> · <https://rallywith.ai/support|Support>" }] });
+  blocks.push({ type: "divider" }, { type: "context", elements: [{ type: "mrkdwn", text: "Rally Agent features require paid Slack and Rally plans. Personal Slack tools use your own Slack permissions when connected. <https://rallywith.ai/privacy|Privacy> · <https://rallywith.ai/help/|Help>" }] });
   return blocks;
 }
 

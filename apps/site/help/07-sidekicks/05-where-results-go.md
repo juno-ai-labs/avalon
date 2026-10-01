@@ -4,9 +4,9 @@ description: Tell a Sidekick where to post its work, and let it remember what it
 nav_title: Where results go
 ---
 
-A Sidekick that does its work and tells nobody is a diary, not a helper.
-This page is about getting the results in front of the right people, and
-about keeping a repeating Sidekick from telling you the same thing twice.
+A Sidekick that does its work and tells nobody is keeping a diary. This page
+covers getting the results in front of the right people, and keeping a
+repeating Sidekick from telling you the same thing twice.
 
 ## The instructions decide
 
@@ -34,7 +34,7 @@ so everyone can tell it apart from a person or from Rally answering a
 question. Now and then a post is labelled "Automation", the old name for a
 Sidekick.
 
-A few things to watch for.
+Three things trip people up.
 
 - **Say where.** A personal Sidekick with no home conversation and no
   connected tools to send through can only leave its work in its
@@ -63,10 +63,8 @@ A good first Sidekick to try is the morning inbox briefing. Ask:
 
 Rally sets up a personal Sidekick that reads your Gmail each morning and
 sends you a Slack DM with up to three emails worth your attention. On a
-morning with
-nothing worth sending, it stays quiet. If your Gmail or Slack connection
-stops working, the run waits for you with **Needs input** rather than
-quietly switching to another account.
+morning with nothing worth sending, it stays quiet. If your Gmail or Slack connection
+stops working, the run waits for you with **Needs input**.
 
 When a Sidekick starts a Slack thread, people can reply in that thread and
 the run carries on with their reply in mind. More on that in
@@ -78,7 +76,7 @@ Every run starts fresh, which is a problem for any Sidekick whose job is
 "tell me what is new". Without help, it would report the same five issues
 every hour until you unplugged it.
 
-So a Sidekick keeps its own memory. It can write notes to itself that later
+That is why a Sidekick keeps its own memory. It can write notes to itself that later
 runs read, and it can keep a small table of things it has already seen. When
 you ask a Sidekick to watch for new things, the drafting assistant sets this
 up for you. There is no screen for it; it happens inside the runs.

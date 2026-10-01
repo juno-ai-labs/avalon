@@ -17,8 +17,8 @@ them for you while you describe what you want, which is the subject of the
 
 ## Instructions only, or delegated work
 
-Whether a Sidekick has triggers decides which of two kinds it is. The
-Sidekicks window labels each one, so you always know which you are looking at.
+Triggers decide which of the two kinds a Sidekick is. The Sidekicks window
+labels each one, so you can tell them apart at a glance.
 
 | | Available in conversations | Delegated work |
 | --- | --- | --- |
@@ -69,7 +69,7 @@ in the Sidekicks window.
 | Badge | Belongs to | Who can see it | Who can change it |
 | --- | --- | --- | --- |
 | **Only you** | You | You | You |
-| **Organization** | The whole Organization | Every member of the Organization | Its author, and the Organization's owners and administrators |
+| **Organization** | The whole Organization | Every member of the Organization except guests | Its author, the person it runs as, and the Organization's owners and administrators |
 | **Channel** | One Channel or Breakout | The people in that Channel or Breakout | Anyone in that Channel or Breakout |
 
 A few rules follow from this.
@@ -78,9 +78,10 @@ A few rules follow from this.
   Organization, ask the drafting assistant to make it an Organization
   Sidekick before it is published.
 - **Channel Sidekicks are born in a Channel.** You get one by asking Rally
-  for a Sidekick from inside a Channel or Breakout, or by creating one from
-  the Channel's Sidekicks section. Its scope is fixed: it cannot later
-  become personal or Organization-wide.
+  for a Sidekick from inside a Channel or Breakout. Its scope is fixed: it
+  cannot later become personal or Organization-wide. (**Create new
+  Sidekick** in the Channel sidebar starts an ordinary new Sidekick, which
+  begins as **Only you**.)
 - **Personal Sidekicks stay personal.** An Only you Sidekick is offered only
   in conversations where everyone present is you. It will not turn up in a
   Channel your whole team is in.
@@ -105,7 +106,7 @@ the run began on a schedule, from an event, or because a teammate pressed
 **Run now**.
 
 > [!IMPORTANT]
-> Keep this in mind before you share a Sidekick or give it a way to be
+> Think about this before you share a Sidekick or give it a way to be
 > started by other people. Anyone who can start a run, email the Sidekick, or
 > reply in a conversation a run started (such as a Slack thread) can steer
 > what that run does next, and the run still acts with its owner's
@@ -123,7 +124,7 @@ conversations · Organization" or "Draft · Only you".
 
 ## Some Sidekicks to try
 
-To give you a feel for the range, here are a few that people make early on.
+Here are a few that people make early on.
 
 - **Brand voice** (instructions only, Organization): how your company
   writes, which words it avoids, and an example paragraph.

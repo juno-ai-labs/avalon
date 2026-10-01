@@ -253,8 +253,9 @@ and numbers them, so **v3** is the third. See
 carry on with a job. See
 [Memory and coming back later](../04-working-with-rally/05-memory-and-coming-back-later.md).
 
-**Watch.** A switch on a resource that tells Rally to notice when the original
-changes. See [Resources: things you bring in](../06-things-rally-makes/04-resources.md).
+**Watch.** A switch, still to come in the Mac app, that will tell Rally to
+notice when a resource's original changes. See
+[Resources: things you bring in](../06-things-rally-makes/04-resources.md#bringing-things-in-yourself).
 
 **Work stream.** The old name for a [Channel](#c). You may also see "stream" or
 "workstream" in a few places.

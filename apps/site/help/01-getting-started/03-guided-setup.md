@@ -18,7 +18,7 @@ Every step is optional, and everything here can be done again later in Settings.
 
 ## Connecting your tools
 
-Rally is far more useful when it can read and work in the tools your team already uses: your email and calendar, your documents, your issue tracker, your meeting notes. A **connection** is the permission that lets it do that. Connecting at this point saves you a trip to Settings later.
+Rally can do a lot more when it can read and work in the tools your team already uses: your email and calendar, your documents, your issue tracker, your meeting notes. A **connection** is the permission that lets it do that. Connecting at this point saves you a trip to Settings later.
 
 There are two pages, because there are two kinds of connection.
 
@@ -84,7 +84,7 @@ Everyone you invite here joins as a **Member** and can use your organization con
 
 If an address is not complete, Rally says **Enter a complete email address for each teammate.** If some invitations fail to send, it lists them after **Could not invite:** and leaves them in the box to fix and retry. Retrying never sends a second invitation to someone who already has one, or who is already a member.
 
-Not ready to invite anyone? Click **Invite later**. (Once you have sent some, the same button reads **Continue**.) You can invite people, and make some of them administrators, at any time; see [Inviting people](../10-running-an-organization/02-inviting-people.md).
+If you are not ready to invite anyone, click **Invite later**. (Once you have sent some, the same button reads **Continue**.) You can invite people, and make some of them administrators, at any time; see [Inviting people](../10-running-an-organization/02-inviting-people.md).
 
 ## When setup is done
 

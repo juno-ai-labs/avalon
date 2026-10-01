@@ -4,9 +4,9 @@ description: Rally updates itself; choose how quickly new versions arrive and wh
 nav_title: Updates
 ---
 
-Rally is young and changes often. The good news is that you never have to go
-and fetch a new version. Rally does it for you, and the only thing it needs from
-you is a restart at a moment that suits you.
+Rally is young and changes often. You never have to go and fetch a new version.
+Rally does that itself, and all it needs from you is a restart at a moment that
+suits you.
 
 ## How Rally updates itself
 
@@ -33,12 +33,12 @@ running the latest version**. If it cannot reach the update service, it says
 
 ## Restarting to finish an update
 
-Once an update has downloaded, Rally gives you three easy ways to finish it:
+Once an update has downloaded, Rally gives you three ways to finish it:
 
 - A **Restart to update to Rally** button (with the version number) appears in
   the sidebar.
 - **Restart to Update** appears at the top of the account menu, which you open
-  by clicking your name at the bottom of the sidebar.
+  by clicking your name at the bottom of the Spaces rail.
 - **Rally → Restart to Update** in the menu bar.
 
 Or do nothing, and the update installs the next time you quit Rally anyway.
@@ -46,7 +46,7 @@ Or do nothing, and the update installs the next time you quit Rally anyway.
 Rally does not restart behind your back. The one time it speaks up is when the
 version you are running is more than a week old and a newer one has already
 downloaded. Then it asks, once per version, with an **Update ready** message and
-two buttons, **Restart Now** and **Later**. **Later** really does mean later.
+two buttons, **Restart Now** and **Later**. **Later** means later.
 
 Restarting is quick, and your drafts survive it, so there is rarely a bad time.
 Have you tried turning it off and on again? For once, that is the official

@@ -41,7 +41,7 @@ be one of the people who built Rally, and you should be getting back to work.
   again. See [While Rally works](../02-working-in-a-channel/03-while-rally-works.md).
 - **Answer questions with letters.** When Rally asks you to choose, press
   <kbd>A</kbd>, <kbd>B</kbd>, <kbd>C</kbd> to pick and <kbd>⌘</kbd>
-  <kbd>Enter</kbd> to submit. See
+  <kbd>Return</kbd> to submit. See
   [Keyboard shortcuts](05-keyboard-shortcuts.md#answering-rallys-questions).
 
 ## Reading answers
@@ -68,22 +68,16 @@ be one of the people who built Rally, and you should be getting back to work.
 
 ## Keeping the sidebar tidy
 
-- **Drag to pin or file.** Drag a Channel onto the **Pinned** section to pin it,
-  or onto a Space to add it there. See
+- **Drag to pin or move.** Drag a Channel onto the **Pinned** section to pin it,
+  or onto a Space in the Spaces rail to move it there. See
   [Arranging your Channels](../03-spaces-and-breakouts/02-arranging-channels.md).
-- **One Channel, several Spaces.** Dropping a Channel on a second Space adds it
-  there without taking it out of the first. A Channel can live in as many Spaces
-  as make sense. See
-  [Arranging your Channels](../03-spaces-and-breakouts/02-arranging-channels.md).
+- **One Channel, several Spaces.** **Add to space** in a Channel's right-click
+  menu puts it in a second Space without taking it out of the first. See
+  [One Channel, several Spaces](../03-spaces-and-breakouts/02-arranging-channels.md#one-channel-several-spaces).
 - **Reorder with the keyboard.** Select a pinned Channel or a Space, hold
   <kbd>⌥</kbd> and press <kbd>↑</kbd> or <kbd>↓</kbd>.
-- **Mark a whole group as read.** Hover one of the date headings in the sidebar,
-  click its **…** button and choose **Mark all as read**. The same menu has
-  **Archive all**, which archives every Channel in the group for everyone who
-  can see them, so read the confirmation before you agree to it. See
-  [Arranging your Channels](../03-spaces-and-breakouts/02-arranging-channels.md).
 - **Your Sidekicks have a shortcut strip.** The row of hexagon tiles above your
-  name at the bottom of the sidebar is one tile per active Sidekick. Click one to
+  name at the bottom of the Spaces rail is one tile per active Sidekick. Click one to
   open it. See [The Sidekicks window](../07-sidekicks/04-the-sidekicks-window.md).
 
 ## Making room
@@ -93,7 +87,7 @@ be one of the people who built Rally, and you should be getting back to work.
   Double-click the edge to fold or unfold it in one go. <kbd>⌘</kbd>
   <kbd>B</kbd> does the same from the keyboard.
 - **Resize the right-hand panel.** Drag the thin line on the left edge of the
-  panel beside the conversation (the browser, an artifact, the details). Rally
+  panel beside the conversation (the browser or an artifact). Rally
   remembers the width for each Channel. Double-click the line to put it back.
 - **Pop an artifact out.** **Open in a new window** in an artifact's header
   gives it a window of its own, ideal for a second screen. Rally reopens it where
@@ -103,15 +97,16 @@ be one of the people who built Rally, and you should be getting back to work.
 ## Getting things in and out
 
 - **Every Channel has an email address.** Forward an email or mail a file
-  straight into the conversation. Find it under **…** (**More channel
-  actions**) → **Copy channel email address**. See
+  straight into the conversation. Click **…** (**More channel actions**) in the
+  Channel's header and choose **Copy channel email address**. See
   [Email into Rally](../08-rally-everywhere/03-email-into-rally.md).
-- **Links open the app.** Links that begin `rallywithai://` open Rally on your
-  Mac at exactly the right Channel, Breakout, Sidekick or Settings page,
-  switching Organization first if they need to. You get them from **Copy channel
-  link** and invitation emails rather than by typing them. Very old links that
-  start `avalon://` still work: Avalon was Rally's name when it was a prototype.
-  See [Search and links](../03-spaces-and-breakouts/06-search-and-links.md).
+- **Links open the app.** The links you copy with **Copy channel link**, and the
+  ones in invitation emails, are web addresses that begin `rallywith.ai/app/`.
+  With Rally installed, they open it on your Mac at the right Channel,
+  Breakout or Sidekick, switching Organization first if they need to. Behind the
+  scenes the last hop is a `rallywithai://` link, which you will rarely see.
+  Old links that start `avalon://` still work: Avalon was Rally's name when
+  it was a prototype. See [Search and links](../03-spaces-and-breakouts/06-search-and-links.md).
 - **Your recent Channels are in the menu bar.** Click the Rally mark at the top
   of the screen to jump back into any of your last ten Channels from whatever
   app you are in. See [Rally on your Mac](03-rally-on-your-mac.md#rally-in-the-menu-bar).
@@ -126,8 +121,7 @@ Right-click it and Rally offers:
 
 - **Spelling suggestions** at the top. Click one to swap it in.
 - **Learn Spelling**, which adds the word to your dictionary so it stops
-  being underlined. Use it for your colleagues' names, your product names and
-  the jargon your team cannot do without.
+  being underlined. Use it for colleagues' names and your team's jargon.
 - **Undo** and **Redo**.
 - **Cut**, **Copy** and **Paste**.
 - **Select All**.
@@ -137,10 +131,10 @@ commands on their own. Items that do not apply at that moment, such as **Paste**
 with nothing on the clipboard, are greyed out.
 
 > [!TIP]
-> Teach it your teammates' names early. Rally will not mind, and neither will
-> your teammates, who have been quietly underlined in red since they joined.
+> Teach it your teammates' names early. They have been underlined in red since
+> the day they joined, and they have noticed.
 
-That is the end of the chapter, and the end of the tricks. The
+That is the last of the tricks. The
 [next chapter](../10-running-an-organization/index.md) is for the people who
 look after an Organization: roles, invitations and what happens when someone
 leaves.

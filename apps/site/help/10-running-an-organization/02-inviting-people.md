@@ -5,8 +5,8 @@ description: Invite teammates by email, choose their role, and manage invitation
 
 An invitation is the only way into an Organization. You may already have sent
 a few during the [guided setup](../01-getting-started/03-guided-setup.md).
-This page is about doing it any time after that, and keeping track of the
-invitations still out there.
+This page covers sending them later, and keeping track of the ones still out
+there.
 
 Only owners and administrators can invite people. Members do not see the
 **Invitations** section at all.
@@ -28,9 +28,8 @@ Only owners and administrators can invite people. Members do not see the
 4. Click **Send invitation**.
 
 Rally confirms with **Invitation emailed** and **It expires in seven days. You
-can also copy the one-time link.** Click **Copy invite link** if you would like
-to send the link yourself as well, say in a chat message to someone who never
-reads email.
+can also copy the one-time link.** Click **Copy invite link** to send the link
+yourself as well, say in a chat message to someone who never reads email.
 
 If Rally shows **Invite link ready** instead, the email was not sent. Copy the
 link and pass it on yourself.
@@ -55,7 +54,7 @@ What they see on their side is covered in
 [Create or join an Organization](../01-getting-started/02-create-or-join-an-organization.md).
 
 When they accept or decline, you get an email saying so, with an **Open Rally**
-link. No more wondering whether they ever saw it.
+link, so you are not left wondering whether they ever saw it.
 
 ## Invitations still waiting
 
@@ -90,5 +89,5 @@ email counts.
 Below the waiting list, a collapsed line reads **Previous invitations** with a
 count, such as **Previous invitations (5)**. Click it to see every invitation
 that is no longer waiting, each with its address and a badge: **Accepted**,
-**Expired** or **Revoked**. It is handy for answering "did I ever invite Sam?"
-without asking Sam.
+**Expired** or **Revoked**. It answers "did I ever invite Sam?" without
+asking Sam.

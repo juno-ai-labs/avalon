@@ -62,7 +62,7 @@ administrators can have Rally save a memory for the whole Organization.
 A Sidekick's memory is its own. Every run of that Sidekick shares it, and it is
 kept apart from the memory of the person who made the Sidekick.
 
-### Things to know
+### Where memory falls short
 
 - **Memory can be out of date.** Rally treats a memory as a helpful hint, not
   a fact, and checks it when getting it right matters. If Rally keeps relying
@@ -131,7 +131,7 @@ wrote itself. It first checks whether the conversation has already settled the
 matter. If someone already sent the recap, it says so briefly rather than
 sending it twice.
 
-### Things to know
+### The rules for wake-ups
 
 - **Times are in your time zone,** or the Organization's if Rally does not know
   yours. Say "London time" or "Pacific" if you mean somewhere else.
@@ -148,7 +148,7 @@ sending it twice.
 
 > [!TIP]
 > A wake-up is a one-off. For something that should happen every Friday, not
-> just this Friday, make a Sidekick with a schedule instead. See
+> only this Friday, make a Sidekick with a schedule instead. See
 > [Triggers and schedules](../07-sidekicks/03-triggers-and-schedules.md).
 
 Next: [Helpers, other conversations and receipts](06-helpers-and-receipts.md).

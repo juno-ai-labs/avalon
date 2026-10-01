@@ -51,7 +51,7 @@ helpful. Pinning lets you keep the Channels you live in at the top, in a
 Pins are yours alone. They follow you to your other devices and change nothing
 for anyone else in the Channel. They are also kept per Space, so a Channel that
 lives in two Spaces can be pinned in one and not the other. Only pinned Channels
-can be reordered; the rest stay alphabetical.
+can be reordered. The rest stay alphabetical.
 
 You can pin up to 1,000 Channels, by which point the Pinned section has become
 the sidebar and you are back where you started.
@@ -62,8 +62,8 @@ The Spaces rail reorders the same way: drag a Space, or select it and use
 ## Moving a Channel to another Space
 
 Drag a Channel from the Channels rail and drop it on a Space in the Spaces rail.
-The Space pulses to say it has caught it. The Channel **moves**: it leaves the
-Space you dragged it from and lives in the new one instead.
+The Space pulses to say it has caught it. The Channel moves: it leaves the Space
+you dragged it from and lives in the new one instead.
 
 - You can only drop on a Space you are able to change, and not on the Space you
   are already in.
@@ -79,8 +79,8 @@ Space you dragged it from and lives in the new one instead.
 
 ## One Channel, several Spaces
 
-A Channel can sit in more than one Space at once and shows up under each. That
-saves you from copying work that belongs to two teams.
+A Channel can sit in more than one Space at once and shows up under each, so
+work that belongs to two teams does not need copying.
 
 - **To add it to another Space**, right-click the Channel, choose **Add to
   space** and pick the Space. It stays where it was as well. Spaces you cannot
@@ -123,14 +123,11 @@ Spaces are the exception: an archived Space can be restored, as described in
 
 ## Making room
 
-The columns of the window can be resized. Hover over the edge of a column until
-the hint **Drag to resize** appears, then drag. Double-click the edge, or select
-it and press <kbd>Enter</kbd>, to put the width back how it was. The Spaces rail
-and the Channels rail each have a button at the bottom to collapse them
-(**Collapse spaces**, **Collapse channels**) and to bring them back.
-
-When the window is too narrow to show everything, Rally collapses the Channels
-rail for you, and the tooltip on its button says **Widen the window to expand channels**.
+Collapsing and widening the rails is covered in
+[A tour of the window](../01-getting-started/04-a-tour-of-the-window.md#making-room).
+One extra: hover over the edge of the Channels rail until **Drag to resize**
+appears. Double-click the edge, or select it and press <kbd>Return</kbd>, to
+fold the rail or open it again in one go.
 
 ## When something goes wrong
 

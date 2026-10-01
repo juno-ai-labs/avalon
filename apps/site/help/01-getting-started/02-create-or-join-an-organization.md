@@ -5,8 +5,8 @@ description: Start a new Organization for your team, or accept an invitation to 
 
 Everything you do in Rally happens inside an Organization, your team's home. Straight after you sign in, Rally checks whether anyone has invited your email address to one. What you see next depends on the answer.
 
-- **Somebody invited you.** You see **Choose where to join** and pick the invitation to accept.
-- **Nobody did.** You see **Create your organization** and start a fresh one, with you as its owner.
+- If somebody invited you, you see **Choose where to join** and pick the invitation to accept.
+- If nobody did, you see **Create your organization** and start a fresh one, with you as its owner.
 
 Both screens show **Signed in as** and your email address at the bottom, with a **Sign out** link in case you signed in with the wrong Google account. It happens to the best of us, usually the ones with a personal and a work account in the same browser.
 
@@ -32,12 +32,12 @@ The person who invited you gets an email either way, so nobody is left wondering
 > [!IMPORTANT]
 > An invitation belongs to one email address. You must be signed in to Rally with exactly that address to accept it. If you open an invitation while signed in as someone else, Rally says **This invitation is for** that address, and asks you to sign in with that account to continue. Use **Sign out**, then **Continue with Google** with the right account.
 
-Some things to know about invitations:
+A few rules apply to every invitation.
 
-- **They expire after seven days**, and each one can be used once. The email says exactly when yours runs out. If it has expired, ask the sender to invite you again.
-- **They come first.** While an invitation is waiting for you, Rally shows it instead of the screen for creating your own Organization. Accept or decline it to move on.
-- **If accepting fails**, you see **The invitation could not be accepted.** and the list refreshes. Try again, or ask the sender to check that the invitation is still open.
-- **If the invitation is no longer valid** (expired, cancelled or already used) when you open its link, Rally shows a small message window that floats above everything else, rather than something inside the main window.
+- They expire after seven days, and each one can be used once. The email says exactly when yours runs out. If it has expired, ask the sender to invite you again.
+- They come first. While an invitation is waiting for you, Rally shows it instead of the screen for creating your own Organization. Accept or decline it to move on.
+- If accepting fails, you see **The invitation could not be accepted.** and the list refreshes. Try again, or ask the sender to check that the invitation is still open.
+- If the invitation is no longer valid (expired, cancelled or already used) when you open its link, Rally shows a small message window that floats above everything else, rather than something inside the main window.
 
 ### Invitations that arrive later
 
@@ -60,7 +60,7 @@ If nobody has invited you, Rally shows **Create your organization**, with the li
 
 The name needs at least two characters and can be up to 120. The button stays greyed out until the name is long enough. Pressing <kbd>Return</kbd> a few extra times out of impatience will not create a few extra Organizations.
 
-You become the Organization's owner. It starts with one Space, called **General**, ready for your first Channels. You can rename the Organization and change its other settings later, as described in [Organization settings](../10-running-an-organization/03-organization-settings.md).
+You become the Organization's owner. It starts with one Space, called **General**, ready for your first Channels. Choose the name with some care: the Organization settings in Rally show it but do not offer a way to change it. Its other settings are described in [Organization settings](../10-running-an-organization/03-organization-settings.md).
 
 > [!NOTE]
 > Older screens and emails may call an Organization a **Workspace**. They are the same thing.

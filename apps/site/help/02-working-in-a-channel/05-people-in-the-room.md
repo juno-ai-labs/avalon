@@ -3,9 +3,8 @@ title: People in the room
 description: Bring teammates into a Channel, see who is here, and know when Rally will chime in.
 ---
 
-A Channel is better with company. This page covers the people side of a
-Channel: who is in it, how to bring someone in, how to tell who said what, and
-how Rally behaves when the room gets busy.
+A Channel is better with company. This page covers who is in a Channel, how to
+bring someone in, and how Rally behaves when the room gets busy.
 
 ## Who is in this Channel
 
@@ -90,9 +89,9 @@ part of what it knows.
 
 Every message carries a short line saying who wrote it and when.
 
-- **Your messages** sit on the right, with your name on the outside edge, a
+- Your messages sit on the right, with your name on the outside edge, a
   small coloured dot (your personal colour) and the time.
-- **Everyone else's**, Rally's included, sit on the left, with the name first and
+- Everyone else's, Rally's included, sit on the left, with the name first and
   then the time. Rally's replies are signed **Rally**. Answers from a Sidekick
   show the Sidekick's name.
 - Messages that came in from Slack read like **Name · Slack**.

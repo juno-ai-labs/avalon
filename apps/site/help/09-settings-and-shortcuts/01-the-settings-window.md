@@ -3,8 +3,7 @@ title: The Settings window
 description: Open Settings, find any setting by searching, and set up your profile and time zone.
 ---
 
-Everything you can adjust in Rally lives in one place: the Settings window. It
-opens beside the main window rather than on top of it, so you can change
+Everything you can adjust in Rally is in the Settings window. It opens beside the main window rather than on top of it, so you can change
 something and watch the effect in the conversation behind.
 
 ## Opening Settings
@@ -15,7 +14,7 @@ There are three ways in:
   that opens settings in almost every Mac app, so your fingers may already know
   it.
 - Choose **Rally → Settings…** from the menu bar at the top of the screen.
-- Click your name at the bottom of the sidebar to open the account menu, then
+- Click your name at the bottom of the Spaces rail to open the account menu, then
   choose **Settings**.
 
 Some links and buttons elsewhere in Rally open Settings straight at the right
@@ -50,8 +49,8 @@ Rally on this Mac.
 | **Organization** | The Organization's name, its default time zone, its members and invitations. | [Organization settings](../10-running-an-organization/03-organization-settings.md) |
 | **Internet access** | Where code Rally runs is allowed to connect. Sits indented under **Organization**. | [Organization settings](../10-running-an-organization/03-organization-settings.md) |
 | **Connections** | Every tool you or your Organization have connected, and the ones you could add. | [Settings → Connections](../05-connecting-your-tools/01-connections.md) |
-| **GitHub** | Which repositories Rally may touch. Indented under **Connections**. | [GitHub](../05-connecting-your-tools/03-github.md) |
-| **MCP tools** | The tools offered by a custom MCP server. Indented under **Connections**. | [Custom MCP server](../05-connecting-your-tools/13-custom-mcp-server.md) |
+| **GitHub** | Which repositories Rally may touch. Indented under **Connections**. | [GitHub](../05-connecting-your-tools/04-github.md) |
+| **MCP tools** | The tools offered by a custom MCP server. Indented under **Connections**. | [Custom MCP server](../05-connecting-your-tools/14-custom-mcp-server.md) |
 | **Application** | Security, privacy, appearance, the menu bar, the app icon, updates, startup and the version number. | The rest of this chapter |
 
 Not everyone sees every section, and a missing one is not a fault:
@@ -80,7 +79,7 @@ everyday words people reach for. A few examples:
 
 Once you have typed something:
 
-- <kbd>Enter</kbd> opens the first result.
+- <kbd>Return</kbd> opens the first result.
 - <kbd>↓</kbd> moves from the box into the list of results, so you can pick
   another one.
 - <kbd>Esc</kbd> clears the box.
@@ -92,7 +91,7 @@ searchable.
 
 > [!TIP]
 > You do not need to remember which section a setting is in. Press
-> <kbd>⌘</kbd> <kbd>,</kbd>, type a word, press <kbd>Enter</kbd>. It is the
+> <kbd>⌘</kbd> <kbd>,</kbd>, type a word, press <kbd>Return</kbd>. It is the
 > fastest way to anything in this chapter.
 
 ## Your profile
@@ -146,17 +145,17 @@ Organization. That one only an administrator can change.
 ## Signing out
 
 **Account → Session** has **Sign out of Rally** and its **Sign out** button,
-which removes your saved session from this Mac. What that means, and how long Rally keeps you signed in
-otherwise, is in
+which removes your saved session from this Mac. What that means, and how long
+Rally keeps you signed in otherwise, is in
 [Signing in, signing out and Lockdown mode](../11-privacy-and-security/01-signing-in-and-out.md).
 
 ## Which version you are running
 
-At the very bottom of **Application** is **About**, with a **Version** row that
+At the bottom of **Application** is **About**, with a **Version** row that
 shows which release of Rally this Mac is running. You can also choose
 **Rally → About Rally** from the menu bar. If the version cannot be read, the
 row says **Unknown**.
 
-It is the first thing support will ask for, so it is worth knowing where it is
-before you need it. [Contacting support](../12-help-and-glossary/03-contact-support.md)
+It is the first thing support will ask for. Find it now, while nothing is on
+fire. [Contacting support](../12-help-and-glossary/03-contact-support.md)
 has the rest of what to include.

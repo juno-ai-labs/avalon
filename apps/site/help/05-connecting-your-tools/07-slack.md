@@ -55,4 +55,4 @@ The list of things Rally can do with your personal connection comes live from Sl
 
 With the Organization install in place and your Slack account linked, Slack can be where things are delivered to you: a Sidekick's results, or your [digest](../08-rally-everywhere/05-the-digest.md), arriving as a direct message from Rally. See [Where a Sidekick's results go](../07-sidekicks/05-where-results-go.md).
 
-Next, [Granola](07-granola.md).
+Next, [Granola](08-granola.md).

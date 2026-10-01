@@ -35,17 +35,17 @@ not need to restart anything.
 
 While it is waiting, a few things change:
 
-- **Scrolling back** through a conversation stops at the top with
+- Scrolling back through a conversation stops at the top with
   **Waiting to reconnect…** in place of the older messages.
-- **Sending** waits. A card says **Sending is available once Rally connects**.
+- Sending waits. A card says **Sending is available once Rally connects**.
   You can carry on typing and attaching files; your draft and attachments are
   kept on your Mac and go when you press send after the connection is back.
-- **Starting a Breakout** waits too, with **Starting a breakout is available
+- Starting a Breakout waits too, with **Starting a breakout is available
   once Rally connects**.
 - **Settings → Connections** says **Connection management is unavailable while
   offline.** You cannot add, refresh or delete connections until Rally is back,
   and the statuses you see may be out of date.
-- **The Channel directory** says it cannot be loaded while offline.
+- The Channel directory says it cannot be loaded while offline.
 
 There is no full offline mode. You can read what Rally already has on your Mac,
 but anything that needs Rally's service, such as sending a message or starting
@@ -61,14 +61,14 @@ you, since they happen on Rally's side, not on your Mac.
 
 A few things fix more problems than they have any right to:
 
-1. **Try it once more.** Press **Retry** on a failed run, or click the link
+1. Try it once more. Press **Retry** on a failed run, or click the link
    again. Many failures are temporary.
-2. **Check which account and Organization you are in.** Open the account menu
+2. Check which account and Organization you are in. Open the account menu
    (click your name) to see the email address you signed in with. A surprising number of
    "Rally cannot see my thing" problems are "I am signed in as my other self".
-3. **Check Settings → Connections** for anything marked **Reconnect required**.
-4. **Make sure Rally is up to date.** Use **Rally → Check for Updates…** in the
+3. Check **Settings → Connections** for anything marked **Reconnect required**.
+4. Make sure Rally is up to date. Use **Rally → Check for Updates…** in the
    menu bar.
 
-Still stuck? [Contacting support](03-contact-support.md) is next, and says what
-to send so the first reply can be the helpful one.
+If none of that worked, [Contacting support](03-contact-support.md) is next.
+It says what to send so the first reply can be the helpful one.

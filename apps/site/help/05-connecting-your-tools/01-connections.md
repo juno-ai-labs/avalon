@@ -98,8 +98,8 @@ Your personal connection to a tool and the Organization's connection to the same
 
 ## Who can do what
 
-- **Members** can add, refresh and delete their own personal connections. Nobody else can touch them, not even an administrator.
-- **Owners and administrators** can also add, refresh and delete Organization connections, and they set the options some tools have, such as which GitHub repositories Rally may use.
+- Members can add, refresh and delete their own personal connections. Nobody else can touch them, not even an administrator.
+- Owners and administrators can also add, refresh and delete Organization connections, and they set the options some tools have, such as which GitHub repositories Rally may use.
 
 [Organization settings](../10-running-an-organization/03-organization-settings.md) has the full list of what administrators control.
 
@@ -123,23 +123,24 @@ These are for reading at a glance. Clicking them does not do anything, and typin
 
 When you connect a tool, the key or sign-in that lets Rally in is encrypted and kept on Rally's servers in your Organization's region. The Mac app never receives keys or tokens back, and Rally does not show them to the AI.
 
-Rally never asks you to approve individual actions it takes through a connection. Connecting is the permission. After that, Rally acts within what the connection allows and what you asked for. If you want Rally to have less power, connect less: for example, set GitHub to read-only, or limit a custom MCP server to read-only tools. Those settings are on the pages for those tools.
+Connecting is the permission, as the [chapter opener](index.md#rally-does-not-ask-before-each-action) says. If you want Rally to have less power, connect less: for example, set GitHub to read-only, or limit a custom MCP server to read-only tools, as described in [Keeping connected tools to reading only](14-custom-mcp-server.md#keeping-connected-tools-to-reading-only).
 
 Some changes to other tools are recorded before they are made. If Rally is interrupted in the middle of one and cannot tell whether it went through, it does not try again on its own. The conversation waits for you instead.
 
 ## Every connector
 
-Each tool has its own page in this chapter:
+Every connector card in Settings has its own page in this chapter:
 
-- [Google: Gmail, Calendar, Drive, Docs and Sheets](02-google.md)
-- [GitHub](03-github.md)
-- [Linear](04-linear.md)
-- [Notion](05-notion.md)
-- [Slack](06-slack.md)
-- [Granola](07-granola.md)
-- [Fireflies](08-fireflies.md)
-- [Ashby](09-ashby.md)
-- [Canva](10-canva.md)
-- [X](11-x.md)
-- [Inbound webhook](12-inbound-webhook.md)
-- [Custom MCP server](13-custom-mcp-server.md)
+- [Google Mail and Calendar](02-google-mail-and-calendar.md)
+- [Google Drive, Docs and Sheets](03-google-drive.md)
+- [GitHub](04-github.md)
+- [Linear](05-linear.md)
+- [Notion](06-notion.md)
+- [Slack](07-slack.md)
+- [Granola](08-granola.md)
+- [Fireflies](09-fireflies.md)
+- [Ashby](10-ashby.md)
+- [Canva](11-canva.md)
+- [X](12-x.md)
+- [Inbound webhook](13-inbound-webhook.md)
+- [Custom MCP server](14-custom-mcp-server.md)

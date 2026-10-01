@@ -3,7 +3,7 @@ title: Granola
 description: Let Rally read your Granola meeting notes and transcripts, and start Sidekicks when a new note lands.
 ---
 
-Granola takes notes in your meetings so you can pay attention to them. Connect it to Rally and those notes stop being something you meant to reread and start being something Rally can act on. The meeting may have run long, but at least the follow-up won't.
+Granola takes notes in your meetings so you can pay attention to them. Connect it and Rally can read those notes and act on them. The meeting may have run long, but at least the follow-up won't.
 
 ## What Rally can do
 
@@ -59,4 +59,4 @@ If setup was interrupted and Rally could not tell whether a connection already e
 - "What did the customer say about onboarding across our last three calls with them?"
 - "Turn yesterday's planning meeting notes into Linear issues."
 
-Next, [Fireflies](08-fireflies.md).
+Next, [Fireflies](09-fireflies.md).

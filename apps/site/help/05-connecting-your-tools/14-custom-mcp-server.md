@@ -6,7 +6,7 @@ nav_title: Custom MCP
 
 The last connector is the most open-ended. If your team runs its own tools, or uses a service that has no card in Settings, you can often still connect it to Rally through MCP. Like the inbound webhook, this page leans a little technical.
 
-**MCP** (Model Context Protocol) is a standard way for a tool to tell an AI what it can do, and to let the AI do it. A service that speaks MCP runs an **MCP server**: a web address that lists its tools and carries them out when asked. Point Rally at one and Rally can use its tools in your Channels, alongside everything else in this chapter.
+MCP (Model Context Protocol) is a standard way for a tool to tell an AI what it can do, and to let the AI do it. A service that speaks MCP runs an MCP server: a web address that lists its tools and carries them out when asked. Point Rally at one and Rally can use its tools in your Channels, alongside everything else in this chapter.
 
 ## Adding a server
 
@@ -59,7 +59,7 @@ Rally reads this list from the server live each time the page opens, and each ti
 
 ## Keeping connected tools to reading only
 
-Two connectors let an administrator keep Rally looking but not touching. Here, set an Organization server to **Read-only tools**. On [GitHub](03-github.md), limit Rally to **Selected repositories** and set them to **Read-only remote**. Because Rally does not ask before each action, these settings are where you draw the line.
+Two connectors let an administrator keep Rally looking but not touching. Here, set an Organization server to **Read-only tools**. On [GitHub](04-github.md), limit Rally to **Selected repositories** and set them to **Read-only remote**. Because Rally does not ask before each action, these settings are where you draw the line.
 
 ## When a server stops working
 
@@ -69,4 +69,4 @@ Two connectors let an administrator keep Rally looking but not touching. Here, s
 
 If you contact support, send the server address, whether the connection is personal or for the Organization, roughly when it happened, your Rally region and any request ID you can see. Never send header values or access tokens.
 
-That is the end of the connectors. With your tools hooked up, the next chapter turns to what Rally hands back: the documents, images, recordings and live pages it makes. Read on in [Things Rally makes](../06-things-rally-makes/index.md).
+That is the last connector. The next chapter is about what Rally hands back: [Things Rally makes](../06-things-rally-makes/index.md).

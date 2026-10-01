@@ -3,7 +3,7 @@ title: Live sites
 description: Ask for a web page or small app and Rally builds it, hosts it and gives it its own address.
 ---
 
-Some requests are not really documents. A landing page, a dashboard, a tip calculator, a habit tracker, a poll, a sign-up sheet for the team offsite: what you want there is a page people can open and click. For those, Rally builds a small website, puts it on the internet, and gives it its own web address. It does not paste a screenful of code into the chat and wish you luck.
+Some requests are not for documents at all. A landing page, a dashboard, a tip calculator, a habit tracker, a poll, a sign-up sheet for the team offsite: what you want there is a page people can open and click. For those, Rally builds a small website, puts it on the internet, and gives it its own web address. It does not paste a screenful of code into the chat and wish you luck.
 
 These are **live sites**, and they are artifacts like any other. They sit in the Channel's **Artifacts** list, they keep their versions, and you change them by asking.
 
@@ -18,7 +18,7 @@ Describe the page or tool you want in the Channel. A few examples:
 
 Rally builds the site on its private computer (the Terminal, from [Code, data and the Terminal](../04-working-with-rally/03-code-files-and-the-terminal.md)), publishes it, and posts a card in the conversation labelled **Site**.
 
-A site can be one of three things, and Rally picks the right one from what you asked for:
+A site can be one of three things, and Rally picks from what you asked for:
 
 - **A plain page** that looks the same for everyone, like the bake-sale page.
 - **A page with some logic behind it**, which works things out when someone visits.
@@ -74,14 +74,14 @@ Every site has a public web address made of four ordinary words, ending in `rall
 Some more detail on access:
 
 - Visitors can read a public site. They cannot change it.
-- If a site must be private, say so when you ask for it, for example "make this sign-up sheet only open to people in our Rally Organization". Rally then builds a site that checks who is visiting and asks them to be signed in to Rally. A plain page that looks the same for everyone cannot be made private.
+- If a site must be private, say so when you ask for it, for example "make this sign-up sheet only open to people in our Rally Organization". Rally then builds a site that checks who is visiting and turns away anyone who is not signed in to Rally. A plain page that looks the same for everyone cannot be made private.
 - The public address always shows the latest version. Earlier versions are only visible inside Rally, and they show the page as it was, never live data.
 - **Open in browser** and **Open in a new window** sign you in to the site as yourself for that visit. That sign-in lasts 24 hours. Use the buttons each time rather than reusing an address from your browser's history, because the sign-in part of that address only works once and expires within a minute.
 - People you have invited into a Channel as guests (see [Sharing with people outside your Organization](../03-spaces-and-breakouts/05-sharing-with-guests.md)) can open a site that is part of what was shared with them.
 
 ## Limits
 
-- Each published version of a site can be at most about 25 MB. That is a lot of web page, unless your bake sale has a very ambitious photo gallery.
+- Each published version of a site can be at most about 25 MB. That is a lot of web page, unless your bake sale has an ambitious photo gallery.
 - Rally does not paste a site's code into the chat. The site is the answer.
 
 Next: the other half of the shelf, things that come in from outside, in [Resources: things you bring in](04-resources.md).

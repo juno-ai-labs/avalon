@@ -22,9 +22,9 @@ Notion offers both kinds of connection, and they work a little differently.
 
 **Connect for me** signs in to Notion as you and uses the tools Notion itself provides. Rally can reach what your Notion account can reach. Because Notion supplies these tools, the exact list is whatever Notion offers at the time, and it can change without a Rally update.
 
-**Connect for organization** (owners and administrators) installs the Rally integration into your Notion workspace for everyone. During the install, Notion asks which pages to share with Rally, and **only those pages** are visible to this connection. The rest of your Notion workspace stays out of reach, even when the connection is healthy. The Organization connection can also tell Rally when shared pages change.
+**Connect for organization** (owners and administrators) installs the Rally integration into your Notion workspace for everyone. During the install, Notion asks which pages to share with Rally, and only those pages are visible to this connection. The rest of your Notion workspace stays out of reach, even when the connection is healthy. The Organization connection can also tell Rally when shared pages change.
 
-The Organization connection searches by page and database **title** only, not the text inside the pages. If Rally cannot find a page you know exists, try asking with words from its title.
+The Organization connection searches by page and database title only, not the text inside the pages. If Rally cannot find a page you know exists, try asking with words from its title.
 
 1. Open **Settings → Connections** and find the **Notion** card.
 2. Click **Connect for me** or **Connect for organization**.
@@ -48,4 +48,4 @@ Then work through the usual checks:
 - "What columns does the Launch Tracker database have, and which rows are still marked as blocked?"
 - "Read the comments on the Q4 roadmap page and summarise the open questions."
 
-Next, [Slack](06-slack.md).
+Next, [Slack](07-slack.md).

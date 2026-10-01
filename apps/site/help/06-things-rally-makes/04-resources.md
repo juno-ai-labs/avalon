@@ -18,7 +18,7 @@ The most common case is Slack. When someone mentions **@Rally** in Slack, whethe
 
 This works even when the person who mentioned @Rally in Slack is not a Rally user. Their Channel still remembers where it started.
 
-When a Sidekick is started by an email (see [Triggers and schedules](../07-sidekicks/03-triggers-and-schedules.md)), the email it was started by is attached to its conversation in the same spirit.
+When a Sidekick is started by an email (see [Triggers and schedules](../07-sidekicks/03-triggers-and-schedules.md)), the email that started it is attached to its conversation in the same way.
 
 Why it matters: a week later, when nobody remembers why this Channel exists, the answer is one click away.
 
@@ -26,7 +26,7 @@ Why it matters: a week later, when nobody remembers why this Channel exists, the
 
 Rally is told about the origin before it starts its first reply, and it can tell the place it was called from apart from files added later. So you can ask "what was the thread about?" or "summarise where this started", and it knows which thread you mean.
 
-An origin is a pointer, not a copy. Rally records where the thread is, not what it said: no Slack messages are copied into Rally. When Rally needs the content, it reads the current version through your connection, with the same permissions you have. Only places the whole Organization may see become an origin, so a private Slack channel's content is not republished to everyone.
+An origin is a pointer, not a copy. Rally records where the thread is, not what it said: no Slack messages are copied into Rally. When Rally needs the content, it fetches it with a tool that is authorized to read it.
 
 ### Things to know about origins
 
@@ -36,9 +36,9 @@ An origin is a pointer, not a copy. Rally records where the thread is, not what 
 
 ## Where to find resources
 
-**In the web browser version** of Rally, a Channel's sidebar has a **Resources** section below **Artifacts**. Each row shows an icon, the title, and a line with the kind of thing and its version, such as **slack thread · v1**. Click a row to open its details. Like the Artifacts section, it appears only when there is something in it.
+In the web browser version of Rally, a Channel's sidebar has a **Resources** section below **Artifacts**. Each row shows an icon, the title, and a line with the kind of thing and its version, such as **slack thread · v1**. Click a row to open its details. Like the Artifacts section, it appears only when there is something in it.
 
-**In the Mac app**, resources do not have their own list in the sidebar today. Open one from the conversation instead: click a citation or file chip that points to it (see [Reading Rally's answers](../02-working-in-a-channel/04-reading-rallys-answers.md)), or click **Resource details** in a file preview.
+In the Mac app, resources do not have their own list in the sidebar today. Open one from the conversation instead: click a citation or file chip that points to it (see [Reading Rally's answers](../02-working-in-a-channel/04-reading-rallys-answers.md)), or click **Resource details** in a file preview.
 
 ## A resource's details
 

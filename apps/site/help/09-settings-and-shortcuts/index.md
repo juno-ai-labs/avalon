@@ -13,11 +13,11 @@ what the program did and started wanting it to do it faster.
 
 You have reached that point with Rally. You can start a Channel, branch a
 Breakout, hand work to the agent, connect your tools and leave a Sidekick
-running overnight. This chapter is about the last stretch: making Rally look the
-way you like, behave the way you expect on your Mac, and answer to your
-fingers instead of your mouse.
+running overnight. This chapter is about the last stretch: making Rally look and
+behave the way you like, and getting it to answer to your fingers instead of
+your mouse.
 
-## Two ideas that make the rest click
+## Where settings live, and how to find them
 
 **Some settings are about you, and some are about this Mac.** Your name, your
 avatar colour and your time zone belong to your account. Set them once and they
@@ -29,7 +29,7 @@ sits under **Desktop app → Application**. When a change does not seem
 to have reached your other computer, this is usually why.
 
 **You do not need to know where a setting lives.** Settings has its own search
-box, and it knows the words people actually use. Type "theme", "colour" or
+box, and it knows the everyday words people type. Type "theme", "colour" or
 "startup" and it finds the right switch, even when the switch is labelled
 something else. If you remember nothing else from this chapter, remember
 <kbd>⌘</kbd> <kbd>,</kbd> and then type what you are looking for.

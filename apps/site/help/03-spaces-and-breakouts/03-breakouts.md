@@ -28,8 +28,8 @@ to you until you add somebody. Rally brings the conversation so far with it.**
 
 1. In the box labelled **What should this breakout work on?**, write your first
    message, the same way you would in any Channel.
-2. Press <kbd>Enter</kbd> to create the Breakout. <kbd>⇧ Shift</kbd>
-   <kbd>Enter</kbd> starts a new line instead.
+2. Press <kbd>Return</kbd> to create the Breakout. <kbd>⇧ Shift</kbd>
+   <kbd>Return</kbd> starts a new line instead.
 
 Nothing exists until you send that first message, so changing your mind costs
 nothing. Click the **X** (**Cancel new breakout**) to back out, and Rally keeps
@@ -44,24 +44,24 @@ If it fails, you will see **The breakout couldn't be created. Try again.**
 
 ## What Rally knows in a Breakout
 
-Rally does not start a Breakout from a blank page. It begins with a **summary**
+Rally does not start a Breakout from a blank page. It begins with a summary
 of the main conversation up to the point you branched from, so it already knows
 what the Channel is about and what has been decided.
 
 From there:
 
-- Rally in the Breakout can **read** the main conversation when it needs more
+- Rally in the Breakout can read the main conversation when it needs more
   detail than the summary holds.
-- It cannot **post** in the main conversation. What happens in the Breakout stays
+- It cannot post in the main conversation. What happens in the Breakout stays
   in the Breakout until you choose to share it.
-- The summary is a summary, not a word-for-word copy. If one exact detail
-  matters, say it again in the Breakout.
+- The summary leaves things out. If one exact detail matters, say it again in
+  the Breakout.
 
 You cannot choose how much Rally brings with it. It always brings the summary.
 
 ## Who can see a Breakout
 
-A new Breakout is **private to you**. Nobody else sees it in the Channel sidebar,
+A new Breakout is private to you. Nobody else sees it in the Channel sidebar,
 not even the Channel's other participants, until you invite them. It is the one
 room in Rally with a door that starts closed.
 
@@ -121,8 +121,8 @@ show up in the Channel. When one is worth sharing, attach it:
 
 The artifact now also appears in the Channel, and everyone who can read the main
 conversation can open it. The Breakout keeps its own copy of the link, so people
-in either place can open it. The private conversation that produced it stays
-private.
+in either place can open it. The conversation that produced it stays private,
+including the twenty minutes spent arguing about the font.
 
 A few details:
 
@@ -131,10 +131,6 @@ A few details:
 - Rally attaches one thing at a time.
 
 Artifacts themselves are covered in [Artifacts](../06-things-rally-makes/01-artifacts.md).
-
-A good Breakout is like a good meeting in a side room: you go in, you work
-something out, you come back with the answer, and nobody has to hear you arguing
-about the font.
 
 Next: [Who can see what](04-who-can-see-what.md), the rules behind all of these
 doors.

@@ -3,7 +3,7 @@ title: Canva
 description: Let Rally find, create, edit and export your Canva designs and handle their comments.
 ---
 
-Connect your Canva account and Rally can work on your slides and graphics with you. It will not replace a designer, but it is very good at "make three versions of this banner by lunch".
+Connect your Canva account and Rally can work on your slides and graphics with you. It will not replace a designer, but it is good at "make three versions of this banner by lunch".
 
 ## What Rally can do
 
@@ -27,11 +27,11 @@ Canva is personal only, and any member can connect it.
 4. Sign in to Canva in your browser and approve access. Keep Rally open until the browser says it worked.
 5. Come back to Rally. The card says **Connected**.
 
-If you do not see a Canva card, update Rally to the latest version.
+If the Canva card says **Unavailable**, Canva is not set up in your Organization's Rally region, and there is nothing to fix from your side.
 
 ## Watching a design
 
-Connecting does not start watching anything. To have Rally keep an eye on a design, bring it into a Channel and turn on **Watch**, as [Resources: things you bring in](../06-things-rally-makes/04-resources.md) shows. Rally hears about changes once Canva makes them available, and not every single edit is guaranteed to produce a notice.
+Connecting does not start watching anything. Rally has the groundwork for watching a design for changes, but the switch for it is not in the Mac app today (see [Resources: things you bring in](../06-things-rally-makes/04-resources.md#bringing-things-in-yourself)). When it arrives, a watch covers one design at a time, and not every single edit is guaranteed to produce a notice.
 
 ## Things to try
 
@@ -45,4 +45,4 @@ If Rally asks you to reconnect, or the row in **Settings → Connections** says 
 
 If you contact support, send the time and the error you saw. Never send sign-in codes or private Canva share links.
 
-Next, [X](11-x.md).
+Next, [X](12-x.md).
