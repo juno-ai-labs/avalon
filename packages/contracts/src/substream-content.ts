@@ -99,3 +99,27 @@ export const SessionImportUpdateResponseSchema = z.strictObject({
   updated: z.number().int().nonnegative(),
 });
 export type SessionImportPreview = z.infer<typeof SessionImportPreviewSchema>;
+export type SessionImportRequest = z.infer<typeof SessionImportRequestSchema>;
+
+/**
+ * Start a conversation import: reserve its Channel and start the agent that
+ * reads the conversation in the person's Rally browser.
+ */
+export const SessionImportStartRequestSchema = z.strictObject({
+  sourceUrl: HttpsUrlSchema,
+  title: z.string().trim().min(1).max(180),
+  clientMessageId: z.string().uuid(),
+  spaceIds: z.array(SpaceIdSchema)
+    .refine((ids) => new Set(ids).size === ids.length, "Space ids must be unique")
+    .default([]),
+});
+/** The Channel an import fills and the hidden conversation its agent runs in. */
+export const SessionImportRunSchema = z.strictObject({
+  workstreamId: z.string().min(1),
+  substreamId: z.string().min(1),
+});
+export const SessionImportDiscardRequestSchema = z.strictObject({
+  substreamId: z.string().min(1),
+  /** The create key of a new import; null for an update, whose Channel stays. */
+  clientMessageId: z.string().uuid().nullable(),
+});

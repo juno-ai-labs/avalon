@@ -193,11 +193,62 @@ export class WorkstreamObjectCreationService {
     });
   }
 
+  /**
+   * Reserve a Channel whose history does not exist yet: place it in its
+   * Spaces and activate its route, but leave its main conversation
+   * uninitialized.
+   *
+   * For a conversation import, whose agent runs in a child of this Channel
+   * before there is anything to initialize it with. The Channel is listed
+   * from here on and opens once `openReservedImport` initializes it with the
+   * imported history under the same create key; until then it answers as
+   * unavailable. `discardReservedChannel` removes it if the import never
+   * finishes.
+   *
+   * `identityHash` stands in for the history in the create receipt, so the
+   * reservation and the later open are one request to the receipt even
+   * though only the second carries content.
+   */
+  async reserveImport(
+    input: Omit<CreateInput, "openingMessage" | "attachmentIds" | "mentions">,
+    identityHash: string,
+  ): Promise<{ workstreamId: WorkstreamId }> {
+    const reserved = await this.createOrReserve(
+      { ...input, objective: input.objective ?? input.title, openingMessage: "", attachmentIds: [] },
+      // The reservation never reads the conversation; the hash names it.
+      { reason: "session_import", initialization: { kind: "history", conversation: { messages: [] }, identityHash } },
+      "reserve",
+    );
+    if (!("reserved" in reserved)) {
+      throw new ApiError(409, "workstream_import_already_open", "This import has already been opened");
+    }
+    return { workstreamId: reserved.reserved };
+  }
+
+  /** Initialize a Channel `reserveImport` reserved, under the same create key. */
+  async openReservedImport(
+    input: Omit<CreateInput, "openingMessage" | "attachmentIds" | "mentions">,
+    conversation: PreparedConversation,
+    identityHash: string,
+  ) {
+    return this.createPrepared(input, conversation, { reason: "session_import", contentIdentityHash: identityHash });
+  }
+
   async create(input: CreateInput, options: CreateOptions = {}): Promise<{
     workstream: Workstream;
     turnId: string;
     harnessRunId: string | null;
   }> {
+    const created = await this.createOrReserve(input, options, "open");
+    if ("reserved" in created) throw new Error("workstream_create_stopped_at_reservation");
+    return created;
+  }
+
+  private async createOrReserve(input: CreateInput, options: CreateOptions, stage: "reserve" | "open"): Promise<{
+    workstream: Workstream;
+    turnId: string;
+    harnessRunId: string | null;
+  } | { reserved: WorkstreamId }> {
     const span = options.span ?? noFlowSpan;
     const body = ((options.initialization?.kind === "history") ? WorkstreamCreationFieldsSchema : CreateWorkstreamRequestSchema).parse(input);
     // Named for the second read it is: `POST /workstreams` already resolved the
@@ -275,6 +326,11 @@ export class WorkstreamObjectCreationService {
     }
     if (receipt.generation !== control.generation) {
       throw new ApiError(409, "workstream_create_generation_stale", "Retry the create against the current authority generation");
+    }
+    // Only a discarded reservation is `failed`: its Channel is gone and its
+    // create key may not bring it back.
+    if (receipt.state === "failed") {
+      throw new ApiError(409, "workstream_create_discarded", "This create was discarded; start a new one");
     }
     span.setAttributes({
       "rally.workstream.id": receipt.workstream_id,
@@ -375,6 +431,15 @@ export class WorkstreamObjectCreationService {
     const scope = start.scope;
     const participantUserIds = start.participantUserIds;
     const originResourceIds = start.originResourceIds;
+    if (stage === "reserve") {
+      // A child of this Channel runs before the Channel opens, and its parent
+      // effects are refused unless the route is active; see
+      // `writeAnchorAndRoute`. `openReserved` later finds both rows written.
+      await span.step("workstream.create.d1_rows.write", () => this.writeAnchorAndRoute(
+        receipt.workstream_id, control.generation, at, "active",
+      ));
+      return { reserved: workstreamId };
+    }
     if (!options.externalBinding) {
       return this.openReserved(span, body, options, input, {
         receipt, client, control, workstreamId, title, objective, email, scope,
@@ -421,27 +486,8 @@ export class WorkstreamObjectCreationService {
       originResourceIds, requestHash, at,
     } = reserved;
 
-    await span.step("workstream.create.d1_rows.write", () => writeRegionalWorkstreamAnchorBatch(
-      this.env,
-      { workspaceId: this.auth.workspaceId, workstreamId: receipt.workstream_id, at },
-      () => [
-        this.env.DB.prepare(
-          `INSERT OR IGNORE INTO workstream_authority_routes
-             (workspace_id, workstream_id, generation, object_name, state, stage_index,
-              source_cursor, source_fence_sequence, source_hash, target_hash,
-              row_counts_json, imported_at, verified_at, activated_at, updated_at)
-           VALUES (?, ?, ?, ?, 'verified', 0, 0, 0, 'created_in_do', 'created_in_do',
-                   '{}', ?, ?, NULL, ?)`,
-        ).bind(
-          this.auth.workspaceId,
-          receipt.workstream_id,
-          control.generation,
-          `${this.env.AVALON_REGION}:${this.auth.workspaceId}:${receipt.workstream_id}`,
-          at,
-          at,
-          at,
-        ),
-      ],
+    await span.step("workstream.create.d1_rows.write", () => this.writeAnchorAndRoute(
+      receipt.workstream_id, control.generation, at, "verified",
     ));
 
     const created = await span.step("workstream.create.child.initialize", () => client.initialize({
@@ -577,6 +623,45 @@ export class WorkstreamObjectCreationService {
     // General was made above, so a second answer that it is missing is the
     // Organization contradicting itself rather than a state to wait out.
     throw new Error("workstream_create_general_space_missing");
+  }
+
+  /**
+   * The Channel's D1 anchor and regional route. Written `verified` by an
+   * ordinary create, which activates it once the conversation is initialized;
+   * written `active` by an import reservation, whose child runs first. Both
+   * statements ignore an existing row, so an open after a reservation keeps
+   * the active route and its activation `UPDATE` still matches it.
+   */
+  private writeAnchorAndRoute(
+    workstreamId: string,
+    generation: number,
+    at: string,
+    state: "verified" | "active",
+  ): Promise<void> {
+    return writeRegionalWorkstreamAnchorBatch(
+      this.env,
+      { workspaceId: this.auth.workspaceId, workstreamId, at },
+      () => [
+        this.env.DB.prepare(
+          `INSERT OR IGNORE INTO workstream_authority_routes
+             (workspace_id, workstream_id, generation, object_name, state, stage_index,
+              source_cursor, source_fence_sequence, source_hash, target_hash,
+              row_counts_json, imported_at, verified_at, activated_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 0, 0, 0, 'created_in_do', 'created_in_do',
+                   '{}', ?, ?, ?, ?)`,
+        ).bind(
+          this.auth.workspaceId,
+          workstreamId,
+          generation,
+          `${this.env.AVALON_REGION}:${this.auth.workspaceId}:${workstreamId}`,
+          state,
+          at,
+          at,
+          state === "active" ? at : null,
+          at,
+        ),
+      ],
+    );
   }
 
   private receipt(clientMessageId: string): Promise<ReceiptRow | null> {

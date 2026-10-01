@@ -357,31 +357,37 @@ describe("POST /spaces", () => {
   });
 });
 
-describe("POST /workstreams/import", () => {
+describe("conversation import routes", () => {
+  const SOURCE_URL = "https://claude.ai/chat/0a1b2c3d-0000-4000-8000-00000000d200";
+  const SOURCE = { provider: "claude", url: SOURCE_URL, sessionId: "0a1b2c3d-0000-4000-8000-00000000d200" };
+
+  /** Reserve a Channel through the start route, then open it with `messages`. */
+  async function importChannel(title: string, clientMessageId: string, spaceIds: string[], messages: unknown[]) {
+    const started = await request("/workstreams/import/runs", OWNER_AUTH, { sourceUrl: SOURCE_URL, title, clientMessageId, spaceIds });
+    expect(started.status).toBe(201);
+    const { workstreamId } = started.body as { workstreamId: WorkstreamId };
+    return request(`/workstreams/${workstreamId}/import/complete`, OWNER_AUTH, {
+      title, source: SOURCE, content: { messages }, clientMessageId, spaceIds,
+    });
+  }
+
   it("rejects an imported title outside the Channel creation contract", async () => {
-    const imported = await request("/workstreams/import", OWNER_AUTH, {
+    const started = await request("/workstreams/import/runs", OWNER_AUTH, {
+      sourceUrl: SOURCE_URL,
       title: "x".repeat(181),
-      source: { provider: "claude", url: null },
-      content: { messages: [{ role: "user", text: "What did we learn?" }] },
       clientMessageId: "00000000-0000-7000-8000-00000000d204",
       spaceIds: [],
     });
 
-    expect(imported.status).toBe(400);
+    expect(started.status).toBe(400);
   });
 
   it("settles the chosen title and places imported history in the selected Space", async () => {
     const destination = await createSpace("personal", "Research");
-    const imported = await request("/workstreams/import", OWNER_AUTH, {
-      title: "Imported research",
-      source: { provider: "claude", url: null, sessionId: "research-session" },
-      content: { messages: [
-        { role: "user", text: "What did we learn?", sourceMessageId: "u1" },
-        { role: "assistant", text: "The selected result.", sourceMessageId: "a1" },
-      ] },
-      clientMessageId: "00000000-0000-7000-8000-00000000d205",
-      spaceIds: [destination.id],
-    });
+    const imported = await importChannel("Imported research", "00000000-0000-7000-8000-00000000d205", [destination.id], [
+      { role: "user", text: "What did we learn?", sourceMessageId: "u1" },
+      { role: "assistant", text: "The selected result.", sourceMessageId: "a1" },
+    ]);
     expect(imported.status).toBe(201);
     const workstream = (imported.body as {
       workstream: { id: WorkstreamId; title: string; titleStatus: string };
@@ -409,11 +415,8 @@ describe("POST /workstreams/import", () => {
   });
 
   it('rejects a different source before uploading its files', async () => {
-    const imported = await request('/workstreams/import', OWNER_AUTH, {
-      title: 'Source validation', source: { provider: 'claude', url: null, sessionId: 'original' },
-      content: { messages: [{ role: 'user', text: 'Original', sourceMessageId: 'u1' }] },
-      clientMessageId: '00000000-0000-7000-8000-00000000d206', spaceIds: [],
-    });
+    const imported = await importChannel('Source validation', '00000000-0000-7000-8000-00000000d206', [],
+      [{ role: 'user', text: 'Original', sourceMessageId: 'u1' }]);
     expect(imported.status).toBe(201);
     const workstreamId = (imported.body as { workstream: { id: string } }).workstream.id;
     const update = await request(`/workstreams/${workstreamId}/import/update`, OWNER_AUTH, {
