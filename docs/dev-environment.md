@@ -34,7 +34,10 @@ Retrying the install is not enough on its own. Once the package is in the pnpm
 store, `pnpm install` reports `Already up to date` and re-runs nothing, and
 `pnpm rebuild electron` exits 0 without fetching anything either — so a missing
 binary stays missing and `electron-vite dev` fails at startup with
-`Error: Electron uninstall`. Run the package's own installer to fetch it:
+`Error: Electron uninstall`. `pnpm dev:desktop` (and so `pnpm dev`) now runs
+`scripts/ensure-electron.mjs` first, which runs the package's own installer and
+returns at once when the binary is already there, so a workstation repairs this
+on the next start. To fetch it by hand — the step below is the same installer:
 
 ```bash
 node node_modules/.pnpm/electron@*/node_modules/electron/install.js
@@ -121,6 +124,31 @@ written before that migration's DDL was last edited: delete
 `apps/api/.wrangler/state` and re-run `pnpm db:migrate` and `pnpm db:seed`.
 The warning does not block local construction. Wiping remains the remedy only
 while the migration is unreleased; a shipped schema change appends a migration.
+
+### Resetting local state
+
+Local state drifts in two halves nothing reconciles. Re-running `db:migrate` and
+`db:seed` brings D1 up to date, but every Durable Object keeps what an older
+checkout's code wrote into it. A stack left for weeks then serves Channels whose
+parent conversation no longer exists: the API logs
+`conversation_parent_missing` and `conversation_not_found`, the sidebar stays on
+**Rally is opening this organization**, and a Channel shows **Channel could not
+be opened**. The desktop client drifts with it: its stored session names an
+account in the old database (`account_reconnect_required`) and its caches still
+list the old Channels. Reset both at once:
+
+```bash
+pnpm dev:reset          # stop `pnpm dev` and quit Rally Development first
+pnpm dev                # then, once the API answers:
+pnpm db:open-authority
+```
+
+`dev:reset` refuses while a local Worker or the development client is running,
+because both hold these files open. It deletes `apps/api/.wrangler/state` and
+everything in the client's `Rally Development` userData directory except
+`Partitions/` — the sign-ins to claude.ai, ChatGPT and other sites made inside
+Rally's browser — and the window and application settings, then runs
+`db:migrate` and `db:seed`.
 
 After the Workers are running (§3), open the authority:
 
