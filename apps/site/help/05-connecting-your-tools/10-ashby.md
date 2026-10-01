@@ -3,7 +3,7 @@ title: Ashby
 description: Let recruiters ask Rally about candidates and jobs, and start Sidekicks when candidates move through Ashby.
 ---
 
-Ashby is a recruiting system. Rally's Ashby connection has two halves that do quite different things, and you can set up either one first, or only one.
+Ashby is a recruiting system. Rally's Ashby connection has two halves that do different things, and you can set up either one first, or only one.
 
 | | Personal connection | Organization connection |
 | --- | --- | --- |
@@ -58,14 +58,14 @@ Owners and administrators see a **Manage events** button on the Organization Ash
 - the connection's status, such as **Connected** or **Needs attention**
 - **Last event received**, or "None yet"
 - **Test**, which checks that events can reach Rally and tries to repair delivery if they cannot
-- **Get help**, which opens Rally support for a problem **Test** does not fix
+- **Get help**, which appears when the connection needs attention and opens Rally support for a problem **Test** does not fix
 
 Under **Advanced** are tools for administrators and support:
 
 - **Refresh status** reads the saved state again.
 - **Replace organization API key** swaps in a new key from the same Ashby account. Existing subscriptions are kept.
 - **Verify existing webhook** is for when Rally could not tell whether Ashby created its event subscription. Look in Ashby for it first, then give Rally its ID here, rather than setting the connection up again.
-- **Retry cleanup** asks Ashby again to remove Rally's subscription after you delete the connection.
+- **Retry cleanup** appears after you delete the connection, when Rally still has a subscription to remove, and asks Ashby again to remove it.
 - **Forget local cleanup credential** stops Rally trying to clean up, and leaves removing any remaining subscription in Ashby to your Ashby administrator.
 
 Deleting the Organization connection stops Rally's access straight away. Removing the subscription on Ashby's side can take a little longer.
@@ -76,4 +76,4 @@ The two halves have separate status. For the personal connection, click **Refres
 
 If you contact support, send the connection ID, your region, the error and roughly when it happened. Never send API keys, sign-in codes or candidate information.
 
-Next, [Canva](10-canva.md).
+Next, [Canva](11-canva.md).

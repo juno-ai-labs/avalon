@@ -5,9 +5,8 @@ description: Have Rally search the web and read pages, and open links in a brows
 
 Rally knows a lot, but what it knows stops at some point in the past, and it
 knows nothing at all about your competitor's pricing page from this morning.
-For anything current or public, it goes and looks. This page covers how Rally
-searches the web, and the browser built into the Rally window where you can
-read what it found.
+For anything current or public, it goes and looks, and you can read what it
+found in a browser built into the Rally window.
 
 ## Asking Rally to look something up
 
@@ -29,7 +28,7 @@ When Rally uses what it read, it says where it came from. You can open its
 sources and check them, as described in
 [Reading Rally's answers](../02-working-in-a-channel/04-reading-rallys-answers.md).
 
-### Things to know
+### What it can and cannot read
 
 - **The web is for public things.** For your company's own information, Rally
   goes to your connected apps (Gmail, Drive, Notion and so on), not the web.
@@ -40,7 +39,7 @@ sources and check them, as described in
 - **Pages can be a little stale.** To be quick, Rally may read a copy of a
   page saved in the last couple of days. If you need the page as it is right
   now (a live price, a status page), ask Rally for a fresh copy.
-- **Very long pages are cut short.** Rally is told when a page was too long
+- **Long pages are cut short.** Rally is told when a page was too long
   to read in full, so it knows it only saw part of it.
 - **Instructions on a web page are not your instructions.** If a page says
   "Ignore your previous instructions and…", Rally ignores it. It works for you,
@@ -94,8 +93,8 @@ tab and it is blank, the panel closes too.
 ### Signing in to sites
 
 The browser remembers sites you sign in to, from one session to the next, so
-you can sign in once and stay signed in. This is useful for reading pages that
-need an account.
+you can sign in once and stay signed in, which helps with pages that need an
+account.
 
 The import window for bringing in a conversation from Claude or ChatGPT is
 the same kind of browser, and it shares your sign-ins with the panel. Sign in

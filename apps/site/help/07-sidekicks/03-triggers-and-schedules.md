@@ -38,8 +38,8 @@ every so often: every hour, every 30 minutes.
 
 When you ask for something that needs checking, the drafting assistant
 prefers not to poll more often than every 10 minutes, and it tells you how
-often it will really look. Checking your inbox every ten seconds would not
-make the email arrive faster. It would only make the Sidekick tired.
+often it will look. Checking your inbox every ten seconds would not make the
+email arrive any sooner.
 
 ### Time zones
 
@@ -66,7 +66,7 @@ and [Organization settings](../10-running-an-organization/03-organization-settin
 ## Events in your other tools
 
 An event trigger starts a run when something happens in a connected tool.
-Some examples of what can start a Sidekick:
+For example:
 
 - **Slack**: a message or thread reply in channels you choose, Rally being
   mentioned, a direct message to Rally, a reaction added or removed, a file
@@ -83,14 +83,13 @@ Each tool's own page in [Connecting your other tools](../05-connecting-your-tool
 says what it can announce. If the tool you name cannot announce events, the
 drafting assistant falls back to checking it on a timer instead, and says so.
 
-A few things to know about event triggers.
+Event triggers have a few rules of their own.
 
 - **Only new events count.** A Sidekick reacts to things that happen after
   it is turned on (or resumed). It does not work through the backlog.
 - **Some tools need the Organization's connection.** Granola, Fireflies and
   Ashby send events only through a connection made for the whole
-  Organization, so a personal connection will not start a Sidekick. Linear's
-  live updates also come from its Organization connection. See
+  Organization, so a personal connection will not start a Sidekick. See
   [Settings → Connections](../05-connecting-your-tools/01-connections.md).
 - **Slack channels you name get a visitor.** When a Sidekick watches a
   public Slack channel, Rally's Slack bot joins that channel so it can hear
@@ -115,20 +114,20 @@ a borderline case; it will not suddenly act on everything.
 If a system you use has no ready-made connector, it can still start a
 Sidekick by sending an inbound webhook: a small message from that system to
 an address Rally gives you. Setting one up is covered in
-[Inbound webhook](../05-connecting-your-tools/12-inbound-webhook.md). Once the
+[Inbound webhook](../05-connecting-your-tools/13-inbound-webhook.md). Once the
 webhook exists, tell the drafting assistant to run when it delivers something.
 
 ## Email a Sidekick
 
 A Sidekick can have its own permanent email address. Send or forward a
 message to it, and a run starts with that email as its starting material.
-This is handy for "here, deal with this" jobs: forward an invoice to be
+It suits "here, deal with this" jobs: forward an invoice to be
 filed, or a long thread to be summarized.
 
 To set it up, ask the drafting assistant for an email trigger ("I want to be
 able to forward emails to you"). Once the Sidekick has an address, its
 details panel shows an **Email this Sidekick** section. Click it to reveal
-the address, which ends in `@automation.rallywith.ai`.
+the address, which is at `automation.rallywith.ai`.
 
 Who can email it depends on the Sidekick's scope.
 

@@ -71,4 +71,4 @@ Work through these before reinstalling anything:
 
 Deleting the GitHub connection in Rally leaves the Rally GitHub App installed on GitHub. Remove it in GitHub's settings if you no longer want it there.
 
-Next, [Linear](04-linear.md).
+Next, [Linear](05-linear.md).

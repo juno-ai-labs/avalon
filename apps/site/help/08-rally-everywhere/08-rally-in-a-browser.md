@@ -9,10 +9,10 @@ someone has shared with you. A client you invited into a single Channel, a
 contractor helping with one Breakout, or a teammate on a computer without the
 Mac app can all open the browser version and join in, with nothing to install.
 
-It is deliberately the light option. You cannot create an Organization, set up
-connections, or make Sidekicks there, and there is no guided setup. All of that
-stays on the Mac. What the browser does, it does with the same conversations
-everyone else sees.
+It is the light option on purpose. You cannot create an Organization, set up
+connections or make Sidekicks there, and there is no guided setup. All of that
+stays on the Mac. The conversations, though, are the same ones everyone else
+sees.
 
 [Sharing with people outside your Organization](../03-spaces-and-breakouts/05-sharing-with-guests.md)
 covers the other side of this: how you invite someone, and how you take that
@@ -88,8 +88,7 @@ difference is that you only see what has been shared with you.
   **Shared channels**.
 - Choosing a Space shows **Channels in this Space**, a read-only overview.
 - The account menu has **Switch organization** and **Sign out**.
-- A **Download the Mac app** button sits above the account menu, for when you
-  want the full thing. The Mac app is for Macs with Apple silicon.
+- A **Download the Mac app** button sits above the account menu. The Mac app is for Macs with Apple silicon.
 - You can rename and archive from the right-click menu and the header. An
   archived Breakout shows **Restore breakout**. An archived Channel has to be
   restored before its conversations can reopen.
@@ -130,6 +129,5 @@ send. Each person gets an invitation like the one you received.
 - Whether you may share at all depends on your role in the Organization; see
   [Who can see what](../03-spaces-and-breakouts/04-who-can-see-what.md).
 
-That completes the tour of Rally outside the app: Slack, email, notifications,
-the digest, the iPhone and the browser. Next, back at the Mac, [Settings,
-shortcuts and making Rally yours](../09-settings-and-shortcuts/index.md).
+Next, back at the Mac: [Settings, shortcuts and making Rally
+yours](../09-settings-and-shortcuts/index.md).

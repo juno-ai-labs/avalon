@@ -38,8 +38,7 @@ until Rally has connected.
 
 ### What you are sharing
 
-Sharing is precise. It gives access to **one conversation**, not to everything
-around it:
+Sharing gives access to one conversation and nothing around it:
 
 - Sharing a Channel from its row, or its main conversation from the header,
   shares the main conversation only. Its Breakouts stay private.
@@ -62,7 +61,7 @@ The guest gets an email with a link. Only someone who can sign in as that email
 address can accept it, so a forwarded invitation is no use to anyone else.
 
 Guests use Rally in a web browser, in a lighter version of the app made for
-exactly this. They see the conversations shared with them and the names of the
+this. They see the conversations shared with them and the names of the
 Spaces and Channels those conversations sit in, and nothing else in your
 Organization. They cannot create Spaces or browse your Organization's directory.
 [Rally in a web browser](../08-rally-everywhere/08-rally-in-a-browser.md) shows
@@ -82,7 +81,7 @@ guest's email address. [Contacting support](../12-help-and-glossary/03-contact-s
 says what else to include. In the meantime, do not post anything in that
 conversation that the guest should not read.
 
-Some facts about how access ends, which hold however it is done:
+However access ends, the same things happen:
 
 - Once access is removed, the guest stops seeing the conversation within moments,
   even if they have it open, and cannot reopen it.

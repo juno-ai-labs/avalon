@@ -6,8 +6,8 @@ description: Get told on your Mac or iPhone when someone mentions you or adds yo
 Rally does not ping you about everything. It notifies you in exactly two
 situations:
 
-- Someone **@mentions you** in a Channel or a Breakout.
-- Someone **adds you to a Channel**. (If you created the Channel yourself,
+- Someone @mentions you in a Channel or a Breakout.
+- Someone adds you to a Channel. (If you created the Channel yourself,
   Rally assumes you already know.)
 
 That is the whole list. Rally finishing a job, a teammate posting, a Sidekick
@@ -19,13 +19,13 @@ in the app, or let the [digest](05-the-digest.md) round them up for you.
 
 Rally tries the quickest route it has for you, in this order:
 
-1. **Slack.** If Rally is installed in your Slack workspace, you get a direct
+1. Slack. If Rally is installed in your Slack workspace, you get a direct
    message from the Rally bot, such as “Sam mentioned you in ‘Q3 plan’” or “Sam
    added you to ‘Q3 plan’”, with an **Open in Rally** link.
-2. **Your Mac and iPhone.** If you have turned on notifications on a Mac or an
+2. Your Mac and iPhone. If you have turned on notifications on a Mac or an
    iPhone, it gets an alert as well. One mention can reach Slack and your phone
    at the same time.
-3. **Email, as a last resort.** Only if neither Slack nor a device took the
+3. Email, as a last resort. Only if neither Slack nor a device took the
    notification, Rally emails you from **Rally <notifications@rallywith.ai>**,
    with a subject such as "Sam mentioned you in Q3 plan" and an **Open in Rally**
    link. You can reply to that email to post into the Channel, as
@@ -49,8 +49,8 @@ turn it off.
 
 - Alerts arrive even when Rally is closed.
 - Click an alert and Rally opens the exact Channel or Breakout it is about.
-- Alerts are grouped by Channel, with its Breakouts in the same group, so a
-  busy Channel does not bury the others.
+- Alerts are grouped by Channel, with its Breakouts in the same group, so one
+  busy Channel does not bury the rest.
 - The first time, macOS asks whether Rally may send notifications. If you said
   no, the settings page says **Notifications are turned off in macOS.** with an
   **Open System Settings** button to change your mind.
@@ -81,21 +81,21 @@ If you turned notifications off for Rally in iOS, the switch says
 **Notifications are turned off in iOS Settings.** with an **Open Settings**
 button.
 
-## Things to know
+## The small print
 
 - Turning the switch off, or refusing permission, takes that device off the
   list, so Rally can fall back to email for you instead.
 - Signing out of Rally on a Mac stops notifications to that Mac.
 - If your device is off or offline, Apple holds alerts for up to 24 hours.
-- Very occasionally the same alert can arrive twice. Rally would rather tell you
+- Now and then the same alert can arrive twice. Rally would rather tell you
   twice than not at all.
 - There is no setting to choose between mentions and additions. You get both
   or, by turning the switches off, neither.
 
-## Notifications or the digest?
+## Notifications and the digest
 
 Notifications are for the things aimed at you, the moment they happen. The
-[digest](05-the-digest.md), on the next page, is for everything else: a calm
-written summary of what moved, on the days and at the times you choose. Most
-people want both. The notifications for "come here now", and the digest for
-"here is what you missed".
+[digest](05-the-digest.md), on the next page, covers everything else: a written
+summary of what moved, on the days and at the times you choose. Most people
+keep both, notifications for "come here now" and the digest for "here is what
+you missed".

@@ -11,24 +11,24 @@ paused ones, and it is where you open a Sidekick to check on it or change it.
 
 There are two ways in.
 
-- **The account menu.** Click your account at the bottom of the sidebar,
+- **The account menu.** Click your name at the bottom of the Spaces rail,
   then **Sidekicks**. The window title is **Rally Sidekicks**. Opening it
   again brings the same window to the front rather than starting a second
   one.
-- **The hexagon strip.** Above your account at the bottom of the
-  sidebar sits a row of hexagon tiles, one for each active Sidekick that is
+- **The hexagon strip.** Above your name at the bottom of the
+  Spaces rail sits a row of hexagon tiles, one for each active Sidekick that is
   yours or the Organization's. Click a tile to open that Sidekick in the
   Sidekicks window. Hover over one to see its name.
 
 A small play triangle at the bottom right of a tile means the Sidekick is
 active. Hover over the triangle and Rally explains that it is in service and
 waiting on its triggers. If you have more tiles than fit, scroll the strip
-sideways. With the sidebar collapsed, the tiles shrink to small squares
+sideways. With the Spaces rail collapsed, the tiles shrink to small squares
 without names.
 
 The strip shows only active Sidekicks that belong to you or the
 Organization. Drafts, paused Sidekicks and Channel Sidekicks never get a
-tile; find those in the Sidekicks window or in the Channel's side panel. If
+tile; find those in the Sidekicks window or in the Channel sidebar. If
 you have no active Sidekick yet, the strip shows a single dashed hexagon
 labelled **New Sidekick** instead. Once you have one, that tile goes away and
 you make new ones from the Sidekicks window.
@@ -117,17 +117,17 @@ Each row shows:
 If there have been no runs yet the dialog says **No runs yet**. If it says
 **Could not load runs**, close it and try again in a moment.
 
-Some things to know:
+Run history is a summary. Each run is its own conversation, visible only to
+the person the Sidekick runs as, and the history shows how each run went
+rather than what was said.
 
-- **Run history is a summary.** Each run is its own conversation, visible
-  only to the person the Sidekick runs as. The history shows how each run
-  went, not the whole conversation.
-- **A run can wake up again.** If someone replies to something a run posted,
-  such as a Slack thread it started, the same run carries on. It keeps one
-  row in the history.
-- **Runs are quiet in the sidebar.** A run does not add a row to your
-  sidebar, an unread dot, or a notification of its own. You see its work
-  where it posts it (see [Where a Sidekick's results go](05-where-results-go.md)).
+A run can wake up again. If someone replies to something a run posted, such as
+a Slack thread it started, the same run carries on, and it keeps one row in
+the history.
+
+Runs stay out of your sidebar: no row, no unread dot, no notification of their
+own. You see a run's work where it posts it (see
+[Where a Sidekick's results go](05-where-results-go.md)).
 
 The **Run history** item appears only once the Sidekick has triggers or has
 already run.
@@ -147,7 +147,7 @@ It does not catch up on the runs it would have made while paused, and it
 ignores events that happened in the meantime. A Sidekick on holiday does not
 come back with a fortnight of postcards.
 
-A paused Sidekick shows **Paused** in the library and in Channel side panels,
+A paused Sidekick shows **Paused** in the library and in Channel sidebars,
 and its tile leaves the sidebar strip until you resume it.
 
 If you archive the Channel or Breakout that owns a Channel Sidekick, Rally
@@ -179,8 +179,8 @@ link** and paste the link wherever you like. Opening it in the Rally app
 opens that Sidekick's page.
 
 The link only works for people in the same Organization who are allowed to
-see the Sidekick. A teammate cannot open your **Only you** Sidekick, however
-nicely you send the link. If copying fails, Rally says **The Sidekick link
+see the Sidekick. A teammate cannot open your **Only you** Sidekick from a
+link. If copying fails, Rally says **The Sidekick link
 could not be copied.**
 
 ## Pausing, archiving and changing need permission
@@ -193,5 +193,5 @@ manage the Sidekick. Who has it depends on the scope, as set out in
 
 The iPhone app has a **Sidekicks** tab that lists the Sidekicks you can see,
 each with a status word and its description. Tap one to open its
-conversation. Making, pausing and archiving Sidekicks happens on the Mac.
-See [Rally on your iPhone](../08-rally-everywhere/06-rally-on-iphone.md).
+conversation. To make, pause or archive a Sidekick, use the desktop app or
+the browser. See [Rally on your iPhone](../08-rally-everywhere/06-rally-on-iphone.md).

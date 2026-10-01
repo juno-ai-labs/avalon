@@ -38,7 +38,7 @@ Rally has its own private computer for running code, the Terminal, which you
 met in [Code, data and the Terminal](../04-working-with-rally/03-code-files-and-the-terminal.md).
 This setting decides where code running on that computer may connect on the
 internet. It is the one setting in this chapter that is mainly about security,
-so it is worth a careful read.
+so read this section slowly.
 
 Open **Settings → Organization → Internet access**. The page is headed
 **Terminal network access**, and its description mentions **Daytona**. Daytona
@@ -52,7 +52,7 @@ Under **Outbound access**, choose one:
 | Choice | What code in the Terminal can reach | Pick it when |
 | --- | --- | --- |
 | **Trusted only** | What Rally itself needs, which covers GitHub and the usual places software packages are downloaded from, plus any domains your Organization approves. | You want to know where your data could go. Code Rally runs cannot send anything to a site you have not approved. |
-| **Full internet** | Any public website or service. Private networks stay blocked either way. | Your team's work needs Rally's code to fetch from many different sites, and the convenience is worth the wider reach. |
+| **Full internet** | Any public website or service. Private networks stay blocked either way. | Rally's code keeps needing to fetch from sites you have not listed, and you would rather allow them all than keep adding domains. |
 
 **Trusted only** is the careful choice. If Rally writes code that tries to
 reach a site not on the list, the connection fails. That protects you from
@@ -79,7 +79,7 @@ address ranges. Rally rejects anything else.
 
 There is room for only a limited number of domains, shared with Rally's own
 built-in list. Under the box, Rally shows how many slots remain, for example
-**3 organization domain slots remain.** Choose the domains you add with care.
+**3 organization domain slots remain.** Spend them on domains you need.
 
 These domains apply only under **Trusted only**. Switching to **Full internet**
 makes them irrelevant, though Rally remembers them.
@@ -124,47 +124,39 @@ Either way the controls are greyed out until it comes back.
 
 ## Shared connections
 
-Chapter 5 explains connections in detail, starting with
-[Settings → Connections](../05-connecting-your-tools/01-connections.md). Here is
-the part that belongs to administrators.
+Chapter 5 covers connections, starting with
+[Settings → Connections](../05-connecting-your-tools/01-connections.md). This
+section is the administrator's share of it.
 
 Every member can connect their own accounts as **Personal connections** and
 manage them. Connections the whole Organization shares are different, and only
 owners and administrators can:
 
-- **Add Organization connections**, with the **Connect for organization**
+- Add Organization connections, with the **Connect for organization**
   button next to a connector. Members do not see that button.
-- **Refresh, reconnect and delete** Organization connections. Deleting one
+- Refresh, reconnect and delete Organization connections. Deleting one
   removes it and its tools from everyone in the Organization, and Rally says so
   before you confirm.
-- **Issue and replace API keys** for connectors that use one for the whole
-  Organization, such as [Ashby](../05-connecting-your-tools/09-ashby.md) and
-  [Granola](../05-connecting-your-tools/07-granola.md).
-- **Create and refresh Organization webhooks**, as described in
-  [Inbound webhook](../05-connecting-your-tools/12-inbound-webhook.md).
+- Issue and replace API keys for connectors that use one for the whole
+  Organization, such as [Ashby](../05-connecting-your-tools/10-ashby.md) and
+  [Granola](../05-connecting-your-tools/08-granola.md).
+- Create and refresh Organization webhooks, as described in
+  [Inbound webhook](../05-connecting-your-tools/13-inbound-webhook.md).
   Refreshing replaces the signing secret, and the old one stops working at
   once.
-- **Choose which GitHub repositories** Rally may use, and whether it may change
-  them, under the GitHub settings described in [GitHub](../05-connecting-your-tools/03-github.md).
-- **Choose which tools** of a shared [custom MCP server](../05-connecting-your-tools/13-custom-mcp-server.md)
+- Choose which GitHub repositories Rally may use, and whether it may change
+  them, under the GitHub settings described in [GitHub](../05-connecting-your-tools/04-github.md).
+- Choose which tools of a shared [custom MCP server](../05-connecting-your-tools/14-custom-mcp-server.md)
   Rally may use: **All tools** or **Read-only tools**.
-- **Manage events** for Ashby, which decides what Ashby activity reaches Rally.
+- Use **Manage events** for Ashby, which decides what Ashby activity reaches Rally.
 
 > [!IMPORTANT]
 > An Organization connection is shared in full. Every member can use every tool
 > it grants, in any Channel, and Rally acts with the account you connected it
 > with. Before you connect an account with wide access for the whole
-> Organization, consider whether a personal connection would do.
+> Organization, ask whether a personal connection would do.
 
 The tools themselves still have the last word. Some connections need you to be
 an administrator on the other side as well: for example, an Organization-wide
 Granola key needs a Granola workspace administrator on a Business or Enterprise
 plan, and adding or removing Rally in Slack needs a Slack administrator.
-
-## What is not here
-
-You may go looking for these, so to save you the search: Rally's settings have
-no billing, plan or subscription section, no single sign-on (SSO or SAML), and
-no verified email domains. The only domains anywhere in Settings are the ones
-on the Internet access page. If you need any of these, write to
-[help@rallywith.ai](mailto:help@rallywith.ai).

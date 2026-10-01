@@ -4,9 +4,9 @@ description: What each role can do, and how to change someone's role.
 nav_title: Roles
 ---
 
-Everyone in an Organization has exactly one role, and it decides what they can
-change. This page explains the four kinds of person you will see, what each can
-do, and how to move someone from one to another.
+Everyone in an Organization has one role, and it decides what they can change.
+There are four kinds of person on the members list, and owners and
+administrators can move people between some of them.
 
 ## The four kinds of person
 
@@ -51,7 +51,7 @@ and nothing else in the Organization.
 The exception: an owner who is the only owner cannot leave while other people
 are still in the Organization.
 
-Members see most administrative controls either missing or greyed out. The
+Members find most administrative controls missing or greyed out. The
 **Invitations** section and the **Connect for organization** buttons do not
 appear for them at all, and the time zone and internet access settings are
 shown read-only. If a teammate asks why they cannot find something, this is
@@ -65,8 +65,8 @@ usually why.
 
 ## The members list
 
-Open **Settings → Organization** and scroll to **Members**. The heading says
-**People with access to** and your Organization's name, with a count of
+Open **Settings → Organization** and scroll to **Members**. Under the heading
+it says **People with access to** and your Organization's name, with a count of
 everyone on the list beside it.
 
 Each row shows:
@@ -118,7 +118,7 @@ member** button.
 3. Click **Make member** to confirm, or **Cancel**.
 
 They become an ordinary member, with the same history they had as a guest.
-Nothing they wrote is lost and none of their windows are closed. From there you
-can make them an administrator too, if you like.
+Nothing they wrote is lost and none of their windows are closed. You can make them an
+administrator from there if you want to.
 
 There is no button to turn a member back into a guest.

@@ -6,7 +6,7 @@ description: Write to Rally and your teammates, with mentions, lists, slash comm
 Everything you say in a Channel starts in the message box at the bottom of the
 window. It is where you ask Rally for work, answer its questions and talk to the
 people in the room. It looks like an ordinary chat box, and it mostly behaves
-like one, with a few extras that are worth knowing.
+like one, with a few extras.
 
 ## Writing and sending
 
@@ -33,7 +33,7 @@ says **Ask your Sidekick…**. It is the same box underneath.
 
 ### How long can a message be?
 
-Up to 100,000 characters, which is roughly a short novel. If you paste in more,
+Up to 100,000 characters, which is roughly a novella. If you paste in more,
 Rally refuses to send and shows **This message is over 100,000 characters,
 please shorten it.** under the box. Your text stays in the box, so you can trim
 it and try again, or attach the long material as a file instead (see
@@ -137,8 +137,8 @@ appear in the box.
 
 There are two ways to use it:
 
-- **Tap.** Click the microphone once to start, speak, and click it again to stop.
-- **Hold.** Press and hold the microphone, speak, and let go when you are done,
+- Tap: click the microphone once to start, speak, and click it again to stop.
+- Hold: press and hold the microphone, speak, and let go when you are done,
   like a walkie-talkie. Rally treats a press of about a third of a second or
   longer as a hold.
 

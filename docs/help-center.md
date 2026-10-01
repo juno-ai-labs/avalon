@@ -27,6 +27,8 @@ covers the machinery.
 | `apps/site/worker/index.ts` | The site's only Worker code. It runs for `/help` and `/help/*` alone (`run_worker_first` in `wrangler.jsonc`): it answers `Accept: text/markdown` with the page's Markdown copy and adds the discovery headers. |
 | `apps/site/build/help/plugin.ts` | The Vite plugin: serves pages on request under `vite dev`, and emits every output during `vite build`, linking the `help` entry's hashed script and stylesheet. |
 | `apps/site/src/help.ts`, `src/help-search.ts` | The browser script: phone menu, copy buttons, the outline's current-section marker, and search. Ranking lives in `help-search.ts` so it can be tested without a DOM. |
+| `apps/site/build/help/og.ts` | Each page's social card: a 1200×630 PNG laid out by Satori and rasterized by resvg (WebAssembly), named by a hash of its words. |
+| `apps/site/public/_redirects` | Sends every retired `/support/...` address to its page in the manual. |
 | `apps/site/src/help.css` | All styling. Colours and type are `--help-*` tokens; the light and dark themes are the only places colours are set. |
 
 ## How it works
@@ -83,6 +85,19 @@ copies, so an agent reading one page can follow the manual without HTML.
 | `help/search-index.json` | The search dialog. Title, chapter, URL, description, headings, and body text per page. |
 | `help/sitemap.xml` | Crawlers. `public/robots.txt` lists it beside the site's own sitemap. |
 | `help/_assets/*` | Images the pages reference. |
+| `help/_og/*.png` | One social card per page, for link previews in Slack, iMessage, X and the rest. |
+
+### Social cards
+
+Every page names its own card in `og:image` and `twitter:image`, with its
+size and alt text. The card shows the chapter, the page number, the title and
+the description in the landing page's type on its dark ground; chapter openers
+and the cover set the title in capitals with the chapter number behind it.
+`renderOgImages` draws them in `generateBundle`, about a tenth of a second
+each, and `vite dev` draws one on request. The file name carries a hash of the
+card's words and `DESIGN_VERSION`, so `_headers` caches `/help/_og/*` as
+immutable and a changed title gets a new URL that unfurlers fetch fresh. Bump
+`DESIGN_VERSION` after changing the card's design.
 
 ### For agents
 
@@ -157,10 +172,13 @@ Barlow for text, Barlow Semi Condensed for display, and a monospace for labels.
 
 ## Boundary
 
-The help center owns `/help/` on the public site. It depends on the site's Vite
-build, its fonts and brand marks, and `site-entry.ts` for telemetry. It does not
-own `/support/`, the hand-written support pages for connectors and contact,
-which it links to; or the Trust Center. It renders what is in the folder and
+The help center owns `/help/` on the public site, and the redirects that retire
+the old `/support/` pages into it. It depends on the site's Vite build, its
+fonts and brand marks, and `site-entry.ts` for telemetry. It does not own the
+Trust Center. The desktop app's **Help Center** and **Send Feedback** menu
+items, the connector **Get help** button and the Slack App Home footer link
+into it; the Slack app manifest's `support_url` still names `/support`, which
+redirects, until the manifest is next pushed to Slack. It renders what is in the folder and
 does not check that the words are true: what a page claims about the product is
 the author's job, and the product's own documents in `docs/` remain the
 engineering reference.
@@ -202,8 +220,9 @@ chapter), a search index and a sitemap, a browser script for search and the
 phone menu, and a Worker in front of `/help/` that serves Markdown to agents
 that ask for it.
 
-**Why:** The existing `/support/` pages are hand-written HTML, which people
-rarely update and agents can't easily write. A folder of Markdown files with a
+**Why:** The `/support/` pages it replaces were hand-written HTML, which people
+rarely updated and agents couldn't easily write; they are deleted and each
+address redirects to its page in the manual. A folder of Markdown files with a
 fixed shape is something both can write, review in a pull request, and read
 back. The manual is meant to be read by agents as well as people, so it
 publishes the Markdown it was written in.
@@ -221,6 +240,11 @@ runtime to a site that is otherwise a plain Vite build with a strict CSP; the
 renderer here is a few hundred lines on the same `unified` libraries those
 frameworks use. Client-side Mermaid, and Shiki's inline-styled highlighting,
 were rejected because the CSP blocks inline styles.
+
+Each page has its own social card because a help link is most often shared by
+pasting it into Slack, where a generic site card says nothing about the answer.
+Cards are drawn without a browser (Satori and resvg) so the build needs nothing
+CI does not already have.
 
 **Consequences:** Anything a page needs that GitHub Markdown can't express
 needs a change to the renderer, not a custom component in the page. Adding a

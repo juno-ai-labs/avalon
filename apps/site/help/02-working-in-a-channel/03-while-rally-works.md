@@ -4,8 +4,7 @@ description: Follow along, steer, stop, answer its questions, and know what to d
 ---
 
 You have pressed send. Rally is on it. This page is about the stretch between
-your request and its answer: what you see, what you can do, and what to do when
-things go sideways.
+your request and its answer, including what to do when things go sideways.
 
 ## What a run is
 
@@ -15,8 +14,7 @@ after step, until it has an answer for you. A simple question might be a run of
 a few seconds. A research report across your Gmail, Linear and the web might be
 a run of half an hour.
 
-You do not have to watch. Switch to another Channel, get a coffee, go to a
-meeting. The run carries on without you, and the Channel's status dot tells you
+You do not have to watch. Switch to another Channel or go to a meeting. The run carries on without you, and the Channel's status dot tells you
 when it is done (see [Status dots and badges](06-status-dots-and-badges.md)).
 
 ## Following along
@@ -53,8 +51,8 @@ not mean zero.
 
 You do not have to wait for Rally to finish before you speak. Send another
 message while it is working, and Rally takes it into account in the run it is
-already doing, rather than starting a second one. This is called steering, and
-it is perfect for "actually, use last quarter's numbers" moments.
+already doing, rather than starting a second one. This is called steering. It is
+for the moment you remember you wanted last quarter's numbers.
 
 Your message shows a small **Unseen** label until Rally has read it. Rally
 picks it up as soon as it finishes the step it is on. It never abandons a step
@@ -102,7 +100,7 @@ properly in [Helpers, other conversations and receipts](../04-working-with-rally
 
 Rally tries not to interrupt you (more on that in
 [How Rally works](../04-working-with-rally/01-how-rally-works.md)). But when a
-decision really is yours to make, it pauses and puts a question card in the
+decision is yours to make, it pauses and puts a question card in the
 conversation. The activity row says **Asking for a decision**, and the run waits
 for you.
 
@@ -201,7 +199,7 @@ and if loading fails, **Retry loading earlier messages** tries again.
 When you come back to a Channel with new messages, an **Unread messages** line
 marks where you left off. Everything below it is new.
 
-Very rarely a message is too big to show at all, and you see **This message is
+Once in a long while a message is too big to show at all, and you see **This message is
 too large to display.** in its place.
 
 Next: [Reading Rally's answers](04-reading-rallys-answers.md).

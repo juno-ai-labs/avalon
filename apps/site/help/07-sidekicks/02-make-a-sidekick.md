@@ -4,21 +4,22 @@ description: Describe what you want in plain words and Rally's drafting assistan
 nav_title: Make a Sidekick
 ---
 
-There is no Sidekick form. No drop-down for "frequency", no checkbox for
-"include weekends". You make a Sidekick the way you ask Rally for anything:
-you say what you want, and a drafting assistant works out the details and
-writes them down.
+There is no Sidekick form, and nowhere to tick "include weekends". You make a
+Sidekick the way you ask Rally for anything: say what you want, and a drafting
+assistant works out the details and writes them down.
 
 ## Start a new Sidekick
 
-You can start one from three places:
+There are three places to start one.
 
 - In the Sidekicks window, click **New Sidekick** at the top right. (Open the
-  window from the account menu at the bottom of the sidebar → **Sidekicks**.)
+  window from the account menu at the bottom of the Spaces rail → **Sidekicks**.)
 - If you have no active Sidekicks yet, click the dashed hexagon labelled
-  **New Sidekick** near the bottom of the sidebar.
-- In a Channel or Breakout's side panel, under **Sidekicks**, click **Add
-  Sidekick** → **Create new Sidekick**.
+  **New Sidekick** near the bottom of the Spaces rail.
+- In the Channel sidebar of a Channel or Breakout, under **Sidekicks**, click **Add
+  Sidekick** → **Create new Sidekick**. This opens the Sidekicks window on a
+  new draft that starts as **Only you**; to get a Sidekick that belongs to
+  the Channel, ask Rally in the Channel instead (see below).
 
 Rally shows **Creating Sidekick…** for a moment, then opens your new
 Sidekick. On one side is its details panel; on the other, a panel headed
@@ -75,7 +76,7 @@ saves at once, and the palette stays open while you try a few. Every window
 showing that Sidekick updates to match.
 
 A recognisable hexagon is worth a minute: it is how you spot the Sidekick in
-the sidebar, in the Sidekicks window and in Channel side panels. Changing it
+the sidebar, in the Sidekicks window and in Channel sidebars. Changing it
 needs permission to manage the Sidekick; if you lack it, the palette shows an
 error and the hexagon goes back to how it was.
 
@@ -93,7 +94,7 @@ Rally first looks for a suitable Sidekick the Channel already has and reuses
 it. If there is none, it makes a small one owned by the Channel and passes
 your request to that Sidekick's drafting assistant. You see the work in the
 conversation under a **Sidekicks** row, and the new Sidekick appears in the
-Channel's side panel.
+Channel sidebar.
 
 A Sidekick made this way belongs to the Channel (its scope badge says
 **Channel**). If you asked from a Breakout, that Breakout becomes its home and
@@ -101,8 +102,8 @@ where it posts by default.
 
 ## Writing good instructions
 
-The drafting assistant turns what you say into instructions, so a clear
-request makes a clear Sidekick. A few habits help.
+The drafting assistant turns what you say into instructions, so a vague
+request gets you a vague Sidekick. These habits help.
 
 - **Say where the result goes.** "Post it in this Channel", "send me a Slack
   DM", "email the summary to me". A Sidekick does not deliver anywhere on its

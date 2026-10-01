@@ -5,8 +5,8 @@ nav_title: Trust Center
 ---
 
 The earlier pages in this chapter are a summary. The documents behind them are
-in Rally's Trust Center, and this last page tells you what is there, how to
-report a security problem, and what to hand your IT team when they ask about
+in Rally's Trust Center. This page lists what is there, then covers how to
+report a security problem and what to hand your IT team when they ask about
 Rally.
 
 ## The Trust Center
@@ -28,23 +28,22 @@ request form to read any of it.
 
 Each document carries its own date, so you can tell when it last changed.
 
-A few points people often ask about:
+A few things people often ask:
 
-- **Certifications.** Rally does not claim a security certification. The
+- Certifications. Rally does not claim a security certification. The
   Security page lists the controls that exist in the product today, and says it
   will add independent assurance only once it is complete and current.
-- **The public website.** rallywith.ai uses no advertising trackers and sets no
+- The public website. rallywith.ai uses no advertising trackers and sets no
   analytics cookie. It does keep its own simple count of page visits and
   downloads, which can store a random, anonymous identifier in your browser.
   The Cookie & Tracking Notice describes exactly what it records.
-- **Questions.** Security, privacy, contract and procurement questions all go
-  to **help@rallywith.ai**. Say which Organization you mean, and do not send
+- Questions. Security, privacy, contract and procurement questions all go
+  to help@rallywith.ai. Say which Organization you mean, and do not send
   passwords or customer content.
 
 ## Reporting a security problem
 
-If you think you have found a security weakness in Rally, we want to hear
-about it.
+If you think you have found a security weakness in Rally, please tell us.
 
 1. Email **help@rallywith.ai** with the subject **Security report**.
 2. Describe:
@@ -66,8 +65,8 @@ While you investigate:
 
 ## A checklist for your IT team
 
-If someone at your company is reviewing Rally, this is the short version of
-the chapter, with where to find each point in full.
+If someone at your company is reviewing Rally, here is the chapter in short,
+with a link to each point in full.
 
 - **Signing in.** Google sign-in. A saved sign-in renews with use, lapses after
   30 days without use and lasts at most 90 days. Signing out ends it on the

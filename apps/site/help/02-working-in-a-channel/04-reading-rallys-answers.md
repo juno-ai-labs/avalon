@@ -1,11 +1,11 @@
 ---
 title: Reading Rally's answers
-description: Make the most of formatted answers, sources, diagrams and the actions under each message.
+description: Formatted answers, sources, diagrams and the actions under each message.
 ---
 
-Rally's answers are not walls of text. They come with headings, tables, links to
-their sources and, when it helps, a diagram. This page shows you how to read
-them quickly, check where they came from, and take them somewhere else.
+Rally's answers come with headings, tables, links to their sources and, when it
+helps, a diagram. This page shows how to check where an answer came from and how
+to take it somewhere else.
 
 ## How Rally writes
 
@@ -73,19 +73,19 @@ and answers you save as an image or PDF, always show everything.
 
 Rally marks the sources it relied on, so you can check its work with one click.
 
-- **Source pills.** A small round pill with a website's icon, after a sentence,
+- Source pills. A small round pill with a website's icon, after a sentence,
   is a link to the page Rally read. Hover it to see the source's name and
   something like **example.com · Opens in your browser**. Click to open it.
-- **Footnote pills.** A numbered pill opens a small pop-up that links to a file
+- Footnote pills. A numbered pill opens a small pop-up that links to a file
   or a web page.
-- **File chips.** A phrase can link straight to a file in the Channel. Click it
+- File chips. A phrase can link straight to a file in the Channel. Click it
   to open the file.
-- **File cards.** When Rally announces something new it made, such as a
+- File cards. When Rally announces something new it made, such as a
   document, spreadsheet, image or site, it shows a card on its own line with an
   icon, a title and the kind of thing it is. Images appear as thumbnails, and
   several in a row make a little gallery. Audio and video open as players.
 
-Rally only cites things it actually used. If a claim has no citation, that
+Rally only cites things it used. If a claim has no citation, that
 means nothing in the run backed it up, so treat it as Rally's own reasoning and
 check it if it matters.
 

@@ -4,13 +4,12 @@ description: Switch between Organizations, create another one, and accept invita
 nav_title: Several Organizations
 ---
 
-Plenty of people belong to more than one team: their company, a client who
-works in Rally too, a side project with friends. One Rally account can belong
+Plenty of people belong to more than one team, such as their company and a
+client who also works in Rally. One Rally account can belong
 to several Organizations, and you move between them from the account menu
 without signing out.
 
-Remember from the [chapter opening](index.md) that Organizations are separate
-worlds. Channels, Spaces, Sidekicks, connections and members never cross from
+As the [chapter opening](index.md) said, Organizations are separate worlds. Channels, Spaces, Sidekicks, connections and members never cross from
 one to another. Rally shows you one Organization at a time.
 
 > [!NOTE]
@@ -47,7 +46,7 @@ Click its name in the **Organizations** section. A small spinner appears on the
 row while Rally gets it ready, then Rally reopens in that Organization, with
 its own Spaces, Channels and settings.
 
-Now and then Rally needs you to confirm who you are before it opens another
+Now and then Rally asks you to confirm who you are before it opens another
 Organization, usually because you have not been there for a while. The row
 then says **Finish signing in to Rally in your browser**, and your browser
 opens. Sign in there and Rally carries on. If you closed the browser tab by

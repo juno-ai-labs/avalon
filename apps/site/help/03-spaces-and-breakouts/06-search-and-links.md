@@ -13,8 +13,8 @@ Press <kbd>⌘</kbd> <kbd>⇧ Shift</kbd> <kbd>F</kbd> from anywhere in the main
 window, or click **Search** at the top of the Spaces rail. A search window opens
 over everything else.
 
-Start typing. Results appear after a short pause, without you pressing anything.
-Search looks through:
+Start typing. Results appear after a short pause, with no need to press
+anything. Search looks through:
 
 - **Messages** in every Channel and Breakout you can read.
 - **Links** that people and Rally have shared in conversations.
@@ -30,7 +30,7 @@ The tabs along the top, **All**, **Messages**, **Links**, **Artifacts** and
 
 ### Opening a result
 
-Click a result, or move to it and press <kbd>Enter</kbd>.
+Click a result, or move to it and press <kbd>Return</kbd>.
 
 - **A message** opens its Channel or Breakout and jumps to that exact message.
 - **A link** opens in your web browser.
@@ -42,7 +42,7 @@ Press <kbd>Esc</kbd> to close the search window without opening anything.
 | Key | What it does |
 | --- | --- |
 | <kbd>↑</kbd> <kbd>↓</kbd> | Move through the results |
-| <kbd>Enter</kbd> | Open the highlighted result |
+| <kbd>Return</kbd> | Open the highlighted result |
 | <kbd>⌘</kbd> <kbd>1</kbd> to <kbd>⌘</kbd> <kbd>9</kbd> | Open the first to ninth result directly |
 | <kbd>←</kbd> <kbd>→</kbd> | Switch tabs, when a tab is selected |
 | <kbd>Esc</kbd> | Close search |
@@ -60,8 +60,8 @@ Every shortcut in Rally is collected in
   shortcut does nothing until you are signed in.
 
 Results can be up to about 30 seconds old. If you repeat a search straight away,
-you may briefly see something that has changed a moment ago, and opening it will show
-the current state.
+you may briefly see something that changed a moment ago. Opening it shows the
+current state.
 
 When something goes wrong, the search window says **Search could not be
 completed. Please try again.** If more results fail to load as you scroll,
@@ -80,8 +80,8 @@ to a teammate and it opens Rally at exactly that place.
 
 If the copy fails, Rally says so and you can try again.
 
-The links are ordinary web addresses starting with `https://rallywith.ai/app/`.
-That has two advantages over a link only the app understands:
+The links are ordinary web addresses starting with `https://rallywith.ai/app/`,
+which beats a link only the app understands in two ways:
 
 - **They look right in other places.** Paste a Channel link in Slack and it
   unfurls into a small card with the Channel's name and when it was last active.

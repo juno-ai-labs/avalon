@@ -19,3 +19,40 @@
 /subprocessors/*  /trust/subprocessors/  301
 /cookies  /trust/cookies/  301
 /cookies/*  /trust/cookies/  301
+
+# The hand-written Support Center became the Markdown help center at /help/.
+# Old addresses circulate in the desktop app's older builds, the Slack app
+# manifest, emails and search results, so each one lands on its new page.
+/support/  /help/  301
+/support  /help/  301
+/support/getting-started/  /help/getting-started/  301
+/support/getting-started  /help/getting-started/  301
+/support/contact/  /help/help-and-glossary/contact-support/  301
+/support/contact  /help/help-and-glossary/contact-support/  301
+/support/connectors/  /help/connecting-your-tools/connections/  301
+/support/connectors  /help/connecting-your-tools/connections/  301
+/support/connectors/google/  /help/connecting-your-tools/google-mail-and-calendar/  301
+/support/connectors/google  /help/connecting-your-tools/google-mail-and-calendar/  301
+/support/connectors/github/  /help/connecting-your-tools/github/  301
+/support/connectors/github  /help/connecting-your-tools/github/  301
+/support/connectors/ashby/  /help/connecting-your-tools/ashby/  301
+/support/connectors/ashby  /help/connecting-your-tools/ashby/  301
+/support/connectors/fireflies/  /help/connecting-your-tools/fireflies/  301
+/support/connectors/fireflies  /help/connecting-your-tools/fireflies/  301
+/support/connectors/canva/  /help/connecting-your-tools/canva/  301
+/support/connectors/canva  /help/connecting-your-tools/canva/  301
+/support/connectors/granola/  /help/connecting-your-tools/granola/  301
+/support/connectors/granola  /help/connecting-your-tools/granola/  301
+/support/connectors/linear/  /help/connecting-your-tools/linear/  301
+/support/connectors/linear  /help/connecting-your-tools/linear/  301
+/support/connectors/notion/  /help/connecting-your-tools/notion/  301
+/support/connectors/notion  /help/connecting-your-tools/notion/  301
+/support/connectors/slack/  /help/connecting-your-tools/slack/  301
+/support/connectors/slack  /help/connecting-your-tools/slack/  301
+/support/connectors/inbound-webhook/  /help/connecting-your-tools/inbound-webhook/  301
+/support/connectors/inbound-webhook  /help/connecting-your-tools/inbound-webhook/  301
+/support/connectors/x/  /help/connecting-your-tools/x/  301
+/support/connectors/x  /help/connecting-your-tools/x/  301
+/support/connectors/custom-mcp/  /help/connecting-your-tools/custom-mcp-server/  301
+/support/connectors/custom-mcp  /help/connecting-your-tools/custom-mcp-server/  301
+/support/*  /help/  301

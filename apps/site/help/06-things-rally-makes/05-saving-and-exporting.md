@@ -4,7 +4,7 @@ description: Turn a reply into a polished image or PDF, copy text and tables, an
 nav_title: Saving and exporting
 ---
 
-Sooner or later someone without Rally asks you to "send that over". This page covers the ways to get a reply, a file or a table out of Rally, and ends with a complete list of every way content can leave Rally today, for the careful reader and the person who has to answer their questions.
+Sooner or later someone without Rally asks you to "send that over". Here are the ways to get a reply, a file or a table out of Rally. At the bottom is a complete list of every way content can leave Rally today, for whoever has to answer questions about where the data goes.
 
 ## Save a reply as an image or a PDF
 
@@ -18,20 +18,15 @@ The page looks like something you would be happy to send: a splash of colour as 
 
 Folded sections of a long reply are always shown in full in the saved page, so nobody receives a document with bits hidden inside it.
 
-Use it for:
+Use it to pass an answer to someone who does not use Rally, to drop a reply into a slide deck, or to keep a record of what was decided.
 
-- Passing an answer to someone who does not use Rally.
-- Dropping a reply into a slide deck.
-- Keeping a record of what was decided.
-
-Things to know:
+Before you rely on it:
 
 - The buttons are in the Mac app only. The web browser version does not have them.
 - A reply with no text has no buttons.
-- Pictures in the reply that fail to load are left out of the saved page.
 - Saving can take a little while for a long reply, up to about a minute before Rally gives up.
 - If saving fails, the button reads **Image failed** or **PDF failed** until you move the pointer away. Try again, or try the other format.
-- For a very long reply, choose PDF. An image taller than about 6,000 pixels is saved at normal rather than sharp resolution, and one taller than about 12,000 pixels is cut off at the bottom. The PDF has no such limit. Think of the image as a postcard and the PDF as a letter.
+- For a long reply, choose PDF. An image taller than about 6,000 pixels is saved at normal rather than sharp resolution, and one taller than about 12,000 pixels is cut off at the bottom. The PDF has no such limit. The image is a postcard; the PDF is a letter.
 - Closing the save dialog without saving is fine. Nothing is lost and nothing is saved.
 
 ## Copying
@@ -50,12 +45,12 @@ Any file in a Channel, whether you attached it or Rally made it, can be download
 
 ## Sharing links
 
-- Right-click a Channel or Breakout in the sidebar and choose **Copy channel link** or **Copy breakout link**. A link opens that place in Rally, for people who are allowed to see it. Links are covered in [Search and links](../03-spaces-and-breakouts/06-search-and-links.md).
+- Click **…** (**More channel actions**) in a Channel's header and choose **Copy channel link**, or right-click a Breakout in the Channel sidebar and choose **Copy breakout link**. A link opens that place in Rally, for people who are allowed to see it. Links are covered in [Search and links](../03-spaces-and-breakouts/06-search-and-links.md).
 - A live site has a public link that anyone can open. Read [Sharing a site, and who can see it](03-live-sites.md#sharing-a-site-and-who-can-see-it) before you send one.
 
 ## Every way content leaves Rally
 
-If you look after your team's data, or someone has asked you exactly where their information can end up, here is the complete list of the ways a person can take content out of Rally today:
+If you look after your team's data, or someone has asked exactly where their information can end up, this is the complete list of the ways a person can take content out of Rally today:
 
 | Way out | What leaves | Who can receive it |
 | --- | --- | --- |
@@ -73,4 +68,4 @@ Rally itself can also send content out when you ask it to, for example by postin
 > [!NOTE]
 > There is no button to export everything in your account or Organization at once. To ask for a copy of your data, or for it to be corrected or deleted, email [help@rallywith.ai](mailto:help@rallywith.ai). The Rally team will check that the request comes from you, and, for content that belongs to an Organization, that you have the authority to ask on its behalf. [What Rally keeps, and deleting your data](../11-privacy-and-security/03-what-rally-keeps.md) has more.
 
-That is the whole shelf: what Rally makes, what you bring in, and how it all gets out. The next chapter is about helpers that keep making things while you are busy elsewhere: [Sidekicks](../07-sidekicks/index.md).
+The next chapter is about [Sidekicks](../07-sidekicks/index.md), helpers that keep making things while you are busy elsewhere.

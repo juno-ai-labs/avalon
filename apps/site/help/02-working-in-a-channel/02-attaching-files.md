@@ -81,15 +81,15 @@ While a Word file or PDF is being turned into readable text, its preview shows
 
 Some things Rally cannot read:
 
-- **Sound and video.** You can attach a recording and people can play it, but
+- Sound and video. You can attach a recording and people can play it, but
   Rally cannot listen to it or watch it.
-- **Locked files.** Password-protected or encrypted PDFs and Office files.
-- **Damaged files**, and file types Rally does not recognise.
+- Locked files, such as password-protected or encrypted PDFs and Office files.
+- Damaged files, and file types Rally does not recognise.
 
 > [!NOTE]
 > A file can be small enough to attach but too big for Rally to read. Rally turns
 > PDFs and Office files into text only when the file is 8 MB or less, and PDFs
-> only up to 200 pages. Images can be up to 20 MB each. For a very large file,
+> only up to 200 pages. Images can be up to 20 MB each. For a big file,
 > attach the part you care about, or split it up.
 
 When a file is long, Rally reads it in pieces. If it only managed part of it,

@@ -4,7 +4,7 @@ description: "Follow and join your Channels from your phone: read, reply, branch
 ---
 
 The Rally app for iPhone (it runs on iPad too) puts your Channels in your
-pocket. It is a companion to the Mac app, not a copy of it. It is for following
+pocket. It is a companion to the Mac app rather than a copy, made for following
 work and joining in: checking how a job is going, answering a question Rally
 asked you, replying to a mention, or sending a quick request while you are away
 from your desk. Setting things up stays on the Mac, and the [next
@@ -33,9 +33,11 @@ yet, ask the Rally team at help@rallywith.ai.
   open it.
 - **Invitations** shows invitations waiting for you, with who sent them. Accept
   one to join.
-- **Create an organization** lets you start a new one. Pick a region from the
-  menu and tap **Create**. The region decides where the Organization's data is
-  kept, so choose it carefully.
+- **Create an organization** lets you start a new one. Type a name and tap
+  **Create**. The screen also has a **Region** menu. Rally publishes a single
+  Global deployment (see [Where your data lives](../11-privacy-and-security/02-what-rally-shares.md#where-your-data-lives)),
+  so leave it on **United States** unless the Rally team has told you
+  otherwise.
 
 The phone holds one Organization at a time. To get to a different one, come
 back to this screen. The guided setup you met on the Mac in [chapter
@@ -108,13 +110,13 @@ phone.
 
 The message bar at the bottom says **Ask Rally anything**.
 
-- **Type** and press <kbd>Return</kbd> to send.
-- **Attach a photo:** tap the paperclip and choose one from your library.
-- **Attach any other file:** press and hold the paperclip and choose **Choose
+- Type and press <kbd>Return</kbd> to send.
+- To attach a photo, tap the paperclip and choose one from your library.
+- To attach any other file, press and hold the paperclip and choose **Choose
   file**. This one is easy to miss. Attachments show as chips above the bar,
   each with an × to remove it, and a message with an attachment can be sent
   without any text.
-- **Speak:** tap the waveform button. A **Speak** sheet opens and shows
+- To talk instead of type, tap the waveform button. A **Speak** sheet opens and shows
   **Listening** while you talk; tap **Send** to send what you said straight away,
   or **Cancel**.
 - While Rally is writing, the send button turns into a square. Tap it to stop.
@@ -140,7 +142,7 @@ suggestions appear only on the iPhone.
 
 Each reply has a row of small buttons:
 
-- **Copy** copies the text. The icon turns into a tick to show it worked.
+- **Copy** copies the text. The icon turns into a tick when it has.
 - **Speak** reads the reply aloud. Tap it again to stop. Handy when your hands
   are full of shopping.
 - **Share** opens the iPhone share sheet with the reply's text.

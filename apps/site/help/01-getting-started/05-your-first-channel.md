@@ -40,7 +40,7 @@ That sends Rally to the web, has it read and compare, and ends with a document y
 
 ## Watch Rally work
 
-Rally does not go quiet while it thinks. A row with a small animated orb shows what it is doing and for how long:
+While Rally works, a row with a small animated orb shows what it is doing and for how long:
 
 - **Thinking for 4s** while it works out its approach.
 - **Using Slack for 8s**, or the name of whichever tool it is using, with that tool's logo.
@@ -53,7 +53,7 @@ The answer itself appears as Rally writes it, a few words at a time, with a smal
 > [!NOTE]
 > If Rally's AI provider is having a slow moment, a notice says **The model is currently slowed down. Responses might take longer.** Nothing is wrong on your side; the answer is still coming.
 
-Some jobs take Rally a few seconds and some take much longer. You do not have to watch. Go and do something else, and the Channel's status dot and badge will tell you when it is done or needs you. [While Rally works](../02-working-in-a-channel/03-while-rally-works.md) covers following along, steering, stopping and what to do if a run fails.
+Some jobs take a few seconds and some take much longer. You do not have to watch. Go and do something else, and the Channel's status dot and badge will tell you when it is done or needs you. [While Rally works](../02-working-in-a-channel/03-while-rally-works.md) covers following along, steering, stopping and what to do if a run fails.
 
 ## Names and icons
 
@@ -76,6 +76,6 @@ If you open a Channel that has no messages in it yet, it says **Ready to begin**
 
 ## Where to go from here
 
-You have installed Rally, set up an Organization, and given the agent its first job. That is the whole loop: start a Channel, say what you need, and work on it together.
+That is the whole loop: start a Channel, say what you need, and work on it together.
 
 The next chapter, [Working in a Channel](../02-working-in-a-channel/index.md), is about doing that well: writing messages, attaching files, steering Rally while it works, and bringing your teammates into the conversation.

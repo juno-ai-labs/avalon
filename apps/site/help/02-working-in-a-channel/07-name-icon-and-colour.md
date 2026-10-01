@@ -3,8 +3,10 @@ title: Names, icons and colours
 description: Rename a Channel or Breakout, pick its icon and colour, and understand the description Rally keeps for it.
 ---
 
-Rally names a new Channel for you, picks it an icon and gives it a colour. Those
-are educated guesses. When you have a dozen Channels, a good name and a
+You name a Channel when you start it, and Rally picks it an icon and a colour.
+Conversations that start without a name, such as Breakouts, get one from Rally,
+as described in [Your first Channel](../01-getting-started/05-your-first-channel.md#names-and-icons).
+Rally's picks are educated guesses. When you have a dozen Channels, a good name and a
 recognisable icon are what let you find the right one in a hurry.
 
 ## The Channel header
@@ -34,8 +36,8 @@ The strip across the top of a Channel holds, from left to right:
 
 This works the same way in a Breakout.
 
-Right after you create a Channel, the name area shimmers while Rally thinks one
-up. You can rename it once the name has arrived.
+When Rally is naming a conversation, such as a new Breakout, the name area
+shimmers while it thinks one up. You can rename it once the name has arrived.
 
 ### From the sidebar
 
@@ -46,12 +48,12 @@ You do not have to open a Channel to rename it.
 
 Breakouts work the same way from their own right-click menu, in a window called
 **Rename breakout**. The **Rename** button stays greyed out until you have
-actually changed something.
+changed something.
 
 ### Things to know about names
 
 - A name can be up to 180 characters, and cannot be empty.
-- **Once you rename a Channel, Rally leaves its name alone.** Rally never renames
+- Once you rename a Channel, Rally leaves its name alone. It never renames
   it automatically again, so your name sticks.
 - If a rename does not save, you see **The channel couldn’t be renamed. Try
   again.** (or the same for a breakout).
@@ -89,21 +91,21 @@ blue whichever look you choose.
 
 ### Things to know about icons and colours
 
-- **Everyone sees the same look.** The icon and colour belong to the Channel, not
+- Everyone sees the same look. The icon and colour belong to the Channel, not
   to you. Change them and everyone's sidebar updates within moments. The last
   person to click wins, so agree on a colour scheme before the office splits
   into Team Rose and Team Fuchsia.
-- **A Breakout has its own look.** Changing a Breakout's icon never changes its
+- A Breakout has its own look. Changing a Breakout's icon never changes its
   Channel's, and the other way round.
-- **You cannot add your own.** There is no custom colour, no icon search and no
+- You cannot add your own. There is no custom colour, no icon search and no
   way to upload a picture or emoji.
-- **Older colours.** Grey, brown, yellow and teal used to be on offer and have
+- Older colours: grey, brown, yellow and teal used to be on offer and have
   been retired. A Channel that already has one keeps it, and no colour looks
   selected in the palette. Once you pick a new colour, the old one cannot be
   chosen again.
-- **When the icon is not clickable.** Guests, and people who can only reach some
-  of a Channel's conversations, see the icon but cannot change it.
-- **If a change does not save**, the palette shows **Couldn’t update the
+- Guests, and people who can only reach some of a Channel's conversations, see
+  the icon but cannot change it.
+- If a change does not save, the palette shows **Couldn’t update the
   appearance. Please choose again.** If you are offline, your clicks wait and
   are sent when the connection returns.
 - Picking the icon and colour is a Mac app feature.
@@ -112,8 +114,7 @@ blue whichever look you choose.
 
 Every Channel also has a short description of what it is for, which Rally
 writes and keeps up to date by itself. You do not have to do anything with it,
-and you will not find it shown in the Channel or the sidebar. It works behind
-the scenes.
+and you will not find it shown in the Channel or the sidebar.
 
 ### What it is for
 
@@ -130,7 +131,7 @@ of the first message. After that, Rally checks now and then whether the Channel
 has moved on to something new, and if it clearly has, quietly rewrites the
 description.
 
-Rally is careful about this:
+Rally is slow to change it:
 
 - It only checks after the Channel has had a rest. The wait starts at six hours
   and grows, up to two days, each time the description turns out to still be
