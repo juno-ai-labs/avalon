@@ -111,7 +111,9 @@ exact public URL. The manifest moves last, after the versioned payloads and
 canonical installer are publicly verified, so a retry after commit verifies
 that the live manifest is byte-identical to the local release before it finishes
 the release tag. The channel prefix is purged again after the manifest upload
-before its exact URL is verified. Both the version-stamping job and the final
+before its exact URL is verified. Every R2 read goes through the shared
+`downloadReleaseObject`, which aborts only when bytes stop arriving, never on
+total transfer time. Both the version-stamping job and the final
 publication boundary refuse a candidate tag that already exists. The embedded
 generic-provider URL points only at that prefix. A signed release build on
 packaged Apple Silicon checks it at launch and every three hours, downloads in
@@ -244,6 +246,24 @@ operator key. It registers only `sideline:`, while **Open in Rally** emits the
 existing `rallywithai:` deep link for the main app.
 
 ## Changelog
+
+### 2026-10-01 — R2 reads abort on idle, not on total time
+
+**What changed:** The publisher's R2 existence checks and post-upload hashes
+download through `downloadReleaseObject` from the desktop release helpers,
+instead of a `fetch` capped at 5 minutes of total time.
+
+**Why:** The 0.1.42 publish uploaded its ~149 MiB DMG, then aborted while
+reading it back to hash it, exactly 5 minutes in. The run was already signed
+and notarized, and nothing went live. Rally's publisher had dropped the same
+cap in #1037, but Sideline kept its own copy of the R2 read.
+
+**Considered and rejected:** A longer wall-clock cap. Any fixed total-time
+limit fails a healthy slow transfer of a large installer.
+
+**Consequences:** A stalled read now fails fast instead of passing, and the
+publish job is the cheap one to rerun. New R2 reads should reuse the shared
+helper; a separate Sideline read path is how this drifted from Rally's.
 
 ### 2026-09-30 — A Rally-style sidebar, and updates that wait behind it
 
