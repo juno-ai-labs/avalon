@@ -228,6 +228,7 @@ describe('public Rally site', () => {
       .toThrow('2026-10-01-hello.md: slug "hello_world" must be lowercase letters, digits and hyphens');
     expect(() => parseBlogPost(source.replace('slug: hello\n', ''), '2026-10-01-hello.md')).toThrow('2026-10-01-hello.md: front matter is missing "slug"');
     expect(() => parseBlogPost(source, '2026-02-30-hello.md')).toThrow('2026-02-30-hello.md: date "2026-02-30" is not a real YYYY-MM-DD day');
+    expect(() => parseBlogPost(source, '2026-13-01-hello.md')).toThrow('2026-13-01-hello.md: date "2026-13-01" is not a real YYYY-MM-DD day');
     expect(() => parseBlogPost(source.replace('author: "The Rally team"\n', ''), '2026-10-01-hello.md')).toThrow('2026-10-01-hello.md: front matter is missing "author"');
     expect(() => parseBlogPost(source.replace('---\nslug', '---\ndate: 2026-10-02\nslug'), '2026-10-01-hello.md'))
       .toThrow('2026-10-01-hello.md: "date" comes from the file name, not the front matter');
