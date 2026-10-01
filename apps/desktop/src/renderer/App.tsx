@@ -37,6 +37,7 @@ import { useWindowActivationTracking } from './lib/window-activation';
 import { useEscapeClosesWindow } from './lib/window-escape';
 import { WorkspaceSocketProvider } from './lib/workspace-socket';
 import { WorkspaceWorkstreamSockets } from './lib/workspace-workstream-sockets';
+import { BrowserImportProgress } from './lib/browser-import-progress';
 import { useOpenFirstWorkstream } from './lib/workstream-landing';
 import { WorkstreamSocketResumeProvider } from './lib/workstream-socket-resume';
 import { AutomationScreen } from './screens/automation';
@@ -269,6 +270,7 @@ function WorkspaceApp(): React.JSX.Element {
         <WorkstreamSocketResumeProvider scope={scope}>
           <WorkspaceOnboardingJourney workspace={workspace.error ? null : workspace.data ?? null}>
             <WorkspaceWorkstreamSockets api={workspace.error ? null : api} enabled={session?.workspace?.accessClass !== 'guest'}>
+              <BrowserImportProgress />
               {content}
             </WorkspaceWorkstreamSockets>
           </WorkspaceOnboardingJourney>

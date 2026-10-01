@@ -196,7 +196,12 @@ function ConversationOpeningSidebar(): React.JSX.Element {
  * opening. The status lives here rather than on the layout so that a rail drawn
  * beside it, placeholder or real, is never read out as part of it.
  */
-function ConversationOpeningFeed({ label, parentKind }: { label: string; parentKind: ConversationParentKind }): React.JSX.Element {
+function ConversationOpeningFeed({ label, parentKind, caption = false }: {
+  label: string;
+  parentKind: ConversationParentKind;
+  /** Show the label above the placeholders, for a wait long enough to explain. */
+  caption?: boolean;
+}): React.JSX.Element {
   return (
     <div
       aria-label={label}
@@ -223,6 +228,7 @@ function ConversationOpeningFeed({ label, parentKind }: { label: string; parentK
         )}
         <div className="transcript-scroll">
           <div className="transcript-column conversation-opening-messages">
+            {caption && <p aria-hidden="true" className="conversation-opening-caption">{label}</p>}
             <div className="conversation-opening-message">
               <div className="conversation-opening-byline">
                 <span className="skeleton-bar conversation-opening-name" />
@@ -274,15 +280,17 @@ export function ConversationOpeningSkeleton({
   label,
   parentKind,
   sidebar = false,
+  caption = false,
 }: {
   label: string;
   parentKind: ConversationParentKind;
   sidebar?: boolean;
+  caption?: boolean;
 }): React.JSX.Element {
   return (
     <div className="conversation-layout conversation-opening-skeleton">
       {sidebar && <ConversationOpeningSidebar />}
-      <ConversationOpeningFeed label={label} parentKind={parentKind} />
+      <ConversationOpeningFeed caption={caption} label={label} parentKind={parentKind} />
     </div>
   );
 }

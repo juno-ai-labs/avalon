@@ -18,6 +18,7 @@ choice. Importing a prior assistant answer never claims Rally executed it.
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Canonical fact preparation for ordered conversations. |
 | `apps/desktop/src/renderer/lib/browser-conversation-import.ts` | The readers that run inside a ChatGPT or claude.ai page: own and shared conversations, and their files. |
 | `apps/desktop/src/renderer/screens/browser-import.tsx` | The import window: Import, and the name-and-Space sheet. |
+| `apps/desktop/src/renderer/lib/browser-import-progress.tsx` | The main window's half: lists the Channel as pending, shows "Importing conversation…", and settles or discards it. |
 | `packages/agent-harness/src/evaluation.ts` | Scenario/checkpoint evaluation using the production Rally runtime. |
 | `apps/desktop/src/renderer/components/new-workstream-menu.tsx`, `session-import-update-dialog.tsx` | The menu item that opens the import window, and the explicit update control. |
 
@@ -35,6 +36,14 @@ a conversation in the window — their own, signed in, or a shared link — and
 clicks Import. A sheet asks for the Space and a Channel name, prefilled with the
 conversation's title; only Spaces the person may edit are offered, and names
 stop at the server's 180-character limit. There is no transcript preview.
+The import window mints the Channel's id before it sends the create, and main
+relays it to the main window, which lists the Channel as a pending row and
+opens it on an "Importing conversation…" screen. That screen opens no socket:
+the Channel is listed before its history is written, and its room refuses
+connections until the create answers. The success confirms the row and the
+import window closes; a failure takes the row away, returns the main window to
+where it was, and keeps the sheet open with the error. The pending-row rule is
+in [Channel creation](workstream-creation.md#the-channel-is-listed-before-it-exists).
 Available attachments and artifact files are copied automatically; missing file
 references remain visible in the imported conversation. The source roles stay
 intact in the visible transcript; the byline says who imported them. The model

@@ -135,12 +135,32 @@ Channel's own. `submit` mints the id, lists a row under it with
 `pending: true` in the Space the request names, and sends
 the id as `workstreamId`; the server creates the Channel under it. Every later
 answer (the create's, a directory page, a refetch) carries a row with the same
-id, which replaces the pending one in place, so there is nothing to match up.
+id, which describes the pending one in place, so there is nothing to match up.
 
-A pending row stays until a server row for its id replaces it, and leaves
-otherwise only through `releasePendingWorkstreams`: the create's confirm or
-discard, or an authoritative eviction of the id. It is drawn dimmed and inert,
-skipped by background sockets and the landing route, and never persisted.
+Listed is not created. The server lists the Channel when its Space placement
+commits, and writes the conversation after that; until the conversation is
+written its room answers every socket and read `503 workstream_maintenance`.
+So a server row for a pending id brings its fields and leaves the row pending
+(`pendingListed` marks that it did). The row stops being pending only through
+`releasePendingWorkstreams`: the create's confirm or discard, or an
+authoritative eviction of the id. Confirm keeps a row the server has already
+described, which is newer than the create's answer, and otherwise takes the
+answer. Discard drops only a row the server never described: one it did
+describe exists even though its create failed (a failure after the Space
+placement commits, or a lost answer), so it stays, settled. A pending row is drawn dimmed and inert, skipped by background sockets
+and the landing route, and never persisted. A route that shows one
+(`WorkstreamScreen`) draws the opening skeleton with a caption and mounts
+nothing that dials or reads the room; the route's active socket skips it too,
+and so does the foreground presence the workspace socket sends, which the
+Organization rejects (closing that socket for good) for a Channel it does not
+list yet.
+
+A create made in another window lists its row here the same way. Browser
+import does: the import window mints the id and tells main, which relays it to
+this window as `browser-import:progress`; `BrowserImportProgress` lists the row
+with `pendingOrigin: 'import'`, opens it on "Importing conversation…", and
+confirms it without a row when the import lands, or discards it and goes back
+when the import fails. See [session import](session-import.md).
 
 The server claims the id with the create receipt, in one statement, only if no
 conversation already has it: the receipt's unique id covers receipt-path
@@ -508,10 +528,14 @@ see
   The suite clears the draft cache in `beforeEach` and stubs `ResizeObserver`;
   a test that skips either will see a restored draft from its predecessor.
 - The pending row: `lib/workstreams-cache.test.ts` (kept across a replacing
-  write, replaced by its server row, confirmed under a different id, evicted, discarded),
-  `lib/workstream-state-store.test.ts` (a versioned common half ends it),
-  `lib/use-workstreams-query.test.tsx` (the refetch keeps it and then takes the
-  fetched row), and `components/sidebar.test.tsx` (drawn dimmed and inert).
+  write, described by its server row and still pending, confirmed with and
+  without a row and under a different id, evicted, discarded),
+  `lib/workstream-state-store.test.ts` (a versioned common half describes it
+  and leaves it pending), `lib/use-workstreams-query.test.tsx` (the refetch
+  keeps it and takes the fetched fields), `components/sidebar.test.tsx` (drawn
+  dimmed and inert), `components/app-shell.test.tsx` (no active socket for a
+  routed pending row) and `lib/browser-import-progress.test.tsx` (an import
+  from the other window lists, opens, settles and discards it).
   The server half is in `apps/api/test/workstream-scope.test.ts`, on the
   checked-in migrations: a named id is used and replayed, and one held by a
   receipt or by a receipt-less anchor is refused, a receipt reserved without the
@@ -565,6 +589,44 @@ see
   to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-01 — A pending row stays pending until its create answers
+
+**What changed:** A server row for a pending id now describes it and leaves it
+pending; only the create's confirm or discard (or an eviction) ends it.
+`WorkstreamScreen` draws a pending row as a captioned opening skeleton and
+mounts no socket or read for it, and the route's active socket skips it. Browser
+import lists its Channel in the main window before the create, under an id the
+import window mints and `POST /workstreams/import` now accepts.
+
+**Why:** Imported Channels opened on "Channel could not be opened". The Space
+placement publishes the Channel before its conversation is written, and an
+import writes a whole history there (3.3 s in the case traced on 2026-10-01).
+The sidebar listed the row, cleared `pending` on that listing, and its
+background warm-up dialed the room, which answered `503 workstream_maintenance`;
+the import's own navigation then landed on a socket already retrying. The old
+rule ("the server listed it, so it exists") had the same gap for the launcher,
+narrowed only by how quickly an opening message is written.
+
+**Considered and rejected:** Initializing the conversation before the Space
+placement, which reverses the residue the create deliberately prefers (a
+listed Channel over an unlisted one after a failure). Having the room wait or
+answer a distinct code while preparing, which still lets every viewer dial a
+room that cannot answer yet, and which the browser cannot read from a failed
+upgrade. Keeping the error screen off for the first retry, which hides every
+other first failure as well. Sending the whole import through the main window,
+which would carry the preview's file bytes over IPC and move the import's
+retry and error sheet out of the window that holds the conversation.
+
+**Consequences:** "Pending" now means "this window's create has not answered",
+not "the server has not listed it". A window that lists a row for a create it
+does not make (import) must also deliver the answer, or the row stays pending
+until the window reloads; main ends an import as failed when its window closes
+mid-create. A failed create whose Channel the server had already listed keeps
+its row, because that listing is not sent again. Other members, whose windows never listed the row,
+can still dial the room during the gap; their background socket retries and
+nothing is shown. The import id travels with its receipt key: a changed name
+or Space takes both anew.
 
 ### 2026-09-30 — The launcher's composer starts in the middle of the pane
 

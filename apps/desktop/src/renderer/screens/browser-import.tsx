@@ -14,6 +14,7 @@ import { Button, DropdownSelect, IconButton, InlineError, Modal } from '../compo
 import { useAppSession } from '../lib/app-session';
 import { browserConversation, readBrowserConversation } from '../lib/browser-conversation-import';
 import { desktopBridge } from '../lib/platform';
+import { uuidV7 } from '../lib/telemetry';
 
 /** Where a person starts: the two providers whose signed-in chats can be read. */
 const PROVIDERS = [
@@ -24,6 +25,17 @@ const PROVIDERS = [
 interface PendingImport {
   preview: SessionImportPreview;
   clientMessageId: string;
+  /** Minted here so the main window can list the Channel before it exists. */
+  workstreamId: string;
+}
+
+/**
+ * One create: the receipt key and the id it claims travel together. A retry of
+ * an unchanged request keeps both; a changed one takes both anew, because a
+ * failed attempt can leave its id reserved under its own key.
+ */
+function requestIdentity(): Pick<PendingImport, 'clientMessageId' | 'workstreamId'> {
+  return { clientMessageId: crypto.randomUUID(), workstreamId: uuidV7() };
 }
 
 /**
@@ -31,8 +43,9 @@ interface PendingImport {
  *
  * Import reads the conversation the active tab is showing, previews it through
  * the ordinary import boundary, and asks only for what a Channel needs — its
- * name and Space — before creating it. The main window then opens the new
- * Channel and this window closes.
+ * name and Space — before creating it. The main window lists the Channel as
+ * pending, under the id this window gives it, while the create runs; it then
+ * opens the Channel and this window closes.
  */
 export function BrowserImportWindow(): React.JSX.Element {
   const { api } = useAppSession();
@@ -75,7 +88,7 @@ export function BrowserImportWindow(): React.JSX.Element {
     const offered = context?.spaces ?? [];
     if (spaceId === '' || offered.some((space) => space.id === spaceId)) return;
     setSpaceId(offered[0]?.id ?? '');
-    setPending((current) => current && { ...current, clientMessageId: crypto.randomUUID() });
+    setPending((current) => current && { ...current, ...requestIdentity() });
   }, [context, spaceId]);
 
   // A failure names the chat it was about; it does not follow the person to the next one.
@@ -93,7 +106,7 @@ export function BrowserImportWindow(): React.JSX.Element {
       setName(preview.title);
       setSpaceId((current) => spaces.some((space) => space.id === current) ? current : spaces[0]?.id ?? '');
       setImportFailure(null);
-      setPending({ preview, clientMessageId: crypto.randomUUID() });
+      setPending({ preview, ...requestIdentity() });
     } catch (error) {
       setFailure(error instanceof Error ? error.message : 'The conversation could not be read.');
     } finally {
@@ -104,20 +117,36 @@ export function BrowserImportWindow(): React.JSX.Element {
   // A retry of the same request keeps its identity; a changed name or Space is
   // a different Channel, which the creation receipt would refuse under the old one.
   const renewRequest = (): void => {
-    setPending((current) => current && { ...current, clientMessageId: crypto.randomUUID() });
+    setPending((current) => current && { ...current, ...requestIdentity() });
   };
 
   const createChannel = async (): Promise<void> => {
     if (!pending || !api || saving || !name.trim() || !context?.spaces.some((space) => space.id === spaceId)) return;
     setSaving(true);
     setImportFailure(null);
+    const title = name.trim();
+    const { workstreamId } = pending;
+    let id: string;
     try {
-      const id = await api.importSession(pending.preview, pending.clientMessageId, { title: name.trim(), spaceIds: [spaceId] });
-      await bridge.completeBrowserImport(id);
+      // Before the request, so the main window holds the Channel as pending.
+      await bridge.reportBrowserImport({ phase: 'importing', workstreamId, title, spaceId });
+      id = await api.importSession(pending.preview, pending.clientMessageId, { title, spaceIds: [spaceId], workstreamId });
     } catch (error) {
+      void bridge.reportBrowserImport({ phase: 'failed', workstreamId }).catch(() => undefined);
       setImportFailure(error instanceof Error ? error.message : 'The channel could not be created.');
       setSaving(false);
+      return;
     }
+    // A receipt reserved by a Worker from before `workstreamId` replays under
+    // the id that Worker minted. The announced row then names nothing: take it
+    // away, and the hand-off below opens the Channel under its real id.
+    if (id !== workstreamId) await bridge.reportBrowserImport({ phase: 'failed', workstreamId }).catch(() => undefined);
+    await bridge.completeBrowserImport(id).catch((error: unknown) => {
+      // The Channel exists; the main window must not keep waiting on it.
+      if (id === workstreamId) void bridge.reportBrowserImport({ phase: 'imported', workstreamId }).catch(() => undefined);
+      setImportFailure(error instanceof Error ? error.message : 'The channel was created but could not be opened.');
+      setSaving(false);
+    });
   };
 
   const spaces = context?.spaces ?? [];
