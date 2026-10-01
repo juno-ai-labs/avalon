@@ -257,9 +257,19 @@ const sharedPublicAppValues = Object.fromEntries(sharedPublicAppKeys.map((key) =
 
 for (const region of configuredRegions) {
   const existing = existingRegional[region];
+  // A safe default outranks the file being rewritten: .dev.vars is generated,
+  // so a value already in it is an earlier default, not a developer's choice —
+  // that belongs in .env.local, which outranks both. Kept the other way round,
+  // every default a checkout ever wrote stayed pinned: an allowlist written
+  // before the renderer origin became app://rallywithai refused every realtime
+  // socket (socket_origin_forbidden, "Channel could not be opened"), and a
+  // since-replaced primary model kept running the screenshot-reading import
+  // agent, which then finished without reading anything.
+  // Generated keys with no default — the signing and encryption keys below —
+  // still carry over, which is what keeps them stable per region.
   const regional = {
-    ...safeDefaults,
     ...existing,
+    ...safeDefaults,
     ...local,
     AVALON_REGION: region,
     PUBLIC_API_BASE_URL: local[`PUBLIC_API_BASE_URL_${regions[region].bindingPrefix}`]
@@ -292,15 +302,6 @@ for (const region of configuredRegions) {
   regional.SESSION_SIGNING_KEY ||= randomBytes(48).toString("base64url");
   regional.OAUTH_STATE_ENCRYPTION_KEY ||= randomBytes(32).toString("base64");
   regional.CONNECTOR_CREDENTIALS_KEY ||= randomBytes(32).toString("base64");
-  // The allowlist is the generated default unless .env.local names one. An
-  // existing .dev.vars value is never a developer's choice — the documented
-  // place for that is .env.local — only an earlier default, and keeping it
-  // pins it for good: a file written before the renderer origin became
-  // app://rallywithai refuses every realtime socket (socket_origin_forbidden),
-  // and each Channel shows "Channel could not be opened".
-  if (!("ALLOWED_ORIGINS" in local)) {
-    regional.ALLOWED_ORIGINS = safeDefaults.ALLOWED_ORIGINS;
-  }
   const serialized = workerKeys
     .filter((key) => (region === "global" || !globalOnlyKeys.has(key))
       && typeof regional[key] === "string"
