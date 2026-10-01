@@ -14,42 +14,37 @@ image, and the same site-chrome markers supply the header and footer.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/site/content/blog/<slug>.md` | One post: front matter (`slug`, `title`, `description`, `date`, `author`) and a plain Markdown body. The only place its copy lives. |
-| `apps/site/src/blog-pages.ts` | Reads and validates posts (`loadBlogPosts`, `parseBlogPost`) and renders the index (`renderBlogIndex`) and a post (`renderBlogPost`). |
-| `apps/site/src/site-chrome.ts` | `blogPosts` (the loaded list, newest first), the footer's Blog column, the shared header nav, the blog sitemap, and the blog section of `llms.txt`. |
-| `apps/site/src/social-cards.ts` | `renderBlogCard`: a post's 1200x630 link-preview card. |
-| `apps/site/vite.config.ts` | `rally-markdown-pages` registers `/blog/` and each `/blog/<slug>/` as build inputs, and emits each post's `social.png`, `index.md`, and `/blog/sitemap.xml`. |
-| `apps/site/src/landing.css` | The `.blog*` styles, in the landing page's tokens. |
+| `apps/site/content/blog/<slug>.md` | One post: front matter (`slug`, `title`, `description`, `date`, `author`) and a Markdown body. |
+| `apps/site/src/blog-pages.ts` | Loads and validates posts; renders the index and each post. |
+| `apps/site/src/site-chrome.ts` | `blogPosts`, the footer's Blog column, the blog sitemap, and the blog part of `llms.txt`. |
+| `apps/site/src/social-cards.ts` | `renderBlogCard`. |
+| `apps/site/vite.config.ts` | Registers the pages and emits each post's `social.png`, `index.md`, and `/blog/sitemap.xml`. |
 
 ## How it works
 
 `loadBlogPosts` reads every `.md` file in `content/blog/`, validates its front
-matter, and sorts by `date`, newest first. `vite.config.ts` registers
-`blog/index.html` and `blog/<slug>/index.html` as build inputs that exist only
-in memory; the plugin's `load` hook answers them with the rendered HTML, and
-Vite then treats them like any other page. In development, a middleware renders
-the same HTML for the same paths.
-
-A post's body goes through `marked` unchanged, so anything Markdown can express
-renders. The page carries `BlogPosting` structured data, a canonical URL, an
-`rel="alternate"` link to its own Markdown at `index.md`, and its own social
-card. The `/blog/` index uses the home page's card.
-
-The footer's Blog column links to the index and the newest post only, so the
-column stays two links long however many posts accumulate.
+matter, and sorts by `date`, newest first. The `rally-markdown-pages` plugin
+treats `blog/index.html` and each `blog/<slug>/index.html` as build inputs that
+exist only in memory, exactly as it does for the comparison pages, and the dev
+server renders the same HTML for the same paths. A post's body goes through
+`marked` unchanged. The `/blog/` index uses the home page's social card; each
+post gets its own. The footer's Blog column links to the index and the newest
+post only, so it stays two links long however many posts accumulate.
 
 ## Invariants
 
 - **One source per post.** The Markdown file feeds the page, the index entry,
   the footer, the sitemap, `llms.txt`, the card, and the build input. Nothing
-  else lists posts. Guard: the blog sitemap test asserts the sitemap against the
-  files on disk.
-- **A file's name is its slug.** `loadBlogPosts` throws when they differ, which
-  fails the build, because the URL comes from the slug and the build input from
-  the file.
-- **`date` is a `YYYY-MM-DD` day.** YAML reads an unquoted date as a JavaScript
-  date; `parseBlogPost` converts it back so the page, sitemap, and sort all use
-  the day as written. A malformed date throws. Guard: the blog rendering test.
+  else lists posts, so a post added anywhere else would be a link the build
+  never emits. Guard: the blog sitemap test checks the sitemap against the
+  loaded posts.
+- **A file's name is its slug, and the slug is lowercase letters, digits and
+  hyphens.** The URL comes from the slug and the build input from the file, so
+  a mismatch would publish a page nothing links to. `loadBlogPosts` and
+  `parseBlogPost` throw, which fails the build. Guard: the blog rendering test.
+- **`date` is a real `YYYY-MM-DD` day.** An impossible day such as 2026-02-30
+  throws instead of rendering as a different date. Guard: the blog rendering
+  test.
 
 ## Boundary
 
@@ -61,10 +56,7 @@ classifies blog pages as `landing`, like the comparison pages; see
 
 ## Failure modes and limits
 
-- A missing front matter field, a slug that does not match its file name, or a
-  malformed date throws, so `vite build` and `vite dev` fail loudly.
-- A `description` too long for two lines on the card is cut with an ellipsis;
-  the page shows it in full.
+- A front matter error fails `vite build` and `vite dev`, per the invariants.
 - `_headers` caches each card for a day, so an edited title can take a day to
   refresh in link previews.
 
@@ -99,3 +91,5 @@ would grow without end.
 **Consequences:** A new post is one Markdown file. If the index outgrows a
 plain list, pagination or tags belong in `renderBlogIndex`, and the sitemap and
 footer need no change.
+
+Shipped in #1052.

@@ -84,10 +84,11 @@ export const renderComparisonSitemap = (): string =>
   sitemap(comparisons.map(({ slug, updated }) => ({ loc: `${ORIGIN}/compare/${slug}/`, lastmod: updated })));
 
 /** A sitemap of the blog index and every post, which `robots.txt` lists beside the main one. */
-export const renderBlogSitemap = (): string => sitemap([
-  { loc: `${ORIGIN}/blog/`, lastmod: blogPosts[0]?.date ?? '' },
-  ...blogPosts.map(({ slug, date }) => ({ loc: `${ORIGIN}/blog/${slug}/`, lastmod: date })),
-]);
+export const renderBlogSitemap = (): string => {
+  const posts = blogPosts.map(({ slug, date }) => ({ loc: `${ORIGIN}/blog/${slug}/`, lastmod: date }));
+  // The index changes when its newest post does; with no posts there is nothing to list.
+  return sitemap(blogPosts[0] ? [{ loc: `${ORIGIN}/blog/`, lastmod: blogPosts[0].date }, ...posts] : posts);
+};
 
 /** `/llms.txt`: a plain index of the site for AI tools. */
 export function renderLlmsTxt(): string {
