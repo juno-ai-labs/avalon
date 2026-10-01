@@ -520,10 +520,10 @@ directory effect that moves only a breakout's activity now advances
 where before it changed nothing. The first advance after deploy moves every
 list once because the hashed shape grew. A breakout whose preparation row is
 gone lists `originTurnId: null`, indistinguishable from one branched through no
-turn. The workspace socket's parser drops keys an older client does not know,
-so the row's new fields are safe to ship first; `/sharing/navigation` is parsed
-strictly by shipped desktop and browser builds, which reject a response
-carrying keys they do not know.
+turn. `/sharing/navigation` also carries `originTurnId` and a Space's
+`systemRole`. Desktop and browser builds older than this change parse that
+response strictly and reject it; they were cut over with it rather than given an
+opt-in, because no released client had to keep working.
 
 ### 2026-09-28 — A Channel's rail is answered here, and its row says when it moved
 

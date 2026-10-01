@@ -63,8 +63,7 @@ sharingRoutes.get("/navigation", requireWorkspaceAuth, async (c) => {
   const auth = getWorkspaceAuth(c);
   c.header("Cache-Control", "no-store");
   return c.json(SharedNavigationDirectorySchema.parse(
-    await listSharedNavigationDirectory(c.env, auth.workspaceId, auth.userId, c.req.query("attention") === "1",
-      c.req.query("origins") === "1"),
+    await listSharedNavigationDirectory(c.env, auth.workspaceId, auth.userId, c.req.query("attention") === "1"),
   ));
 });
 sharingRoutes.get("/:parentId/options", requireWorkspaceAuth, zValidator("param", z.object({ parentId: IdSchema })), async (c) => {
