@@ -150,7 +150,8 @@ export class ParticipantAuthorityTransferStorage {
             added_at=excluded.added_at,first_opened_at=NULL,updated_at=excluded.updated_at,
             participant_epoch=participants.participant_epoch+1`,
         request.userId,request.reason,request.addedByUserId,request.changedAt,request.changedAt);
-        startReadCursorAtLatest(this.storage.sql, request.userId, request.changedAt);
+        startReadCursorAtLatest(this.storage.sql, request.userId, request.changedAt,
+          (request.addedByUserId ?? request.userId) !== request.userId);
       } else if (!request.active && prior?.status === "active") {
         this.storage.sql.exec(`UPDATE participants SET status='removed',removed_at=?,updated_at=?,
           participant_epoch=participant_epoch+1 WHERE user_id=?`,request.changedAt,request.changedAt,request.userId);
