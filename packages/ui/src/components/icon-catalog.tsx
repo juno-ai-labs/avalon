@@ -22,10 +22,10 @@ const SECTION_TAB_ICON: Record<AppearanceIconSectionId, PickableAppearanceIconKe
  * The icon catalog laid out to be chosen from: a row of section tabs over one
  * scrolling grid, with a heading per section, the way Slack lays out emoji.
  *
- * Presentational and shared. It owns only the layout and the jump between
- * sections; each cell is the caller's, through {@link renderIcon}, because the
- * two pickers that use it differ in exactly that — a menu radio item that saves
- * on click in `AppearancePicker`, a form button in `SpaceAppearancePicker`.
+ * Presentational. It owns only the layout and the jump between sections; each
+ * cell is the caller's, through {@link renderIcon} — in `AppearancePicker`, a
+ * menu radio item that saves on click, for a Channel, a Breakout, a Space and a
+ * Sidekick alike.
  *
  * The whole catalog is rendered at once rather than a section at a time, so
  * scrolling is the browser's and a tab is a scroll offset. 253 small SVGs is

@@ -1,6 +1,7 @@
 import { projectColorCells } from '../lib/project-palette';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { GENERATED_WORKSTREAM_ICON_KEYS, type WorkstreamAppearance, type WorkstreamAppearancePatch } from '@rally/contracts';
+import clsx from 'clsx';
 import { useEffect, useRef, useState } from 'react';
 import { IconCatalog } from './icon-catalog';
 import { WORKSTREAM_ICON_COMPONENTS, workstreamAppearance } from './workstream-glyph';
@@ -37,7 +38,7 @@ function settled(choice: PendingChoice, appearance: WorkstreamAppearance | undef
  * prop rather than a component this file picks: the caller owns its own
  * treatment, and this owns the choosing.
  */
-export function AppearancePicker({ id, appearance, label: triggerLabel, renderGlyph, onChange }: {
+export function AppearancePicker({ id, appearance, label: triggerLabel, renderGlyph, onChange, triggerClassName }: {
   id: string;
   appearance?: WorkstreamAppearance;
   /** The trigger's accessible name, and the popup's: "Change X icon and color". */
@@ -45,6 +46,8 @@ export function AppearancePicker({ id, appearance, label: triggerLabel, renderGl
   /** The glyph, drawn from the appearance *including* choices not yet committed. */
   renderGlyph: (appearance: WorkstreamAppearance) => React.ReactNode;
   onChange: (patch: WorkstreamAppearancePatch) => Promise<void>;
+  /** The trigger's frame, for a surface that draws its mark in a tile of its own. */
+  triggerClassName?: string;
 }): React.JSX.Element {
   const [pending, setPending] = useState<PendingChoice[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -78,7 +81,7 @@ export function AppearancePicker({ id, appearance, label: triggerLabel, renderGl
   };
   return <DropdownMenu.Root onOpenChange={(value) => { open.current = value; setError(null); }}>
     <DropdownMenu.Trigger asChild>
-      <button type="button" aria-label={triggerLabel} className="appearance-picker-trigger window-no-drag">
+      <button type="button" aria-label={triggerLabel} className={clsx('appearance-picker-trigger window-no-drag', triggerClassName)}>
         {renderGlyph(selected)}
       </button>
     </DropdownMenu.Trigger>

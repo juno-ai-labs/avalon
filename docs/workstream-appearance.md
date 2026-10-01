@@ -18,6 +18,13 @@ behaviour and the deterministic default, for every surface that has an
 appearance. Anything else that grows one comes here for those, and brings its
 own storage and its own glyph treatment.
 
+**So does a Space.** The icon tile on its dashboard is this picker's trigger,
+drawn with `SpaceIcon`. A Space's route replaces the name, icon and colour
+together rather than merging a patch, so the dashboard sends one choice at a
+time and builds each request from the last choice rather than from the Space as
+rendered; otherwise a colour clicked before the icon's answer arrived would send
+the old icon back. The route itself is [`spaces.md`](spaces.md)'s.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -200,7 +207,10 @@ colours already did: the 11 keys that left the menu (`aperture`, `boxes`,
 `circuit-board`, `component`, `orbit`, `spline`, `workflow`,
 `chart-no-axes-combined`, `pen-tool`, `package`, `globe-2`) are still valid
 stored values. `circle-dot`, the naming fallback, is in the Planning section so
-the fallback is something a person can also pick.
+the fallback is something a person can also pick. The Space dashboard dropped
+its own Save-button dialog and opens `AppearancePicker` too, so there is one
+picker; `SpaceAppearancePicker` is gone and `SpaceIcon` moved to
+`space-icon.tsx`.
 
 **Why:** The old 37 left most work with no fitting mark, and a Space offered
 only its own 25. The descriptions had to get shorter as the list grew: every

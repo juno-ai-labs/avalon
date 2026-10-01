@@ -11,11 +11,11 @@ drawing a second design.
   workstream sidebar, resource rows, Sidekick section/picker, account trigger,
   glyphs, avatars and visual primitives — and the Space surfaces: `space-row.tsx`
   (`SpaceRow`, `SpaceRowContent`, `SpacePlacementList`),
-  `space-appearance-picker.tsx` (`SpaceAppearancePicker`, `SpaceIcon`),
+  `space-icon.tsx` (`SpaceIcon`),
   `space-dashboard.tsx` (`SpaceDashboardHeader`, `SpaceDashboardSection`). The
   icon catalog's glyphs are `appearance-icons.ts` (`APPEARANCE_ICON_COMPONENTS`)
-  and its sectioned grid is `icon-catalog.tsx` (`IconCatalog`), shared by the
-  Space picker and `AppearancePicker`.
+  and its sectioned grid is `icon-catalog.tsx` (`IconCatalog`), drawn by
+  `AppearancePicker`, the one picker a Space and a Channel both open.
 - `packages/ui/src/lib`: browser-safe display helpers, theme application and
   device preferences. `packages/ui/src/styles` owns the shared styles/tokens.
 - Desktop renderer adapters retain routing, UI stores, IPC, telemetry and data

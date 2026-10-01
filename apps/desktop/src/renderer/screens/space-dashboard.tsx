@@ -8,8 +8,8 @@ import {
   type SpaceDirectory,
   type SpaceIconKey,
   type SpaceSummary,
+  type WorkstreamAppearancePatch,
 } from '@rally/contracts';
-import { SpaceAppearancePicker } from '@rally/ui/components/space-appearance-picker';
 import { ConversationIdentityTip } from '@rally/ui/components/conversation-identity-tip';
 import { WorkstreamGlyph, WorkstreamMark } from '@rally/ui/components/workstream-glyph';
 import {
@@ -32,7 +32,6 @@ import {
 } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { copySpaceLink } from '../lib/copy-workstream-link';
-import { PROJECT_COLOR_DEFAULT } from '../lib/project-palette';
 import { workstreamMarkerStatus } from '../lib/format';
 import { blockedChannelLabel, spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
 import { INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY, spaceConversationsQueryKey } from '../lib/sidebar-list-store';
@@ -55,8 +54,7 @@ type FailureSlot =
   | 'name'
   | 'archive'
   | 'participants'
-  | 'audience'
-  | 'appearance';
+  | 'audience';
 
 /**
  * A Space's own screen: what it is, who it is for, and what is in it.
@@ -81,9 +79,12 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   // next attempt rather than by closing the modal: a person who reopens it
   // should still see what they were told to move.
   const [blockedChannelIds, setBlockedChannelIds] = useState<string[]>([]);
-  const [appearanceOpen, setAppearanceOpen] = useState(false);
-  const [editIconKey, setEditIconKey] = useState<SpaceIconKey>('briefcase');
-  const [editColorKey, setEditColorKey] = useState<SpaceColorKey>(PROJECT_COLOR_DEFAULT);
+  // Icon and colour choices in flight. The route replaces both keys at once, so
+  // each request is built from the last choice rather than from the Space as
+  // rendered, and they are sent one after another: a colour clicked before the
+  // icon's answer arrives must not send the old icon back.
+  const appearanceQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const intendedAppearance = useRef<{ iconKey: SpaceIconKey; colorKey: SpaceColorKey; pending: number } | null>(null);
   const [participantsOpen, setParticipantsOpen] = useState(false);
   const [editParticipants, setEditParticipants] = useState<Set<string>>(new Set());
   const [pendingScope, setPendingScope] = useState<'personal' | 'workspace' | null>(null);
@@ -175,6 +176,26 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
       } : current);
     }
   };
+  const changeAppearance = (patch: WorkstreamAppearancePatch): Promise<void> => {
+    const base = intendedAppearance.current ?? { iconKey: space.iconKey, colorKey: space.colorKey, pending: 0 };
+    const next = { iconKey: patch.icon ?? base.iconKey, colorKey: patch.color ?? base.colorKey, pending: base.pending + 1 };
+    intendedAppearance.current = next;
+    const sent = appearanceQueue.current.then(() => api!.updateSpacePresentation(space.id, {
+      name: space.name, iconKey: next.iconKey, colorKey: next.colorKey,
+    }));
+    appearanceQueue.current = sent.catch(() => undefined);
+    const settle = (): void => {
+      const current = intendedAppearance.current;
+      if (current && --current.pending === 0) intendedAppearance.current = null;
+    };
+    return sent.then((updated) => { settle(); applySpace(updated); }, (cause: unknown) => {
+      // A refused choice leaves the Space as the server holds it, so the next
+      // click starts from that rather than from the choice that failed.
+      settle();
+      intendedAppearance.current = null;
+      throw cause;
+    });
+  };
   /**
    * Make one change, and say whether it landed.
    *
@@ -263,12 +284,8 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
           key={space.id}
           name={space.name}
           nameError={failures.name ?? null}
-          onEditAppearance={() => {
-            report('appearance', null);
-            setEditIconKey(space.iconKey);
-            setEditColorKey(space.colorKey);
-            setAppearanceOpen(true);
-          }}
+          id={space.id}
+          onAppearanceChange={changeAppearance}
           onRename={(name) => void save(
             'name',
             () => api!.updateSpacePresentation(space.id, { name, iconKey: space.iconKey, colorKey: space.colorKey }),
@@ -475,21 +492,6 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
           {failures.audience && <InlineError>{failures.audience}</InlineError>}
         </Modal>
 
-        <Modal
-          footer={<><Button disabled={saving} onClick={() => setAppearanceOpen(false)}>Cancel</Button><Button className="button-primary" disabled={saving} onClick={() => {
-            void save(
-              'appearance',
-              () => api!.updateSpacePresentation(space.id, { name: space.name, iconKey: editIconKey, colorKey: editColorKey }),
-              'The icon and color could not be saved.',
-            ).then(() => setAppearanceOpen(false));
-          }}>Save</Button></>}
-          onOpenChange={(open) => { if (!saving) setAppearanceOpen(open); }}
-          open={appearanceOpen}
-          title="Space icon and color"
-        >
-          <SpaceAppearancePicker colorKey={editColorKey} iconKey={editIconKey} onColorChange={setEditColorKey} onIconChange={setEditIconKey} />
-          {failures.appearance && <InlineError>{failures.appearance}</InlineError>}
-        </Modal>
       </div>
     </div>
   );

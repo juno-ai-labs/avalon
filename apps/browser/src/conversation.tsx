@@ -29,7 +29,7 @@ import {
 } from '@rally/ui/lib/sidebar-geometry';
 import { browserAccountHome, browserRailVisibility, browserSidebarLayout, type BrowserRailVisibility } from './sidebar-layout';
 import { MacDownloadLink } from './mac-download';
-import { SpaceIcon } from '@rally/ui/components/space-appearance-picker';
+import { SpaceIcon } from '@rally/ui/components/space-icon';
 import { ConversationHeader } from '@rally/ui/components/conversation-header';
 import { WorkstreamSidebar } from '@rally/ui/components/workstream-sidebar';
 import { Button, InlineError, Modal } from '@rally/ui/components/primitives';
