@@ -5,11 +5,11 @@ import {
   IconCloudDownload,
   IconCornerDownRight,
   IconDots,
+  IconHexagons,
   IconLink,
   IconLock,
   IconPencil,
   IconPin,
-  IconRobot,
   IconShare2,
   IconUserPlus,
   IconUsers,
@@ -332,6 +332,10 @@ export function ChannelMenu({
       {extraActions}
       <ResourceList label="Artifacts" onOpen={onOpenArtifact} resources={artifacts} />
       {onOpenResource && <ResourceList label="Resources" onOpen={onOpenResource} resources={otherResources} />}
+      {actions?.onArchive && <>
+        <TitleMenuSeparator />
+        <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => actions.onArchive?.(target)}>Archive channel</TitleMenuItem>
+      </>}
     </>;
   }
   return <>
@@ -349,12 +353,8 @@ export function ChannelMenu({
       <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />
     </ActionTiles>
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(workstream.participants.length, workstream.scope, participantsPending)} view={PEOPLE_VIEW} />
-    <LevelRow icon={<IconRobot aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={sidekickMeta(sidekicks)} view={SIDEKICKS_VIEW} />
+    <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={sidekickMeta(sidekicks)} view={SIDEKICKS_VIEW} />
     <LevelRow icon={<IconCornerDownRight aria-hidden="true" size={17} stroke={1.7} />} label="Breakouts" meta={breakouts?.length} view={BREAKOUTS_VIEW} />
-    {actions?.onArchive && <>
-      <TitleMenuSeparator />
-      <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => actions.onArchive?.(target)}>Archive channel</TitleMenuItem>
-    </>}
   </>;
 }
 
@@ -435,7 +435,7 @@ export function BreakoutMenu({
       {(appearance || actions?.onMakePublic) && <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />}
     </ActionTiles>
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(participants.length, scope, participantsPending)} view={PEOPLE_VIEW} />
-    <LevelRow icon={<IconRobot aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={sidekickMeta(sidekicks)} view={SIDEKICKS_VIEW} />
+    <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={sidekickMeta(sidekicks)} view={SIDEKICKS_VIEW} />
     {actions?.onArchive && <>
       <TitleMenuSeparator />
       <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => actions.onArchive?.(breakout)}>Archive breakout</TitleMenuItem>
