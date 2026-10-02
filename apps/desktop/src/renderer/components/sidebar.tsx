@@ -187,11 +187,32 @@ function workstreamHasActivityForViewer(workstream: WorkstreamSummary): boolean 
   return workstream.hasUnread === true || workstreamAttentionCount(workstream) > 0;
 }
 
-/** The sort toggle's cycle: each order's label, how it is read aloud, and what a click moves to. */
-const CHANNEL_SORTS: Record<SidebarChannelSort, { label: string; spoken: string; next: SidebarChannelSort }> = {
-  alphabetical: { label: 'A–Z', spoken: 'A to Z', next: 'recent' },
-  recent: { label: 'Recent', spoken: 'by recent activity', next: 'needs_you' },
-  needs_you: { label: 'Needs you', spoken: 'by what needs you', next: 'alphabetical' },
+/**
+ * Newest last activity first, ties A to Z. The Channel's own last activity,
+ * not when this reader last opened it: the row's time shows the same value,
+ * so the order and the times down the list agree.
+ */
+function compareRecent(left: WorkstreamSummary, right: WorkstreamSummary): number {
+  return recencyTimestamp(right) - recencyTimestamp(left) || compareAlphabeticalTitle(left, right);
+}
+
+/** The sort toggle's cycle: each order's label, how it is read aloud, its comparator, and what a click moves to. */
+const CHANNEL_SORTS: Record<SidebarChannelSort, {
+  label: string;
+  spoken: string;
+  compare: (left: WorkstreamSummary, right: WorkstreamSummary) => number;
+  next: SidebarChannelSort;
+}> = {
+  alphabetical: { label: 'A–Z', spoken: 'A to Z', compare: compareAlphabeticalTitle, next: 'recent' },
+  recent: { label: 'Recent', spoken: 'by recent activity', compare: compareRecent, next: 'needs_you' },
+  // Every bold row first, then the rest, each half in Recent order.
+  needs_you: {
+    label: 'Needs you',
+    spoken: 'by what needs you',
+    compare: (left, right) => Number(workstreamHasActivityForViewer(right)) - Number(workstreamHasActivityForViewer(left))
+      || compareRecent(left, right),
+    next: 'alphabetical',
+  },
 };
 
 const sidebarWeekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
@@ -516,6 +537,7 @@ function WorkstreamRow({
   const socketWarmup = useWorkstreamSocketHoverWarmup(workstream.id);
   const socketOpenContext = useWorkstreamSocketOpenContext(workstream.id);
   const attentionCount = workstreamAttentionCount(workstream);
+  const hasActivityForViewer = workstreamHasActivityForViewer(workstream);
   const destination = `/workstreams/${workstream.id}${workstream.associativeSubstreamId && workstream.associativeSubstreamId !== '0'
     ? `?substream=${encodeURIComponent(workstream.associativeSubstreamId)}`
     : ''}`;
@@ -618,7 +640,7 @@ function WorkstreamRow({
   // sidebar leaves `completed` out: a finished run is the ordinary state.
   const rankedMarker = workstreamMarkerStatus({
     ...workstream,
-    hasUnread: workstreamHasActivityForViewer(workstream),
+    hasUnread: hasActivityForViewer,
   });
   const marker = rankedMarker === 'completed' ? null : rankedMarker;
   return (
@@ -779,7 +801,7 @@ function WorkstreamRow({
               isActive && 'is-active',
               // Bold follows the dot's own unread input, so a row whose
               // Breakout needs this reader reads as unread in both.
-              workstreamHasActivityForViewer(workstream) && 'is-unread',
+              hasActivityForViewer && 'is-unread',
               // Machinery the reader has opted into seeing. Dimmed rather than
               // badged, so it reads as one level below the work it sits beside
               // without adding another thing to decode.
@@ -1388,21 +1410,11 @@ export function Sidebar({
     () => orderPinnedWorkstreams(visibleWorkstreams, activeDragOrder ?? storedAllOrder),
     [activeDragOrder, storedAllOrder, visibleWorkstreams],
   );
-  // Recent orders by the Channel's own last activity, not by when this reader
-  // last opened it: the row's time shows the same value, so the order and the
-  // times down the list agree. Ties fall back to A to Z. Needs you puts every
-  // bold row first, then the rest, each half in that same Recent order.
-  const unpinnedWorkstreams = useMemo(() => {
-    const byRecent = (left: WorkstreamSummary, right: WorkstreamSummary): number => (
-      recencyTimestamp(right) - recencyTimestamp(left) || compareAlphabeticalTitle(left, right)
-    );
-    return visibleWorkstreams
+  const unpinnedWorkstreams = useMemo(() => (
+    visibleWorkstreams
       .filter((workstream) => workstream.pinPosition === null)
-      .sort(channelSort === 'alphabetical' ? compareAlphabeticalTitle
-        : channelSort === 'recent' ? byRecent
-          : (left, right) => Number(workstreamHasActivityForViewer(right)) - Number(workstreamHasActivityForViewer(left))
-            || byRecent(left, right));
-  }, [channelSort, visibleWorkstreams]);
+      .sort(CHANNEL_SORTS[channelSort].compare)
+  ), [channelSort, visibleWorkstreams]);
   const displayedWorkstreams = useMemo(
     () => [...pinnedWorkstreams, ...unpinnedWorkstreams],
     [pinnedWorkstreams, unpinnedWorkstreams],
