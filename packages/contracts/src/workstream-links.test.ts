@@ -131,7 +131,7 @@ describe("canonical work-stream links", () => {
   it("addresses an import under its Organization", () => {
     const target = { region: TARGET.region, workspaceId: WORKSPACE_ID, importId: WORKSTREAM_ID, workstreamId: SPACE_ID };
     expect(sessionImportCanonicalUrl(WEB_BASE_URL, target))
-      .toBe(`${WEB_BASE_URL}/app/enterprise/${ENCODED_WORKSPACE_ID}/i/${ENCODED_WORKSTREAM_ID}?c=${ENCODED_SPACE_ID}`);
+      .toBe(`${WEB_BASE_URL}/app/enterprise/${ENCODED_WORKSPACE_ID}/i/${ENCODED_WORKSTREAM_ID}/c/${ENCODED_SPACE_ID}`);
     expect(() => sessionImportCanonicalUrl(WEB_BASE_URL, { ...target, importId: "0" })).toThrow();
     expect(() => sessionImportCanonicalUrl(WEB_BASE_URL, { ...target, workstreamId: "0" })).toThrow();
   });

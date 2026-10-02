@@ -106,6 +106,7 @@ export function BrowserImportWindow(): React.JSX.Element {
   const [failure, setFailure] = useState<string | null>(null);
   // The running import's agent conversation and its Channel, which a bad import is debugged from.
   const [importRun, setImportRun] = useState<{ workstreamId: string; substreamId: string } | null>(null);
+  const [copyFailed, setCopyFailed] = useState(false);
 
   const conversation = active ? browserConversation(active) : null;
   const update = context?.update ?? null;
@@ -174,6 +175,7 @@ export function BrowserImportWindow(): React.JSX.Element {
     setRun(started);
     setSteps([]);
     setImportRun(null);
+    setCopyFailed(false);
     void started.done.then(async (result) => {
       const workstreamId = reserved.current;
       reserved.current = null;
@@ -237,9 +239,10 @@ export function BrowserImportWindow(): React.JSX.Element {
   const copyImportId = (): void => {
     const workspace = session?.workspace;
     if (!importRun || !workspace) return;
+    setCopyFailed(false);
     void bridge.getRuntimeConfig().then(({ webBaseUrl }) => bridge.copyText(sessionImportCanonicalUrl(webBaseUrl, {
       region: workspace.region, workspaceId: workspace.id, importId: importRun.substreamId, workstreamId: importRun.workstreamId,
-    }))).catch(() => undefined);
+    }))).catch(() => setCopyFailed(true));
   };
 
   const spaces = context?.spaces ?? [];
@@ -297,6 +300,7 @@ export function BrowserImportWindow(): React.JSX.Element {
       title={update ? 'Importing updates' : 'Importing conversation'}
     >
       <ImportSteps steps={steps} />
+      {copyFailed && <InlineError>The import id could not be copied.</InlineError>}
     </Modal>
     <Modal
       footer={<>
