@@ -153,6 +153,10 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
   const queryClient = useQueryClient();
   const [archiveTarget, setArchiveTarget] = useState<string | null>(null);
   const [sharingSubstream, setSharingSubstream] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<{ noun: 'channel' | 'breakout'; title: string; rename: (title: string) => Promise<void> } | null>(null);
+  const [renameTitle, setRenameTitle] = useState('');
+  const [renamePending, setRenamePending] = useState(false);
+  const [renameFailed, setRenameFailed] = useState(false);
   const [changingArchive, setChangingArchive] = useState(false);
   const [archiveFailure, setArchiveFailure] = useState<'archive' | 'restore' | null>(null);
   const [breakoutWidth, setBreakoutWidth] = useState<number | null>(null);
@@ -206,6 +210,23 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
     void navigator.clipboard.writeText(url);
   };
   const channelTitle = parent?.title ?? 'Shared channel';
+  const startRename = (noun: 'channel' | 'breakout', title: string, rename: (title: string) => Promise<void>): void => {
+    setRenaming({ noun, title, rename });
+    setRenameTitle(title);
+    setRenameFailed(false);
+  };
+  const submitRename = async (): Promise<void> => {
+    const title = renameTitle.trim();
+    if (!renaming || !title || renamePending) return;
+    if (title === renaming.title) { setRenaming(null); return; }
+    setRenamePending(true); setRenameFailed(false);
+    try {
+      await renaming.rename(title);
+      await queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
+      setRenaming(null);
+    } catch { setRenameFailed(true); }
+    finally { setRenamePending(false); }
+  };
   const channelLevel = (context: ConversationHeaderContext | null, onSelect?: () => void): TitlePillLevel => ({
     key: `channel:${parentId}`,
     icon: <WorkstreamGlyph appearance={parent?.appearance} id={parentId} size={24} />,
@@ -217,11 +238,13 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
       actions={{
         onShare: (target) => setSharingSubstream(target.substreamId),
         onCopyLink: (target) => copyLink(target.substreamId),
+        ...(context ? { onRename: () => startRename('channel', channelTitle, context.rename) } : {}),
       }}
       addSidekick={context && <SidekickPicker substreamId="0" workstreamId={parentId} />}
       breakouts={breakoutMarks}
       onOpenArtifact={context?.openArtifact}
       onOpenBreakout={openBreakout}
+      onOpenResource={context?.openResource}
       onParticipants={context?.openParticipantDialog}
       onRefreshSidekicks={context?.refreshSidekicks}
       onSidekickMenuOpen={context?.loadSidekickOptions}
@@ -255,7 +278,9 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
           onShare: (target) => setSharingSubstream(target.substreamId),
           onCopyLink: (target) => copyLink(target.substreamId),
           onArchive: (target) => setArchiveTarget(target.substreamId),
+          onRename: () => startRename('breakout', context.detail.title, context.rename),
         }}
+        addSidekick={<SidekickPicker substreamId={breakoutId} workstreamId={parentId} />}
         breakout={{ substreamId: breakoutId, title: context.detail.title }}
         channel={{ id: parentId, title: channelTitle, appearance: parent?.appearance }}
         origin={context.origin}
@@ -268,7 +293,11 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
         } : undefined}
         participants={context.detail.participants}
         presentUserIds={context.presentUserIds}
+        onRefreshSidekicks={context.refreshSidekicks}
+        onSidekickMenuOpen={context.loadSidekickOptions}
         scope={listed?.scope}
+        sidekickFailure={context.sidekickFailure}
+        sidekicks={context.sidekicks}
       />,
     };
   };
@@ -304,6 +333,27 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
     />;
   return <>
     {api && session?.workspace && sharingSubstream !== null && <ShareConversationDialog api={api} workspaceId={session.workspace.id} parentId={parentId} substreamId={sharingSubstream} open onOpenChange={(open) => { if (!open) setSharingSubstream(null); }} />}
+    <Modal
+      footer={<>
+        <Button disabled={renamePending} onClick={() => setRenaming(null)}>Cancel</Button>
+        <Button
+          className="button-primary"
+          disabled={renamePending || !renameTitle.trim() || renameTitle.trim() === renaming?.title}
+          onClick={() => void submitRename()}
+        >Rename</Button>
+      </>}
+      onOpenChange={(open) => { if (!open && !renamePending) setRenaming(null); }}
+      open={renaming !== null}
+      title={renaming?.noun === 'channel' ? 'Rename channel' : 'Rename breakout'}
+    >
+      {renameFailed && <InlineError>{renaming?.noun === 'channel' ? 'The channel couldn’t be renamed.' : 'The breakout couldn’t be renamed.'}</InlineError>}
+      <form onSubmit={(event) => { event.preventDefault(); void submitRename(); }}>
+        <label className="form-field">
+          <span>Title</span>
+          <input autoFocus maxLength={180} disabled={renamePending} onChange={(event) => setRenameTitle(event.target.value)} value={renameTitle} />
+        </label>
+      </form>
+    </Modal>
     <Modal open={archiveTarget !== null} onOpenChange={(open) => { if (!open) setArchiveTarget(null); }} title="Archive breakout" description="This breakout will leave the active list. You can restore it later.">
       <Button disabled={changingArchive} onClick={() => setArchiveTarget(null)}>Cancel</Button>
       <Button disabled={changingArchive} onClick={() => { void changeArchive(true, archiveTarget ?? substreamId).then(() => setArchiveTarget(null)); }}>Archive breakout</Button>

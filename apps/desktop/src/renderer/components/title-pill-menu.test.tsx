@@ -88,6 +88,24 @@ describe('a title pill menu with levels', () => {
     expect(onChange).toHaveBeenCalledWith(true);
   });
 
+  it('lists a Channel’s other resources in More and opens one through the host', async () => {
+    const onOpenResource = vi.fn();
+    renderChannelPill({
+      onOpenResource,
+      workstream: { id: 'c1', title: 'Launch', scope: 'personal', participants: [member], resources: [
+        { id: 'r1', title: 'Pricing sheet', resourceType: 'spreadsheet', direction: 'artifact', currentVersion: 1 },
+        { id: 'r2', title: 'Launch brief', resourceType: 'document', direction: 'input', currentVersion: 3 },
+      ] },
+    });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
+
+    expect(await screen.findByText('Artifacts')).toBeInTheDocument();
+    expect(screen.getByText('Resources')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: /Launch brief/u }));
+    expect(onOpenResource).toHaveBeenCalledWith('r2', expect.any(HTMLElement));
+  });
+
   it('adds someone from the People level, with only people not already in it suggested', async () => {
     const onAdd = vi.fn();
     const newcomer = { id: 'user-2', name: 'Jordan', email: 'jordan@example.test', timezone: 'UTC' };
