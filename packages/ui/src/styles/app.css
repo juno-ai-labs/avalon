@@ -7520,7 +7520,14 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
    Space under the title. */
 .single-sidebar .sidebar-scroll { padding-inline: 10px; }
 .single-sidebar .sidebar-list { gap: 2px; }
-.single-sidebar .sidebar-row.channel-row { border-radius: 12px; gap: 10px; }
+/* Two columns, as the mockup's row: the glyph and the text. A third column
+   exists only for a row that has something trailing, so a quiet row does not
+   spend a gap on an empty one and its time sits on the row's right edge. */
+.single-sidebar .sidebar-row.channel-row { border-radius: 12px; flex-basis: 54px; gap: 10px; grid-template-columns: 40px minmax(0, 1fr); height: 54px; min-height: 54px; }
+.single-sidebar .sidebar-row.channel-row:has(> .sidebar-workstream-timer) { grid-template-columns: 40px minmax(0, 1fr) auto; }
+/* Unread is said the mockup's way: a semibold title and a red dot. */
+.single-sidebar .channel-row.is-unread .sidebar-row-title { font-weight: 600; }
+.single-sidebar .channel-row-marker .status-unread .status-dot { background: var(--av-sys-color-danger-base); }
 .single-sidebar .channel-row .sidebar-row-icon { height: 40px; width: 40px; }
 .single-sidebar .channel-row .sidebar-row-title { font-size: 14.5px; }
 .single-sidebar .channel-row-subtitle { font-size: 13px; line-height: 18px; }
