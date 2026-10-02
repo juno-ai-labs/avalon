@@ -22,7 +22,7 @@ schema, handled by the import window's own handlers.
 | `apps/api/src/durable-objects/substream-agent.ts` | `requestDesktopAction` (the executor a run reaches), `answerDesktopAction`, and re-offering pending actions to a subscriber. |
 | `apps/api/src/runtime/local-authorities.ts` | `desktopAction`, the in-object authority a run's tools read. |
 | `apps/api/src/services/desktop-actions/browser-plugin.ts` | The browser tools and `runDesktopAction`, which turns an answer into a tool result or a typed error. |
-| `apps/desktop/src/renderer/lib/desktop-actions/executor.ts` | The desktop side: parse, pin to one tab, check sites, run through the browser command path. |
+| `apps/desktop/src/renderer/lib/desktop-actions/executor.ts` | The desktop side: parse, pin to one tab, run through the browser command path. |
 | `apps/desktop/src/renderer/lib/desktop-actions/page-script.ts` | The page-script wrapper and its `rally.store` helper. |
 | `apps/desktop/src/renderer/lib/desktop-actions/store.ts` | What page script stored, by handle, and the per-file cap. |
 | `apps/desktop/src/renderer/lib/desktop-actions/ax-outline.ts` | The accessibility tree as an indented outline. |
@@ -81,10 +81,9 @@ frame — the room has the answer then — before it closes its socket.
 ## Invariants
 
 - **The desktop decides where an action runs, not the model.** The executor is
-  pinned to one tab and exposes no open, close, select or raw DevTools action;
-  navigation and loads are refused off the work's allowed sites, and a page
-  found off them after an action fails that action. Otherwise a planted
-  instruction in a page could drive the person's other signed-in sites. Guard:
+  pinned to one tab and exposes no open, close, select or raw DevTools action.
+  Within that tab it may navigate to and load from any site: restricting where
+  the browser goes is not a boundary this product draws. Guard:
   `executor.test.ts`.
 - **Only the conversation's creator answers its actions.** An action runs in
   that person's browser session; an answer from anyone else is not theirs to
@@ -151,8 +150,8 @@ same frames. Per Rally's policy, no action asks the person to confirm it.
 
 Page content is untrusted, and so is anything the model writes in reaction to
 it. The model can run script in a page the person is signed in to — that is the
-capability — so the boundary is around the tab: one tab, the work's own sites,
-no other tab and no DevTools passthrough. There is no network egress filter on
+capability — so the boundary is around the tab: one tab, which may go to any
+site, no other tab and no DevTools passthrough. There is no network egress filter on
 the page, and outcomes — network bodies included — are not redacted; both are
 recorded in this document's changelog. Page script runs in the page, never in Rally's renderer or main
 process, and the desktop validates every action and every stored value it
@@ -187,13 +186,14 @@ conversation's `SubstreamAgent`. Making send itself durable, when the room's
 re-offer exists to recover exactly this. Redacting outcomes or network bodies,
 and an egress filter on the page: by product decision nothing is redacted — the
 page already received what it shows, and the model reads it as it reads any
-page content; the boundary is the one tab on the work's own sites.
+page content; the boundary is the one tab. A list of sites the tab may use:
+an import also needs the provider's file, sign-in and artifact hosts, which
+change, and where the browser may go is not a line this product draws.
 
 **Consequences:** Only the conversation's creator answers; a future consumer
 keeps that rule unless it states whose desktop may act for its conversation. A
 consumer that ends its work on an answer must wait for the tool's
 `tool_completed` frame before closing its socket. Whatever a tab's page
-received can reach the model, so a consumer must choose its sites with that in
-mind.
+received can reach the model, wherever the tab went.
 
 Shipped in #1058.

@@ -8,7 +8,7 @@ import { describeZodIssues } from '@rally/contracts/zod-diagnostics';
 
 import type { RallyDesktopBridge } from '../../common/desktop';
 import type { RallyApi } from './api';
-import { conversationAt, providerSiteAllows, type BrowserConversationProvider } from './browser-conversation';
+import { conversationAt } from './browser-conversation';
 import { createDesktopActionExecutor } from './desktop-actions/executor';
 import { DesktopActionStore } from './desktop-actions/store';
 import { createRealtimeSocket, type RealtimeSocket } from './realtime-socket';
@@ -135,12 +135,10 @@ export function startSessionImportRun(input: {
   onStarted?: (run: { workstreamId: string }) => void;
 }): SessionImportRun {
   const conversation = conversationAt(input.sourceUrl, '');
-  const provider: BrowserConversationProvider | null = conversation?.provider ?? null;
   /**
-   * Whether `url` shows a conversation other than the one the person opened.
-   * Such a page is off the import's sites, like another company's: whatever
-   * the agent read there would land under this conversation's identity. The
-   * skills never need one; files, sign-in and the API stay reachable.
+   * Whether `url` shows a conversation other than the one the person opened,
+   * whose messages would land under this conversation's identity if finished
+   * there. The browser itself may go anywhere.
    */
   const otherConversation = (url: string): boolean => {
     const shown = conversationAt(url, '');
@@ -186,7 +184,6 @@ export function startSessionImportRun(input: {
   const executor = createDesktopActionExecutor({
     bridge: input.bridge,
     tabId: input.tabId,
-    siteAllows: (url) => provider !== null && providerSiteAllows(provider, url) && !otherConversation(url),
     store,
     handlers: {
       'session_import.finish': async (action): Promise<DesktopActionOutcome> => {

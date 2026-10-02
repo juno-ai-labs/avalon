@@ -338,7 +338,7 @@ export function createBrowserPlugin(
         (args) => ({ kind: "browser.type", text: args.text }), "Typed in the page"),
       input_("browser_press_key", "Press one key in the page.", KeyArgumentsSchema,
         (args) => ({ kind: "browser.key", key: args.key }), "Pressed a key"),
-      input_("browser_navigate", "Open a URL in the tab. Only pages on the conversation's own site open.", NavigateArgumentsSchema,
+      input_("browser_navigate", "Open a URL in the tab.", NavigateArgumentsSchema,
         (args) => ({ kind: "browser.navigate", url: args.url }), "Opened a page"),
       load,
       networkList,

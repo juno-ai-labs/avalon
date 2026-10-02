@@ -324,7 +324,7 @@ describe('running an import', () => {
     await expect(run.done).resolves.toEqual({ kind: 'unfinished', refusal: 'This import key belongs to another channel' });
   });
 
-  it('refuses to finish, or act, while the tab shows a conversation other than the one opened', async () => {
+  it('lets the tab go to another conversation, but refuses to finish while it shows one', async () => {
     sockets.length = 0;
     const completions: string[] = [];
     const unused = async (): Promise<never> => { throw new Error('not used by this run'); };
@@ -354,7 +354,7 @@ describe('running an import', () => {
     const answers = () => socket.sent.filter((frame) => (frame as { type: string }).type === 'answer_desktop_action') as Array<{ actionId: string; outcome: { ok: boolean; code?: string } }>;
     await vi.waitFor(() => expect(answers()).toHaveLength(2));
     expect(answers().map((answer) => [answer.actionId, answer.outcome.ok, answer.outcome.code])).toEqual([
-      ['a0', false, 'origin_not_allowed'],
+      ['a0', true, undefined],
       ['a1', false, 'import_rejected'],
     ]);
     expect(completions).toEqual([]);
