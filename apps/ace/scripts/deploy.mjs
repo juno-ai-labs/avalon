@@ -141,6 +141,9 @@ await Promise.all([
   retireFlag('automation-workspace-templates-enabled'),
   retireFlag('agent-model-automation-compiler'),
   retireFlag('agent-model-automation-result-disposition'),
+  retireFlag('agent-model-activity-structured'),
+  retireFlag('agent-model-addressing-classifier'),
+  retireFlag('agent-model-hypersight'),
 ]);
 await Promise.all([
   ensureFlag('suggested-work-enabled', 'True shows Suggested Work surfaces in Electron; false hides them without changing API availability.'),
