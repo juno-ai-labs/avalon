@@ -111,8 +111,9 @@ from; reduced motion turns both off.
   opens the full roster dialog), a search, the participants and suggestions
   to add inline (`TitleMenuPeople`). Sidekicks is the Sidekick section. Breakouts
   is the list, newest activity first, filtered past six. More is **Pinned in
-  sidebar** (the sidebar's own pin action, lent through `useUiStore.pinChannel`),
-  Make public, Import updates, host extras, the Channel's artifacts, and
+  my sidebar** (the sidebar's own pin action, lent through `useUiStore.pinChannel`),
+  **Public to organization** (a switch both ways; a refusal to make it private
+  names what holds it public), Import updates, host extras, the Channel's artifacts, and
   **Archive channel** last.
 - **Breakout menu:** root header is the Channel it belongs to (with **Show in
   channel**) and the message it started from. People and Sidekicks as above;
