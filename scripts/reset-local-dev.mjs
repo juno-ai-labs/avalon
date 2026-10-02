@@ -43,7 +43,7 @@ export const KEPT_DESKTOP_ENTRIES = Object.freeze([
  * Electron's `appData` for this platform, where the development client keeps
  * `Rally Development` (see `apps/desktop/src/main/user-data-path.ts`).
  */
-function desktopAppDataDirectory(platform, env, home) {
+export function desktopAppDataDirectory(platform, env, home) {
   if (platform === "darwin") return join(home, "Library", "Application Support");
   if (platform === "win32") return env.APPDATA ?? join(home, "AppData", "Roaming");
   return env.XDG_CONFIG_HOME || join(home, ".config");
