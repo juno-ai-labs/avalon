@@ -19,7 +19,7 @@ const apiDirectory = join(scriptsDirectory, '..', 'apps', 'api');
  * it. Two name segments keep region discovery from reading the copy as a
  * region, and it is rewritten on every start, so it cannot go stale.
  */
-export function containerFreeConfig(source) {
+function containerFreeConfig(source) {
   const config = parseWranglerConfig(source);
   delete config.containers;
   return `${JSON.stringify(config, null, 2)}\n`;
@@ -36,7 +36,7 @@ function writeLocalMainConfigs() {
   }
 }
 
-export function regionalApiCommands({ local }) {
+function regionalApiCommands({ local }) {
   return configuredRegions.map((region, index) => ({
     name: region,
     arguments: ['--filter', '@rally/api', 'exec', '--', 'wrangler', 'dev',
