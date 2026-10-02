@@ -279,6 +279,8 @@ nothing and most needs them. The heading shows whenever the list has rows.
 **Consequences:** The unpinned list always has a heading, so a member with no
 pins sees one more row above their Channels than before.
 
+Shipped in #1068.
+
 ### 2026-10-02 — Space pills sort A to Z
 
 **What changed:** The Space pills lost drag and `Alt`+`Arrow` reordering. All
