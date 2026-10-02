@@ -153,13 +153,11 @@ await Promise.all([
   ensureFlag('live-artifacts-enabled', 'True shows live-artifact surfaces in Electron — the rail site detail and preview, the data view, and the artifact window; false hides them. An artifact URL somebody already holds keeps working either way, because its authorization is structural rather than flagged.'),
   ensureModelFlag('agent-model-workstream', 'Runs the main participant-visible work stream and the structured attachment-summary pass: reasons over transcripts, calls tools, and streams answers.', 'openai/gpt-5.6-terra', ['google/gemini-3.8-flash']),
   ensureModelFlag('agent-model-inline-child', 'Runs a bounded read-only child task delegated by a work-stream agent and returns the result to its parent.', 'openai/gpt-5.6-terra', ['google/gemini-3.8-flash']),
-  ensureModelFlag('agent-model-automation-compiler', 'Turns an automation setup conversation into the saved automation definition, schedule, scope, and delivery plan.', 'x-ai/grok-4.5', ['google/gemini-3.6-flash']),
   ensureModelFlag('agent-model-workstream-naming', 'Creates the short work-stream title from the opening request while the creator waits.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.8-flash']),
   ensureModelFlag('agent-model-work-opportunity-admission', 'Decides whether recent unclaimed activity should become a personal or workspace suggestion and drafts its candidate.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.8-flash']),
   ensureModelFlag('agent-model-work-opportunity-ranking', 'Orders admitted suggestions for one person, accounting for freshness and impressions before storing the visible set.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.8-flash']),
   ensureModelFlag('agent-model-workstream-description', 'Re-evaluates the derived one-line description after terminal runs and rewrites it only when the work stream changed purpose.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.8-flash']),
   ensureModelFlag('agent-model-session-import', 'Drives the person\'s desktop browser (page script, page outline, screenshots, input) to read a ChatGPT or Claude conversation and its files into a new Channel. Must accept images.', 'openai/gpt-5.6-terra', ['google/gemini-3.8-flash']),
-  ensureModelFlag('agent-model-automation-result-disposition', 'Decides whether a completed automation run is worth delivering at all, and whether its result belongs in the work stream that owns the automation or in the work stream the run itself used, made visible.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.6-flash']),
 ]);
 await verifyRuntimeQueuePermissions({ accountId, token: aceRuntimeToken });
 

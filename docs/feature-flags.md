@@ -825,7 +825,7 @@ would mean maintaining two copies of every flag that are meant to stay
 identical. Staging a rollout per region does not need a second app either:
 `region` is in the evaluation context, so a targeting rule reaches one region.
 
-Ace automatically ensures all ten `agent-model-*` JSON flags plus
+Ace automatically ensures all seven `agent-model-*` JSON flags plus
 `meeting-recording-enabled`, `suggested-work-enabled`,
 `multiple-workspaces-enabled`,
 `live-artifacts-enabled`, `push-notifications-enabled`, and `digests-enabled` exist on every
