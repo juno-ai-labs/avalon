@@ -153,6 +153,13 @@ describe('browser import window', () => {
     fireEvent.pointerDown(within(progress).getByRole('button', { name: 'More import actions' }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy import id' }));
     await waitFor(() => expect(harness.bridge.copyText)
-      .toHaveBeenCalledWith('https://rallywith.ai/app/global/1111117Hxt1fAWDjN7Te/i/1111117Hxt1fAWDjN7WQ?c=CduMrko5vpzwph2okTVLJ'));
+      .toHaveBeenCalledWith('https://rallywith.ai/app/global/1111117Hxt1fAWDjN7Te/i/1111117Hxt1fAWDjN7WQ/c/CduMrko5vpzwph2okTVLJ'));
+    expect(within(progress).queryByText('The import id could not be copied.')).toBeNull();
+
+    // A copy that does not reach the clipboard says so, rather than leaving a stale one to paste.
+    harness.bridge.copyText.mockRejectedValueOnce(new Error('clipboard denied'));
+    fireEvent.pointerDown(within(progress).getByRole('button', { name: 'More import actions' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy import id' }));
+    expect(await within(progress).findByText('The import id could not be copied.')).toBeVisible();
   });
 });
