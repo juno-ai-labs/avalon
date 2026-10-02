@@ -156,25 +156,24 @@ it.
 personal states, which it never faced before: it now outranks `unread` and loses
 to `mentioned` and `unseen`, in the one place those pairs were already decided.
 
-### Channel rail
+### Channel row
 
-Main and every Breakout use their own viewer state to decide whether the
-Channel rail shows its existing attention count badge. Each row counts one
-conversation, so the badge reads 1 when `conversationNeedsViewer` is true and
-is absent otherwise. The left Channel navigation counts accessible Main and all
-Breakouts needing attention in its single badge; its Channel glyph has no state
-dot or cutout.
-The badge follows `conversationNeedsViewer`, so a scheduled, running or
-needs-input run counts even when there is nothing unread. A read, failed run
-does not count on run state alone; the Space dashboard and the open Channel
-header still show its failure state.
+The per-Channel rail and its per-conversation count badges were removed with
+the shell redesign ([`desktop-shell.md`](desktop-shell.md)). The sidebar's
+Channel row counts accessible Main (by `conversationNeedsViewer`) plus
+`breakoutAttentionCount`, and any count marks the row unread: a semibold title
+and a red dot. The count is spoken in the row link's accessible name ("N
+conversations need attention") rather than drawn as a badge. A scheduled,
+running or needs-input run counts even when there is nothing unread. A read,
+failed run does not count on run state alone; the Space dashboard and the open
+Channel header still show its failure state.
 
 ### Project space
 
 The project space lists a project's work streams and draws the ranked marker on
 each row. It is the list that draws **the ranked per-person dot** — the Sidekick
 run history draws a dot too, but from a run's own status rather than this
-viewer's. Channel navigation and the Channel rail use count badges.
+viewer's. The sidebar's Channel row uses the unread treatment above.
 
 **The dot carries the state; the label beside it is not coloured.** These rows
 are the home screen's retired **Needs attention** rows, reused wholesale, and
@@ -246,7 +245,7 @@ own:
   object's, described in the same document. Each conversation keeps its own,
   Main and every private substream alike, which is why a read is acknowledged
   against the conversation that was read rather than against the work stream;
-  the Channel rail receives each Breakout's viewer state from the Channel parent.
+  the Channel row receives each Breakout's viewer state from the Channel parent.
 - **How a colour reaches the screen** — [`theming.md`](theming.md) owns the
   token vocabulary, the theme files, and the generated stylesheet.
 - **Notifications.** Being added to a work stream also produces an activity
@@ -277,7 +276,7 @@ own:
 | --- | --- | --- |
 | `apps/desktop/src/renderer/lib/format.test.ts` | The ranking, pair by pair, and the queued-run fold. | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/format.test.ts` |
 | `apps/desktop/src/renderer/screens/workstream.test.tsx` | The header draws a queued run as running, which is what holds the second call site to the fold. | `pnpm --filter @rally/desktop exec vitest run src/renderer/screens/workstream.test.tsx` |
-| `apps/desktop/src/renderer/components/workstream-sidebar.test.tsx` | Main and Breakout rows show independent attention badges. | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/workstream-sidebar.test.tsx` |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` | A Channel row counts Main and Breakout attention together and marks Breakout-only news as unread. | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/sidebar.test.tsx` |
 | `apps/api/test-workers/unseen-workstream-state.test.ts` | On real workerd: added at creation, added later, cleared by the first open, unchanged by a duplicate add, set again by a re-add. | `pnpm --filter @rally/api test:workers` |
 | `apps/api/test-workers/workspace-directory-reads.test.ts` | The flag survives the workspace projection as the viewer's rather than the row's. | as above |
 | `apps/api/test/workstream-object-schema.test.ts` | Both compatibility views reset the column on a re-add, and leave it alone on a removal. | `pnpm --filter @rally/api exec vitest run test/workstream-object-schema.test.ts` |

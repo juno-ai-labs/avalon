@@ -521,9 +521,10 @@ where before it changed nothing. The first advance after deploy moves every
 list once because the hashed shape grew. A breakout whose preparation row is
 gone lists `originTurnId: null`, indistinguishable from one branched through no
 turn. `/sharing/navigation` also carries `originTurnId` and a Space's
-`systemRole`. Desktop and browser builds older than this change parse that
-response strictly and reject it; they were cut over with it rather than given an
-opt-in, because no released client had to keep working.
+`systemRole`, but only when the request asks with `shell=1`. Released desktops
+parse that response strictly and reject a key they do not know, so for them the
+read keeps its old shape; a guest's whole sidebar is this read. A future field
+here takes the same route: an opt-in flag, never an unconditional addition.
 
 ### 2026-09-28 — A Channel's rail is answered here, and its row says when it moved
 

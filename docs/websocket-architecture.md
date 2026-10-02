@@ -61,7 +61,7 @@ protocol inside each Durable Object.
 | `packages/contracts/src/workspace-reach-watch.ts` | The listen-only workspace socket for hosts without one of their own (Sideline main, the lite browser), and the heartbeat and reconnect numbers every workspace-socket client shares. |
 | `apps/desktop/src/renderer/lib/conversation-admission.tsx` | Composes account and workspace-journey readiness independently of connection warming. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns one substream `0` feed per selected work stream above the route, retains recently viewed feeds for five minutes, and supports presence-free feed warming on deliberate hover. |
-| `apps/desktop/src/renderer/lib/channel-viewer-state.ts` | Writes the breakouts and running background agents each workspace-socket Channel row carries into the caches the Channel rail and composer read. |
+| `apps/desktop/src/renderer/lib/channel-viewer-state.ts` | Writes the breakouts and running background agents each workspace-socket Channel row carries into the caches the Channel menu and composer read. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Owns the SubstreamAgent feed protocol, ticket request, snapshot/replay application, heartbeat, pagination, and reconnect state machine. |
 | `apps/desktop/src/renderer/lib/realtime-socket.ts` | Presents a browser-shaped socket to the feed hook and maps Electron sockets onto one socket-ID-multiplexed preload listener. Browser development falls back to the native `WebSocket` constructor. |
 | `apps/desktop/src/common/realtime-socket.ts` | Defines the closed IPC schemas for opening, sending, closing, and receiving brokered socket events. |

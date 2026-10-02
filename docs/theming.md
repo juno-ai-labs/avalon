@@ -135,9 +135,7 @@ serves it through `rally-font://`.
   beside the rule — not a literal on that one selector. Overriding each
   consumer in turn is what let `sys.space.group.gap` keep a retired theme's
   60px in the one place nobody had overridden; the value that survives that
-  process is the one nobody argued for. `margin-top: 0` on the compact rail is
-  allowed because it hides the headings the gap spaces, which is a decision
-  rather than an escape.
+  process is the one nobody argued for.
 - **A rule that names a token is not proof the token reaches it.** Check for a
   shorthand later in `app.css` that shadows the longhand on the same element —
   `.sidebar-primary-actions` (`app.css:703`) names `sys.space.group.gap` and has

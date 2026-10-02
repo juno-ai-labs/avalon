@@ -171,8 +171,9 @@ stacks at the left of the Breakout's header, and pressing its title closes the
 panel to return to the split. Opening a Breakout while the Channel holds a
 panel closes that panel first. The split's width is device-local under
 `layoutKey(…, 'breakout-width')` and clamps both panes to the conversation
-minimum. A window too narrow for two minimums splits the panes evenly instead,
-and the pane's CSS cap allows that half, so the stored width is the drawn one.
+minimum. A split too narrow for two minimums (under 848px of content) shows
+the Breakout alone instead, measured by `SplitConversationLayout` itself; its
+close button returns to the Channel.
 
 ### Web links
 
@@ -272,5 +273,7 @@ Channel look placed.
 - Anything that opens, closes or reads the right panel inside a surface must go
   through that surface's scope.
 - A new pane-level control belongs in a title menu, not a header row.
-- Reply counts are not shown; adding them needs a counted field on the Breakout
-  row.
+- A Breakout's reply count is derived from its loaded history, so it appears
+  only on its own title pill once that history is fully loaded; showing it
+  anywhere else (a chip, a tick, the Channel menu) needs a counted field on the
+  Breakout row.

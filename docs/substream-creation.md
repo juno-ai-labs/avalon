@@ -50,42 +50,32 @@ execution independently. See [prepared conversations](session-import.md).
 
 ## How it works
 
-The middle sidebar puts the main conversation first, then one full-width row per
-child — including, while one is being created, the child that does not exist
-yet — then **New substream**. Every row is the navigation sidebar's work-stream
-row — borderless, one 36px leading mark slot — and the mark is what tells them
-apart: the Channel's own tinted icon for Main, each Breakout's own stored or
-ID-derived tinted icon, and the blue enter mark for creation. Selecting a
-Breakout exposes the shared appearance picker in that Breakout's title bar;
-the choice is stored by the child and projected into the parent-owned row.
-Compact hides the titles but keeps those same marks. It retains the existing
-sidebar colors, row sizing, drag width and icon-only collapse. A completed
-main-feed message also offers **New substream** with that message as the cutoff:
-last in the assistant turn's action row, after Copy, Speak, Image and PDF, and in
-a row of its own under any person's bubble — the reader's own turn and a
-colleague's alike — ending on the same vertical as the identity line above it.
-Both placements appear on hover, alongside the other things a settled turn can be
-asked to do. [Conversation surfaces](conversation-surfaces.md) owns the rows
-themselves.
+The middle sidebar that listed Main, one row per child and **New substream**
+was removed with the shell redesign ([`desktop-shell.md`](desktop-shell.md)).
+A Channel's Breakouts are now listed in its title menu, newest activity first,
+and marked by chips under their origin message and ticks on Main's edge; the
+open Breakout sits in the right pane beside Main. Each Breakout's mark is its
+own stored or ID-derived tinted icon, chosen from **Icon and color** in its
+menu; the choice is stored by the child and projected into the parent-owned
+row. A Breakout is created only from a message: a completed main-feed message
+offers **New breakout** with that message as the
+cutoff, last in the assistant turn's action row and in a row of its own under
+any person's bubble, and under Rally's newest reply as a visible line. There is
+no context-strategy picker, no title field and no preview step.
+[Conversation surfaces](conversation-surfaces.md) owns the rows themselves.
 
-The sidebar row and the message control enter the same creation flow; there is no
-context-strategy picker, no title field and no preview step.
-
-The main row’s right-click menu offers **Make public to workspace**, **Rename**,
-**Copy work stream link**, then a separator and **Archive work stream** in danger
-styling. Publication is disabled for an already-public stream and omitted for
-system-managed streams. Child rows offer **Rename**, **Copy substream link**, then
-a separator and **Archive substream** in danger styling. Actions target the row
-that was clicked, including Main while a child is open; rename and archive reuse
-the screen’s target-addressed dialogs. Links use the canonical workspace address
-and include the child suffix only for child rows.
+Row actions — rename, copy link, share, make public, archive — live in each
+conversation's title menu (`ConversationRowActions` in
+`packages/ui/src/components/conversation-menus.tsx`) and target that
+conversation; rename and archive reuse the screen's target-addressed dialogs.
+Links use the canonical workspace address and include the child suffix only for
+child rows.
 
 ### The launch surface
 
-Both entry points replace the conversation's three rows — header, transcript,
-composer dock — with the launch surface, inside the same column. The work
-stream's sidebar, inspector and retained parent socket do not move, because the
-work stream has not been left; only its middle column has something else in it.
+The launch surface opens in the right pane beside Main, as a second Main
+surface with `paneKey="launch"`. Main, its panel and the retained parent socket
+do not move, because the Channel has not been left.
 
 The geometry is `.workstream-launch-screen`, shared with the work-stream
 launcher and described in [`workstream-creation.md`](workstream-creation.md):
@@ -96,7 +86,7 @@ those values any more — it is the same message capsule, at the same width, on
 both sides of the submit, per
 [`conversation-surfaces.md`](conversation-surfaces.md).
 
-What sits above that composer is the difference between the two entry points:
+What sits above that composer is the branch provenance:
 
 - **From a message** — the turn that was branched from and the four before it,
   faded out upward under a gradient mask and inert to the pointer. They say what
@@ -106,9 +96,6 @@ What sits above that composer is the difference between the two entry points:
   composing rather than part of the substream, so the keystroke that submits is
   the last frame they are drawn on: anything still above the opening turn —
   collapsing, faded, or merely inert — is height the swap has to take back.
-- **From the sidebar** — nothing, exactly as the work-stream launcher's body is
-  empty. A substream started there branches from wherever the conversation has
-  reached, so there is no particular moment to be looking at.
 
 The composer itself is the work-stream launcher's, and carries the same one
 control the launcher does: while Application → Developer → **Debug enabled** is
@@ -164,27 +151,13 @@ in the same place rather than showing its opening state. A creation that fails
 takes the optimistic turn back off the screen and puts the words back in the
 composer.
 
-The rail draws the row from that same keystroke. It is the ordinary child row —
-the arrow in the mark slot, selected — carrying the title skeleton the header
-above it already shows, placed last in the list, where a child created now will
-be listed. **New substream** goes back to being the row that starts the next
-one. Two round trips is long enough that the conversation on screen having no
-row of its own was the surface saying nothing about the thing it was doing, and
-a plus row claiming to be where the reader is says it wrong. The skeleton rather
-than the first line of the message because the title is the server's to derive:
-a second answer here to what a first line is would disagree the moment either
-changed.
-
-The placeholder yields to the child's own row the moment the parent's directory
-carries it, which is **before** the navigation rather than at it: readiness
-broadcasts from inside the confirmation, so that frame can reach the window
-while the response is still in flight. The rail recognizes the row by the id
-preparation reserved — `prepare` answers with it, the child is provisioned under
-the same one, and `workstream.tsx` holds it for the attempt on screen. Without
-that the two would be drawn side by side, one conversation with two rows. While
-the published row stands in for a creation the route has not caught up with, it
-is the row marked current, because that is the conversation the launch surface
-is showing.
+No placeholder row is drawn while the creation is in flight: the rail that
+held one was removed with the shell redesign. The launch pane carries the
+optimistic turn, and the Breakout appears in the Channel menu and as a chip
+once the parent's directory carries it, which is **before** the navigation:
+readiness broadcasts from inside the confirmation. The id preparation reserved
+— `prepare` answers with it and the child is provisioned under the same one —
+is what lets the route and that row agree.
 
 The timer is the one thing the swap does not carry across, and deliberately: a
 work stream's creation writes its run and answers with the id, while a message
@@ -198,7 +171,7 @@ its launch surface opens there too, as a second Main surface keyed
 the Channel's title menu belongs to the parent work stream. Opening a Breakout
 changes the right pane, not the menu's artifact inventory, parent participant
 roster or management target. The right side of the conversation title bar shows a participant facepile for the
-selected conversation. Main participants appear in both the sidebar and Main
+selected conversation. Main participants appear in both the Channel menu and Main
 title bar; a child title bar manages only that child. The parent socket remains retained on
 direct child links. This shared chrome does not publish private child resources
 or replace the child's creator-only conversation membership.
@@ -265,11 +238,11 @@ That projection is the authority and it is not quick: the child's directory
 effect goes to the Queue and back before the parent knows, about fourteen
 seconds after a substream is created — which is exactly when its naming pass
 renames it. The child knows its new name at once and the parent does not, so a
-window opened in which the header carried the name Rally chose and the rail
-beside it still carried the first line of the message. A window in which one
+window opened in which the header carried the name Rally chose and the Breakout
+list still carried the first line of the message. A window in which one
 conversation has two names is a defect whichever name is right.
 
-The rail closes it by reading rather than writing. Every row it draws comes from
+The list closes it by reading rather than writing. Every row it draws comes from
 the parent's directory, except the row for the substream that is **open**, whose
 title comes from that child's own detail — the same entry the header renders, so
 the two cannot say different things (`railChildren` in `workstream.tsx`). It
@@ -282,7 +255,7 @@ Only the open child, and read-time rather than written back into the directory,
 and both restrictions are the same decision. The parent's projection stays the
 only writer of that cache: a patch into it is replaced wholesale by the next
 parent frame, which inside the window still carries the old name, so whether the
-rail was right would come down to which socket spoke last — measured in a real
+list was right would come down to which socket spoke last — measured in a real
 window, the parent's frame on a cold open usually speaks second and wins. And
 no other row has a better answer available: nothing in the window subscribes to
 a substream it is not showing, so for every child but the open one the parent's
@@ -326,7 +299,7 @@ A child row's context menu offers **Rename** and **Archive substream**.
 or `archived` per request. Rename writes the child's own title; its common
 projection updates the parent-owned child registry. The desktop applies a child
 rename event to the child's detail and to nothing else — never the workspace's
-parent row, whose name a child cannot change — and the rail draws the open
+parent row, whose name a child cannot change — and the list draws the open
 child's row from that same detail, per **The name a substream is given** above.
 Archive stores `conversation_children.archived_at`, removes the row from every
 member's child directory, and refuses messages, membership changes and new
@@ -573,7 +546,7 @@ five completion/error cases.
   from admission.
 - Desktop socket, sidebar, draft, navigation and performance suites exercise
   cache isolation, recovery and operation correlation. Real Electron QA is
-  additionally required for expanded/compact sidebar, preview, child navigation,
+  additionally required for the split pane, the Channel menu, child navigation,
   themes, drag width and composer readiness.
 
 Run the focused suites with the package-local Vitest paths per

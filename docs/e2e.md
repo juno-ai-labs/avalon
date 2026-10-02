@@ -103,7 +103,7 @@ Run the Electron desktop with `pnpm dev:desktop` and exercise these flows agains
 18. Ask Rally to follow up at a specific time, then ask it to follow up after a relative delay. Confirm each work-stream row gains a clock at its right edge as soon as the wake-up is pending, including while its latest run is already **Latest run completed**. Hover the clock and confirm its tooltip shows the earliest wake-up's exact local date and time plus no more than 40 characters of its prompt, ending a longer one with an ellipsis. Add a second wake-up, cancel the first, and confirm the tooltip advances to the second; let that one fire and confirm the clock disappears. Work streams with only fired or cancelled wake-ups show no clock.
 19. **As a guest, whose sidebar is the only one that still groups Channels by time.** Populate several recency groups, including more rows in one group than the sidebar has loaded, and confirm every group header has a small **⋯** action. With more than 250 notes in the workspace, scroll the sidebar to the bottom and confirm older notes keep arriving — the list pages the way work streams do — and that a note edited in another window does not snap the list back to its first page. Open it and confirm **Mark all as read** and **Archive all** are the only choices. Choose each in turn and confirm a **Continue** / **Cancel** dialog calls it a mass change and names the complete server-side count rather than only the visible rows. Confirm **Cancel** changes nothing. Continue **Mark all as read** and confirm the dialog named work streams only — a note has no read state — and that every unpinned, non-system work stream in that exact date group loses its unread, mention, and unseen marker while other groups and pinned rows do not. Put notes in the same group first, including one owned by another member and one still recording, and confirm the **Archive all** dialog names work streams *and* notes and counts only the notes you own that are not recording. Confirm an automation's runs are counted by neither dialog: with a recent run and a planned run in that date range, the count matches the rows under the heading, and after **Archive all** the automation's **Recent runs** and **Next run** still open. Continue **Archive all** and confirm the same target set disappears for every member, that your own idle notes under that heading go with it while the other member's note and the recording one stay, that an open target — work stream or note — is replaced by the ordinary unavailable treatment, and that any active run in a target stops. While Queue delivery is in flight, repeat the same operation ID and confirm no work stream is changed twice; change membership before delivery and confirm the removed member's queued personal update is skipped.
 20. As an ordinary member, confirm the sidebar has **no** time-grouped list of Channels at all: no **Last hour**, **Today** or weekday headings, and no **⋯** bulk action, because every Channel is under the Space that holds it. Have another member put a Channel you can read into a personal Space of their own and confirm it appears under **Other channels** below the Spaces — flat, newest first, no headings. Place it in a Space you can see and confirm that section disappears with it. Pin an unplaced Channel and confirm it is in **Pinned** only, not in both.
-21. Arrange the Organization's Space rail and the selected Space's Pinned section by hand and confirm each order survives. Repeat with `Alt`+`ArrowUp` / `Alt`+`ArrowDown` on a focused row. Confirm ordinary Channels sort A–Z case-insensitively below Pinned and Breakouts sort the same way below Main, with **New breakout** last; neither alphabetical list should reorder by drag or keyboard. With Pinned initially empty, start dragging an ordinary Channel and confirm the Pinned target appears, then drop it there; drag the new pinned row around and confirm only Pinned changes. Drag an ordinary Channel onto another Space and confirm it is *placed* there without changing either alphabetical order. Stop the API and repeat a manual Space or Pinned move: confirm the row snaps back to the order the server holds and the section says so, rather than keeping an arrangement nothing took.
+21. Arrange the Organization's Space pills and the selected Space's Pinned section by hand and confirm each order survives. Repeat with `Alt`+`ArrowUp` / `Alt`+`ArrowDown` on a focused row. Confirm ordinary Channels sort A–Z case-insensitively below Pinned and the Channel menu lists Breakouts by latest activity; neither list should reorder by drag or keyboard. With Pinned initially empty, start dragging an ordinary Channel and confirm the Pinned target appears, then drop it there; drag the new pinned row around and confirm only Pinned changes. Drag an ordinary Channel onto another Space and confirm it is *placed* there without changing either alphabetical order. Stop the API and repeat a manual Space or Pinned move: confirm the row snaps back to the order the server holds and the section says so, rather than keeping an arrangement nothing took.
 22. On a Mac, narrow the main window to its 860-pixel minimum, so the navigation collapses into a drawer. Confirm the work-stream header's drawer button, title, and run status all start to the right of the traffic lights rather than under them, and that the drawer button is clickable — the traffic lights are chrome above the page and take the press, so a header under them is not merely hard to read. Open the resource lightbox at that width and confirm the drawer button keeps its full 30-pixel box while the title truncates around it, rather than the button giving up width first. Widen the window again and confirm the header returns to sitting immediately after the navigation, with no gutter of its own. Do the same on an automation's overview, whose header is laid out by the same rule. On Windows or Linux, where the buttons are in a frame above the page or not drawn at all, confirm the collapsed header keeps its old 8-pixel gutter and gains no indent.
 
 ## Desktop signup, invitations, and settings
@@ -318,7 +318,7 @@ never registers a login item. See [`menu-bar.md`](menu-bar.md).
 
 1. Sign in and navigate among several screens. Confirm Electron opens exactly one WorkspaceDO socket for the active workspace and does not reconnect it merely because the selected work stream changed. Confirm the initial sidebar and each infinite-scroll page are correlated `list_workstreams` / `workspace_workstream_page` messages on that socket, with no REST/D1 work-stream-list request. From a second client, change workspace timezone, Terminal policy, an invitation/member, and a connector health state; confirm the first client refreshes the corresponding screen within one event without polling or reloading.
 2. Disconnect the WorkspaceDO socket after waterline 4, publish several different workspace topics, and reconnect. Confirm it subscribes with `afterWaterline: 4` and receives one newest-waterline event containing the union of missed topics rather than every intermediate invalidation. Exceed the 1,024-event window and confirm one `history_unavailable` event invalidates all workspace surfaces. Send an equal/older waterline afterward and confirm the renderer ignores it. Drop the socket after a user command commits but before its private receipt and confirm reconnect resends the same client message ID and creates exactly one transcript row.
-3. Open a work stream and confirm Electron opens one SubstreamAgent feed socket for it and no Channel control socket (no `GET /workstreams/:id/control-socket`, no `/socket/workstreams/:id` upgrade). Rename it, clear its email/plan, change its state and mention/read metadata from another client, and confirm the header, sidebar Active/In Progress/Completed grouping, unread marker, and You Are Mentioned view converge from complete workspace-socket rows with independent increasing common/viewer waterlines; a duplicated row must cause no visual reset. Confirm the Channel rail lists your breakouts from the same rows. Deliver viewer waterline 6 before common waterline 5, then duplicate and reorder both Queue messages; confirm each field advances independently and neither rolls back. Disconnect WorkspaceDO during an older-page request, reconnect it, and confirm the pending request resumes once with no missing, duplicated, or re-ordered rows and that an already-resident directory is refreshed to the latest state. A lower generation/waterline or older WorkspaceDO directory page must not roll back common/viewer fields or pin position.
+3. Open a work stream and confirm Electron opens one SubstreamAgent feed socket for it and no Channel control socket (no `GET /workstreams/:id/control-socket`, no `/socket/workstreams/:id` upgrade). Rename it, clear its email/plan, change its state and mention/read metadata from another client, and confirm the header, sidebar Active/In Progress/Completed grouping, unread marker, and You Are Mentioned view converge from complete workspace-socket rows with independent increasing common/viewer waterlines; a duplicated row must cause no visual reset. Confirm the Channel menu lists your breakouts from the same rows. Deliver viewer waterline 6 before common waterline 5, then duplicate and reorder both Queue messages; confirm each field advances independently and neither rolls back. Disconnect WorkspaceDO during an older-page request, reconnect it, and confirm the pending request resumes once with no missing, duplicated, or re-ordered rows and that an already-resident directory is refreshed to the latest state. A lower generation/waterline or older WorkspaceDO directory page must not roll back common/viewer fields or pin position.
 4. Switch between two streaming work streams. Confirm both running work streams retain their Channel control and SubstreamAgent sockets, each resumes its own cursor, and neither receives the other's metadata or tokens. Once an unselected work stream is idle, confirm both child-scoped sockets close while the one workspace socket remains. Revoke access to a private work stream and confirm its metadata/detail/sidebar row is removed and its feed stops retrying.
 5. Open a work stream and confirm the first SubstreamAgent frame is `subscribe` with `afterSequence: 0`, followed by one room snapshot rather than duplicate snapshots.
 6. Disconnect after receiving an event and reconnect. Confirm the new socket subscribes with the last applied sequence and receives only newer buffered events.
@@ -732,47 +732,13 @@ Flows 2 and 3 require external services and are release gates for a hosted test 
 
 ### Sidebar geometry and resizing
 
-Both collapsed navigation sidebars are 96 CSS pixels wide, allowing symmetric
-space around the macOS traffic lights. Their navigation controls, including
-Search and New substream, are 54-pixel squares with 9-pixel padding. Collapse
-controls sit at the bottom; the account avatar and navigation toggle remain
-side by side. In the global navigation, Search sits above the scrolling
-streams in both widths and the rail's New work stream row sits under it.
-Collapse and expand the global navigation with ⌘B and confirm its contents
-travel with the edge rather than cutting a frame ahead of it: the rows narrow to
-their marks as the titles fade, the headings close, the search pill closes to
-its icon in place, the titlebar's New work stream fades while the rail's slides
-in under Search once the slot has opened, and on expand the rail's New work
-stream slides out to the left as the pill reopens. Drag the edge past the
-threshold and confirm the contents snap with it, as the edge does. Toggle the
-work-stream sidebar the same way and confirm its rows narrow to their marks as
-the copy fades, the section headings close as the section rules appear, a
-substream's arrow cross-fades into its initial, the participants'
-avatars shrink into the square, and the footer's toggle glides to the centre.
-The main conversation row uses the work-stream title, and carries
-the work stream's own icon in its colour; a substream row carries the `↳`
-arrow, which compact replaces with the first character of the substream's
-title, and **New substream** carries a plus.
-
-Check each bottom toggle and double-click each right edge to collapse and
-expand. Drag short of the expansion/collapse threshold and confirm a faint
-vertical guide follows the pointer; release or cancel and confirm it disappears.
-Expand all three hierarchy rails, then select a Space, a Channel, Main, a
-Breakout, and **New breakout**. Confirm only the Spaces rail auto-collapses:
-the Channels and Breakouts rails remain expanded until their own explicit
-controls or a narrow window compacts them. Manually collapse either contextual
-rail, navigate within it, and confirm navigation preserves that choice too.
-Check both appearances, long titles, and a short window: account and collapse
-controls must remain visible while the content scrolls.
-
-Public work streams show the globe in the glyph's upper-right corner, above
-the status badge. Both badges have a surface-colored cutout and stay attached
-to the glyph in expanded and collapsed navigation. Check public and private
-rows, selected and hovered rows, and light and dark appearances.
-
-In collapsed navigation, Search and New work stream sit in the command bar above
-the work-stream scroller. Scroll a long list and confirm both stay put at the
-top, and that the account and collapse controls stay fixed at the bottom.
+The navigation is one sidebar that never collapses
+([`desktop-shell.md`](desktop-shell.md)); there is no ⌘B toggle, compact rail,
+or bottom collapse control. Drag its edge and confirm it stops at the minimum
+rather than snapping shut, and that the width survives a relaunch. Double-click
+the right panel's edge and confirm it resets to its default width. Check both
+appearances, long titles, and a short window: the account row must remain
+visible while the list scrolls.
 
 Hover a public stream icon and then move onto its globe in both appearances.
 The globe stays visible and answers for itself — **Public — everyone in the
@@ -809,9 +775,6 @@ switch away, and confirm it is gone rather than waiting there on your return.
 Repeat once more with a resize handle's drag hint, which is the one tooltip
 whose open state its caller holds rather than `Tip`.
 
-When a narrow window forces navigation into compact mode, its Expand control
-is disabled and double-clicking the edge must preserve the saved expanded
-preference. Widening the window restores expansion. Clicking either separator
-must focus it so ArrowLeft/ArrowRight can immediately resize it. Public stream
-links expose their visibility as an accessible description; the compact center
-sidebar's bottom toggle is centered in the same icon column as its rows.
+Clicking either separator must focus it so ArrowLeft/ArrowRight can
+immediately resize it. Public stream links expose their visibility as an
+accessible description.
