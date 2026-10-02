@@ -26,6 +26,19 @@ class FakeContents extends EventEmitter {
   setBackgroundThrottling = (throttled: boolean): void => { this.throttled = throttled; };
   focused = false;
   isFocused = (): boolean => this.focused;
+  /** DevTools: events a test emits, and the bodies `Network.getResponseBody` answers with. */
+  bodies = new Map<string, { body: string; base64Encoded: boolean }>();
+  debugger = Object.assign(new EventEmitter(), {
+    attached: false,
+    isAttached: () => this.debugger.attached,
+    attach: () => { this.debugger.attached = true; },
+    sendCommand: vi.fn(async (method: string, params: { requestId?: string } = {}) => {
+      if (method !== 'Network.getResponseBody') return {};
+      const body = this.bodies.get(params.requestId ?? '');
+      if (!body) throw new Error('No resource with given identifier found');
+      return body;
+    }),
+  });
   close = vi.fn(() => { this.destroyed = true; this.emit('destroyed'); });
 }
 
@@ -214,5 +227,36 @@ describe('the local browser behind the rail and the import window', () => {
     instance.dispose();
     expect(electron.views[0]!.webContents.close).toHaveBeenCalled();
     await expect(instance.command({ action: 'open' })).rejects.toThrow('Browser is closed');
+  });
+
+  it('records the page’s responses, keeps fetched bodies after the browser lets them go, and starts over on a new document', async () => {
+    const { instance } = browser();
+    await instance.command({ action: 'open', url: 'https://chat.example/c/1' });
+    const tabId = instance.state().activeTabId!;
+    const contents = electron.views[0]!.webContents;
+    expect(contents.debugger.sendCommand).toHaveBeenCalledWith('Network.enable');
+    const network = (method: string, params: Record<string, unknown>) => contents.debugger.emit('message', {}, method, params);
+    network('Network.requestWillBeSent', { requestId: 'r1', request: { method: 'POST' } });
+    network('Network.responseReceived', { requestId: 'r1', type: 'Fetch', response: { url: 'https://chat.example/api/conversation/1', status: 200, mimeType: 'application/json' } });
+    network('Network.responseReceived', { requestId: 'r2', type: 'Image', response: { url: 'https://chat.example/logo.png', status: 200, mimeType: 'image/png' } });
+    contents.bodies.set('r1', { body: '{"messages":[1,2]}', base64Encoded: false });
+    network('Network.loadingFinished', { requestId: 'r1', encodedDataLength: 18 });
+    network('Network.loadingFinished', { requestId: 'r2', encodedDataLength: 900 });
+    await vi.waitFor(async () => expect(await instance.command({ action: 'network', tabId })).toEqual({ kind: 'network', responses: [
+      { requestId: 'r1', url: 'https://chat.example/api/conversation/1', method: 'POST', status: 200, mimeType: 'application/json', resourceType: 'Fetch', size: 18, cached: true },
+      { requestId: 'r2', url: 'https://chat.example/logo.png', method: 'GET', status: 200, mimeType: 'image/png', resourceType: 'Image', size: 900, cached: false },
+    ] }));
+
+    // Chromium has evicted its copy; the fetched body still reads back.
+    contents.bodies.clear();
+    expect(await instance.command({ action: 'response_body', tabId, requestId: 'r1' }))
+      .toEqual({ kind: 'response_body', body: '{"messages":[1,2]}', base64Encoded: false });
+    await expect(instance.command({ action: 'response_body', tabId, requestId: 'r2' })).rejects.toThrow('No resource');
+
+    // A same-document change keeps the list; a new document starts it over.
+    contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: true });
+    expect((await instance.command({ action: 'network', tabId }) as { responses: unknown[] }).responses).toHaveLength(2);
+    contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+    expect(await instance.command({ action: 'network', tabId })).toEqual({ kind: 'network', responses: [] });
   });
 });

@@ -111,6 +111,12 @@ as Google Chrome.
   users would expose one person's website sessions to another.
 - Native page bounds follow the rail and are hidden behind Rally overlays.
   Otherwise a guest page can paint above a dialog or outside the browser rail.
+- Every tab records its page's network responses from creation through
+  DevTools, and copies Fetch and XHR bodies as each finishes; a new document
+  clears the record. An agent reads the data a web app loaded instead of
+  rebuilding the request that loaded it, and reads it again after Chromium has
+  evicted its own copy. A tab under an open DevTools window records nothing,
+  because only one debugger can attach.
 - Hidden is parked, not collapsed: the active tab keeps its size outside the
   window, unthrottled and without keyboard focus. An agent driving it reads,
   captures and clicks the same page whether or not a Rally overlay covers it,
@@ -218,6 +224,13 @@ keeps sending the page's real rectangle while it hides it. Parking rather than
 an input-swallowing overlay view was chosen because it needs no second
 renderer: the page is unreachable for being out of the window, and the
 renderer draws whatever should show behind its overlay.
+
+Each tab now records its network responses from its first request. Recording
+must start before a request for Chromium to keep its body, so it cannot wait
+for an agent to ask; bodies of Fetch and XHR responses are copied because that
+is where a web app's data arrives, and Chromium's own buffer evicts them. The
+record is bounded by one document: a navigation to a new one clears it, which
+is why no separate size limit was added.
 
 ### 2026-09-25 — Closing the only blank tab closes the rail
 

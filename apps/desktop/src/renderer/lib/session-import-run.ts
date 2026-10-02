@@ -43,6 +43,11 @@ export function assemblePreview(
   const ids = parsed.data.map((message) => message.sourceMessageId);
   const duplicate = ids.find((id, index) => ids.indexOf(id) !== index);
   if (duplicate) throw new Error(`sourceMessageId ${duplicate} appears more than once.`);
+  // A chat with no reply is never what a provider shows; an import that has
+  // none dropped them, often a report held where the reader did not look.
+  if (!parsed.data.some((message) => message.role === 'assistant')) {
+    throw new Error('The stored messages have no assistant reply. Find the replies the page shows, including any report or document a tool produced, and store them too.');
+  }
   const messages = parsed.data.map((message, index) => {
     const files = (message.files ?? []).map((file): ConversationFile => {
       if ('unavailable' in file) {
@@ -206,30 +211,52 @@ export function startSessionImportRun(input: {
     },
   });
 
-  // One action at a time, each answered once: a re-offered action this window
-  // is already running, or has answered, is not run again.
+  // One action at a time, each run once. A re-offered action this window is
+  // still running is ignored; one it has answered gets the same answer again,
+  // because the room re-offers exactly the actions whose answer it never got.
   const seen = new Set<string>();
+  const answers = new Map<string, DesktopActionOutcome>();
+  const answer = (id: string, outcome: DesktopActionOutcome) => {
+    try {
+      socket?.send(JSON.stringify({ type: 'answer_desktop_action', actionId: id, outcome }));
+    } catch {
+      // The socket is between connections; the room offers this action again
+      // on the next one, and the stored answer goes then.
+    }
+  };
   let queue = Promise.resolve();
   const onFrame = (raw: string) => {
     let frame: {
       type?: string; request?: unknown; status?: string;
-      invocation?: { id?: string; toolCallId?: string; activityName?: string | null; outputSummary?: string | null; status?: string };
+      invocation?: { id?: string; toolCallId?: string; toolName?: string; activityName?: string | null; outputSummary?: string | null; status?: string };
     };
     try { frame = JSON.parse(raw) as typeof frame; } catch { return; }
     if (frame.type === 'desktop_action_requested') {
       const parsed = DesktopActionRequestSchema.safeParse(frame.request);
-      if (!parsed.success || seen.has(parsed.data.id)) return;
-      seen.add(parsed.data.id);
+      if (!parsed.success) return;
       const request = parsed.data;
+      const answered = answers.get(request.id);
+      if (answered) {
+        answer(request.id, answered);
+        return;
+      }
+      if (seen.has(request.id)) return;
+      seen.add(request.id);
       queue = queue.then(async () => {
         const outcome = await executor.execute(request.action);
-        // Answered before the run is ended here, so the agent's tool returns
-        // instead of waiting on a socket this window has closed.
-        socket?.send(JSON.stringify({ type: 'answer_desktop_action', actionId: request.id, outcome }));
-        if (ending) finish(ending);
+        answers.set(request.id, outcome);
+        answer(request.id, outcome);
       });
     } else if ((frame.type === 'tool_started' || frame.type === 'tool_completed') && frame.invocation) {
       const invocation = frame.invocation;
+      // The run ends here, once the room has the finish's answer, not when this
+      // window sent it: closing on the send lost the answer whenever the socket
+      // was between connections, and the agent waited out its tool timeout.
+      if (frame.type === 'tool_completed' && ending
+        && (invocation.toolName === 'import_finish' || invocation.toolName === 'import_fail')) {
+        const decided = ending;
+        void queue.then(() => finish(decided));
+      }
       const id = invocation.toolCallId ?? invocation.id;
       if (!id) return;
       if (frame.type === 'tool_started') {
