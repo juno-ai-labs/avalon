@@ -82,7 +82,7 @@ describe('a title pill menu with levels', () => {
     openMenu();
     fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
 
-    const pin = await screen.findByRole('menuitemcheckbox', { name: 'Pinned in sidebar' });
+    const pin = await screen.findByRole('menuitemcheckbox', { name: 'Pinned in my sidebar' });
     expect(pin).toHaveAttribute('aria-checked', 'false');
     fireEvent.click(pin);
     expect(onChange).toHaveBeenCalledWith(true);

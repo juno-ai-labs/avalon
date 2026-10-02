@@ -5,11 +5,11 @@ import {
   IconCloudDownload,
   IconCornerDownRight,
   IconDots,
+  IconHexagons,
   IconLink,
   IconLock,
   IconPencil,
   IconPin,
-  IconRobot,
   IconShare2,
   IconUserPlus,
   IconUsers,
@@ -33,7 +33,9 @@ export interface ConversationRowTarget { substreamId: string; title: string }
 
 /** What a Channel's or a Breakout's menu can do; an absent action is not offered. */
 export interface ConversationRowActions {
-  onMakePublic?: (() => void) | undefined;
+  /** Whether the conversation is public to its Organization, and the switch that changes it. */
+  isPublic?: boolean | undefined;
+  onSetPublic?: ((next: boolean) => void) | undefined;
   publicDisabled?: boolean | undefined;
   onCopyLink?: ((target: ConversationRowTarget) => void) | undefined;
   onRename?: (target: ConversationRowTarget) => void;
@@ -226,12 +228,13 @@ function BreakoutsView({ breakouts, onOpenBreakout, openSubstreamId, renderAge }
 }
 
 /** A setting kept on the conversation, drawn as a switch the row toggles. */
-function SwitchRow({ checked, icon, label, onChange }: {
-  checked: boolean; icon: ReactNode; label: string; onChange: (next: boolean) => void;
+function SwitchRow({ checked, disabled, icon, label, onChange }: {
+  checked: boolean; disabled?: boolean | undefined; icon: ReactNode; label: string; onChange: (next: boolean) => void;
 }): React.JSX.Element {
   return <DropdownMenu.CheckboxItem
     checked={checked}
     className="menu-item title-menu-switch-row"
+    disabled={disabled}
     onCheckedChange={onChange}
     onSelect={(event) => event.preventDefault()}
   >
@@ -239,6 +242,19 @@ function SwitchRow({ checked, icon, label, onChange }: {
     <span className="title-menu-item-copy">{label}</span>
     <span aria-hidden="true" className="title-menu-switch" data-checked={checked ? '' : undefined} />
   </DropdownMenu.CheckboxItem>;
+}
+
+/** The conversation's Organization audience, as a switch; nothing where it cannot change. */
+function PublicSwitch({ actions }: { actions: ConversationRowActions | undefined }): React.JSX.Element | null {
+  const onSetPublic = actions?.onSetPublic;
+  if (!onSetPublic) return null;
+  return <SwitchRow
+    checked={actions.isPublic ?? false}
+    disabled={actions.publicDisabled}
+    icon={<IconWorld aria-hidden="true" size={16} stroke={1.8} />}
+    label="Public to organization"
+    onChange={onSetPublic}
+  />;
 }
 
 function sidekickMeta(sidekicks: SidekickRow[] | undefined): string | undefined {
@@ -324,14 +340,18 @@ export function ChannelMenu({
   }
   if (nav.view?.key === 'more') {
     return <>
-      {pinned && <div className="title-menu-settings">
-        <SwitchRow checked={pinned.on} icon={<IconPin aria-hidden="true" size={16} stroke={1.8} />} label="Pinned in sidebar" onChange={pinned.onChange} />
+      {(pinned || actions?.onSetPublic) && <div className="title-menu-settings">
+        {pinned && <SwitchRow checked={pinned.on} icon={<IconPin aria-hidden="true" size={16} stroke={1.8} />} label="Pinned in my sidebar" onChange={pinned.onChange} />}
+        <PublicSwitch actions={actions} />
       </div>}
-      {actions?.onMakePublic && <TitleMenuItem disabled={actions.publicDisabled} icon={<IconWorld aria-hidden="true" size={16} stroke={1.8} />} onSelect={actions.onMakePublic}>Make public to organization</TitleMenuItem>}
       {onImportUpdates && <TitleMenuItem icon={<IconCloudDownload aria-hidden="true" size={16} stroke={1.8} />} onSelect={onImportUpdates}>Import updates</TitleMenuItem>}
       {extraActions}
       <ResourceList label="Artifacts" onOpen={onOpenArtifact} resources={artifacts} />
       {onOpenResource && <ResourceList label="Resources" onOpen={onOpenResource} resources={otherResources} />}
+      {actions?.onArchive && <>
+        <TitleMenuSeparator />
+        <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => actions.onArchive?.(target)}>Archive channel</TitleMenuItem>
+      </>}
     </>;
   }
   return <>
@@ -349,12 +369,8 @@ export function ChannelMenu({
       <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />
     </ActionTiles>
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(workstream.participants.length, workstream.scope, participantsPending)} view={PEOPLE_VIEW} />
-    <LevelRow icon={<IconRobot aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={sidekickMeta(sidekicks)} view={SIDEKICKS_VIEW} />
+    <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={sidekickMeta(sidekicks)} view={SIDEKICKS_VIEW} />
     <LevelRow icon={<IconCornerDownRight aria-hidden="true" size={17} stroke={1.7} />} label="Breakouts" meta={breakouts?.length} view={BREAKOUTS_VIEW} />
-    {actions?.onArchive && <>
-      <TitleMenuSeparator />
-      <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => actions.onArchive?.(target)}>Archive channel</TitleMenuItem>
-    </>}
   </>;
 }
 
@@ -413,7 +429,11 @@ export function BreakoutMenu({
   if (nav.view?.key === 'more') {
     return <>
       {appearance}
-      {actions?.onMakePublic && <TitleMenuItem disabled={actions.publicDisabled} icon={<IconWorld aria-hidden="true" size={16} stroke={1.8} />} onSelect={actions.onMakePublic}>Make public to organization</TitleMenuItem>}
+      {actions?.onSetPublic && <div className="title-menu-settings"><PublicSwitch actions={actions} /></div>}
+      {actions?.onArchive && <>
+        {(appearance || actions.onSetPublic) && <TitleMenuSeparator />}
+        <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => actions.onArchive?.(breakout)}>Archive breakout</TitleMenuItem>
+      </>}
     </>;
   }
   return <>
@@ -432,14 +452,10 @@ export function BreakoutMenu({
       {actions?.onRename && <ActionTile icon={<IconPencil aria-hidden="true" size={20} stroke={1.6} />} label="Rename" onSelect={() => actions.onRename?.(breakout)} />}
       {actions?.onCopyLink && <ActionTile icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label="Copy link" onSelect={() => actions.onCopyLink?.(breakout)} />}
       {actions?.onShare && <ActionTile icon={<IconShare2 aria-hidden="true" size={20} stroke={1.6} />} label="Share" onSelect={() => actions.onShare?.(breakout)} />}
-      {(appearance || actions?.onMakePublic) && <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />}
+      {(appearance || actions?.onSetPublic || actions?.onArchive) && <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />}
     </ActionTiles>
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(participants.length, scope, participantsPending)} view={PEOPLE_VIEW} />
-    <LevelRow icon={<IconRobot aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={sidekickMeta(sidekicks)} view={SIDEKICKS_VIEW} />
-    {actions?.onArchive && <>
-      <TitleMenuSeparator />
-      <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => actions.onArchive?.(breakout)}>Archive breakout</TitleMenuItem>
-    </>}
+    <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={sidekickMeta(sidekicks)} view={SIDEKICKS_VIEW} />
   </>;
 }
 

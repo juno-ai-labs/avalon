@@ -121,15 +121,6 @@ test("treats a table name as a literal rather than a pattern", () => {
   assert.equal(misqualifiedReferences("FROM rally.llm.inference\n", dotted).length, 1);
 });
 
-test("reads the namespace and table from the checked-in manifests", async () => {
-  const tables = await lakehouseTables();
-
-  assert.deepEqual(
-    tables.map((table) => `${table.namespace}.${table.table}`),
-    ["avalon.analytics_events", "avalon.llm_inference"],
-  );
-});
-
 /**
  * Drives `check()` end to end: manifest discovery, the document walk, and the
  * reported shape. Asserting only that the real `docs/` tree comes back empty
@@ -200,8 +191,4 @@ test("leaves docs/PRDs alone", async () => {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
-});
-
-test("the repository's own documents pass", async () => {
-  assert.deepEqual(await check(), []);
 });

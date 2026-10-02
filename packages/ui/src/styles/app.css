@@ -8045,6 +8045,30 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .title-pill-icon-action .appearance-picker-trigger,
 .title-pill-icon-action > button { border-radius: var(--av-sys-size-radius-pill); }
 .title-pill-menu-trigger.has-title { padding-left: 6px; }
+/* The menu centres on its trigger, so beside an icon action the trigger spans
+   the whole pill, under the icon, and its body sits in the column after it. */
+.title-pill.has-icon-action { display: inline-grid; grid-template-columns: auto minmax(0, auto); }
+.title-pill.has-icon-action > .title-pill-icon-action { grid-area: 1 / 1; z-index: 1; }
+.title-pill.has-icon-action > .title-pill-menu-trigger {
+  display: grid;
+  gap: 0;
+  grid-area: 1 / 1 / 2 / 3;
+  grid-template-columns: subgrid;
+  padding: 0;
+}
+.title-pill.has-icon-action > .title-pill-menu-trigger:hover { background: transparent; }
+.title-pill-menu-trigger-body {
+  align-items: center;
+  border-radius: var(--av-sys-size-radius-pill);
+  display: inline-flex;
+  gap: 8px;
+  grid-column: 2;
+  height: 36px;
+  min-width: 0;
+  padding: 0 12px 0 6px;
+}
+.title-pill-menu-trigger:hover > .title-pill-menu-trigger-body { background: var(--av-sys-color-state-hover); }
+.title-pill-menu-trigger[data-state='open'] > .title-pill-menu-trigger-body { background: transparent; }
 /* A Breakout's composer names it; a long name ends in an ellipsis rather than
    wrapping the empty field onto a second line. */
 .split-conversation-pane.is-breakout .workstream-composer textarea::placeholder { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -63,5 +63,5 @@ run_step "pnpm env:sync" pnpm env:sync
 run_step "pnpm db:migrate" pnpm db:migrate
 run_step "pnpm db:seed" pnpm db:seed
 
-log "ready — start the API with 'pnpm dev:api:local' (see docs/dev-environment.md)"
+log "ready — start the API with 'pnpm dev:api:local', which also opens the local authority (see docs/dev-environment.md)"
 exit 0

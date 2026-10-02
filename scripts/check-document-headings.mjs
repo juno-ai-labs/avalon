@@ -67,7 +67,7 @@ export async function markdownFiles(directory) {
   return files.sort();
 }
 
-export async function check(directory) {
+async function check(directory) {
   const problems = [];
   for (const file of await markdownFiles(directory)) {
     for (const found of truncatedHeadings(await readFile(file, 'utf8'))) {

@@ -150,7 +150,9 @@ everything in the client's `Rally Development` userData directory except
 Rally's browser — and the window and application settings, then runs
 `db:migrate` and `db:seed`.
 
-After the Workers are running (§3), open the authority:
+After the Workers are running (§3), open the authority. `pnpm dev:api:local`
+does this itself once its Workers are ready; `pnpm dev:api` and `pnpm dev` do
+not:
 
 ```bash
 pnpm db:open-authority
@@ -200,20 +202,18 @@ Local mode passes `--enable-containers=false`; building the crash symbolicator
 otherwise needs Docker. Use `pnpm dev:api` when testing that container itself.
 
 **That flag is ignored once more than one `--config` is passed**, which is every
-invocation the runner makes (wrangler 4.126.0). `dev:api:local` therefore still
-reaches for Docker and dies before any Worker binds:
+invocation the runner makes (wrangler 4.126.0), and Wrangler then reaches for
+Docker and dies before any Worker binds:
 
 ```
 ✘ [ERROR] The Docker CLI is needed to build the configured image before running dev
 ```
 
 `"dev": { "enable_containers": false }` in the config does not suppress it
-either — only the absence of the `containers` block does. Until the runner has a
-way to say this that wrangler honours, a session that needs the whole regional
-stack and has no Docker daemon copies `wrangler.global.jsonc` to
-**`apps/api/wrangler.global.scratch.jsonc`**, deletes the `containers` block
-from the copy, runs the same command against that, and deletes the copy
-afterwards. Nothing in a member-facing screen reaches the symbolicator.
+either — only the absence of the `containers` block does. So in local mode the
+runner writes **`apps/api/wrangler.<region>.scratch.jsonc`**, the region's main
+config without that block, and starts Wrangler against it. It is rewritten on
+every start, so it cannot go stale, and it is in `.gitignore`.
 
 **Use that name, in that directory.** `scripts/migrate-d1.mjs` discovers a
 region from every `wrangler.<name>.jsonc` carrying a migratable D1 binding, and
@@ -224,10 +224,13 @@ will never exist. Two segments is what already keeps
 `wrangler.artifacts.global.jsonc` and its siblings out of the region list, and
 it is what keeps this copy out; `scripts/migrate-d1.test.mjs` pins that. The
 copy belongs beside the original because the config's `main`, `migrations_dir`
-and `.dev.vars` paths are relative to `apps/api/`, and it is in `.gitignore`
-with the other generated wrangler files so a forgotten copy cannot be
-committed. Delete it when the session is done anyway: it goes stale the moment
-`wrangler.global.jsonc` changes.
+and `.dev.vars` paths are relative to `apps/api/`.
+
+Once every Worker is ready, local mode also runs `pnpm db:open-authority`
+(§2). Until that has run, the workspace socket answers 503
+`workstream_maintenance` and the client sits on **Opening channels…** with an
+empty sidebar. A failure there is printed and leaves the Workers running; run
+the command by hand once the cause is fixed.
 
 For an API-only session, the equivalent command is:
 
