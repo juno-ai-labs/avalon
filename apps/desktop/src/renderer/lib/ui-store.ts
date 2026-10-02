@@ -5,6 +5,8 @@ import type { WorkstreamSummary } from './types';
 export const CONTEXT_SIDEBAR_ENABLED = false;
 
 export type RailVariant = 'context' | 'browser';
+/** How the sidebar orders the Channels nobody pinned. */
+export type SidebarChannelSort = 'alphabetical' | 'recent';
 /** The panel occupying the right sidebar slot. */
 export interface RailInspector {
   type: 'resource' | 'connection' | 'task' | 'run';
@@ -16,6 +18,7 @@ interface UiState {
   sidebarWidth: number;
   /** The Space the sidebar's Channel list is filtered to, or null for All. */
   sidebarSpaceFilter: string | null;
+  sidebarChannelSort: SidebarChannelSort;
   railOpen: boolean;
   railVariant: RailVariant;
   railWidth: number;
@@ -25,6 +28,7 @@ interface UiState {
   setSidebarOpen: (open: boolean) => void;
   setSidebarWidth: (width: number) => void;
   setSidebarSpaceFilter: (spaceId: string | null) => void;
+  setSidebarChannelSort: (sort: SidebarChannelSort) => void;
   openRail: (variant?: RailVariant) => void;
   closeRail: () => void;
   setRailVariant: (variant: RailVariant) => void;
@@ -55,6 +59,7 @@ import { clampSidebarWidth, loadSidebarWidth, saveSidebarPreference } from '@ral
 import { SINGLE_SIDEBAR_DEFAULT_WIDTH } from '@rally/ui/lib/sidebar-geometry';
 const SIDEBAR_WIDTH_STORAGE_KEY = 'rally.sidebar-width';
 const SIDEBAR_SPACE_FILTER_STORAGE_KEY = 'rally.sidebar-space-filter';
+const SIDEBAR_CHANNEL_SORT_STORAGE_KEY = 'rally.sidebar-channel-sort';
 const RAIL_WIDTH_STORAGE_PREFIX = 'rally.rail-width';
 
 function loadSpaceFilter(): string | null {
@@ -73,6 +78,24 @@ function saveSpaceFilter(spaceId: string | null): void {
     else window.localStorage.setItem(SIDEBAR_SPACE_FILTER_STORAGE_KEY, spaceId);
   } catch {
     // Best-effort device preference; the filter still works for this session.
+  }
+}
+
+function loadChannelSort(): SidebarChannelSort {
+  if (typeof window === 'undefined') return 'alphabetical';
+  try {
+    return window.localStorage.getItem(SIDEBAR_CHANNEL_SORT_STORAGE_KEY) === 'recent' ? 'recent' : 'alphabetical';
+  } catch {
+    return 'alphabetical';
+  }
+}
+
+function saveChannelSort(sort: SidebarChannelSort): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(SIDEBAR_CHANNEL_SORT_STORAGE_KEY, sort);
+  } catch {
+    // Best-effort device preference; the order still applies for this session.
   }
 }
 
@@ -111,6 +134,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   sidebarOpen: false,
   sidebarWidth: loadSidebarWidth(SIDEBAR_WIDTH_STORAGE_KEY, SINGLE_SIDEBAR_DEFAULT_WIDTH),
   sidebarSpaceFilter: loadSpaceFilter(),
+  sidebarChannelSort: loadChannelSort(),
   railOpen: false,
   railVariant: 'context',
   railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, null),
@@ -126,6 +150,10 @@ export const useUiStore = create<UiState>((set, get) => ({
   setSidebarSpaceFilter: (sidebarSpaceFilter) => {
     saveSpaceFilter(sidebarSpaceFilter);
     set({ sidebarSpaceFilter });
+  },
+  setSidebarChannelSort: (sidebarChannelSort) => {
+    saveChannelSort(sidebarChannelSort);
+    set({ sidebarChannelSort });
   },
   openRail: (railVariant = 'context') => set({ railOpen: true, railVariant, inspector: null }),
   // The detail view is cleared when the rail is next opened rather than as it

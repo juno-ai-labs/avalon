@@ -7,6 +7,7 @@ import type { HarnessStatus, WorkstreamSummary } from './types';
 export {
   groupActivityItems,
   nextRecencyBoundary,
+  recencyTimestamp,
   workstreamRecencyAt,
   type RecencyGroup,
 } from '../../common/recency-groups';

@@ -2061,7 +2061,7 @@ describe('pinned channels', () => {
     window.localStorage.clear();
     markWorkstreamNavigation.mockReset();
     reportTelemetryProductIntent.mockReset();
-    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300, sidebarSpaceFilter: null });
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300, sidebarSpaceFilter: null, sidebarChannelSort: 'alphabetical' });
     scrollIntoView.mockClear();
     Element.prototype.scrollIntoView = scrollIntoView;
     vi.stubGlobal('ResizeObserver', class {
@@ -2144,6 +2144,29 @@ describe('pinned channels', () => {
     expect(within(section).queryByRole('link', { name: /Quarterly planning/u })).not.toBeInTheDocument();
     // With pins above it, the rest of the list is named.
     expect(screen.getByRole('heading', { name: 'Channels' })).toBeVisible();
+  });
+
+  it('toggles the unpinned Channels between A to Z and most recent activity', () => {
+    renderWith([
+      pinned(workstream('ws-pinned', 'Launch tracking', 'completed'), 0),
+      workstream('ws-old', 'alpha review', 'completed', '2026-07-01T20:00:00.000Z'),
+      workstream('ws-new', 'Zulu sync', 'completed', '2026-07-31T20:00:00.000Z'),
+      workstream('ws-mid', 'Bravo notes', 'completed', '2026-07-15T20:00:00.000Z'),
+    ]);
+    const channelTitles = (): string[] => [...screen.getByRole('region', { name: 'Channels' })
+      .querySelectorAll('[data-workstream-id] .sidebar-row-title-copy')]
+      .map((title) => title.textContent ?? '');
+
+    // Case-insensitive: the lowercase title still sorts first.
+    expect(channelTitles()).toEqual(['alpha review', 'Bravo notes', 'Zulu sync']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sorted A to Z. Sort by recent activity' }));
+    expect(channelTitles()).toEqual(['Zulu sync', 'Bravo notes', 'alpha review']);
+    expect(screen.getByRole('button', { name: 'Sorted by recent activity. Sort A to Z' })).toHaveTextContent('Recent');
+    expect(window.localStorage.getItem('rally.sidebar-channel-sort')).toBe('recent');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sorted by recent activity. Sort A to Z' }));
+    expect(channelTitles()).toEqual(['alpha review', 'Bravo notes', 'Zulu sync']);
   });
 
   it('shows an empty Pinned section that says how to pin, before anything is pinned', () => {

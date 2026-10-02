@@ -57,10 +57,16 @@ in the Channel menu. The desktop remembers the filter per device
 (`useUiStore.sidebarSpaceFilter`, `rally.sidebar-space-filter`). Opening a
 Channel the filter would hide widens the list to All.
 
-The list is **Pinned**, then every other Channel A to Z. With pins above it
-the rest is headed **Channels**, and each heading carries a quiet hint at its
-far edge (*Drag to reorder* when there are pins to reorder, *A–Z*); with no
-pins the list stands alone and has no heading. A row shows the glyph,
+The list is **Pinned**, then every other Channel, A to Z by default. With pins
+above it the rest is headed **Channels**, and each heading carries a quiet hint
+at its far edge (*Drag to reorder* when there are pins to reorder; the sort
+toggle on **Channels**); with no pins the list stands alone and has no heading.
+The toggle, an `arrows-sort` icon beside the current label, switches the
+unpinned Channels between **A–Z** (case-insensitive, `compareAlphabeticalTitle`)
+and **Recent** (newest `lastActivityAt` first, ties A to Z). The desktop
+remembers the choice per device (`useUiStore.sidebarChannelSort`,
+`rally.sidebar-channel-sort`), and it still applies while the heading is
+hidden. A row shows the glyph,
 the title and the last activity time. Under them it shows the names of the
 Channel's Spaces, without General; a Channel only in General has a one-line
 row. An unread row has a semibold title and its dot is red; the weight follows the
@@ -244,6 +250,26 @@ from the shared navigation directory.
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-02 — Channels sort toggle: A–Z or Recent
+
+**What changed:** The **Channels** heading's *A–Z* hint became a button with an
+`arrows-sort` icon that switches the unpinned list between A to Z and most
+recent activity. The choice is a per-device preference in `localStorage`.
+
+**Why:** Product asked for a way to see the Channels that moved last without
+pinning them, and for the choice to survive a restart.
+
+**Considered and rejected:** Ordering Recent by `workstreamRecencyAt`, which
+prefers when this reader last opened the Channel. The ask was most recent
+update, and the row's time already shows `lastActivityAt`, so ordering by it
+keeps the list and its times in agreement. Storing the choice on the server
+was also out: the ask was a local preference.
+
+**Consequences:** The toggle lives in the heading, which only shows when
+something is pinned; without pins the stored order still applies but cannot be
+changed from the sidebar. Showing the control without pins means giving the
+lone list a heading, which this document deliberately avoids.
 
 ### 2026-10-02 — Space pills sort A to Z
 
