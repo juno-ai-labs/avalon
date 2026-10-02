@@ -43,6 +43,8 @@ export interface IdentityRow extends Record<string, SqlStorageValue> {
   email_address: string | null;
   email_route_status: string;
   model_override: string | null;
+  /** The agent profile this conversation's runs use; null for an ordinary conversation. */
+  agent_profile: string | null;
   appearance_json: string | null;
   archived_at: number | null;
   created_at: number;
@@ -77,6 +79,12 @@ export interface WorkstreamProvisionInput {
   emailRouteStatus: string | null;
   systemKind: string | null;
   modelOverride: string | null;
+  /**
+   * The agent profile every run of this conversation uses: its system prompt,
+   * model role and exact tool surface. Fixed at provision, like the model pin;
+   * omitted for an ordinary conversation.
+   */
+  agentProfile?: string | null;
   now: number;
 }
 
@@ -125,7 +133,7 @@ export class WorkstreamIdentityStorage {
               title_status, scope, exact_state, state_reason_code, origin_type, parent_kind, system_kind,
               created_by_user_id, automation_subscription_id, automation_run_id,
               created_from_opportunity_id, planned_for, email_address, email_route_status,
-              model_override, appearance_json, archived_at, created_at, updated_at
+              model_override, agent_profile, appearance_json, archived_at, created_at, updated_at
          FROM workstream WHERE id = 1`,
     ));
   }
@@ -619,7 +627,7 @@ export class WorkstreamIdentityStorage {
                 -- rather than leave the column alone.
                 email_address = COALESCE(?, email_address),
                 email_route_status = COALESCE(?, email_route_status),
-                model_override = ?,
+                model_override = ?, agent_profile = ?,
                 exact_state = ?, state_reason_code = ?, title_status = ?,
                 description_source = 'derived', listing_epoch = listing_epoch + 1,
                 created_at = ?, last_people_activity_at = ?, state_changed_at = ?,
@@ -633,6 +641,7 @@ export class WorkstreamIdentityStorage {
         input.emailAddress,
         input.emailRouteStatus,
         input.modelOverride,
+        input.agentProfile ?? null,
         exactState,
         exactState === "idle" ? "provisioned" : `run_${exactState}`,
         input.titleStatus ?? "settled",

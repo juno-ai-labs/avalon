@@ -1,0 +1,83 @@
+import { describe, expect, it, vi } from 'vitest';
+import type { EmbeddedBrowserCommand, EmbeddedBrowserResult, EmbeddedBrowserTab } from '../../../common/embedded-browser';
+import { createDesktopActionExecutor } from './executor';
+import { DesktopActionStore } from './store';
+
+const tab = (id: string, url: string): EmbeddedBrowserTab => ({
+  id, title: 'Chat', url, loading: false, canGoBack: false, canGoForward: false, favicon: null,
+});
+
+function harness(url = 'https://claude.ai/chat/1') {
+  const tabs = [tab('pinned', url), tab('other', 'https://example.com/')];
+  const commandEmbeddedBrowser = vi.fn(async (command: EmbeddedBrowserCommand): Promise<EmbeddedBrowserResult> => {
+    if (command.action === 'navigate') tabs[0] = tab('pinned', command.url);
+    if (command.action === 'evaluate') {
+      return { kind: 'value', value: { ok: true, value: 3, stored: [{ handle: 'h1', kind: 'json', name: 'm', mimeType: 'application/json', size: 2, data: '[]' }], url, title: 'Chat' } };
+    }
+    return { kind: 'state', state: { tabs, activeTabId: 'pinned' } };
+  });
+  const store = new DesktopActionStore();
+  const executor = createDesktopActionExecutor({
+    bridge: { commandEmbeddedBrowser, getEmbeddedBrowserState: vi.fn(async () => ({ tabs, activeTabId: 'pinned' })) },
+    tabId: 'pinned',
+    store,
+  });
+  return { executor, commandEmbeddedBrowser, store, tabs };
+}
+
+describe('desktop action executor', () => {
+  it('runs every action on the pinned tab and keeps what page script stored', async () => {
+    const { executor, commandEmbeddedBrowser, store } = harness();
+    await expect(executor.execute({ kind: 'browser.evaluate', script: 'return 3' })).resolves.toEqual({
+      ok: true, result: { url: 'https://claude.ai/chat/1', title: 'Chat', value: 3,
+        stored: [{ handle: 'h1', kind: 'json', name: 'm', mimeType: 'application/json', size: 2 }] },
+    });
+    expect(store.json('h1')).toEqual([]);
+    await executor.execute({ kind: 'browser.click', x: 10, y: 20 });
+    expect(commandEmbeddedBrowser.mock.calls.map(([command]) => 'tabId' in command ? command.tabId : null)).toEqual(['pinned', 'pinned']);
+  });
+
+  it('lets the work take the tab to any site and keep acting there', async () => {
+    const { executor, commandEmbeddedBrowser, tabs } = harness();
+    await expect(executor.execute({ kind: 'browser.navigate', url: 'https://example.com/' })).resolves.toMatchObject({ ok: true });
+    expect(commandEmbeddedBrowser).toHaveBeenCalledWith({ action: 'navigate', tabId: 'pinned', url: 'https://example.com/' });
+    tabs[0] = tab('pinned', 'https://example.com/');
+    await expect(executor.execute({ kind: 'browser.click', x: 1, y: 2 })).resolves.toMatchObject({ ok: true });
+  });
+
+  it('answers a closed tab, an unknown action and an unhandled kind without throwing', async () => {
+    const { executor, tabs } = harness();
+    await expect(executor.execute({ kind: 'browser.open' })).resolves.toMatchObject({ ok: false, code: 'invalid_action' });
+    await expect(executor.execute({ kind: 'session_import.fail', reason: 'page_unavailable' }))
+      .resolves.toMatchObject({ ok: false, code: 'invalid_action' });
+    tabs.splice(0, 1);
+    await expect(executor.execute({ kind: 'browser.screenshot' })).resolves.toMatchObject({ ok: false, code: 'tab_closed' });
+  });
+
+  it('lists the page’s responses, narrowed, and places a body in the page with a slice of it returned', async () => {
+    const tabs = [tab('pinned', 'https://claude.ai/chat/1')];
+    const page: { __rallyNetwork?: Record<string, unknown> } = {};
+    const responses = [
+      { requestId: 'r1', url: 'https://claude.ai/api/chat_conversations/1', method: 'GET', status: 200, mimeType: 'application/json', resourceType: 'Fetch', size: 40, cached: true },
+      { requestId: 'r2', url: 'https://claude.ai/logo.svg', method: 'GET', status: 200, mimeType: 'image/svg+xml', resourceType: 'Image', size: 900, cached: false },
+    ];
+    const commandEmbeddedBrowser = vi.fn(async (command: EmbeddedBrowserCommand): Promise<EmbeddedBrowserResult> => {
+      if (command.action === 'network') return { kind: 'network', responses };
+      if (command.action === 'response_body') return { kind: 'response_body', body: '{"uuid":"1","chat_messages":[{"text":"hi"}]}', base64Encoded: false };
+      if (command.action === 'evaluate') return { kind: 'value', value: new Function('window', `return ${command.expression}`)(page) };
+      return { kind: 'state', state: { tabs, activeTabId: 'pinned' } };
+    });
+    const executor = createDesktopActionExecutor({
+      bridge: { commandEmbeddedBrowser, getEmbeddedBrowserState: vi.fn(async () => ({ tabs, activeTabId: 'pinned' })) },
+      tabId: 'pinned', store: new DesktopActionStore(),
+    });
+    await expect(executor.execute({ kind: 'browser.network_list', urlContains: 'chat_conversations', resourceType: 'fetch' }))
+      .resolves.toEqual({ ok: true, result: { responses: [responses[0]] } });
+    await expect(executor.execute({ kind: 'browser.network_read', requestId: 'r1', offset: 2, length: 4 })).resolves.toEqual({
+      ok: true,
+      result: { variable: 'window.__rallyNetwork["r1"]', mimeType: 'application/json', size: 44, json: true, keys: ['uuid', 'chat_messages'], text: 'uuid' },
+    });
+    // The page now holds the parsed body, for page script to work on.
+    expect(page.__rallyNetwork?.['r1']).toEqual({ uuid: '1', chat_messages: [{ text: 'hi' }] });
+  });
+});

@@ -1,6 +1,5 @@
 import { HttpsUrlSchema } from "./url-schemas";
 import { SpaceIdSchema } from "./spaces";
-import { WorkstreamIdSchema } from "./identifiers";
 import { z } from "zod";
 
 /** Source bytes and unavailable references are explicit; a URL is never proof of retrieval. */
@@ -62,10 +61,6 @@ export const ImportedMessageProvenanceSchema = z.strictObject({
 });
 export type ImportedMessageProvenance = z.infer<typeof ImportedMessageProvenanceSchema>;
 
-/** A conversation Rally's browser read from the provider's page, signed in or shared. */
-export const SessionImportPreviewRequestSchema = z.strictObject({
-  kind: z.literal("export"), provider: z.enum(["chatgpt", "claude"]), text: z.string().min(1), sourceUrl: HttpsUrlSchema,
-});
 export const SessionImportPreviewSchema = z.strictObject({
   title: z.string().min(1),
   source: SessionSourceSchema,
@@ -74,12 +69,6 @@ export const SessionImportPreviewSchema = z.strictObject({
 export const SessionImportRequestSchema = SessionImportPreviewSchema.extend({
   title: z.string().min(1).max(180),
   clientMessageId: z.string().uuid(),
-  /**
-   * The id the caller already listed this Channel under, as `POST /workstreams`
-   * takes it. Creation semantics, like `spaceIds`: not part of the imported
-   * content's identity.
-   */
-  workstreamId: WorkstreamIdSchema.optional(),
   spaceIds: z.array(SpaceIdSchema)
     .refine((ids) => new Set(ids).size === ids.length, "Space ids must be unique")
     .default([]),
@@ -99,3 +88,28 @@ export const SessionImportUpdateResponseSchema = z.strictObject({
   updated: z.number().int().nonnegative(),
 });
 export type SessionImportPreview = z.infer<typeof SessionImportPreviewSchema>;
+export type SessionImportRequest = z.infer<typeof SessionImportRequestSchema>;
+
+/**
+ * Start a conversation import: reserve its Channel and start the agent that
+ * reads the conversation in the person's Rally browser.
+ */
+export const SessionImportStartRequestSchema = z.strictObject({
+  sourceUrl: HttpsUrlSchema,
+  title: z.string().trim().min(1).max(180),
+  clientMessageId: z.string().uuid(),
+  spaceIds: z.array(SpaceIdSchema)
+    .refine((ids) => new Set(ids).size === ids.length, "Space ids must be unique")
+    .default([]),
+});
+/** The Channel an import fills and the hidden conversation its agent runs in. */
+export const SessionImportRunSchema = z.strictObject({
+  workstreamId: z.string().min(1),
+  substreamId: z.string().min(1),
+});
+export const SessionImportDiscardRequestSchema = z.strictObject({
+  /** The import's hidden child; never a Channel's main conversation. */
+  substreamId: z.string().min(1).refine((id) => id !== "0", "The main conversation is not an import"),
+  /** The create key of a new import; null for an update, whose Channel stays. */
+  clientMessageId: z.string().uuid().nullable(),
+});
