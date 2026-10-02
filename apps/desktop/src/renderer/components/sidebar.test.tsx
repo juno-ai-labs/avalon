@@ -13,7 +13,7 @@ import {
 import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { installWindowActivationTracking } from '../lib/window-activation';
-import { allPinPosition, REVEAL_DEADLINE_MS, Sidebar } from './sidebar';
+import { allPinPosition, channelPinTargets, REVEAL_DEADLINE_MS, Sidebar } from './sidebar';
 
 const copyText = vi.hoisted(() => vi.fn());
 const openSettings = vi.hoisted(() => vi.fn());
@@ -2208,10 +2208,12 @@ describe('pinned channels', () => {
     expect(screen.getByRole('heading', { name: 'Channels' })).toBeVisible();
   });
 
-  it('shows no Pinned section until something is pinned', () => {
+  it('shows an empty Pinned section that says how to pin, before anything is pinned', () => {
     renderWith([workstream('ws-recent', 'Quarterly planning', 'completed')]);
 
-    expect(screen.queryByRole('region', { name: 'Pinned' })).not.toBeInTheDocument();
+    const section = screen.getByRole('region', { name: 'Pinned' });
+    expect(within(section).getByText('Move a channel here to pin it')).toBeVisible();
+    expect(within(section).queryByRole('link')).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
   });
 
@@ -2597,20 +2599,20 @@ describe('pinned channels', () => {
         workstream('ws-recent', 'Quarterly planning', 'completed'),
       ]);
 
-      fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+      fireEvent.contextMenu(screen.getByRole('link', { name: /Roadmap review/u }), { clientX: 120, clientY: 90 });
       fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
       await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
 
       // The animated element is the one the Pinned section now renders, and it
-      // leaves and returns one row above its alphabetical slot, under the new
-      // Pinned heading.
-      const moved = playedOn('workstream:ws-recent');
+      // rises one slot from the second alphabetical row to the first pinned one,
+      // under the Pinned heading that was already there.
+      const moved = playedOn('workstream:ws-first');
       expect(moved).toBeDefined();
       expect(screen.getByRole('region', { name: 'Pinned' })).toContainElement(moved!.element);
-      expect(moved!.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, -48px)' }));
-      // The remaining alphabetical row shifts down two slots: one for the
-      // Pinned section above it and one for the Channels heading it now has.
-      expect(playedOn('workstream:ws-first')?.keyframes).toEqual([{ transform: 'translate(0px, -96px)' }, { transform: 'translate(0px, 0px)' }]);
+      expect(moved!.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 48px)' }));
+      // The row it passed shifts down two slots: one for the pinned row above
+      // it and one for the Channels heading the list now has.
+      expect(playedOn('workstream:ws-recent')?.keyframes).toEqual([{ transform: 'translate(0px, -96px)' }, { transform: 'translate(0px, 0px)' }]);
     });
 
     // `scrollIntoView` scrolls to the box as transformed, and the motion's first
@@ -2877,7 +2879,7 @@ describe('pinned channels', () => {
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
     const scrolled = scrollIntoView.mock.instances[0] as Element;
     expect(scrolled).toHaveAttribute('data-workstream-id', 'ws-pinned');
-    expect(screen.queryByRole('region', { name: 'Pinned' })).not.toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Pinned' })).getByText('Move a channel here to pin it')).toBeVisible();
   });
 
   // The shell discards a pin response a later one has superseded, so the action
@@ -3520,7 +3522,7 @@ describe('alphabetical channels inside a space', () => {
   }
 
   function placementTitles(): string[] {
-    const list = document.querySelector(`[data-motion-scope="space:${hiring.id}"]`);
+    const list = document.querySelector(`:not(section)[data-motion-scope="space:${hiring.id}"]`);
     if (!list) throw new Error('The space has no placement list');
     return within(list as HTMLElement).getAllByRole('link')
       .map((row) => row.querySelector('.sidebar-row-title-copy')?.textContent ?? '');
@@ -3545,7 +3547,7 @@ describe('alphabetical channels inside a space', () => {
     });
 
     expect(placementTitles()).toEqual(['Åland', 'alpha', 'Alpha', 'Bravo', 'Same', 'Same', 'Zulu']);
-    const list = document.querySelector(`[data-motion-scope="space:${hiring.id}"]`);
+    const list = document.querySelector(`:not(section)[data-motion-scope="space:${hiring.id}"]`);
     expect([...list?.querySelectorAll<HTMLElement>('[data-workstream-id]') ?? []]
       .map((row) => row.dataset.workstreamId)).toEqual([
       accented.id,
@@ -3755,17 +3757,18 @@ describe('alphabetical channels inside a space', () => {
     expect(placementTitles()).toEqual(['Alpha', 'Bravo']);
   });
 
-  it('reveals Pinned for the first channel drag and pins the dropped channel', async () => {
+  it('wakes the empty Pinned drop zone for a channel drag and pins the dropped channel', async () => {
     const onPinWorkstream = vi.fn(async () => true);
     renderSidebar({ onPinWorkstream, workstreams: [alpha, bravo] });
     const transfer = channelTransfer();
     const source = dragTarget(/Bravo/u);
 
-    expect(screen.queryByRole('region', { name: 'Pinned' })).not.toBeInTheDocument();
+    const pinnedTarget = screen.getByRole('region', { name: 'Pinned' });
+    const zone = within(pinnedTarget).getByText('Move a channel here to pin it').parentElement!;
+    expect(zone).not.toHaveClass('is-armed');
     fireEvent.dragStart(source, { dataTransfer: transfer });
     expect(transfer.getData('application/x-rally-workstream-id')).toBe(bravo.id);
-    const pinnedTarget = screen.getByRole('region', { name: 'Pinned' });
-    expect(within(pinnedTarget).getByText('Drop channel here to pin')).toHaveClass('pinned-empty-drop-surface');
+    expect(zone).toHaveClass('is-armed');
     fireEvent.dragOver(pinnedTarget, { dataTransfer: transfer });
     fireEvent.drop(pinnedTarget, { dataTransfer: transfer });
     fireEvent.dragEnd(source, { dataTransfer: transfer });
@@ -3773,18 +3776,19 @@ describe('alphabetical channels inside a space', () => {
     await waitFor(() => expect(onPinWorkstream).toHaveBeenCalledWith(bravo, hiring.id, true));
   });
 
-  it('hides the empty Pinned drop surface when the Channel drag is cancelled', () => {
+  it('settles the empty Pinned drop zone when the Channel drag is cancelled', () => {
     renderSidebar({ workstreams: [alpha, bravo] });
     const transfer = channelTransfer('none');
     const source = dragTarget(/Bravo/u);
+    const zone = screen.getByText('Move a channel here to pin it').parentElement!;
 
     fireEvent.dragStart(source, { dataTransfer: transfer });
-    expect(screen.getByText('Drop channel here to pin')).toBeInTheDocument();
+    expect(zone).toHaveClass('is-armed');
 
     fireEvent.dragEnd(source, { dataTransfer: transfer });
 
-    expect(screen.queryByRole('region', { name: 'Pinned' })).not.toBeInTheDocument();
-    expect(screen.queryByText('Drop channel here to pin')).not.toBeInTheDocument();
+    expect(zone).not.toHaveClass('is-armed');
+    expect(screen.getByRole('region', { name: 'Pinned' })).toContainElement(zone);
   });
 
   it('offers placement removal for a pinned Channel in the selected Space', async () => {
@@ -3981,6 +3985,52 @@ describe('the sidebar Space filter', () => {
     expect(pinnedTitles()).toEqual(['Alpha', 'Charlie']);
   });
 
+  it('draws All\'s pins in the person\'s own order, and Alt+Arrow saves it whole across Spaces', async () => {
+    const onReorderAllPinned = vi.fn(async () => undefined);
+    const onReorderPinnedWorkstreams = vi.fn(async () => undefined);
+    renderFiltered({
+      allPinnedOrder: [charlie.id, alpha.id],
+      onReorderAllPinned,
+      onReorderPinnedWorkstreams,
+      workstreams: [
+        { ...alpha, spacePins: [{ spaceId: home.id, position: 0 }] },
+        { ...bravo, spacePins: [{ spaceId: home.id, position: 1 }] },
+        { ...charlie, spacePins: [{ spaceId: launch.id, position: 0 }] },
+      ],
+    });
+
+    // Named ids first in the person's order; Bravo, never ordered, follows.
+    expect(pinnedTitles()).toEqual(['Charlie', 'Alpha', 'Bravo']);
+
+    fireEvent.keyDown(screen.getByRole('link', { name: /^Bravo/u }), { key: 'ArrowUp', altKey: true });
+
+    await waitFor(() => expect(onReorderAllPinned).toHaveBeenCalledWith([charlie.id, bravo.id, alpha.id]));
+    expect(onReorderPinnedWorkstreams).not.toHaveBeenCalled();
+  });
+
+  it('pins a Channel dropped on the Pinned section under All', async () => {
+    const onPinWorkstream = vi.fn(async () => true);
+    renderFiltered({ onPinWorkstream, onReorderAllPinned: vi.fn(async () => undefined) });
+    // jsdom has no DataTransfer; the row reads and writes only these.
+    const data = new Map<string, string>();
+    const transfer = {
+      dropEffect: 'move',
+      effectAllowed: '',
+      types: [] as string[],
+      setData: (type: string, value: string) => { data.set(type, value); transfer.types.push(type); },
+      getData: (type: string) => data.get(type) ?? '',
+    };
+    const source = screen.getByRole('link', { name: 'Charlie' }).closest<HTMLElement>('.sidebar-context-target')!;
+
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    const pinnedSection = screen.getByRole('region', { name: 'Pinned' });
+    fireEvent.dragOver(pinnedSection, { dataTransfer: transfer });
+    fireEvent.drop(pinnedSection, { dataTransfer: transfer });
+    fireEvent.dragEnd(source, { dataTransfer: transfer });
+
+    await waitFor(() => expect(onPinWorkstream).toHaveBeenCalledWith(expect.objectContaining({ id: charlie.id }), hiring.id, true));
+  });
+
   it('widens a Space filter to All when the open Channel is not in that Space', () => {
     useUiStore.setState({ sidebarSpaceFilter: launch.id });
     render(
@@ -4061,6 +4111,26 @@ describe('the sidebar Space filter', () => {
 
       await waitFor(() => expect(onCreateChannel).toHaveBeenCalledWith({ name: 'Roadmap', spaceId: launch.id }));
     });
+  });
+});
+
+describe('channelPinTargets', () => {
+  const channel = { spaceIds: ['general', 'space-x'], spacePins: [{ spaceId: 'general', position: 0 }] };
+  const active = new Set(['general', 'space-x']);
+
+  it('unpins every Space that pins the Channel when asked as All, which is how its menu asks', () => {
+    // Filtered to Space X while pinned only in General: the menu reads it as
+    // pinned, so its unpin must clear General rather than write to X.
+    expect(channelPinTargets(channel, false, { activeSpaceIds: active, generalSpaceId: 'general', selectedSpaceId: null }))
+      .toEqual(['general']);
+  });
+
+  it('pins under a Space filter in that Space, and under All in General first', () => {
+    const unpinned = { spaceIds: ['general', 'space-x'], spacePins: [] };
+    expect(channelPinTargets(unpinned, true, { activeSpaceIds: active, generalSpaceId: 'general', selectedSpaceId: 'space-x' }))
+      .toEqual(['space-x']);
+    expect(channelPinTargets(unpinned, true, { activeSpaceIds: active, generalSpaceId: 'general', selectedSpaceId: null }))
+      .toEqual(['general']);
   });
 });
 

@@ -60,8 +60,7 @@ describe('where a breakout started', () => {
     expect(within(region).getByText('The origin')).toBeInTheDocument();
   });
 
-  it('reads markdown as plain text without eating the characters inside words', () => {
-    expect(originExcerpt('## Plan\n- **Wake** at 9:05 AM America/New_York\n- see [docs](https://x.test) and `code`, _then_ *ship*'))
-      .toBe('Plan Wake at 9:05 AM America/New_York see docs and code, then ship');
+  it('keeps a message that is only code, rather than drawing an empty card', () => {
+    expect(originExcerpt('```ts\nconst a = 1;\n```')).toBe('const a = 1;');
   });
 });

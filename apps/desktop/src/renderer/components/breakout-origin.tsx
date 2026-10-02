@@ -1,3 +1,4 @@
+import { rewriteMessageAsPlainText } from '@rally/contracts/citations';
 import { formatDateTime } from '../lib/format';
 import type { Message } from '../lib/types';
 
@@ -33,18 +34,13 @@ export function breakoutOriginMessages(
   };
 }
 
-/** Markdown read as a line of plain text, for an excerpt rather than a render. */
+/**
+ * A message as one line of plain text, for an excerpt rather than a render:
+ * the repository's one Markdown reduction (citations, references, code and
+ * all), with its line breaks folded.
+ */
 export function originExcerpt(text: string): string {
-  return text
-    .replace(/```[\s\S]*?```/gu, ' ')
-    .replace(/`([^`]*)`/gu, '$1')
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/gu, '$1')
-    .replace(/(\*\*|__)(.+?)\1/gu, '$2')
-    // A single marker only where it wraps words, so `New_York` keeps its underscore.
-    .replace(/(^|[\s(])[*_](\S(?:.*?\S)?)[*_](?=[\s).,!?:;]|$)/gu, '$1$2')
-    .replace(/^\s{0,3}(?:#{1,6}|>|[-*+]|\d+\.)\s+/gmu, '')
-    .replace(/\s+/gu, ' ')
-    .trim();
+  return rewriteMessageAsPlainText(text, { sources: 'none' }).replace(/\s+/gu, ' ').trim();
 }
 
 function byline(message: Message): string {

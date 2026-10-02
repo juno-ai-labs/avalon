@@ -4,6 +4,8 @@ import type { SpaceSummary } from '@rally/contracts';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 
+import { ApiError } from '../lib/api';
+import type { WorkstreamSummary } from '../lib/types';
 import { SpacePills } from './space-pills';
 
 function space(id: string, name: string, overrides: Partial<SpaceSummary> = {}): SpaceSummary {
@@ -37,7 +39,7 @@ function LocationProbe(): React.JSX.Element {
 
 function renderPills(props: Partial<React.ComponentProps<typeof SpacePills>> = {}) {
   const onSelect = vi.fn();
-  render(
+  const tree = (pillProps: Partial<React.ComponentProps<typeof SpacePills>>) => (
     <MemoryRouter initialEntries={['/workstreams/current']}>
       <Tooltip.Provider>
         <SpacePills
@@ -57,13 +59,25 @@ function renderPills(props: Partial<React.ComponentProps<typeof SpacePills>> = {
           selectedSpaceId={null}
           spaces={[general, launch, hiring]}
           workstreams={[]}
-          {...props}
+          {...pillProps}
         />
         <LocationProbe />
       </Tooltip.Provider>
-    </MemoryRouter>,
+    </MemoryRouter>
   );
-  return { onSelect };
+  const view = render(tree(props));
+  return {
+    onSelect,
+    rerenderPills: (next: Partial<React.ComponentProps<typeof SpacePills>>) => {
+      view.rerender(tree({ ...props, ...next }));
+    },
+  };
+}
+
+async function openArchiveConfirmation(name: string): Promise<HTMLElement> {
+  fireEvent.contextMenu(pill(name));
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive space' }));
+  return screen.findByRole('dialog', { name: 'Archive space?' });
 }
 
 function pill(name: string): HTMLElement {
@@ -78,6 +92,30 @@ function channelTransfer(workstreamId: string, sourceSpaceId: string) {
       : type === 'application/x-rally-channel-source-space-id' ? sourceSpaceId : '',
     types: ['application/x-rally-workstream-id', 'application/x-rally-channel-source-space-id'],
   };
+}
+
+/**
+ * jsdom implements no `DataTransfer`, and the Space drag reads two of its
+ * fields: `types`, which is how a pill tells a Channel's drag passing through
+ * it from a Space's own, and `dropEffect`, which is how `dragend` tells a
+ * release the strip took from one backed out of.
+ */
+function spaceTransfer(dropEffect: 'move' | 'none' = 'move'): {
+  dropEffect: string; effectAllowed: string; types: string[];
+  setData: (type: string, value: string) => void; getData: (type: string) => string;
+} {
+  const data = new Map<string, string>();
+  const transfer = {
+    dropEffect,
+    effectAllowed: '',
+    types: [] as string[],
+    setData: (type: string, value: string) => {
+      data.set(type, value);
+      if (!transfer.types.includes(type)) transfer.types.push(type);
+    },
+    getData: (type: string) => data.get(type) ?? '',
+  };
+  return transfer;
 }
 
 describe('SpacePills', () => {
@@ -233,6 +271,174 @@ describe('SpacePills', () => {
     expect(pill('Launch')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     expect(onRetry).toHaveBeenCalledOnce();
+  });
+
+  describe('archiving a Space', () => {
+    it('archives only after the confirmation is accepted', async () => {
+      const onArchive = vi.fn(async () => undefined);
+      renderPills({ onArchive });
+
+      const dialog = await openArchiveConfirmation('Launch');
+      expect(onArchive).not.toHaveBeenCalled();
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Archive space' }));
+
+      await waitFor(() => expect(onArchive).toHaveBeenCalledWith('launch'));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Archive space?' })).not.toBeInTheDocument());
+    });
+
+    it('keeps a refused archive open with actionable copy and the named channels', async () => {
+      const blockedId = '00000000-0000-7000-8000-0000000000e1';
+      const onArchive = vi.fn(async () => {
+        throw new ApiError(
+          'A Channel in Launch belongs to no other Space',
+          409,
+          'space_membership_final',
+          { channelIds: [blockedId] },
+        );
+      });
+      renderPills({
+        onArchive,
+        workstreams: [{ id: blockedId, title: 'Launch plan' } as WorkstreamSummary],
+      });
+
+      const dialog = await openArchiveConfirmation('Launch');
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Archive space' }));
+
+      expect(await within(dialog).findByText('Every channel needs a space, and this would leave one with none. Add it to another space first.')).toBeVisible();
+      expect(within(dialog).queryByText(/belongs to no other Space/u)).not.toBeInTheDocument();
+      expect(within(within(dialog).getByRole('list', { name: 'Channels to move first' })).getByText('Launch plan')).toBeVisible();
+      expect(screen.getByRole('dialog', { name: 'Archive space?' })).toBeVisible();
+    });
+
+    it('uses action-specific copy for an archive failure without a Space refusal code', async () => {
+      renderPills({ onArchive: async () => { throw new Error('socket closed'); } });
+
+      const dialog = await openArchiveConfirmation('Launch');
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Archive space' }));
+
+      expect(await within(dialog).findByText('The space could not be archived.')).toBeVisible();
+      expect(within(dialog).queryByText('socket closed')).not.toBeInTheDocument();
+      expect(within(dialog).queryByRole('list', { name: 'Channels to move first' })).not.toBeInTheDocument();
+    });
+
+    it('disables an open archive confirmation with a visible error when authority is lost', async () => {
+      const onArchive = vi.fn(async () => undefined);
+      const { rerenderPills } = renderPills({ onArchive });
+
+      const dialog = await openArchiveConfirmation('Launch');
+      rerenderPills({ onArchive: undefined });
+
+      expect(await within(dialog).findByText('The space directory is unavailable. Reconnect and try again.')).toBeVisible();
+      const confirm = within(dialog).getByRole('button', { name: 'Archive space' });
+      expect(confirm).toBeDisabled();
+      fireEvent.click(confirm);
+      expect(onArchive).not.toHaveBeenCalled();
+    });
+
+    it('disables an open archive confirmation when the Space leaves the active directory', async () => {
+      const onArchive = vi.fn(async () => undefined);
+      const { rerenderPills } = renderPills({ onArchive });
+
+      const dialog = await openArchiveConfirmation('Launch');
+      rerenderPills({ spaces: [general, hiring] });
+
+      expect(await within(dialog).findByText('This space is no longer available to archive.')).toBeVisible();
+      const confirm = within(dialog).getByRole('button', { name: 'Archive space' });
+      expect(confirm).toBeDisabled();
+      fireEvent.click(confirm);
+      expect(onArchive).not.toHaveBeenCalled();
+    });
+
+    it('does not offer archive on a Space reached through a channel', async () => {
+      renderPills({ spaces: [general, launch, space('shared', 'Shared', { reach: 'through_channel' })] });
+
+      fireEvent.contextMenu(pill('Shared'));
+
+      expect(await screen.findByRole('menuitem', { name: 'Open space' })).toBeInTheDocument();
+      expect(screen.queryByRole('menuitem', { name: 'Archive space' })).not.toBeInTheDocument();
+    });
+
+    it('does not offer archive before the Space directory is live', async () => {
+      renderPills({ onArchive: undefined });
+
+      fireEvent.contextMenu(pill('Launch'));
+
+      expect(await screen.findByRole('menuitem', { name: 'Open space' })).toBeInTheDocument();
+      expect(screen.queryByRole('menuitem', { name: 'Archive space' })).not.toBeInTheDocument();
+    });
+  });
+
+  it('clears a failed restore when the recovery dialog is reopened', async () => {
+    const onRestore = vi.fn(async () => { throw new Error('Resolve the space conflict'); });
+    renderPills({ inactiveSpaces: [space('archive', 'Archived', { status: 'archived' })], onRestore });
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'New space' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Restore archived space' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Restore archived space' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Archived' }));
+    expect(await within(dialog).findByText('The space couldn’t be restored.')).toBeVisible();
+    expect(screen.queryByText('Resolve the space conflict')).not.toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Restore archived space' })).not.toBeInTheDocument());
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'New space' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Restore archived space' }));
+    const reopened = await screen.findByRole('dialog', { name: 'Restore archived space' });
+
+    expect(within(reopened).getByRole('button', { name: 'Archived' })).toBeVisible();
+    expect(screen.queryByText('The space couldn’t be restored.')).not.toBeInTheDocument();
+  });
+
+  describe('dragging a Space', () => {
+    it('saves the full new order, General in its stored place, when a drag completes', async () => {
+      const onReorder = vi.fn(async () => undefined);
+      renderPills({ onReorder });
+
+      const dataTransfer = spaceTransfer();
+      fireEvent.dragStart(pill('Hiring'), { dataTransfer });
+      fireEvent.dragEnter(pill('Launch'), { dataTransfer });
+      fireEvent.dragEnd(pill('Hiring'), { dataTransfer });
+
+      await waitFor(() => expect(onReorder).toHaveBeenCalledWith({
+        container: { kind: 'organization' },
+        itemIds: ['general', 'hiring', 'launch'],
+      }));
+    });
+
+    // Escape leaves the drag with no accepted drop, which the browser reports
+    // as `none`. Backing out is not finishing: the order persists to every
+    // session the person has open.
+    it('saves nothing and restores the stored order when a drag is backed out of', async () => {
+      const onReorder = vi.fn(async () => undefined);
+      renderPills({ onReorder });
+
+      const dataTransfer = spaceTransfer();
+      fireEvent.dragStart(pill('Hiring'), { dataTransfer });
+      fireEvent.dragEnter(pill('Launch'), { dataTransfer });
+      expect(within(screen.getByRole('group', { name: 'Spaces' })).getAllByRole('button').map((item) => item.textContent))
+        .toEqual(['All', 'Hiring', 'Launch']);
+      fireEvent.dragEnd(pill('Hiring'), { dataTransfer: { ...dataTransfer, dropEffect: 'none' } });
+
+      await waitFor(() => expect(within(screen.getByRole('group', { name: 'Spaces' })).getAllByRole('button')
+        .map((item) => item.textContent)).toEqual(['All', 'Launch', 'Hiring']));
+      expect(onReorder).not.toHaveBeenCalled();
+    });
+
+    it('explains why a dragged order snapped back when saving it fails', async () => {
+      renderPills({ onReorder: async () => { throw new Error('Could not save space order'); } });
+
+      const dataTransfer = spaceTransfer();
+      fireEvent.dragStart(pill('Hiring'), { dataTransfer });
+      fireEvent.dragEnter(pill('Launch'), { dataTransfer });
+      fireEvent.dragEnd(pill('Hiring'), { dataTransfer });
+
+      const dialog = await screen.findByRole('dialog', { name: 'Spaces could not be reordered' });
+      expect(within(dialog).getByText('The spaces are back in the order they were in. Try again in a moment.')).toBeVisible();
+      expect(screen.queryByText('Could not save space order')).not.toBeInTheDocument();
+      fireEvent.click(within(dialog).getByRole('button', { name: 'OK' }));
+      await waitFor(() => expect(within(screen.getByRole('group', { name: 'Spaces' })).getAllByRole('button')
+        .map((item) => item.textContent)).toEqual(['All', 'Launch', 'Hiring']));
+    });
   });
 
   describe('dropping a Channel', () => {

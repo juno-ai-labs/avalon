@@ -59,6 +59,7 @@ import {
   ChannelAccessSchema as WireChannelAccessSchema,
   SpaceChannelPageSchema as WireSpaceChannelPageSchema,
   ContainerOrderSchema as WireContainerOrderSchema,
+  PinnedOrderWriteSchema,
   SpaceSummarySchema as WireSpaceSummarySchema,
   MoveChannelBetweenSpacesResultSchema as WireMoveChannelBetweenSpacesResultSchema,
   type ChannelAccess,
@@ -1050,7 +1051,7 @@ export class RallyApi {
   }
 
   async getSharedNavigationDirectory(signal?: AbortSignal) {
-    return this.request('/sharing/navigation?attention=1', { schema: SharedNavigationDirectorySchema, signal });
+    return this.request('/sharing/navigation?attention=1&shell=1', { schema: SharedNavigationDirectorySchema, signal });
   }
 
   /**
@@ -1288,6 +1289,18 @@ export class RallyApi {
       body: order,
       schema: WireContainerOrderSchema,
     });
+  }
+
+  /**
+   * Save this person's order for **All**'s Pinned section, in full. Answers
+   * with what was stored: only Channels they can list, each once.
+   */
+  async reorderAllPinned(itemIds: string[]): Promise<string[]> {
+    return (await this.request('/workspace/pinned-order', {
+      method: 'PUT',
+      body: { itemIds },
+      schema: PinnedOrderWriteSchema,
+    })).itemIds;
   }
 
   /**

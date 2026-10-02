@@ -206,5 +206,7 @@ it('opens a lone Channel with no hierarchy rails and keeps the account menu reac
     expect(screen.queryByRole('complementary', { name: 'Spaces sidebar' })).not.toBeInTheDocument();
     expect(screen.queryByRole('complementary', { name: 'Rally navigation' })).not.toBeInTheDocument();
     expect(view.container.querySelector('.browser-account-fallback')).toHaveTextContent('Design team');
+    // No sidebar, so the main pane reserves no room for one.
+    expect(view.container.querySelector<HTMLElement>('.browser-workspace')?.style.getPropertyValue('--av-cmp-sidebar-width')).toBe('0px');
   } finally { view.unmount(); }
 });

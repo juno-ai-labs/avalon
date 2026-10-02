@@ -62,9 +62,18 @@ const PASTEL_KEYS: ReadonlySet<PaletteKey> = new Set(PALETTE_RING);
  * A person's colour is not a mark and keeps the hue itself (`personalColor`).
  * `black` and the retired keys have no pastel pair; anything still storing one
  * is drawn as before, the hue under its `PALETTE_INK`.
+ *
+ * `bare` is the colour for a mark drawn with no tint behind it, straight on
+ * the page: a pastel hue's ink, which reads there, or for the rest the hue
+ * itself. Their `PALETTE_INK` is near white or near black, chosen to sit on
+ * the hue, and on the page it can vanish.
  */
-export function markColors(color: PaletteKey): { tint: string; ink: string } {
+export function markColors(color: PaletteKey): { tint: string; ink: string; bare: string } {
   return PASTEL_KEYS.has(color)
-    ? { tint: `var(--av-sys-color-project-tint-${color})`, ink: `var(--av-sys-color-project-ink-${color})` }
-    : { tint: `var(--av-sys-color-project-${color})`, ink: glyphInk(color) };
+    ? {
+      tint: `var(--av-sys-color-project-tint-${color})`,
+      ink: `var(--av-sys-color-project-ink-${color})`,
+      bare: `var(--av-sys-color-project-ink-${color})`,
+    }
+    : { tint: `var(--av-sys-color-project-${color})`, ink: glyphInk(color), bare: `var(--av-sys-color-project-${color})` };
 }

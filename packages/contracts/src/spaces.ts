@@ -295,14 +295,14 @@ export type UpdateSpaceAudienceRequest = z.infer<typeof UpdateSpaceAudienceReque
 /**
  * What a person may arrange by hand, named by the thing that contains it.
  *
- * Four lists in the product are ordered per person — the Organization's
- * Spaces, the Channels placed in one Space, the Breakouts under one Channel,
- * and the Channels pinned under **All** — and they are one mechanism because the question
+ * Three lists in the product are ordered per person — the Organization's
+ * Spaces, the Channels placed in one Space, and the Breakouts under one
+ * Channel — and they are one mechanism rather than three because the question
  * each answers is identical: in what order does *this* person want the items of
  * *this* container. The kind says which list, the id says which container of
  * that kind, and the items are ids of whatever that container holds.
  *
- * **`organization` and `pinned` carry no id.** A request is already addressed to one
+ * **`organization` carries no id.** A request is already addressed to one
  * Organization — the authority reads the workspace from the caller's session
  * and writes the rows under it — so an id here would be a second answer to a
  * question already settled, and a wrong one would be *accepted*: the write
@@ -312,18 +312,13 @@ export type UpdateSpaceAudienceRequest = z.infer<typeof UpdateSpaceAudienceReque
  * to fill in correctly. The stored row still keys on the workspace id, because
  * a row wants to say what it is about; the wire does not have to be told.
  */
-export const OrderedContainerKindSchema = z.enum(["organization", "space", "channel", "pinned"]);
+export const OrderedContainerKindSchema = z.enum(["organization", "space", "channel"]);
 export type OrderedContainerKind = z.infer<typeof OrderedContainerKindSchema>;
 
 export const OrderedContainerSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("organization") }),
   z.strictObject({ kind: z.literal("space"), id: IdSchema }),
   z.strictObject({ kind: z.literal("channel"), id: IdSchema }),
-  // The Pinned section under **All**: every Channel this person pinned in any
-  // Space, in one order of their own. Each Space keeps its own pinned run; All
-  // draws from several, so it has no run to rearrange and keeps this list
-  // instead. Addressed like `organization`, by the request's own Organization.
-  z.strictObject({ kind: z.literal("pinned") }),
 ]);
 export type OrderedContainer = z.infer<typeof OrderedContainerSchema>;
 
@@ -360,6 +355,26 @@ export type ContainerOrder = z.infer<typeof ContainerOrderSchema>;
  */
 export const PersonalOrderSchema = z.array(ContainerOrderSchema);
 export type PersonalOrder = z.infer<typeof PersonalOrderSchema>;
+
+/**
+ * One person's order for **All**'s Pinned section: Channel ids, first to last.
+ *
+ * All draws its pins from every Space, so it has no Space's run to rearrange
+ * and keeps this list instead. A pin it does not name follows, in the order its
+ * Spaces give it.
+ *
+ * Not a fourth kind of `OrderedContainer`, on purpose. A shipped desktop
+ * parses `PersonalOrder` strictly, so one entry of a kind it does not know
+ * makes it drop the whole snapshot that carries it — the person's sidebar on
+ * every older build they have open. A key it does not know it ignores, so the
+ * order rides beside `ordering` instead, and is stored in a table of its own
+ * so an older Worker never reads a row it cannot parse.
+ */
+export const PinnedOrderSchema = z.array(IdSchema);
+export type PinnedOrder = z.infer<typeof PinnedOrderSchema>;
+
+/** The body of saving that order, and the answer: what was actually stored. */
+export const PinnedOrderWriteSchema = z.strictObject({ itemIds: PinnedOrderSchema });
 
 /**
  * What a Space hands down to its member Channels, as one kind-keyed value.
