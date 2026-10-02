@@ -1355,11 +1355,7 @@ describe('Sidebar channel markers', () => {
           <Sidebar
             {...defaultActions}
             onSignOut={vi.fn()}
-            ordering={[{
-              container: { kind: 'organization' },
-              itemIds: [launch.id, hiring.id, general().id],
-            }]}
-            spaces={[general(), hiring, launch]}
+            spaces={[general(), launch, hiring]}
             workspace={workspace}
             workstreams={[target]}
           />
@@ -1367,7 +1363,7 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    expect(pillNames()).toEqual(['All', 'Launch', 'Hiring']);
+    expect(pillNames()).toEqual(['All', 'Hiring', 'Launch']);
 
     // The row lives under the Space that holds it; there is no second, flat
     // list of the same Channel to reach it through.
@@ -1380,9 +1376,9 @@ describe('Sidebar channel markers', () => {
     const generalOption = await screen.findByRole('menuitemcheckbox', { name: 'General' });
     const existing = screen.getByRole('menuitemcheckbox', { name: 'Hiring' });
     const available = screen.getByRole('menuitemcheckbox', { name: 'Launch' });
-    // The pills' order, with General — which has no pill — in its stored place.
+    // The pills' A–Z order, with General — which has no pill — sorted among them.
     expect(screen.getAllByRole('menuitemcheckbox').map((option) => option.textContent))
-      .toEqual(['Launch', 'Hiring', 'General']);
+      .toEqual(['General', 'Hiring', 'Launch']);
     expect(generalOption).toHaveAttribute('aria-checked', 'true');
     expect(generalOption.firstElementChild).toHaveClass('nested-menu-check');
     expect(existing).toHaveAttribute('data-disabled');
@@ -1394,14 +1390,14 @@ describe('Sidebar channel markers', () => {
     expect(available.firstElementChild).not.toHaveClass('nested-menu-check');
 
     act(() => available.focus());
-    fireEvent.keyDown(available, { key: 'ArrowDown' });
+    fireEvent.keyDown(available, { key: 'ArrowUp' });
     await waitFor(() => expect(existing).toHaveFocus());
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
       'This channel is already in Hiring.',
     );
   });
 
-  it('orders the new Channel Space picker like the Space sidebar', async () => {
+  it('orders the new Channel Space picker like the Space pills', async () => {
     const hiring = space();
     const launch = space('00000000-0000-7000-8000-0000000000f5', 'Launch');
     render(
@@ -1410,11 +1406,7 @@ describe('Sidebar channel markers', () => {
           <Sidebar
             {...defaultActions}
             onSignOut={vi.fn()}
-            ordering={[{
-              container: { kind: 'organization' },
-              itemIds: [launch.id, hiring.id, general().id],
-            }]}
-            spaces={[general(), hiring, launch]}
+            spaces={[general(), launch, hiring]}
             workspace={workspace}
             workstreams={[]}
           />
@@ -1422,69 +1414,15 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    expect(pillNames()).toEqual(['All', 'Launch', 'Hiring']);
+    expect(pillNames()).toEqual(['All', 'Hiring', 'Launch']);
     fireEvent.click(screen.getByRole('button', { name: 'New channel' }));
 
     const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
     const spacePicker = within(dialog).getByRole('combobox', { name: 'Space' });
-    expect(spacePicker).toHaveTextContent('Launch');
+    expect(spacePicker).toHaveTextContent('General');
     fireEvent.click(spacePicker);
     expect(screen.getAllByRole('option').map((option) => option.textContent))
-      .toEqual(['Launch', 'Hiring', 'General']);
-  });
-
-  it('keeps Add to space aligned with an in-flight Space reorder', async () => {
-    let finishReorder: (() => void) | undefined;
-    const onReorderContainer = vi.fn(() => new Promise<void>((resolve) => {
-      finishReorder = resolve;
-    }));
-    const hiring = space();
-    const launch = space('00000000-0000-7000-8000-0000000000f5', 'Launch');
-    const target = placedIn(
-      workstream('optimistic-menu-spaces', 'Quarterly planning', 'completed'),
-      hiring.id,
-      general().id,
-    );
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            onReorderContainer={onReorderContainer}
-            onSignOut={vi.fn()}
-            ordering={[{
-              container: { kind: 'organization' },
-              itemIds: [launch.id, hiring.id, general().id],
-            }]}
-            spaces={[general(), hiring, launch]}
-            workspace={workspace}
-            workstreams={[target]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    fireEvent.keyDown(pill('Launch'), {
-      altKey: true,
-      key: 'ArrowRight',
-    });
-    await waitFor(() => expect(onReorderContainer).toHaveBeenCalledWith({
-      container: { kind: 'organization' },
-      itemIds: [hiring.id, launch.id, general().id],
-    }));
-    expect(pillNames()).toEqual(['All', 'Hiring', 'Launch']);
-
-    selectSpace('Hiring');
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), {
-      clientX: 120,
-      clientY: 90,
-    });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add to space' }));
-    expect(screen.getAllByRole('menuitemcheckbox').map((option) => option.textContent))
-      .toEqual(['Hiring', 'Launch', 'General']);
-
-    finishReorder?.();
-    await waitFor(() => expect(onReorderContainer).toHaveBeenCalledOnce());
+      .toEqual(['General', 'Hiring', 'Launch']);
   });
 
   it('removes a channel from the space whose placement menu was opened', async () => {
@@ -3407,17 +3345,6 @@ describe('the sidebar without a recency list', () => {
 
     expect(screen.queryByRole('link', { name: /Launch tracking/u })).not.toBeInTheDocument();
   });
-
-  it('given a stored space order, when the section is drawn, then it is in that order', () => {
-    const first = space('00000000-0000-7000-8000-0000000000f3', 'Alpha');
-    const second = space('00000000-0000-7000-8000-0000000000f4', 'Bravo');
-    renderSidebar({
-      spaces: [first, second],
-      ordering: [{ container: { kind: 'organization' }, itemIds: [second.id, first.id] }],
-    });
-
-    expect(pillNames()).toEqual(['All', 'Bravo', 'Alpha']);
-  });
 });
 
 describe('alphabetical channels inside a space', () => {
@@ -3542,7 +3469,6 @@ describe('alphabetical channels inside a space', () => {
     const duplicateEarlier = placedIn(workstream('ws-duplicate-a', 'Same', 'completed'), hiring.id);
     const zulu = placedIn(workstream('ws-zulu', 'Zulu', 'completed'), hiring.id);
     renderSidebar({
-      ordering: [{ container: { kind: 'space', id: hiring.id }, itemIds: [zulu.id, bravo.id, lowercase.id] }],
       workstreams: [zulu, duplicateLater, duplicateEarlier, uppercase, bravo, lowercase, accented],
     });
 
@@ -3564,8 +3490,7 @@ describe('alphabetical channels inside a space', () => {
   // reordered inside the alphabetical list it is leaving.
   it('given a placement dropped on another space, then it is moved and nothing is reordered', async () => {
     const onMoveChannelToSpace = vi.fn(async () => undefined);
-    const onReorderContainer = vi.fn(async () => undefined);
-    renderSidebar({ onMoveChannelToSpace, onReorderContainer });
+    renderSidebar({ onMoveChannelToSpace });
 
     const transfer = channelTransfer();
     const target = pill('Launch');
@@ -3574,7 +3499,6 @@ describe('alphabetical channels inside a space', () => {
     fireEvent.dragEnd(dragTarget(/Bravo/u), { dataTransfer: transfer });
 
     await waitFor(() => expect(onMoveChannelToSpace).toHaveBeenCalledWith(hiring.id, launch.id, bravo.id));
-    expect(onReorderContainer).not.toHaveBeenCalled();
     expect(placementTitles()).toEqual([expect.stringContaining('Alpha'), expect.stringContaining('Bravo')]);
   });
 
@@ -3748,12 +3672,10 @@ describe('alphabetical channels inside a space', () => {
   });
 
   it('does not reorder the alphabetical section with Alt+Arrow', () => {
-    const onReorderContainer = vi.fn(async () => undefined);
-    renderSidebar({ onReorderContainer });
+    renderSidebar();
 
     fireEvent.keyDown(dragTarget(/Bravo/u), { altKey: true, key: 'ArrowUp' });
 
-    expect(onReorderContainer).not.toHaveBeenCalled();
     expect(placementTitles()).toEqual(['Alpha', 'Bravo']);
   });
 
