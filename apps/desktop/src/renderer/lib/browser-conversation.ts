@@ -27,34 +27,6 @@ export function isBrowserConversationUrl(value: string | null): boolean {
   return value !== null && conversationAt(value, '') !== null;
 }
 
-/**
- * The sites an import of one provider's conversation may drive the tab to and
- * load files from: the provider's chat app, the hosts it serves files from,
- * and its sign-in host. Everything else is refused before a navigation or a
- * load, and a tab found anywhere else after an action fails that action.
- *
- * Named hosts, not the company's domain: the same signed-in browser holds the
- * person's API and billing consoles (platform.openai.com,
- * console.anthropic.com), which an import never needs and page content must
- * not be able to steer the agent onto. `*.` admits a domain's subdomains.
- */
-const PROVIDER_SITES: Record<BrowserConversationProvider, readonly string[]> = {
-  chatgpt: ['chatgpt.com', '*.chatgpt.com', 'auth.openai.com', '*.oaiusercontent.com', '*.oaistatic.com'],
-  claude: ['claude.ai', '*.claude.ai', '*.claudeusercontent.com'],
-};
-
-export function providerSiteAllows(provider: BrowserConversationProvider, value: string): boolean {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== 'https:') return false;
-    return PROVIDER_SITES[provider].some((site) => site.startsWith('*.')
-      ? url.hostname.endsWith(site.slice(1))
-      : url.hostname === site);
-  } catch {
-    return false;
-  }
-}
-
 type LoaderBridge = Pick<RallyDesktopBridge, 'commandEmbeddedBrowser'>;
 
 /**

@@ -27,8 +27,6 @@ export interface DesktopActionExecutorOptions {
   bridge: ExecutorBridge;
   /** The one tab this work drives. No action reaches any other. */
   tabId: string;
-  /** Whether the tab may be on, navigate to, or load from this URL. */
-  siteAllows: (url: string) => boolean;
   store: DesktopActionStore;
   handlers?: DesktopActionHandlers;
 }
@@ -54,7 +52,7 @@ function fileName(url: string): string {
  * or switching tabs and raw DevTools commands are not actions at all.
  */
 export function createDesktopActionExecutor(options: DesktopActionExecutorOptions) {
-  const { bridge, tabId, siteAllows, store } = options;
+  const { bridge, tabId, store } = options;
 
   const command = (input: EmbeddedBrowserCommand) => bridge.commandEmbeddedBrowser(input);
 
@@ -68,7 +66,6 @@ export function createDesktopActionExecutor(options: DesktopActionExecutorOption
   const settled = async (): Promise<{ url: string; title: string } | DesktopActionOutcome> => {
     const current = await page();
     if (!current) return failed('tab_closed', 'The tab this work uses was closed.');
-    if (!siteAllows(current.url)) return failed('origin_not_allowed', `The tab is on ${current.url}, which this work may not use.`);
     return current;
   };
 
@@ -80,9 +77,7 @@ export function createDesktopActionExecutor(options: DesktopActionExecutorOption
 
   const browser = async (action: Extract<DesktopAction, { kind: `browser.${string}` }>): Promise<DesktopActionOutcome> => {
     const before = await settled();
-    // Only navigation may start from a site this work may not use: it is how
-    // the agent brings the tab back.
-    if ('ok' in before && !(action.kind === 'browser.navigate' && !before.ok && before.code === 'origin_not_allowed')) return before;
+    if ('ok' in before) return before;
     if (action.kind === 'browser.evaluate') {
       let raw: unknown;
       try {
@@ -114,7 +109,6 @@ export function createDesktopActionExecutor(options: DesktopActionExecutorOption
       return { ok: true, result: { ...current, mimeType: result.mimeType, data: result.data, width: result.width, height: result.height } };
     }
     if (action.kind === 'browser.load') {
-      if (!siteAllows(action.url)) return failed('origin_not_allowed', `${action.url} is not a site this work may load from.`);
       const loaded = await loadThroughTab(bridge, tabId, action.url, MAX_STORED_FILE_BYTES);
       if (loaded === 'too_large') return failed('file_too_large', `The file is larger than the ${MAX_STORED_FILE_BYTES}-byte file limit.`);
       if (!loaded) return failed('browser_command_failed', `${action.url} could not be loaded.`);
@@ -178,9 +172,6 @@ export function createDesktopActionExecutor(options: DesktopActionExecutorOption
           ...(action.length !== undefined ? { text: (textual ? text : body.body).slice(offset, offset + action.length) } : {}),
         },
       };
-    }
-    if (action.kind === 'browser.navigate' && !siteAllows(action.url)) {
-      return failed('origin_not_allowed', `${action.url} is not a site this work may open.`);
     }
     try {
       if (action.kind === 'browser.navigate') await command({ action: 'navigate', tabId, url: action.url });

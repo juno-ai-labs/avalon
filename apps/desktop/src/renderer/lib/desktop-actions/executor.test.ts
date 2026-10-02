@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EmbeddedBrowserCommand, EmbeddedBrowserResult, EmbeddedBrowserTab } from '../../../common/embedded-browser';
-import { providerSiteAllows } from '../browser-conversation';
 import { createDesktopActionExecutor } from './executor';
 import { DesktopActionStore } from './store';
 
@@ -21,7 +20,6 @@ function harness(url = 'https://claude.ai/chat/1') {
   const executor = createDesktopActionExecutor({
     bridge: { commandEmbeddedBrowser, getEmbeddedBrowserState: vi.fn(async () => ({ tabs, activeTabId: 'pinned' })) },
     tabId: 'pinned',
-    siteAllows: (value) => providerSiteAllows('claude', value),
     store,
   });
   return { executor, commandEmbeddedBrowser, store, tabs };
@@ -39,17 +37,12 @@ describe('desktop action executor', () => {
     expect(commandEmbeddedBrowser.mock.calls.map(([command]) => 'tabId' in command ? command.tabId : null)).toEqual(['pinned', 'pinned']);
   });
 
-  it('refuses sites the work may not use, before and after an action', async () => {
+  it('lets the work take the tab to any site and keep acting there', async () => {
     const { executor, commandEmbeddedBrowser, tabs } = harness();
-    await expect(executor.execute({ kind: 'browser.navigate', url: 'https://example.com/' }))
-      .resolves.toMatchObject({ ok: false, code: 'origin_not_allowed' });
-    await expect(executor.execute({ kind: 'browser.load', url: 'https://example.com/file.pdf' }))
-      .resolves.toMatchObject({ ok: false, code: 'origin_not_allowed' });
-    expect(commandEmbeddedBrowser).not.toHaveBeenCalled();
-    // A page that navigated itself away fails the next action, but navigation may bring it back.
+    await expect(executor.execute({ kind: 'browser.navigate', url: 'https://example.com/' })).resolves.toMatchObject({ ok: true });
+    expect(commandEmbeddedBrowser).toHaveBeenCalledWith({ action: 'navigate', tabId: 'pinned', url: 'https://example.com/' });
     tabs[0] = tab('pinned', 'https://example.com/');
-    await expect(executor.execute({ kind: 'browser.snapshot' })).resolves.toMatchObject({ ok: false, code: 'origin_not_allowed' });
-    await expect(executor.execute({ kind: 'browser.navigate', url: 'https://claude.ai/chat/1' })).resolves.toMatchObject({ ok: true });
+    await expect(executor.execute({ kind: 'browser.click', x: 1, y: 2 })).resolves.toMatchObject({ ok: true });
   });
 
   it('answers a closed tab, an unknown action and an unhandled kind without throwing', async () => {
@@ -76,7 +69,7 @@ describe('desktop action executor', () => {
     });
     const executor = createDesktopActionExecutor({
       bridge: { commandEmbeddedBrowser, getEmbeddedBrowserState: vi.fn(async () => ({ tabs, activeTabId: 'pinned' })) },
-      tabId: 'pinned', siteAllows: (value) => providerSiteAllows('claude', value), store: new DesktopActionStore(),
+      tabId: 'pinned', store: new DesktopActionStore(),
     });
     await expect(executor.execute({ kind: 'browser.network_list', urlContains: 'chat_conversations', resourceType: 'fetch' }))
       .resolves.toEqual({ ok: true, result: { responses: [responses[0]] } });

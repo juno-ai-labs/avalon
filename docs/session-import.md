@@ -22,7 +22,7 @@ choice. Importing a prior assistant answer never claims Rally executed it.
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Shared materialization, preparation receipts, file reservations, root/child publication. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Source-message checkpoint and update receipts owned by the Channel authority. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Canonical fact preparation for ordered conversations. |
-| `apps/desktop/src/renderer/lib/browser-conversation.ts` | Which tab shows an importable conversation, and the provider sites an import may use. |
+| `apps/desktop/src/renderer/lib/browser-conversation.ts` | Which tab shows an importable conversation, and loading a cross-site file through the tab. |
 | `apps/desktop/src/renderer/lib/session-import-run.ts` | The desktop half of a run: start it, answer its actions, assemble and hand over what the agent stored. |
 | `apps/desktop/src/renderer/screens/browser-import.tsx` | The import window: Import, the name-and-Space sheet, the run's progress modal and Cancel. |
 | `apps/desktop/src/renderer/lib/browser-import-progress.tsx` | The main window's half: lists the Channel as pending, shows "Importing conversation…", and settles or discards it. |
@@ -78,8 +78,10 @@ returns the main window to where it was. The pending-row rule is in
 3. **Read.** The import window opens the child's socket and answers every
    [desktop action](desktop-actions.md) the agent asks for on the tab it was
    started from: page script, the page's accessibility outline, screenshots,
-   input, navigation and cross-site file loads, all held to the provider's own
-   sites. The prompt points the agent at the JSON the page itself loads, because
+   input, navigation and cross-site file loads, to any site. The finish is
+   refused while the tab shows a conversation other than the one the person
+   opened, so another conversation's messages are never saved under its
+   identity. The prompt points the agent at the JSON the page itself loads, because
    long conversations render lazily and a DOM read drops messages silently. Page
    script keeps bytes and the assembled messages with the desktop through
    `rally.store`; the model and the API see only handles.
