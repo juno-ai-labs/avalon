@@ -4049,6 +4049,23 @@ describe('the sidebar Space filter', () => {
     expect(screen.getByRole('link', { name: 'Alpha' })).toHaveClass('is-active');
   });
 
+  it('widens to All when the open Channel leaves the filtered Space', () => {
+    useUiStore.setState({ sidebarSpaceFilter: launch.id });
+    const tree = (channel: WorkstreamSummary): React.JSX.Element => (
+      <MemoryRouter initialEntries={[`/workstreams/${delta.id}`]}>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[home, hiring, launch]}
+            workspace={workspace} workstreams={[alpha, bravo, charlie, channel]} />
+        </Tooltip.Provider>
+      </MemoryRouter>
+    );
+    const view = render(tree(delta));
+    expect(pill('Launch')).toHaveAttribute('aria-pressed', 'true');
+
+    view.rerender(tree(placedIn(delta, hiring.id)));
+    expect(pill('All')).toHaveAttribute('aria-pressed', 'true');
+  });
+
   describe('a pill picked while a Channel is open', () => {
     const empty = space('00000000-0000-7000-8000-0000000000f6', 'Empty');
 

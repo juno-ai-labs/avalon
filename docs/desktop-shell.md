@@ -52,13 +52,15 @@ name, case-insensitive A to Z (`compareAlphabeticalName`). Pills cannot be
 reordered by drag or keyboard; dragging a Channel onto a pill still places it
 in that Space. **General has no pill.** It is where a Channel lives
 when nobody put it in a Space, and All already shows it. A pill filters the
-list below and does not navigate; **Open space** is on its right-click menu and
+list below and navigates only when it hides the open Channel (see below);
+**Open space** is on its right-click menu and
 in the Channel menu. The desktop remembers the filter per device
 (`useUiStore.sidebarSpaceFilter`, `rally.sidebar-space-filter`). Opening a
 Channel the filter would hide, or moving the open Channel out of the filtered
 Space, widens the list to All. Picking a pill that hides the open Channel
 filters as asked and opens the first Channel the filtered list draws, or the
-Space's dashboard when it holds none.
+Space's dashboard when it holds none. Restoring an archived Space selects its
+pill the same way, so it can navigate too.
 
 The list is **Pinned**, then every other Channel, A to Z by default. The rest
 is headed **Channels** whenever it has rows, pinned or not, because that heading
@@ -272,12 +274,14 @@ leave the open one off the list.
 
 **Considered and rejected:** Dropping the widen rule. It still earns its place
 when a link or a stored filter opens a Channel the list would hide. Keeping the
-open Channel and leaving its row off the list, which the first fix did: the
-open screen and the list disagreed about where the reader was.
+open Channel and leaving its row off the list: the screen and the list
+disagreed about where the reader was.
 
 **Consequences:** The navigation waits for the picked Space's Channels and
-drops itself if the route changes or another pill is picked first. It pushes a
-history entry, so Back returns to the earlier Channel and widens to All.
+drops itself if the route changes or another pill is picked first, but not
+if the reader has only started typing in the open Channel. It pushes a history
+entry, so Back returns to the earlier Channel and widens to All. Restore
+selects through the same path, so the list and the screen agree there too.
 
 ### 2026-10-02 — Channels sort toggle: A–Z, Recent, or Needs you
 
