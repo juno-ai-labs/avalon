@@ -7472,7 +7472,19 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 }
 .sidebar-top-actions > .icon-button:hover:not(:disabled),
 .sidebar-top-action:hover:not(:disabled) { background: var(--av-sys-color-surface-raised-hover); }
-.sidebar-top-actions > .sidebar-top-update { color: var(--av-sys-color-accent-base); }
+/* The one action asking to be taken: a fixed blue fill, the same in both themes. */
+.sidebar-top-actions > .sidebar-top-update {
+  background: var(--av-sys-color-project-blue);
+  box-shadow: var(--av-cmp-composer-shadow);
+  color: var(--av-sys-color-palette-ink-light);
+}
+/* Restates fill and ink: the siblings' hover would repaint the fill, and the
+   rule above's shorthand would clear `.icon-button:focus-visible`'s wash. */
+.sidebar-top-actions > .sidebar-top-update:hover:not(:disabled),
+.sidebar-top-actions > .sidebar-top-update:focus-visible {
+  background: var(--hover-layer), var(--av-sys-color-project-blue);
+  color: var(--av-sys-color-palette-ink-light);
+}
 
 .space-pill-strip { align-items: center; display: flex; flex: 0 0 auto; gap: 6px; min-width: 0; padding: 0 14px 10px; }
 .space-pill-strip-scroll {
