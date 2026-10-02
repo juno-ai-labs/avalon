@@ -20,7 +20,7 @@ conversation, not parent work-stream metadata. Members retain `renameWorkstream`
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/src/services/workstream-naming-service.ts` | Both passes, the provisional title, the model call, the compare-and-set that advances `title_status`, and the rename event. The single source of every generated title. |
+| `apps/api/src/services/workstream-naming-service.ts` | Both passes, the icon pass for a Channel created with its name, the provisional title, the model call, the compare-and-set that advances `title_status`, and the rename event. The single source of every generated title. |
 | `packages/agent-harness/src/prompts/` | `renderWorkstreamNameMessages` — the naming agent's prompt, including the icon catalog rendered into it. See [`writing-prompts.md`](writing-prompts.md). |
 | `packages/contracts/src/workstream-appearance.ts` | The icon keys, one description per key, and the default. Shared with the picker; see [`workstream-appearance.md`](workstream-appearance.md). |
 | `packages/contracts/src/index.ts` | `WORKSTREAM_NAMING_GRACE_MS`, `WorkstreamNameResultSchema`, and `titleStatus` on every work-stream shape. |
@@ -42,7 +42,8 @@ written `title_status = 'naming'`, and that value is the promise that a name is
 coming.
 
 A create that carries its own title is not named at all: it is written `settled`,
-and neither pass will look at it.
+and neither pass will look at it. A conversation import is the one such create
+that still gets a generated icon; see [Prepared history](#prepared-history).
 
 ### A private substream is named the same way
 
@@ -301,9 +302,21 @@ text under another's header.
 
 An unnamed prepared conversation uses the same first naming pass after its history
 is committed. The creation service requests canonical conversation context, reusing
-the existing transcript reader and context bounds. Imports use the source title as
-the objective and provisional fallback, leaving the final title and icon to this
-standard background path. Explicitly titled prepared scenarios retain their names.
+the existing transcript reader and context bounds. Explicitly titled prepared
+scenarios retain their names.
+
+A conversation import is created with the name the importer typed, so it is
+`settled` and the first pass never runs. Creation runs the **icon pass**
+(`chooseWorkstreamIcon`) instead, when the caller asks for it with `chooseIcon`,
+which only `openReservedImport` does. It is the same model call over the same
+imported history, through the same `rename`, with no title and `settled` on both
+sides of the fence. So the name and its status stay as they are, and the icon is
+written only where none is stored, as for any pass. The name the model also
+returns is thrown away: it is asked for because the icon is chosen against what
+the name leads with. The colour stays the id-derived one, as on every other
+conversation. When the object refuses the icon, nothing is published; otherwise
+the `workstream_renamed` event carries the title the row holds, which `rename`
+now returns, so a person's rename during the call is not undone on screen.
 
 ## Invariants
 
@@ -438,6 +451,13 @@ ordinary work-stream update and belongs to the object's product service.
   own parse degrades that value long before the write, and *"names the work
   stream past an appearance it cannot read"*. Restore either `.parse` and both
   fail with the row stuck in `naming`.
+- The icon pass has its own cases in the same file: an imported Channel gets the
+  icon and keeps its settled name, and nothing is published when a person's
+  icon is already there. Break the first by not passing the history to the
+  model (the conversation assertion fails), the second by removing the early
+  return in `advanceTitle`. `apps/api/test-workers/session-import-run.test.ts`
+  proves the wiring on real workerd: the opened Channel has the double's icon.
+  Break it by passing `chooseIcon: false` from `openReservedImport`.
 - `packages/agent-harness/src/prompts.test.ts` asserts a description line for
   every key in the catalog, not a sample of them. A key added without one fails
   to compile first; this is what catches one described in a way the prompt never
@@ -474,6 +494,26 @@ ordinary work-stream update and belongs to the object's product service.
   file's hard-coded date asserts nothing.
 
 ## Changelog
+
+### 2026-10-02 — Imports get an icon from their history
+
+**What changed:** A Channel created by a conversation import runs an icon-only
+pass after it opens. `rename` accepts `settled` as the fence with no title, and
+returns the title the row holds.
+
+**Why:** Imports carry the name the importer typed, so the first pass never
+ran and every imported Channel kept one of the twelve id-derived abstract
+marks, whatever it was about. Reusing the naming call, prompt and `rename`
+keeps one policy for generated icons; a separate import prompt would drift.
+
+**Rejected:** Letting the model pick the colour too. The colour stays on the id
+hash, which spreads Channels across the ring with no model opinion to maintain.
+Also rejected: creating imports untitled and letting the first pass name them,
+which would replace the name the importer chose.
+
+**Consequences:** The event this pass publishes is a `workstream_renamed` with
+an unchanged title, so clients apply it as they do any naming event. A later
+change that lets this pass write anything else must keep it off the title.
 
 ### 2026-09-18 — Keep guest Main renaming inside conversation authority
 
