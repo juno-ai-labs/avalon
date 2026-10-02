@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useUiStore } from './ui-store';
 
 describe('context rail state', () => {
@@ -84,16 +84,24 @@ describe('context rail state', () => {
 });
 
 describe('sidebar width', () => {
-  it('starts a device that never resized the sidebar at the design width', async () => {
+  // Each test reads the store as a fresh device would, so the module is
+  // re-imported over its own storage and both are put back afterwards.
+  beforeEach(() => {
     window.localStorage.clear();
     vi.resetModules();
+  });
+  afterEach(() => {
+    window.localStorage.clear();
+    vi.resetModules();
+  });
+
+  it('starts a device that never resized the sidebar at the design width', async () => {
     const { useUiStore: fresh } = await import('./ui-store');
     expect(fresh.getState().sidebarWidth).toBe(340);
   });
 
   it('keeps a width the person dragged to over the design width', async () => {
     window.localStorage.setItem('rally.sidebar-width', '260');
-    vi.resetModules();
     const { useUiStore: fresh } = await import('./ui-store');
     expect(fresh.getState().sidebarWidth).toBe(260);
   });

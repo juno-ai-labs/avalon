@@ -27,6 +27,7 @@ import { BreakoutMenu, ChannelMenu } from '@rally/ui/components/conversation-men
 import { SpacePill, SpacePillStrip, SidebarTopActions } from '@rally/ui/components/space-pills';
 import { SplitConversationLayout } from '@rally/ui/components/split-conversation';
 import { BreakoutPillIcon, TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
+import { SpaceIcon } from '@rally/ui/components/space-icon';
 import { WorkstreamGlyph } from '@rally/ui/components/workstream-glyph';
 import { Button, InlineError, Modal, StatusDot } from '@rally/ui/components/primitives';
 import { RallyApi } from '../../desktop/src/renderer/lib/api';
@@ -210,6 +211,8 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
     void navigator.clipboard.writeText(url);
   };
   const channelTitle = parent?.title ?? 'Shared channel';
+  // The Space this link names, for the menu's Open space; a pill only filters.
+  const menuSpace = directory.data?.spaces.find((space) => space.id === spaceId && space.systemRole !== 'general');
   const startRename = (noun: 'channel' | 'breakout', title: string, rename: (title: string) => Promise<void>): void => {
     setRenaming({ noun, title, rename });
     setRenameTitle(title);
@@ -254,6 +257,11 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
       presentUserIds={context?.presentUserIds ?? []}
       sidekickFailure={context?.sidekickFailure}
       sidekicks={context?.sidekicks}
+      space={menuSpace ? {
+        icon: <SpaceIcon size={16} space={menuSpace} />,
+        name: menuSpace.name,
+        onOpen: () => navigate(`/s/${uuidToBase58(menuSpace.id)}/`),
+      } : undefined}
       workstream={{
         id: parentId,
         title: channelTitle,
@@ -381,7 +389,6 @@ function SharedNavigation({ accountMenu, directory, navigationSpaces }: {
 }): React.JSX.Element {
   const { session } = useCollaborationSession();
   const { pathname } = useLocation();
-  const navigate = useNavigate();
   const canonicalHost = !location.pathname.startsWith('/app/workspaces/');
   const legacyParentId = pathname.match(/^\/workstreams\/([^/]+)/u)?.[1] ?? null;
   const canonicalRoute = /^\/s\/([^/]+)(?:\/c\/([^/]+))?/u.exec(pathname);
@@ -435,10 +442,7 @@ function SharedNavigation({ accountMenu, directory, navigationSpaces }: {
       {pillSpaces.map((space) => <SpacePill
         aria-description={space.scope === 'workspace' ? 'Public space' : undefined}
         key={space.id}
-        onClick={() => {
-          setSelectedSpaceId(space.id);
-          if (canonicalHost && space.id !== SHARED_CHANNELS_SPACE_ID) navigate(`/s/${uuidToBase58(space.id)}/`);
-        }}
+        onClick={() => setSelectedSpaceId(space.id)}
         selected={selectedSpace?.id === space.id}
       >{space.name}</SpacePill>)}
     </SpacePillStrip>}

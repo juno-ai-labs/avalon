@@ -9,9 +9,9 @@ describe('clampBreakoutWidth', () => {
     expect(clampBreakoutWidth(500.4, 1_200)).toBe(500);
   });
 
-  it('holds the breakout at the minimum when the container cannot fit two', () => {
-    expect(clampBreakoutWidth(300, 600)).toBe(424);
-    expect(clampBreakoutWidth(800, 600)).toBe(424);
+  it('splits evenly when the container cannot fit two minimums', () => {
+    expect(clampBreakoutWidth(300, 600)).toBe(300);
+    expect(clampBreakoutWidth(800, 601)).toBe(301);
   });
 });
 
