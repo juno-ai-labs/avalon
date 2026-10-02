@@ -1,4 +1,5 @@
 import { ProductFeatureFlagKeySchema, type ProductFeatureFlagKey } from '@rally/contracts';
+import { platformErrorCode } from '@rally/contracts/platform-diagnostics';
 import { z } from 'zod';
 import type { Env } from './env';
 import {
@@ -36,10 +37,35 @@ export class FlagshipRequestError extends Error {
  * queue. Saving again is safe and repairs the notification.
  */
 export class FlagChangeNotificationError extends Error {
-  constructor() {
-    super('Flagship saved the flag, but the change notification to connected clients failed. Save the same definition again to notify them.');
+  constructor(cause: unknown) {
+    super(
+      'Flagship saved the flag, but the change notification to connected clients failed. Save the same definition again to notify them.',
+      { cause },
+    );
     this.name = 'FlagChangeNotificationError';
   }
+}
+
+/**
+ * The code and caller-safe message for a Flagship failure Ace can name, or
+ * `null`. Flagship's own error text stays in Ace: only its status crosses, to
+ * the Ace page and to the engineering MCP alike.
+ */
+export function flagshipFailure(error: unknown): { code: string; message: string } | null {
+  if (error instanceof FlagshipRequestError) {
+    return {
+      code: `flagship_request_failed_${error.status}`,
+      message: `Flagship refused the request with HTTP ${error.status}. Nothing was changed by this call.`,
+    };
+  }
+  if (error instanceof FlagChangeNotificationError) {
+    const platform = platformErrorCode(error.cause);
+    return {
+      code: platform ? `flag_change_notification_failed:${platform}` : 'flag_change_notification_failed',
+      message: error.message,
+    };
+  }
+  return null;
 }
 
 async function request(env: Env, path: string, init?: RequestInit): Promise<unknown> {
@@ -97,8 +123,8 @@ export async function updateManagedFlag(
       { kind: 'flagship_product_flag_changed', flagKey: parsedKey },
       { delaySeconds: FLAGSHIP_PROPAGATION_DELAY_SECONDS },
     );
-  } catch {
-    throw new FlagChangeNotificationError();
+  } catch (error) {
+    throw new FlagChangeNotificationError(error);
   }
   return result;
 }
