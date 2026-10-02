@@ -37,8 +37,7 @@ minutes. You do not have to sit and watch. You can keep talking, change your
 mind halfway, or stop it, and the Channel shows you what it is up to the whole
 time.
 
-The Channel also tells you when it needs you. Small coloured dots and number
-badges say whether Rally is busy, waiting on an answer from you, finished, or
+The Channel also tells you when it needs you. Small coloured dots say whether Rally is busy, waiting on an answer from you, finished, or
 stuck. Once you know the colours, you can glance at your list of Channels and
 know where to look first.
 
@@ -50,7 +49,9 @@ going on while Rally works, how to steer it, and what to do when a run fails.
 Then reading Rally's answers, with their tables, sources and diagrams.
 
 The second half is about people: bringing teammates in, seeing who is around,
-and when Rally speaks up or stays quiet. Then the status dots, and how to give a
-Channel a name, an icon and a colour you will recognise. The last page brings a
+and when Rally speaks up or stays quiet. Then the status dots, and the title pill
+at the top of every conversation, whose menu holds the Channel's people,
+Sidekicks, Breakouts and settings, and where you give a Channel a name, an icon
+and a colour you will recognise. The last page brings a
 conversation you started in Claude or ChatGPT into Rally, so that work does not
 start from scratch.

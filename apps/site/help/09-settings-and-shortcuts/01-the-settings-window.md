@@ -14,7 +14,7 @@ There are three ways in:
   that opens settings in almost every Mac app, so your fingers may already know
   it.
 - Choose **Rally → Settings…** from the menu bar at the top of the screen.
-- Click your name at the bottom of the Spaces rail to open the account menu, then
+- Click your name at the bottom of the sidebar to open the account menu, then
   choose **Settings**.
 
 Some links and buttons elsewhere in Rally open Settings straight at the right

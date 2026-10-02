@@ -80,7 +80,7 @@ A few rules follow from this.
 - **Channel Sidekicks are born in a Channel.** You get one by asking Rally
   for a Sidekick from inside a Channel or Breakout. Its scope is fixed: it
   cannot later become personal or Organization-wide. (**Create new
-  Sidekick** in the Channel sidebar starts an ordinary new Sidekick, which
+  Sidekick** in a Channel's **Sidekicks** list starts an ordinary new Sidekick, which
   begins as **Only you**.)
 - **Personal Sidekicks stay personal.** An Only you Sidekick is offered only
   in conversations where everyone present is you. It will not turn up in a

@@ -55,10 +55,7 @@ export function orderByStoredIds<T>(
  */
 export function sameContainer(left: OrderedContainer, right: OrderedContainer): boolean {
   if (left.kind !== right.kind) return false;
-  // The Organization's list and All's pins are one per Organization and carry no id.
-  if (left.kind === 'organization' || left.kind === 'pinned') return true;
-  if (right.kind === 'organization' || right.kind === 'pinned') return true;
-  return left.id === right.id;
+  return left.kind === 'organization' || right.kind === 'organization' || left.id === right.id;
 }
 
 /**

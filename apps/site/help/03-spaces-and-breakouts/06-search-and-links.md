@@ -10,7 +10,8 @@ exact spot.
 ## Search your Organization
 
 Press <kbd>⌘</kbd> <kbd>⇧ Shift</kbd> <kbd>F</kbd> from anywhere in the main
-window, or click **Search** at the top of the Spaces rail. A search window opens
+window, or click **Search organization** (the magnifying glass) at the top of
+the sidebar. A search window opens
 over everything else.
 
 Start typing. Results appear after a short pause, with no need to press
@@ -55,7 +56,7 @@ Every shortcut in Rally is collected in
 - **Things you cannot read.** Search only shows results from conversations you
   have access to, and checks again when you open one.
 - **Spaces and Channels by name.** Search looks inside conversations, not at
-  their titles. To find a Channel by name, look in the Spaces and Channels rails.
+  their titles. To find a Channel by name, look in the sidebar.
 - **Anything, while you are signed out.** The Search button is greyed out and the
   shortcut does nothing until you are signed in.
 
@@ -75,8 +76,8 @@ to a teammate and it opens Rally at exactly that place.
 | To copy a link to | Do this |
 | --- | --- |
 | A Space | Click **Copy space link** on the Space's page. |
-| A Channel | Click **…** (**More channel actions**) in the Channel's header and choose **Copy channel link**, or right-click the main conversation row in the Channel sidebar and choose **Copy channel link**. |
-| A Breakout | Right-click it in the Channel sidebar and choose **Copy breakout link**. |
+| A Channel | Click the Channel's name in its title pill and choose **Copy link**. |
+| A Breakout | Click the Breakout's name in its title pill and choose **Copy link**. |
 
 If the copy fails, Rally says so and you can try again.
 

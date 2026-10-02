@@ -51,7 +51,7 @@ The preview normally lays a see-through, slightly blurred wash over the window b
 
 ## Opening an artifact
 
-Click an artifact's card in the conversation, or its row under **Artifacts** in the Channel sidebar, and it opens with its title in the header and a row of buttons beside it:
+Click an artifact's card in the conversation, or its row under **Artifacts** in the Channel's menu (**More**), and it opens with its title in the header and a row of buttons beside it:
 
 - **Open in a righthand sidebar** docks it beside the conversation (below).
 - **Open in a new window** gives it a window of its own (further below).

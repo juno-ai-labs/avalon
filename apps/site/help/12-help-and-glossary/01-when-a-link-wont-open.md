@@ -148,8 +148,8 @@ why, and how to be let in.
 | Rally could not open that note link. | The link is damaged. Ask whoever sent it to copy it again from inside Rally. |
 | Rally could not open that link. | Something unexpected went wrong. Try the link once more. If it keeps happening, contact support with the time it happened. |
 
-A link to start a new Channel opens Rally and leaves the choosing to you: pick
-a Space and use the **+** in the sidebar. A link to make a new Sidekick opens
+A link to start a new Channel opens Rally and leaves the choosing to you: click
+**New channel** at the top of the sidebar and pick a Space. A link to make a new Sidekick opens
 the app's home. Neither of those is a failure. Each is a link with modest
 ambitions.
 
