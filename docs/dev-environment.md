@@ -362,6 +362,11 @@ await page.screenshot({ path: '/tmp/avalon.png' });
 await browser.close();
 ```
 
+A change to `packages/ui/src/styles/app.css` can reach the window stale: the
+desktop's `styles/app.css` only `@import`s it, and Vite can re-serve the old
+inlined copy after an edit. When a computed style disagrees with the file,
+`touch apps/desktop/src/renderer/styles/app.css` to rebuild it.
+
 **Every visible change must be looked at in a real window before it is called
 done.** A passing component test asserts on the DOM, which says nothing about
 whether an element is visible, positioned, legible, or covered by something else.

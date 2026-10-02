@@ -2438,6 +2438,11 @@ export function Sidebar({
                   the thing seen to leave. See `useListMotion`. */}
               <div className="sidebar-section-heading" data-motion-hold="" data-motion-key="heading:pinned">
                 <h2 id="pinned-heading">Pinned</h2>
+                {/* The visible half of the hint below; the screen-reader half
+                    names the keys instead of the pointer. */}
+                {!spacesReadOnly && pinOrderSpaceId !== null && pinnedWorkstreams.length > 1 && (
+                  <span aria-hidden="true" className="sidebar-section-hint">Drag to reorder</span>
+                )}
               </div>
               {/* Said once for the section rather than repeated on every row:
                   as a per-row description it lands inside each link's
@@ -2474,7 +2479,7 @@ export function Sidebar({
             </section>
           )}
 
-          {pinnedWorkstreams.length > 0 && unpinnedWorkstreams.length > 0 && (
+          {pinnedWorkstreams.length > 0 && unpinnedWorkstreams.length > 0 && !spacesEnabled && (
             <hr
               aria-label="Pinned and unpinned channels"
               className="sidebar-section-divider"
@@ -2524,6 +2529,15 @@ export function Sidebar({
                 /* The selected Space above is the heading for this rail. A
                    second "Channels" label only restates the level the rail
                    already represents and pushes its rows down. */
+                <>
+                {/* Named only when Pinned sits above it: alone, the list needs
+                    no heading, and with pins the two lists need telling apart. */}
+                {pinnedWorkstreams.length > 0 && (
+                  <div className="sidebar-section-heading" data-motion-hold="" data-motion-key="heading:channels">
+                    <h2>Channels</h2>
+                    <span aria-hidden="true" className="sidebar-section-hint">A–Z</span>
+                  </div>
+                )}
                 <SidebarList data-motion-scope={selectedSpaceId ? `space:${selectedSpaceId}` : undefined}>
                   {unpinnedWorkstreams.map((workstream) => (
                     <Fragment key={workstream.id}>{renderWorkstream(
@@ -2533,6 +2547,7 @@ export function Sidebar({
                     )}</Fragment>
                   ))}
                 </SidebarList>
+                </>
               )
             ) : groups.length === 0 ? (
               // Pinned work streams are work streams, so the empty line only
