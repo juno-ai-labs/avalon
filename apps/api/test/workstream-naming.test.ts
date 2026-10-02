@@ -412,7 +412,7 @@ describe("work-stream naming", () => {
 
     expect(JSON.parse(answer.bodyJson)).toEqual({
       ok: true,
-      value: { outcome: "renamed", icon: null, title: "Avalon download link" },
+      value: { outcome: "renamed", icon: null },
     });
     expect(workstreamRow(database)).toMatchObject({
       title: "Avalon download link",
@@ -472,7 +472,6 @@ describe("work-stream naming", () => {
       workspaceId,
       workstreamId,
       objective: "Danny's onboarding chat",
-      title: "Danny's onboarding chat",
       userId,
     });
 
@@ -482,14 +481,9 @@ describe("work-stream naming", () => {
     });
     // The colour stays unchosen, so the id-derived one stays in force.
     expect(appearance(database)).toEqual({ icon: "megaphone", color: null });
-    // The title on the event is the one the row holds, not the model's, so a
-    // client applying it changes nothing.
-    expect(published).toEqual([{
-      type: "workstream_renamed",
-      title: "Danny's onboarding chat",
-      titleStatus: "settled",
-      icon: "megaphone",
-    }]);
+    // No room event: one carrying a title could undo a rename that landed
+    // after this pass read the row. The directory projection carries the icon.
+    expect(published).toEqual([]);
     // The imported history is what the model reads. The client appends the
     // expected JSON Schema to the last message, so the rendered payload is the
     // part before it.
@@ -497,7 +491,25 @@ describe("work-stream naming", () => {
     expect((JSON.parse(String(rendered)) as { conversation: unknown[] }).conversation).toHaveLength(2);
   });
 
-  it("publishes nothing for an import whose icon a person already chose", async () => {
+  it("keeps an import's icon when the name it came with normalizes away", async () => {
+    const database = seededDatabase();
+    applyWorkstreamObjectRootFields(objectStoreOf(database), { titleStatus: "settled" });
+    // A bare heading marker is a name the normalizer reduces to nothing. The
+    // icon pass throws the name away regardless, so the icon still stands.
+    stubOpenRouter([], "##");
+    const env = environment(database, []);
+
+    await chooseWorkstreamIcon(env, {
+      workspaceId,
+      workstreamId,
+      objective,
+    });
+
+    expect(appearance(database)).toEqual({ icon: "megaphone", color: null });
+    expect(workstreamRow(database)).toMatchObject({ title: provisionalTitle, title_status: "settled" });
+  });
+
+  it("keeps the icon a person chose for an import", async () => {
     const database = seededDatabase();
     applyWorkstreamObjectRootFields(objectStoreOf(database), {
       titleStatus: "settled",
@@ -511,7 +523,6 @@ describe("work-stream naming", () => {
       workspaceId,
       workstreamId,
       objective,
-      title: provisionalTitle,
     });
 
     expect(appearance(database)).toEqual({ icon: "rocket", color: null });

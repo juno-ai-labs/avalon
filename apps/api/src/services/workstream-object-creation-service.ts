@@ -75,11 +75,7 @@ interface ReceiptRow {
 
 interface CreateOptions {
   contentIdentityHash?: string;
-  /**
-   * Run the icon pass on a Channel created with its title: a model picks its
-   * icon from the history it opens with, and the title stands. A Channel
-   * created without a title is named instead, icon included, and ignores this.
-   */
+  /** Run the icon pass on a Channel created with its title (an import). */
   chooseIcon?: boolean;
   initialization?: ConversationInitialization;
   /** Authority snapshot already resolved by the owning HTTP route in this request. */
@@ -240,7 +236,6 @@ export class WorkstreamObjectCreationService {
     return this.createPrepared(input, conversation, {
       reason: "session_import",
       contentIdentityHash: identityHash,
-      // The importer typed the name, so only the icon is left to choose.
       chooseIcon: true,
     });
   }
@@ -600,9 +595,6 @@ export class WorkstreamObjectCreationService {
     // provisional title in `naming` forever — a permanent skeleton shimmer in
     // the sidebar. Naming reaches transcript and identity through their typed
     // object ports; it does not need a database-shaped work-stream proxy.
-    //
-    // A Channel created with its title skips naming, and gets the same model
-    // call for its icon alone where the caller asked for that.
     const naming = body.title == null
       ? nameWorkstream(
         this.env,
@@ -622,7 +614,6 @@ export class WorkstreamObjectCreationService {
           workstreamId: receipt.workstream_id,
           userId: this.auth.userId,
           objective,
-          title,
         })
         : null;
     if (naming) {
