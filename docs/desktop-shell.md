@@ -284,6 +284,8 @@ disabled reason ("already in All"). Anything new that lists Spaces for a choice
 should read it through `useSpaceChoices` rather than sort on its own: the
 rule lives in that one file.
 
+Shipped in #1072.
+
 ### 2026-10-02 — Panel dividers stop short of the window's edges
 
 **What changed:** The lines between conversation panels (the Channel and
