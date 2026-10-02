@@ -87,7 +87,7 @@ describe('assembling an import from what the agent stored', () => {
 describe('running an import', () => {
   function started(
     onSteps?: (steps: readonly SessionImportStep[]) => void,
-    options: { reservation?: Promise<{ workstreamId: string; substreamId: string }>; onStarted?: (run: { workstreamId: string }) => void } = {},
+    options: { reservation?: Promise<{ workstreamId: string; substreamId: string }>; onStarted?: (run: { workstreamId: string; substreamId: string }) => void } = {},
   ) {
     const discards: string[] = [];
     const unused = async (): Promise<never> => { throw new Error('not used by this run'); };
@@ -204,6 +204,14 @@ describe('running an import', () => {
     await vi.waitFor(() => expect(discards).toEqual(['w1']));
     expect(reported).toEqual([]);
     expect(sockets).toHaveLength(0);
+  });
+
+  it('reports the reserved Channel and the agent’s conversation once the API answers', async () => {
+    sockets.length = 0;
+    const reported: unknown[] = [];
+    const { run } = started(undefined, { onStarted: (reservation) => reported.push(reservation) });
+    await vi.waitFor(() => expect(reported).toEqual([{ workstreamId: 'w1', substreamId: 's1' }]));
+    await run.cancel();
   });
 
   it('keeps an import that opened its Channel as imported when the agent gives up afterwards', async () => {
