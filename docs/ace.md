@@ -395,6 +395,8 @@ target.
 **Consequences:** A key in the retire list must not also appear in an ensure
 call; the second step wins and the flag survives every deploy.
 
+PR #1062.
+
 ### 2026-09-12 — Use the existing operator identity for connector maintenance
 
 **What changed:** Regional maintenance routes admit the existing Ace demos operator identity for preview, apply, status, resume and cancel; no Ace UI is added.

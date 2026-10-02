@@ -1117,6 +1117,8 @@ with `completion_defect` three times in a row before the fallback served it;
 that fix is deferred, so a role moved onto Terra leans on its fallback for
 those turns.
 
+PR #1062.
+
 ### 2026-09-17 — Addressing leaves the model-flag catalog
 
 **What changed:** Message addressing no longer has an
