@@ -26,6 +26,7 @@ import {
   WorkspaceSpaceChannelPageResultSchema,
   WorkspaceSpaceDefaultResultSchema,
   WorkspaceContainerOrderResultSchema,
+  WorkspacePinnedOrderResultSchema,
   WorkspaceSpaceGeneralOpenResultSchema,
   WorkspaceSpaceMembersResultSchema,
   WorkspaceSpaceMembershipMoveOutcomeSchema,
@@ -200,6 +201,17 @@ export class SpaceService {
     }));
     if (!result.ok) throw spaceRefusal(result.code, "");
     return ContainerOrderSchema.parse(result.order);
+  }
+
+  /** This person's order for All's Pinned section, answered with what was stored. */
+  async reorderAllPinned(itemIds: string[]): Promise<string[]> {
+    const result = WorkspacePinnedOrderResultSchema.parse(await (await this.workspace()).reorderAllPinned({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+      itemIds,
+    }));
+    if (!result.ok) throw spaceRefusal(result.code, "");
+    return result.itemIds;
   }
 
   async summary(spaceId: SpaceId): Promise<SpaceSummary> {

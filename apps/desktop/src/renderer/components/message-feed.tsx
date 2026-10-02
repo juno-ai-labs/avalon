@@ -1,4 +1,5 @@
 import { useVirtualizer, type Virtualizer } from '@tanstack/react-virtual';
+import { BreakoutChipRow, type BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { AttachmentPreview } from './attachments';
 import type { CitationContext } from './markdown-citations';
@@ -43,6 +44,15 @@ interface MessageFeedProps {
   onAnswerElicitation: (elicitationId: string, answer: string | string[] | null, customResponse?: string) => Promise<void>;
   onOpenAttachment?: (preview: AttachmentPreview) => void;
   onStartSubstream?: (throughTurnId: string) => void;
+  /**
+   * The Breakouts started from each turn, drawn as chips under the last row of
+   * that turn. Absent on a surface that has no Breakouts of its own.
+   */
+  breakoutChips?: {
+    byTurn: ReadonlyMap<string, BreakoutMark[]>;
+    openSubstreamId: string | null;
+    onOpen: (substreamId: string) => void;
+  };
   /** Creates the automation a proposal card names; see its card. */
   onAcceptDraft?: (automationId: string) => void;
   acceptingDraftFor?: string | null;
@@ -170,6 +180,7 @@ export function MessageFeed({
   onAnswerElicitation,
   onOpenAttachment,
   onStartSubstream,
+  breakoutChips,
   onAcceptDraft,
   acceptingDraftFor,
   acceptDraftFailureFor,
@@ -248,6 +259,36 @@ export function MessageFeed({
       return next;
     }),
   }), [expandedRows]);
+  // A turn can be several rows — its text and the tools around it — and its
+  // chips belong after the last of them, where the turn ends.
+  const lastRowOfTurn = useMemo(() => {
+    const last = new Map<string, number>();
+    if (!breakoutChips || breakoutChips.byTurn.size === 0) return last;
+    messages.forEach((message, index) => {
+      if (message.transcriptTurnId && breakoutChips.byTurn.has(message.transcriptTurnId)) {
+        last.set(message.transcriptTurnId, index);
+      }
+    });
+    return last;
+  }, [breakoutChips, messages]);
+  // The newest thing Rally said: the one turn whose breakout action is shown
+  // outright rather than on hover, since it is the likeliest place to branch.
+  const latestReplyId = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index]!;
+      if (message.authorType === 'agent' && message.messageType === 'text') return message.id;
+    }
+    return null;
+  }, [messages]);
+  const chipsAfter = (message: Message, index: number): React.JSX.Element | null => {
+    const turnId = message.transcriptTurnId;
+    if (!breakoutChips || !turnId || lastRowOfTurn.get(turnId) !== index) return null;
+    return <BreakoutChipRow
+      breakouts={breakoutChips.byTurn.get(turnId) ?? []}
+      onOpen={breakoutChips.onOpen}
+      openSubstreamId={breakoutChips.openSubstreamId}
+    />;
+  };
   const row = (message: Message, index: number): React.JSX.Element => (
     <div className="message-arrival-layer" data-arrival-id={message.id} data-arrival-kind={message.messageType}>
       {index === firstUnreadIndex && (
@@ -268,6 +309,7 @@ export function MessageFeed({
           onAnswerElicitation={onAnswerElicitation}
           onOpenAttachment={onOpenAttachment}
           onStartSubstream={onStartSubstream}
+          latestReply={message.id === latestReplyId}
           rowDisclosure={rowDisclosure}
           {...(onAcceptDraft ? { onAcceptDraft } : {})}
           acceptingDraftFor={acceptingDraftFor ?? null}
@@ -279,6 +321,7 @@ export function MessageFeed({
           onResourceAuthorized={markResourceAuthorized}
         />
       )}
+      {chipsAfter(message, index)}
     </div>
   );
 

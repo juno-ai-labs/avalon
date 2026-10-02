@@ -15,7 +15,7 @@ a few seconds. A research report across your Gmail, Linear and the web might be
 a run of half an hour.
 
 You do not have to watch. Switch to another Channel or go to a meeting. The run carries on without you, and the Channel's status dot tells you
-when it is done (see [Status dots and badges](06-status-dots-and-badges.md)).
+when it is done (see [Status dots](06-status-dots-and-badges.md)).
 
 ## Following along
 

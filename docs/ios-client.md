@@ -115,7 +115,8 @@ newest row and the reader pulls to the oldest visible content. A LazyVStack
 sentinel at index 0 is not that signal — it appears while the view is still
 pinned to the bottom. There is no Load-earlier button.
 
-The desktop center rail is parent-scoped, so on iPhone it is not a fifth tab.
+The desktop's Breakout list is parent-scoped (it lives in the Channel's title
+menu), so on iPhone it is not a fifth tab.
 After a work stream is selected, its substream list is the next push: Main, each
 private child, and **New substream**. Row menus rename, copy the canonical link,
 archive, and (on Main) make the work stream public. A settled main-feed message
@@ -210,7 +211,7 @@ than stubbed as working.
 | Suggested prompts | Empty-state chips from `/work-opportunities` |
 | Stop / retry / copy / speak | Composer stop, failed-turn Retry, message actions |
 | Save image / PDF / Mermaid export | Not on iPhone. Copy and Share are |
-| Start substream / center rail (Main, children, New substream, launch, rename, archive, copy link) | Substream list after picking a work stream, plus message action on the feed. Same prepare/confirm contract as desktop. Not a tab. |
+| Start breakout / Channel menu Breakouts (children, launch, rename, archive, copy link) | Substream list after picking a work stream, plus message action on the feed. Same prepare/confirm contract as desktop. Not a tab. |
 | Composer: send, stop, attach, dictation | Composer + PhotosPicker + file importer + `VoiceBar` |
 | Mentions, slash commands, debug model override, pending-input reorder | Not on iPhone |
 | `#/spaces/:spaceId` and `#/spaces/:spaceId/workstreams/new` | Not on iPhone. Space grouping stays on the Mac |

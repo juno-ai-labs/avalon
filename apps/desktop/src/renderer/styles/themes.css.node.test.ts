@@ -56,11 +56,12 @@ const declared = new Set(Object.keys(registry.tokens).map(customProperty));
  * A reader is a source file naming the custom property or the dotted path, a
  * token file aliasing it, or one of the two places that read by prefix:
  * `workstream-glyph.tsx` and its neighbours build `--av-sys-color-project-<key>`
- * from a palette key, and the build script exports every `sys.color.syntax.*`
+ * from a palette key, `markColors()` builds a mark's `project-tint-<key>` and
+ * `project-ink-<key>` the same way, and the build script exports every `sys.color.syntax.*`
  * for the message exporter.
  */
 describe('every token has a reader', () => {
-  const READ_BY_PREFIX = ['sys.color.project.', 'sys.color.syntax.'];
+  const READ_BY_PREFIX = ['sys.color.project.', 'sys.color.project-tint.', 'sys.color.project-ink.', 'sys.color.syntax.'];
 
   it('is named by a source file, aliased by a token file, or read by prefix', () => {
     const sources: string[] = [];
@@ -111,7 +112,7 @@ describe('window background', () => {
 describe('token references', () => {
   // Properties the stylesheet defines for its own use rather than taking from a
   // theme. Each is set by a rule in this same file.
-  const RULE_LOCAL = ['--attachment-file-card-height', '--attachment-media-size', '--pill-overhang', '--rail-slot',
+  const RULE_LOCAL = ['--attachment-file-card-height', '--attachment-media-size', '--rail-slot',
     // Runtime layout geometry, not theme-selectable design tokens.
     '--rail-max-slot',
     '--composer-line-height', '--composer-text-padding', '--system-message-lines',
@@ -188,8 +189,15 @@ describe('token references', () => {
     // than about the appearance, so it cannot be a theme token.
     '--glyph-ink',
     '--markdown-table-columns', '--arrival-index',
-    '--workstream-sidebar-width', '--conversation-min-width',
+    '--conversation-min-width',
     '--citation-card-played',
+    // The open Breakout's pane width, set by SplitConversationLayout from the
+    // width the reader dragged it to.
+    '--split-breakout-width',
+    // How far back an origin-context message sits, set per row by BreakoutOrigin.
+    '--origin-step',
+    // A picker swatch's ink dot, set per swatch from markColors().
+    '--swatch-ink',
     '--radix-dropdown-menu-content-available-height',
     '--radix-select-content-available-height', '--radix-select-trigger-width'];
 

@@ -1,81 +1,24 @@
 import {
-  COLLAPSED_SIDEBAR_WIDTH,
+  MAX_SIDEBAR_WIDTH,
   MIN_SIDEBAR_WIDTH,
   SIDEBAR_CONTENT_MIN_WIDTH,
 } from '@rally/ui/lib/sidebar-geometry';
 
-export interface BrowserSidebarLayout {
-  channelsAvailableWidth: number;
-  channelsConstrained: boolean;
-  channelsWidth: number;
-  spacesAvailableWidth: number;
-  spacesConstrained: boolean;
-  spacesWidth: number;
-}
-
-export interface BrowserRailVisibility {
-  channels: boolean;
-  spaces: boolean;
+/**
+ * Whether the tab draws its navigation sidebar at all. A guest shared one
+ * Channel and nothing else has no choice to make, so the Channel opens alone;
+ * until the directory answers, and when it holds nothing, the sidebar stays,
+ * since it carries the loading, error and empty states.
+ */
+export function browserSidebarVisible(counts: { spaceCount: number; channelCount: number } | undefined): boolean {
+  if (!counts) return true;
+  return counts.channelCount !== 1 || counts.spaceCount > 1;
 }
 
 /**
- * A rail with exactly one row offers no choice, so it is left out. Until the
- * directory answers, and when it holds nothing, both rails stay: they carry the
- * loading, error and empty states.
+ * The sidebar's width: the reader's preference between the shared clamps, and
+ * never more than the window leaves after the conversation minimum.
  */
-export function browserRailVisibility(counts: { spaceCount: number; channelCount: number } | undefined): BrowserRailVisibility {
-  if (!counts) return { channels: true, spaces: true };
-  return { channels: counts.channelCount !== 1, spaces: counts.spaceCount !== 1 };
-}
-
-/**
- * Where the account menu lives, and the download pinned above it: the leftmost
- * rail that is shown, or the conversation's own rail when neither outer rail
- * is. One decision for both, so the two cannot be placed apart.
- */
-export type BrowserAccountHome = 'spaces' | 'channels' | 'conversation';
-
-export function browserAccountHome(rails: BrowserRailVisibility): BrowserAccountHome {
-  if (rails.spaces) return 'spaces';
-  if (rails.channels) return 'channels';
-  return 'conversation';
-}
-
-/** Preserve Electron's conversation minimum while sizing the two outer hierarchy rails. */
-export function browserSidebarLayout(input: {
-  channelOpen: boolean;
-  channelsCollapsed: boolean;
-  channelsPreferredWidth: number;
-  channelsVisible: boolean;
-  spacesCollapsed: boolean;
-  spacesPreferredWidth: number;
-  spacesVisible: boolean;
-  viewportWidth: number;
-}): BrowserSidebarLayout {
-  const breakoutWidth = input.channelOpen ? COLLAPSED_SIDEBAR_WIDTH : 0;
-  const spacesAvailableWidth = input.viewportWidth
-    - SIDEBAR_CONTENT_MIN_WIDTH
-    - (input.channelsVisible ? COLLAPSED_SIDEBAR_WIDTH : 0)
-    - breakoutWidth;
-  const spacesConstrained = input.spacesVisible && spacesAvailableWidth < MIN_SIDEBAR_WIDTH;
-  const spacesWidth = !input.spacesVisible ? 0 : input.spacesCollapsed || spacesConstrained
-    ? COLLAPSED_SIDEBAR_WIDTH
-    : Math.min(input.spacesPreferredWidth, spacesAvailableWidth);
-  const channelsAvailableWidth = input.viewportWidth
-    - SIDEBAR_CONTENT_MIN_WIDTH
-    - breakoutWidth
-    - spacesWidth;
-  const channelsConstrained = input.channelsVisible && channelsAvailableWidth < input.channelsPreferredWidth;
-  const channelsWidth = !input.channelsVisible ? 0 : input.channelsCollapsed || channelsConstrained
-    ? COLLAPSED_SIDEBAR_WIDTH
-    : input.channelsPreferredWidth;
-
-  return {
-    channelsAvailableWidth,
-    channelsConstrained,
-    channelsWidth,
-    spacesAvailableWidth,
-    spacesConstrained,
-    spacesWidth,
-  };
+export function browserSidebarWidth(preferredWidth: number, viewportWidth: number): number {
+  return Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, preferredWidth, viewportWidth - SIDEBAR_CONTENT_MIN_WIDTH));
 }

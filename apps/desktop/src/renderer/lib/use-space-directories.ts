@@ -1,8 +1,9 @@
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
-import type { PersonalOrder, SpaceDirectory } from '@rally/contracts';
+import type { PersonalOrder, PinnedOrder, SpaceDirectory } from '@rally/contracts';
 import {
   INACTIVE_SPACES_QUERY_KEY,
   PERSONAL_ORDER_QUERY_KEY,
+  PINNED_ORDER_QUERY_KEY,
   SPACES_QUERY_KEY,
   SPACES_READY_QUERY_KEY,
 } from './sidebar-list-store';
@@ -68,3 +69,16 @@ export function usePersonalOrder(): PersonalOrder {
     staleTime: Number.POSITIVE_INFINITY,
   }).data ?? [];
 }
+
+/** All's Pinned order, pushed with `usePersonalOrder`'s and empty until it arrives. */
+export function usePinnedOrder(): PinnedOrder {
+  return useQuery<PinnedOrder>({
+    queryKey: PINNED_ORDER_QUERY_KEY,
+    queryFn: () => {
+      throw new Error('pinned-order is pushed by the organization socket, never fetched');
+    },
+    enabled: false,
+    staleTime: Number.POSITIVE_INFINITY,
+  }).data ?? EMPTY_PINNED_ORDER;
+}
+const EMPTY_PINNED_ORDER: PinnedOrder = [];

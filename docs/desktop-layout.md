@@ -17,8 +17,9 @@ the device remembers only the view the person chose.
 
 ## How it works
 
-The renderer keeps rail widths, collapsed state, and first visible Space or
-Channel row in local storage. The row key is an ID, so a reordered directory
+The renderer keeps the sidebar's width, its Space filter, the Breakout pane's
+width (`breakout-width`), and the first visible Channel row in local storage. The
+sidebar no longer collapses, so there is no collapsed state to keep. The row key is an ID, so a reordered directory
 opens at the same object instead of yesterday's pixel offset. Scroll events are
 coalesced into one layout read per animation frame. A missing saved Channel row
 asks for the next directory page once per loaded list revision, so a failed

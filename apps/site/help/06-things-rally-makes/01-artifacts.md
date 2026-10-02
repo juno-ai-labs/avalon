@@ -42,13 +42,13 @@ A request for something new makes a new artifact. "Write a second brief for the 
 > [!TIP]
 > Rally never renames a document it has published. If you want a different title, ask for a new document with that title.
 
-## The Artifacts list in the sidebar
+## The Artifacts list
 
-Everything Rally has made in a Channel is listed in the Channel sidebar under **Artifacts**, below the list of Breakouts. Each row shows the artifact's title, what kind of thing it is, and its version number, for example **v3** for a document on its third version. Hover a row to see a long title in full, and click it to open the artifact.
+Everything Rally has made in a Channel is listed in the Channel's menu: click the Channel's name in its title pill, choose **More**, and look under **Artifacts**. Each row shows the artifact's icon and title. Click it to open the artifact.
 
-The section appears only once the Channel has at least one artifact, so a brand-new Channel has no Artifacts heading at all. Rally does not label an empty shelf.
+The list appears only once the Channel has at least one artifact, so a brand-new Channel has no Artifacts heading at all. Rally does not label an empty shelf.
 
-In the web browser version of Rally, the sidebar also has a **Resources** section for things brought into the Channel from outside. Those are the subject of [Resources: things you bring in](04-resources.md).
+In the web browser version of Rally, **More** also has a **Resources** list for things brought into the Channel from outside. Those are the subject of [Resources: things you bring in](04-resources.md).
 
 ## Versions
 

@@ -17,14 +17,9 @@ The symbols are the ones on a Mac keyboard: <kbd>⌘</kbd> is Command,
 | --- | --- |
 | <kbd>⌘</kbd> <kbd>,</kbd> | Open [Settings](01-the-settings-window.md). |
 | <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>F</kbd> | Open **Search organization**, to find a message, link, artifact or file. See [Search and links](../03-spaces-and-breakouts/06-search-and-links.md). |
-| <kbd>⌘</kbd> <kbd>B</kbd> | Collapse or expand the Channels rail, for more room to read. |
 | <kbd>⌘</kbd> <kbd>W</kbd> | Close the front window. |
 | <kbd>⌘</kbd> <kbd>Q</kbd> | Quit Rally. (Closing the window does not; see [Rally on your Mac](03-rally-on-your-mac.md#closing-the-window-is-not-quitting).) |
 | <kbd>Esc</kbd> | In the Settings and Sidekicks windows, close the window, as long as nothing else is open and you are not mid-way through typing. |
-
-<kbd>⌘</kbd> <kbd>B</kbd> only folds the Channels rail. The Spaces rail stays
-where it is. If the window is too narrow, the rail stays folded whatever you
-press; widen the window first.
 
 ## In the search pop-up
 
@@ -126,17 +121,27 @@ With a tab button selected, <kbd>←</kbd> and <kbd>→</kbd> move between tabs,
 
 | Keys | What they do |
 | --- | --- |
-| <kbd>⌥</kbd> <kbd>↑</kbd> / <kbd>⌥</kbd> <kbd>↓</kbd> | Move a selected pinned Channel, or a Space, up or down. See [Arranging your Channels](../03-spaces-and-breakouts/02-arranging-channels.md). |
+| <kbd>⌥</kbd> <kbd>↑</kbd> / <kbd>⌥</kbd> <kbd>↓</kbd> | Move a selected pinned Channel up or down. See [Arranging your Channels](../03-spaces-and-breakouts/02-arranging-channels.md). |
+| <kbd>⌥</kbd> <kbd>←</kbd> / <kbd>⌥</kbd> <kbd>→</kbd> | Move a selected Space pill left or right. |
 | <kbd>←</kbd> <kbd>→</kbd>, on a panel's edge | With the edge of the right-hand panel selected, <kbd>←</kbd> makes the panel wider and <kbd>→</kbd> narrower. |
 | <kbd>Return</kbd>, on a panel's edge | Put the right-hand panel back to its usual width. |
 
 The arrows on their own only move the selection up and down the sidebar. Only
 pinned Channels can be reordered; the rest keep their own order.
 
+## In a title pill's menu
+
+Once you have clicked a Channel's or Breakout's name to open its menu:
+
+| Keys | What they do |
+| --- | --- |
+| <kbd>↑</kbd> <kbd>↓</kbd> | Move through the menu's items. |
+| <kbd>Tab</kbd> | Move through everything in the menu, including its search box and **Add** buttons. |
+| <kbd>Esc</kbd> or <kbd>←</kbd> | In **People**, **Sidekicks**, **Breakouts** or **More**, go back to the top of the menu. At the top, <kbd>Esc</kbd> closes it. |
+
 ## On computers other than a Mac
 
 Rally is made for the Mac, and this page is written for it. If you meet Rally on
 another kind of computer, <kbd>Ctrl</kbd> takes the place of <kbd>⌘</kbd> for
-most of these shortcuts. Two exceptions use the Command key only and do nothing
-elsewhere: <kbd>⌘</kbd> <kbd>B</kbd> for the Channels rail, and <kbd>⌘</kbd>
-<kbd>1</kbd> to <kbd>9</kbd> in **Add people**.
+most of these shortcuts. One exception uses the Command key only and does
+nothing elsewhere: <kbd>⌘</kbd> <kbd>1</kbd> to <kbd>9</kbd> in **Add people**.

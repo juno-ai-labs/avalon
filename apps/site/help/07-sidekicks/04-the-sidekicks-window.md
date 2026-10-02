@@ -9,29 +9,13 @@ paused ones, and it is where you open a Sidekick to check on it or change it.
 
 ## Opening the window
 
-There are two ways in.
+Click your name at the bottom of the sidebar to open the account menu, then
+**Sidekicks**. The window title is **Rally Sidekicks**. Opening it again brings
+the same window to the front rather than starting a second one.
 
-- **The account menu.** Click your name at the bottom of the Spaces rail,
-  then **Sidekicks**. The window title is **Rally Sidekicks**. Opening it
-  again brings the same window to the front rather than starting a second
-  one.
-- **The hexagon strip.** Above your name at the bottom of the
-  Spaces rail sits a row of hexagon tiles, one for each active Sidekick that is
-  yours or the Organization's. Click a tile to open that Sidekick in the
-  Sidekicks window. Hover over one to see its name.
-
-A small play triangle at the bottom right of a tile means the Sidekick is
-active. Hover over the triangle and Rally explains that it is in service and
-waiting on its triggers. If you have more tiles than fit, scroll the strip
-sideways. With the Spaces rail collapsed, the tiles shrink to small squares
-without names.
-
-The strip shows only active Sidekicks that belong to you or the
-Organization. Drafts, paused Sidekicks and Channel Sidekicks never get a
-tile; find those in the Sidekicks window or in the Channel sidebar. If
-you have no active Sidekick yet, the strip shows a single dashed hexagon
-labelled **New Sidekick** instead. Once you have one, that tile goes away and
-you make new ones from the Sidekicks window.
+A Channel's own Sidekicks are also listed in the Channel itself: click its name
+in the title pill and choose **Sidekicks**. Click one there to open it in the
+Sidekicks window. See [Sidekicks in a Channel](06-sidekicks-in-channels.md).
 
 ## The library
 
@@ -107,7 +91,7 @@ dialog is subtitled "Technical details for troubleshooting this Sidekick."
 Each row shows:
 
 - a status dot, coloured the same way as elsewhere in Rally (see
-  [Status dots and badges](../02-working-in-a-channel/06-status-dots-and-badges.md));
+  [Status dots](../02-working-in-a-channel/06-status-dots-and-badges.md));
 - how the run started: **Manual**, **Scheduled**, **Event** or **Email**;
 - a short summary of the result, or "Running" with how long it has been
   going, or when it finished;
@@ -147,8 +131,8 @@ It does not catch up on the runs it would have made while paused, and it
 ignores events that happened in the meantime. A Sidekick on holiday does not
 come back with a fortnight of postcards.
 
-A paused Sidekick shows **Paused** in the library and in Channel sidebars,
-and its tile leaves the sidebar strip until you resume it.
+A paused Sidekick shows **Paused** in the library and in a Channel's
+**Sidekicks** list until you resume it.
 
 If you archive the Channel or Breakout that owns a Channel Sidekick, Rally
 pauses that Sidekick for you, and it cannot be resumed while the room stays

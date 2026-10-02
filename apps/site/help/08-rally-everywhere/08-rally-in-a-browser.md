@@ -78,19 +78,25 @@ mode](../11-privacy-and-security/01-signing-in-and-out.md) has the details.
 
 ## Finding your way around
 
-If you have used the Mac app, the layout will look familiar: a rail of Spaces,
-a list of Channels, the Breakouts, the conversation, and an account menu. The
-difference is that you only see what has been shared with you.
+If you have used the Mac app, the layout will look familiar: one sidebar with
+Space pills across the top and your Channels under them, the conversation with
+its title pill, and an account menu. The difference is that you only see what
+has been shared with you.
 
-- A rail with only one thing in it hides itself. A guest with one shared
-  conversation sees little more than that conversation, which is the point.
-- Channels shared with you that are not in a Space you can see are listed under
-  **Shared channels**.
-- Choosing a Space shows **Channels in this Space**, a read-only overview.
+- Space pills appear only when you can see a Space other than General. Click
+  one to show only its Channels, or **All** for everything. A guest with one
+  shared conversation sees little more than that conversation, which is the
+  point.
+- Channels shared with you that are not in a Space you can see are grouped
+  under a **Shared channels** pill.
+- **Open space** in a Channel's title pill menu shows **Channels in this
+  Space**, a read-only overview.
+- Breakouts open beside their Channel, as on the Mac. See
+  [Breakouts](../03-spaces-and-breakouts/03-breakouts.md#a-breakout-beside-its-channel).
 - The account menu has **Switch organization** and **Sign out**.
 - A **Download the Mac app** button sits above the account menu. The Mac app is for Macs with Apple silicon.
-- You can rename and archive from the right-click menu and the header. An
-  archived Breakout shows **Restore breakout**. An archived Channel has to be
+- You can rename a Channel or Breakout, and archive a Breakout, from its title
+  pill menu. An archived Breakout shows **Restore breakout**. An archived Channel has to be
   restored before its conversations can reopen.
 
 The browser version needs a reasonably wide window. If it is too narrow, Rally
@@ -117,8 +123,8 @@ Channel](../02-working-in-a-channel/index.md) applies, with a few exceptions:
 
 ## Sharing from the browser
 
-To bring someone else into the conversation you are in, click **Share** in the
-conversation's header, or right-click a Channel or Breakout in the list. Type
+To bring someone else into the conversation you are in, click its name in the
+title pill and choose **Share**. Type
 one or more email addresses, separated by spaces, commas or semicolons, and
 send. Each person gets an invitation like the one you received.
 

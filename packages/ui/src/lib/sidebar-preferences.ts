@@ -11,13 +11,13 @@ export function clampSidebarWidth(width: number): number {
   return Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width));
 }
 
-export function loadSidebarWidth(key: string): number {
-  if (typeof window === 'undefined') return DEFAULT_SIDEBAR_WIDTH;
+export function loadSidebarWidth(key: string, fallback = DEFAULT_SIDEBAR_WIDTH): number {
+  if (typeof window === 'undefined') return fallback;
   try {
     const stored = Number.parseFloat(window.localStorage.getItem(key) ?? '');
-    return Number.isFinite(stored) ? clampSidebarWidth(stored) : DEFAULT_SIDEBAR_WIDTH;
+    return Number.isFinite(stored) ? clampSidebarWidth(stored) : fallback;
   } catch {
-    return DEFAULT_SIDEBAR_WIDTH;
+    return fallback;
   }
 }
 

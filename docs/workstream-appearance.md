@@ -34,7 +34,7 @@ the old icon back. The route itself is [`spaces.md`](spaces.md)'s.
 | `packages/ui/src/components/appearance-icons.ts` | `APPEARANCE_ICON_COMPONENTS`, the Lucide glyph for every storable key. |
 | `packages/ui/src/components/icon-catalog.tsx` | `IconCatalog`: section tabs over one scrolling grid with a heading per section. Both pickers render their cells through it. |
 | `packages/ui/src/components/appearance-picker.tsx` | `AppearancePicker`: palette, optimistic preview, ordered clicks, and failures, for every surface that has an appearance. The caller supplies the trigger's mark through `renderGlyph` and its accessible name through `label`; nothing else about it differs between a work stream and a Sidekick. |
-| `packages/ui/src/components/workstream-glyph.tsx` | `resolveWorkstreamAppearance`, the one resolver from a stored appearance to an icon component and a colour, and the three treatments over it: the filled `WorkstreamGlyph` for navigation, `WorkstreamMark` — the bare tinted symbol — for a surface already inside the work stream, such as the center rail's main conversation row, and `AutomationGlyph`, the rounded hexagon a Sidekick wears. |
+| `packages/ui/src/components/workstream-glyph.tsx` | `resolveWorkstreamAppearance`, the one resolver from a stored appearance to an icon component and a colour, and the three treatments over it: the filled `WorkstreamGlyph` for navigation, `WorkstreamMark` — the bare tinted symbol — for a surface already inside the work stream, such as the Breakout menu's Channel header, and `AutomationGlyph`, the rounded hexagon a Sidekick wears. |
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | `patchCachedWorkstreamAppearance`, the receipt-time write that puts a committed choice on the sidebar row ahead of the directory projection, and `patchCachedGeneratedIcon`, the naming pass's, which additionally declines a row that already has an icon. Neither touches the cached detail. Built on `patchCachedWorkstream`, the write for any unversioned fact both caches must agree on. |
 | `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | `useCachedWorkstreamAppearance`, the read side: one work stream's appearance off the sidebar row, for a surface that must move with that row rather than with the detail. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Orders the picker's choices on the addressed conversation socket and applies each one to the relevant Channel or Breakout cache row when its receipt arrives. |
@@ -115,8 +115,11 @@ same lines, rendered once by `WORKSTREAM_ICON_CATALOG` in
 headings the picker shows, so a Channel, a Breakout and a Sidekick all choose
 from one list with one set of descriptions.
 Colors store semantic keys such as `blue` and `purple`, never hex or RGB values.
-Both the swatch and glyph resolve `sys.color.project.<key>` through the current
-appearance. The keys that resolve to the same colour in both appearances live
+A glyph and its swatch resolve the key to its pastel pair, `project-tint` under
+`project-ink`, through the current appearance (`markColors()`;
+[`theming.md`](theming.md) owns the pair), and a bare mark is drawn in the ink.
+`sys.color.project.<key>` is the hue itself, which people's colours and the
+keys without a pair still use. The keys that resolve to the same colour in both appearances live
 in `config/design-tokens/base.json`; a key that has to differ is set in both
 `themes/light.json` and `dark.json`, never one. Run `pnpm tokens:build` after
 either. The shared palette also affects projects and personal accents.

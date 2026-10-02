@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { WorkstreamSummary } from './types';
 
 /** The general channel context rail remains retired; artifact reading uses the slot directly. */
 export const CONTEXT_SIDEBAR_ENABLED = false;
@@ -12,10 +13,9 @@ export interface RailInspector {
 
 interface UiState {
   sidebarOpen: boolean;
-  sidebarCollapsed: boolean;
   sidebarWidth: number;
-  spacesSidebarWidth: number;
-  spacesSidebarCollapsed: boolean;
+  /** The Space the sidebar's Channel list is filtered to, or null for All. */
+  sidebarSpaceFilter: string | null;
   railOpen: boolean;
   railVariant: RailVariant;
   railWidth: number;
@@ -23,10 +23,8 @@ interface UiState {
   railLeaving: boolean;
   railScope: string | null;
   setSidebarOpen: (open: boolean) => void;
-  setSidebarCollapsed: (collapsed: boolean) => void;
   setSidebarWidth: (width: number) => void;
-  setSpacesSidebarWidth: (width: number) => void;
-  setSpacesSidebarCollapsed: (collapsed: boolean) => void;
+  setSidebarSpaceFilter: (spaceId: string | null) => void;
   openRail: (variant?: RailVariant) => void;
   closeRail: () => void;
   setRailVariant: (variant: RailVariant) => void;
@@ -39,18 +37,44 @@ interface UiState {
   // The inspector keeps its width per work stream. Screens outside a work
   // stream pass null and share one bucket.
   setRailScope: (scope: string | null) => void;
+  /**
+   * The sidebar's own pin action, so a Channel's menu pins through the same
+   * rule (`channelPinTargets`, answered as under All) and the same reveal. It
+   * takes the menu's own row, which need not be in the sidebar's loaded page.
+   * Null while no sidebar is mounted.
+   */
+  pinChannel: ((workstream: WorkstreamSummary, pinned: boolean) => void) | null;
+  setPinChannel: (pin: ((workstream: WorkstreamSummary, pinned: boolean) => void) | null) => void;
 }
 
 export const MIN_RAIL_WIDTH = 280;
 export const DEFAULT_RAIL_WIDTH = 320;
 /** GrokBot's compact rail and expanded-sidebar geometry. */
-export { COLLAPSED_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '@rally/ui/lib/sidebar-geometry';
-import { clampSidebarWidth, loadSidebarCollapsed, loadSidebarWidth, saveSidebarPreference } from '@rally/ui/lib/sidebar-preferences';
-export const SIDEBAR_COLLAPSED_STORAGE_KEY = 'rally.sidebar-collapsed';
+export { COLLAPSED_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, SINGLE_SIDEBAR_DEFAULT_WIDTH, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '@rally/ui/lib/sidebar-geometry';
+import { clampSidebarWidth, loadSidebarWidth, saveSidebarPreference } from '@rally/ui/lib/sidebar-preferences';
+import { SINGLE_SIDEBAR_DEFAULT_WIDTH } from '@rally/ui/lib/sidebar-geometry';
 const SIDEBAR_WIDTH_STORAGE_KEY = 'rally.sidebar-width';
-const SPACES_SIDEBAR_WIDTH_STORAGE_KEY = 'rally.spaces-sidebar-width';
-const SPACES_SIDEBAR_COLLAPSED_STORAGE_KEY = 'rally.spaces-sidebar-collapsed';
+const SIDEBAR_SPACE_FILTER_STORAGE_KEY = 'rally.sidebar-space-filter';
 const RAIL_WIDTH_STORAGE_PREFIX = 'rally.rail-width';
+
+function loadSpaceFilter(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.localStorage.getItem(SIDEBAR_SPACE_FILTER_STORAGE_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+function saveSpaceFilter(spaceId: string | null): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (spaceId === null) window.localStorage.removeItem(SIDEBAR_SPACE_FILTER_STORAGE_KEY);
+    else window.localStorage.setItem(SIDEBAR_SPACE_FILTER_STORAGE_KEY, spaceId);
+  } catch {
+    // Best-effort device preference; the filter still works for this session.
+  }
+}
 
 function clampRailWidth(width: number): number {
   // Grok preserves the preferred width; the host caps its visible width to
@@ -85,10 +109,8 @@ function saveRailWidth(prefix: string, scope: string | null, width: number): voi
 
 export const useUiStore = create<UiState>((set, get) => ({
   sidebarOpen: false,
-  sidebarCollapsed: loadSidebarCollapsed(SIDEBAR_COLLAPSED_STORAGE_KEY),
-  sidebarWidth: loadSidebarWidth(SIDEBAR_WIDTH_STORAGE_KEY),
-  spacesSidebarWidth: loadSidebarWidth(SPACES_SIDEBAR_WIDTH_STORAGE_KEY),
-  spacesSidebarCollapsed: loadSidebarCollapsed(SPACES_SIDEBAR_COLLAPSED_STORAGE_KEY),
+  sidebarWidth: loadSidebarWidth(SIDEBAR_WIDTH_STORAGE_KEY, SINGLE_SIDEBAR_DEFAULT_WIDTH),
+  sidebarSpaceFilter: loadSpaceFilter(),
   railOpen: false,
   railVariant: 'context',
   railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, null),
@@ -96,23 +118,14 @@ export const useUiStore = create<UiState>((set, get) => ({
   railLeaving: false,
   railScope: null,
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
-  setSidebarCollapsed: (sidebarCollapsed) => {
-    saveSidebarPreference(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed);
-    set({ sidebarCollapsed });
-  },
   setSidebarWidth: (width) => {
     const sidebarWidth = clampSidebarWidth(width);
     saveSidebarPreference(SIDEBAR_WIDTH_STORAGE_KEY, sidebarWidth);
     set({ sidebarWidth });
   },
-  setSpacesSidebarWidth: (width) => {
-    const spacesSidebarWidth = clampSidebarWidth(width);
-    saveSidebarPreference(SPACES_SIDEBAR_WIDTH_STORAGE_KEY, spacesSidebarWidth);
-    set({ spacesSidebarWidth });
-  },
-  setSpacesSidebarCollapsed: (spacesSidebarCollapsed) => {
-    saveSidebarPreference(SPACES_SIDEBAR_COLLAPSED_STORAGE_KEY, spacesSidebarCollapsed);
-    set({ spacesSidebarCollapsed });
+  setSidebarSpaceFilter: (sidebarSpaceFilter) => {
+    saveSpaceFilter(sidebarSpaceFilter);
+    set({ sidebarSpaceFilter });
   },
   openRail: (railVariant = 'context') => set({ railOpen: true, railVariant, inspector: null }),
   // The detail view is cleared when the rail is next opened rather than as it
@@ -131,4 +144,6 @@ export const useUiStore = create<UiState>((set, get) => ({
     railScope,
     railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, railScope),
   }),
+  pinChannel: null,
+  setPinChannel: (pinChannel) => set({ pinChannel }),
 }));

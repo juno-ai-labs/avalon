@@ -36,9 +36,9 @@ An origin is a pointer, not a copy. Rally records where the thread is, not what 
 
 ## Where to find resources
 
-In the web browser version of Rally, a Channel's sidebar has a **Resources** section below **Artifacts**. Each row shows an icon, the title, and a line with the kind of thing and its version, such as **slack thread · v1**. Click a row to open its details. Like the Artifacts section, it appears only when there is something in it.
+In the web browser version of Rally, click a Channel's name in its title pill and choose **More**. Below **Artifacts** is a **Resources** list, with an icon and the title of each. Click a row to open its details. Like the Artifacts list, it appears only when there is something in it.
 
-In the Mac app, resources do not have their own list in the sidebar today. Open one from the conversation instead: click a citation or file chip that points to it (see [Reading Rally's answers](../02-working-in-a-channel/04-reading-rallys-answers.md)), or click **Resource details** in a file preview.
+In the Mac app, resources do not have their own list today. Open one from the conversation instead: click a citation or file chip that points to it (see [Reading Rally's answers](../02-working-in-a-channel/04-reading-rallys-answers.md)), or click **Resource details** in a file preview.
 
 ## A resource's details
 
