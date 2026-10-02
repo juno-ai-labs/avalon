@@ -165,7 +165,11 @@ import fails. An import cancelled before its reservation comes back is never
 reported. A reservation that never opens has its create receipt set `failed` —
 by the import's discard, or by the import run's end when no discard arrived —
 and is archived; a `failed` receipt is never reused, and opening one is refused
-`409 workstream_create_discarded`. See [session import](session-import.md).
+`409 workstream_create_discarded`. Opening claims the receipt first
+(`reserved` → `initialized`, in one statement, before anything is initialized),
+and a discard or reclaim retires only a `reserved` receipt, so the two cannot
+both win; an `initialized` receipt is a create that stopped midway, which a
+retry finishes. See [session import](session-import.md).
 
 The server claims the id with the create receipt, in one statement, only if no
 conversation already has it: the receipt's unique id covers receipt-path

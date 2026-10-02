@@ -96,6 +96,7 @@ import {
   recordHarnessRunObservation,
 } from "../observability/harness-run-observability";
 import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observability/logger";
+import { agentProfileFor, type AgentProfile } from "../services/agent-profiles";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   identityAttributes,
@@ -4722,6 +4723,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       createToolReceiptObjectPort(executionEnv, input.workspaceId, input.parentId),
       terminalLoopFence,
     );
+    // After the outcome is durable and on every path that reached it — a
+    // completed run, a stopped one, and one whose host threw alike.
+    await this.endAgentProfileRun(executionEnv, input);
     if (outcome.finalTurnId) {
       await this.publishAgentRuntimeEvent({ type: "stream_completed", streamId: input.harnessRunId });
     }
@@ -4731,6 +4735,30 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       status: root,
     });
     return this.persistAgentRunForExternalSettlement(input, outcome);
+  }
+
+  /** The cleanup this conversation's agent profile owes once a run of it has ended. */
+  private async endAgentProfileRun(executionEnv: Env, input: WorkstreamWorkflowInput): Promise<void> {
+    let profile: AgentProfile | null;
+    try {
+      profile = agentProfileFor(this.identityRows.identity()?.agent_profile);
+    } catch {
+      // An unknown profile already failed the run with `agent_profile_unknown`.
+      return;
+    }
+    if (!profile?.ended) return;
+    await profile.ended(executionEnv, {
+      workspaceId: input.workspaceId,
+      parentId: input.parentId,
+      userId: input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null,
+    }).catch((error: unknown) => {
+      logWarn(this.env, "agent_profile_run_end_failed", {
+        workspace_id: input.workspaceId,
+        workstream_id: input.parentId,
+        harness_run_id: input.harnessRunId,
+        error_code: diagnosticErrorCode(error, "agent_profile_run_end_failed"),
+      });
+    });
   }
 
   /**
@@ -6216,7 +6244,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private offerPendingDesktopActions(socket: WebSocket, userId: string, deliveredThrough: number): void {
     if (!this.answersDesktopActions(userId)) return;
     const occurredAt = new Date().toISOString();
-    for (const request of this.desktopActions.pending()) {
+    const unreadable = (id: string, code: string, outcome: DesktopActionOutcome) => {
+      logWarn(this.env, "desktop_action_unreadable", { action_id: id, error_code: code });
+      this.desktopActionWaiters.get(id)?.(outcome);
+    };
+    for (const request of this.desktopActions.pending(unreadable)) {
       socket.send(JSON.stringify({ type: "desktop_action_requested", request, sequence: deliveredThrough, occurredAt }));
     }
   }

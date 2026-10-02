@@ -284,6 +284,34 @@ describe("a conversation import run", () => {
     })).rejects.toMatchObject({ code: "workstream_create_discarded" });
   }, 60_000);
 
+  it("admits one run for two starts of the same import at once", async () => {
+    const spaceId = await personalSpace();
+    const clientMessageId = crypto.randomUUID();
+    const input = { sourceUrl: SOURCE_URL, title: "Twice", spaceIds: [spaceId], clientMessageId };
+    const [first, second] = await Promise.all([
+      new SessionImportRunService(creationEnv(), AUTH).start(input),
+      new SessionImportRunService(creationEnv(), AUTH).start(input),
+    ]);
+    expect(second).toEqual(first);
+    expect(await runInDurableObject(child(first.workstreamId, first.substreamId), (_instance, state) =>
+      state.storage.sql.exec<{ runs: number }>(`SELECT COUNT(*) AS runs FROM runs`).one().runs)).toBe(1);
+  }, 60_000);
+
+  it("refuses to discard a Channel a completing import has claimed", async () => {
+    const spaceId = await personalSpace();
+    const clientMessageId = crypto.randomUUID();
+    const service = new SessionImportRunService(creationEnv(), AUTH);
+    const run = await service.start({ sourceUrl: SOURCE_URL, title: "Opening", spaceIds: [spaceId], clientMessageId });
+    // Where a complete stands between its claim and opening the Channel.
+    await env.DB.prepare(`UPDATE workstream_create_receipts SET state = 'initialized' WHERE workstream_id = ?`).bind(run.workstreamId).run();
+    await expect(service.discard({ workstreamId: run.workstreamId, substreamId: run.substreamId, clientMessageId }))
+      .rejects.toMatchObject({ code: "session_import_already_open" });
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ archived_at: number | null }>(
+      `SELECT archived_at FROM channels WHERE workstream_id = ?`, run.workstreamId).one().archived_at)).toBeNull();
+    expect((await env.DB.prepare(`SELECT state FROM workstream_create_receipts WHERE workstream_id = ?`).bind(run.workstreamId)
+      .first<{ state: string }>())?.state).toBe("initialized");
+  }, 60_000);
+
   it("discarding a Channel that never opened archives it and retires its create key", async () => {
     const spaceId = await personalSpace();
     const clientMessageId = crypto.randomUUID();
