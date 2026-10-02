@@ -15,6 +15,7 @@ import {
 import { searchUsers, searchWorkspaces, type DirectoryRegion } from './directory';
 import { devAuthEnabled, type Env } from './env';
 import {
+  flagshipFailure,
   listManagedFlags,
   listManagedModelFlags,
   updateManagedFlag,
@@ -271,6 +272,11 @@ app.post('/api/workspaces/:workspaceId/retire', async (c) => {
 app.all('/api/*', (c) => c.json({ error: 'not_found' }, 404));
 app.all('*', (c) => c.env.ASSETS.fetch(c.req.raw));
 app.onError((error, c) => {
+  const flagship = flagshipFailure(error);
+  if (flagship) {
+    console.error(JSON.stringify({ event: 'ace_request_failed', path: c.req.path, error_code: flagship.code }));
+    return c.json({ error: flagship.code, message: flagship.message }, 502);
+  }
   // A schema rejection's message is its issue list as JSON; the code names
   // the field so the row can be read without expanding it.
   const errorCode = zodDiagnosticCode(error, 'request');

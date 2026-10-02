@@ -1,10 +1,9 @@
-import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
+import { describeZodIssues, zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import { WorkerEntrypoint } from 'cloudflare:workers';
-import type { z } from 'zod';
 import type { Env } from './env';
 import {
   FlagChangeNotificationError,
-  FlagshipRequestError,
+  flagshipFailure,
   listManagedFlags,
   listManagedModelFlags,
   updateManagedFlag,
@@ -36,27 +35,14 @@ async function named<T>(operation: () => Promise<FlagAdministrationResult<T>>): 
   try {
     return await operation();
   } catch (error) {
-    if (error instanceof FlagshipRequestError) {
-      // Flagship's own error text stays in Ace; only its status crosses.
-      return {
-        ok: false,
-        code: `flagship_request_failed_${error.status}`,
-        message: `Flagship refused the request with HTTP ${error.status}. Nothing was changed by this call.`,
-      };
-    }
-    if (error instanceof FlagChangeNotificationError) {
-      return { ok: false, code: 'flag_change_notification_failed', message: error.message };
-    }
+    const flagship = flagshipFailure(error);
+    if (flagship) return { ok: false, ...flagship };
     const schema = zodDiagnosticCode(error, 'flagship_response');
     if (schema) return { ok: false, code: schema, message: 'Flagship returned a flag definition Ace cannot read.' };
     throw error;
   }
 }
 
-/** Returned to the engineer only; the log carries the code. */
-function issuesMessage(error: z.ZodError): string {
-  return error.issues.map((issue) => `${issue.path.join('.') || 'request'}: ${issue.message}`).join('; ');
-}
 
 function logWrite(event: string, actor: FlagAdministrationActor, target: Record<string, string>): void {
   console.log(JSON.stringify({ event, actor_subject: actor.subject, via: 'engineering_mcp', ...target }));
@@ -85,7 +71,7 @@ export class FlagAdministration extends WorkerEntrypoint<Env> implements FlagAdm
         return {
           ok: false,
           code: zodDiagnosticCode(update.error, 'flag_update')!,
-          message: `The flag definition is not valid: ${issuesMessage(update.error)}`,
+          message: `The flag definition is not valid: ${describeZodIssues(update.error)}`,
         };
       }
       let flag: unknown;
@@ -120,7 +106,7 @@ export class FlagAdministration extends WorkerEntrypoint<Env> implements FlagAdm
         return {
           ok: false,
           code: zodDiagnosticCode(update.error, 'model_update')!,
-          message: `The model route is not valid: ${issuesMessage(update.error)}`,
+          message: `The model route is not valid: ${describeZodIssues(update.error)}`,
         };
       }
       const validation = await validateRouting(update.data.routing);

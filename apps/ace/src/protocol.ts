@@ -246,33 +246,15 @@ export type ManagedFlagUpdate = z.infer<typeof ManagedFlagUpdateSchema>;
  */
 export interface FlagAdministrationActor {
   subject: string;
-  email: string | null;
 }
 
 export type FlagAdministrationResult<T> =
   | { ok: true; value: T }
   | { ok: false; code: string; message: string };
 
-export interface ManagedProductFlagState {
-  key: (typeof MANAGED_FLAGS)[number]['key'];
-  label: string;
-  description: string;
-  defaultVariation: 'on' | 'off';
-  /** Flagship's live definition, or `null` when the flag is not provisioned. */
-  flag: unknown;
-}
-
-export interface ManagedModelFlagState {
-  rank: number;
-  rankReason: string;
-  role: AgentModelRole;
-  key: string;
-  label: string;
-  description: string;
-  defaultRouting: AgentModelRouting;
-  /** Flagship's live definition, or `null` when the flag is not provisioned. */
-  flag: unknown;
-}
+/** A catalog entry beside Flagship's live definition, `null` when not provisioned. */
+export type ManagedProductFlagState = (typeof MANAGED_FLAGS)[number] & { flag: unknown };
+export type ManagedModelFlagState = (typeof MANAGED_MODELS)[number] & { flag: unknown };
 
 export interface FlagAdministrationRpc {
   listProductFlags(): Promise<FlagAdministrationResult<ManagedProductFlagState[]>>;

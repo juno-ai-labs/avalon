@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { asArtifactId, asAutomationId, asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { EngineeringInspectionRpcBinding } from "@rally/contracts/engineering-inspection";
 
-import type { FlagAdministrationRpc } from "../../ace/src/protocol";
+import { MANAGED_FLAGS, type FlagAdministrationRpc } from "../../ace/src/protocol";
 import type { AccessPrincipal } from "../src/access";
 import type { Env } from "../src/env";
 import { createEngineeringMcpHandler } from "../src/index";
@@ -72,6 +72,15 @@ function flagAdministration(): FlagAdministrationRpc {
   };
 }
 
+function testEnv(bindings: Partial<Env> = {}): Env {
+  return {
+    GLOBAL_INSPECTION: regionalBinding("global"),
+    ENTERPRISE_INSPECTION: regionalBinding("enterprise"),
+    FLAG_ADMINISTRATION: flagAdministration(),
+    ...bindings,
+  };
+}
+
 async function rpc(
   env: Env,
   method: string,
@@ -97,20 +106,14 @@ async function rpc(
 
 describe("Rally engineering MCP tools", () => {
   it.each(hostedClients.originHostnames)("admits the %s hosted origin to the MCP transport", async (hostname) => {
-    const env: Env = {
-      GLOBAL_INSPECTION: regionalBinding("global"),
-      ENTERPRISE_INSPECTION: regionalBinding("enterprise"), FLAG_ADMINISTRATION: flagAdministration(),
-    };
+    const env = testEnv();
 
     const response = await rpc(env, "tools/list", {}, `https://${hostname}`);
     expect(response.result).toMatchObject({ tools: expect.any(Array) });
   });
 
   it("publishes every inventory and SQL tool with mutation annotations on SQL", async () => {
-    const env: Env = {
-      GLOBAL_INSPECTION: regionalBinding("global"),
-      ENTERPRISE_INSPECTION: regionalBinding("enterprise"), FLAG_ADMINISTRATION: flagAdministration(),
-    };
+    const env = testEnv();
 
     const response = await rpc(env, "tools/list");
     const result = response.result as { tools: Array<{ name: string; annotations?: Record<string, boolean> }> };
@@ -146,7 +149,7 @@ describe("Rally engineering MCP tools", () => {
     };
     const global = regionalBinding("global");
     vi.mocked(global.listWorkspaces).mockResolvedValue({ region: "global", items: [workspace] });
-    const env: Env = { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: regionalBinding("enterprise") , FLAG_ADMINISTRATION: flagAdministration()};
+    const env = testEnv({ GLOBAL_INSPECTION: global });
 
     const response = await rpc(env, "tools/call", {
       name: "list_workspaces",
@@ -169,7 +172,7 @@ describe("Rally engineering MCP tools", () => {
     });
 
     const response = await rpc(
-      { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise , FLAG_ADMINISTRATION: flagAdministration()},
+      testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }),
       "tools/call",
       { name: "list_workstreams", arguments: { workspaceId } },
     );
@@ -190,13 +193,13 @@ describe("Rally engineering MCP tools", () => {
 
     try {
       await rpc(
-        { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise , FLAG_ADMINISTRATION: flagAdministration()},
+        testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }),
         "tools/call",
         { name: "list_workstreams", arguments: { workspaceId } },
       );
       vi.mocked(enterprise.listWorkstreams).mockResolvedValue({ found: false });
       await rpc(
-        { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise , FLAG_ADMINISTRATION: flagAdministration()},
+        testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }),
         "tools/call",
         { name: "list_workstreams", arguments: { workspaceId } },
       );
@@ -253,7 +256,7 @@ describe("Rally engineering MCP tools", () => {
         }],
       },
     });
-    const env: Env = { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise , FLAG_ADMINISTRATION: flagAdministration()};
+    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
 
     const sidekicks = await rpc(env, "tools/call", {
       name: "list_sidekicks",
@@ -285,7 +288,7 @@ describe("Rally engineering MCP tools", () => {
     });
 
     const response = await rpc(
-      { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise , FLAG_ADMINISTRATION: flagAdministration()},
+      testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }),
       "tools/call",
       { name: "list_artifacts", arguments: { workspaceId } },
     );
@@ -327,7 +330,7 @@ describe("Rally engineering MCP tools", () => {
     });
 
     const response = await rpc(
-      { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise , FLAG_ADMINISTRATION: flagAdministration()},
+      testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }),
       "tools/call",
       {
         name: "run_substream_sql",
@@ -383,7 +386,7 @@ describe("Rally engineering MCP tools", () => {
     });
 
     const response = await rpc(
-      { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise , FLAG_ADMINISTRATION: flagAdministration()},
+      testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }),
       "tools/call",
       {
         name: "run_sidekick_sql",
@@ -432,7 +435,7 @@ describe("Rally engineering MCP tools", () => {
     });
 
     const response = await rpc(
-      { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise , FLAG_ADMINISTRATION: flagAdministration()},
+      testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }),
       "tools/call",
       {
         name: "run_artifact_sql",
@@ -482,7 +485,7 @@ describe("Rally engineering MCP tools", () => {
     });
 
     const response = await rpc(
-      { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise , FLAG_ADMINISTRATION: flagAdministration()},
+      testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }),
       "tools/call",
       {
         name: "run_substream_sql",
@@ -506,28 +509,20 @@ describe("Rally engineering MCP tools", () => {
     vi.mocked(flags.listProductFlags).mockResolvedValue({
       ok: true,
       value: [{
-        key: "digests-enabled",
-        label: "Digests Enabled",
-        description: "Sends scheduled digests.",
-        defaultVariation: "on",
+        ...MANAGED_FLAGS.find((flag) => flag.key === "digests-enabled")!,
         flag: { key: "digests-enabled", enabled: true, default_variation: "on", rules: [] },
       }],
     });
-    const env: Env = {
-      GLOBAL_INSPECTION: regionalBinding("global"),
-      ENTERPRISE_INSPECTION: regionalBinding("enterprise"),
-      FLAG_ADMINISTRATION: flags,
-    };
+    const env = testEnv({ FLAG_ADMINISTRATION: flags });
 
     const response = await rpc(env, "tools/call", { name: "list_feature_flags", arguments: {} });
     const result = response.result as { content: Array<{ text: string }> };
-    expect(JSON.parse(result.content[0]!.text)).toEqual([{
+    expect(JSON.parse(result.content[0]!.text)).toEqual([expect.objectContaining({
       key: "digests-enabled",
       label: "Digests Enabled",
-      description: "Sends scheduled digests.",
       defaultVariation: "on",
       flag: { key: "digests-enabled", enabled: true, default_variation: "on", rules: [] },
-    }]);
+    })]);
   });
 
   it("hands a flag definition to Ace with the engineer it acts for", async () => {
@@ -536,11 +531,7 @@ describe("Rally engineering MCP tools", () => {
       ok: true,
       value: { key: "live-artifacts-enabled", default_variation: "on" },
     });
-    const env: Env = {
-      GLOBAL_INSPECTION: regionalBinding("global"),
-      ENTERPRISE_INSPECTION: regionalBinding("enterprise"),
-      FLAG_ADMINISTRATION: flags,
-    };
+    const env = testEnv({ FLAG_ADMINISTRATION: flags });
     const update = {
       key: "live-artifacts-enabled",
       description: "Live artifacts.",
@@ -558,18 +549,14 @@ describe("Rally engineering MCP tools", () => {
     expect(result.isError).toBeUndefined();
     expect(JSON.parse(result.content[0]!.text)).toEqual({ key: "live-artifacts-enabled", default_variation: "on" });
     expect(flags.updateProductFlag).toHaveBeenCalledWith({
-      actor: { subject: "engineer-1", email: "engineer@rallywith.ai" },
+      actor: { subject: "engineer-1" },
       update,
     });
   });
 
   it("rejects a flag the catalog does not manage before reaching Ace", async () => {
     const flags = flagAdministration();
-    const env: Env = {
-      GLOBAL_INSPECTION: regionalBinding("global"),
-      ENTERPRISE_INSPECTION: regionalBinding("enterprise"),
-      FLAG_ADMINISTRATION: flags,
-    };
+    const env = testEnv({ FLAG_ADMINISTRATION: flags });
 
     const response = await rpc(env, "tools/call", {
       name: "update_feature_flag",
@@ -587,11 +574,7 @@ describe("Rally engineering MCP tools", () => {
       code: "invalid_openrouter_models",
       message: "OpenRouter does not recognize or currently route: example/missing",
     });
-    const env: Env = {
-      GLOBAL_INSPECTION: regionalBinding("global"),
-      ENTERPRISE_INSPECTION: regionalBinding("enterprise"),
-      FLAG_ADMINISTRATION: flags,
-    };
+    const env = testEnv({ FLAG_ADMINISTRATION: flags });
     const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const response = await rpc(env, "tools/call", {
@@ -609,7 +592,7 @@ describe("Rally engineering MCP tools", () => {
       error_code: "invalid_openrouter_models",
     })]);
     expect(flags.updateModelRouting).toHaveBeenCalledWith({
-      actor: { subject: "engineer-1", email: "engineer@rallywith.ai" },
+      actor: { subject: "engineer-1" },
       update: { role: "workstream", routing: { model: "example/missing", fallbackModels: [] } },
     });
   });
