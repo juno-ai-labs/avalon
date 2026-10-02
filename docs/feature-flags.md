@@ -1096,6 +1096,21 @@ hiding the Notifications section.
 
 ## Changelog
 
+### 2026-10-02 — Ace deployment deletes every retired model key
+
+**What changed:** Ace deployment now retires `agent-model-activity-structured`,
+`agent-model-addressing-classifier` and `agent-model-hypersight`, and no longer
+recreates `agent-model-automation-compiler` and
+`agent-model-automation-result-disposition` right after retiring them.
+
+**Why:** The 2026-09-03 removal left both automation keys in the `ensureModelFlag`
+list, so each deploy deleted them and then put them back. The other three roles
+left the contract without a retire call, so their keys stayed in Flagship as
+dead targets.
+
+**Consequences:** A role removed from `AGENT_MODEL_ROLES` needs its key moved
+from the ensure list to the retire list in `apps/ace/scripts/deploy.mjs`.
+
 ### 2026-09-17 — Addressing leaves the model-flag catalog
 
 **What changed:** Message addressing no longer has an
