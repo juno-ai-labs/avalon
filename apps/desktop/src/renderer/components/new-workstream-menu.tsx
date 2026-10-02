@@ -3,6 +3,7 @@ import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { cloneElement, useEffect, useId, useMemo, useState, type MouseEvent, type ReactElement } from 'react';
 
+import { useSpaceChoices } from '../lib/space-choices';
 import { Button, DropdownSelect, InlineError, Modal, Tip } from './primitives';
 
 type CreationKind = 'channel' | 'space';
@@ -57,10 +58,11 @@ export function NewWorkstreamMenu({
   // A locked Space is the only choice; one reached only through a shared
   // Channel leaves none, which disables the items.
   const spaceLocked = lock !== null;
+  const choices = useSpaceChoices(spaces);
   const selectableSpaces = useMemo(
-    () => spaces.filter((space) => space.reach !== 'through_channel'
+    () => choices.filter((space) => space.reach !== 'through_channel'
       && (lock === null || space.id === lock)),
-    [lock, spaces],
+    [choices, lock],
   );
   useEffect(() => {
     if (kind === null || kind === 'space') return;

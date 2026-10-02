@@ -36,6 +36,7 @@ import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation, reportTelemetryProductIntent, telemetryVisibility } from '../lib/telemetry';
 import { spaceFailureOf, spaceFailureSentence } from '../lib/space-failure-copy';
+import { useSpaceChoices } from '../lib/space-choices';
 import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { MIN_SIDEBAR_WIDTH, SIDEBAR_CONTENT_MIN_WIDTH, type SidebarChannelSort, useUiStore } from '../lib/ui-store';
 import { useDownloadedUpdate } from '../lib/use-downloaded-update';
@@ -622,8 +623,9 @@ function WorkstreamRow({
   // who could see its row read a stale or incomplete list here. Keep every
   // visible Space and put the existing-placement or access reason on the
   // disabled choice; `addableSpaces` remains the capability used by drag.
+  const choices = useSpaceChoices(spaces);
   const spaceOptions = isProductChannel && !spacesReadOnly
-    ? spaces.map((space) => {
+    ? choices.map((space) => {
         const selected = workstream.spaceIds.includes(space.id);
         const readOnly = space.reach === 'through_channel';
         return {
@@ -1564,7 +1566,7 @@ export function Sidebar({
   // Importing reads the conversation in Rally's own browser, which only the
   // desktop host has. Under a Space the import starts there and offers no other.
   const openBrowserImport = typeof window === 'undefined' ? undefined : window.rally?.openBrowserImport;
-  const importSpaces = placementSpaces.filter((space) => space.reach !== 'through_channel'
+  const importSpaces = useSpaceChoices(placementSpaces).filter((space) => space.reach !== 'through_channel'
     && (selectedSpaceId === null || space.id === selectedSpaceId));
   const allViewSourceSpaceId = (workstream: WorkstreamSummary): string | undefined => (
     workstream.spaceIds.includes(generalSpaceId ?? '')
