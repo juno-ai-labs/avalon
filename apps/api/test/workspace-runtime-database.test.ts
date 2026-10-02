@@ -213,6 +213,7 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "workspace_batch_dispatch_targets",
   "workspace_batch_dispatches",
   "workspace_container_order",
+  "workspace_pinned_order", // All's Pinned order; read and written only by the Space authority.
   "workspace_directory_state",
   "workspace_external_event_registrations",
   "external_registration_generations", // Owned by typed registration RPC only.

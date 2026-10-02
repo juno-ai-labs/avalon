@@ -35,10 +35,10 @@ running the latest version**. If it cannot reach the update service, it says
 
 Once an update has downloaded, Rally gives you three ways to finish it:
 
-- A **Restart to update to Rally** button (with the version number) appears in
-  the sidebar.
+- A **Restart to update** button appears among the round buttons at the top of
+  the sidebar. Hover over it to see the version number.
 - **Restart to Update** appears at the top of the account menu, which you open
-  by clicking your name at the bottom of the Spaces rail.
+  by clicking your name at the bottom of the sidebar.
 - **Rally → Restart to Update** in the menu bar.
 
 Or do nothing, and the update installs the next time you quit Rally anyway.

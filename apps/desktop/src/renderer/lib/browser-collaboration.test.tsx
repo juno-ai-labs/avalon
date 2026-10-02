@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { BrowserEntry } from '../../../../browser/src/entry';
 import { cookieClientSession } from '../../../../browser/src/session';
@@ -81,10 +81,12 @@ it('keeps the live collaboration socket across a focus session refresh', async (
   const view = render(<BrowserEntry renderCollaboration={(region, session, onSignOut) =>
     <BrowserConversation session={cookieClientSession(region, session)} onSignOut={onSignOut} />} />);
   try {
+    // One feed: the directory lists only the Breakout, so Main is not this
+    // guest's and no Main socket may be opened for it, even briefly.
     await waitFor(() => expect(feedSockets()).toHaveLength(1));
     const socket = feedSockets()[0]!;
     await act(async () => { socket.open(); });
-    await screen.findByRole('heading', { name: 'Shared child conversation' });
+    await screen.findByRole('button', { name: 'Breakout menu: Shared child conversation' });
     const previousSelections = selections;
     fireEvent.focus(window);
     await waitFor(() => expect(selections).toBeGreaterThan(previousSelections));
@@ -94,7 +96,7 @@ it('keeps the live collaboration socket across a focus session refresh', async (
     // The membership socket is keyed by the workspace, not the session object,
     // so a focus-time session refresh does not reconnect it either.
     expect(workspaceSockets()).toHaveLength(1);
-    expect(screen.getByRole('heading', { name: 'Shared child conversation' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Breakout menu: Shared child conversation' })).toBeInTheDocument();
   } finally { view.unmount(); }
 });
 
@@ -124,24 +126,35 @@ it('groups a guest’s authorized Channels by Space and opens the shared Breakou
   history.replaceState(null, '', `/app/workspaces/global/${workspace.id}`);
   const session = cookieClientSession('global', { user, workspace, expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
   const view = render(<BrowserConversation session={session} onSignOut={vi.fn()} />);
+  const pill = (name: string): HTMLElement => within(screen.getByRole('group', { name: 'Spaces' })).getByRole('button', { name });
   try {
-    expect(await screen.findByRole('button', { name: 'Product' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('link', { name: 'Channel Alpha' })).toHaveAttribute('aria-description', 'Private channel');
-    expect(screen.queryByRole('link', { name: 'Channel Beta' })).not.toBeInTheDocument();
+    // All is every shared Channel; a pill filters the list and opens nothing.
+    expect(await screen.findByRole('link', { name: 'Channel Alpha' })).toHaveAttribute('aria-description', 'Private channel');
+    expect(pill('All')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('link', { name: 'Channel Beta' })).toHaveAttribute('aria-description', 'Public channel');
+    expect(within(screen.getByRole('link', { name: 'Channel Alpha' })).getByText('Product, Research')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Research' }));
-    expect(await screen.findByRole('link', { name: 'Channel Beta' })).toHaveAttribute('aria-description', 'Public channel');
-    expect(screen.getByRole('link', { name: 'Channel Alpha' })).toHaveAttribute('aria-description', 'Private channel');
-    expect(location.pathname).toBe(`/app/workspaces/global/${workspace.id}/workstreams/${otherParent}/substreams/${otherChild}`);
-    expect(screen.getByRole('button', { name: 'Research' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(pill('Product'));
+    expect(pill('Product')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('link', { name: 'Channel Alpha' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Channel Beta' })).not.toBeInTheDocument();
+    expect(location.pathname).toBe(`/app/workspaces/global/${workspace.id}`);
+
+    fireEvent.click(pill('Research'));
+    fireEvent.click(await screen.findByRole('link', { name: 'Channel Beta' }));
+    await waitFor(() => expect(location.pathname).toBe(`/app/workspaces/global/${workspace.id}/workstreams/${otherParent}/substreams/${otherChild}`));
+    expect(pill('Research')).toHaveAttribute('aria-pressed', 'true');
 
     await waitFor(() => expect(feedSockets().length).toBeGreaterThan(0));
     await act(async () => { feedSockets().at(-1)!.open(); });
-    expect(await screen.findByRole('button', { name: 'Go to breakout: Breakout Beta' })).toHaveAttribute('aria-current', 'page');
-    fireEvent.click(screen.getByRole('link', { name: 'Channel Alpha' }));
-    await waitFor(() => expect(location.pathname).toBe(`/app/workspaces/global/${workspace.id}/workstreams/${parent}/substreams/${child}`));
-    expect(screen.getByRole('button', { name: 'Research' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('button', { name: 'Product' })).toHaveAttribute('aria-pressed', 'false');
+    // Main is not this guest's, so the shared Breakout opens alone.
+    expect(await screen.findByRole('button', { name: /^Breakout menu: /u })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Close breakout' })).not.toBeInTheDocument();
+
+    // A filter that would hide the open Channel widens the list to All.
+    fireEvent.click(pill('Product'));
+    await waitFor(() => expect(pill('All')).toHaveAttribute('aria-pressed', 'true'));
+    expect(screen.getByRole('link', { name: 'Channel Beta' })).toBeInTheDocument();
   } finally { view.unmount(); }
 });
 
@@ -193,5 +206,7 @@ it('opens a lone Channel with no hierarchy rails and keeps the account menu reac
     expect(screen.queryByRole('complementary', { name: 'Spaces sidebar' })).not.toBeInTheDocument();
     expect(screen.queryByRole('complementary', { name: 'Rally navigation' })).not.toBeInTheDocument();
     expect(view.container.querySelector('.browser-account-fallback')).toHaveTextContent('Design team');
+    // No sidebar, so the main pane reserves no room for one.
+    expect(view.container.querySelector<HTMLElement>('.browser-workspace')?.style.getPropertyValue('--av-cmp-sidebar-width')).toBe('0px');
   } finally { view.unmount(); }
 });

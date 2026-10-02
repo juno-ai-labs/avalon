@@ -357,6 +357,26 @@ export const PersonalOrderSchema = z.array(ContainerOrderSchema);
 export type PersonalOrder = z.infer<typeof PersonalOrderSchema>;
 
 /**
+ * One person's order for **All**'s Pinned section: Channel ids, first to last.
+ *
+ * All draws its pins from every Space, so it has no Space's run to rearrange
+ * and keeps this list instead. A pin it does not name follows, in the order its
+ * Spaces give it.
+ *
+ * Not a fourth kind of `OrderedContainer`, on purpose. A shipped desktop
+ * parses `PersonalOrder` strictly, so one entry of a kind it does not know
+ * makes it drop the whole snapshot that carries it — the person's sidebar on
+ * every older build they have open. A key it does not know it ignores, so the
+ * order rides beside `ordering` instead, and is stored in a table of its own
+ * so an older Worker never reads a row it cannot parse.
+ */
+export const PinnedOrderSchema = z.array(IdSchema);
+export type PinnedOrder = z.infer<typeof PinnedOrderSchema>;
+
+/** The body of saving that order, and the answer: what was actually stored. */
+export const PinnedOrderWriteSchema = z.strictObject({ itemIds: PinnedOrderSchema });
+
+/**
  * What a Space hands down to its member Channels, as one kind-keyed value.
  *
  * A resource and a Sidekick recommendation are the same mechanism with a

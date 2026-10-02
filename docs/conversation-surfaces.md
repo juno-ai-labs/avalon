@@ -75,11 +75,9 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
   delay and one provider through. A new tooltip comes from there rather than
   from Radix's five parts; eight files still assemble those by hand and predate
   it.
-- `packages/ui/src/components/workstream-sidebar.tsx` owns the Channel rail's
-  navigation language. Its main conversation and Breakout rows use the same
-  icon-and-title hover card as the Space and Channel hierarchy, while New
-  breakout, Channel participants, and the expand/collapse control use concise control
-  tooltips.
+- `packages/ui/src/components/conversation-menus.tsx` owns the Channel and
+  Breakout title-pill menus that replaced the Channel rail
+  ([`desktop-shell.md`](desktop-shell.md)).
 - `apps/desktop/src/renderer/lib/window-activation.ts` answers the one question
   every one of those surfaces has to ask before it opens: whether the hover or
   the focus it is looking at came from the person or from the window being
@@ -358,7 +356,7 @@ reach.
 Below a 600px pane the field gives the inset up and takes the whole row inside
 the dock's gutters, and those two rows come with it. The dock is an inline-size
 container named `composer-dock`, so that threshold follows the *pane*, which
-narrows when a sidebar expands and widens when one collapses, where a viewport
+narrows when the sidebar is dragged wider or a pane opens beside it, where a viewport
 media query would have answered for a width nobody is looking at. A size query
 measures the container's content box, so the number in the query is that pane
 width less a dock's two 16px gutters. Every dock states the same gutter, because
@@ -411,92 +409,32 @@ pause, resume, delete, run now, the run-history dialog) outside the feed rather 
 inside it. Neither host may smuggle those controls through an optional common
 prop.
 
-The work-stream host supplies `WorkstreamSidebar` through the surface's
-`renderSidebar` slot, between global navigation and the feed. It displays the
-current work stream, its viewer-visible private substreams, resources whose
-direction is `artifact`, then participants from the same live detail/presence
-state as the conversation. Every conversation row in it is the navigation
-sidebar's work-stream row — borderless, one 36px leading slot, the same title
-and the same idle/hover/current fills — and only the mark in that slot says
-which conversation it is: the work stream's own icon tinted with its appearance
-colour for the main conversation, a Tabler `corner-down-right` arrow for a
-substream, and a Tabler `plus` for **New substream**. A substream being created has a row
-of its own in that list, drawn with the arrow and carrying a title skeleton
-until the child exists; it is the one conversation row that is not a button,
-because the reader is already on the surface it stands for. See
-[`substream-creation.md`](substream-creation.md#the-launch-surface). That arrow is the same
-shape the feed's control draws as a text `↳`, and the two deliberately no
-longer mean the same thing: in this rail the arrow says a row *is* a substream,
-while on a settled turn it says *start* one. Compact shows the first character of a substream's
-title, capitalized, in place of its arrow, because a rail of identical arrows
-with no titles beside them says only that these are substreams; both marks
-are drawn in the slot, stacked, and cross-fade over the collapse motion. The
-main conversation's
-mark reads the parent work stream's appearance off its **sidebar row** rather
-than its cached detail, so a colour or icon change moves both rails on the same
-receipt; the header stays on the detail, which is what retires the picker's
-preview. See [`workstream-appearance.md`](workstream-appearance.md).
-Artifact selection
-uses `useCitations.openPreview` to open the artifact lightbox, including an
-explicit unavailable-preview state rather than an inspector fallback; arrival
-of an artifact never opens a panel. Generated sites open the existing isolated
-native viewer inside a resource lightbox, not the file conversion endpoint.
-**Artifacts** is absent, not empty, until the work stream has one — the way the
-Sidekick strip below it already is — because a heading over a placeholder row
-spends rail height saying a conversation has produced nothing yet, which is
-every conversation's opening state. Each artifact row carries the renderer's own
-tooltip through the shared `Tip` primitive, opening to the **right** so it covers
-the feed rather than the next artifact, and never a native `title`: the rail
-truncates a long title and the compact rail drops it entirely, so the tooltip is
-how the row is read, and `title` draws it in the desktop's own type, after the
-desktop's own delay, and not at all for a reader who arrives by keyboard. That is
-the same rule the sidebar facepile settled — one tooltip language per slot, never
-Radix and native together. It has no **Manage resources** button or
-resource-list popup.
-File previews still offer individual **Resource details**; their lightbox retains
-refresh, watch, archive and version history, but no navigation to a resource list.
-Changing conversations closes both lightboxes and pending resource dialogs.
-Participants are one facepile button onto the
-existing management dialog. Selecting a row switches the feed's substream; the
-rail itself stays at work-stream scope.
+The work-stream host passes no `renderSidebar`. What the Channel rail held now
+lives in the Channel's title-pill menu: its Space, people, Sidekicks, artifacts,
+actions and Breakouts. Each conversation's header is a `TitlePillHeader` that
+the host renders through `renderHeader`, and the header context carries
+`openArtifact` for the menu's artifact rows. A Channel's Main surface also takes
+`breakouts`, `openBreakoutId` and `onOpenBreakout`, and from them draws the
+chips under each origin turn and the tick bar along its edge. `scrollToTurn`
+asks it to bring a turn into view, and `honorsSearchTarget` says whether
+`?turn=&sequence=` names this conversation. The right panel is scoped to the
+conversation, not the Channel, because a Channel and its open Breakout are
+mounted together. [`desktop-shell.md`](desktop-shell.md) owns the panes, the
+pills and that scope. `renderSidebar` (and its `renderOpeningSidebar`
+placeholder) remains on the surface, but no host passes it.
 
-Its device-local collapse preference is independent of the global sidebar.
-Expanded width defaults to 280px and is draggable between 240px and 400px;
-the icon rail is 96px (`COLLAPSED_SIDEBAR_WIDTH`), matching the existing Grok navigation. Its trailing-edge
-handle also accepts Left/Right keys, and a held arrow key suppresses the
-collapse animation exactly as a drag does — it is the same gesture reached from
-the keyboard, writing the width over and over, and the class is raised on
-`keydown` and dropped on `keyup` rather than after a guessed idle period. Width is persisted separately from global
-navigation. Dragging below 210px collapses it; expanding requires crossing
-220px, retaining the existing ten-pixel hysteresis. Reaching either width is
-animated over `--sidebar-collapse-motion`, the one duration both sidebars spend,
-except while a drag is in progress: the gesture must land on the pointer, so
-`.is-resizing` takes the transition off for as long as it lasts. This sidebar
-carries that width on two channels — the `flex-basis` that draws it, and the
-`--workstream-sidebar-width` it publishes to the shell for `--rail-max-slot` —
-and **both** are transitioned over that same interval. A change that adds a
-third consumer of its width adds it to that set: a channel left untransitioned
-reaches its final value in one frame and steps whatever reads it while this
-sidebar is still travelling. It temporarily
-collapses when its enclosing pane cannot fit the preferred width
-plus the existing 424px conversation reservation. Only that pane is observed,
-so collapse cannot change its own measurement and cause oscillation. All paint
-uses the existing light/dark sidebar, row, text, and focus tokens; selectors are
-scoped to the new component and do not change global navigation rows.
-
-Neither rail ends a line it cannot fit with an ellipsis or a hard cut: the line
-fades out. `@keyframes clipped-line-fade` in `app.css` carries a `mask-image`
-whose last 24px go to transparent, and the rule under it lists every line the
-two rails clip — a row title, the flex line a title shares with a system-work
-cog, a row hint, a project name, a Sidekick tile's caption, the account row's
-name and address, and a centre-rail row's name and subtitle. A mask rather than
+The sidebar never ends a line it cannot fit with an ellipsis or a hard cut: the
+line fades out. `@keyframes clipped-line-fade` in `app.css` carries a
+`mask-image` whose last 24px go to transparent, and the rule under it lists
+every line the sidebar clips — a row title, the flex line a title shares with
+an activity hint, a Sidekick tile's caption, and the account row's name and
+address. A mask rather than
 a gradient painted over the line, because each of those rows has an idle, a
 hover and a current fill and an overlay matched to one shows as a bar in the
 other two.
 
-The same 24px mask sits on the rails' own scrollers: `.sidebar-scroll` and
-`.workstream-context-scroll` on the block axis, `.sidebar-automation-strip` on
-the inline axis. A list that overflows fades the edge items are disappearing
+The same 24px mask sits on the sidebar's own scroller, `.sidebar-scroll`, on
+the block axis. A list that overflows fades the edge items are disappearing
 into, and only that edge — the far edge at rest, both once the scroller has
 moved, the near edge when it can go no further. A list that fits has no
 timeline and therefore no mask, so the first and last items stay at full ink.
@@ -507,7 +445,7 @@ the middle. Those two animations are clocks, so the global reduced-motion kill
 switch would pin them at their 100% keyframes; their durations stay `auto`
 under that preference, restored next to the kill switch, because a fade that
 says "there is more this way" is not motion. The mask does not spare a focus
-ring, so the same 24px is `scroll-padding` on each scroller: Tab and the rail's
+ring, so the same 24px is `scroll-padding` on each scroller: Tab and the sidebar's
 own `scrollIntoView({ block: 'nearest' })` would otherwise park a row flush
 with the faded edge.
 
@@ -517,7 +455,7 @@ is the line's own inline scroller: a line whose text fits is not scrollable, its
 timeline is inactive, and an animation on an inactive timeline contributes
 nothing — so a title ending a few pixels short of the edge keeps its last
 characters at full ink, which an unconditional mask would fade for no reason.
-Renaming a row, dragging either rail, or collapsing one re-decides on its own.
+Renaming a row or dragging either sidebar re-decides on its own.
 The keyframe holds one value at both ends because nothing is meant to move; the
 timeline is being asked a question about overflow, not used as a clock, and the
 fill mode is what keeps the mask applied for the reader whose reduced-motion
@@ -536,78 +474,29 @@ unconditional fade this arrangement exists to avoid, reachable by a reordering
 that looks like tidying, which is why the ordering is pinned and not merely the
 three declarations. jsdom lays nothing out, so no component test sees any of it.
 
-The global navigation's contents travel with its edge. Every rule in its
-stylesheet that changes a shape between the expanded sidebar and the 96px rail
-transitions on `--sidebar-layout-motion`, stated once on `.sidebar` as the
-collapse motion; a drag sets it to `0s` for the transitions it would start and
-takes the property off everything already travelling, since a running
-transition keeps the duration it began with. The rows narrow to their 36px marks
-while their titles fade under a clip, the headings close to no height, the group
-gaps and the scroll box's padding close, the titlebar's New work stream fades,
-the account row keeps its avatar and closes its name, and the Sidekick tiles
-shed their captions. Nothing on screen during the toggle is `display: none` in
-the rail — hidden copy is kept in layout at zero size and faded, with
-`visibility` carried on the same interval so it leaves the accessibility tree
-when the fade ends — and every travelling value is a number in both layouts,
-because a keyword cannot be interpolated. Search sits in a command bar between
-the titlebar and the scroll box in both layouts, a grid of two numeric tracks:
-the pill closes to a 54px square in place, and the second track opens for the
-rail's New work stream row, which arrives and leaves through
-[`list-motion.md`](list-motion.md)'s insert motion. The aside carries a
-registered `--sidebar-compact` number on the same interval, drawn from by
-nothing; the component listens to the platform's transition events for it on
-the aside itself to know when the layout has settled, and holds the list
-motion until then.
+The global navigation is one sidebar that resizes and never collapses: both
+apps mount `ResizableSidebar` with `collapsible={false}` and `compact={false}`.
+The compact 96px rail, its ⌘B and double-click collapse, and the per-Channel
+work-stream sidebar with its own compact layout were removed with the shell
+redesign; what that sidebar held now lives in the title pill menus
+([`desktop-shell.md`](desktop-shell.md)). The primitive still carries its
+compact layout (`--sidebar-compact`, `--sidebar-layout-motion`), which no app
+turns on.
 
-The work-stream sidebar's contents travel the same way, on the same
-`--sidebar-layout-motion` restated on it and cancelled the same way by its own
-drag: its
-rows narrow to their 36px marks as their copy fades under a clip, the section
-headings close to no height as the section rules and their spacing arrive, the
-substream mark cross-fades from arrow to initial, the participants' avatars
-shrink into the square with their overlap, the empty state closes to its icon,
-and the footer's toggle is carried to the centre by the footer's padding.
-Nothing in it is centred with `justify-content`, which cannot travel: a mark is
-centred by the row's padding, and content of no fixed width — the avatar
-stack, the empty state's icon — by a transform of `calc(18px - 50%)`. It has no
-list motion to hold and so carries no `--sidebar-compact`.
-
-Both dividers say what they are. A grip carries no words, and the double-click
-that collapses the sidebar beside it was written down nowhere, so each handle is
-wrapped in `DragHint` (`components/primitives.tsx`): a `Tip` whose
-trigger is the handle's whole pointer target rather than the pill drawn inside
-it, so the hint and the pill appear for the same approach, and whose content is
-centre-aligned, which lands it beside the pill without either side measuring the
-other. Its two lines are the citation popover's two lines: the subordinate one
-is dimmed to 0.72 and left at the tooltip's own size, which is how a tooltip
-here says *secondary* and the only way it says it. The first line names the
-drag; the second names the quick action in the
-direction the next one would go, collapse while expanded and expand while
-compact. That second line names a key as well as the double-click, and it has
-to: the hint opens on focus as well as on hover, so its most likely reader is
-the one who cannot double-click at all. `Enter` is the key, performing exactly
-what the double-click performs and refused under exactly the same condition,
-which is the action the ARIA authoring practices give a window splitter. That second line is dropped exactly where the gesture would be refused:
-a window too narrow for the navigation's expanded width, or a pane too narrow
-for the work-stream rail's contents, which are the same conditions that disable
-each footer toggle. The navigation takes that condition as a prop,
-`constrained`, rather than deriving it: `compact` is `collapsed || constrained`
-and so reads the same for a sidebar the reader collapsed as for one the window
-is pinning, and somebody who did both is held by the window. Derived as
-`compact && !collapsed` it read false for exactly that reader, which brought
-the footer toggle back to life, made the hint offer an expansion that could not
-happen, and rewrote the saved preference to expanded for a widening that might
-never come. Keeping the two in step is the point of the hint, so a new
-guard on either double-click adds itself to the hint in the same change. The
-right sidebar's handle takes the same hint from the same primitive, with one
-difference in what it offers: that panel closes from its own header control, so
-its double-click, and its `Enter`, restore `DEFAULT_RAIL_WIDTH` rather than
-collapsing anything, through the same clamp the drag uses, so a window whose
-derived maximum is under that width resets to the maximum instead. There the key is the only keyboard route to that width at
-all: the arrows step by a fixed amount, so reaching the default by holding one
-means counting steps to a number nothing on screen shows. Either sidebar's
-arrows do reach its collapsed width, by crossing the collapse threshold, so
-`Enter` there is about the hint being honest rather than about reachability.
+Both resize handles say what they are. A grip carries no words, so each is
+wrapped in `DragHint` (`packages/ui/src/components/primitives.tsx`): a `Tip`
+whose trigger is the handle's whole pointer target rather than the pill drawn
+inside it, so the hint and the pill appear for the same approach, and whose
+content is centre-aligned, which lands it beside the pill without either side
+measuring the other. Its two lines are the citation popover's two lines: the
+subordinate one is dimmed to 0.72 and left at the tooltip's own size. The
+navigation's hint names the drag alone, since there is nothing to collapse. The
+right sidebar's handle (`RailResizeHandle`) adds a second line: its
+double-click, and its `Enter` — the hint opens on focus as well as hover, so
+its likeliest reader is one who cannot double-click — restore
+`DEFAULT_RAIL_WIDTH` through the same clamp the drag uses, so a window whose
+derived maximum is under that width resets to the maximum instead. The key is
+the only keyboard route to that width: the arrows step by a fixed amount.
 
 The route host, not the feed, owns identity transitions. A new work stream
 begins with local composer keys; after durable admission its adapter rekeys

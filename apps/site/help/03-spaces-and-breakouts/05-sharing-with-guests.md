@@ -13,11 +13,10 @@ People who join this way are **guests**.
 
 You can share from two places.
 
-- **The header.** Open the Channel or Breakout and click the **Share** button
-  in its header. This shares whichever conversation you are looking at: the
-  main conversation, or the Breakout you have open.
-- **A menu.** Right-click a Channel in the Channels rail, or a Breakout or the
-  main conversation row in the Channel sidebar, and choose **Share**.
+- **The title pill.** Open the Channel or Breakout, click its name in the
+  title pill and choose **Share**. This shares that conversation: the
+  Channel's main conversation, or the Breakout.
+- **The sidebar.** Right-click a Channel in the sidebar and choose **Share**.
 
 Then:
 
@@ -40,8 +39,8 @@ until Rally has connected.
 
 Sharing gives access to one conversation and nothing around it:
 
-- Sharing a Channel from its row, or its main conversation from the header,
-  shares the main conversation only. Its Breakouts stay private.
+- Sharing a Channel, from its row or its title pill, shares the main
+  conversation only. Its Breakouts stay private.
 - Sharing a Breakout shares that Breakout only. The guest does not get the
   Channel's main conversation, its other Breakouts, or its list of participants.
 

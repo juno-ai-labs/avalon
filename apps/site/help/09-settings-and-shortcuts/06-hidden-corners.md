@@ -69,23 +69,24 @@ be one of the people who built Rally, and you should be getting back to work.
 ## Keeping the sidebar tidy
 
 - **Drag to pin or move.** Drag a Channel onto the **Pinned** section to pin it,
-  or onto a Space in the Spaces rail to move it there. See
+  or onto a Space's pill to move it there. See
   [Arranging your Channels](../03-spaces-and-breakouts/02-arranging-channels.md).
 - **One Channel, several Spaces.** **Add to space** in a Channel's right-click
   menu puts it in a second Space without taking it out of the first. See
   [One Channel, several Spaces](../03-spaces-and-breakouts/02-arranging-channels.md#one-channel-several-spaces).
-- **Reorder with the keyboard.** Select a pinned Channel or a Space, hold
-  <kbd>⌥</kbd> and press <kbd>↑</kbd> or <kbd>↓</kbd>.
-- **Your Sidekicks have a shortcut strip.** The row of hexagon tiles above your
-  name at the bottom of the Spaces rail is one tile per active Sidekick. Click one to
-  open it. See [The Sidekicks window](../07-sidekicks/04-the-sidekicks-window.md).
+- **Reorder with the keyboard.** Select a pinned Channel, hold <kbd>⌥</kbd>
+  and press <kbd>↑</kbd> or <kbd>↓</kbd>. For a Space's pill, use <kbd>⌥</kbd>
+  with <kbd>←</kbd> or <kbd>→</kbd>.
+- **Open a Space's page from its pill.** Clicking a pill only filters the list.
+  Right-click it and choose **Open space** to see the Space's own page.
 
 ## Making room
 
-- **Resize the rails.** Drag the edge of the sidebar to make it wider or
-  narrower; drag it narrow enough and it folds into a slim strip of icons.
-  Double-click the edge to fold or unfold it in one go. <kbd>⌘</kbd>
-  <kbd>B</kbd> does the same from the keyboard.
+- **Resize the sidebar.** Drag its right edge to make it wider or narrower. It
+  does not fold away.
+- **Resize a Breakout.** Drag the line between a Channel and the Breakout
+  open beside it. See
+  [Breakouts](../03-spaces-and-breakouts/03-breakouts.md#a-breakout-beside-its-channel).
 - **Resize the right-hand panel.** Drag the thin line on the left edge of the
   panel beside the conversation (the browser or an artifact). Rally
   remembers the width for each Channel. Double-click the line to put it back.
@@ -97,10 +98,9 @@ be one of the people who built Rally, and you should be getting back to work.
 ## Getting things in and out
 
 - **Every Channel has an email address.** Forward an email or mail a file
-  straight into the conversation. Click **…** (**More channel actions**) in the
-  Channel's header and choose **Copy channel email address**. See
+  straight into the conversation. See
   [Email into Rally](../08-rally-everywhere/03-email-into-rally.md).
-- **Links open the app.** The links you copy with **Copy channel link**, and the
+- **Links open the app.** The links you copy with **Copy link** in a title pill's menu, and the
   ones in invitation emails, are web addresses that begin `rallywith.ai/app/`.
   With Rally installed, they open it on your Mac at the right Channel,
   Breakout or Sidekick, switching Organization first if they need to. Behind the

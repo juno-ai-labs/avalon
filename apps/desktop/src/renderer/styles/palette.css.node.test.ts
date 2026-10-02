@@ -6,11 +6,12 @@ import { describe, expect, it } from 'vitest';
 import {
   PALETTE_INK,
   PALETTE_KEYS,
+  PALETTE_RING,
   PERSONAL_COLOR_KEYS,
   PROJECT_COLOR_KEYS,
 } from '@rally/contracts';
 
-import { PROJECT_COLOR_COLUMNS, glyphInk, projectColorCells } from '../lib/project-palette';
+import { PROJECT_COLOR_COLUMNS, glyphInk, markColors, projectColorCells } from '../lib/project-palette';
 
 // Read from disk for the same reason `themes.css.node.test.ts` does: Vite hands
 // `?raw` an empty string for a file it is already processing as CSS.
@@ -313,6 +314,69 @@ describe('project palette', () => {
         expect(Math.abs(apcaLc(resolved, fill)), `${key} in ${theme} draws its symbol below the floor`)
           .toBeGreaterThanOrEqual(READABLE_LC);
       }
+    }
+  });
+});
+
+/** OKLab lightness, the perceptual L the pastel pairs were tuned to share. */
+function oklabL(hex: string): number {
+  const linear = (pair: string): number => {
+    const value = Number.parseInt(pair, 16) / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  const [r, g, b] = [linear(hex.slice(1, 3)), linear(hex.slice(3, 5)), linear(hex.slice(5, 7))];
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const short = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  return 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * short;
+}
+
+/**
+ * A mark's pastel pair: `project-tint` under `project-ink`, per hue and per
+ * appearance. The pairs were chosen so the ink is body-text legible on its tint
+ * and so no hue's tint stands out from the rest; these are the two properties
+ * that make them a set rather than fourteen colours.
+ */
+describe('mark pastels', () => {
+  /** The floor each appearance's pairs were built to clear: 5.3–5.9:1 light, 7.3–7.4:1 dark. */
+  const CONTRAST_FLOOR = { light: 5.3, dark: 7.25 } as const;
+  /** How far apart, in OKLab L, any two tints (or inks) of one appearance may sit. */
+  const LIGHTNESS_SPREAD = 0.01;
+
+  for (const theme of ['light', 'dark'] as const) {
+    it(`gives every hue in the ${theme} appearance an ink that reads on its tint`, () => {
+      const values = themeValues(theme);
+      for (const key of PALETTE_RING) {
+        const tint = values[`sys.color.project-tint.${key}`];
+        const ink = values[`sys.color.project-ink.${key}`];
+        expect(tint, key).toMatch(/^#[0-9a-f]{6}$/u);
+        expect(ink, key).toMatch(/^#[0-9a-f]{6}$/u);
+        expect(contrast(luminance(ink!), luminance(tint!)), key).toBeGreaterThanOrEqual(CONTRAST_FLOOR[theme]);
+      }
+    });
+
+    it(`keeps the ${theme} tints, and the inks, at one lightness so no hue stands out`, () => {
+      const values = themeValues(theme);
+      for (const family of ['tint', 'ink'] as const) {
+        const lightness = PALETTE_RING.map((key) => oklabL(values[`sys.color.project-${family}.${key}`]!));
+        expect(Math.max(...lightness) - Math.min(...lightness), family).toBeLessThanOrEqual(LIGHTNESS_SPREAD);
+      }
+    });
+  }
+
+  it('paints a ring hue as its pastel pair and anything else as before', () => {
+    expect(markColors('rose')).toEqual({
+      tint: 'var(--av-sys-color-project-tint-rose)',
+      ink: 'var(--av-sys-color-project-ink-rose)',
+      bare: 'var(--av-sys-color-project-ink-rose)',
+    });
+    // `black` is the account accent and the retired keys are only ever read
+    // back; neither has a pastel pair, so they keep the hue under its ink.
+    for (const key of ['black', 'gray', 'brown', 'yellow', 'teal'] as const) {
+      // Drawn bare, on the page, the near-white ink would vanish; the hue reads.
+      expect(markColors(key)).toEqual({
+        tint: `var(--av-sys-color-project-${key})`, ink: glyphInk(key), bare: `var(--av-sys-color-project-${key})`,
+      });
     }
   });
 });

@@ -6,6 +6,7 @@ import { zValidator } from "../middleware/validation";
 import {
   AcceptWorkspaceInvitationRequestSchema,
   ContainerOrderSchema,
+  PinnedOrderWriteSchema,
   CreateWorkspaceInvitationRequestSchema,
   IdSchema,
   CreateWorkspaceInvitationResponseSchema,
@@ -110,6 +111,12 @@ workspaceRoutes.put("/order", zValidator("json", ContainerOrderSchema), async (c
   c.json(ContainerOrderSchema.parse(
     await new SpaceService(c.env, getAuth(c)).reorderContainer(c.req.valid("json")),
   )),
+);
+/** All's Pinned order, which is not an `OrderedContainer`; see `PinnedOrderSchema`. */
+workspaceRoutes.put("/pinned-order", zValidator("json", PinnedOrderWriteSchema), async (c) =>
+  c.json(PinnedOrderWriteSchema.parse({
+    itemIds: await new SpaceService(c.env, getAuth(c)).reorderAllPinned(c.req.valid("json").itemIds),
+  })),
 );
 workspaceRoutes.get("/terminal", async (c) =>
   c.json(TerminalWorkspaceSettingsSchema.parse(await withTerminalSettingsService(c, (service) => service.get()))),

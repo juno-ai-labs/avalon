@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useUiStore } from './ui-store';
 
 describe('context rail state', () => {
@@ -7,7 +7,7 @@ describe('context rail state', () => {
     useUiStore.setState({
       sidebarOpen: false,
       sidebarWidth: 300,
-      spacesSidebarWidth: 280,
+      sidebarSpaceFilter: null,
       railOpen: false,
       railVariant: 'context',
       railWidth: 360,
@@ -42,10 +42,16 @@ describe('context rail state', () => {
     useUiStore.getState().setSidebarWidth(900);
     expect(useUiStore.getState().sidebarWidth).toBe(400);
     expect(window.localStorage.getItem('rally.sidebar-width')).toBe('400');
+  });
 
-    useUiStore.getState().setSpacesSidebarWidth(200);
-    expect(useUiStore.getState().spacesSidebarWidth).toBe(240);
-    expect(window.localStorage.getItem('rally.spaces-sidebar-width')).toBe('240');
+  it('remembers the sidebar Space filter and forgets it when set back to All', () => {
+    useUiStore.getState().setSidebarSpaceFilter('space-launch');
+    expect(useUiStore.getState().sidebarSpaceFilter).toBe('space-launch');
+    expect(window.localStorage.getItem('rally.sidebar-space-filter')).toBe('space-launch');
+
+    useUiStore.getState().setSidebarSpaceFilter(null);
+    expect(useUiStore.getState().sidebarSpaceFilter).toBeNull();
+    expect(window.localStorage.getItem('rally.sidebar-space-filter')).toBeNull();
   });
 
   it('opens the requested contextual variant and resets stale detail state', () => {
@@ -74,5 +80,29 @@ describe('context rail state', () => {
 
     useUiStore.getState().openRail('context');
     expect(useUiStore.getState()).toMatchObject({ railOpen: true, inspector: null });
+  });
+});
+
+describe('sidebar width', () => {
+  // Each test reads the store as a fresh device would, so the module is
+  // re-imported over its own storage and both are put back afterwards.
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.resetModules();
+  });
+  afterEach(() => {
+    window.localStorage.clear();
+    vi.resetModules();
+  });
+
+  it('starts a device that never resized the sidebar at the design width', async () => {
+    const { useUiStore: fresh } = await import('./ui-store');
+    expect(fresh.getState().sidebarWidth).toBe(340);
+  });
+
+  it('keeps a width the person dragged to over the design width', async () => {
+    window.localStorage.setItem('rally.sidebar-width', '260');
+    const { useUiStore: fresh } = await import('./ui-store');
+    expect(fresh.getState().sidebarWidth).toBe(260);
   });
 });

@@ -17,6 +17,9 @@ import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace
  */
 const SPACE_SCHEMA_VERSION = 63;
 
+/** The version that let a person order the Pinned section under All. */
+const PINNED_ORDER_VERSION = 87;
+
 const SPACE_ID = "00000000-0000-7000-8000-0000000000c1";
 const OTHER_SPACE_ID = "00000000-0000-7000-8000-0000000000c2";
 const CHANNEL_ID = "00000000-0000-7000-8000-0000000000c3";
@@ -235,5 +238,23 @@ describe("WorkspaceDO space schema", () => {
       `INSERT INTO workspace_retirement_graph (parent_kind, parent_id, recorded_at, retired_at)
        VALUES ('space', ?, 10, NULL)`,
     ).run(SPACE_ID)).not.toThrow();
+  });
+
+  it("given 87, when All's Pinned order is stored, then it lands in its own table and the shared order table still refuses it", () => {
+    const database = openDatabase();
+    apply(database, PINNED_ORDER_VERSION);
+    database.prepare(
+      `INSERT INTO workspace_pinned_order (user_id, item_id, position, updated_at) VALUES (?, ?, 0, 2)`,
+    ).run(USER_ID, CHANNEL_ID);
+
+    expect(database.prepare(
+      "SELECT user_id, item_id, position FROM workspace_pinned_order",
+    ).all()).toEqual([{ user_id: USER_ID, item_id: CHANNEL_ID, position: 0 }]);
+    // Untouched, so a Worker from before 87 never reads a row it cannot parse.
+    expect(() => database.prepare(
+      `INSERT INTO workspace_container_order
+         (user_id, container_kind, container_id, item_id, position, created_at, updated_at)
+       VALUES (?, 'pinned', ?, ?, 0, 1, 2)`,
+    ).run(USER_ID, WORKSPACE_ID, CHANNEL_ID)).toThrow(/CHECK constraint failed/u);
   });
 });

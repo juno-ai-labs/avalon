@@ -13,13 +13,27 @@ import { useUiStore } from './ui-store';
  */
 type BrowserRailHost = (url: string) => void;
 
-let host: BrowserRailHost | null = null;
+/**
+ * Every mounted host, newest last. A Channel and its open Breakout are two
+ * conversations on screen at once, and a link belongs to the one it was
+ * clicked in: each host names the element it covers, and a link with no such
+ * element — a menu portalled out of both panes — goes to the newest.
+ */
+const hosts: { open: BrowserRailHost; element: () => Element | null }[] = [];
 
-export function registerBrowserRailHost(next: BrowserRailHost): () => void {
-  host = next;
+export function registerBrowserRailHost(next: BrowserRailHost, element: () => Element | null = () => null): () => void {
+  const entry = { open: next, element };
+  hosts.push(entry);
   return () => {
-    if (host === next) host = null;
+    const index = hosts.indexOf(entry);
+    if (index >= 0) hosts.splice(index, 1);
   };
+}
+
+function hostFor(origin: EventTarget | null | undefined): BrowserRailHost | null {
+  const node = origin instanceof Node ? origin : null;
+  const containing = node ? hosts.find((candidate) => candidate.element()?.contains(node)) : undefined;
+  return (containing ?? hosts[hosts.length - 1])?.open ?? null;
 }
 
 function webUrl(raw: string): string | null {
@@ -31,9 +45,13 @@ function webUrl(raw: string): string | null {
   }
 }
 
-/** Opens `url` in the browser rail when one is on screen, else through `openExternal`. */
-export function openLink(url: string): Promise<void> {
+/**
+ * Opens `url` in the browser rail when one is on screen, else through
+ * `openExternal`. `origin` is what was clicked, which picks the pane's rail.
+ */
+export function openLink(url: string, origin?: EventTarget | null): Promise<void> {
   const web = webUrl(url);
+  const host = hostFor(origin);
   if (web && host) {
     host(web);
     return Promise.resolve();
@@ -54,7 +72,7 @@ export function captureLinkClicks(root: Document): () => void {
     const web = webUrl(anchor.href);
     if (!web || new URL(web).origin === root.location.origin) return;
     event.preventDefault();
-    void openLink(web);
+    void openLink(web, anchor);
   };
   root.addEventListener('click', onClick);
   root.addEventListener('auxclick', onClick);
@@ -68,20 +86,33 @@ export function captureLinkClicks(root: Document): () => void {
  * Makes the mounted screen the rail host while `enabled`, on the desktop only:
  * the web host has no local browser and keeps opening new tabs.
  */
-export function useBrowserRailLinks(enabled: boolean): void {
+export function useBrowserRailLinks(
+  enabled: boolean,
+  element: () => Element | null = () => null,
+  claimRail: () => void = () => undefined,
+): void {
   useEffect(() => {
     if (!enabled || !window.rally) return;
     const unregister = registerBrowserRailHost((url) => {
+      claimRail();
       const ui = useUiStore.getState();
       ui.setRailWidth(Math.max(ui.railWidth, 600));
       ui.openRail('browser');
       // A page that fails to load says so in its own tab.
       void desktopBridge().commandEmbeddedBrowser({ action: 'open', url }).catch(() => undefined);
-    });
-    const release = captureLinkClicks(document);
+    }, element);
+    // One document listener however many hosts are mounted, so a click is
+    // routed once rather than once per conversation on screen.
+    if (linkCaptureCount++ === 0) releaseLinkCapture = captureLinkClicks(document);
     return () => {
-      release();
+      if (--linkCaptureCount === 0) {
+        releaseLinkCapture?.();
+        releaseLinkCapture = null;
+      }
       unregister();
     };
-  }, [enabled]);
+  }, [claimRail, element, enabled]);
 }
+
+let linkCaptureCount = 0;
+let releaseLinkCapture: (() => void) | null = null;

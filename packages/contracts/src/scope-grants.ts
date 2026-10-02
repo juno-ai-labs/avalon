@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { WorkstreamAppearanceSchema } from "./workstream-appearance";
 import { IdSchema, SubstreamIdSchema, UserIdSchema, WorkspaceIdSchema } from "./identifiers";
-import { SpaceColorKeySchema, SpaceIconKeySchema, SpaceIdSchema } from "./spaces";
+import { SpaceColorKeySchema, SpaceIconKeySchema, SpaceIdSchema, SpaceSystemRoleSchema } from "./spaces";
 
 /** Guest is a workspace relationship, never a different kind of user identity. */
 export const WorkspaceAccessClassSchema = z.enum(["member", "guest"]);
@@ -206,6 +206,8 @@ export const SharedNavigationWorkstreamSchema = SharedWorkstreamSchema.omit({ co
     scope: z.enum(["personal", "workspace"]),
     archived: z.boolean(),
     needsAttention: z.boolean().optional(),
+    /** A breakout's Main transcript turn it was branched through; null when not branched from one. */
+    originTurnId: z.string().min(1).nullable().optional(),
   })),
 });
 export type SharedNavigationWorkstream = z.infer<typeof SharedNavigationWorkstreamSchema>;
@@ -217,6 +219,8 @@ export const SharedNavigationSpaceSchema = z.strictObject({
   iconKey: SpaceIconKeySchema,
   colorKey: SpaceColorKeySchema,
   scope: z.enum(["personal", "workspace"]),
+  /** `general` marks the Organization's General Space. */
+  systemRole: SpaceSystemRoleSchema.nullable().optional(),
   workstreamIds: z.array(IdSchema),
 });
 export type SharedNavigationSpace = z.infer<typeof SharedNavigationSpaceSchema>;

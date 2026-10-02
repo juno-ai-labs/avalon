@@ -43,9 +43,9 @@ describe('appearance picker', () => {
     render(<WorkstreamAppearancePicker id="room" appearance={{ icon: 'atom', color: 'blue' }} onChange={vi.fn().mockResolvedValue(undefined)} />);
     openPicker();
     const drum = await screen.findByRole('menuitemradio', { name: 'Drum' });
-    expect(drum.querySelector('svg')).toHaveAttribute('stroke', 'var(--av-sys-color-project-blue)');
+    expect(drum.querySelector('svg')).toHaveAttribute('stroke', 'var(--av-sys-color-project-ink-blue)');
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'Green' }));
-    expect(drum.querySelector('svg')).toHaveAttribute('stroke', 'var(--av-sys-color-project-green)');
+    expect(drum.querySelector('svg')).toHaveAttribute('stroke', 'var(--av-sys-color-project-ink-green)');
   });
 
   it('draws an icon the catalog no longer offers, and offers nothing in its place', async () => {

@@ -187,11 +187,17 @@ export function SidebarCollapseFooter({
 
 type ResizableSidebarProps = Omit<ComponentPropsWithoutRef<'aside'>, 'children'> & {
   children: ReactNode;
+  /**
+   * False for a sidebar that only resizes: the edge never collapses it, the
+   * keyboard stops at the minimum width, and the hint offers no toggle.
+   */
+  collapsible?: boolean;
   compact: boolean;
   constrained?: boolean;
   resizeLabel: string;
   onResize: (width: number) => void;
-  onToggle: () => void;
+  /** Required unless `collapsible` is false. */
+  onToggle?: () => void;
   sidebarRef: RefObject<HTMLElement | null>;
   width: number;
 };
@@ -207,6 +213,7 @@ type ResizableSidebarProps = Omit<ComponentPropsWithoutRef<'aside'>, 'children'>
 export function ResizableSidebar({
   children,
   className,
+  collapsible = true,
   compact,
   constrained = false,
   resizeLabel,
@@ -261,7 +268,7 @@ export function ResizableSidebar({
   }, [onResize, resizing, sidebarRef]);
 
   const toggle = (): void => {
-    if (!constrained) onToggle();
+    if (collapsible && !constrained) onToggle?.();
   };
 
   return <aside
@@ -274,13 +281,13 @@ export function ResizableSidebar({
     <DragHint
       action="Drag to resize"
       suppressed={resizing}
-      shortcut={constrained ? undefined : compact ? 'Double-click or Enter to expand' : 'Double-click or Enter to collapse'}
+      shortcut={constrained || !collapsible ? undefined : compact ? 'Double-click or Enter to expand' : 'Double-click or Enter to collapse'}
     >
       <div
         aria-label={resizeLabel}
         aria-orientation="vertical"
         aria-valuemax={MAX_SIDEBAR_WIDTH}
-        aria-valuemin={COLLAPSED_SIDEBAR_WIDTH}
+        aria-valuemin={collapsible ? COLLAPSED_SIDEBAR_WIDTH : MIN_SIDEBAR_WIDTH}
         aria-valuenow={width}
         className={clsx('sidebar-resizer', (pointerNearEdge || resizing) && 'is-near', resizeActive && 'is-resizing')}
         onBlur={() => setKeyResizing(false)}
@@ -295,8 +302,8 @@ export function ResizableSidebar({
           event.preventDefault();
           setKeyResizing(true);
           if (event.key === 'ArrowLeft' && !compact) {
-            onResize(width > MIN_SIDEBAR_WIDTH
-              ? width - KEYBOARD_STEP
+            onResize(width > MIN_SIDEBAR_WIDTH || !collapsible
+              ? Math.max(collapsible ? 0 : MIN_SIDEBAR_WIDTH, width - KEYBOARD_STEP)
               : SIDEBAR_COLLAPSE_DRAG_THRESHOLD - 1);
           }
           if (event.key === 'ArrowRight') onResize(compact ? MIN_SIDEBAR_WIDTH : width + KEYBOARD_STEP);

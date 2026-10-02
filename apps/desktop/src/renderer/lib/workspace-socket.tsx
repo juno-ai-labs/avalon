@@ -57,6 +57,7 @@ import {
   INACTIVE_SPACES_QUERY_KEY,
   SPACES_READY_QUERY_KEY,
   PERSONAL_ORDER_QUERY_KEY,
+  PINNED_ORDER_QUERY_KEY,
   SIDEBAR_LIST_QUERY_KEYS,
   applyVersionedSpaceSnapshot,
   applyVersionedSidebarList,
@@ -417,7 +418,7 @@ export function WorkspaceSocketProvider({
       WORKSTREAMS_QUERY_KEY,
       SIDEBAR_LIST_QUERY_KEYS.automations,
       SPACES_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, SPACES_READY_QUERY_KEY,
-      PERSONAL_ORDER_QUERY_KEY,
+      PERSONAL_ORDER_QUERY_KEY, PINNED_ORDER_QUERY_KEY,
       CLIENT_FEATURE_FLAGS_QUERY_KEY,
       WORKSTREAM_STATE_WATERLINES_KEY, WORKSPACE_DIRECTORY_WATERLINES_KEY,
     ]);
@@ -575,7 +576,7 @@ export function WorkspaceSocketProvider({
           sidebar.automations.items.map(mapAutomationSummary),
         );
         if (sidebar.spaces) {
-          applyVersionedSpaceSnapshot(queryClient, sidebar.spaces, sidebar.ordering ?? [], sidebar.spacesReady ?? true);
+          applyVersionedSpaceSnapshot(queryClient, sidebar.spaces, sidebar.ordering ?? [], sidebar.spacesReady ?? true, sidebar.pinnedOrder);
         }
         directoryLive = true;
         setSidebarConnect((current) => ({
@@ -616,6 +617,7 @@ export function WorkspaceSocketProvider({
           // arrangement, which is what an empty one draws.
           sidebar.ordering ?? [],
           sidebar.spacesReady ?? true,
+          sidebar.pinnedOrder,
         );
       }
       directoryLive = true;
@@ -1190,6 +1192,7 @@ export function WorkspaceSocketProvider({
               spaceSnapshot.data.spaces,
               spaceSnapshot.data.ordering,
               spaceSnapshot.data.spacesReady,
+              spaceSnapshot.data.pinnedOrder,
             );
             setSidebarConnect((current) => current ? { ...current, spacesLive: true } : current);
             // Guest hierarchy is a separately authorized associative read.

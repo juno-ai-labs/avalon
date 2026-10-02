@@ -49,7 +49,7 @@ something out of sight. It does not erase it.
   says: **Nothing is deleted, but Rally has no way to bring a channel back.**
 - A Breakout. The same: it is kept, and there is no control in the app to
   restore it.
-- A Space. Archiving removes it from the Spaces rail. Spaces are the one
+- A Space. Archiving removes its pill from the sidebar. Spaces are the one
   thing you can restore from the app.
 - A Sidekick. Its schedules stop, and its conversation and run history stay
   stored but can no longer be viewed. It cannot be unarchived.

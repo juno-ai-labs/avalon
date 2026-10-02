@@ -7,15 +7,12 @@ Time to give Rally a job. A Channel is one conversation about one piece of work,
 
 ## Start a Channel
 
-1. Click the **+** button (**New channel or space**) at the top of the Spaces rail.
-2. Choose **Start New Channel**.
-3. In the **Start a new channel** dialog, pick a **Space** from the list. In a new Organization the only choice is **General**, which makes this the easiest decision you will make all day.
-4. Type a **Name of channel**, up to 180 characters. A few words is plenty.
-5. Click **Create**.
+1. Click **New channel** (a speech bubble with a plus) at the top of the sidebar.
+2. In the **Start a new channel** dialog, pick a **Space** from the list. In a new Organization the only choice is **General**, which makes this the easiest decision you will make all day. If you have a Space's pill selected, the new Channel goes in that Space.
+3. Type a **Name of channel**, up to 180 characters. A few words is plenty.
+4. Click **Create**.
 
-You can also right-click an empty part of the Channels rail. That menu offers the same Channel choices, already set to the Space you are looking at.
-
-The **+** menu has two other items. **Create New Space** makes a new group for Channels, covered in [Spaces](../03-spaces-and-breakouts/01-spaces.md). **Import Channel from Claude or ChatGPT** brings in a conversation you had elsewhere, covered in [Bring in a conversation from Claude or ChatGPT](../02-working-in-a-channel/08-import-from-claude-or-chatgpt.md).
+You can also right-click an empty part of the Channel list and choose **Start New Channel**. The same menu has **Import Channel from Claude or ChatGPT**, which brings in a conversation you had elsewhere, covered in [Bring in a conversation from Claude or ChatGPT](../02-working-in-a-channel/08-import-from-claude-or-chatgpt.md). New Spaces have a button of their own, covered in [Spaces](../03-spaces-and-breakouts/01-spaces.md).
 
 ## Write the opening message
 
@@ -28,7 +25,7 @@ The starting screen has two parts.
 
 Mentioning a teammate by name in that first message adds them to the Channel too. [People in the room](../02-working-in-a-channel/05-people-in-the-room.md) has more on who is in a Channel.
 
-The new Channel appears in the Channels rail as soon as you press <kbd>Return</kbd>, and Rally starts on your message straight away.
+The new Channel appears in the sidebar as soon as you press <kbd>Return</kbd>, and Rally starts on your message straight away.
 
 ### What to ask
 
@@ -53,7 +50,7 @@ The answer itself appears as Rally writes it, a few words at a time, with a smal
 > [!NOTE]
 > If Rally's AI provider is having a slow moment, a notice says **The model is currently slowed down. Responses might take longer.** Nothing is wrong on your side; the answer is still coming.
 
-Some jobs take a few seconds and some take much longer. You do not have to watch. Go and do something else, and the Channel's status dot and badge will tell you when it is done or needs you. [While Rally works](../02-working-in-a-channel/03-while-rally-works.md) covers following along, steering, stopping and what to do if a run fails.
+Some jobs take a few seconds and some take much longer. You do not have to watch. Go and do something else, and the Channel's status dot in the sidebar will tell you when it is done or needs you. [While Rally works](../02-working-in-a-channel/03-while-rally-works.md) covers following along, steering, stopping and what to do if a run fails.
 
 ## Names and icons
 
@@ -68,7 +65,7 @@ Some conversations start without a name, though: a Breakout you branch off from 
 
 Renaming a conversation yourself settles the matter: Rally never overwrites a name a person chose. The same goes for an icon you pick yourself.
 
-Every Channel gets an icon and colour, even if nobody chooses one. To change them, click the icon at the left of the Channel's header (**Change channel icon and color**), pick a colour, then an icon. [Names, icons and colours](../02-working-in-a-channel/07-name-icon-and-colour.md) covers renaming and everything else about how a Channel looks. A Channel with a nice icon is not more productive, but it is easier to find, which is nearly the same thing.
+Every Channel gets an icon and colour, even if nobody chooses one. To change them, click the icon at the left of the Channel's title pill, pick a colour, then an icon. [Names, icons and colours](../02-working-in-a-channel/07-name-icon-and-colour.md) covers renaming and everything else about how a Channel looks. A Channel with a nice icon is not more productive, but it is easier to find, which is nearly the same thing.
 
 ## An empty Channel
 

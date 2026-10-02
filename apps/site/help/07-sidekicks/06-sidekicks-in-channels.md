@@ -4,15 +4,16 @@ description: Attach a Sidekick to a Channel so its instructions and helpers are 
 ---
 
 So far, Sidekicks have lived in their own window. This page brings them into
-the room. Every Channel and Breakout has a place in its Channel sidebar that
+the room. Every Channel and Breakout has a list in its title pill menu that
 shows which Sidekicks belong to it, which ones Rally has loaded there, and
 which ones the team recommends.
 
 ## The Sidekicks section
 
-Open a Channel or Breakout and look in the Channel sidebar, the third column
-from the left (introduced in [A tour of the window](../01-getting-started/04-a-tour-of-the-window.md#the-channel-sidebar)).
-Under **Channel participants** is a section headed **Sidekicks**. It lists:
+Open a Channel or Breakout, click its name in the title pill (introduced in
+[Names, icons and colours](../02-working-in-a-channel/07-name-icon-and-colour.md#the-title-pill))
+and choose **Sidekicks**. The row shows how many there are, or **None yet**. The
+list it opens shows:
 
 - **Sidekicks the Channel owns**: the ones made from inside it, with the
   **Channel** scope;
@@ -29,13 +30,13 @@ to open that Sidekick in the Sidekicks window.
 example because someone gave it a trigger (which turns it into delegated
 work) or because the people who could use it changed.
 
-The section heading stays even when there is nothing under it, so you
+The **Sidekicks** row is there even when the Channel has none, so you
 always know where to look. If the list cannot be read, a **Refresh** row
 appears instead; click it to try again.
 
 ## Add a Sidekick to a Channel
 
-At the bottom of the section is **Add Sidekick**. Click it for two choices.
+At the bottom of the list is **Add Sidekick**. Click it for two choices.
 
 - **Attach existing Sidekick** opens a dialog of the same name. Type in
   **Search organization Sidekicks** to find one, then click it. It is now
@@ -70,7 +71,7 @@ having to remember to ask for it.
 
 ## Right-click a Sidekick
 
-Right-click a row in the Sidekicks section for its options. Depending on the
+Right-click a row in the Sidekicks list for its options. Depending on the
 Sidekick and your permissions, you see:
 
 - **Recommend for this channel**, to recommend a Sidekick that is loaded

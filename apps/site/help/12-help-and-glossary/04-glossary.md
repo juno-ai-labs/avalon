@@ -21,15 +21,11 @@ deleting. See [Arranging your Channels](../03-spaces-and-breakouts/02-arranging-
 
 **Artifact.** A file Rally made for you and put in a Channel: a document, a
 picture, a voice recording, a zip archive or a live site. Artifacts are listed
-under **Artifacts** in the Channel sidebar and keep every version. See
+under **More** in the Channel's menu and keep every version. See
 [Artifacts](../06-things-rally-makes/01-artifacts.md).
 
 **Attachment.** A file you add to a message you send. See
 [Attaching files](../02-working-in-a-channel/02-attaching-files.md).
-
-**Attention badge.** The small number beside a Channel in the sidebar. It
-counts conversations that need you, not unread messages. See
-[Status dots and badges](../02-working-in-a-channel/06-status-dots-and-badges.md).
 
 **Automation.** The old name for a [Sidekick](#s). A few labels and messages
 still say it.
@@ -99,8 +95,8 @@ your Mac's own keychain. See
 
 ## M
 
-**Main.** A Channel's own conversation, as opposed to its Breakouts. It is the
-first row in the Channel sidebar. See
+**Main.** A Channel's own conversation, as opposed to its Breakouts. An open
+Breakout sits to its right. See
 [Breakouts](../03-spaces-and-breakouts/03-breakouts.md).
 
 **Member.** The everyday Organization role. See
@@ -150,8 +146,8 @@ it, such as the Web, the Terminal, or one for each connected tool. Loading a
 plugin never gives Rally more permission than it already had. See
 [How Rally works](../04-working-with-rally/01-how-rally-works.md).
 
-**Private.** Seen only by the people listed in it. A private Channel carries a
-**Private** badge. Its opposite is **Public**: everyone in the Organization
+**Private.** Seen only by the people listed in it. A private Channel says
+**Private** under **People** in its menu. Its opposite is **Public**: everyone in the Organization
 can see it. See [Who can see what](../03-spaces-and-breakouts/04-who-can-see-what.md).
 
 **Project.** The old name for a [Space](#s).
@@ -211,11 +207,16 @@ the Organization, or only the people you add. Every Organization starts with
 one called **General**. Old name: Project. See
 [Spaces](../03-spaces-and-breakouts/01-spaces.md).
 
+**Space pill.** One of the rounded buttons across the top of the sidebar, one
+per Space except General, plus **All**. Clicking one shows only that Space's
+Channels. See
+[A tour of the window](../01-getting-started/04-a-tour-of-the-window.md#the-space-pills).
+
 **Status dot.** The coloured dot and label showing one state for a Channel or
 Breakout. The labels are **New to you**, **You were mentioned**, **Running**,
 **Needs input**, **Unread**, **Latest run completed**, **Latest run stopped**
 and **Needs intervention**. See
-[Status dots and badges](../02-working-in-a-channel/06-status-dots-and-badges.md).
+[Status dots](../02-working-in-a-channel/06-status-dots-and-badges.md).
 
 **Steering.** Sending a message while Rally is in the middle of a run, so it
 changes course without starting again. Your message shows **Unseen** until
@@ -230,6 +231,10 @@ Rally has read it. See
 data and builds files. Your Organization decides how far it may reach on the
 internet. See
 [Code, data and the Terminal](../04-working-with-rally/03-code-files-and-the-terminal.md).
+
+**Title pill.** The rounded name at the top of a Channel or Breakout. Click it
+for the menu that holds its people, Sidekicks, Breakouts and settings. See
+[Names, icons and colours](../02-working-in-a-channel/07-name-icon-and-colour.md#the-title-pill).
 
 **Trigger.** What starts a Sidekick: a time, an interval, an event in another
 tool, a webhook, an email, or starting it by hand. See
