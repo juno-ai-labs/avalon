@@ -43,7 +43,9 @@ context). The round **New space** button at the head of the Space pills opens
 or a shared link — and clicks Import. A sheet asks for the Space and a Channel
 name, prefilled with the tab's title; only Spaces the person may edit are
 offered, and names stop at the server's 180-character limit. The entered name is
-the settled Channel title.
+the settled Channel title. Once the Channel opens, a background pass picks its
+icon from the imported history; its colour comes from its id, as for any Channel
+([naming](workstream-naming.md#prepared-history)).
 The main window lists the Channel as a pending row the moment the import
 starts and opens it on an "Importing conversation…" screen. That screen opens
 no socket: the Channel is listed before its history is written, and its room
