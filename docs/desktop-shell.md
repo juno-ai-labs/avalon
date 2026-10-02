@@ -54,7 +54,10 @@ in the Channel menu. The desktop remembers the filter per device
 (`useUiStore.sidebarSpaceFilter`, `rally.sidebar-space-filter`). Opening a
 Channel the filter would hide widens the list to All.
 
-The list is **Pinned**, then every other Channel A to Z. A row shows the glyph,
+The list is **Pinned**, then every other Channel A to Z. With pins above it
+the rest is headed **Channels**, and each heading carries a quiet hint at its
+far edge (*Drag to reorder* when there are pins to reorder, *A–Z*); with no
+pins the list stands alone and has no heading. A row shows the glyph,
 the title and the last activity time. Under them it shows the names of the
 Channel's Spaces, without General; a Channel only in General has a one-line
 row. One dot at the leading edge shows the ranked marker from

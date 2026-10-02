@@ -2497,14 +2497,15 @@ describe('pinned channels', () => {
     // Once, not twice: the recent list keeps only what is not pinned.
     expect(screen.getAllByRole('link', { name: /Launch tracking/u })).toHaveLength(1);
     expect(within(section).queryByRole('link', { name: /Quarterly planning/u })).not.toBeInTheDocument();
-    expect(screen.getByRole('separator', { name: 'Pinned and unpinned channels' })).toBeVisible();
+    // With pins above it, the rest of the list is named.
+    expect(screen.getByRole('heading', { name: 'Channels' })).toBeVisible();
   });
 
   it('shows no Pinned section until something is pinned', () => {
     renderWith([workstream('ws-recent', 'Quarterly planning', 'completed')]);
 
     expect(screen.queryByRole('region', { name: 'Pinned' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('separator', { name: 'Pinned and unpinned channels' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
   });
 
   it('renders pinned rows in their stored order rather than by activity', () => {
@@ -2514,7 +2515,7 @@ describe('pinned channels', () => {
     ]);
 
     expect(pinnedRowTitles()).toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
-    expect(screen.queryByRole('separator', { name: 'Pinned and unpinned channels' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
   });
 
   it('does not navigate behind an open modal dialog', async () => {
@@ -2902,8 +2903,9 @@ describe('pinned channels', () => {
       expect(moved).toBeDefined();
       expect(screen.getByRole('region', { name: 'Pinned' })).toContainElement(moved!.element);
       expect(moved!.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, -48px)' }));
-      // The remaining alphabetical row shifts down one slot under Pinned.
-      expect(playedOn('workstream:ws-first')?.keyframes).toEqual([{ transform: 'translate(0px, -48px)' }, { transform: 'translate(0px, 0px)' }]);
+      // The remaining alphabetical row shifts down two slots: one for the
+      // Pinned section above it and one for the Channels heading it now has.
+      expect(playedOn('workstream:ws-first')?.keyframes).toEqual([{ transform: 'translate(0px, -96px)' }, { transform: 'translate(0px, 0px)' }]);
     });
 
     // `scrollIntoView` scrolls to the box as transformed, and the motion's first
