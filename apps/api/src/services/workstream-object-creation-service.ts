@@ -549,12 +549,15 @@ export class WorkstreamObjectCreationService {
     if (Number(activated.meta.changes ?? 0) !== 1) {
       throw new Error("workstream_create_route_activation_failed");
     }
-    await span.step("workstream.create.receipt.complete", () => this.env.DB.prepare(
+    // A receipt discarded while this create ran stays discarded: a failed
+    // receipt is never reused, so the create that lost the race says so
+    // instead of completing a Channel its discard has archived.
+    const completedReceipt = await span.step("workstream.create.receipt.complete", () => this.env.DB.prepare(
       `UPDATE workstream_create_receipts
           SET state = 'completed', message_id = ?, harness_run_id = ?,
               error_code = NULL, updated_at = ?
         WHERE workspace_id = ? AND creator_user_id = ? AND client_message_id = ?
-          AND request_hash = ?`,
+          AND request_hash = ? AND state <> 'failed'`,
     ).bind(
       created.turnId,
       created.harnessRunId,
@@ -564,6 +567,9 @@ export class WorkstreamObjectCreationService {
       body.clientMessageId,
       requestHash,
     ).run());
+    if (Number(completedReceipt.meta.changes ?? 0) === 0) {
+      throw new ApiError(409, "workstream_create_discarded", "This create was discarded; start a new one");
+    }
 
     // The first naming pass. The legacy creation path schedules this and the
     // object path never did, so every post-cutover work stream kept its

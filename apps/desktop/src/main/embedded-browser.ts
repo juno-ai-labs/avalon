@@ -24,6 +24,8 @@ interface BrowserTab {
   favicon: string | null;
   /** What the page has received since it last navigated, by DevTools request id. */
   network: Map<string, RecordedResponse>;
+  /** Bytes of copied bodies `network` holds, against `NETWORK_BODY_BYTES_MAX`. */
+  networkBytes: number;
 }
 
 /**
@@ -32,6 +34,18 @@ interface BrowserTab {
  * and media are listed but read live from Chromium's own buffer.
  */
 const CACHED_RESOURCE_TYPES = new Set(['Fetch', 'XHR']);
+
+/**
+ * The most body bytes one tab holds for one document; a body past it is
+ * listed but left uncopied, and reads live from Chromium if it still has it.
+ *
+ * Open on purpose: the guard is written, the number is the team's to set (see
+ * `docs/adding-security-defensive-and-other-limits.md`). Only an agent-driven
+ * browser records, and a new document empties the record, so the arithmetic
+ * is one conversation page's Fetch/XHR traffic: a ChatGPT conversation's JSON
+ * runs from 0.2 to 5 MB.
+ */
+export const NETWORK_BODY_BYTES_MAX = Number.POSITIVE_INFINITY;
 
 const embeddedBrowserContents = new WeakSet<WebContents>();
 
@@ -95,6 +109,12 @@ export class EmbeddedBrowser {
     private readonly onState: (state: EmbeddedBrowserState) => void,
     /** Asks the host's controls to focus the address field, for a shortcut pressed inside a page. */
     private readonly onFocusAddress: () => void = () => undefined,
+    /**
+     * A browser an agent drives (the import window's): its tabs record their
+     * network from creation, and a covered active tab keeps rendering at full
+     * speed. A person's own browsing pays for neither.
+     */
+    private readonly agentDriven = false,
   ) {
     this.partition = browserPartition(userId);
     this.browserSession = session.fromPartition(this.partition);
@@ -150,7 +170,7 @@ export class EmbeddedBrowser {
     for (const tab of this.tabs.values()) {
       const active = tab.id === this.activeTabId;
       const contents = tab.view.webContents;
-      contents.setBackgroundThrottling(!active);
+      contents.setBackgroundThrottling(!(active && this.agentDriven));
       if (!active) tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
       else if (this.visible) tab.view.setBounds(this.bounds);
       else {
@@ -200,7 +220,7 @@ export class EmbeddedBrowser {
     const contents = view.webContents;
     this.configureRemoteContents(contents, id);
     const network = new Map<string, RecordedResponse>();
-    this.recordNetwork(contents, network);
+    if (this.agentDriven) this.recordNetwork(contents, id);
     contents.on('page-title-updated', () => this.publish());
     contents.on('did-navigate', () => {
       // A new document starts without the last one's icon.
@@ -234,7 +254,7 @@ export class EmbeddedBrowser {
       // that went away on its own still needs it.
       if (this.forget(id)) this.publish();
     });
-    this.tabs.set(id, { id, view, popupOf, favicon: null, network });
+    this.tabs.set(id, { id, view, popupOf, favicon: null, network, networkBytes: 0 });
     this.window.contentView.addChildView(view);
     this.activeTabId = id;
     this.layout();
@@ -305,20 +325,26 @@ export class EmbeddedBrowser {
    * arrived. A new document starts a new list, which keeps what is held to one
    * page's traffic.
    */
-  private recordNetwork(contents: WebContents, network: Map<string, RecordedResponse>): void {
+  private recordNetwork(contents: WebContents, tabId: string): void {
     const methods = new Map<string, string>();
+    // The tab is registered after its view, so it is looked up per event.
+    const recordOf = () => this.tabs.get(tabId);
     contents.on('did-start-navigation', (...args: unknown[]) => {
       const details = args[0] as { isMainFrame?: boolean; isSameDocument?: boolean } | undefined;
       const isMainFrame = details?.isMainFrame ?? args[3] === true;
       const isSameDocument = details?.isSameDocument ?? args[2] === true;
-      if (isMainFrame && !isSameDocument) {
-        network.clear();
+      const tab = recordOf();
+      if (isMainFrame && !isSameDocument && tab) {
+        tab.network.clear();
+        tab.networkBytes = 0;
         methods.clear();
       }
     });
     contents.debugger.on('message', (_event, method: string, params: Record<string, unknown>) => {
       const requestId = typeof params['requestId'] === 'string' ? params['requestId'] : null;
-      if (!requestId) return;
+      const tab = recordOf();
+      if (!requestId || !tab) return;
+      const network = tab.network;
       if (method === 'Network.requestWillBeSent') {
         const request = params['request'] as { method?: string } | undefined;
         methods.set(requestId, request?.method ?? 'GET');
@@ -344,6 +370,8 @@ export class EmbeddedBrowser {
           .then((body) => {
             // A navigation may have started a new list while this was read.
             if (network.get(requestId) !== recorded) return;
+            if (tab.networkBytes + body.body.length > NETWORK_BODY_BYTES_MAX) return;
+            tab.networkBytes += body.body.length;
             recorded.body = { body: body.body, base64Encoded: body.base64Encoded };
             recorded.cached = true;
           })

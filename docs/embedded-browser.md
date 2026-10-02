@@ -111,14 +111,18 @@ as Google Chrome.
   users would expose one person's website sessions to another.
 - Native page bounds follow the rail and are hidden behind Rally overlays.
   Otherwise a guest page can paint above a dialog or outside the browser rail.
-- Every tab records its page's network responses from creation through
-  DevTools, and copies Fetch and XHR bodies as each finishes; a new document
-  clears the record. An agent reads the data a web app loaded instead of
+- In a browser an agent drives — the import window's, `agentDriven` — every
+  tab records its page's network responses from creation through DevTools, and
+  copies Fetch and XHR bodies as each finishes, up to `NETWORK_BODY_BYTES_MAX`
+  (open: the team's number to set); a new document clears the record. The
+  rail's browser records nothing: a person's own browsing keeps no responses in
+  the main process. An agent reads the data a web app loaded instead of
   rebuilding the request that loaded it, and reads it again after Chromium has
   evicted its own copy. A tab under an open DevTools window records nothing,
   because only one debugger can attach.
 - Hidden is parked, not collapsed: the active tab keeps its size outside the
-  window, unthrottled and without keyboard focus. An agent driving it reads,
+  window, without keyboard focus, and — in an agent-driven browser only —
+  unthrottled. An agent driving it reads,
   captures and clicks the same page whether or not a Rally overlay covers it,
   and the person cannot reach it while one does.
 
@@ -160,8 +164,9 @@ for `PublicKeyCredential` still waits forever.
 The native view cannot be layered under renderer dialogs, so the renderer hides
 it for dialogs and menus, and CSS — a blur, a scrim — cannot reach it. A surface
 that wants the page visible behind an overlay draws a capture of it instead, as
-the import window's run does. A parked active tab renders at full speed, so a
-covered page costs what a visible one does.
+the import window's run does. In the import window a parked active tab renders
+at full speed, so a covered page costs what a visible one does; the rail's
+throttles as Chromium does for any hidden page.
 
 ## Testing
 
@@ -206,31 +211,42 @@ Adding passkey support later means removing this flag in the same change.
 
 Shipped in #1056.
 
-### 2026-10-01 — Size screenshots in DIPs for an agent that clicks
+### 2026-10-01 — Let an agent drive a tab: DIP screenshots, parked tabs, recorded network
 
-The agent-to-desktop boundary this document planned now exists as [desktop
-actions](desktop-actions.md), and its first user, the conversation importer,
-clicks where a screenshot shows something. `capturePage` returns device pixels
-while `sendInputEvent` takes DIPs, so on a high-density display every click
-landed at twice the coordinates. The screenshot command now resizes the capture
-to the view's DIP bounds and returns its width and height; a future change to
-either command must keep the two in the same units.
+**What changed:** Screenshots are resized to the view's DIP bounds and return
+their size. A hidden active tab is parked outside the window at full size and
+without keyboard focus, instead of collapsed to 0×0. In a browser an agent
+drives (the import window's), tabs record their network responses from
+creation and keep Fetch and XHR bodies, cleared on a new document, and a
+parked tab is unthrottled.
 
-Hiding the page used to collapse it to 0×0. That stalled an agent whenever a
-dialog covered the page — the import window's own progress modal included — so
-a hidden active tab is now parked outside the window at its full size, with
-background throttling off and keyboard focus moved back to Rally. The renderer
-keeps sending the page's real rectangle while it hides it. Parking rather than
-an input-swallowing overlay view was chosen because it needs no second
-renderer: the page is unreachable for being out of the window, and the
-renderer draws whatever should show behind its overlay.
+**Why:** The agent-to-desktop boundary this document planned now exists as
+[desktop actions](desktop-actions.md), and its first user clicks where a
+screenshot shows something. `capturePage` returns device pixels while
+`sendInputEvent` takes DIPs, so on a high-density display every click landed at
+twice the coordinates. A collapsed tab stalled the agent whenever a dialog —
+the import window's own progress modal included — covered the page. Chromium
+keeps a body only if recording began before the request, so recording cannot
+wait for an agent to ask, and it evicts its own copy, so Fetch and XHR bodies
+— where a web app's data arrives — are copied.
 
-Each tab now records its network responses from its first request. Recording
-must start before a request for Chromium to keep its body, so it cannot wait
-for an agent to ask; bodies of Fetch and XHR responses are copied because that
-is where a web app's data arrives, and Chromium's own buffer evicts them. The
-record is bounded by one document: a navigation to a new one clears it, which
-is why no separate size limit was added.
+**Considered and rejected:** An input-swallowing overlay view over the page,
+which needs a second renderer; parked, the page is unreachable for being out of
+the window. Recording in every browser, including the rail's: review found it
+kept every site's responses, auth included, in the main process during ordinary
+browsing, and a single-page app rarely starts a new document to clear them.
+Recording only the pinned tab once a run starts: Chromium keeps no body for a
+request made before recording began, and the page loads its conversation
+first.
+
+**Consequences:** The screenshot and input commands must stay in the same
+units. A new agent surface passes `agentDriven` or gets no network panel.
+`NETWORK_BODY_BYTES_MAX` is open; past it a body is listed but not copied. A
+parked agent-driven tab renders at full speed, so a covered page costs what a
+visible one does. A tab under an open DevTools window records nothing, because
+only one debugger can attach.
+
+Shipped in #1058.
 
 ### 2026-09-25 — Closing the only blank tab closes the rail
 

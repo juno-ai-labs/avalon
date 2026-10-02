@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import type { HarnessToolContext } from "@rally/agent-harness";
+import {
+  AVALON_SKILL_TOOL_DEFINITIONS, createSkillRuntime, hasAvalonToolProse, toolActivityName, type HarnessToolContext,
+} from "@rally/agent-harness";
 import { asHarnessRunId, asUserId } from "@rally/contracts";
 import { agentProfileFor } from "../src/services/agent-profiles";
 import { createBrowserPlugin, DesktopActionToolError } from "../src/services/desktop-actions/browser-plugin";
@@ -67,6 +69,26 @@ describe("agent profiles", () => {
     expect(agentProfileFor(null)).toBeNull();
     expect(agentProfileFor("session_import")?.role).toBe("session_import");
     expect(() => agentProfileFor("retired_profile")).toThrow(expect.objectContaining({ code: "agent_profile_unknown" }));
+  });
+
+  it("lists every step an import can take in plain words, not its tool name", () => {
+    const profile = agentProfileFor("session_import")!;
+    const names = [
+      ...profile.plugins({ harnessRunId: RUN_ID } as never, undefined).flatMap((plugin) => plugin.tools.map((entry) => entry.definition.name)),
+      ...AVALON_SKILL_TOOL_DEFINITIONS.map((definition) => definition.name),
+    ];
+    expect(names.filter((name) => !hasAvalonToolProse(name))).toEqual([]);
+    expect(toolActivityName({ toolName: "browser_network_read", status: "started" })).toBe("Reading data the page loaded");
+  });
+
+  it("offers its run every skill it names, because each skill's owner is one of its plugins", async () => {
+    const profile = agentProfileFor("session_import")!;
+    const runtime = await createSkillRuntime({
+      skills: profile.skills,
+      eligiblePlugins: profile.plugins({ harnessRunId: RUN_ID } as never, undefined).map((plugin) => plugin.canonicalId),
+    });
+    expect(runtime.summaries.map((summary) => summary.name).sort())
+      .toEqual(["reading-an-ai-chat", "reading-chatgpt-conversations", "reading-claude-conversations"]);
   });
 
   it("asks the desktop for the page's network responses and a body, and returns what it answered", async () => {

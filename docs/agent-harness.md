@@ -907,6 +907,15 @@ conversation importer, is its first entry, and its tools are [desktop
 actions](desktop-actions.md). A stored profile this Worker does not know fails
 the run as `agent_profile_unknown` rather than running with every tool.
 
+A profile may also name an `ended` hook: cleanup owed once a run of it has
+ended, failed or stopped. `runWorkstreamHarness` calls it after the run's
+outcome is durable, with the run's workspace, parent and — for a run a person
+started — user; a hook that throws is logged as
+`agent_profile_run_end_failed` with its code and does not change the run's
+outcome. `session_import` uses it to archive a Channel its run reserved and
+never opened ([session import](session-import.md)), the one cleanup a closed or
+crashed import window cannot send.
+
 ### Scoped durable memory
 
 Query-based memory search resolves the run's scopes with `resolveMemoryAccess`,
@@ -1429,25 +1438,35 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ### 2026-10-01 — A conversation can be provisioned to do one fixed job
 
-The conversation importer needed an agent loop whose only tools drive the
-person's browser, whose prompt is its own, and whose model must read
-screenshots. Nothing let a run narrow its tool surface: `defaultPluginIds` only
-preloads, and every run assembled the full built-in and connector set. Agent
-profiles are that narrowing, stored on the conversation so a profile cannot
-change under a running conversation and a run never decides its own surface.
-The alternatives were an input field on the activation (any activation path
-could then forget it) and a new Durable Object for the import (rejected: the
-loop and its durability already live here). A future profile must stay
-fail-closed — an unknown profile is a failed run, never the default surface.
+**What changed:** A conversation can carry an agent profile, stored on it at
+provisioning, that fixes its run's system prompt, model role, whole tool
+surface, skill catalog and run-end cleanup. `session_import` is the first; it
+names three new browser-owned skills that read AI chats.
 
-A profile also names the skills its catalog offers; `session_import` names the
-three AI-chat readers. Before them, the importer re-derived each provider's page
-on every run: 9 of 19 calls reverse-engineering ChatGPT's markup, a DOM read
-that silently dropped 8 of 15 messages, and a page script that sent the
-signed-in site's cookies to the model. With the skills it reads the page's own
-data in 6–14 calls. The knowledge stayed in skills rather than the prompt so the
-catalog line is all a run pays for until it loads one, and so a browser-bearing
-run that is not an import can use the same readers.
+**Why:** The conversation importer needed an agent loop whose only tools drive
+the person's browser, whose prompt is its own, and whose model must read
+screenshots. Nothing let a run narrow its tool surface: `defaultPluginIds` only
+preloads, and every run assembled the full built-in and connector set. Without
+the skills the importer re-derived each provider's page on every run — 9 of 19
+calls reverse-engineering ChatGPT's markup, a DOM read that silently dropped 8
+of 15 messages, a page script that sent the signed-in site's cookies to the
+model — and with them it read the page's own data in 6–14 calls. The run-end
+hook exists because an import's reserved Channel was otherwise left listed
+whenever its window closed without discarding it.
+
+**Considered and rejected:** A profile field on the activation, which any
+activation path could forget. A new Durable Object for the import, when the
+loop and its durability already live here. Provider reading knowledge in the
+system prompt, which every run would pay for in full; as skills a run pays for
+the catalog line until it loads one, and any browser-bearing run can use them.
+
+**Consequences:** A profile is fail-closed: an unknown stored profile is a
+failed run, never the default surface, and a future profile must keep it so. A
+profile cannot change under a running conversation. An `ended` hook runs on
+the harness host's normal exit after a run, so it must be idempotent and cheap when there
+is nothing to do.
+
+Shipped in #1058.
 
 ### 2026-09-27 — A run's result reaches a conversation only by conversation_post
 

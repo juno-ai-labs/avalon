@@ -31,6 +31,7 @@ export const SESSION_IMPORT_FAILURE_REASONS = [
   "sign_in_required",
   "not_a_conversation",
   "page_unavailable",
+  "unreadable",
 ] as const;
 export const SessionImportFailureReasonSchema = z.enum(SESSION_IMPORT_FAILURE_REASONS);
 export type SessionImportFailureReason = z.infer<typeof SessionImportFailureReasonSchema>;

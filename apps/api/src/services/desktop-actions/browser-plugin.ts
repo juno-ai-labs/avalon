@@ -1,6 +1,7 @@
 import type { HarnessPlugin, HarnessTool, HarnessToolContext, HarnessToolResult } from "@rally/agent-harness";
 import { truncateTextWithMarker } from "@rally/connectors";
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
+import { describeZodIssues } from "@rally/contracts/zod-diagnostics";
 import {
   DesktopActionResultSchemas,
   type DesktopAction,
@@ -47,7 +48,7 @@ const NEXT_STEP: Record<string, string> = {
   file_too_large: "Record that file as unavailable, with this reason, and continue.",
   unknown_handle: "Use a handle a previous rally.store or browser_load returned.",
   invalid_conversation: "Fix what the message names in the stored messages, store them again, and call import_finish with the new handle.",
-  import_rejected: "Fix what the message names and call import_finish again.",
+  import_rejected: "Fix what the message names and call import_finish again. If nothing in the stored messages can fix it, call import_fail with unreadable.",
   result_too_large: "Return less: keep large values in the page with rally.store and return only what you need.",
 };
 
@@ -88,7 +89,7 @@ export async function runDesktopAction<K extends DesktopActionKind>(
   if (!parsed.success) {
     throw new DesktopActionToolError(
       "invalid_desktop_result",
-      `The desktop answered ${action.kind} with a result that does not match it.`,
+      `The desktop answered ${action.kind} with a result that does not match it: ${describeZodIssues(parsed.error)}.`,
       "Try the call again.",
     );
   }

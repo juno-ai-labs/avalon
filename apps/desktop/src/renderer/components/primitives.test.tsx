@@ -733,6 +733,22 @@ describe('Modal', () => {
     fireEvent.click(remove);
     expect(onOpenChange).not.toHaveBeenCalled();
   });
+
+  it('leaves a dialog that must not be dismissed only through its footer, with no button focused to press by accident', async () => {
+    const onOpenChange = vi.fn();
+    render(
+      <Tooltip.Provider>
+        <Modal dismissible={false} footer={<button type="button">Cancel</button>} onOpenChange={onOpenChange} open title="Importing conversation">
+          <p>Reading the page</p>
+        </Modal>
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.queryByRole('button', { name: 'Close dialog' })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('dialog')).toHaveFocus());
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
 });
 
 describe('DropdownSelect', () => {

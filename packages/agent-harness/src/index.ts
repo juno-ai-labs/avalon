@@ -1670,7 +1670,8 @@ function parseOpenRouterChatResult(payload: unknown): ChatResult | null {
   return parsed.ok ? parsed.value : null;
 }
 
-function parseOpenRouterStreamChunk(serialized: string): ChatStreamChunk {
+/** One raw OpenRouter stream event, read the way the SDK reads its own. Exported for its test. */
+export function parseOpenRouterStreamChunk(serialized: string): ChatStreamChunk {
   const parsed = chatStreamChunkFromJSON(serialized);
   if (parsed.ok) return parsed.value;
   let raw: Record<string, unknown> = {};
@@ -1739,6 +1740,9 @@ function rawUsageToSdk(usage: Record<string, unknown>): ChatUsage {
     && typeof usage.completion_tokens_details === "object"
     ? usage.completion_tokens_details as Record<string, unknown>
     : null;
+  const costDetails = usage.cost_details && typeof usage.cost_details === "object"
+    ? usage.cost_details as Record<string, unknown>
+    : null;
   const reasoningTokens = typeof usage.reasoning_tokens === "number"
     ? usage.reasoning_tokens
     : typeof completionDetails?.reasoning_tokens === "number"
@@ -1757,6 +1761,16 @@ function rawUsageToSdk(usage: Record<string, unknown>): ChatUsage {
       : (typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : 0)
         + (typeof usage.completion_tokens === "number" ? usage.completion_tokens : 0),
     ...(typeof usage.cost === "number" ? { cost: usage.cost } : {}),
+    // A bring-your-own-key call's provider charge, which `openRouterCallCostUsd`
+    // adds to the fee; the SDK's own parse carries it, so this one must too.
+    ...(typeof usage.is_byok === "boolean" ? { isByok: usage.is_byok } : {}),
+    ...(typeof costDetails?.upstream_inference_cost === "number"
+      ? { costDetails: {
+        upstreamInferenceCost: costDetails.upstream_inference_cost,
+        upstreamInferencePromptCost: typeof costDetails.upstream_inference_prompt_cost === "number" ? costDetails.upstream_inference_prompt_cost : 0,
+        upstreamInferenceCompletionsCost: typeof costDetails.upstream_inference_completions_cost === "number" ? costDetails.upstream_inference_completions_cost : 0,
+      } }
+      : {}),
     ...(reasoningTokens === undefined ? {} : {
       completionTokensDetails: { reasoningTokens },
     }),
