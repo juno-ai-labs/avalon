@@ -279,6 +279,7 @@ export function ChannelMenu({
   onImportUpdates,
   onOpenArtifact,
   onOpenBreakout,
+  onOpenResource,
   onOpenSidekick,
   onParticipants,
   onRefreshSidekicks,
@@ -302,6 +303,8 @@ export function ChannelMenu({
   onImportUpdates?: (() => void) | undefined;
   onOpenArtifact?: ((id: string, returnFocus: HTMLElement) => void) | undefined;
   onOpenBreakout: (substreamId: string) => void;
+  /** Opens a resource that is not an artifact; absent where the host has no view for one. */
+  onOpenResource?: ((id: string, returnFocus: HTMLElement) => void) | undefined;
   onOpenSidekick?: (id: string) => void;
   onParticipants?: (() => void) | undefined;
   onRefreshSidekicks?: (() => void) | undefined;
@@ -322,6 +325,7 @@ export function ChannelMenu({
   const nav = useTitleMenuNav();
   const target = { substreamId: '0', title: workstream.title };
   const artifacts = workstream.resources.filter((resource) => resource.direction === 'artifact');
+  const otherResources = workstream.resources.filter((resource) => resource.direction !== 'artifact');
   if (nav.view?.key === 'people') {
     return <PeopleView manage={onParticipants} members={workstream.participants} noun="channel" people={people} presentUserIds={presentUserIds} scope={workstream.scope} />;
   }
@@ -339,18 +343,8 @@ export function ChannelMenu({
       {actions?.onMakePublic && <TitleMenuItem disabled={actions.publicDisabled} icon={<IconWorld aria-hidden="true" size={16} stroke={1.8} />} onSelect={actions.onMakePublic}>Make public to organization</TitleMenuItem>}
       {onImportUpdates && <TitleMenuItem icon={<IconCloudDownload aria-hidden="true" size={16} stroke={1.8} />} onSelect={onImportUpdates}>Import updates</TitleMenuItem>}
       {extraActions}
-      {artifacts.length > 0 && <>
-        <div className="title-menu-section-heading">Artifacts</div>
-        {artifacts.map((resource) => <DropdownMenu.Item
-          className="menu-item title-menu-item"
-          disabled={!onOpenArtifact}
-          key={resource.id}
-          onSelect={(event) => onOpenArtifact?.(resource.id, event.currentTarget as HTMLElement)}
-        >
-          <ResourceIcon resource={resource} />
-          <span className="title-menu-item-copy">{resource.title}</span>
-        </DropdownMenu.Item>)}
-      </>}
+      <ResourceList label="Artifacts" onOpen={onOpenArtifact} resources={artifacts} />
+      {onOpenResource && <ResourceList label="Resources" onOpen={onOpenResource} resources={otherResources} />}
     </>;
   }
   return <>
@@ -459,5 +453,26 @@ export function BreakoutMenu({
       <TitleMenuSeparator />
       <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => actions.onArchive?.(breakout)}>Archive breakout</TitleMenuItem>
     </>}
+  </>;
+}
+
+/** A headed list of a Channel's resources in **More**; nothing when there are none. */
+function ResourceList({ label, onOpen, resources }: {
+  label: string;
+  onOpen: ((id: string, returnFocus: HTMLElement) => void) | undefined;
+  resources: SidebarPresentation['resources'];
+}): React.JSX.Element | null {
+  if (resources.length === 0) return null;
+  return <>
+    <div className="title-menu-section-heading">{label}</div>
+    {resources.map((resource) => <DropdownMenu.Item
+      className="menu-item title-menu-item"
+      disabled={!onOpen}
+      key={resource.id}
+      onSelect={(event) => onOpen?.(resource.id, event.currentTarget as HTMLElement)}
+    >
+      <ResourceIcon resource={resource} />
+      <span className="title-menu-item-copy">{resource.title}</span>
+    </DropdownMenu.Item>)}
   </>;
 }
