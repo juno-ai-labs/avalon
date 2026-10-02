@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useUiStore } from './ui-store';
 
 describe('context rail state', () => {
@@ -80,5 +80,21 @@ describe('context rail state', () => {
 
     useUiStore.getState().openRail('context');
     expect(useUiStore.getState()).toMatchObject({ railOpen: true, inspector: null });
+  });
+});
+
+describe('sidebar width', () => {
+  it('starts a device that never resized the sidebar at the design width', async () => {
+    window.localStorage.clear();
+    vi.resetModules();
+    const { useUiStore: fresh } = await import('./ui-store');
+    expect(fresh.getState().sidebarWidth).toBe(340);
+  });
+
+  it('keeps a width the person dragged to over the design width', async () => {
+    window.localStorage.setItem('rally.sidebar-width', '260');
+    vi.resetModules();
+    const { useUiStore: fresh } = await import('./ui-store');
+    expect(fresh.getState().sidebarWidth).toBe(260);
   });
 });

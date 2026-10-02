@@ -1905,28 +1905,6 @@ describe('private channels', () => {
     expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
   });
 
-  it('explains the public badge on hover without displacing the row preview', async () => {
-    renderWith([workstream('00000000-4000-4000-8000-00000000002f', 'Launch', 'completed')]);
-    const row = screen.getByRole('link', { name: 'Launch' });
-    expect(row).toHaveAccessibleDescription('Public channel');
-    const globe = within(row).getByRole('img', { name: 'Public channel' });
-    fireEvent.pointerEnter(row.closest('[data-workstream-id]')!);
-    await waitFor(() => expect(screen.getByRole('tooltip')).toHaveTextContent('Launch'), { timeout: 5_000 });
-
-    // The badge is the smallest thing on the row and the only one whose meaning
-    // has to be guessed, so it answers for itself. Radix asks every other open
-    // tooltip to close when one opens; the preview drives its own `open` and
-    // stays, which is what keeps the two explanations from taking turns.
-    fireEvent.pointerMove(globe, { pointerType: 'mouse' });
-    await waitFor(
-      () => expect(screen.getAllByRole('tooltip').map((tip) => tip.textContent)).toEqual(
-        expect.arrayContaining([expect.stringContaining('everyone in the organization can see this channel')]),
-      ),
-      { timeout: 5_000 },
-    );
-    expect(screen.getByRole('tooltip', { name: /Launch/u })).toBeInTheDocument();
-  });
-
   it('reaches a keyboard reader through the row preview the globe tip cannot', async () => {
     renderWith([workstream('00000000-4000-4000-8000-00000000003a', 'Launch', 'completed')]);
     const row = screen.getByRole('link', { name: 'Launch' });
@@ -1965,7 +1943,9 @@ describe('private channels', () => {
     }]);
 
     const row = screen.getByRole('link', { name: /Launch/u });
-    expect(row.querySelector('.sidebar-workstream-public')).not.toBeNull();
+    // Said in the row's description rather than as a badge on its glyph.
+    expect(row).toHaveAccessibleDescription('Public channel');
+    expect(row.querySelector('.sidebar-workstream-public')).toBeNull();
     expect(screen.queryByLabelText('Private channel')).not.toBeInTheDocument();
     expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
   });
