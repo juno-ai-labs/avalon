@@ -159,6 +159,23 @@ export function sidekickCanonicalUrl(webBaseUrl: string, target: SidekickLinkTar
   return new URL(`${WORKSTREAM_LINK_PATH_PREFIX}${target.region}/${uuidToBase58(target.workspaceId)}/sk/${uuidToBase58(target.sidekickId)}/`, webBaseUrl).toString();
 }
 
+export interface SessionImportLinkTarget extends WorkspaceTarget {
+  /** The import agent's hidden conversation: the run a bad import is debugged from. */
+  importId: string;
+}
+
+/**
+ * The address a person copies from the import window to report a bad import.
+ * Nothing routes it yet; it carries the Organization and the import's id in
+ * the canonical link shape so whoever reads the report can find the run.
+ */
+export function sessionImportCanonicalUrl(webBaseUrl: string, target: SessionImportLinkTarget): string {
+  if (!isWorkspaceTarget(target) || !isWorkstreamId(target.importId)) {
+    throw new Error("An import link requires a region, Organization UUID, and import UUID");
+  }
+  return new URL(`${WORKSTREAM_LINK_PATH_PREFIX}${target.region}/${uuidToBase58(target.workspaceId)}/i/${uuidToBase58(target.importId)}`, webBaseUrl).toString();
+}
+
 /** Parse the canonical Sidekick path. */
 export function parseSidekickLinkPathTarget(pathname: string): SidekickLinkTarget | null {
   const normalized = pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;

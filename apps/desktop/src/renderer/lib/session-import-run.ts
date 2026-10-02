@@ -131,8 +131,11 @@ export function startSessionImportRun(input: {
   mode: SessionImportMode;
   /** Every step so far, oldest first, each time one starts or ends. */
   onSteps?: (steps: readonly SessionImportStep[]) => void;
-  /** The run exists: for a new import, the API has reserved its Channel under this id. */
-  onStarted?: (run: { workstreamId: string }) => void;
+  /**
+   * The run exists: for a new import, the API has reserved its Channel under
+   * `workstreamId`; `substreamId` is the agent's hidden conversation.
+   */
+  onStarted?: (run: { workstreamId: string; substreamId: string }) => void;
 }): SessionImportRun {
   const conversation = conversationAt(input.sourceUrl, '');
   const store = new DesktopActionStore();
@@ -320,7 +323,7 @@ export function startSessionImportRun(input: {
         await discard();
         return;
       }
-      input.onStarted?.({ workstreamId: run.workstreamId });
+      input.onStarted?.({ workstreamId: run.workstreamId, substreamId: run.substreamId });
       await connect();
     } catch (error) {
       finish({ kind: 'error', message: messageOf(error) });
