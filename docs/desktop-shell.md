@@ -258,6 +258,32 @@ from the shared navigation directory.
 
 ## Changelog
 
+### 2026-10-02 — Panel dividers stop short of the window's edges
+
+**What changed:** The lines between conversation panels (the Channel and
+Breakout split, and the right panel's grab line) no longer run the full window
+height. Each starts level with the title pill and ends level with the top of an
+empty composer. Two tokens on `:root`, `--panel-divider-inset-top` and
+`--panel-divider-inset-bottom`, set both ends. The bottom one is
+derived from `--composer-dock-gap` and `--composer-capsule-height`, which the
+composer dock and capsule now read too. A Breakout's launcher dock now
+uses the same bottom gap as every other dock, so its empty field lines up with
+the Channel's beside it (it sat 12px higher on a 28px gap).
+
+**Why:** Design asked for dividers that frame the conversation rather than cut
+the window edge to edge. The Breakout pane's `border-left` could not be
+shortened, so it became a positioned line.
+
+**Considered and rejected:** Measuring the live composer from script. A draft
+that grows would drag the divider with it, and the ask was the empty box's edge. Insetting the sidebars' edges too. Their fill
+differs from the pane's, so the colour change runs full height anyway and a
+shorter line beside it reads as a mistake.
+
+**Consequences:** Changing the empty composer's height or the gap below it
+moves both dividers with it. Both sidebars keep their full-height border.
+
+Shipped in #1071.
+
 ### 2026-10-02 — A picked pill filters while a Channel is open
 
 **What changed:** The rule that widens the list to All when the open Channel is
