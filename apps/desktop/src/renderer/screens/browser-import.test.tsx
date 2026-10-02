@@ -153,6 +153,6 @@ describe('browser import window', () => {
     fireEvent.pointerDown(within(progress).getByRole('button', { name: 'More import actions' }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy import id' }));
     await waitFor(() => expect(harness.bridge.copyText)
-      .toHaveBeenCalledWith('https://rallywith.ai/app/global/1111117Hxt1fAWDjN7Te/i/1111117Hxt1fAWDjN7WQ'));
+      .toHaveBeenCalledWith('https://rallywith.ai/app/global/1111117Hxt1fAWDjN7Te/i/1111117Hxt1fAWDjN7WQ?c=CduMrko5vpzwph2okTVLJ'));
   });
 });
