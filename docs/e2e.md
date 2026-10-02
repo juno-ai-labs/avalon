@@ -737,18 +737,7 @@ space around the macOS traffic lights. Their navigation controls, including
 Search and New substream, are 54-pixel squares with 9-pixel padding. Collapse
 controls sit at the bottom; the account avatar and navigation toggle remain
 side by side. In the global navigation, Search sits above the scrolling
-streams in both widths and the rail's New work stream row sits under it; the
-Sidekick strip stays below the streams as a horizontal row in both widths,
-one tile centred and the next showing past the edge when there are more. Rest a
-pointer on a tile in both widths and confirm the app's own tooltip — not the
-desktop's — names the Sidekick above the strip, with **· Workspace** on a
-workspace one, since the caption is ellipsized at the wide width and gone at the
-rail's. Move onto the green play in that tile's corner and confirm the same
-tooltip — one per tile — answers for it instead, reading **Active — in service
-and waiting on its triggers.** below the strip, with no second delay on the way
-in and the name back on the way out. Cross the tile quickly on the way to the
-play as well, inside the tooltip's own delay, and confirm the play still gets
-the answer. Moving off the strip leaves nothing behind.
+streams in both widths and the rail's New work stream row sits under it.
 Collapse and expand the global navigation with ⌘B and confirm its contents
 travel with the edge rather than cutting a frame ahead of it: the rows narrow to
 their marks as the titles fade, the headings close, the search pill closes to
@@ -783,8 +772,7 @@ rows, selected and hovered rows, and light and dark appearances.
 
 In collapsed navigation, Search and New work stream sit in the command bar above
 the work-stream scroller. Scroll a long list and confirm both stay put at the
-top, that the Sidekick strip stays put below the list, and that the account
-and collapse controls stay fixed at the bottom.
+top, and that the account and collapse controls stay fixed at the bottom.
 
 Hover a public stream icon and then move onto its globe in both appearances.
 The globe stays visible and answers for itself — **Public — everyone in the

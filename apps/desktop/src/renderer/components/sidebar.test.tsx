@@ -10,7 +10,7 @@ import {
   consumeDeepLinkWorkstreamNavigation,
   markDeepLinkWorkstreamNavigation,
 } from '../lib/deep-link-navigation';
-import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
+import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { installWindowActivationTracking } from '../lib/window-activation';
 import { allPinPosition, REVEAL_DEADLINE_MS, Sidebar } from './sidebar';
@@ -94,16 +94,6 @@ const defaultActions = {
   onReorderPinnedWorkstreams: async (): Promise<void> => undefined,
   onRenameWorkstream: async (): Promise<void> => undefined,
   onRunAutomation: async (): Promise<void> => undefined,
-};
-
-const automation: AutomationSummary = {
-  id: 'automation-1',
-  name: 'Daily product brief',
-  description: 'A brief every morning.',
-  scope: 'you',
-  status: 'active',
-  nextRunAt: '2026-08-01T16:00:00.000Z',
-  updatedAt: '2026-07-20T09:00:00.000Z',
 };
 
 function workstream(
@@ -248,8 +238,7 @@ describe('Sidebar channel markers', () => {
       createdAt: '2026-07-01T00:00:00.000Z', lastAccessedAt: '2026-08-02T00:00:00.000Z' };
     const noisy = { ...workstream('noisy', 'New shared activity', 'completed', '2099-01-01T00:00:00.000Z'),
       createdAt: '2026-07-20T00:00:00.000Z', lastAccessedAt: null };
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions}
-      automations={[]} onSignOut={vi.fn()} workspace={workspace}
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace}
       workstreams={[noisy, visited]} /></Tooltip.Provider></MemoryRouter>);
     const links = screen.getAllByRole('link').map((link) => link.textContent);
     expect(links.findIndex((text) => text?.includes('Last visited')))
@@ -258,7 +247,7 @@ describe('Sidebar channel markers', () => {
 
   it('keeps the unsent new channel out of the sidebar', () => {
     render(<MemoryRouter initialEntries={['/workstreams/new']}><Tooltip.Provider>
-      <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()}
+      <Sidebar {...defaultActions} onSignOut={vi.fn()}
         spaces={[general()]} workspace={workspace} workstreams={[]} />
     </Tooltip.Provider></MemoryRouter>);
 
@@ -269,7 +258,7 @@ describe('Sidebar channel markers', () => {
   it('marks sidebar creation telemetry only when the Channel setup is submitted', async () => {
     const onCreateChannel = vi.fn(async () => undefined);
     render(<MemoryRouter><Tooltip.Provider>
-      <Sidebar {...defaultActions} automations={[]} onCreateChannel={onCreateChannel}
+      <Sidebar {...defaultActions} onCreateChannel={onCreateChannel}
         onSignOut={vi.fn()} spaces={[general()]} workspace={workspace} workstreams={[]} />
     </Tooltip.Provider></MemoryRouter>);
     // The header's New channel opens the form directly, with no menu between.
@@ -292,7 +281,7 @@ describe('Sidebar channel markers', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
         </Tooltip.Provider>
       </MemoryRouter>,
     );
@@ -315,7 +304,7 @@ describe('Sidebar channel markers', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
         </Tooltip.Provider>
       </MemoryRouter>,
     );
@@ -345,7 +334,7 @@ describe('Sidebar channel markers', () => {
   });
 
   it('keeps the hint shut through a grab that never waited for it', () => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     const edge = screen.getByRole('separator', { name: 'Resize navigation' });
     edge.setPointerCapture = vi.fn();
     expect(screen.queryByRole('tooltip')).toBeNull();
@@ -367,7 +356,7 @@ describe('Sidebar channel markers', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
         </Tooltip.Provider>
       </MemoryRouter>,
     );
@@ -391,7 +380,7 @@ describe('Sidebar channel markers', () => {
 
   it('connects a row\'s hover description to its link', async () => {
     const item = workstream('compact-preview', 'Named destination', 'completed');
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[item]} /></Tooltip.Provider></MemoryRouter>);
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[item]} /></Tooltip.Provider></MemoryRouter>);
     const link = screen.getByRole('link', { name: item.title });
     fireEvent.pointerEnter(link.closest('[data-workstream-id]')!);
     await waitFor(() => expect(link).toHaveAttribute('aria-describedby', `workstream-preview-${item.id}`));
@@ -405,7 +394,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[hovered]}
@@ -439,7 +427,7 @@ describe('Sidebar channel markers', () => {
   it('shows the last activity time on every row and no participant stacks or Command hints', () => {
     const read = { ...workstream('read-row', 'Read destination', 'completed'), participantUserIds: ['user-1'] };
     const unread = { ...workstream('unread-row', 'Unread destination', 'completed'), hasUnread: true, preview: 'Do not display this preview' };
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[read, unread]} /></Tooltip.Provider></MemoryRouter>);
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[read, unread]} /></Tooltip.Provider></MemoryRouter>);
     const readLink = screen.getByRole('link', { name: read.title });
     const unreadLink = screen.getByRole('link', { name: new RegExp(unread.title, 'u') });
     expect(readLink.querySelector('time')).toHaveAttribute('datetime', read.lastActivityAt);
@@ -467,7 +455,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[described]}
@@ -497,7 +484,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             spaces={[hiring, company]}
             workspace={workspace}
@@ -521,7 +507,7 @@ describe('Sidebar channel markers', () => {
     render(
       <MemoryRouter initialEntries={['/spaces/archived-space']}>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[hiring]}
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[hiring]}
             workspace={workspace} workstreams={[]} />
         </Tooltip.Provider>
       </MemoryRouter>,
@@ -544,7 +530,7 @@ describe('Sidebar channel markers', () => {
     render(
       <MemoryRouter initialEntries={['/starting-point']}>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[hiring]}
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[hiring]}
             workspace={workspace} workstreams={[]} />
           <HistoryProbe />
         </Tooltip.Provider>
@@ -570,7 +556,7 @@ describe('Sidebar channel markers', () => {
     render(
       <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()}
+          <Sidebar {...defaultActions} onSignOut={vi.fn()}
             spaces={[other, hiring]} workspace={workspace} workstreams={[target, neighbor]} />
         </Tooltip.Provider>
       </MemoryRouter>,
@@ -601,7 +587,7 @@ describe('Sidebar channel markers', () => {
     const view = render(
       <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[]}
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[]}
             spacesReady={false} workspace={workspace} workstreams={[target]} />
         </Tooltip.Provider>
       </MemoryRouter>,
@@ -611,7 +597,7 @@ describe('Sidebar channel markers', () => {
     view.rerender(
       <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[hiring]}
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[hiring]}
             spacesReady workspace={workspace} workstreams={[target]} />
         </Tooltip.Provider>
       </MemoryRouter>,
@@ -630,7 +616,7 @@ describe('Sidebar channel markers', () => {
     const view = render(
       <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} hasMoreWorkstreams onLoadMoreWorkstreams={onLoadMoreWorkstreams}
+          <Sidebar {...defaultActions} hasMoreWorkstreams onLoadMoreWorkstreams={onLoadMoreWorkstreams}
             onSignOut={vi.fn()} spaces={[hiring]} workspace={workspace} workstreams={[]} />
         </Tooltip.Provider>
       </MemoryRouter>,
@@ -641,7 +627,7 @@ describe('Sidebar channel markers', () => {
     view.rerender(
       <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} hasMoreWorkstreams onLoadMoreWorkstreams={onLoadMoreWorkstreams}
+          <Sidebar {...defaultActions} hasMoreWorkstreams onLoadMoreWorkstreams={onLoadMoreWorkstreams}
             onSignOut={vi.fn()} spaces={[hiring]} workspace={workspace} workstreams={[firstPage]} />
         </Tooltip.Provider>
       </MemoryRouter>,
@@ -651,7 +637,7 @@ describe('Sidebar channel markers', () => {
     view.rerender(
       <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onLoadMoreWorkstreams={onLoadMoreWorkstreams}
+          <Sidebar {...defaultActions} onLoadMoreWorkstreams={onLoadMoreWorkstreams}
             onSignOut={vi.fn()} spaces={[hiring]} workspace={workspace} workstreams={[firstPage, target]} />
         </Tooltip.Provider>
       </MemoryRouter>,
@@ -675,7 +661,7 @@ describe('Sidebar channel markers', () => {
           setItems([target, neighbor]);
           navigate(`/workstreams/${target.id}`);
         }}>Open restored channel</button>
-        <Sidebar {...defaultActions} automations={[]} loading onSignOut={vi.fn()}
+        <Sidebar {...defaultActions} loading onSignOut={vi.fn()}
           spaces={[hiring]} workspace={workspace} workstreams={items} />
       </>;
     }
@@ -698,7 +684,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[active]}
@@ -720,7 +705,7 @@ describe('Sidebar channel markers', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
         </Tooltip.Provider>
       </MemoryRouter>,
     );
@@ -753,7 +738,7 @@ describe('Sidebar channel markers', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
         </Tooltip.Provider>
       </MemoryRouter>,
     );
@@ -789,7 +774,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             loading
             onSignOut={vi.fn()}
             spaces={[]}
@@ -819,7 +803,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             loading={false}
             onSignOut={vi.fn()}
             spaces={[]}
@@ -838,7 +821,7 @@ describe('Sidebar channel markers', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
         </Tooltip.Provider>
       </MemoryRouter>,
     );
@@ -852,7 +835,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[
@@ -895,7 +877,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[
@@ -933,7 +914,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[waiting, workstream('finished', 'Deploy finished', 'completed')]}
@@ -968,7 +948,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[naming, workstream('named', 'Board decision', 'needs_input')]}
@@ -1006,7 +985,6 @@ describe('Sidebar channel markers', () => {
           <Tooltip.Provider>
             <Sidebar
               {...defaultActions}
-              automations={[]}
               onSignOut={vi.fn()}
               workspace={workspace}
               workstreams={[naming, undated]}
@@ -1044,7 +1022,6 @@ describe('Sidebar channel markers', () => {
           <Tooltip.Provider>
             <Sidebar
               {...defaultActions}
-              automations={[]}
               onSignOut={vi.fn()}
               workspace={workspace}
               workstreams={[
@@ -1098,7 +1075,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onApplyWorkstreamBatch={onApplyWorkstreamBatch}
             onPreviewWorkstreamBatch={onPreviewWorkstreamBatch}
             onSignOut={vi.fn()}
@@ -1147,7 +1123,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onApplyWorkstreamBatch={onApplyWorkstreamBatch}
             onPreviewWorkstreamBatch={vi.fn(async () => ({ matchedCount: 20, matchedNoteCount: 0 }))}
             onSignOut={vi.fn()}
@@ -1187,7 +1162,6 @@ describe('Sidebar channel markers', () => {
           <Tooltip.Provider>
             <Sidebar
               {...defaultActions}
-              automations={[]}
               onPreviewWorkstreamBatch={onPreviewWorkstreamBatch}
               onSignOut={vi.fn()}
               workspace={workspace}
@@ -1221,238 +1195,8 @@ describe('Sidebar channel markers', () => {
     }
   });
 
-  it('shows only enabled standalone Sidekicks and opens their library detail', () => {
-    const shared = { ...automation, loadable: false, id: 'shared', name: 'Team brief', scope: 'workspace' as const };
-    const excluded = [
-      { ...automation, id: 'paused', name: 'Paused helper', status: 'paused' as const },
-      { ...automation, id: 'draft', name: 'Draft helper', status: 'draft' as const },
-      { ...automation, id: 'room', name: 'Room helper', scope: 'workstream' as const },
-    ];
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, loadable: true }, shared, ...excluded]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    const strip = screen.getByRole('region', { name: 'Sidekick shortcuts' });
-    // Below the list and above the account row in both layouts: the rail keeps
-    // the strip where the full sidebar has it rather than folding it into the
-    // scrolling list.
-    expect(strip.closest('.sidebar-scroll')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Open account menu' })).toBeVisible();
-    expect(within(strip).getAllByRole('button')).toHaveLength(2);
-    for (const item of excluded) expect(screen.queryByText(item.name)).toBeNull();
-    // Running says so with a play in the success colour, drawn into the hexagon
-    // rather than laid over it. The dot this replaced said only "a state is
-    // true here", and inherited the work-stream marker's radius on the way, so
-    // what a person actually saw was an unnamed dark square.
-    const tile = within(strip).getByRole('button', { name: 'Team brief, Active · Organization' });
-    const marker = tile.querySelector('.automation-glyph-marker');
-    expect(marker).toHaveClass('lucide-play');
-    expect(marker).toHaveAttribute('fill', 'var(--av-sys-color-success-base)');
-    // The state reaches a screen reader through that name and nowhere else. The
-    // tile used to also render a visually hidden "Active", which read as the
-    // accessibility path while contributing nothing: `aria-label` on a button
-    // replaces its contents in the accessible name, so the span was never
-    // announced. Queried above by the exact name, so a second source for the
-    // state has to keep the name right rather than appending to it.
-    expect(tile.querySelector('.sr-only')).toBeNull();
-    fireEvent.click(within(strip).getByRole('button', { name: 'Team brief, Active · Organization' }));
-    expect(openSidekicks).toHaveBeenCalledWith('shared');
-    // The Sidekicks window is a separate renderer with its own copy of the
-    // telemetry module, and its surface mounts no route observer, so a marker
-    // set here reaches nothing and is left for this window's next navigation to
-    // consume as `sidebar_automation`.
-    expect(markSurfaceEntrypoint).not.toHaveBeenCalled();
-    expect(screen.queryByRole('link', { name: /Daily product brief/u })).toBeNull();
-  });
-
-  it('reads a truncated tile through the renderer\'s own tooltip, and its play through a second', async () => {
-    const shared = { ...automation, loadable: false, id: 'shared', name: 'Team brief', scope: 'workspace' as const };
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[shared]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    const strip = screen.getByRole('region', { name: 'Sidekick shortcuts' });
-    const tile = within(strip).getByRole('button', { name: 'Team brief, Active · Organization' });
-
-    // One tooltip language per slot. `title` is the desktop's own: a different
-    // delay, a different type, no theme, and nothing at all on keyboard focus —
-    // which is the whole cost here, because the caption is ellipsized at 80px
-    // and the rail drops it, so the tooltip is how the tile is read.
-    expect(tile).not.toHaveAttribute('title');
-
-    fireEvent.pointerMove(tile, { pointerType: 'mouse' });
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Team brief · Organization');
-    // Not the state: every tile in this strip is active, the play in the corner
-    // reports it, and the tile's one line is better spent on which Sidekick it
-    // is. A screen reader still gets the state, out of the accessible name
-    // asserted above.
-    expect(screen.getByRole('tooltip')).not.toHaveTextContent('Active');
-
-    fireEvent.pointerMove(tile.querySelector('.automation-glyph-marker')!.parentElement!, { pointerType: 'mouse' });
-    await waitFor(
-      () => expect(screen.getByRole('tooltip')).toHaveTextContent('in service and waiting on its triggers'),
-    );
-    // And only that one, because there is only one: the tile has a single
-    // tooltip slot and the pointer decides what it says.
-    expect(screen.getAllByRole('tooltip')).toHaveLength(1);
-  });
-
-  /** The strip with one workspace Sidekick, and the tile that carries its play. */
-  function renderStripTile(): HTMLElement {
-    const shared = { ...automation, loadable: false, id: 'shared', name: 'Team brief', scope: 'workspace' as const };
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[shared]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    const strip = screen.getByRole('region', { name: 'Sidekick shortcuts' });
-    return within(strip).getByRole('button', { name: 'Team brief, Active · Organization' });
-  }
-
-  /** The marker's hover target: the `<g>` the hexagon wraps its play in. */
-  function playTarget(tile: HTMLElement): HTMLElement {
-    return tile.querySelector('.automation-glyph-marker')!.parentElement as HTMLElement;
-  }
-
-  it('opens on keyboard focus, which is the whole of what the native tooltip could not do', async () => {
-    const tile = renderStripTile();
-
-    // The reason this rail took `Tip` at all. A `title` draws nothing for a
-    // reader who arrives by Tab, on the one row whose caption is ellipsized at
-    // 80px and dropped outright by the rail.
-    act(() => { tile.focus(); });
-
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Team brief · Organization');
-  });
-
-  it('says what the play means to a reader who cannot rest a pointer on it', () => {
-    const tile = renderStripTile();
-
-    // The marker is drawn inside `aria-hidden` artwork and its target is a
-    // non-focusable `<g>`, so the sentence reaches assistive technology only
-    // because the tile carries it. Giving the target a tab stop instead would
-    // put one inside every tile in the strip.
-    expect(tile).toHaveAccessibleDescription('Active — in service and waiting on its triggers.');
-    expect(playTarget(tile)).not.toHaveAttribute('tabindex');
-  });
-
-  it('answers for the play when the pointer reaches it inside the tile tooltip\'s own delay', () => {
-    // The path a pointer actually takes: across the tile, onto the play, before
-    // the tile's 450ms is up. Two tooltips cannot resolve this between them —
-    // a Radix root tells every other root to close the moment it *decides* to
-    // open, so the tile's pending open closed the play's explanation on its way
-    // to being refused, and the tile showed nothing at all. One root has one
-    // answer, and it is the one the pointer is on.
-    vi.useFakeTimers();
-    try {
-      const tile = renderStripTile();
-
-      fireEvent.pointerMove(tile, { pointerType: 'mouse' });
-      // Short of 450ms: the tile's open is pending, and nothing is up yet.
-      act(() => { vi.advanceTimersByTime(120); });
-      expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
-
-      fireEvent.pointerMove(playTarget(tile), { pointerType: 'mouse' });
-      // Each advance flushes on its own, the way separate timers land in a
-      // browser. Advancing straight past both at once lets a tooltip mount
-      // after an event it should have heard, which reads as a pass for a race
-      // that is still there.
-      act(() => { vi.advanceTimersByTime(400); });
-      act(() => { vi.advanceTimersByTime(2_000); });
-
-      expect(screen.getAllByRole('tooltip').map((tip) => tip.textContent))
-        .toEqual(['Active — in service and waiting on its triggers.']);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('swaps its answer both ways as the pointer moves between the tile and its play', () => {
-    // No second delay on the way in and no gap on the way out: the slot is
-    // already open, so it re-labels rather than closing and waiting again.
-    vi.useFakeTimers();
-    try {
-      const tile = renderStripTile();
-
-      fireEvent.pointerMove(tile, { pointerType: 'mouse' });
-      act(() => { vi.advanceTimersByTime(600); });
-      expect(screen.getByRole('tooltip')).toHaveTextContent('Team brief · Organization');
-
-      fireEvent.pointerMove(playTarget(tile), { pointerType: 'mouse' });
-      act(() => { vi.advanceTimersByTime(50); });
-      expect(screen.getAllByRole('tooltip').map((tip) => tip.textContent))
-        .toEqual(['Active — in service and waiting on its triggers.']);
-
-      // And back, which two roots could not do: the tile's trigger opens once
-      // per pointer entry, so a tooltip it had given up would not return until
-      // the pointer left the tile and came back.
-      fireEvent.pointerLeave(playTarget(tile));
-      fireEvent.pointerMove(tile, { pointerType: 'mouse' });
-      act(() => { vi.advanceTimersByTime(50); });
-      expect(screen.getAllByRole('tooltip').map((tip) => tip.textContent))
-        .toEqual(['Team brief · Organization']);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('offers making the first Sidekick where the shortcuts would be', () => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    // Named for what it holds: an offer to make one, not shortcuts to any.
-    const strip = screen.getByRole('region', { name: 'Sidekicks' });
-    expect(screen.queryByRole('region', { name: 'Sidekick shortcuts' })).toBeNull();
-    // The same tile a Sidekick gets, so it sheds its caption and shrinks to the
-    // rail's square with them rather than keeping a shape of its own.
-    const create = within(strip).getByRole('button', { name: 'New Sidekick' });
-    expect(create).toHaveClass('automation-tile');
-    expect(create.querySelector('.sidekick-new-glyph')).not.toBeNull();
-    // No lifecycle marker: there is no Sidekick yet to have one, so the hexagon
-    // is drawn whole rather than with a state cut out of it.
-    expect(create.querySelector('.automation-glyph-marker')).toBeNull();
-    expect(create.querySelector('mask')).toBeNull();
-    expect(within(strip).getAllByRole('button')).toHaveLength(1);
-    fireEvent.click(create);
-    expect(openSidekicks).toHaveBeenCalledWith('new');
-    // Strands a marker in this window otherwise; see the Sidekick tile above.
-    expect(markSurfaceEntrypoint).not.toHaveBeenCalled();
-  });
-
-  it('drops the new-Sidekick tile once one is enabled, and names the strip for the shortcuts it holds', () => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[automation]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    expect(within(screen.getByRole('region', { name: 'Sidekick shortcuts' })).queryByRole('button', { name: 'New Sidekick' })).toBeNull();
-    expect(screen.queryByRole('region', { name: 'Sidekicks' })).toBeNull();
-  });
-
-  it('waits for the organization answer before saying an organization has no Sidekicks', () => {
-    // The array itself carries the wait, so no caller has to remember a flag.
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={undefined} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    expect(screen.queryByRole('region', { name: 'Sidekick shortcuts' })).toBeNull();
-  });
-
-  it('keeps the new-Sidekick slot for drafts and resumes the most recently updated standalone draft', () => {
-    const olderDraft = { ...automation, id: 'automation-draft-older', status: 'draft' as const };
-    const newerDraft = { ...olderDraft, id: 'automation-draft-newer', updatedAt: '2026-07-21T09:00:00.000Z' };
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[olderDraft, newerDraft]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    const strip = screen.getByRole('region', { name: 'Sidekicks' });
-    const create = within(strip).getByRole('button', { name: 'New Sidekick' });
-    fireEvent.click(create);
-    expect(openSidekicks).toHaveBeenCalledWith(newerDraft.id);
-    expect(screen.queryByRole('region', { name: 'Sidekick shortcuts' })).toBeNull();
-  });
-
-  it('keeps the new-Sidekick slot for paused Sidekicks and starts a new draft', () => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, status: 'paused' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    const create = within(screen.getByRole('region', { name: 'Sidekicks' })).getByRole('button', { name: 'New Sidekick' });
-    fireEvent.click(create);
-    expect(openSidekicks).toHaveBeenCalledWith('new');
-  });
-
-  it('does not resume an organization draft whose management authority is unknown', () => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, scope: 'workspace', status: 'draft' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    const create = within(screen.getByRole('region', { name: 'Sidekicks' })).getByRole('button', { name: 'New Sidekick' });
-    fireEvent.click(create);
-    expect(openSidekicks).toHaveBeenCalledWith('new');
-  });
-
-  it('keeps the new-Sidekick slot when only a channel-owned Sidekick exists', () => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, scope: 'workstream' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    const create = within(screen.getByRole('region', { name: 'Sidekicks' })).getByRole('button', { name: 'New Sidekick' });
-    fireEvent.click(create);
-    expect(openSidekicks).toHaveBeenCalledWith('new');
-  });
-
   it('manages Sidekicks through the library instead of listing them in the sidebar', () => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[automation]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     expect(screen.queryByRole('region', { name: 'Automations' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'New automation' })).toBeNull();
   });
@@ -1465,7 +1209,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onArchiveWorkstream={onArchiveWorkstream}
             onSignOut={vi.fn()}
             workspace={workspace}
@@ -1512,7 +1255,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onArchiveWorkstream={onArchiveWorkstream}
             onSignOut={vi.fn()}
             workspace={workspace}
@@ -1559,7 +1301,7 @@ describe('Sidebar channel markers', () => {
       render(
         <MemoryRouter>
           <Tooltip.Provider>
-            <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()}
+            <Sidebar {...defaultActions} onSignOut={vi.fn()}
               spaces={[general(), hiring]} workspace={workspace} workstreams={[target]} />
           </Tooltip.Provider>
         </MemoryRouter>,
@@ -1610,7 +1352,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             ordering={[{
               container: { kind: 'organization' },
@@ -1666,7 +1407,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             ordering={[{
               container: { kind: 'organization' },
@@ -1708,7 +1448,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onReorderContainer={onReorderContainer}
             onSignOut={vi.fn()}
             ordering={[{
@@ -1762,7 +1501,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onRemoveChannelFromSpace={onRemoveChannelFromSpace}
             onSignOut={vi.fn()}
             spaces={[launch, hiring]}
@@ -1800,7 +1538,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onRemoveChannelFromSpace={onRemoveChannelFromSpace}
             onSignOut={vi.fn()}
             spaces={[hiring]}
@@ -1835,7 +1572,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onRemoveChannelFromSpace={onRemoveChannelFromSpace}
             onSignOut={vi.fn()}
             spaces={[hiring]}
@@ -1876,7 +1612,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             spaces={[general(), reached]}
             workspace={workspace}
@@ -1918,7 +1653,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             spaces={[hiring]}
             workspace={workspace}
@@ -1947,7 +1681,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onMoveChannelToSpace={onMoveChannelToSpace}
             onSignOut={vi.fn()}
             spaces={[general(), launch, hiring]}
@@ -1984,7 +1717,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[target]}
@@ -2012,7 +1744,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             spaces={[general()]}
             spacesReady={false}
@@ -2043,7 +1774,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onRetrySpaces={onRetrySpaces}
             onSignOut={vi.fn()}
             spaces={[general(), space()]}
@@ -2070,7 +1800,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             spaces={[hiring, launch]}
             workspace={workspace}
@@ -2095,7 +1824,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onMarkWorkstreamUnread={onMarkWorkstreamUnread}
             onRenameWorkstream={onRenameWorkstream}
             onSignOut={vi.fn()}
@@ -2155,7 +1883,6 @@ describe('private channels', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={streams}
@@ -2304,7 +2031,6 @@ describe('channel rows after an application switch', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={streams}
@@ -2449,7 +2175,6 @@ describe('pinned channels', () => {
           <Sidebar
             {...defaultActions}
             {...actions}
-            automations={[]}
             spaces={[space(undefined, undefined, { channelCount: streams.length })]}
             onSignOut={vi.fn()}
             workspace={workspace}
@@ -2726,7 +2451,6 @@ describe('pinned channels', () => {
       <MemoryRouter><Tooltip.Provider>
         <Sidebar
           {...defaultActions}
-          automations={[]}
           onReorderPinnedWorkstreams={onReorderPinnedWorkstreams}
           onSignOut={vi.fn()}
           spaces={[launch, hiring]}
@@ -2813,7 +2537,6 @@ describe('pinned channels', () => {
       return (
         <Sidebar
           {...defaultActions}
-          automations={[]}
           onPinWorkstream={async (workstream, spaceId, pinned) => {
             pins.push(`${pinned ? 'pin' : 'unpin'}:${workstream.id}`);
             await Promise.resolve();
@@ -2964,7 +2687,7 @@ describe('pinned channels', () => {
       );
       render(
         <MemoryRouter><Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[launch, hiring]} workspace={workspace} workstreams={[member]} />
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[launch, hiring]} workspace={workspace} workstreams={[member]} />
         </Tooltip.Provider></MemoryRouter>,
       );
       selectSpace('Launch');
@@ -2986,7 +2709,7 @@ describe('pinned channels', () => {
       const yesterday = workstream('ws-yesterday', 'Quarterly planning', 'completed', '2026-07-31T09:00:00.000Z');
       const view = (streams: WorkstreamSummary[]): React.JSX.Element => (
         <MemoryRouter><Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={streams} />
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={streams} />
         </Tooltip.Provider></MemoryRouter>
       );
       // jsdom has no `TransitionEvent`, so the property name goes on by hand.
@@ -3029,7 +2752,7 @@ describe('pinned channels', () => {
       const yesterday = workstream('ws-yesterday', 'Quarterly planning', 'completed', '2026-07-31T09:00:00.000Z');
       const view = (streams: WorkstreamSummary[]): React.JSX.Element => (
         <MemoryRouter><Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={streams} />
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={streams} />
         </Tooltip.Provider></MemoryRouter>
       );
       const layoutEvent = (type: string): Event => {
@@ -3061,14 +2784,14 @@ describe('pinned channels', () => {
       const yesterday = workstream('ws-yesterday', 'Quarterly planning', 'completed', '2026-07-31T09:00:00.000Z');
       const { rerender } = render(
         <MemoryRouter><Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[today, yesterday]} />
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[today, yesterday]} />
         </Tooltip.Provider></MemoryRouter>,
       );
       expect(screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual(['Today', 'Yesterday']);
 
       rerender(
         <MemoryRouter><Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[today, { ...yesterday, lastActivityAt: '2026-08-01T11:00:00.000Z' }]} />
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[today, { ...yesterday, lastActivityAt: '2026-08-01T11:00:00.000Z' }]} />
         </Tooltip.Provider></MemoryRouter>,
       );
 
@@ -3189,7 +2912,6 @@ describe('pinned channels', () => {
       return (
         <Sidebar
           {...defaultActions}
-          automations={[]}
           onPinWorkstream={async () => {
             await Promise.resolve();
             setStreams((current) => current.map((item) => ({
@@ -3231,7 +2953,6 @@ describe('pinned channels', () => {
           }])} type="button">Bring it back</button>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onPinWorkstream={async () => {
               await Promise.resolve();
               setStreams([]);
@@ -3274,7 +2995,6 @@ describe('pinned channels', () => {
           }])} type="button">Let it land</button>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             // Reports applied, but the list does not follow — the shape of a
             // response overtaken by a change from another device.
             onPinWorkstream={async () => true}
@@ -3427,7 +3147,6 @@ describe('Sidebar channel paging', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[workstream('one', 'Launch brief', 'completed')]}
@@ -3466,7 +3185,7 @@ describe('Sidebar channel paging', () => {
   it('opens organization search without loading sidebar pages', () => {
     const onOpenSearch = vi.fn();
     const onLoadMoreWorkstreams = vi.fn();
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[]}
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions}
       onSignOut={vi.fn()} workspace={workspace} workstreams={[]} hasMoreWorkstreams
       onOpenSearch={onOpenSearch} onLoadMoreWorkstreams={onLoadMoreWorkstreams} /></Tooltip.Provider></MemoryRouter>);
     fireEvent.click(screen.getByRole('button', { name: 'Search organization' }));
@@ -3530,7 +3249,7 @@ describe('the sidebar without a recency list', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} hasMoreWorkstreams
+          <Sidebar {...defaultActions} hasMoreWorkstreams
             onLoadMoreWorkstreams={onLoadMoreWorkstreams} onSignOut={vi.fn()} spaces={[hiring]}
             workspace={workspace} workstreams={[member]} />
         </Tooltip.Provider>
@@ -3551,7 +3270,6 @@ describe('the sidebar without a recency list', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[]}
@@ -3770,7 +3488,6 @@ describe('alphabetical channels inside a space', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             spaces={[hiring, launch]}
             workspace={workspace}
@@ -3807,7 +3524,6 @@ describe('alphabetical channels inside a space', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onMoveChannelToSpace={async () => undefined}
             onSignOut={vi.fn()}
             spaces={[hiring, launch]}
@@ -3959,7 +3675,6 @@ describe('alphabetical channels inside a space', () => {
       revealNext = () => setRows([bravo]);
       return <Sidebar
         {...defaultActions}
-        automations={[]}
         loadingMoreWorkstreams
         onMoveChannelToSpace={async () => undefined}
         onSignOut={vi.fn()}
@@ -4136,7 +3851,6 @@ describe('the sidebar Space filter', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             spaces={[home, hiring, launch]}
             workspace={workspace}
@@ -4290,7 +4004,7 @@ describe('the sidebar Space filter', () => {
     render(
       <MemoryRouter initialEntries={[`/workstreams/${alpha.id}`]}>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[home, hiring, launch]}
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[home, hiring, launch]}
             workspace={workspace} workstreams={[alpha, bravo, charlie, delta]} />
         </Tooltip.Provider>
       </MemoryRouter>,

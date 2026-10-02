@@ -19,11 +19,10 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { conversationNeedsViewer, type ContainerOrder, type CreateSpaceRequest, type PersonalOrder, type SpaceSummary, type WorkstreamBatchFilter, type WorkstreamBatchUpdate } from '@rally/contracts';
 import { IconDots } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { Archive, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderMinus, FolderPlus, Globe2, Info, LogOut, Megaphone, Menu, Pencil, Pin, PinOff, Plus, Settings, Smartphone } from 'lucide-react';
+import { Archive, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderMinus, FolderPlus, Globe2, Info, LogOut, Megaphone, Menu, Pencil, Pin, PinOff, Settings, Smartphone } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TransitionEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { NEW_SIDEKICK_TARGET } from '../../common/sidekicks';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
 import {
   consumeDeepLinkWorkstreamNavigation,
@@ -52,22 +51,11 @@ import { ContextNestedMenu } from './nested-menu';
 import { SpacePills } from './space-pills';
 import { RelativeTime } from './relative-time';
 import { SidebarSkeletonGroup, SidebarSkeletonRows } from './sidebar-skeleton';
-import { AutomationGlyph, HexagonGlyph, SIDEKICK_RUNNING_MARKER, WorkstreamGlyph } from './workstream-glyph';
+import { WorkstreamGlyph } from './workstream-glyph';
 
 interface SidebarProps {
   onOpenSearch?: () => void;
   workspace: Workspace;
-  /**
-   * Every Sidekick the person can see, or `undefined` while the workspace
-   * answer that carries them has not arrived.
-   *
-   * The distinction is the prop's to carry rather than a caller's to remember:
-   * an empty array means an empty workspace, and that is what the strip offers
-   * to make the first Sidekick from. Collapsing the two at the call site with
-   * `?? []` is what made a separate loading flag necessary, and a flag a caller
-   * can forget is a flag that reads "empty workspace" on a cold sidebar.
-   */
-  automations: AutomationSummary[] | undefined;
   /**
    * The active Space directory, or absent for a host with no Space navigation.
    *
@@ -326,169 +314,6 @@ function CopyWorkstreamLinkItem({ workstreamId, spaceId, workspace }: {
     <ContextMenu.Item className="menu-item" onSelect={() => void copy().catch(() => undefined)}>
       <Copy aria-hidden="true" size={16} /> Copy channel link
     </ContextMenu.Item>
-  );
-}
-
-/**
- * Neither tile marks a surface entrypoint, and that is deliberate.
- *
- * `markSurfaceEntrypoint` writes a module-local marker that
- * `TelemetryRouteObserver` consumes on the *next route change in this
- * renderer*. Both tiles open the Sidekicks window instead, which is a separate
- * renderer with its own copy of that module — and whose surface in `App.tsx`
- * mounts no observer at all — so a marker set here could never reach the visit
- * it was meant to describe. What it did instead was sit in the main window
- * until its next unmarked navigation consumed it, reporting that navigation as
- * `sidebar_automation`. Attributing the Sidekicks window's own visits needs the
- * entrypoint carried across the window boundary and an observer mounted there;
- * that is a telemetry change, not this one.
- */
-
-/**
- * One tile in the Sidekick strip: a hexagon over a caption, inside the wrapper
- * the strip sizes and the rail shrinks.
- *
- * Shared by the Sidekicks and by the new-Sidekick action below, so the action
- * is the same tile that sheds its caption and shrinks to the rail's 54px square
- * with them rather than a second shape to keep in step with this one.
- *
- * The tile knows nothing about lifecycle. A Sidekick's state reaches the screen
- * as the marker cut into `glyph`, and reaches assistive technology inside
- * `label`; the action tile has neither, and needs no third way to say so. This
- * used to carry an `active` flag as well, which rendered a visually hidden
- * "Active" — dead markup, because `aria-label` on the button replaces its
- * contents in the accessible name, and the label already said it.
- */
-/**
- * What the tile's one tooltip says, and where. A tile has one tooltip slot and
- * more than one thing under the pointer, so the slot's whole answer travels as
- * a unit rather than as three props that could disagree.
- */
-interface SidekickTileTip {
-  label: React.ReactNode;
-  /** Away from whatever the pointer is on, which differs per answer. */
-  side: 'top' | 'bottom';
-}
-
-function SidekickStripTile({ description, glyph, label, name, onClick, tip }: {
-  /**
-   * What the tooltip would say about the tile that its name does not, for a
-   * reader who has no pointer to rest on the thing it is about. The glyph's
-   * lifecycle marker is drawn inside `aria-hidden` artwork, so its sentence
-   * reaches assistive technology only if the surface carries it — the rule this
-   * rail already keeps for the public-scope badge on a work-stream row, which
-   * names itself on the row rather than in its own tooltip.
-   */
-  description?: string | undefined;
-  glyph: React.ReactNode;
-  /**
-   * What the tile is called to a screen reader, which the caption cannot be: it
-   * is truncated. The whole name, state included — this is the accessible name,
-   * not an addition to one, so anything the contents say is not read.
-   */
-  label: string;
-  name: string;
-  onClick: () => void;
-  /**
-   * What a pointer resting on the tile is told, which is the caption's job
-   * everywhere the caption can do it — and it cannot here: the strip ellipsizes
-   * a name at 80px and the rail drops it outright.
-   *
-   * One `Tip` for the whole tile, whichever part of it the pointer is on. A
-   * second Radix root nested inside this one's trigger — the obvious way to
-   * hang an explanation off the glyph's lifecycle marker — cannot share the
-   * slot: a root dispatches a global "close everything else" when it decides to
-   * open, so nested roots resolve to whichever decided last rather than to the
-   * one being pointed at, and a caller that vetoes the outer root gets nothing
-   * at all. One root cannot race itself.
-   */
-  tip: SidekickTileTip;
-}): React.JSX.Element {
-  return (
-    <div className="sidebar-context-target">
-      {/*
-        `disableHoverableContent`, like every other tooltip in this rail that
-        hangs off something small: there is nothing in a name or a state to
-        travel into, and the grace area Radix otherwise keeps between a trigger
-        and its content swallows the move onto the tile beside this one.
-      */}
-      <Tip
-        className="sidekick-tile-tooltip"
-        collisionPadding={8}
-        disableHoverableContent
-        label={tip.label}
-        side={tip.side}
-      >
-        <SidebarRow
-          className="automation-row automation-tile"
-          aria-description={description}
-          aria-label={label}
-          onClick={onClick}
-          type="button"
-        >
-          <span className="automation-tile-glyph" aria-hidden="true">{glyph}</span>
-          <span className="automation-tile-name">{name}</span>
-        </SidebarRow>
-      </Tip>
-    </div>
-  );
-}
-
-function SidekickTile({ sidekick }: { sidekick: AutomationSummary }): React.JSX.Element {
-  const scopeDescription = sidekick.scope === 'workspace' ? ' · Organization' : '';
-  // Which part of the tile the pointer is on, which only the hexagon can say:
-  // the play is drawn in its viewBox so it scales with the tile, rather than
-  // positioned by this rail, so there is no element here whose own pointer
-  // events would describe it.
-  const [markerHovered, setMarkerHovered] = useState(false);
-  return (
-    <SidekickStripTile
-      glyph={<AutomationGlyph {...(sidekick.appearance ? { appearance: sidekick.appearance } : {})} id={sidekick.id} marker={SIDEKICK_RUNNING_MARKER} onMarkerHover={setMarkerHovered} />}
-      label={`${sidekick.name}, Active${scopeDescription}`}
-      name={sidekick.name}
-      onClick={() => void desktopBridge().openSidekicks(sidekick.id)}
-      // The tile's line is which Sidekick, not what state it is in: every tile
-      // in this strip is active, so naming the state on each of them would spend
-      // the one line on the one fact they share. The play in the corner reports
-      // it, and pointing at the play is what spells it out — in this same slot,
-      // below the tile rather than above it, because that is the corner it is
-      // answering for. A screen reader gets the state from `label` either way.
-      //
-      // Swapped rather than delayed a second time: moving onto the play while
-      // the name is up changes the answer at once, and moving back changes it
-      // back. That is what one root buys over two — no second delay, no gap,
-      // and no ordering to get right.
-      tip={markerHovered
-        ? { label: SIDEKICK_RUNNING_MARKER.description, side: 'bottom' }
-        : { label: `${sidekick.name}${scopeDescription}`, side: 'top' }}
-      // The same sentence, for a reader with no pointer to rest on the play.
-      // The accessible name above says *which* state; this says what it means,
-      // which is the half the mark gets wrong on its own.
-      description={SIDEKICK_RUNNING_MARKER.description}
-    />
-  );
-}
-
-/**
- * The strip's action for an empty active-shortcut slot, standing where a
- * Sidekick's tile would: the same hexagon, drawn without a colour or symbol,
- * with a plus in it. A draft or paused Sidekick can exist without occupying
- * this slot.
- *
- * Only while no active standalone Sidekick qualifies. Once one does, the strip
- * is a row of shortcuts that scrolls, and an action tile in it would compete
- * with them for the one place a person looks to reach a Sidekick; the library
- * window carries New Sidekick of its own from then on.
- */
-function NewSidekickTile({ target }: { target: string }): React.JSX.Element {
-  return (
-    <SidekickStripTile
-      glyph={<HexagonGlyph className="sidekick-new-glyph" fill="none" ink="var(--av-sys-color-text-muted)" symbol={Plus} />}
-      label="New Sidekick"
-      name="New Sidekick"
-      onClick={() => void desktopBridge().openSidekicks(target)}
-      tip={{ label: 'New Sidekick', side: 'top' }}
-    />
   );
 }
 
@@ -1213,7 +1038,6 @@ const sidebarMenuFailureCopy: Record<SidebarMenuFailure, { title: string; copy: 
 export function Sidebar({
   onOpenSearch,
   workspace,
-  automations,
   spaces,
   spacesReadOnly = false,
   inactiveSpaces = [],
@@ -1541,17 +1365,6 @@ export function Sidebar({
   // the link unstyled. It is the same comparison the `returnTo` state below
   // makes, so the two cannot disagree about which route this is.
   const onNewStreamRoute = /^\/spaces\/[^/]+\/workstreams\/new$/u.test(location.pathname);
-  const standaloneSidekicks = useMemo(() => (automations ?? []).filter((sidekick) => sidekick.scope !== 'workstream' && sidekick.status === 'active'), [automations]);
-  const sidekickShortcutsLoaded = automations !== undefined;
-  const resumablePersonalDraft = useMemo(() => (automations ?? [])
-    .filter((sidekick) => sidekick.scope === 'you' && sidekick.status === 'draft')
-    .reduce<AutomationSummary | undefined>((latest, sidekick) => {
-      if (!latest) return sidekick;
-      const recency = sidekick.updatedAt.localeCompare(latest.updatedAt);
-      return recency > 0 || (recency === 0 && sidekick.id.localeCompare(latest.id) > 0)
-        ? sidekick
-        : latest;
-    }, undefined), [automations]);
   // A pinned work stream leaves the recent list entirely rather than appearing
   // twice: the section it moves to is the one whose order the reader controls,
   // and a row in both places would take its order from whichever they saw last.
@@ -2264,20 +2077,6 @@ export function Sidebar({
     selectedSpaceId,
   ]);
 
-  // Active standalone Sidekicks occupy the strip. Until one exists, its empty
-  // slot remains the dashed New Sidekick action; the whole section stays absent
-  // only while the workspace answer is still loading.
-  const sidekickShortcuts = sidekickShortcutsLoaded && (
-    <section
-      aria-label={standaloneSidekicks.length > 0 ? 'Sidekick shortcuts' : 'Sidekicks'}
-      className="sidebar-automation-strip"
-      onClick={() => setSidebarOpen(false)}
-    >
-      {standaloneSidekicks.length > 0
-        ? standaloneSidekicks.map((sidekick) => <SidekickTile key={sidekick.id} sidekick={sidekick} />)
-        : <NewSidekickTile target={resumablePersonalDraft?.id ?? NEW_SIDEKICK_TARGET} />}
-    </section>
-  );
 
   return (
     <>
@@ -2650,9 +2449,6 @@ export function Sidebar({
         */}
         {/* <OnboardingChecklist /> */}
 
-        {/* Below the scroll box in both layouts: a horizontal strip in the
-            rail as in the full sidebar, one tile wide with the next peeking. */}
-        {sidekickShortcuts}
         <SidebarHorizontalLine className="sidebar-footer-line" />
         <SidebarFooter leading={<div className="sidebar-account-slot" ref={setAccountSlot} />} />
         {accountSlot && createPortal(accountMenu ?? <DropdownMenu.Root>

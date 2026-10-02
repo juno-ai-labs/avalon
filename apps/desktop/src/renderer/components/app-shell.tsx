@@ -21,9 +21,9 @@ import { conversationDirectoryQueryKey } from '../lib/conversation-directory';
 import { desktopBridge } from '../lib/platform';
 import { layoutKey, writeLayout } from '../lib/desktop-layout';
 import { uuidV7 } from '../lib/telemetry';
-import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
+import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { SIDEBAR_CONTENT_MIN_WIDTH, useUiStore } from '../lib/ui-store';
-import { INACTIVE_SPACES_QUERY_KEY, PERSONAL_ORDER_QUERY_KEY, SIDEBAR_LIST_QUERY_KEYS, SPACES_QUERY_KEY, applyContainerOrder, useSocketOwnedList } from '../lib/sidebar-list-store';
+import { INACTIVE_SPACES_QUERY_KEY, PERSONAL_ORDER_QUERY_KEY, SPACES_QUERY_KEY, applyContainerOrder } from '../lib/sidebar-list-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { usePersonalOrder, useSpaceDirectories, useSpacesReady } from '../lib/use-space-directories';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
@@ -549,11 +549,10 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   }, []);
   // Nothing here loads the sidebar. Subscribing to the workspace socket is
   // answered with the whole of it — the first page of work streams, the
-  // automations and the notes — and WorkspaceDO pushes each list again whenever
+  // Sidekicks and the notes — and WorkspaceDO pushes each list again whenever
   // it changes a row. This query exists for what a person asks for afterwards:
   // scrolling past page one, or widening the list with Debug enabled.
   const workstreams = useWorkstreamsQuery();
-  const automations = useSocketOwnedList<AutomationSummary>(SIDEBAR_LIST_QUERY_KEYS.automations);
   // One counter across all three pin mutations, because they all rewrite the
   // same list and a response can only be judged stale against the others.
   const pinRequestsIssued = useRef(new Map<string, number>());
@@ -843,7 +842,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             workspaces={knownWorkspaces}
           />
         )}
-        automations={automations.data}
         // Not `isLoading`: the first page is not fetched, so there is no
         // in-flight request to report. The sidebar is waiting exactly while it
         // has no list yet — which also keeps the skeletons up rather than
