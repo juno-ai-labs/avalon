@@ -78,13 +78,29 @@ describe('sidebar creation menu', () => {
     const callbacks = renderMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Start New Channel' }));
     const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
-    expect(within(dialog).getByRole('combobox', { name: 'Space' })).toHaveTextContent('General');
+    expect(within(dialog).getByRole('combobox', { name: 'Space' })).toHaveTextContent('All');
     expect(within(dialog).queryByRole('textbox', { name: 'URL' })).not.toBeInTheDocument();
     const name = within(dialog).getByRole('textbox', { name: 'Name of channel' });
     expect(name).toHaveAttribute('maxlength', '180');
     fireEvent.change(name, { target: { value: 'Launch' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(callbacks.onCreateChannel).toHaveBeenCalledWith({ name: 'Launch', spaceId: general.id }));
+  });
+
+  it('starts on All and lists it first whatever order the Spaces arrive in', () => {
+    const accounts = SpaceSummarySchema.parse({ ...planning, id: '00000000-0000-7000-8000-0000000000f3', name: 'Accounts' });
+    render(<Tooltip.Provider>
+      <NewWorkstreamMenu onCreateChannel={vi.fn(async () => undefined)} onCreateSpace={vi.fn(async () => undefined)}
+        spaces={[planning, accounts, general]}>
+        <button type="button">Plus</button>
+      </NewWorkstreamMenu>
+    </Tooltip.Provider>);
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Plus' }), { key: 'ArrowDown' });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Start New Channel' }));
+    const select = screen.getByRole('combobox', { name: 'Space' });
+    expect(select).toHaveTextContent('All');
+    fireEvent.click(select);
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['All', 'Accounts', 'Planning']);
   });
 
   it('repairs a selection when the live directory removes its Space', async () => {
@@ -101,7 +117,7 @@ describe('sidebar creation menu', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Start New Channel' }));
     const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Launch' } });
-    expect(within(dialog).getByRole('combobox', { name: 'Space' })).toHaveTextContent('General');
+    expect(within(dialog).getByRole('combobox', { name: 'Space' })).toHaveTextContent('All');
 
     view.rerender(<Tooltip.Provider>
       <NewWorkstreamMenu {...callbacks} spaces={[planning]}>
@@ -131,7 +147,7 @@ describe('sidebar creation menu', () => {
     view.rerender(menu(planning.id));
 
     const picker = within(dialog).getByRole('combobox', { name: 'Space' });
-    expect(picker).toHaveTextContent('General');
+    expect(picker).toHaveTextContent('All');
     expect(picker).toBeDisabled();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(onCreateChannel).toHaveBeenCalledWith({ name: 'Launch', spaceId: general.id }));
@@ -150,7 +166,7 @@ describe('sidebar creation menu', () => {
     fireEvent.keyDown(screen.getByRole('button', { name: 'Plus' }), { key: 'ArrowDown' });
     fireEvent.click(screen.getByRole('menuitem', { name: 'Start New Channel' }));
     const select = screen.getByRole('combobox', { name: 'Space' });
-    expect(select).toHaveTextContent('General');
+    expect(select).toHaveTextContent('All');
     fireEvent.click(select);
     expect(screen.queryByRole('option', { name: 'Shared project' })).not.toBeInTheDocument();
   });
@@ -174,7 +190,7 @@ describe('sidebar creation menu', () => {
     vi.stubGlobal('rally', { openBrowserImport });
     const callbacks = renderMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Import Channel from Claude or ChatGPT' }));
-    expect(openBrowserImport).toHaveBeenCalledWith({ spaces: [{ id: general.id, name: 'General' }] });
+    expect(openBrowserImport).toHaveBeenCalledWith({ spaces: [{ id: general.id, name: 'All' }] });
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(callbacks.onCreateChannel).not.toHaveBeenCalled();
   });
