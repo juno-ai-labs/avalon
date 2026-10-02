@@ -136,10 +136,16 @@ function recoveryBoot(overrides: Partial<WorkstreamBoot> = {}): WorkstreamBoot {
 let navigateInTest: ReturnType<typeof useNavigate>;
 let locationInTest: ReturnType<typeof useLocation>;
 
-/** Opens a title pill's menu, as a pointer press on it does, and picks one item. */
-async function titleMenu(trigger: string | RegExp, item: string): Promise<void> {
+/**
+ * Opens a title pill's menu, as a pointer press on it does, and picks an item.
+ * An item inside a level (People, More) is named by its path: each step is
+ * picked in turn, the last one being the action.
+ */
+async function titleMenu(trigger: string | RegExp, item: string | readonly string[]): Promise<void> {
   fireEvent.pointerDown(await screen.findByRole('button', { name: trigger }), { button: 0, ctrlKey: false });
-  fireEvent.click(await screen.findByRole('menuitem', { name: item }));
+  for (const step of typeof item === 'string' ? [item] : item) {
+    fireEvent.click(await screen.findByRole('menuitem', { name: step }));
+  }
 }
 
 function NavigationProbe(): null { navigateInTest = useNavigate(); locationInTest = useLocation(); return null; }
@@ -255,7 +261,7 @@ describe('socket-first channel open', () => {
     return boot;
   }
 
-  async function mainMenu(action: string): Promise<void> {
+  async function mainMenu(action: string | readonly string[]): Promise<void> {
     await titleMenu('Channel menu: Recovered channel', action);
   }
 
@@ -269,7 +275,7 @@ describe('socket-first channel open', () => {
       cache.setQueryData(['workstream', workstreamId], boot);
       cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
     });
-    const label = action === 'make_public' ? 'Make public to organization' : action === 'rename' ? 'Rename' : 'Archive channel';
+    const label = action === 'make_public' ? ['More', 'Make public to organization'] : action === 'rename' ? 'Rename' : 'Archive channel';
     await mainMenu(label);
     if (action === 'rename') fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), { target: { value: 'Renamed parent' } });
     if (action !== 'make_public') fireEvent.click(screen.getByRole('button', { name: action === 'rename' ? 'Rename' : 'Archive' }));
@@ -336,7 +342,7 @@ describe('socket-first channel open', () => {
       cache.setQueryData(['workstream', workstreamId], boot);
       cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
     });
-    await mainMenu('Copy channel link');
+    await mainMenu('Copy link');
     await waitFor(() => expect(copy).toHaveBeenCalledOnce());
     if (next === 'navigate') act(() => navigateInTest('/workstreams/00000000-0000-7000-8000-000000000651'));
     else await mainMenu('Rename');
@@ -749,6 +755,7 @@ describe('socket-first channel open', () => {
 
     expect(await screen.findByRole('button', { name: 'Breakout menu: New github pr header' })).toBeInTheDocument();
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Channel menu: Investigate ENG-142' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^Breakouts/u }));
     const breakoutRows = (): string[] => screen.getAllByRole('menuitem')
       .filter((item) => item.classList.contains('title-menu-breakout'))
       .map((item) => item.querySelector('.title-menu-item-copy')?.textContent ?? '');
@@ -793,16 +800,18 @@ describe('socket-first channel open', () => {
     act(() => client.setQueryData(['workstream', workstreamId], { ...parent, appearance: { icon: 'heart', color: 'blue' } }));
 
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Channel menu: Recovered channel' }), { button: 0, ctrlKey: false });
-    expect(await screen.findByRole('menuitem', { name: /1 person$/u })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Parent artifact' })).toBeInTheDocument();
+    expect(await screen.findByRole('menuitem', { name: /^People\s*1/u })).toBeInTheDocument();
+    // The Channel's artifacts are in More, and they are the Channel's own.
+    fireEvent.click(screen.getByRole('menuitem', { name: 'More' }));
+    expect(await screen.findByRole('menuitem', { name: 'Parent artifact' })).toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: 'Child artifact' })).not.toBeInTheDocument();
     expect(retainedSocket).toHaveBeenCalledWith(api, workstreamId, true, 'workstream', '0');
 
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Add people' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Add New member to main conversation' }));
+    // Adding from the menu's People level adds to the main conversation.
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowLeft' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add New member' }));
     await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, newcomer.id));
-    expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'New member participant actions' })).toBeVisible();
     expect(client.getQueryData<WorkstreamDetail>(['substream-workstream', workstreamId, childId])?.participants).toEqual([]);
   });
 
@@ -838,6 +847,7 @@ describe('socket-first channel open', () => {
     }, childId);
 
     fireEvent.pointerDown(await screen.findByRole('button', { name: 'Breakout menu: Private child' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
     fireEvent.keyDown(await screen.findByRole('menuitem', { name: 'Icon and color' }), { key: 'ArrowRight' });
     fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Purple' }));
     await waitFor(() => expect(childAppearance).toHaveBeenCalledWith({ color: 'purple' }));
@@ -886,8 +896,10 @@ describe('socket-first channel open', () => {
     }, childId);
 
     fireEvent.pointerDown(await screen.findByRole('button', { name: 'Breakout menu: Private child' }), { button: 0, ctrlKey: false });
-    expect(await screen.findByRole('menuitem', { name: /1 person$/u })).toBeInTheDocument();
+    expect(await screen.findByRole('menuitem', { name: /^People\s*1/u })).toBeInTheDocument();
+    // The People level's Change opens the full roster, where people are removed.
     fireEvent.click(screen.getByRole('menuitem', { name: 'Add people' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Change' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Add New member to breakout' }));
     await waitFor(() => expect(api.addSubstreamParticipant).toHaveBeenCalledWith(workstreamId, childId, newcomer.id));
     expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
@@ -1256,7 +1268,7 @@ describe('socket-first channel open', () => {
       queryClient.setQueryData(['ordered-transcript', workstreamId], detail.transcript);
     });
 
-    await titleMenu('Channel menu: Recovered channel', 'Add people');
+    await titleMenu('Channel menu: Recovered channel', ['Add people', 'Change']);
     fireEvent.click(await screen.findByRole('button', { name: 'Add Jordan to main conversation' }));
     expect(await screen.findByText('That participant couldn’t be added.')).toBeInTheDocument();
     expect(screen.queryByText('Adam cannot add Jordan')).not.toBeInTheDocument();
@@ -1304,7 +1316,7 @@ describe('socket-first channel open', () => {
       queryClient.setQueryData(['ordered-transcript', workstreamId], detail.transcript);
     });
 
-    await titleMenu('Channel menu: Recovered channel', 'Add people');
+    await titleMenu('Channel menu: Recovered channel', ['Add people', 'Change']);
     fireEvent.click(await screen.findByRole('button', { name: 'Add Katherine to main conversation' }));
     await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, katherine.id));
     const dialog = screen.getByRole('dialog', { name: 'Add a participant' });
@@ -1340,7 +1352,7 @@ describe('socket-first channel open', () => {
       queryClient.setQueryData(['ordered-transcript', workstreamId], detail.transcript);
     });
 
-    await titleMenu('Channel menu: Recovered channel', 'Add people');
+    await titleMenu('Channel menu: Recovered channel', ['Add people', 'Change']);
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Adam participant actions' }), {
       button: 0,
       ctrlKey: false,

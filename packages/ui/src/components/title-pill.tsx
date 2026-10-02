@@ -3,7 +3,61 @@ import { IconChevronDown, IconChevronRight, IconCornerDownRight, IconX } from '@
 
 import { IconButton } from './primitives';
 import clsx from 'clsx';
-import type { ReactNode } from 'react';
+import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+
+/**
+ * One level inside a title pill's menu, e.g. People. The pill names it as a
+ * breadcrumb after the conversation's own title, and the menu draws it in
+ * place of its root.
+ */
+export interface TitleMenuView { key: string; label: string }
+
+interface TitleMenuNav {
+  view: TitleMenuView | null;
+  /** Which way the last move went, so a view enters from the side it came from. */
+  direction: 'in' | 'out';
+  open: (view: TitleMenuView) => void;
+  back: () => void;
+}
+
+const TitleMenuNavContext = createContext<TitleMenuNav>({
+  view: null,
+  direction: 'in',
+  open: () => undefined,
+  back: () => undefined,
+});
+
+/** The menu's current level, and the way to move between levels. */
+export function useTitleMenuNav(): TitleMenuNav {
+  return useContext(TitleMenuNavContext);
+}
+
+/**
+ * The menu's frame, sized to whichever level is showing and travelling between
+ * those sizes rather than cutting, so moving to People reads as the same popout
+ * reshaping itself. The level's own rows enter on a short stagger, keyed by the
+ * level so each move replays it.
+ */
+export function TitleMenuMorph({ children }: { children: ReactNode }): React.JSX.Element {
+  const { view, direction } = useTitleMenuNav();
+  const inner = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+  useLayoutEffect(() => {
+    const element = inner.current;
+    if (!element) return undefined;
+    const measure = (): void => setSize({ width: element.offsetWidth, height: element.offsetHeight });
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [view]);
+  return <div className="title-menu-morph" style={size ? { height: size.height, width: size.width } : undefined}>
+    <div className="title-menu-view" data-direction={direction} key={view?.key ?? 'root'} ref={inner}>
+      {children}
+    </div>
+  </div>;
+}
 
 /**
  * One level of a conversation's title: a Channel, or a Breakout inside it.
@@ -44,11 +98,52 @@ export function TitlePill({ level, variant = 'current' }: {
     <span className="title-pill-title">{level.title}</span>
     {level.meta ? <span className="title-pill-meta">{level.meta}</span> : null}
   </>;
+  const [view, setView] = useState<TitleMenuView | null>(null);
+  const [direction, setDirection] = useState<'in' | 'out'>('in');
+  const back = useCallback(() => { setDirection('out'); setView(null); }, []);
+  const nav = useMemo<TitleMenuNav>(() => ({
+    view,
+    direction,
+    open: (next) => { setDirection('in'); setView(next); },
+    back,
+  }), [back, direction, view]);
+  // A menu reopens at its root, wherever it was left.
+  const onOpenChange = (open: boolean): void => { if (!open) { setDirection('in'); setView(null); } };
   const Chevron = level.chevron === 'right' ? IconChevronRight : IconChevronDown;
   const chevron = <Chevron aria-hidden="true" className="title-pill-chevron" size={13} stroke={2} />;
+  /**
+   * The title, and the level open below it. While a level is open the title is
+   * the breadcrumb's first step and takes the menu back to its root: on
+   * pointer-down, before the trigger would read the press as closing.
+   */
+  const crumbTitle = view
+    ? <span
+      className="title-pill-title is-crumb-root"
+      onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); back(); }}
+    >{level.title}</span>
+    : <span className="title-pill-title">{level.title}</span>;
+  const crumb = view ? <>
+    <IconChevronRight aria-hidden="true" className="title-pill-crumb-separator" size={13} stroke={2} />
+    <span className="title-pill-title title-pill-crumb" key={view.key}>{view.label}</span>
+  </> : null;
   const menu = level.menu ? <DropdownMenu.Portal>
-    <DropdownMenu.Content align={variant === 'ancestor' ? 'start' : 'center'} className="menu-content title-pill-menu" collisionPadding={12} sideOffset={8}>
-      {level.menu}
+    <DropdownMenu.Content
+      align={variant === 'ancestor' ? 'start' : 'center'}
+      className="menu-content title-pill-menu"
+      collisionPadding={12}
+      // Escape and the left arrow step back a level before they close anything.
+      onEscapeKeyDown={(event) => { if (view) { event.preventDefault(); back(); } }}
+      onKeyDown={(event) => {
+        if (!view || event.key !== 'ArrowLeft') return;
+        if (event.target instanceof HTMLInputElement) return;
+        event.preventDefault();
+        back();
+      }}
+      sideOffset={8}
+    >
+      <TitleMenuNavContext.Provider value={nav}>
+        <TitleMenuMorph>{level.menu}</TitleMenuMorph>
+      </TitleMenuNavContext.Provider>
     </DropdownMenu.Content>
   </DropdownMenu.Portal> : null;
 
@@ -56,10 +151,11 @@ export function TitlePill({ level, variant = 'current' }: {
     return <span className={clsx('title-pill is-split', `is-${variant}`)}>
       <span className="title-pill-icon-action">{level.iconAction}</span>
       {menu
-        ? <DropdownMenu.Root modal={false}>
-          <DropdownMenu.Trigger aria-label={level.label} className="title-pill-menu-trigger has-title">
-            <span className="title-pill-title">{level.title}</span>
-            {level.meta ? <span className="title-pill-meta">{level.meta}</span> : null}
+        ? <DropdownMenu.Root modal={false} onOpenChange={onOpenChange}>
+          <DropdownMenu.Trigger aria-label={view ? `${level.label}, ${view.label}` : level.label} className="title-pill-menu-trigger has-title">
+            {crumbTitle}
+            {!view && level.meta ? <span className="title-pill-meta">{level.meta}</span> : null}
+            {crumb}
             {chevron}
           </DropdownMenu.Trigger>
           {menu}
@@ -70,16 +166,20 @@ export function TitlePill({ level, variant = 'current' }: {
   if (level.onSelect) {
     return <span className={clsx('title-pill is-split', `is-${variant}`)}>
       <button className="title-pill-select" onClick={level.onSelect} type="button">{body}</button>
-      {menu && <DropdownMenu.Root modal={false}>
-        <DropdownMenu.Trigger aria-label={level.label} className="title-pill-menu-trigger">{chevron}</DropdownMenu.Trigger>
+      {menu && <DropdownMenu.Root modal={false} onOpenChange={onOpenChange}>
+        <DropdownMenu.Trigger aria-label={level.label} className="title-pill-menu-trigger">{crumb}{chevron}</DropdownMenu.Trigger>
         {menu}
       </DropdownMenu.Root>}
     </span>;
   }
   if (!menu) return <span className={clsx('title-pill', `is-${variant}`)}>{body}</span>;
-  return <DropdownMenu.Root modal={false}>
-    <DropdownMenu.Trigger aria-label={level.label} className={clsx('title-pill', `is-${variant}`)}>
-      {body}{chevron}
+  return <DropdownMenu.Root modal={false} onOpenChange={onOpenChange}>
+    <DropdownMenu.Trigger aria-label={view ? `${level.label}, ${view.label}` : level.label} className={clsx('title-pill', `is-${variant}`)}>
+      <span className="title-pill-icon">{level.icon}</span>
+      {crumbTitle}
+      {!view && level.meta ? <span className="title-pill-meta">{level.meta}</span> : null}
+      {crumb}
+      {chevron}
     </DropdownMenu.Trigger>
     {menu}
   </DropdownMenu.Root>;

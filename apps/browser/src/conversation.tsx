@@ -227,6 +227,7 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
       onSidekickMenuOpen={context?.loadSidekickOptions}
       openSubstreamId={openBreakoutId}
       participantsPending={context === null}
+      people={context?.people}
       presentUserIds={context?.presentUserIds ?? []}
       sidekickFailure={context?.sidekickFailure}
       sidekicks={context?.sidekicks}
@@ -259,6 +260,7 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
         channel={{ id: parentId, title: channelTitle, appearance: parent?.appearance }}
         origin={context.origin}
         onParticipants={context.openParticipantDialog}
+        people={context.people}
         onShowInChannel={mainVisible ? () => {
           if (breakoutOwnsRail) closeRail();
           const turnId = breakoutMarks?.find((breakout) => breakout.substreamId === breakoutId)?.originTurnId;

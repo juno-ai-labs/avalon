@@ -36,6 +36,13 @@ interface UiState {
   // The inspector keeps its width per work stream. Screens outside a work
   // stream pass null and share one bucket.
   setRailScope: (scope: string | null) => void;
+  /**
+   * The sidebar's own pin action, so a Channel's menu pins exactly as the
+   * sidebar's row would — the same Space choice and the same reveal — rather
+   * than through a second copy of that rule. Null while no sidebar is mounted.
+   */
+  pinChannel: ((workstreamId: string, pinned: boolean) => void) | null;
+  setPinChannel: (pin: ((workstreamId: string, pinned: boolean) => void) | null) => void;
 }
 
 export const MIN_RAIL_WIDTH = 280;
@@ -135,4 +142,6 @@ export const useUiStore = create<UiState>((set, get) => ({
     railScope,
     railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, railScope),
   }),
+  pinChannel: null,
+  setPinChannel: (pinChannel) => set({ pinChannel }),
 }));

@@ -36,6 +36,7 @@ import { useChannelRail } from '../lib/channel-rails';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { useBrowserRailLinks } from '../lib/browser-rail-links';
 import { BreakoutTickBar, breakoutsByOrigin, orderBreakoutsForTicks, type BreakoutMark } from '@rally/ui/components/breakout-marks';
+import type { TitleMenuPeople } from '@rally/ui/components/conversation-menus';
 import { RelativeTime } from '../components/relative-time';
 import { BreakoutOrigin, breakoutOriginMessages, originExcerpt } from '../components/breakout-origin';
 import { formatDateTime } from '../lib/format';
@@ -951,6 +952,8 @@ export interface ConversationHeaderContext {
   replyCount?: number | undefined;
   /** A Breakout's origin message, for its title menu's "Started from" card. */
   origin?: { byline: string; text: string } | undefined;
+  /** Adding people to this conversation from inside its title menu. */
+  people?: TitleMenuPeople | undefined;
 }
 
 /** Messages a person would call replies: what people and Rally said, one per turn. */
@@ -2728,6 +2731,18 @@ export function ConversationSurface({
         rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
         setAppearance: socketConnection.setAppearance,
         replyCount,
+        people: parentKind === 'workstream' ? {
+          candidates: visibleMembers,
+          onAdd: (member) => {
+            removeParticipant.reset();
+            addParticipant.mutate({ member, target: substreamId });
+          },
+          adding: addParticipant.isPending,
+          error: addParticipant.error
+            ? refusalMessage(addParticipant.error) ?? 'That person couldn’t be added.'
+            : undefined,
+          currentUserId: session?.user.id,
+        } : undefined,
         origin: origin ? {
           byline: `Started from ${origin.origin.authorType === 'agent' ? 'Rally’s' : `${origin.origin.author?.name ?? 'a'}’s`} message · ${formatDateTime(origin.origin.createdAt)}`,
           text: originExcerpt(origin.origin.text ?? ''),
