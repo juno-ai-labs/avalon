@@ -39,7 +39,6 @@ Grok-inspired transcript chrome, or the TestFlight archive.
 | `apps/ios/Rally/Assets.xcassets/RallyMark.imageset` | Shared loop PNG from `assets/brand/rally-mark.png`. Template-rendered in brand ink. |
 | `apps/ios/Rally/Design` | True-black/light palette, Liquid Glass helpers, Dynamic Type, the shared Rally loop mark, work-stream/Sidekick glyphs from the appearance catalog, the circular account avatar. |
 | `apps/ios/fastlane` and `apps/ios/scripts/archive-testflight.sh` | App Store export. Must run on a Mac. |
-| `scripts/ios-project.test.mjs` | Linux-runnable packaging invariants. |
 
 There is no `apps/ios/package.json`. `pnpm-workspace.yaml` globs `apps/*`; a
 Node package here would be picked up as a workspace package and is forbidden.
@@ -304,13 +303,13 @@ it.
 
 | Suite | Command | What it can prove |
 | --- | --- | --- |
-| Packaging | `pnpm test:scripts` (file `scripts/ios-project.test.mjs`) | Native-only tree, bundle ID, team, entitlements, privacy manifest, 1024 RGB icon, required Swift files, Electron route coverage, feed-kind cases, substream switcher/launch strings. Runs on Linux. |
 | XCTest | Xcode → RallyTests | PKCE lengths, deep-link parsing (including child path and `?substream=`), Apple push payload parse and PUT body, transcript mapping, feed kinds, branch provenance, member/search decode, REST vs nested snapshot decode, substream prepare/confirm/control metadata, work-stream appearance hash and catalog fallback, account initials/color decode and personal-color aliases, work-stream recency directory order, navigation-shaped socket retain set, feed chrome while a substream opens. Needs iOS 26 SDK. |
 | UI tests | Xcode → RallyUITests | Intro chrome and Continue with Google. `testLocalDevelopmentAccountReachesChats` is skipped unless `RALLY_LOCAL_UI=1` and a local Worker is up — CI never sets that. Needs a simulator. |
 
-This sandbox cannot run `xcodebuild`. The packaging test is the gate that CI
-on Linux can actually fail. A Swift behavior change that the packaging test
-does not see needs RallyTests on a Mac before it is believed.
+This sandbox cannot run `xcodebuild`, and nothing on Linux tests the iOS tree:
+a source scan of the Swift and Xcode files was removed because it asserted on
+file text rather than behavior. A Swift behavior change needs RallyTests on a
+Mac before it is believed.
 
 ## Regional impact
 

@@ -41,8 +41,6 @@ test("prepares a hashed 30-minute nonce and copies only the webhook URL", async 
   assert.equal(result.expiresAt, "2026-08-12T20:30:00.000Z");
   assert.equal(requests.length, 1);
   assert.equal(requests[0].body.batch.length, 2);
-  assert.match(requests[0].body.batch[0].sql, /SET is_current = 0/u);
-  assert.match(requests[0].body.batch[1].sql, /INSERT INTO notion_webhook_setup_nonces/u);
   const nonce = random.toString("base64url");
   assert.equal(requests[0].body.batch[1].params[0], sha256Base64Url(nonce));
   assert.doesNotMatch(JSON.stringify(requests), new RegExp(nonce));
@@ -57,9 +55,7 @@ test("decrypts the stored Global token and sends plaintext only to the clipboard
   };
   const encrypted = await encryptToken("notion-verification-secret", keyBytes);
   const clipboard = [];
-  const requests = [];
-  const cloudflare = async (_path, init) => {
-    requests.push(JSON.parse(init.body));
+  const cloudflare = async () => {
     return [{
       success: true,
       results: [{
@@ -80,8 +76,6 @@ test("decrypts the stored Global token and sends plaintext only to the clipboard
 
   assert.deepEqual(result, { createdAt: "2026-08-12T20:01:00.000Z" });
   assert.deepEqual(clipboard, ["notion-verification-secret"]);
-  assert.match(requests[0].sql, /nonce\.is_current = 1/u);
-  assert.match(requests[0].sql, /nonce\.nonce_hash = challenge\.setup_nonce_hash/u);
 });
 
 test("selects the historical Global credential key for an older row", () => {

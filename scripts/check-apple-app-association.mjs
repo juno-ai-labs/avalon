@@ -1,5 +1,5 @@
 import { isEntryPoint } from './entry-point.mjs';
-export async function assertAppleAssociation(response) {
+async function assertAppleAssociation(response) {
   if (response.status !== 200 || response.redirected || !response.headers.get('content-type')?.includes('application/json')) throw new Error('Apple association must serve JSON without a redirect');
   const document = await response.json();
   const details = document.applinks?.details;

@@ -6,7 +6,7 @@ const RETENTION_RULE_ID = "delete-observability-after-90-days";
 const RETENTION_SECONDS = 90 * 24 * 60 * 60;
 const WORKERS_TRACE_DATASET = "workers_trace_events";
 
-export const OBSERVABILITY_CONFIGURATIONS = Object.freeze([
+const OBSERVABILITY_CONFIGURATIONS = Object.freeze([
   {
     region: "global",
     jurisdiction: "default",
@@ -15,7 +15,7 @@ export const OBSERVABILITY_CONFIGURATIONS = Object.freeze([
   },
 ]);
 
-export const LOGPUSH_FIELD_NAMES = Object.freeze([
+const LOGPUSH_FIELD_NAMES = Object.freeze([
   "CPUTimeMs",
   "Entrypoint",
   "Event",
@@ -52,7 +52,7 @@ function savedQuery(name, description, filters) {
   };
 }
 
-export const SAVED_QUERY_DEFINITIONS = Object.freeze([
+const SAVED_QUERY_DEFINITIONS = Object.freeze([
   savedQuery(
     "Avalon · Failures",
     "Errors from either regional Avalon API.",
@@ -160,13 +160,13 @@ function normalizeSavedQueryValue(value, key) {
   return Object.keys(normalized).length === 0 ? undefined : normalized;
 }
 
-export function savedQueryMatchesDefinition(query, definition) {
+function savedQueryMatchesDefinition(query, definition) {
   if (query.name !== definition.name || query.description !== definition.description) return false;
   return canonicalJson(normalizeSavedQueryValue(query.parameters))
     === canonicalJson(normalizeSavedQueryValue(definition.parameters));
 }
 
-export function assessSavedQueries(existing = [], definitions = SAVED_QUERY_DEFINITIONS) {
+function assessSavedQueries(existing = [], definitions = SAVED_QUERY_DEFINITIONS) {
   const verified = [];
   const differences = [];
   for (const definition of definitions) {
@@ -194,7 +194,7 @@ function savedQueryDifferenceMessage(difference) {
   return `${difference.definition.name}: saved query differs from Avalon; remove the stale query in the Cloudflare dashboard`;
 }
 
-export function reconcileLifecycleRules(rules = []) {
+function reconcileLifecycleRules(rules = []) {
   const current = rules.find((rule) => rule.id === RETENTION_RULE_ID);
   const condition = current?.deleteObjectsTransition?.condition;
   const prefix = current?.conditions?.prefix;
@@ -241,7 +241,7 @@ function destinationBucket(destinationConfiguration) {
   }
 }
 
-export function assessLogpushJob(job, configuration) {
+function assessLogpushJob(job, configuration) {
   const problems = [];
   if (job.dataset !== WORKERS_TRACE_DATASET) problems.push("dataset");
   if (job.enabled !== true) problems.push("enabled state");

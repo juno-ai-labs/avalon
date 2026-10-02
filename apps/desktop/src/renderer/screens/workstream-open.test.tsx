@@ -81,6 +81,7 @@ import { patchCachedWorkstreamAppearance, setCachedWorkstreams } from '../lib/wo
 import { workstreamFeedSourceQueryKey } from '../lib/telemetry';
 import { substreamInitialContextQueryKey } from '../lib/use-workstream-socket';
 import { desktopBridge } from '../lib/platform';
+import { ApiError } from '../lib/api';
 import { STOPPED_LABEL, STOPPING_LABEL } from '../components/agent-work-timing';
 import { ConversationOpeningSkeleton, ConversationSurface } from './conversation-surface';
 import { workstreamDetailQueryKey } from '../lib/workstreams-cache';
@@ -144,7 +145,9 @@ let locationInTest: ReturnType<typeof useLocation>;
 async function titleMenu(trigger: string | RegExp, item: string | readonly string[]): Promise<void> {
   fireEvent.pointerDown(await screen.findByRole('button', { name: trigger }), { button: 0, ctrlKey: false });
   for (const step of typeof item === 'string' ? [item] : item) {
-    fireEvent.click(await screen.findByRole('menuitem', { name: step }));
+    // A setting in More is a switch, not a plain item.
+    fireEvent.click(await waitFor(() => screen.queryByRole('menuitem', { name: step })
+      ?? screen.getByRole('menuitemcheckbox', { name: step })));
   }
 }
 
@@ -275,7 +278,7 @@ describe('socket-first channel open', () => {
       cache.setQueryData(['workstream', workstreamId], boot);
       cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
     });
-    const label = action === 'make_public' ? ['More', 'Make public to organization'] : action === 'rename' ? 'Rename' : 'Archive channel';
+    const label = action === 'make_public' ? ['More', 'Public to organization'] : action === 'rename' ? 'Rename' : ['More', 'Archive channel'];
     await mainMenu(label);
     if (action === 'rename') fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), { target: { value: 'Renamed parent' } });
     if (action !== 'make_public') fireEvent.click(screen.getByRole('button', { name: action === 'rename' ? 'Rename' : 'Archive' }));
@@ -292,6 +295,29 @@ describe('socket-first channel open', () => {
       kind: 'workstream_action_completed', workstreamId, action, origin: 'ad_hoc', pinned: false,
     })));
     expect(mutation.mock.calls.every(([id]) => id === workstreamId)).toBe(true);
+  });
+
+  it('makes a public Channel private and names what blocks it when a Space holds it public', async () => {
+    const boot = recoveryBoot({ scope: 'workspace' });
+    const report = vi.spyOn(desktopBridge(), 'reportTelemetryProductIntent').mockResolvedValue(undefined);
+    api.setWorkstreamScope
+      .mockRejectedValueOnce(new ApiError('scope locked', 409, 'channel_scope_locked_by_space'))
+      .mockResolvedValue({ ...boot, scope: 'personal' });
+    renderScreen(cache => {
+      cache.setQueryData(['workstream', workstreamId], boot);
+      cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
+    });
+    await mainMenu('More');
+    const toggle = await screen.findByRole('menuitemcheckbox', { name: 'Public to organization' });
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(toggle);
+    await screen.findByText('An organization-wide space still makes this channel public. Remove it from that space first.');
+    expect(api.setWorkstreamScope).toHaveBeenLastCalledWith(workstreamId, 'personal');
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await mainMenu(['More', 'Public to organization']);
+    await waitFor(() => expect(report).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'workstream_action_completed', workstreamId, action: 'make_private', visibility: 'private',
+    })));
   });
 
   it.each(['rename', 'archive'] as const)('keeps Main and child %s targets separate while a child is selected', async (action) => {
@@ -311,7 +337,7 @@ describe('socket-first channel open', () => {
         { substreamId: childId, title: child.title, createdByUserId: null, createdAt: child.createdAt, updatedAt: child.updatedAt },
       ] });
     }, childId);
-    await titleMenu('Breakout menu: Private investigation', action === 'rename' ? 'Rename' : 'Archive breakout');
+    await titleMenu('Breakout menu: Private investigation', action === 'rename' ? 'Rename' : ['More', 'Archive breakout']);
     if (action === 'rename') fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), { target: { value: 'Renamed child' } });
     fireEvent.click(screen.getByRole('button', { name: action === 'rename' ? 'Rename' : 'Archive' }));
     await waitFor(() => expect(action === 'rename' ? api.renameSubstream : api.setSubstreamArchived)
@@ -322,7 +348,7 @@ describe('socket-first channel open', () => {
     // Re-enter the child after archiving it: the directory fixture remains so
     // this isolates the row target from the currently selected conversation.
     act(() => navigateInTest(`/workstreams/${workstreamId}?substream=${childId}`));
-    await mainMenu(action === 'rename' ? 'Rename' : 'Archive channel');
+    await mainMenu(action === 'rename' ? 'Rename' : ['More', 'Archive channel']);
     if (action === 'rename') fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), { target: { value: 'Renamed parent' } });
     fireEvent.click(screen.getByRole('button', { name: action === 'rename' ? 'Rename' : 'Archive' }));
     await waitFor(() => expect(action === 'rename' ? api.renameWorkstream : api.archiveWorkstream)

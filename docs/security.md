@@ -1036,7 +1036,7 @@ no unit test standing in for them.
 | `apps/api/test/telemetry-*.test.ts`, `crash-*.test.ts`, `posthog-adapter.test.ts` | Regional acceptance, capabilities, preference/identity ordering, immutable deadlines, raw-object access, sanitization, and exact destination negative space. |
 | `apps/site/test/site.test.ts` | Pure functions only: iOS detection, telemetry path classification, desktop handoff target parsing and Slack fragment parsing. Public entries, route-before-identity behavior and tracking disclosure have no automated test. |
 | `pnpm --filter @rally/desktop test:release` | The entitlement rules, notarization, blockmap ordering, and the final verifier. CI runs this as a separate job — `pnpm test:scripts` does **not** cover `apps/desktop/scripts/`. |
-| `scripts/gitleaks-allowlist.test.mjs` (`pnpm test:scripts`) | That every `.gitleaks.toml` pattern still rejects real key material. It fails when an exception is added without a case, because the scan itself only reports what it finds today and would not notice an exception that had been widened. |
+| `scripts/gitleaks-allowlist.test.mjs` (`pnpm test:scripts`) | That each `.gitleaks.toml` pattern it has a case for still rejects real key material, because the scan itself only reports what it finds today and would not notice an exception that had been widened. A new exception needs its own case; nothing fails if it is added without one, so that is a review finding. |
 | The `secrets` CI job | Gitleaks over the commits a pull request adds to its base branch — `HEAD_SHA --not <base tip>` — and not the base branch's own history. |
 
 The trap in the desktop suites is that they assert on the *stored* shape of a
