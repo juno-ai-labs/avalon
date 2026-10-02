@@ -1,9 +1,12 @@
 import { READING_AI_CHATS_SKILLS, renderSessionImportSystemPrompt, type HarnessPlugin, type HarnessSkill } from "@rally/agent-harness";
 import type { AgentModelRole, WorkstreamWorkflowInput } from "@rally/contracts";
 
+import type { Env } from "../env";
+
 import { createBrowserPlugin } from "./desktop-actions/browser-plugin";
 import type { DesktopActionExecutor } from "./desktop-actions/executor";
 import { createSessionImportPlugin } from "./desktop-actions/session-import-plugin";
+import { reclaimUnopenedImport } from "./session-import-reclaim";
 
 /**
  * A conversation that does one fixed job rather than a person's open-ended
@@ -27,6 +30,11 @@ export interface AgentProfile {
   plugins(input: WorkstreamWorkflowInput, desktop: DesktopActionExecutor | undefined): HarnessPlugin[];
   /** The skills its catalog offers; each still loads only when the model asks. */
   skills: readonly HarnessSkill[];
+  /**
+   * Cleanup owed once a run of it has ended, however it ended. A run started
+   * by a person names them; it runs after the run's outcome is durable.
+   */
+  ended?(env: Env, run: { workspaceId: string; parentId: string; userId: string | null }): Promise<void>;
 }
 
 export const AGENT_PROFILES = {
@@ -38,6 +46,10 @@ export const AGENT_PROFILES = {
       createSessionImportPlugin(input, desktop),
     ],
     skills: READING_AI_CHATS_SKILLS,
+    ended: async (env, run) => {
+      if (run.userId === null) return;
+      await reclaimUnopenedImport(env, { workspaceId: run.workspaceId, workstreamId: run.parentId, userId: run.userId });
+    },
   },
 } as const satisfies Record<string, AgentProfile>;
 

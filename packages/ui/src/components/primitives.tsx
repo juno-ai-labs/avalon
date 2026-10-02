@@ -689,11 +689,14 @@ interface ModalProps {
   footer?: ReactNode;
   initialFocusRef?: RefObject<HTMLElement | null>;
   /**
-   * Refuse Escape and a click outside, leaving the footer as the only way out.
+   * Refuse Escape, a click outside and the header's close button, leaving the
+   * footer as the only way out, and open with focus on the dialog itself
+   * rather than its first button, so a stray Enter presses nothing.
    *
-   * For the dialog that shows a value exactly once — a generated signing secret
-   * that cannot be asked for again — where a stray click costs the
-   * administrator a delete-and-reconnect across two products. Everywhere else
+   * For a dialog whose accidental dismissal destroys something a reopen
+   * cannot bring back: a value shown exactly once — a generated signing secret
+   * that cannot be asked for again — or long-running work the dialog holds
+   * the window for, such as a conversation import minutes in. Everywhere else
    * an accidental dismissal costs a reopen, and taking Escape away from a
    * person to save them a reopen is the wrong trade.
    */
@@ -746,9 +749,13 @@ export function Modal({
           }}
           onOpenAutoFocus={(event) => {
             const initialFocus = initialFocusRef?.current;
-            if (!initialFocus) return;
-            event.preventDefault();
-            initialFocus.focus();
+            if (initialFocus) {
+              event.preventDefault();
+              initialFocus.focus();
+            } else if (!dismissible && event.currentTarget instanceof HTMLElement) {
+              event.preventDefault();
+              event.currentTarget.focus();
+            }
           }}
         >
           <header className="dialog-header">
@@ -756,11 +763,11 @@ export function Modal({
               <Dialog.Title className="dialog-title">{title}</Dialog.Title>
               {description && <Dialog.Description className="dialog-description">{description}</Dialog.Description>}
             </div>
-            <Dialog.Close asChild>
+            {dismissible && <Dialog.Close asChild>
               <IconButton label="Close dialog" showTooltip={false}>
                 <X size={16} />
               </IconButton>
-            </Dialog.Close>
+            </Dialog.Close>}
           </header>
           {children != null && <div className="dialog-body">{children}</div>}
           {footer && <footer className="dialog-footer">{footer}</footer>}

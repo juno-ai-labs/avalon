@@ -23,7 +23,7 @@
 // both hold these files open, and wiping under them leaves exactly the
 // half-reset state this exists to remove.
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readlinkSync, rmSync } from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readlinkSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,11 +60,17 @@ export function localResetTargets({ repositoryRoot, desktopUserDataDirectory, de
 }
 
 /**
- * The PID holding Chromium's single-instance lock, if that process is alive.
- * The lock is a symlink whose target is `<hostname>-<pid>`, and it outlives a
- * crashed client, so the PID is checked rather than the link's presence.
+ * What holds Chromium's single-instance lock, if anything live does: a PID on
+ * macOS and Linux, `true` on Windows, where no PID is recorded.
+ *
+ * On macOS and Linux the lock is a symlink whose target is `<hostname>-<pid>`,
+ * and it outlives a crashed client, so the PID is checked rather than the
+ * link's presence. On Windows the client holds `lockfile` open with no
+ * sharing for as long as it runs, so the file being openable is what proves
+ * nothing does.
  */
-export function liveDesktopLockHolder(desktopUserDataDirectory) {
+export function liveDesktopLockHolder(desktopUserDataDirectory, platform = process.platform) {
+  if (platform === "win32") return windowsLockHeld(join(desktopUserDataDirectory, "lockfile"));
   let target;
   try {
     target = readlinkSync(join(desktopUserDataDirectory, "SingletonLock"));
@@ -81,16 +87,42 @@ export function liveDesktopLockHolder(desktopUserDataDirectory) {
   }
 }
 
+function windowsLockHeld(lockfile) {
+  if (!existsSync(lockfile)) return null;
+  try {
+    closeSync(openSync(lockfile, "r+"));
+    return null;
+  } catch (error) {
+    // EBUSY or EPERM: a sharing violation, which only a live holder causes.
+    // Anything else is not proof the client is gone, so it blocks too.
+    return error?.code === "ENOENT" ? null : true;
+  }
+}
+
+/**
+ * Whether a local Worker may be using its SQLite files: `free` only on a
+ * refused connection. A timeout is a Worker still starting or busy, not an
+ * absent one, so it blocks like an answer does.
+ */
+export async function probeLocalWorker(url, fetchImpl = fetch) {
+  try {
+    await fetchImpl(url, { signal: AbortSignal.timeout(1000) });
+    return "running";
+  } catch (error) {
+    const code = error?.cause?.code ?? error?.code;
+    if (code === "ECONNREFUSED") return "free";
+    return error?.name === "TimeoutError" ? "not_answering" : "unknown";
+  }
+}
+
 async function runningWorkers() {
   const running = [];
   for (const region of configuredRegions) {
     const url = regions[region].localApiUrl;
-    try {
-      await fetch(url, { signal: AbortSignal.timeout(1000) });
-      running.push(`${region} at ${url}`);
-    } catch {
-      // Nothing listening: the region's SQLite files are free.
-    }
+    const state = await probeLocalWorker(url);
+    if (state === "running") running.push(`${region} at ${url}`);
+    else if (state === "not_answering") running.push(`${region} at ${url} (listening but not answering; it may still be starting)`);
+    else if (state === "unknown") running.push(`${region} at ${url} (could not tell whether it is running)`);
   }
   return running;
 }
@@ -105,14 +137,25 @@ async function main() {
   const desktopPid = liveDesktopLockHolder(desktopUserDataDirectory);
   if (workers.length > 0 || desktopPid !== null) {
     if (workers.length > 0) console.error(`A local Worker is running (${workers.join(", ")}).`);
-    if (desktopPid !== null) console.error(`The development desktop client is running (pid ${desktopPid}).`);
+    if (desktopPid !== null) {
+      console.error(`The development desktop client is running${desktopPid === true ? "" : ` (pid ${desktopPid})`}.`);
+    }
     console.error("Stop `pnpm dev` and quit Rally Development, then run `pnpm dev:reset` again.");
     process.exit(1);
   }
 
   const desktopEntries = existsSync(desktopUserDataDirectory) ? readdirSync(desktopUserDataDirectory) : [];
   for (const target of localResetTargets({ repositoryRoot, desktopUserDataDirectory, desktopEntries })) {
-    rmSync(target, { recursive: true, force: true });
+    try {
+      rmSync(target, { recursive: true, force: true });
+    } catch (error) {
+      // Windows refuses to delete a file another process holds open, and
+      // stops partway; name the file so the person can find what holds it.
+      if (error?.code !== "EBUSY" && error?.code !== "EPERM") throw error;
+      console.error(`Could not remove ${error.path ?? target}: another process has it open (${error.code}).`);
+      console.error("Quit whatever holds it (a Worker, Rally Development, an editor), then run `pnpm dev:reset` again.");
+      process.exit(1);
+    }
   }
   console.log("Removed local Worker state and the desktop client's Rally session and caches.");
   console.log(`Kept ${KEPT_DESKTOP_ENTRIES.join(", ")} in ${desktopUserDataDirectory}.`);

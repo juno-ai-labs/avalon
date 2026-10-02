@@ -27,14 +27,18 @@ allowed to add Channels to.
 6. The **Import channel** window asks for a **Space** and a **Name of channel**.
    The name starts as the chat's own title, and you can change it (up to 180
    characters).
-7. Click **Import**. Rally reads the conversation in the window while you
-   watch: the bar above the page says **Reading the conversation…** and counts
-   its steps. A long chat with many files can take a few minutes. When it is
-   done, the new Channel opens and the import window closes.
+7. Click **Import**. Rally reads the conversation in the window. A box titled
+   **Importing conversation** covers the page, which shows blurred behind it,
+   and lists what Rally is doing, a step at a time. The page is locked while
+   Rally reads it, so nothing you click can get in its way. A long chat with
+   many files can take a few minutes. When it is done, the new Channel opens and
+   the import window closes.
 
 The Channel appears in your sidebar as soon as the import starts, but it opens
-only once the import has finished. To stop an import, click **Cancel**; the
-half-made Channel is removed from your sidebar.
+only once the import has finished. To stop an import, click **Cancel** in the
+box; the half-made Channel is removed from your sidebar. If you close the import
+window instead, the half-made Channel is removed once Rally notices the import
+has stopped.
 
 The **Import** button stays greyed out until you are looking at an actual
 conversation. Hover it and it says **Open a Claude or ChatGPT chat to import
@@ -124,6 +128,7 @@ never adds the same messages twice.
 | This tab does not show a conversation. Open one, then import again. | Open the chat itself, not the home page or a list of chats. |
 | The conversation’s page would not load. Reload it, then import again. | Reload the page in the window and try again. |
 | The import did not finish. Try again, or cancel. | Click again. Rally starts reading from the beginning. |
+| The conversation was imported, but Rally could not open it. Find it in your Channels. | The import worked. Open the new Channel from your sidebar. |
 | The source removed or reordered earlier messages. Import this branch into a new channel | See below. |
 
 ### Why Rally refuses a branched conversation

@@ -73,10 +73,10 @@ function hostWindow(zoom = 1) {
   return window;
 }
 
-function browser(zoom = 1, userId = 'user-1') {
+function browser(zoom = 1, userId = 'user-1', agentDriven = false) {
   const window = hostWindow(zoom);
   const states: unknown[] = [];
-  const instance = new EmbeddedBrowser(window as never, userId, (state) => states.push(state));
+  const instance = new EmbeddedBrowser(window as never, userId, (state) => states.push(state), undefined, agentDriven);
   return { instance, window, states };
 }
 
@@ -147,7 +147,7 @@ describe('the local browser behind the rail and the import window', () => {
   });
 
   it('places the active tab in window points while visible, and parks it at full size, unfocused, while hidden', async () => {
-    const { instance, window } = browser(1.25);
+    const { instance, window } = browser(1.25, 'user-1', true);
     await instance.command({ action: 'open', url: 'https://a.example/' });
     await instance.command({ action: 'open', url: 'https://b.example/' });
     instance.setBounds({ x: 10, y: 40, width: 400, height: 300 });
@@ -164,6 +164,16 @@ describe('the local browser behind the rail and the import window', () => {
     instance.setVisible(false);
     expect(electron.views[1]!.bounds).toEqual({ x: 100_000, y: 100_000, width: 500, height: 375 });
     expect(window.webContents.focus).toHaveBeenCalledTimes(1);
+  });
+
+  it('records nothing and throttles a covered tab in a browser no agent drives', async () => {
+    const { instance } = browser();
+    await instance.command({ action: 'open', url: 'https://chat.example/c/1' });
+    const contents = electron.views[0]!.webContents;
+    expect(contents.debugger.attached).toBe(false);
+    expect(contents.throttled).toBe(true);
+    contents.debugger.emit('message', {}, 'Network.responseReceived', { requestId: 'r1', type: 'Fetch', response: { url: 'https://chat.example/api', status: 200, mimeType: 'application/json' } });
+    expect(await instance.command({ action: 'network', tabId: instance.state().activeTabId! })).toEqual({ kind: 'network', responses: [] });
   });
 
   it('reorders tabs, selects the closed tab’s neighbour, and leaves a blank tab after the last close', async () => {
@@ -230,7 +240,7 @@ describe('the local browser behind the rail and the import window', () => {
   });
 
   it('records the page’s responses, keeps fetched bodies after the browser lets them go, and starts over on a new document', async () => {
-    const { instance } = browser();
+    const { instance } = browser(1, 'user-1', true);
     await instance.command({ action: 'open', url: 'https://chat.example/c/1' });
     const tabId = instance.state().activeTabId!;
     const contents = electron.views[0]!.webContents;

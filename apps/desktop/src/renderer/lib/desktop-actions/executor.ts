@@ -5,12 +5,13 @@ import {
   type DesktopActionOutcome,
   type StoredRef,
 } from '@rally/contracts/desktop-actions';
+import { describeZodIssues } from '@rally/contracts/zod-diagnostics';
 
 import type { RallyDesktopBridge } from '../../../common/desktop';
 import type { EmbeddedBrowserCommand } from '../../../common/embedded-browser';
 import { loadThroughTab } from '../browser-conversation';
 import { axOutline } from './ax-outline';
-import { pageScript, type PageScriptOutcome } from './page-script';
+import { pageScript, PageScriptOutcomeSchema } from './page-script';
 import { MAX_STORED_FILE_BYTES, type DesktopActionStore } from './store';
 
 type ExecutorBridge = Pick<RallyDesktopBridge, 'getEmbeddedBrowserState' | 'commandEmbeddedBrowser'>;
@@ -83,14 +84,17 @@ export function createDesktopActionExecutor(options: DesktopActionExecutorOption
     // the agent brings the tab back.
     if ('ok' in before && !(action.kind === 'browser.navigate' && !before.ok && before.code === 'origin_not_allowed')) return before;
     if (action.kind === 'browser.evaluate') {
-      let answered: PageScriptOutcome;
+      let raw: unknown;
       try {
         const result = await command({ action: 'evaluate', tabId, expression: pageScript(action.script) });
-        answered = (result.kind === 'value' ? result.value : null) as PageScriptOutcome;
+        raw = result.kind === 'value' ? result.value : null;
       } catch {
         return failed('script_error', 'The script could not run. Check its syntax: it is the body of an async function.');
       }
-      if (!answered || typeof answered !== 'object') return failed('script_error', 'The script did not answer.');
+      if (!raw || typeof raw !== 'object') return failed('script_error', 'The script did not answer.');
+      const shaped = PageScriptOutcomeSchema.safeParse(raw);
+      if (!shaped.success) return failed('script_error', `The page changed the script's answer: ${describeZodIssues(shaped.error)}.`);
+      const answered = shaped.data;
       if (!answered.ok) return failed(answered.code, answered.message);
       const stored = answered.stored.map(keep);
       const after = await settled();
@@ -196,7 +200,7 @@ export function createDesktopActionExecutor(options: DesktopActionExecutorOption
     /** Run one requested action; never throws, so every request gets an answer. */
     async execute(raw: unknown): Promise<DesktopActionOutcome> {
       const parsed = DesktopActionSchema.safeParse(raw);
-      if (!parsed.success) return failed('invalid_action', 'This desktop does not run that action.');
+      if (!parsed.success) return failed('invalid_action', `This desktop does not run that action: ${describeZodIssues(parsed.error)}.`);
       const action = parsed.data;
       try {
         if (action.kind.startsWith('browser.')) {

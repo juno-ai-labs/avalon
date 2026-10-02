@@ -4655,6 +4655,20 @@ export async function runWorkstreamHarness(
     model: outcome.model ?? modelName,
     usageJson: JSON.stringify({ ...outcome.usage, run_stats: outcome.stats }),
   });
+  if (profile?.ended) {
+    await profile.ended(env, {
+      workspaceId: input.workspaceId,
+      parentId: input.parentId,
+      userId: input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null,
+    }).catch((error: unknown) => {
+      logStructuredEvent(env, "warn", "agent_profile_run_end_failed", {
+        request_id: input.harnessRunId,
+        workspace_id: input.workspaceId,
+        workstream_id: input.parentId,
+        error_code: diagnosticErrorCode(error, "agent_profile_run_end_failed"),
+      });
+    });
+  }
   return {
     ...terminalResult,
     metrics: summarizeHarnessRun(outcome, Date.now() - runStartedAtMs),

@@ -1,7 +1,6 @@
-import type { ConversationFile, SessionImportPreview } from '@rally/contracts';
+import { safeParseSocketEvent, ServerSocketEventSchema, type ConversationFile, type SessionImportPreview } from '@rally/contracts';
 import {
   BrowserImportMessagesSchema,
-  DesktopActionRequestSchema,
   type DesktopActionOutcome,
   type SessionImportFailureReason,
 } from '@rally/contracts/desktop-actions';
@@ -83,7 +82,8 @@ export type SessionImportMode =
 export type SessionImportRunResult =
   | { kind: 'imported'; workstreamId: string }
   | { kind: 'failed'; reason: SessionImportFailureReason }
-  | { kind: 'unfinished' }
+  /** The run ended without a finish; `refusal` is Rally's last answer to one it tried, if any. */
+  | { kind: 'unfinished'; refusal?: string }
   /** The person cancelled; nothing to explain. */
   | { kind: 'cancelled' }
   | { kind: 'error'; message: string };
@@ -93,6 +93,7 @@ export const SESSION_IMPORT_FAILURE_COPY: Record<SessionImportFailureReason, str
   sign_in_required: 'Sign in to the conversation’s site in this window, then import again.',
   not_a_conversation: 'This tab does not show a conversation. Open one, then import again.',
   page_unavailable: 'The conversation’s page would not load. Reload it, then import again.',
+  unreadable: 'Rally could not read this conversation’s messages from the page.',
 };
 
 const ENDED = new Set(['completed', 'failed', 'stopped', 'needs_input', 'idle']);
@@ -159,6 +160,8 @@ export function startSessionImportRun(input: {
   };
   /** How the run ends once the action that decided it has been answered. */
   let ending: SessionImportRunResult | null = null;
+  /** Rally's own words the last time it refused the agent's finish. */
+  let refusal: string | null = null;
   const finish = (result: SessionImportRunResult) => {
     if (finished) return;
     finished = true;
@@ -176,6 +179,8 @@ export function startSessionImportRun(input: {
     handlers: {
       'session_import.finish': async (action): Promise<DesktopActionOutcome> => {
         if (!run || !conversation) return { ok: false, code: 'import_rejected', message: 'The import has not started.' };
+        // A repeated finish after the Channel opened changes nothing.
+        if (ending?.kind === 'imported') return { ok: true, result: { workstreamId: run.workstreamId } };
         let preview: SessionImportPreview;
         try {
           const source = input.mode.kind === 'update'
@@ -201,13 +206,15 @@ export function startSessionImportRun(input: {
             await input.api.updateImportedSession(run.workstreamId, preview, crypto.randomUUID());
           }
         } catch (error) {
-          return { ok: false, code: 'import_rejected', message: error instanceof Error ? error.message : 'Rally refused the import.' };
+          refusal = error instanceof Error && error.message.trim() ? error.message : 'Rally refused the import.';
+          return { ok: false, code: 'import_rejected', message: refusal };
         }
         ending = { kind: 'imported', workstreamId: run.workstreamId };
         return { ok: true, result: { workstreamId: run.workstreamId, messages: preview.content.messages.length } };
       },
       'session_import.fail': async (action) => {
-        ending = { kind: 'failed', reason: action.reason };
+        // An opened Channel stays the ending; a later give-up cannot unlist it.
+        if (ending?.kind !== 'imported') ending = { kind: 'failed', reason: action.reason };
         return { ok: true, result: {} };
       },
     },
@@ -228,15 +235,14 @@ export function startSessionImportRun(input: {
   };
   let queue = Promise.resolve();
   const onFrame = (raw: string) => {
-    let frame: {
-      type?: string; request?: unknown; status?: string;
-      invocation?: { id?: string; toolCallId?: string; toolName?: string; activityName?: string | null; outputSummary?: string | null; status?: string };
-    };
-    try { frame = JSON.parse(raw) as typeof frame; } catch { return; }
+    let decoded: unknown;
+    try { decoded = JSON.parse(raw); } catch { return; }
+    // A frame this window cannot read is one it has no part in.
+    const parsed = safeParseSocketEvent(ServerSocketEventSchema, decoded);
+    if (!parsed.success) return;
+    const frame = parsed.data;
     if (frame.type === 'desktop_action_requested') {
-      const parsed = DesktopActionRequestSchema.safeParse(frame.request);
-      if (!parsed.success) return;
-      const request = parsed.data;
+      const request = frame.request;
       const answered = answers.get(request.id);
       if (answered) {
         answer(request.id, answered);
@@ -249,7 +255,7 @@ export function startSessionImportRun(input: {
         answers.set(request.id, outcome);
         answer(request.id, outcome);
       });
-    } else if ((frame.type === 'tool_started' || frame.type === 'tool_completed') && frame.invocation) {
+    } else if (frame.type === 'tool_started' || frame.type === 'tool_completed' || frame.type === 'tool_failed') {
       const invocation = frame.invocation;
       // The run ends here, once the room has the finish's answer, not when this
       // window sent it: closing on the send lost the answer whenever the socket
@@ -259,22 +265,21 @@ export function startSessionImportRun(input: {
         const decided = ending;
         void queue.then(() => finish(decided));
       }
-      const id = invocation.toolCallId ?? invocation.id;
-      if (!id) return;
+      const id = invocation.toolCallId;
       if (frame.type === 'tool_started') {
         recordStep(id, (current) => current ?? { id, label: invocation.activityName ?? 'Working', status: 'running' });
       } else {
         recordStep(id, (current) => ({
           id,
           label: invocation.outputSummary ?? current?.label ?? invocation.activityName ?? 'Working',
-          status: invocation.status === 'failed' || invocation.status === 'ambiguous' ? 'failed' : 'done',
+          status: frame.type === 'tool_failed' || invocation.status === 'failed' || invocation.status === 'ambiguous' ? 'failed' : 'done',
         }));
       }
     } else if (frame.type === 'harness_status_changed' && frame.status === 'running') {
       started = true;
-    } else if (frame.type === 'harness_status_changed' && frame.status && ENDED.has(frame.status) && (started || steps.length > 0)) {
+    } else if (frame.type === 'harness_status_changed' && ENDED.has(frame.status) && (started || steps.length > 0)) {
       // Finishing answers before the run ends; an end with no finish means the agent gave up.
-      void queue.then(() => finish({ kind: 'unfinished' }));
+      void queue.then(() => finish(refusal ? { kind: 'unfinished', refusal } : { kind: 'unfinished' }));
     }
   };
 
@@ -307,11 +312,13 @@ export function startSessionImportRun(input: {
         ? await input.api.startSessionImport({ sourceUrl: input.sourceUrl, title: input.mode.title, spaceIds: input.mode.spaceIds,
           clientMessageId: input.mode.clientMessageId })
         : await input.api.startSessionImportUpdate(input.mode.workstreamId);
-      input.onStarted?.({ workstreamId: run.workstreamId });
+      // Cancelled while the reservation was in flight: the run has already
+      // ended, so the Channel is discarded without ever being reported.
       if (cancelled) {
         await discard();
         return;
       }
+      input.onStarted?.({ workstreamId: run.workstreamId });
       await connect();
     } catch (error) {
       finish({ kind: 'error', message: messageOf(error) });
