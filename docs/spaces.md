@@ -40,11 +40,11 @@ them; the product design is in
 | `apps/api/src/services/space-bootstrap-service.ts` | The one-time cutover, the new-Organization General, and the placement the two creation paths outside the coordinator take for themselves. |
 | `apps/api/src/services/workstream-object-creation-service.ts` | Where a Channel is born into its Spaces. [`workstream-creation.md`](workstream-creation.md) owns it. |
 | `apps/api/src/routes/spaces.ts` | `/spaces` mutations and the two paginated reads. |
-| `apps/api/src/routes/workspace.ts` | `PUT /workspace/order`, the one write for all three hand-arranged lists. It is a workspace route because two of the three containers are not Spaces. |
+| `apps/api/src/routes/workspace.ts` | `PUT /workspace/order`, the one write for all three hand-arranged lists, and `PUT /workspace/pinned-order` for All's Pinned order. It is a workspace route because two of the three containers are not Spaces. |
 | `apps/api/src/queues/activity-consumer.ts` | The `space_default`, `space_intent_resume` and `space_bootstrap` handlers. |
 | `packages/ui/src/components/space-icon.tsx`, `space-dashboard.tsx`, `space-pills.tsx` | The shared presentation both hosts draw a Space with. `docs/shared-ui.md` owns the split. |
 | `apps/desktop/src/renderer/components/space-pills.tsx`, `sidebar.tsx` | The Space pills across the top of the one sidebar, and the Channel list they filter. **All** lists every Channel; General has no pill. See [`desktop-shell.md`](desktop-shell.md). |
-| `apps/desktop/src/renderer/lib/deep-link-navigation.ts` | The renderer-local signal that distinguishes an externally opened Channel from ordinary in-app navigation so both hierarchy rails reveal it once. |
+| `apps/desktop/src/renderer/lib/deep-link-navigation.ts` | The renderer-local signal that distinguishes an externally opened Channel from ordinary in-app navigation so the sidebar reveals it once. |
 | `apps/desktop/src/renderer/screens/space-dashboard.tsx` | The `/spaces/:spaceId` dashboard. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.tsx` | **Manage access**: `GET /workstreams/:id/access`, rendered as one union of sources. |
 | `apps/desktop/src/renderer/lib/sidebar-list-store.ts`, `use-space-directories.ts`, `workspace-socket.tsx`, `workspace-directory-cache.ts` | The client's Space state: one versioned receiver, the two socket-owned directories, `spacesReady`, this person's whole ordering, and the local cache slice. |
@@ -90,7 +90,7 @@ The hash route identifies a Channel but cannot say whether it came from an
 external deep link. `deep-link-navigation.ts` carries that distinction until
 the live Space hierarchy is ready. The Channels sidebar walks its existing
 directory pager until the target summary is resident, selects one active Space
-that contains it, and asks both hierarchy rails to center their selected row.
+that contains it, and asks the sidebar to center the Channel's row.
 The signal is revisioned so reopening the current Channel works even though its
 hash does not change, and is discarded when the reader navigates elsewhere or
 the complete directory does not contain the target. Ordinary in-app navigation
@@ -327,16 +327,20 @@ and `channel`; `container_id` is the workspace id, the Space id, or the Channel
 id, so a row says what it is about without the object it is stored in being part
 of its key.
 
+The Pinned section under **All** keeps a fourth order that is deliberately not
+a fourth kind: `workspace_pinned_order` (migration 87), sent as `pinnedOrder`
+beside `ordering` and written through `PUT /workspace/pinned-order`. Shipped
+desktops parse `ordering` strictly and would drop a whole snapshot holding a
+kind they do not know; `workstream-pinning.md` owns it.
+
 That is the durable capability, not the current navigation policy. The desktop
-currently applies it only to the Organization's Space rail. Unpinned Channels
+currently applies it only to the Organization's Space pills. Unpinned Channels
 in the selected Space and Breakouts under a Channel ignore stored `space` and
 `channel` arrangements and sort by title with case-insensitive comparison.
 Pinned Channels remain manually ordered in their separate pinned section; an
 unpinned alphabetical row may be dragged into that section to pin it. When the
 section is empty, starting that drag reveals a drop surface directly beneath
-the **Pinned** heading. In the compact middle rail, the text surface is hidden
-like other text-only empty states; the Pinned section remains a drop target.
-Rows cannot be rearranged inside either alphabetical list. The broader wire
+the **Pinned** heading. Rows cannot be rearranged inside either alphabetical list. The broader wire
 and storage shapes remain accepted so this presentation change does not
 require a destructive migration or a coordinated compatibility cutover.
 
@@ -404,7 +408,7 @@ because its rows are what the directory join needs to exist at all.
 member of this Organization, through `spaceRefusalCode(..., "write")`. Legacy
 Space- and Channel-container arrangements remain accepted behind that same gate
 for compatibility, although the desktop no longer uses them to arrange its
-alphabetical Channel and Breakout rails.
+alphabetical Channel list or the Channel menu's Breakouts.
 
 **One delivery shape.** The whole ordering rides the per-viewer
 `workspace_space_snapshot` and the connect payload that seeds it, as one
@@ -412,11 +416,11 @@ alphabetical Channel and Breakout rails.
 this person has arranged. A list rather than a map because the key is a *pair*,
 and a map would have to encode it into a string every reader parses back. The
 Organization's own list is in there too, although the Space directory beside it
-already arrives sorted by the same rows. That redundancy lets the Space rail
+already arrives sorted by the same rows. That redundancy lets the Space pills
 apply one optimistic order and roll it back without relying on server
 serialization order. `space` and `channel` entries remain in the payload as
-compatibility data but are ignored by the desktop's alphabetical Channel and
-Breakout rails. A write republishes the whole ordering to every socket this
+compatibility data but are ignored by the desktop's alphabetical Channel list
+and the Channel menu's Breakouts. A write republishes the whole ordering to every socket this
 person holds, which is what makes a Space drag in one window move the list in
 another without a reload.
 
@@ -465,7 +469,7 @@ the team" above with what deciding it needs.
 `orderByStoredIds` puts the stored ids first in stored
 order, then everything the arrangement never mentioned in the order the list
 already had, and drops a stored id the list is not carrying. It is also what
-`orderPinnedWorkstreams` is built on, so the Space rail and pinned section keep
+`orderPinnedWorkstreams` is built on, so the Space pills and pinned section keep
 one arrangement rule. A drag writes its arrangement locally
 first and drops it if the server refuses; the list then shows what the
 Organization holds, which is what this person's other windows are showing.
@@ -507,7 +511,7 @@ be asked: an Organization-wide Space admits any active member, and a default's
 instructions become a skill in every agent in the Channel, including personal
 and restricted Channels that member cannot manage. A requester the relationship
 table has not heard of, or a refusal, takes the Queue, whose canonical path
-asks again and records the reason on the target. Open rails are refreshed with
+asks again and records the reason on the target. Open Sidekick lists are refreshed with
 the `automations` sync topic after commit.
 
 Resource targets, and Sidekick targets that did not qualify, are published
@@ -995,7 +999,7 @@ Channels. The path keeps the word `channels` because it is a shipped route and
 renaming one to describe its payload buys a reader nothing; what it returns is
 `SpaceChannelPageSchema`, a page of `SpaceConversation` rows. The next section
 is what that page is. A Breakout row carries both its own appearance and its
-parent Channel's appearance, so a compact hierarchy treatment never has to
+parent Channel's appearance, so a hierarchy treatment never has to
 guess either identity from an id when the person has chosen an icon and colour.
 
 WorkspaceDO decides which conversations the page is about and in what order,
@@ -1277,7 +1281,7 @@ A placement is not a copy. The rows under an expanded Space are the Channel list
 the sections below already render, filtered by the Channel's own `spaceIds`, and
 they go through the same row — so a Channel in two Spaces is one record shown
 twice, with one unread state, one running state and one destination. Dropping a
-Channel from the selected Channel rail onto another Space is one server-side
+Channel from the sidebar's list onto another Space's pill is one server-side
 move request. When both Spaces grant the same scope and participant roster, it
 is one `moveSpaceMembership` RPC: in one WorkspaceDO transaction the Channel's
 hosted parent replaces the source Space id while preserving the exact
@@ -1308,9 +1312,9 @@ the list as a keyboard-focusable disabled choice whose tooltip says that only
 its participants may add Channels. Existing placements use checked-item
 semantics, put their checkmark immediately before the Space name, and remain
 keyboard-focusable in the same list. The list uses the reader's stored
-Organization Space order, matching the Space rail rather than the directory's
+Organization Space order, matching the Space pills rather than the directory's
 arrival order. While a reorder is being saved, the optimistic order is shared
-by the rail, Channel placement menus, and creation/import selectors so those
+by the pills, Channel placement menus, and creation/import selectors so those
 surfaces do not briefly disagree.
 The server still refuses either write by name; the disabled rows explain the
 boundary without pretending that a visible Space disappeared.
@@ -1411,10 +1415,10 @@ slots are cleared when the screen changes Space: one component draws every
 Space, so a refusal about the Space somebody just left would otherwise be read
 as being about the one they just opened.
 
-While `spacesReady` is false the Space rail and the dashboard show the
+While `spacesReady` is false the Space pills and the dashboard show the
 Organization-opening card *instead of* Space rows: a directory missing General,
-or a Channel with no Space, is not a state any surface may render. The adjacent
-Channel rail remains the temporary route to every Channel already in hand, but
+or a Channel with no Space, is not a state any surface may render. The
+Channel list remains the temporary route to every Channel already in hand, but
 its rows are not draggable and receive no Space placement controls, and the
 global creation launcher is unavailable because it cannot name a valid
 destination yet. The flag is optional on the wire and read as ready when absent,
@@ -1425,15 +1429,14 @@ placement, or an unpinned-to-pinned drop is possible; a system Channel offers ne
 because the subsystem that writes it decides both its audience and its home.
 
 **There is no time-grouped list of Channels for a member.** Every Channel
-belongs to a Space, so the Space selection is the filter for the adjacent
-Channel rail. A Channel in several Spaces is the same row in each selection,
+belongs to a Space, so the Space pill is the filter for the Channel list. A Channel in several Spaces is the same row in each selection,
 never two simultaneous copies. A Channel whose `spaceIds` name no visible Space
 is omitted once opening is complete: the reach rule makes that an invalid
 directory state rather than a fourth navigation section. While opening is in
-progress, the Channel rail deliberately shows every Channel already in hand so
+progress, the Channel list deliberately shows every Channel already in hand so
 the cutover never makes navigation disappear.
 
-**The selected Channel rail pages the member's list.** It uses the existing
+**The Channel list pages the member's list.** It uses the existing
 workstream loader when its own scroll approaches the end. There is no second
 endpoint: this is the same `['workstreams']` page the former flat list used.
 
@@ -1444,7 +1447,7 @@ channels". The state it describes is a brand-new Organization: **Spaces →
 General → No channels**, and without it nothing under that, which reads as a
 sidebar that has stopped talking rather than one that is empty.
 
-**A member's rail adds the same bounded hierarchy for any Channel they reach
+**A member's sidebar adds the same bounded hierarchy for any Channel they reach
 only through its conversations** — a Breakout of a Channel they cannot read —
 after the member directory's own Channels, and it lists the Spaces those
 Channels sit in beside the member Space directory. Such a Channel opens on its
@@ -1453,18 +1456,18 @@ not hold its Main.
 
 **Both guest hosts get the bounded read-only hierarchy.** Neither guest is
 handed the member Space directory. They use `/sharing/navigation` to draw Space,
-Channel and Breakout rails from canonically admitted Channels only. Selecting a
-Space filters the adjacent Channel rail; in Electron the read-only row is a
+pills and Channel rows from canonically admitted Channels only. Selecting a
+Space filters the Channel list; in Electron the read-only row is a
 button rather than a link to the member Space dashboard. If an admitted Channel
 has no Space placement in a rolling-deploy response, the browser puts it in a
 local **Shared channels** fallback so an authority-safe conversation never
 becomes unreachable while its container metadata is not ready.
 
 **Only manually ordered lists advertise reordering.** Spaces and pinned
-Channels keep drag plus Alt with the up or down arrow. The selected Space's
-ordinary Channels and the selected Channel's Breakouts are alphabetical and do
-not expose a reorder gesture. An ordinary Channel can still be dragged onto a
-Space to move its placement or into the pinned section to pin it.
+Channels keep drag plus Alt with the up or down arrow. Ordinary Channels are alphabetical,
+and a Channel menu lists its Breakouts by latest activity; neither exposes a
+reorder gesture.
+An ordinary Channel can still be dragged onto a Space pill to move its placement or into the pinned section to pin it.
 
 ## Invariants
 
@@ -1498,8 +1501,8 @@ Space to move its placement or into the pinned section to pin it.
 - **One person's order for one container is stored under that container, and
   delivered to nobody else.** The rows are per viewer and reach only that
   viewer's own sockets. Compatibility Channel-container order is accepted
-  unchecked; current React
-  rails ignore it, and any future consumer must continue to treat ids absent
+  unchecked; the current
+  sidebar and Channel menu ignore it, and any future consumer must continue to treat ids absent
   from its own authorized directory as nonexistent.
 - **A membership is invisible until it is finalized.** A `joining` row is not
   counted, not listed, and not on the snapshot. Publishing one before its
@@ -1749,7 +1752,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | `packages/contracts/src/conversation-attention.test.ts` | The predicate itself over all 56 combinations, and that the three reader fields default to false rather than to unknown. |
 | `apps/api/test-workers/space-object.test.ts` | The role's differences, that what a Space's retired conversation still publishes is acknowledged and applied nowhere, that a Space's directory effect lands in the Space directory rather than the Channel one, and that a Channel product request aimed at a Space's conversation is refused by name. |
 | `apps/api/test-workers/channel-access-sources.test.ts` | The Channel end of a Space source: the union every plan is computed against, the revision fence a retract-then-apply convergence carries, and an equivalent-audience provenance replacement transferring source plus supplied-reader attribution atomically and idempotently. |
-| `apps/api/test/workspace-space-schema.test.ts` | Migration 61 against the real ledger: the CHECK vocabularies — including the three containers a person can arrange — the order row's compound key, General's unique partial index, the default-target foreign key, and the retirement-graph rebuild carrying its `retired_at` receipts. |
+| `apps/api/test/workspace-space-schema.test.ts` | Migration 61 against the real ledger: the CHECK vocabularies — including the containers a person can arrange — the order row's compound key, General's unique partial index, the default-target foreign key, and the retirement-graph rebuild carrying its `retired_at` receipts. |
 | `apps/api/test/space-service.test.ts` | The service's *ordering* against capability doubles: what is not written when an earlier step refuses (a D1 anchor failure reserves nothing), that the equal-audience move, an add and a removal are each one WorkspaceDO call without the Worker reading or rewriting the Channel audience, that an archive and a restore walk their members one WorkspaceDO call per page, that each kind of structured refusal is rendered with its own code, that a queued resume calls WorkspaceDO until the intent stops progressing, and that a refused creation anchors and reserves nothing. `apps/api/test/settled-batches.test.ts` holds the archive walk's bounded overlap: a batch overlaps, and a failed step's started sibling is awaited. |
 | `apps/api/test/workspace-space-move-migration.test.ts` | Migration 68 preserving existing intents while adding the move kind and requiring all three source-side fences on every move row. |
 | `apps/api/test/space-default-publication.test.ts` | Claim, send, accept — for default targets and for the cutover's page claim — and that a rejected send leaves its rows pending. |
@@ -1767,7 +1770,6 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | The single sidebar: the All filter and the pills it sits beside, the Space subtitle with General left out, pins under All, associative read-only guest hierarchy, and the rows' markers. |
 | `apps/desktop/src/renderer/lib/browser-collaboration.test.tsx` | The cookie-scoped browser's single sidebar and split Breakout pane; selected-Space filtering and accessibility state; multi-Space route stability; active-before-archived selection; and the local fallback that keeps an admitted Channel reachable when no visible Space is returned. |
 | `apps/desktop/src/renderer/lib/personal-order.test.ts` | The one arrangement rule: stored ids first, the rest in their natural order, an id the list does not carry dropped, an empty arrangement as the identity, and a container addressed by both halves of its key. |
-| `apps/desktop/src/renderer/components/workstream-sidebar.test.tsx` | The Breakout rail's navigation without selection-driven compaction, with Main first, case-insensitive alphabetical Breakouts, creation last, and no reorder gesture. |
 
 ```bash
 pnpm --filter @rally/api exec vitest run test/workspace-space-schema.test.ts
@@ -1850,7 +1852,8 @@ per-person half of the same projection and is where a Space's participants live.
 `workspace_container_order` is `(user_id, container_kind, container_id,
 item_id) → position` — every list a person arranges by hand, keyed by the
 container it belongs to, with a `CHECK` narrowing `container_kind` to the three
-containers the product lets somebody arrange. It replaced a Space-only
+containers the product lets somebody arrange. All's Pinned order is a table of
+its own (`workspace_pinned_order`, migration 87), for the reason above. It replaced a Space-only
 `workspace_space_order` **in place** in migration 63 rather than beside it,
 because 61 is unreleased and a rename dance would have been migration
 bookkeeping for a table nothing had yet stored.

@@ -101,7 +101,7 @@ Loads in child substreams persist in that child's attachment table too; main
 and sibling attachments stay independent. Removing an attachment affects future executions.
 
 Workstream-owned Sidekicks are inherently Recommended. Participants and agents
-can also attach non-archived workspace Sidekicks through the rail picker or the
+can also attach non-archived workspace Sidekicks through the Channel menu's picker or the
 Sidekicks plugin's attach/detach tools. The Channel's parent owns those explicit
 links, in `WorkspaceDO`'s `parent_sidekicks`.
 Workstream main and child agents receive only list/attach/detach from this
@@ -146,13 +146,13 @@ recommendations. The UI separates local removal, shared recommendation removal,
 and recommending an eligible local source. The agent catalog reports `canAttach`
 from the same decision and only reads owned definitions with parent management.
 
-A work stream's own rails list **Sidekicks**: the Sidekicks the room owns,
+A Channel's title menu lists **Sidekicks**: the Sidekicks the room owns,
 explicit workspace recommendations and the current substream's loaded
 attachments, folded into one list keyed by Sidekick id. A Channel's Main reads
 them from its rail on the Organization socket (below); a breakout, and a Main
 whose rail has not arrived, read them over REST — the owned list through
 `listWorkstreamAutomations` (`GET /sidekicks/workstream/:id`, which refuses a
-caller who is not a participant). The plus-marked Add Sidekick rail row opens a menu:
+caller who is not a participant). The plus-marked Add Sidekick row opens a menu:
 Attach existing Sidekick selects a non-archived workspace Sidekick, while Create
 new Sidekick opens the existing Sidekick composer.
 A row opens that Sidekick in the library window; Remove lives in its right-click
@@ -160,7 +160,7 @@ menu when the viewer may remove it. Local removal and workstream recommendation
 removal are separate, explicitly labeled actions. Removing a workspace recommendation
 also clears its current local attachment. An owned Sidekick that has never been
 loaded carries no removal action; its recommendation follows ownership.
-The rail marks recommendations with a right-aligned circled carambola icon whose
+The list marks recommendations with a right-aligned circled carambola icon whose
 tooltip explains shared discovery without automatic loading.
 Picker state is keyed by workstream, and an attachment response cancels older
 recommendation reads before updating the selected conversation's cache and
@@ -245,8 +245,7 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is a Sidekick resolves the workspace scope and the Sidekick's own `sidekick` scope. |
 | `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (the hexagon, which opens the appearance picker, plus lifecycle badge, scope, email address, Pause, Resume, Archive Sidekick, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
 | `apps/desktop/src/renderer/components/appearance-picker.tsx` | The one icon-and-colour palette, shared with the work stream's header. [`workstream-appearance.md`](workstream-appearance.md) owns it, the catalog, and the deterministic default a Sidekick nobody has chosen for still shows. |
-| `apps/desktop/src/renderer/components/inspector-rail.tsx` | The center rail shows the participant facepile and this room's Sidekicks. |
-| `apps/desktop/src/renderer/components/sidekick-section.tsx` | `SidekickSection`, the **Sidekicks** section both of a work stream's rails render, and `workstreamSidekickRows`, the merge of what the room owns with what its conversation loaded — owned first, one row per Sidekick, `undefined` until both answers are in. |
+| `apps/desktop/src/renderer/components/sidekick-section.tsx` | `SidekickSection`, the **Sidekicks** section the Channel menu renders, and `workstreamSidekickRows`, the merge of what the room owns with what its conversation loaded — owned first, one row per Sidekick, `undefined` until both answers are in. |
 | `packages/ui/src/components/conversation-menus.tsx`, `screens/conversation-surface.tsx` | The section's place in the Channel's title menu, below its people; the two queries behind it (`workstream-sidekicks` and `attached-sidekicks`), the participant check that decides whether a row may be detached, and the 403 a non-participant viewer's listing is read as none. |
 | `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink, a symbol, and an optional `HexagonMarker` — a symbol, a colour, and the sentence it means — which it cuts out of the fill along that marker's own outline, gives a hover target the size of the marker's whole box, and reports as `onMarkerHover` so the surface can say what the marker means in its own tooltip (`SIDEKICK_RUNNING_MARKER` is the only one so far); `AutomationGlyph` is that primitive filled from the Sidekick's stored appearance, or from its id where nobody has chosen. |
 | `apps/desktop/src/renderer/screens/sidekicks-library.tsx` | `SidekicksWindow`: the window's routes, and the one place its Escape-to-close gesture is installed. |
@@ -294,7 +293,7 @@ instructions open the authoring conversation and are shown there as its
 tools are available only in that authoring conversation. The persisted drafting
 plugin id and canonical tool names stay; the model reads the plugin as
 `rally_sidekicks` and its tools under the `sidekick_` prefix. Workstream-owned
-entries are managed in the library and listed in their own room's rails, beside
+entries are managed in the library and listed in their own room's Channel menu, beside
 that conversation's loaded attachments.
 
 `createAutomation` reserves the durable owner before bootstrapping its main
@@ -824,7 +823,7 @@ Sidekick's id.
   drafts, applies and activates, and then differs from a working Sidekick with
   nothing to do only in that it never fires.
 - **A room's automation is the room's.** Its scope is fixed at creation, its
-  managers are the room's participants, it is listed only in the room's rail,
+  managers are the room's participants, it is listed only in the room's Channel menu,
   and the room's archive pauses it. Authorship confers nothing on it.
 
 ## Boundary

@@ -57,10 +57,12 @@ asks WorkspaceDO only for the visible Space marks and containment edges of those
 canonically admitted Channels. The response preserves parent archive state separately
 from each conversation, so clients do not offer a child restore while its parent is
 archived.
-The current Channel rail opts into `?attention=1` on `/sharing/navigation`.
+The desktop's guest navigation opts into `?attention=1` on `/sharing/navigation`.
 The Channel's parent then derives one attention boolean from each *admitted*
 conversation's common and requesting-viewer projections. The default response
 keeps its previous shape for deployed clients with strict navigation parsers.
+`?shell=1` adds each Breakout's `originTurnId` and each Space's `systemRole`
+for the single-sidebar shell, behind a flag for the same reason.
 This remains a navigation snapshot, refreshed on focus or directory
 invalidation; it does not create a guest socket for unopened Breakouts.
 
