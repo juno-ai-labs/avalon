@@ -31,8 +31,9 @@ const READING_AN_AI_CHAT_BODY = `Use this to copy a conversation from an AI chat
 ## Procedure
 1. **Load the provider's companion skill** if one matches the page's site — it says where that provider usually keeps the data. Treat its routes and field names as the first place to look, and fall back to the steps below for anything that no longer matches.
 2. **Find the conversation data**, cheapest first:
+   - **The page's network responses.** List what the page received, as a browser's network panel shows it; the conversation is usually a Fetch or XHR response whose URL contains its id. Read that response's body into the page and work on it there, reading slices of it back when you need to see its shape. The page already made the request, with whatever sign-in, token or request body it needed, so nothing has to be rebuilt.
    - **Data embedded in the page.** Look through script elements and hydration payloads for a large JSON-like value. Some pages stream it as an index-encoded array, where objects refer to other entries by their position in the array; decode those references before searching.
-   - **The page's own requests.** List the resource URLs the page has loaded and pick the one that returned the conversation, usually a path containing the conversation's id. Request it again from page script with the page's credentials, just as the page did.
+   - **The page's own requests, made again.** Only when the response you need was never received — the page fetched part of the history, or loaded before recording began — request it yourself from page script with the page's credentials, as the page did.
    - **In the page's memory**, as a last resort before the DOM.
    Recognise the conversation by its **shape**, not by names: a collection of objects that each carry an author or role, some text or content parts, and an id, plus usually a parent link and a pointer to the current or latest message. Keep the whole object on window so later calls can use it without fetching it again.
 3. **Take the branch the person sees.** If messages form a tree, where editing or regenerating forked it, start at the current or latest message and follow parent links back to the root, then reverse. Check that the walk ends at the root; a walk that stops early has lost the beginning of the conversation. If the data is a plain list, keep its order.
@@ -56,11 +57,11 @@ Check your result against the page, not against itself. Most failures are silent
 - **Ids are the provider's.** Every sourceMessageId is unique and comes from the data, never from the page's element order. Where a provider gives messages no ids at all, use the scheme its companion skill names. On an update, your messages start with exactly the ids you were given.
 
 ## Anti-patterns
-- **Reverse-engineering the page every time.** Do this instead: try the companion skill's routes first and spend calls on discovery only when they fail.
+- **Reverse-engineering the page every time.** Do this instead: read the network responses and the companion skill's routes first, and spend calls on discovery only when they fail.
 - **Returning large blobs to read them.** Do this instead: keep data on window and return only the counts, ids and short samples you need to decide the next step.
 - **Clicking at coordinates you have not seen.** Do this instead: read the outline or take a screenshot first, then click a control you identified.`;
 
-const READING_CHATGPT_BODY = `Hints for copying a conversation from chatgpt.com. They describe where ChatGPT has kept its data; verify each before relying on it. A hint marked (seen once) comes from a single conversation: check it before building on it, and expect it to be incomplete. When one no longer holds, use the generic procedure in the reading-an-ai-chat skill for that part.
+const READING_CHATGPT_BODY = `Hints for copying a conversation from chatgpt.com. They describe where ChatGPT has kept its data; verify each before relying on it. The routes below are also where to look in the page's network responses: read a response the page already received before requesting one yourself. A hint marked (seen once) comes from a single conversation: check it before building on it, and expect it to be incomplete. When one no longer holds, use the generic procedure in the reading-an-ai-chat skill for that part.
 
 ## Where the conversation is
 - **The person's own chat** (/c/<id>): the signed-in API at /backend-api/conversation/<id>. It wants the access token ChatGPT's own client gets from /api/auth/session (the accessToken field) as a Bearer token. Fetch both inside one page script and never return the token. Cookies alone can return a misleading not-found.
@@ -85,7 +86,7 @@ const READING_CHATGPT_BODY = `Hints for copying a conversation from chatgpt.com.
 ## Page fallback
 Turns have been marked with data-testid values starting "conversation-turn-", plus data-message-author-role and data-message-id on the message itself. Expect these to drift; check that they exist before relying on them.`;
 
-const READING_CLAUDE_BODY = `Hints for copying a conversation from claude.ai. They describe where Claude has kept its data; verify each before relying on it. A hint marked (seen once) comes from a single conversation: check it before building on it, and expect it to be incomplete. When one no longer holds, use the generic procedure in the reading-an-ai-chat skill for that part.
+const READING_CLAUDE_BODY = `Hints for copying a conversation from claude.ai. They describe where Claude has kept its data; verify each before relying on it. The routes below are also where to look in the page's network responses: read a response the page already received before requesting one yourself. A hint marked (seen once) comes from a single conversation: check it before building on it, and expect it to be incomplete. When one no longer holds, use the generic procedure in the reading-an-ai-chat skill for that part.
 
 ## Where the conversation is
 - **The person's own chat** (/chat/<id>): /api/organizations/<orgId>/chat_conversations/<id>?tree=True&rendering_mode=messages&render_all_tools=true. To find the organization, fetch /api/organizations and try each uuid until one returns the conversation. Do not read cookies to find it.

@@ -20,7 +20,7 @@ Each message needs sourceMessageId: the provider's own stable id for that messag
 ## How to read the page
 Before you read anything, load the reading-an-ai-chat skill and the companion skill for this conversation's site. Follow them: they say where the conversation's data is and what counts as shown.
 
-browser_evaluate runs an async JavaScript function body in the page and returns what it returns, as JSON. Prefer reading the JSON the page itself loads (call the same endpoints with fetch and credentials: "include", as the page does) over reading the DOM: long conversations are rendered lazily, so the DOM holds only part of them and reading it drops messages without any error. Use the DOM, browser_snapshot or browser_screenshot to find your way, and to check what the person sees. Never return cookies, storage or tokens from the page.
+browser_evaluate runs an async JavaScript function body in the page and returns what it returns, as JSON. Prefer reading the JSON the page itself loaded — the browser records the page's network responses, and their bodies read back into the page — or calling the same endpoints with fetch and credentials: "include", as the page does, over reading the DOM: long conversations are rendered lazily, so the DOM holds only part of them and reading it drops messages without any error. Use the DOM, browser_snapshot or browser_screenshot to find your way, and to check what the person sees. Never return cookies, storage or tokens from the page.
 
 Variables you assign to window persist between calls until the page navigates; keep large data there and return only what you need to decide the next step.
 

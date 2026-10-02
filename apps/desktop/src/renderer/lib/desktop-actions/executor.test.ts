@@ -60,4 +60,31 @@ describe('desktop action executor', () => {
     tabs.splice(0, 1);
     await expect(executor.execute({ kind: 'browser.screenshot' })).resolves.toMatchObject({ ok: false, code: 'tab_closed' });
   });
+
+  it('lists the page’s responses, narrowed, and places a body in the page with a slice of it returned', async () => {
+    const tabs = [tab('pinned', 'https://claude.ai/chat/1')];
+    const page: { __rallyNetwork?: Record<string, unknown> } = {};
+    const responses = [
+      { requestId: 'r1', url: 'https://claude.ai/api/chat_conversations/1', method: 'GET', status: 200, mimeType: 'application/json', resourceType: 'Fetch', size: 40, cached: true },
+      { requestId: 'r2', url: 'https://claude.ai/logo.svg', method: 'GET', status: 200, mimeType: 'image/svg+xml', resourceType: 'Image', size: 900, cached: false },
+    ];
+    const commandEmbeddedBrowser = vi.fn(async (command: EmbeddedBrowserCommand): Promise<EmbeddedBrowserResult> => {
+      if (command.action === 'network') return { kind: 'network', responses };
+      if (command.action === 'response_body') return { kind: 'response_body', body: '{"uuid":"1","chat_messages":[{"text":"hi"}]}', base64Encoded: false };
+      if (command.action === 'evaluate') return { kind: 'value', value: new Function('window', `return ${command.expression}`)(page) };
+      return { kind: 'state', state: { tabs, activeTabId: 'pinned' } };
+    });
+    const executor = createDesktopActionExecutor({
+      bridge: { commandEmbeddedBrowser, getEmbeddedBrowserState: vi.fn(async () => ({ tabs, activeTabId: 'pinned' })) },
+      tabId: 'pinned', siteAllows: (value) => providerSiteAllows('claude', value), store: new DesktopActionStore(),
+    });
+    await expect(executor.execute({ kind: 'browser.network_list', urlContains: 'chat_conversations', resourceType: 'fetch' }))
+      .resolves.toEqual({ ok: true, result: { responses: [responses[0]] } });
+    await expect(executor.execute({ kind: 'browser.network_read', requestId: 'r1', offset: 2, length: 4 })).resolves.toEqual({
+      ok: true,
+      result: { variable: 'window.__rallyNetwork["r1"]', mimeType: 'application/json', size: 44, json: true, keys: ['uuid', 'chat_messages'], text: 'uuid' },
+    });
+    // The page now holds the parsed body, for page script to work on.
+    expect(page.__rallyNetwork?.['r1']).toEqual({ uuid: '1', chat_messages: [{ text: 'hi' }] });
+  });
 });

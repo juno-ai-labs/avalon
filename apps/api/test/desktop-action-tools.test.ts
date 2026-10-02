@@ -68,4 +68,22 @@ describe("agent profiles", () => {
     expect(agentProfileFor("session_import")?.role).toBe("session_import");
     expect(() => agentProfileFor("retired_profile")).toThrow(expect.objectContaining({ code: "agent_profile_unknown" }));
   });
+
+  it("asks the desktop for the page's network responses and a body, and returns what it answered", async () => {
+    const asked: unknown[] = [];
+    const executor: DesktopActionExecutor = async (request) => {
+      asked.push(request.action);
+      return request.action.kind === "browser.network_list"
+        ? { ok: true, result: { responses: [{ requestId: "r1", url: "https://chat.example/api/c/1", method: "GET", status: 200, mimeType: "application/json", resourceType: "Fetch", size: 40, cached: true }] } }
+        : { ok: true, result: { variable: "window.__rallyNetwork[\"r1\"]", mimeType: "application/json", size: 40, json: true, keys: ["messages"], text: "{\"mess" } };
+    };
+    await expect(tool("browser_network_list", executor).execute({ urlContains: "/api/" }, context))
+      .resolves.toMatchObject({ output: { responses: [{ requestId: "r1", cached: true }] }, summary: "Listed 1 network responses" });
+    await expect(tool("browser_network_read", executor).execute({ requestId: "r1", length: 6 }, context))
+      .resolves.toMatchObject({ output: { variable: "window.__rallyNetwork[\"r1\"]", keys: ["messages"], text: "{\"mess" } });
+    expect(asked).toEqual([
+      { kind: "browser.network_list", urlContains: "/api/" },
+      { kind: "browser.network_read", requestId: "r1", length: 6 },
+    ]);
+  });
 });

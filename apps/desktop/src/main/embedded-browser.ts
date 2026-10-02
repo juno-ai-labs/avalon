@@ -7,9 +7,14 @@ import {
   type EmbeddedBrowserBounds,
   type EmbeddedBrowserShortcut,
   type EmbeddedBrowserCommand,
+  type EmbeddedBrowserNetworkResponse,
   type EmbeddedBrowserResult,
   type EmbeddedBrowserState,
 } from '../common/embedded-browser';
+
+interface RecordedResponse extends EmbeddedBrowserNetworkResponse {
+  body: { body: string; base64Encoded: boolean } | null;
+}
 
 interface BrowserTab {
   id: string;
@@ -17,7 +22,16 @@ interface BrowserTab {
   /** The tab the person opened that this popup tab belongs to, or null for one they opened. */
   popupOf: string | null;
   favicon: string | null;
+  /** What the page has received since it last navigated, by DevTools request id. */
+  network: Map<string, RecordedResponse>;
 }
+
+/**
+ * The resource types whose bodies are copied as they finish: what page script
+ * fetched, which is where a web app's data arrives. Documents, scripts, images
+ * and media are listed but read live from Chromium's own buffer.
+ */
+const CACHED_RESOURCE_TYPES = new Set(['Fetch', 'XHR']);
 
 const embeddedBrowserContents = new WeakSet<WebContents>();
 
@@ -185,6 +199,8 @@ export class EmbeddedBrowser {
     const id = randomUUID();
     const contents = view.webContents;
     this.configureRemoteContents(contents, id);
+    const network = new Map<string, RecordedResponse>();
+    this.recordNetwork(contents, network);
     contents.on('page-title-updated', () => this.publish());
     contents.on('did-navigate', () => {
       // A new document starts without the last one's icon.
@@ -218,7 +234,7 @@ export class EmbeddedBrowser {
       // that went away on its own still needs it.
       if (this.forget(id)) this.publish();
     });
-    this.tabs.set(id, { id, view, popupOf, favicon: null });
+    this.tabs.set(id, { id, view, popupOf, favicon: null, network });
     this.window.contentView.addChildView(view);
     this.activeTabId = id;
     this.layout();
@@ -279,6 +295,67 @@ export class EmbeddedBrowser {
     const tab = this.tabs.get(id ?? this.activeTabId ?? '');
     if (!tab) throw new Error('Browser tab is no longer open');
     return tab;
+  }
+
+  /**
+   * Records every response the page receives, from the tab's first request,
+   * so an agent can read the data a web app loaded instead of rebuilding the
+   * request that fetched it. Fetch and XHR bodies are copied as each finishes:
+   * Chromium evicts its own copies, and an agent may need one well after it
+   * arrived. A new document starts a new list, which keeps what is held to one
+   * page's traffic.
+   */
+  private recordNetwork(contents: WebContents, network: Map<string, RecordedResponse>): void {
+    const methods = new Map<string, string>();
+    contents.on('did-start-navigation', (...args: unknown[]) => {
+      const details = args[0] as { isMainFrame?: boolean; isSameDocument?: boolean } | undefined;
+      const isMainFrame = details?.isMainFrame ?? args[3] === true;
+      const isSameDocument = details?.isSameDocument ?? args[2] === true;
+      if (isMainFrame && !isSameDocument) {
+        network.clear();
+        methods.clear();
+      }
+    });
+    contents.debugger.on('message', (_event, method: string, params: Record<string, unknown>) => {
+      const requestId = typeof params['requestId'] === 'string' ? params['requestId'] : null;
+      if (!requestId) return;
+      if (method === 'Network.requestWillBeSent') {
+        const request = params['request'] as { method?: string } | undefined;
+        methods.set(requestId, request?.method ?? 'GET');
+      } else if (method === 'Network.responseReceived') {
+        const response = params['response'] as { url?: string; status?: number; mimeType?: string } | undefined;
+        network.set(requestId, {
+          requestId,
+          url: response?.url ?? '',
+          method: methods.get(requestId) ?? 'GET',
+          status: response?.status ?? 0,
+          mimeType: response?.mimeType ?? '',
+          resourceType: typeof params['type'] === 'string' ? params['type'] : 'Other',
+          size: null,
+          cached: false,
+          body: null,
+        });
+      } else if (method === 'Network.loadingFinished') {
+        const recorded = network.get(requestId);
+        if (!recorded) return;
+        recorded.size = typeof params['encodedDataLength'] === 'number' ? params['encodedDataLength'] : null;
+        if (!CACHED_RESOURCE_TYPES.has(recorded.resourceType)) return;
+        void (contents.debugger.sendCommand('Network.getResponseBody', { requestId }) as Promise<{ body: string; base64Encoded: boolean }>)
+          .then((body) => {
+            // A navigation may have started a new list while this was read.
+            if (network.get(requestId) !== recorded) return;
+            recorded.body = { body: body.body, base64Encoded: body.base64Encoded };
+            recorded.cached = true;
+          })
+          .catch(() => undefined);
+      }
+    });
+    try {
+      if (!contents.debugger.isAttached()) contents.debugger.attach('1.3');
+      void contents.debugger.sendCommand('Network.enable').catch(() => undefined);
+    } catch {
+      // Another debugger (an open DevTools window) holds the page; nothing is recorded.
+    }
   }
 
   private async cdp(contents: WebContents, method: string, params: Record<string, unknown> = {}): Promise<unknown> {
@@ -355,6 +432,18 @@ export class EmbeddedBrowser {
       return { kind: 'value', value: await contents.executeJavaScript(command.expression, true) };
     } else if (command.action === 'cdp') {
       return { kind: 'value', value: await this.cdp(contents, command.method, command.params) };
+    } else if (command.action === 'network') {
+      const responses = [...this.tab(command.tabId).network.values()].map((recorded): EmbeddedBrowserNetworkResponse => ({
+        requestId: recorded.requestId, url: recorded.url, method: recorded.method, status: recorded.status,
+        mimeType: recorded.mimeType, resourceType: recorded.resourceType, size: recorded.size, cached: recorded.cached,
+      }));
+      return { kind: 'network', responses };
+    } else if (command.action === 'response_body') {
+      const recorded = this.tab(command.tabId).network.get(command.requestId);
+      if (!recorded) throw new Error('No response with that id since the page last navigated');
+      if (recorded.body) return { kind: 'response_body', ...recorded.body };
+      const live = await this.cdp(contents, 'Network.getResponseBody', { requestId: command.requestId }) as { body: string; base64Encoded: boolean };
+      return { kind: 'response_body', body: live.body, base64Encoded: live.base64Encoded };
     }
     this.publish();
     return { kind: 'state', state: this.state() };

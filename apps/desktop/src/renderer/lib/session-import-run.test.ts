@@ -3,17 +3,22 @@ import { assemblePreview, startSessionImportRun, type SessionImportApi, type Ses
 import { DesktopActionStore } from './desktop-actions/store';
 
 /** One fake feed socket per run: records what this window sent and when it closed. */
-const sockets = vi.hoisted(() => [] as Array<{ log: string[]; emit(type: string, data?: string): void }>);
+const sockets = vi.hoisted(() => [] as Array<{ log: string[]; dropNextSend: boolean; emit(type: string, data?: string): void }>);
 vi.mock('./realtime-socket', () => ({
   createRealtimeSocket: () => {
     const listeners = new Map<string, Array<(event: { data?: string }) => void>>();
     const socket = {
       log: [] as string[],
       readyState: 1,
+      /** The next send meets a socket between connections, as a real one throws. */
+      dropNextSend: false,
       addEventListener(type: string, listener: (event: { data?: string }) => void) {
         listeners.set(type, [...(listeners.get(type) ?? []), listener]);
       },
-      send(data: string) { socket.log.push(`send ${(JSON.parse(data) as { type: string }).type}`); },
+      send(data: string) {
+        if (socket.dropNextSend) { socket.dropNextSend = false; throw new Error('Realtime socket is not open'); }
+        socket.log.push(`send ${(JSON.parse(data) as { type: string }).type}`);
+      },
       close() { socket.log.push('close'); },
       emit(type: string, data?: string) { for (const listener of listeners.get(type) ?? []) listener({ data }); },
     };
@@ -52,8 +57,12 @@ describe('assembling an import from what the agent stored', () => {
     expect(at([{ role: 'user', text: 'x' }])).toThrow('sourceMessageId');
     expect(at([{ role: 'user', text: 'a', sourceMessageId: 'm' }, { role: 'assistant', text: 'b', sourceMessageId: 'm' }]))
       .toThrow('sourceMessageId m appears more than once.');
-    expect(at([{ role: 'user', text: 'a', sourceMessageId: 'm', files: [{ handle: 'gone' }] }])).toThrow('file handle gone');
-    expect(at([{ role: 'user', text: ' ', sourceMessageId: 'm' }])).toThrow('Message 1 has no text and no files.');
+    const reply = { role: 'assistant', text: 'b', sourceMessageId: 'r' };
+    expect(at([{ role: 'user', text: 'a', sourceMessageId: 'm', files: [{ handle: 'gone' }] }, reply])).toThrow('file handle gone');
+    expect(at([{ role: 'user', text: ' ', sourceMessageId: 'm' }, reply])).toThrow('Message 1 has no text and no files.');
+    // A chat with no reply is never what a provider shows.
+    expect(at([{ role: 'user', text: 'a', sourceMessageId: 'm' }, { role: 'user', text: 'b', sourceMessageId: 'n' }]))
+      .toThrow('The stored messages have no assistant reply.');
   });
 });
 
@@ -86,9 +95,30 @@ describe('running an import', () => {
     const socket = sockets[0]!;
     socket.emit('open');
     socket.emit('message', JSON.stringify({ type: 'desktop_action_requested', request: { id: 'a1', action: { kind: 'session_import.fail', reason: 'page_unavailable' } } }));
+    await vi.waitFor(() => expect(socket.log).toEqual(['send subscribe', 'send answer_desktop_action']));
+    // The room has the answer once the tool completes; only then does the run end.
+    socket.emit('message', JSON.stringify({ type: 'tool_completed', invocation: { toolCallId: 'c9', toolName: 'import_fail', status: 'completed' } }));
     await expect(run.done).resolves.toEqual({ kind: 'failed', reason: 'page_unavailable' });
     expect(socket.log).toEqual(['send subscribe', 'send answer_desktop_action', 'close']);
     await vi.waitFor(() => expect(discards).toEqual(['w1']));
+  });
+
+  it('answers a re-offered action again when its first answer never reached the room', async () => {
+    sockets.length = 0;
+    const { run } = started();
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    const socket = sockets[0]!;
+    socket.emit('open');
+    const request = JSON.stringify({ type: 'desktop_action_requested', request: { id: 'a1', action: { kind: 'session_import.fail', reason: 'page_unavailable' } } });
+    socket.dropNextSend = true;
+    socket.emit('message', request);
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+    expect(socket.log).toEqual(['send subscribe']);
+    // The room never got it, so it offers the action again; the same answer goes.
+    socket.emit('message', request);
+    await vi.waitFor(() => expect(socket.log).toEqual(['send subscribe', 'send answer_desktop_action']));
+    socket.emit('message', JSON.stringify({ type: 'tool_completed', invocation: { toolCallId: 'c9', toolName: 'import_fail', status: 'completed' } }));
+    await expect(run.done).resolves.toEqual({ kind: 'failed', reason: 'page_unavailable' });
   });
 
   it('lists each step in the harness’s words, then in what the tool did, once each', async () => {

@@ -146,7 +146,7 @@ describe("prompt renderers", () => {
       },
       sessionImportSystem: {
         actual: renderSessionImportSystemPrompt(),
-        hash: "e33d67cb81994810d154e5824bdd7875e2bf3c0e6407b13b42403ffe864dd53e",
+        hash: "579b0757b7faec5dbe8492734f4656d2e60eaa120b4edd72fd55696d069b2398",
       },
       sessionImportOpening: {
         actual: renderSessionImportOpening({

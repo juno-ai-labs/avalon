@@ -368,6 +368,12 @@ Sidekick's submission does, and the loop names a code-shaped failure through
 `diagnosticErrorCode`. The window likewise treats a run that ends without a
 finish as unfinished once it has started, rather than only after its first
 step, so an agent that gives up at once no longer leaves the window waiting.
+`import_finish` refuses a conversation with no assistant reply — never what a
+provider shows — so a reader that dropped the replies, as one did with a Deep
+Research report held in a tool message's widget state, is told to look again
+rather than trusted. The window ends a run on the finish tool's
+`tool_completed` frame, not on sending its answer, and re-sends a stored answer
+to a re-offered action (see [desktop actions](desktop-actions.md)).
 Signed-in verification against the owners' own chats confirmed originals:
 claude.ai uploads byte-for-byte (a preview is taken only where claude.ai offers
 no original), ChatGPT's generated images at full size, and an artifact equal to
