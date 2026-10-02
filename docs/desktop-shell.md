@@ -57,10 +57,17 @@ in the Channel menu. The desktop remembers the filter per device
 (`useUiStore.sidebarSpaceFilter`, `rally.sidebar-space-filter`). Opening a
 Channel the filter would hide widens the list to All.
 
-The list is **Pinned**, then every other Channel A to Z. With pins above it
-the rest is headed **Channels**, and each heading carries a quiet hint at its
-far edge (*Drag to reorder* when there are pins to reorder, *A–Z*); with no
-pins the list stands alone and has no heading. A row shows the glyph,
+The list is **Pinned**, then every other Channel, A to Z by default. The rest
+is headed **Channels** whenever it has rows, pinned or not, because that heading
+carries the sort toggle; **Pinned** carries a quiet *Drag to reorder* hint when
+there are pins to reorder.
+The toggle cycles the unpinned Channels through **A–Z** (case-insensitive),
+**Recent** (newest `lastActivityAt` first) and **Needs you** (bold rows first,
+then the rest, each newest first). Needs you reads
+`workstreamHasActivityForViewer`, the same input as the bold title; a Channel
+opened while bold stays in the bold half until the reader opens another, so
+reading it does not move it out from under the pointer. The choice
+is per device, in `rally.sidebar-channel-sort`. A row shows the glyph,
 the title and the last activity time. Under them it shows the names of the
 Channel's Spaces, without General; a Channel only in General has a one-line
 row. An unread row has a semibold title and its dot is red; the weight follows the
@@ -245,6 +252,32 @@ from the shared navigation directory.
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-02 — Channels sort toggle: A–Z, Recent, or Needs you
+
+**What changed:** The **Channels** heading's *A–Z* hint became a button with an
+`arrows-sort` icon that cycles the unpinned list through A to Z, most recent
+activity, and Needs you (bold rows first, then the rest, each newest first).
+The choice is a per-device preference in `localStorage`. Needs you reads the
+same `workstreamHasActivityForViewer` the row's bold title does, so a row
+cannot sort as needing the reader while drawn as read, or the reverse.
+
+**Why:** Product asked for a way to see the Channels that moved last without
+pinning them, and for the choice to survive a restart.
+
+**Considered and rejected:** Ordering Recent by `workstreamRecencyAt`, which
+prefers when this reader last opened the Channel. The ask was most recent
+update, and the row's time already shows `lastActivityAt`, so ordering by it
+keeps the list and its times in agreement. Storing the choice on the server
+was also out: the ask was a local preference. So was keeping the **Channels**
+heading only when something is pinned, as before. The heading now carries the toggle, so that
+rule would hide Recent and Needs you from exactly the reader who has pinned
+nothing and most needs them. The heading shows whenever the list has rows.
+
+**Consequences:** The unpinned list always has a heading, so a member with no
+pins sees one more row above their Channels than before.
+
+Shipped in #1068.
 
 ### 2026-10-02 — Space pills sort A to Z
 

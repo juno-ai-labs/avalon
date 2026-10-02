@@ -17,7 +17,7 @@ import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { conversationNeedsViewer, type CreateSpaceRequest, type SpaceSummary, type WorkstreamBatchFilter, type WorkstreamBatchUpdate } from '@rally/contracts';
-import { IconDots } from '@tabler/icons-react';
+import { IconArrowsSort, IconDots } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { Archive, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderMinus, FolderPlus, Globe2, Info, LogOut, Megaphone, Menu, Pencil, Pin, PinOff, Settings, Smartphone } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TransitionEvent } from 'react';
@@ -28,7 +28,7 @@ import {
   consumeDeepLinkWorkstreamNavigation,
   useDeepLinkWorkstreamNavigation,
 } from '../lib/deep-link-navigation';
-import { formatDateTime, formatTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, type RecencyGroup, workstreamMarkerStatus, workstreamRecencyAt } from '../lib/format';
+import { formatDateTime, formatTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, recencyTimestamp, type RecencyGroup, workstreamMarkerStatus, workstreamRecencyAt } from '../lib/format';
 import { layoutRowAt } from '../lib/list-motion';
 import { committedOrder, moveWithin, orderByStoredIds } from '../lib/personal-order';
 import { compareAlphabeticalName, compareAlphabeticalTitle } from '@rally/ui/lib/alphabetical';
@@ -37,7 +37,7 @@ import { desktopBridge } from '../lib/platform';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation, reportTelemetryProductIntent, telemetryVisibility } from '../lib/telemetry';
 import { spaceFailureOf, spaceFailureSentence } from '../lib/space-failure-copy';
 import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
-import { MIN_SIDEBAR_WIDTH, SIDEBAR_CONTENT_MIN_WIDTH, useUiStore } from '../lib/ui-store';
+import { MIN_SIDEBAR_WIDTH, SIDEBAR_CONTENT_MIN_WIDTH, type SidebarChannelSort, useUiStore } from '../lib/ui-store';
 import { useDownloadedUpdate } from '../lib/use-downloaded-update';
 import { layoutKey, useSemanticScroll } from '../lib/desktop-layout';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
@@ -170,6 +170,62 @@ function batchSubject(target: WorkstreamBatchTarget): string {
     : `${target.matchedCount} channels`;
   return workstreams;
 }
+
+/**
+ * How many of this Channel's conversations need this reader: its Breakouts,
+ * plus Main when the row shows Main. One count for the row's bold title, its
+ * dot, and the Needs you sort, so the three cannot disagree.
+ */
+function workstreamAttentionCount(workstream: WorkstreamSummary): number {
+  const mainVisible = !workstream.associativeSubstreamId || workstream.associativeSubstreamId === '0';
+  return (workstream.breakoutAttentionCount ?? 0)
+    + Number(mainVisible && conversationNeedsViewer(workstream));
+}
+
+/** Whether the row reads as unread: the input to its bold title. */
+function workstreamHasActivityForViewer(workstream: WorkstreamSummary): boolean {
+  return workstream.hasUnread === true || workstreamAttentionCount(workstream) > 0;
+}
+
+/**
+ * Newest last activity first, ties A to Z. The Channel's own last activity,
+ * not when this reader last opened it: the row's time shows the same value,
+ * so the order and the times down the list agree.
+ */
+function compareRecent(left: WorkstreamSummary, right: WorkstreamSummary): number {
+  return recencyTimestamp(right) - recencyTimestamp(left) || compareAlphabeticalTitle(left, right);
+}
+
+type WorkstreamComparator = (left: WorkstreamSummary, right: WorkstreamSummary) => number;
+
+/**
+ * The sort toggle's cycle: each order's label, how it is read aloud, its
+ * comparator, and what a click moves to. `heldId` is the open Channel that was
+ * bold when the reader opened it; only Needs you reads it.
+ */
+const CHANNEL_SORTS: Record<SidebarChannelSort, {
+  label: string;
+  spoken: string;
+  compare: (heldId: string | null) => WorkstreamComparator;
+  next: SidebarChannelSort;
+}> = {
+  alphabetical: { label: 'A–Z', spoken: 'A to Z', compare: () => compareAlphabeticalTitle, next: 'recent' },
+  recent: { label: 'Recent', spoken: 'by recent activity', compare: () => compareRecent, next: 'needs_you' },
+  // Every bold row first, then the rest, each half in Recent order. Opening a
+  // bold row reads it, and without the hold it would drop out from under the
+  // pointer while the reader is still in it; it stays until they move on.
+  needs_you: {
+    label: 'Needs you',
+    spoken: 'by what needs you',
+    compare: (heldId) => {
+      const needsYou = (workstream: WorkstreamSummary): number => Number(
+        workstream.id === heldId || workstreamHasActivityForViewer(workstream),
+      );
+      return (left, right) => needsYou(right) - needsYou(left) || compareRecent(left, right);
+    },
+    next: 'alphabetical',
+  },
+};
 
 const sidebarWeekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
 const sidebarMonthDay = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
@@ -492,9 +548,8 @@ function WorkstreamRow({
   const [managingAccess, setManagingAccess] = useState(false);
   const socketWarmup = useWorkstreamSocketHoverWarmup(workstream.id);
   const socketOpenContext = useWorkstreamSocketOpenContext(workstream.id);
-  const mainVisible = !workstream.associativeSubstreamId || workstream.associativeSubstreamId === '0';
-  const attentionCount = (workstream.breakoutAttentionCount ?? 0)
-    + Number(mainVisible && conversationNeedsViewer(workstream));
+  const attentionCount = workstreamAttentionCount(workstream);
+  const hasActivityForViewer = workstreamHasActivityForViewer(workstream);
   const destination = `/workstreams/${workstream.id}${workstream.associativeSubstreamId && workstream.associativeSubstreamId !== '0'
     ? `?substream=${encodeURIComponent(workstream.associativeSubstreamId)}`
     : ''}`;
@@ -597,7 +652,7 @@ function WorkstreamRow({
   // sidebar leaves `completed` out: a finished run is the ordinary state.
   const rankedMarker = workstreamMarkerStatus({
     ...workstream,
-    hasUnread: workstream.hasUnread === true || attentionCount > 0,
+    hasUnread: hasActivityForViewer,
   });
   const marker = rankedMarker === 'completed' ? null : rankedMarker;
   return (
@@ -758,7 +813,7 @@ function WorkstreamRow({
               isActive && 'is-active',
               // Bold follows the dot's own unread input, so a row whose
               // Breakout needs this reader reads as unread in both.
-              (workstream.hasUnread || attentionCount > 0) && 'is-unread',
+              hasActivityForViewer && 'is-unread',
               // Machinery the reader has opted into seeing. Dimmed rather than
               // badged, so it reads as one level below the work it sits beside
               // without adding another thing to decode.
@@ -1058,6 +1113,8 @@ export function Sidebar({
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
   const selectedSpaceFilter = useUiStore((state) => state.sidebarSpaceFilter);
   const setSelectedSpaceFilter = useUiStore((state) => state.setSidebarSpaceFilter);
+  const channelSort = useUiStore((state) => state.sidebarChannelSort);
+  const setChannelSort = useUiStore((state) => state.setSidebarChannelSort);
   const downloadedUpdate = useDownloadedUpdate();
   // The sidebar never collapses: these stay false so the row and list motion
   // contracts that still take a layout flag read the one layout there is.
@@ -1365,11 +1422,21 @@ export function Sidebar({
     () => orderPinnedWorkstreams(visibleWorkstreams, activeDragOrder ?? storedAllOrder),
     [activeDragOrder, storedAllOrder, visibleWorkstreams],
   );
+  // Taken once per opened Channel, while its row still shows what it was
+  // opened for: reading it clears the bold a moment later.
+  const [heldOpen, setHeldOpen] = useState<{ routeId: string | null; heldId: string | null }>({ routeId: null, heldId: null });
+  if (heldOpen.routeId !== routeWorkstreamId) {
+    const opened = visibleWorkstreams.find((workstream) => workstream.id === routeWorkstreamId);
+    setHeldOpen({
+      routeId: routeWorkstreamId,
+      heldId: opened !== undefined && workstreamHasActivityForViewer(opened) ? opened.id : null,
+    });
+  }
   const unpinnedWorkstreams = useMemo(() => (
     visibleWorkstreams
       .filter((workstream) => workstream.pinPosition === null)
-      .sort(compareAlphabeticalTitle)
-  ), [visibleWorkstreams]);
+      .sort(CHANNEL_SORTS[channelSort].compare(heldOpen.heldId))
+  ), [channelSort, heldOpen.heldId, visibleWorkstreams]);
   const displayedWorkstreams = useMemo(
     () => [...pinnedWorkstreams, ...unpinnedWorkstreams],
     [pinnedWorkstreams, unpinnedWorkstreams],
@@ -2305,14 +2372,23 @@ export function Sidebar({
                    second "Channels" label only restates the level the rail
                    already represents and pushes its rows down. */
                 <>
-                {/* Named only when Pinned sits above it: alone, the list needs
-                    no heading, and with pins the two lists need telling apart. */}
-                {pinnedWorkstreams.length > 0 && (
-                  <div className="sidebar-section-heading" data-motion-hold="" data-motion-key="heading:channels">
-                    <h2>Channels</h2>
-                    <span aria-hidden="true" className="sidebar-section-hint">A–Z</span>
-                  </div>
-                )}
+                {/* Named whenever the list has rows, pinned or not: the heading
+                    carries the sort toggle, and a reader with no pins is the
+                    one who most needs Recent and Needs you to find their way. */}
+                <div className="sidebar-section-heading" data-motion-hold="" data-motion-key="heading:channels">
+                  <h2>Channels</h2>
+                  <button
+                    aria-label={`Sorted ${CHANNEL_SORTS[channelSort].spoken}. Sort ${CHANNEL_SORTS[CHANNEL_SORTS[channelSort].next].spoken}`}
+                    className="sidebar-sort-toggle window-no-drag"
+                    onClick={() => setChannelSort(CHANNEL_SORTS[channelSort].next)}
+                    type="button"
+                  >
+                    {/* Text first, icon last: the icon keeps its place at
+                        the edge while the label changes width. */}
+                    <span className="sidebar-section-hint">{CHANNEL_SORTS[channelSort].label}</span>
+                    <IconArrowsSort aria-hidden="true" size={13} stroke={1.8} />
+                  </button>
+                </div>
                 <SidebarList data-motion-scope={selectedSpaceId ? `space:${selectedSpaceId}` : undefined}>
                   {unpinnedWorkstreams.map((workstream) => (
                     <Fragment key={workstream.id}>{renderWorkstream(
