@@ -1,5 +1,6 @@
 import { type SpaceColorKey, type SpaceIconKey } from '@rally/contracts';
 
+import { markColors } from '../lib/project-palette';
 import { APPEARANCE_ICON_COMPONENTS } from './appearance-icons';
 
 export interface SpaceAppearance {
@@ -8,7 +9,7 @@ export interface SpaceAppearance {
 }
 
 /**
- * A Space's mark: its chosen glyph, stroked in its chosen hue.
+ * A Space's mark: its chosen glyph, stroked in its chosen hue's ink.
  *
  * The same drawing in the sidebar row, the dashboard header and the archived
  * list, so a Space is recognised by the same two choices wherever it appears.
@@ -20,7 +21,7 @@ export function SpaceIcon({ space, size = 15 }: { space: SpaceAppearance; size?:
     <Icon
       aria-hidden="true"
       size={size}
-      stroke={`var(--av-sys-color-project-${space.colorKey})`}
+      stroke={markColors(space.colorKey).ink}
       strokeWidth={1.8}
     />
   );

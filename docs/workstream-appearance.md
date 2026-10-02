@@ -115,8 +115,11 @@ same lines, rendered once by `WORKSTREAM_ICON_CATALOG` in
 headings the picker shows, so a Channel, a Breakout and a Sidekick all choose
 from one list with one set of descriptions.
 Colors store semantic keys such as `blue` and `purple`, never hex or RGB values.
-Both the swatch and glyph resolve `sys.color.project.<key>` through the current
-appearance. The keys that resolve to the same colour in both appearances live
+A glyph and its swatch resolve the key to its pastel pair, `project-tint` under
+`project-ink`, through the current appearance (`markColors()`;
+[`theming.md`](theming.md) owns the pair), and a bare mark is drawn in the ink.
+`sys.color.project.<key>` is the hue itself, which people's colours and the
+keys without a pair still use. The keys that resolve to the same colour in both appearances live
 in `config/design-tokens/base.json`; a key that has to differ is set in both
 `themes/light.json` and `dark.json`, never one. Run `pnpm tokens:build` after
 either. The shared palette also affects projects and personal accents.

@@ -181,6 +181,46 @@
   --av-sys-color-palette-ink-light: #fcfcfc;
   --av-sys-color-palette-ink-dark: #141414;
 
+  /* The background of a mark drawn in a palette hue — a Channel's or a
+   * Breakout's glyph, a Sidekick's hexagon, a picker swatch. Pastel rather
+   * than the hue itself, all at one lightness and chroma per appearance so
+   * none stands out, and each a pair with its `project-ink`. A person's own
+   * colour does not use it: avatars and accents keep `project` at full
+   * saturation. */
+  --av-sys-color-project-tint-rose: #fedfe0;
+  --av-sys-color-project-tint-red: #fee0dc;
+  --av-sys-color-project-tint-orange: #fee1d3;
+  --av-sys-color-project-tint-amber: #fee3c5;
+  --av-sys-color-project-tint-lime: #dcefcd;
+  --av-sys-color-project-tint-green: #d1f2d6;
+  --av-sys-color-project-tint-emerald: #cbf3de;
+  --av-sys-color-project-tint-cyan: #c3f1fd;
+  --av-sys-color-project-tint-blue: #dce9fe;
+  --av-sys-color-project-tint-indigo: #e2e6ff;
+  --av-sys-color-project-tint-violet: #e8e4ff;
+  --av-sys-color-project-tint-purple: #ede2fe;
+  --av-sys-color-project-tint-fuchsia: #f8ddfc;
+  --av-sys-color-project-tint-pink: #ffdde9;
+
+  /* The icon on its `project-tint`, and the stroke of a mark drawn without one
+   * (a Breakout's bare mark, a Space's icon). Every ink clears WCAG text
+   * contrast on its tint: at least 4.5:1 in the light appearance and 7:1 in
+   * the dark. */
+  --av-sys-color-project-ink-rose: #963541;
+  --av-sys-color-project-ink-red: #963633;
+  --av-sys-color-project-ink-orange: #923f01;
+  --av-sys-color-project-ink-amber: #7e4f04;
+  --av-sys-color-project-ink-lime: #406800;
+  --av-sys-color-project-ink-green: #026e2f;
+  --av-sys-color-project-ink-emerald: #016c49;
+  --av-sys-color-project-ink-cyan: #046678;
+  --av-sys-color-project-ink-blue: #2b58a2;
+  --av-sys-color-project-ink-indigo: #4a50a2;
+  --av-sys-color-project-ink-violet: #5f499c;
+  --av-sys-color-project-ink-purple: #6b4495;
+  --av-sys-color-project-ink-fuchsia: #7c3e85;
+  --av-sys-color-project-ink-pink: #90355f;
+
   /* The semantic identity palette shared by projects, work streams, and
    * personal accents. Stored color keys remain stable; each light/dark
    * appearance defines its own values so shades can be tuned for contrast
@@ -614,6 +654,36 @@
 
   --av-sys-color-palette-ink-light: #fcfcfc;
   --av-sys-color-palette-ink-dark: #141414;
+
+  --av-sys-color-project-tint-rose: #5a2e31;
+  --av-sys-color-project-tint-red: #5b2f2b;
+  --av-sys-color-project-tint-orange: #59321d;
+  --av-sys-color-project-tint-amber: #533611;
+  --av-sys-color-project-tint-lime: #31441e;
+  --av-sys-color-project-tint-green: #22472a;
+  --av-sys-color-project-tint-emerald: #154833;
+  --av-sys-color-project-tint-cyan: #014552;
+  --av-sys-color-project-tint-blue: #283d5f;
+  --av-sys-color-project-tint-indigo: #35395f;
+  --av-sys-color-project-tint-violet: #3e365c;
+  --av-sys-color-project-tint-purple: #443459;
+  --av-sys-color-project-tint-fuchsia: #4d3151;
+  --av-sys-color-project-tint-pink: #572e3f;
+
+  --av-sys-color-project-ink-rose: #ffc2c4;
+  --av-sys-color-project-ink-red: #fec4be;
+  --av-sys-color-project-ink-orange: #ffc6a9;
+  --av-sys-color-project-ink-amber: #fbca93;
+  --av-sys-color-project-ink-lime: #c0e1a3;
+  --av-sys-color-project-ink-green: #aae5b5;
+  --av-sys-color-project-ink-emerald: #9de7c3;
+  --av-sys-color-project-ink-cyan: #8be4f9;
+  --av-sys-color-project-ink-blue: #bcd6ff;
+  --av-sys-color-project-ink-indigo: #c9d1ff;
+  --av-sys-color-project-ink-violet: #d5ccff;
+  --av-sys-color-project-ink-purple: #dfc8ff;
+  --av-sys-color-project-ink-fuchsia: #f1c1f8;
+  --av-sys-color-project-ink-pink: #ffc0d7;
 
   --av-sys-color-project-edge: rgba(252, 252, 252, 0.22);
   --av-sys-color-project-black: #45454d;

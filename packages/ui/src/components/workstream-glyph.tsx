@@ -17,7 +17,7 @@ import {
 import { PROJECT_COLOR_RING, type ProjectColorKey, type WorkstreamAppearance as SavedAppearance } from '@rally/contracts';
 import clsx from 'clsx';
 import { useId } from 'react';
-import { glyphInk } from '../lib/project-palette';
+import { markColors } from '../lib/project-palette';
 import { APPEARANCE_ICON_COMPONENTS } from './appearance-icons';
 
 const WORKSTREAM_ICONS = [
@@ -105,8 +105,11 @@ export function resolveWorkstreamAppearance(id: string, saved?: ResolvableAppear
   Icon: LucideIcon;
   /** The palette key itself, for a caller that has to look something up by it. */
   colorKey: ProjectColorKey;
-  /** That key as the CSS custom property a fill or a stroke can take directly. */
+  /** That key as the hue itself, for a caller that draws the official colour. */
   color: string;
+  /** The mark's pastel background and the icon on it; see `markColors`. */
+  tint: string;
+  ink: string;
 } {
   const generated = workstreamAppearance(id);
   const colorKey = saved?.color ?? generated.color;
@@ -116,6 +119,7 @@ export function resolveWorkstreamAppearance(id: string, saved?: ResolvableAppear
       || Sparkles,
     colorKey,
     color: `var(--av-sys-color-project-${colorKey})`,
+    ...markColors(colorKey),
   };
 }
 
@@ -126,17 +130,18 @@ export function resolveWorkstreamAppearance(id: string, saved?: ResolvableAppear
  * shows one stream needs the colour and the symbol, not a second badge.
  */
 export function WorkstreamMark({ id, size = 24, appearance: saved }: { id: string; size?: number; appearance?: SavedAppearance }): React.JSX.Element {
-  const { Icon, color } = resolveWorkstreamAppearance(id, saved);
-  return <Icon aria-hidden="true" className="workstream-mark" size={size} strokeWidth={1.9} style={{ color }} />;
+  // No tint behind it, so the mark is drawn in the ink, which reads on the page.
+  const { Icon, ink } = resolveWorkstreamAppearance(id, saved);
+  return <Icon aria-hidden="true" className="workstream-mark" size={size} strokeWidth={1.9} style={{ color: ink }} />;
 }
 
 export function WorkstreamGlyph({ id, size = 32, appearance: saved }: { id: string; size?: number; appearance?: SavedAppearance }): React.JSX.Element {
-  const { Icon, color, colorKey } = resolveWorkstreamAppearance(id, saved);
+  const { Icon, tint, ink } = resolveWorkstreamAppearance(id, saved);
   return (
     <span
       aria-hidden="true"
       className="workstream-glyph"
-      style={{ height: size, width: size, '--glyph-ink': glyphInk(colorKey) } as React.CSSProperties}
+      style={{ height: size, width: size, '--glyph-ink': ink } as React.CSSProperties}
     >
       {/*
         The raw fill, flat. This used to be a 145deg gradient whose far stop
@@ -156,7 +161,7 @@ export function WorkstreamGlyph({ id, size = 32, appearance: saved }: { id: stri
         cleared the floor; the flat fill won because a guarantee that needs no
         second surface to reason about is worth more here than the depth.
       */}
-      <span className="workstream-glyph-shape" style={{ background: color }} />
+      <span className="workstream-glyph-shape" style={{ background: tint }} />
       <Icon className="workstream-glyph-icon" size={Math.max(12, Math.round(size * 0.5))} strokeWidth={1.9} />
     </span>
   );
@@ -275,7 +280,7 @@ export function HexagonGlyph({ className, fill, ink, marker, onMarkerHover, symb
   className?: string | undefined;
   /** The shape's interior. `none` leaves what is underneath it showing. */
   fill: string;
-  /** What the symbol is drawn in over that fill; see `glyphInk`. */
+  /** What the symbol is drawn in over that fill; see `markColors`. */
   ink: string;
   /** The state to mark, or nothing where there is no state to mark. */
   marker?: HexagonMarker | undefined;
@@ -377,6 +382,6 @@ export function AutomationGlyph({ id, appearance: saved, marker, onMarkerHover }
   /** Passed through; see `HexagonGlyph`. */
   onMarkerHover?: ((over: boolean) => void) | undefined;
 }): React.JSX.Element {
-  const { Icon, color, colorKey } = resolveWorkstreamAppearance(id, saved);
-  return <HexagonGlyph fill={color} ink={glyphInk(colorKey)} marker={marker} onMarkerHover={onMarkerHover} symbol={Icon} />;
+  const { Icon, tint, ink } = resolveWorkstreamAppearance(id, saved);
+  return <HexagonGlyph fill={tint} ink={ink} marker={marker} onMarkerHover={onMarkerHover} symbol={Icon} />;
 }
