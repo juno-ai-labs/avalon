@@ -19,7 +19,7 @@ const apiDirectory = join(scriptsDirectory, '..', 'apps', 'api');
  * it. Two name segments keep region discovery from reading the copy as a
  * region, and it is rewritten on every start, so it cannot go stale.
  */
-function containerFreeConfig(source) {
+export function containerFreeConfig(source) {
   const config = parseWranglerConfig(source);
   delete config.containers;
   return `${JSON.stringify(config, null, 2)}\n`;
