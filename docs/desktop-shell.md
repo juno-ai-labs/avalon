@@ -96,13 +96,27 @@ one per turn of what people and Rally said); its own icon and colour are chosen
 from **Icon and color** in its menu (`AppearanceSubmenu`). An open pill fills
 solid and drops its lift to the bare ring.
 
-- **Channel menu:** the Space it lives in (with **Open space**), people,
-  Public/Private, Add people, Rename, Make public, Copy channel link, Share,
-  Import updates, Artifacts, Sidekicks, the Channel's Breakouts (newest activity
-  first, filter past six, "Show N more"), and Archive.
-- **Breakout menu:** the Channel it belongs to (with **Show in channel**),
-  the message it started from, people, Private/Public, Add people, Rename,
-  Icon and color, Copy breakout link, Share, and Archive.
+Each menu has a root and levels. The root is a header, a row of action tiles
+(Add people, Rename, Copy link, Share, More) and one row each for People,
+Sidekicks and, on a Channel, Breakouts, with a count beside each. A row, or the
+Add people and More tiles, opens its level in place (`useTitleMenuNav`), and the
+pill becomes a breadcrumb, the title quietened and the level after it. The
+title, Escape or the left arrow step back to the root before anything closes,
+and the menu always reopens at its root. `TitleMenuMorph` measures each level
+and travels the popout's width and height between them over 320ms while the
+level's rows arrive on a 22ms stagger, sliding in from the side the move came
+from; reduced motion turns both off.
+
+- **Channel menu:** root header is the Space it lives in (with **Open space**)
+  and Archive is under the rows. People is the scope (with **Change**, which
+  opens the full roster dialog), a search, the participants and suggestions
+  to add inline (`TitleMenuPeople`). Sidekicks is the Sidekick section. Breakouts
+  is the list, newest activity first, filtered past six. More is **Pinned in
+  sidebar** (the sidebar's own pin action, lent through `useUiStore.pinChannel`),
+  Make public, Import updates, host extras and the Channel's artifacts.
+- **Breakout menu:** root header is the Channel it belongs to (with **Show in
+  channel**) and the message it started from. People and Sidekicks as above;
+  More is Icon and color and Make public.
 
 ### Breakouts
 

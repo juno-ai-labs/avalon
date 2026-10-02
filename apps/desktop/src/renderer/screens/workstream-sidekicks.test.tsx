@@ -149,12 +149,14 @@ function renderScreen(participant = false, cachedOwnedSidekicks?: WorkstreamAuto
 }
 
 /**
- * The Channel's Sidekicks live in its title pill's menu. Their rows are found
- * by name rather than as buttons: the desktop menu draws them without an open
- * action, so they are not buttons there.
+ * The Channel's Sidekicks live in their own level of its title pill's menu,
+ * opened from the root's Sidekicks row. Their rows are found by name rather
+ * than as buttons: the desktop menu draws them without an open action, so they
+ * are not buttons there.
  */
 async function openChannelMenu(): Promise<void> {
   fireEvent.pointerDown(await screen.findByRole('button', { name: 'Channel menu: Investigate ENG-142' }), { button: 0, ctrlKey: false });
+  fireEvent.click(await screen.findByRole('menuitem', { name: /^Sidekicks/u }));
 }
 
 /**
