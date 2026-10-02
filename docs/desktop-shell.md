@@ -55,7 +55,9 @@ when nobody put it in a Space, and All already shows it. A pill filters the
 list below and does not navigate; **Open space** is on its right-click menu and
 in the Channel menu. The desktop remembers the filter per device
 (`useUiStore.sidebarSpaceFilter`, `rally.sidebar-space-filter`). Opening a
-Channel the filter would hide widens the list to All.
+Channel the filter would hide, or moving the open Channel out of the filtered
+Space, widens the list to All. Picking a pill while a Channel is open filters
+as asked, even if the open Channel drops out of the list.
 
 The list is **Pinned**, then every other Channel, A to Z by default. The rest
 is headed **Channels** whenever it has rows, pinned or not, because that heading
@@ -252,6 +254,23 @@ from the shared navigation directory.
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-02 — A picked pill filters while a Channel is open
+
+**What changed:** The rule that widens the list to All when the open Channel is
+outside the filter now runs only when the open Channel, or its set of Spaces,
+changes. It no longer runs when the reader picks a pill.
+
+**Why:** The rule ran on every filter change, so with any Channel open, picking
+a Space that did not hold it snapped straight back to All. Since a Channel is
+almost always open, the pills looked like they did nothing.
+
+**Considered and rejected:** Dropping the widen rule. It still earns its place
+when a link or a stored filter opens a Channel the list would hide.
+
+**Consequences:** The open Channel's row may be absent from the list after the
+reader picks a pill. Anything that assumes the active row is always drawn must
+not rely on the widen rule for it.
 
 ### 2026-10-02 — Channels sort toggle: A–Z, Recent, or Needs you
 

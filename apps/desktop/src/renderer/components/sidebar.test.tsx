@@ -4049,6 +4049,21 @@ describe('the sidebar Space filter', () => {
     expect(screen.getByRole('link', { name: 'Alpha' })).toHaveClass('is-active');
   });
 
+  it('filters to a picked Space even when the open Channel is not in it', () => {
+    render(
+      <MemoryRouter initialEntries={[`/workstreams/${alpha.id}`]}>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[home, hiring, launch]}
+            workspace={workspace} workstreams={[alpha, bravo, charlie, delta]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    selectSpace('Launch');
+    expect(pill('Launch')).toHaveAttribute('aria-pressed', 'true');
+    expect(channelTitles()).toEqual(['Charlie', 'Delta']);
+  });
+
   describe('the header', () => {
     it('opens organization search', () => {
       const onOpenSearch = vi.fn();
