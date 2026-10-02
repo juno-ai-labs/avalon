@@ -230,10 +230,16 @@ This provides an executable eval seam, not a scheduler or scoring database.
   Otherwise instructions planted in a page could reach the person's workspace.
   Guard: the Workers test asserts the run's exact tool names.
 - A Channel reserved for an import is either opened by `complete` or archived by
-  `discard` or the run-end reclaim, never both: each retires the create key
-  before it archives, and opening refuses a retired key
-  (`workstream_create_discarded`), including one retired between `complete`'s
-  check and its write. Guard: the discard and run-end tests.
+  `discard` or the run-end reclaim, never both. `complete` first claims the
+  receipt (`reserved` → `initialized`, one statement) before anything opens;
+  discard and reclaim retire only a `reserved` receipt, and opening refuses a
+  retired one (`workstream_create_discarded`). Whichever claims first wins, so
+  no Channel is left open with a failed receipt. Guard: the discard, claimed
+  and run-end tests.
+- A replayed or concurrent start of one import admits one run: the child and
+  its run ids are both named from the reservation, and a second admission finds
+  the run. A start whose launch fails retires the reservation only when no run
+  was admitted. Guard: the Workers concurrent-start test.
 - Discard stops only the caller's own hidden import child. Otherwise one member
   could stop another's agent, or a Channel's own run, by naming it. Guard: the
   Workers ownership test.

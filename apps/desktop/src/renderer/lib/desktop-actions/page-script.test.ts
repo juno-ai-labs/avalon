@@ -27,7 +27,7 @@ describe('page script', () => {
     expect(result.stored[0]).toMatchObject({ kind: 'json', name: 'messages', data: '[{"role":"user","text":"Hi","sourceMessageId":"m1"}]' });
     expect(result.stored[1]).toMatchObject({ kind: 'file', name: 'notes.md', mimeType: 'text/markdown', data: btoa('# Notes') });
     expect(result.value).toEqual({
-      messages: { handle: result.stored[0]!.handle, kind: 'json', name: 'messages', mimeType: 'application/json', size: result.stored[0]!.data.length },
+      messages: { handle: result.stored[0]!.handle, kind: 'json', name: 'messages', mimeType: 'application/json', size: 52 },
       note: { handle: result.stored[1]!.handle, kind: 'file', name: 'notes.md', mimeType: 'text/markdown', size: 7 },
     });
   });
@@ -38,7 +38,8 @@ describe('page script', () => {
     });
     await expect(run("return rally.store(new Response('x', { headers: { 'content-length': '999999999' } }), { name: 'video.mp4' });"))
       .resolves.toMatchObject({ ok: false, code: 'file_too_large', message: expect.stringContaining('video.mp4') });
-    await expect(run("return rally.store({ text: 'x'.repeat(25_000_001) }, { name: 'messages' });"))
+    // Bytes, not characters: 9 million three-byte characters are 27 MB of JSON.
+    await expect(run("return rally.store({ text: '漢'.repeat(9_000_000) }, { name: 'messages' });"))
       .resolves.toMatchObject({ ok: false, code: 'file_too_large', message: expect.stringContaining('messages') });
     await expect(run('const value = {}; value.self = value; return value;'))
       .resolves.toMatchObject({ ok: false, code: 'value_not_serializable' });

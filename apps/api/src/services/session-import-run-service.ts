@@ -35,11 +35,13 @@ function importIdentityHash(clientMessageId: string, sourceUrl: string): string 
 }
 
 /**
- * The agent child of a new import, derived from its reservation: a replayed
- * start names the same child, finds it, and launches nothing new.
+ * A UUID named by `name`: the same name always gives the same id. A new
+ * import's agent child and its run are named from its reservation, so a
+ * replayed or concurrent start names the same child and the same run, and
+ * the run is admitted once.
  */
-async function importChildId(workstreamId: string, clientMessageId: string): Promise<string> {
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${workstreamId}:${clientMessageId}`)));
+async function nameDerivedUuid(name: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(name)));
   digest[6] = (digest[6]! & 0x0f) | 0x80; // version 8: a name-derived UUID
   digest[8] = (digest[8]! & 0x3f) | 0x80; // RFC 9562 variant
   const hex = [...digest.subarray(0, 16)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -97,15 +99,22 @@ export class SessionImportRunService {
       this.channelInput(input),
       importIdentityHash(input.clientMessageId, source.url),
     );
-    const childId = await importChildId(workstreamId, input.clientMessageId);
+    const childId = await nameDerivedUuid(`${workstreamId}:${input.clientMessageId}`);
+    const runId = await nameDerivedUuid(`${workstreamId}:${input.clientMessageId}:run`);
     const parent = await this.parent();
     if (await parent.ownsHiddenChild({ workspaceId: this.auth.workspaceId, parentId: workstreamId, substreamId: childId, userId: this.auth.userId })) {
       return { workstreamId, substreamId: childId };
     }
+    let admitted: "admitted" | "exists" | null = null;
     try {
-      await this.launch(workstreamId, source, [], childId);
+      await this.launch(workstreamId, source, [], childId, runId, (outcome) => { admitted = outcome; });
     } catch (error) {
-      await this.retire(workstreamId, input.clientMessageId).catch(() => undefined);
+      // A concurrent start that admitted the run owns the Channel now; only a
+      // start whose launch failed with no run admitted takes the reservation back.
+      const othersRun = admitted === "exists" || (admitted === null && await createHarnessRunObjectPort(
+        this.env, this.auth.workspaceId, workstreamId, undefined, childId,
+      ).run({ runId }).then((found) => found != null, () => false));
+      if (!othersRun) await this.retire(workstreamId, input.clientMessageId).catch(() => undefined);
       throw error;
     }
     return { workstreamId, substreamId: childId };
@@ -133,6 +142,7 @@ export class SessionImportRunService {
           SET state = 'failed', error_code = 'session_import_discarded', updated_at = ?
         WHERE workspace_id = ? AND creator_user_id = ? AND client_message_id = ?
           AND workstream_id = ? AND state IN ('reserved', 'failed')
+          -- Not 'initialized': a complete has claimed it and is opening the Channel.
         RETURNING workstream_id`,
     ).bind(new Date().toISOString(), workspaceId, this.auth.userId, clientMessageId, workstreamId)
       .first<{ workstream_id: string }>();
@@ -154,7 +164,7 @@ export class SessionImportRunService {
     const source = browserConversationSource(recorded.url);
     await this.stopEarlierImports(workstreamId);
     const substreamId = uuidV7(Date.now());
-    await this.launch(workstreamId, source, checkpoint.map((entry) => entry.sourceMessageId), substreamId);
+    await this.launch(workstreamId, source, checkpoint.map((entry) => entry.sourceMessageId), substreamId, uuidV7(Date.now()));
     return { workstreamId, substreamId };
   }
 
@@ -169,6 +179,8 @@ export class SessionImportRunService {
     source: { provider: "chatgpt" | "claude"; url: string },
     recordedMessageIds: readonly string[],
     childId: string,
+    runId: string,
+    onAdmission: (outcome: "admitted" | "exists") => void = () => undefined,
   ): Promise<string> {
     const workspaceId = this.auth.workspaceId;
     const userId = asUserId(this.auth.userId);
@@ -227,10 +239,9 @@ export class SessionImportRunService {
       producedByRunId: null,
       now: Date.now(),
     });
-    const runId = uuidV7(Date.now());
     const executionPrincipal = { type: "user" as const, userId };
     const model = (await resolveAgentModelRouting(this.env, "session_import", { workspaceId, workstreamId, userId })).model;
-    await createHarnessRunObjectPort(this.env, workspaceId, workstreamId, undefined, childId).admitRun({
+    const admission = await createHarnessRunObjectPort(this.env, workspaceId, workstreamId, undefined, childId).admitRun({
       runId,
       origin: "session_import",
       executionPrincipalJson: JSON.stringify(executionPrincipal),
@@ -242,6 +253,12 @@ export class SessionImportRunService {
       expectedLatestRunId: null,
       now: Date.now(),
     });
+    if (admission.outcome === "exists") {
+      // Another start admitted this run and activates it; there is one agent.
+      onAdmission("exists");
+      return childId;
+    }
+    onAdmission("admitted");
     await activateWorkstreamLoop(this.env, {
       region: this.env.AVALON_REGION,
       workspaceId: asWorkspaceId(workspaceId),

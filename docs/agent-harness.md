@@ -908,8 +908,9 @@ actions](desktop-actions.md). A stored profile this Worker does not know fails
 the run as `agent_profile_unknown` rather than running with every tool.
 
 A profile may also name an `ended` hook: cleanup owed once a run of it has
-ended, failed or stopped. `runWorkstreamHarness` calls it after the run's
-outcome is durable, with the run's workspace, parent and — for a run a person
+ended, failed or stopped. `SubstreamAgent` calls it right after
+`terminalizeHarnessAttempt`, which every executed run passes through — a normal
+return, a stop, and a host that threw alike — so the outcome is durable first, with the run's workspace, parent and — for a run a person
 started — user; a hook that throws is logged as
 `agent_profile_run_end_failed` with its code and does not change the run's
 outcome. `session_import` uses it to archive a Channel its run reserved and
@@ -1462,9 +1463,10 @@ the catalog line until it loads one, and any browser-bearing run can use them.
 
 **Consequences:** A profile is fail-closed: an unknown stored profile is a
 failed run, never the default surface, and a future profile must keep it so. A
-profile cannot change under a running conversation. An `ended` hook runs on
-the harness host's normal exit after a run, so it must be idempotent and cheap when there
-is nothing to do.
+profile cannot change under a running conversation. An `ended` hook runs after
+every executed run's terminalization, whatever its outcome, so it must be
+idempotent and cheap when there is nothing to do. A run cancelled before it ever
+executes reaches no terminalization and runs no hook.
 
 Shipped in #1058.
 
