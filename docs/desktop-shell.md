@@ -24,6 +24,7 @@ right panel.
 | `packages/ui/src/styles/app.css` | The "Single sidebar", "Title pills", "Breakouts in the Channel" and "Split conversation" blocks. |
 | `apps/desktop/src/renderer/components/sidebar.tsx` | The desktop sidebar: top actions, the All filter, pins under All (`allPinPosition`), rows. |
 | `apps/desktop/src/renderer/components/space-pills.tsx` | Desktop pills: A–Z order, drop a Channel on a Space, archive, restore. |
+| `apps/desktop/src/renderer/lib/space-choices.ts` | `useSpaceChoices`: Space picker order and labels, General first as All, then A–Z. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | The Channel screen: both panes, both pills, the one-slot rule, Breakout creation in the right pane. |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | One conversation. Draws chips and ticks for Main, owns its right panel by conversation, honours a scroll-to-turn request. |
 | `apps/desktop/src/renderer/lib/browser-rail-links.ts` | Routes a clicked web link to the pane it was clicked in. |
@@ -61,6 +62,12 @@ Space, widens the list to All. Picking a pill that hides the open Channel
 filters as asked and opens the first Channel the filtered list draws, or the
 Space's dashboard when it holds none. Restoring an archived Space selects its
 pill the same way, so it can navigate too.
+
+Every Space picker (**Start a new channel**, the import window, **Add to
+space**) reads its list through `useSpaceChoices`: General first and named **All**,
+matching the first pill, then the rest A to Z. A picker starts on its first
+choice, so a new Channel goes to All unless the reader picks a Space or the
+sidebar is filtered to one.
 
 The list is **Pinned**, then every other Channel, A to Z by default. The rest
 is headed **Channels** whenever it has rows, pinned or not, because that heading
@@ -257,6 +264,25 @@ from the shared navigation directory.
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-02 — Space pickers lead with All
+
+**What changed:** Space pickers list General first, labelled **All**, then the
+rest A to Z, and start on it. Before, General sorted among the others by name
+and the picker defaulted to whichever Space came first.
+
+**Why:** Product asked for one name for the Organization-wide home across the
+sidebar and the pickers, and for new Channels to land there unless someone
+picks a Space. The pill strip already called it All.
+
+**Considered and rejected:** Renaming the stored General Space. Its name is
+data the API and other surfaces read; the label lives only in the pickers, so
+the rename stays a client presentation choice keyed on `systemRole`.
+
+**Consequences:** A picker shows General's name as All, including in the
+disabled reason ("already in All"). Anything new that lists Spaces for a choice
+should read it through `useSpaceChoices` rather than sort on its own: the
+rule lives in that one file.
 
 ### 2026-10-02 — Panel dividers stop short of the window's edges
 
