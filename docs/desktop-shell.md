@@ -282,6 +282,8 @@ shorter line beside it reads as a mistake.
 **Consequences:** Changing the empty composer's height or the gap below it
 moves both dividers with it. Both sidebars keep their full-height border.
 
+Shipped in #1071.
+
 ### 2026-10-02 — A picked pill filters while a Channel is open
 
 **What changed:** The rule that widens the list to All when the open Channel is
