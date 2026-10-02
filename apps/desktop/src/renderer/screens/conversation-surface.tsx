@@ -29,6 +29,7 @@ import type { ConversationParentKind } from '@rally/contracts/conversation-paren
 import type { SubstreamInitialContext } from '@rally/contracts/substream-creation';
 import type { ClientSession } from '@rally/contracts/client-session';
 import { useCollaborationSession } from '../lib/collaboration-session';
+import { MemberPresentationContext } from '../lib/member-presentation';
 import { useCitations } from '../lib/use-citations';
 import { breakoutResourceActions } from '../lib/breakout-resource-actions';
 import { ApiError, type MentionIdentity } from '../lib/api';
@@ -1492,6 +1493,15 @@ export function ConversationSurface({
   });
   const visibleMembers = isGuest ? routedDetail?.participants ?? NO_MEMBERS : members.data ?? NO_MEMBERS;
   const visibleConnections = isGuest ? routedDetail?.connections : connections.data;
+  // Each member's colour, for the transcript's bubbles. The desktop shell
+  // already provides this map, with the signed-in person's unsaved edits on
+  // top, so its entries win; the browser provides none, and without this every
+  // person's turn fell back to the default black bubble there.
+  const outerPresentations = useContext(MemberPresentationContext);
+  const presentations = useMemo(() => new Map([
+    ...visibleMembers.flatMap((member) => member.presentation ? [[member.id, member.presentation] as const] : []),
+    ...outerPresentations,
+  ]), [outerPresentations, visibleMembers]);
   const availableResources = useInfiniteQuery({
     queryKey: ['resources', debouncedResourceSearch],
     queryFn: ({ pageParam, signal }) => api!.listResources({
@@ -2668,6 +2678,7 @@ export function ConversationSurface({
     ?? 'Rally could not complete this run. Retrying is unlikely to help — copy the request ID for support.';
 
   return (
+    <MemberPresentationContext.Provider value={presentations}>
     <ConnectorConnectionsProvider connections={visibleConnections}>
     <div className="conversation-layout" ref={layoutRef}>
       {renderSidebar?.({
@@ -3107,5 +3118,6 @@ export function ConversationSurface({
     </div>
     </div>
     </ConnectorConnectionsProvider>
+    </MemberPresentationContext.Provider>
   );
 }

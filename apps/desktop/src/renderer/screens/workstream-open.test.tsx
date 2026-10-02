@@ -254,6 +254,35 @@ describe('socket-first channel open', () => {
     expect(api.getConnections).not.toHaveBeenCalled();
   });
 
+  it('paints a member\'s turn in their colour without a colour map from the shell, as the browser opens it', async () => {
+    const member = { id: '00000000-0000-7000-8000-000000000663', name: 'Katherine', email: 'katherine@example.test', timezone: 'UTC',
+      presentation: { displayName: 'Katherine', initials: 'K', color: 'violet' as const, avatar: 'circle' as const, revision: 1 } };
+    api.getWorkspaceMembers.mockResolvedValue([member]);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600);
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(600);
+    const boot = recoveryBoot();
+    boot.transcript.snapshotThrough = 1;
+    boot.transcript.ranges = [{
+      purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 }, covered: { startInclusive: 1, endExclusive: 2 },
+      activities: [], pluginRuns: [],
+      turns: [{
+        transcriptSequence: 1, turnId: 'turn-1', entryKind: 'conversation', actor: 'human',
+        authorUserId: member.id, authorSnapshot: { userId: member.id, displayName: 'Katherine', avatarUrl: null },
+        attentionOrdinal: 1, createdAtUtc: '2026-08-26T14:00:00.000Z', revision: 1, activityId: null,
+        blocks: [{ type: 'text', blockId: 'turn-1:text:0', blockIndex: 0, text: 'Pull up the spreadsheet', streaming: false }],
+      }],
+    }];
+    const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    cache.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'local_cache');
+    cache.setQueryData(workstreamDetailQueryKey(workstreamId, '0'), boot);
+    cache.setQueryData(orderedTranscriptQueryKey(workstreamId, '0'), boot.transcript);
+    render(<Tooltip.Provider><QueryClientProvider client={cache}><MemoryRouter>
+      <ConversationSurface parentKind="workstream" parentId={workstreamId} substreamId="0" />
+    </MemoryRouter></QueryClientProvider></Tooltip.Provider>);
+    const turn = await screen.findByLabelText('Message from Katherine');
+    await waitFor(() => expect(turn.style.getPropertyValue('--av-cmp-bubble-human-background')).toBe('var(--av-sys-color-project-violet)'));
+  });
+
   function historyBoot(id = workstreamId): WorkstreamBoot {
     const boot = recoveryBoot({ id });
     boot.transcript.snapshotThrough = 10;
