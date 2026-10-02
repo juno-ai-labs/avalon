@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { join } from "node:path";
@@ -70,8 +70,10 @@ test("on Windows a lockfile nothing holds does not block the reset, and one that
     writeFileSync(lockfile, "");
     assert.equal(liveDesktopLockHolder(directory, "win32"), null);
     // A running client's sharing violation, as far as a POSIX host can stage
-    // one: the file is there and cannot be opened.
-    chmodSync(lockfile, 0o000);
+    // one: the lockfile is there and cannot be opened. Not with `chmod 000`,
+    // which root opens anyway; a directory refuses `r+` whoever asks.
+    rmSync(lockfile);
+    mkdirSync(lockfile);
     assert.equal(liveDesktopLockHolder(directory, "win32"), true);
   } finally {
     rmSync(directory, { recursive: true, force: true });
