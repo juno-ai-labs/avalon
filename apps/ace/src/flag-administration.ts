@@ -37,7 +37,12 @@ async function named<T>(operation: () => Promise<FlagAdministrationResult<T>>): 
     return await operation();
   } catch (error) {
     if (error instanceof FlagshipRequestError) {
-      return { ok: false, code: `flagship_request_failed_${error.status}`, message: error.message };
+      // Flagship's own error text stays in Ace; only its status crosses.
+      return {
+        ok: false,
+        code: `flagship_request_failed_${error.status}`,
+        message: `Flagship refused the request with HTTP ${error.status}. Nothing was changed by this call.`,
+      };
     }
     if (error instanceof FlagChangeNotificationError) {
       return { ok: false, code: 'flag_change_notification_failed', message: error.message };
