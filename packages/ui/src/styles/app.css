@@ -6052,10 +6052,13 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 /* What the parked page looked like after the agent's last step, under the run's blurred modal. */
 .browser-import-mirror { display: block; height: 100%; inset: 0; object-fit: cover; object-position: top left; position: absolute; width: 100%; }
 .browser-import-steps { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; }
-.browser-import-steps li, .browser-import-steps-empty { align-items: center; color: var(--av-sys-color-text-muted); display: flex; gap: 10px; line-height: 1.4; margin: 0; }
+.browser-import-steps li, .browser-import-steps-empty { align-items: baseline; color: var(--av-sys-color-text-muted); display: flex; gap: 10px; line-height: 1.4; margin: 0; }
 .browser-import-steps li.is-running { color: var(--av-sys-color-text-default); }
 .browser-import-steps li.is-failed svg { color: var(--av-sys-color-danger-base); }
-.browser-import-steps svg, .browser-import-steps-empty svg { flex: 0 0 14px; }
+/* Baseline alignment sits the icon's bottom edge on the label's first
+   baseline; the shift then centers it on the capitals, in whatever system
+   font draws them and beside the first line of a label that wraps. */
+.browser-import-steps svg, .browser-import-steps-empty svg { flex: 0 0 14px; translate: 0 calc(7px - 0.5cap); }
 .browser-import-start { margin: 0 auto; max-width: 440px; padding: 12vh 24px 48px; }
 .browser-import-start h1 { font-size: 20px; font-weight: 500; margin: 0 0 22px; }
 .browser-import-start ol { counter-reset: import-step; display: grid; gap: 16px; list-style: none; margin: 0; padding: 0; }
