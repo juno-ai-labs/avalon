@@ -1,10 +1,10 @@
-import { ChannelRailSchema, PersonalOrderSchema, SpaceDirectorySchema, WorkstreamPrivateChildSchema, type ChannelRail, type PersonalOrder, type SpaceDirectory } from '@rally/contracts';
+import { ChannelRailSchema, PersonalOrderSchema, PinnedOrderSchema, SpaceDirectorySchema, WorkstreamPrivateChildSchema, type ChannelRail, type PersonalOrder, type PinnedOrder, type SpaceDirectory } from '@rally/contracts';
 import { heldChannelRails, isChannelRailQueryKey, seedChannelRails } from './channel-rails';
 import { heldChannelBreakouts, isWorkstreamChildrenQueryKey, seedChannelBreakouts, type ChannelBreakoutLists } from './channel-viewer-state';
 import { notifyManager, type QueryClient } from '@tanstack/react-query';
 import { defineLocalCacheSlice, localCacheEpoch } from './local-cache';
 import { mirrorQueriesToLocalCache, queryKeyIsOneOf, type QueryMirror } from './local-cache-mirror';
-import { SIDEBAR_LIST_QUERY_KEYS, SPACES_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, PERSONAL_ORDER_QUERY_KEY } from './sidebar-list-store';
+import { SIDEBAR_LIST_QUERY_KEYS, SPACES_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, PERSONAL_ORDER_QUERY_KEY, PINNED_ORDER_QUERY_KEY } from './sidebar-list-store';
 import type { AutomationSummary, WorkstreamSummary } from './types';
 import { setCachedWorkstreams, WORKSTREAM_PAGE_SIZE, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
@@ -39,6 +39,8 @@ export interface CachedWorkspaceDirectory {
    * dropping every cached row to avoid it.
    */
   ordering: PersonalOrder;
+  /** All's Pinned order, for the same cold-launch paint; absent on older rows reads as none. */
+  pinnedOrder?: PinnedOrder;
   /**
    * Each listed Channel's breakouts for this viewer, as the workspace socket
    * last said them, so the Channel rail paints its breakouts on a cold launch
@@ -125,6 +127,11 @@ function parseOrdering(value: unknown): PersonalOrder | undefined {
   return parsed.success ? parsed.data : undefined;
 }
 
+function parsePinnedOrder(value: unknown): PinnedOrder {
+  const parsed = PinnedOrderSchema.safeParse(value);
+  return parsed.success ? parsed.data : [];
+}
+
 const BreakoutListSchema = WorkstreamPrivateChildSchema.array();
 
 function parseBreakouts(value: unknown): ChannelBreakoutLists | undefined {
@@ -161,7 +168,8 @@ function parseCachedDirectory(value: unknown): CachedWorkspaceDirectory | null {
   const rails = parseRails(candidate['rails']);
   if (!workstreams || !automations || spaces === undefined || inactiveSpaces === undefined) return null;
   if (ordering === undefined || breakouts === undefined || rails === undefined) return null;
-  return { workstreams, automations, spaces, inactiveSpaces, ordering, breakouts, rails };
+  const pinnedOrder = parsePinnedOrder(candidate['pinnedOrder']);
+  return { workstreams, automations, spaces, inactiveSpaces, ordering, pinnedOrder, breakouts, rails };
 }
 
 /**
@@ -223,6 +231,9 @@ export async function hydrateWorkspaceDirectory(
     if (queryClient.getQueryData(PERSONAL_ORDER_QUERY_KEY) === undefined) {
       queryClient.setQueryData(PERSONAL_ORDER_QUERY_KEY, cached.ordering);
     }
+    if (queryClient.getQueryData(PINNED_ORDER_QUERY_KEY) === undefined) {
+      queryClient.setQueryData(PINNED_ORDER_QUERY_KEY, cached.pinnedOrder ?? []);
+    }
     seedChannelBreakouts(queryClient, cached.breakouts);
     seedChannelRails(queryClient, cached.rails);
   });
@@ -235,6 +246,7 @@ const directoryKey = queryKeyIsOneOf([
   SPACES_QUERY_KEY,
   INACTIVE_SPACES_QUERY_KEY,
   PERSONAL_ORDER_QUERY_KEY,
+  PINNED_ORDER_QUERY_KEY,
 ]);
 
 /**
@@ -268,6 +280,7 @@ export function mirrorWorkspaceDirectory(
         spaces: queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY) ?? null,
         inactiveSpaces: queryClient.getQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY) ?? null,
         ordering: queryClient.getQueryData<PersonalOrder>(PERSONAL_ORDER_QUERY_KEY) ?? [],
+        pinnedOrder: queryClient.getQueryData<PinnedOrder>(PINNED_ORDER_QUERY_KEY) ?? [],
       };
     },
     write: (value, atEpoch) => workspaceDirectorySlice.write(scope, DIRECTORY_CACHE_KEY, value, DIRECTORY_CACHE_KEY, atEpoch),

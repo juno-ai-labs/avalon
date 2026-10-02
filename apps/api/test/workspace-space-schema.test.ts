@@ -240,36 +240,21 @@ describe("WorkspaceDO space schema", () => {
     ).run(SPACE_ID)).not.toThrow();
   });
 
-  it("given personal order rows, when 87 widens their kinds, then the rows survive and All's pins are accepted", () => {
+  it("given 87, when All's Pinned order is stored, then it lands in its own table and the shared order table still refuses it", () => {
     const database = openDatabase();
-    apply(database, PINNED_ORDER_VERSION - 1);
-    const insertOrder = (kind: string, containerId: string, itemId: string, position = 0): void => {
-      database.prepare(
-        `INSERT INTO workspace_container_order
-           (user_id, container_kind, container_id, item_id, position, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 1, 2)`,
-      ).run(USER_ID, kind, containerId, itemId, position);
-    };
-    insertOrder("organization", WORKSPACE_ID, SPACE_ID);
-    insertOrder("space", SPACE_ID, CHANNEL_ID, 3);
-    expect(() => insertOrder("pinned", WORKSPACE_ID, CHANNEL_ID)).toThrow(/CHECK constraint failed/u);
+    apply(database, PINNED_ORDER_VERSION);
+    database.prepare(
+      `INSERT INTO workspace_pinned_order (user_id, item_id, position, updated_at) VALUES (?, ?, 0, 2)`,
+    ).run(USER_ID, CHANNEL_ID);
 
-    apply(database, PINNED_ORDER_VERSION, PINNED_ORDER_VERSION - 1);
-
-    // A person's arrangement of their Spaces and of a Space's Channels is
-    // carried through the rebuild, positions and timestamps intact.
     expect(database.prepare(
-      `SELECT container_kind, container_id, item_id, position, created_at, updated_at
-         FROM workspace_container_order ORDER BY container_kind`,
-    ).all()).toEqual([
-      { container_kind: "organization", container_id: WORKSPACE_ID, item_id: SPACE_ID, position: 0, created_at: 1, updated_at: 2 },
-      { container_kind: "space", container_id: SPACE_ID, item_id: CHANNEL_ID, position: 3, created_at: 1, updated_at: 2 },
-    ]);
-    expect(() => insertOrder("pinned", WORKSPACE_ID, CHANNEL_ID)).not.toThrow();
-    expect(() => insertOrder("workstream", CHANNEL_ID, SPACE_ID)).toThrow(/CHECK constraint failed/u);
-    // The rebuild brings back the ordering index the reads seek on.
-    expect(database.prepare(
-      "SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'workspace_container_order' AND name NOT LIKE 'sqlite_%'",
-    ).all()).toEqual([{ name: "workspace_container_order_position_idx" }]);
+      "SELECT user_id, item_id, position FROM workspace_pinned_order",
+    ).all()).toEqual([{ user_id: USER_ID, item_id: CHANNEL_ID, position: 0 }]);
+    // Untouched, so a Worker from before 87 never reads a row it cannot parse.
+    expect(() => database.prepare(
+      `INSERT INTO workspace_container_order
+         (user_id, container_kind, container_id, item_id, position, created_at, updated_at)
+       VALUES (?, 'pinned', ?, ?, 0, 1, 2)`,
+    ).run(USER_ID, WORKSPACE_ID, CHANNEL_ID)).toThrow(/CHECK constraint failed/u);
   });
 });

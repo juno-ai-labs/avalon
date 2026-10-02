@@ -1,6 +1,7 @@
 import { RegionSchema } from "@rally/contracts/regions";
 import {
   ContainerOrderSchema,
+  PinnedOrderSchema,
   ConversationParentReserveChildRequestSchema,
   CreateSpaceRequestSchema,
   IdSchema,
@@ -122,6 +123,19 @@ export const WorkspaceContainerOrderResultSchema = z.union([
   SpaceFailureSchema,
 ]);
 export type WorkspaceContainerOrderResult = z.infer<typeof WorkspaceContainerOrderResultSchema>;
+
+/** One person's order for All's Pinned section; see `PinnedOrderSchema`. */
+export const WorkspacePinnedOrderRequestSchema = SpaceActorSchema.extend({
+  itemIds: PinnedOrderSchema,
+}).strict();
+export type WorkspacePinnedOrderRequest = z.infer<typeof WorkspacePinnedOrderRequestSchema>;
+
+/** What was stored: the Channels this person can list, each once. */
+export const WorkspacePinnedOrderResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), itemIds: PinnedOrderSchema }),
+  SpaceFailureSchema,
+]);
+export type WorkspacePinnedOrderResult = z.infer<typeof WorkspacePinnedOrderResultSchema>;
 
 /**
  * The presentation a Space's own authority has just accepted.

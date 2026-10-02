@@ -55,6 +55,9 @@ describe('workstreamAppearance', () => {
     expect(stored.querySelector<HTMLElement>('.workstream-glyph')?.style.getPropertyValue('--glyph-ink'))
       .toBe('var(--av-sys-color-palette-ink-light)');
     expect(stored.querySelector('.workstream-glyph-shape')).toHaveStyle({ background: 'var(--av-sys-color-project-black)' });
+    // With no fill behind it, the same mark is drawn in the hue, not the white ink.
+    const bare = render(<WorkstreamMark appearance={saved} id="launch-room" />).container;
+    expect(bare.querySelector('.workstream-mark')).toHaveStyle({ color: 'var(--av-sys-color-project-black)' });
   });
 
   it('falls back to a drawable icon rather than blanking the window on a key it does not know', () => {

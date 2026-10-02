@@ -96,7 +96,7 @@ function AppearanceChoices({ selected, change, error }: Pick<ReturnType<typeof u
       <IconCatalog renderIcon={(icon) => {
         const Icon = WORKSTREAM_ICON_COMPONENTS[icon];
         return <DropdownMenu.RadioItem key={icon} value={icon} aria-label={label(icon)} title={label(icon)} className="appearance-picker-choice" onSelect={(event) => { event.preventDefault(); change({ icon }); }}>
-          <Icon size={20} strokeWidth={1.8} stroke={selected.color ? markColors(selected.color).ink : undefined} />
+          <Icon size={20} strokeWidth={1.8} stroke={selected.color ? markColors(selected.color).bare : undefined} />
         </DropdownMenu.RadioItem>;
       }} />
     </DropdownMenu.RadioGroup>

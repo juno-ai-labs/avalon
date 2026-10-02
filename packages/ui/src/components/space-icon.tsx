@@ -21,7 +21,7 @@ export function SpaceIcon({ space, size = 15 }: { space: SpaceAppearance; size?:
     <Icon
       aria-hidden="true"
       size={size}
-      stroke={markColors(space.colorKey).ink}
+      stroke={markColors(space.colorKey).bare}
       strokeWidth={1.8}
     />
   );

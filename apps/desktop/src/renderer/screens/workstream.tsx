@@ -3,7 +3,7 @@ import { BreakoutMenu, ChannelMenu, type ConversationRowTarget } from '@rally/ui
 import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { SpaceIcon } from '@rally/ui/components/space-icon';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
-import { BreakoutPillIcon, TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
+import { BreakoutPillIcon, TitleMenuItem, TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { WorkstreamGlyph } from '@rally/ui/components/workstream-glyph';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -22,7 +22,7 @@ import { desktopBridge } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { AppearancePicker, AppearanceSubmenu } from '../components/appearance-picker';
-import { IconPalette } from '@tabler/icons-react';
+import { IconMail, IconPalette } from '@tabler/icons-react';
 import { RelativeTime } from '../components/relative-time';
 
 import type { WorkstreamChildDirectory } from '../lib/channel-viewer-state';
@@ -677,6 +677,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     const naming = (detail?.titleStatus ?? row?.titleStatus) === 'naming';
     const glyph = <WorkstreamGlyph appearance={channelAppearance} id={id} size={24} />;
     const appearanceChange = conversationScoped ? undefined : mainConnection.setAppearance;
+    const channelEmail = context?.detail.emailAddress ?? row?.emailAddress ?? null;
     return {
       key: `channel:${id}`,
       icon: glyph,
@@ -698,6 +699,15 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       menu: <ChannelMenu
         actions={mainActions}
         addSidekick={(context || channelRail) && <SidekickPicker substreamId="0" workstreamId={id} />}
+        // Mail sent here lands in the Channel; the old header's menu carried it.
+        extraActions={channelEmail ? <TitleMenuItem
+          icon={<IconMail aria-hidden="true" size={16} stroke={1.8} />}
+          onSelect={() => {
+            void desktopBridge().copyText(channelEmail).then(() => reportTelemetryProductIntent({
+              kind: 'content_copied', contentType: 'workstream_email', resourceType: 'workstream', resourceId: id,
+            })).catch(() => undefined);
+          }}
+        >Copy channel email address</TitleMenuItem> : undefined}
         breakouts={breakoutMarks}
         onImportUpdates={api && importedSourceUpdatable(importedSource.data) ? () => setImportUpdateOpen(true) : undefined}
         onOpenArtifact={context?.openArtifact}
@@ -711,7 +721,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         people={context?.people}
         pinned={pinChannel && row && !conversationScoped ? {
           on: (row.spacePins ?? []).some((pin) => row.spaceIds.includes(pin.spaceId)),
-          onChange: (next) => pinChannel(id, next),
+          onChange: (next) => pinChannel(row, next),
         } : undefined}
         presentUserIds={context?.presentUserIds ?? []}
         renderAge={breakoutAge}

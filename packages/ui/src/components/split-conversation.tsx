@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
 import { SIDEBAR_CONTENT_MIN_WIDTH } from '../lib/sidebar-geometry';
 
@@ -19,13 +19,8 @@ const KEYBOARD_STEP = 16;
  */
 export type SplitConversationMode = 'main' | 'split' | 'breakout';
 
-/**
- * The Breakout's width, keeping both panes at least the conversation minimum.
- * A container too narrow for two minimums splits evenly instead, which the
- * pane's CSS cap allows, so the width reported is the width drawn.
- */
+/** The Breakout's width, keeping both panes at least the conversation minimum. */
 export function clampBreakoutWidth(requested: number, containerWidth: number): number {
-  if (containerWidth < 2 * SIDEBAR_CONTENT_MIN_WIDTH) return Math.round(containerWidth / 2);
   const max = Math.max(SIDEBAR_CONTENT_MIN_WIDTH, containerWidth - SIDEBAR_CONTENT_MIN_WIDTH);
   return Math.round(Math.max(SIDEBAR_CONTENT_MIN_WIDTH, Math.min(max, requested)));
 }
@@ -46,6 +41,23 @@ export function SplitConversationLayout({ breakout, breakoutWidth, main, mode, o
 }): React.JSX.Element {
   const container = useRef<HTMLDivElement>(null);
   const [resizing, setResizing] = useState(false);
+  // Too narrow for two conversations at their minimum, a split shows the
+  // Breakout alone; its close button returns to the Channel.
+  const [narrow, setNarrow] = useState(false);
+  useLayoutEffect(() => {
+    const element = container.current;
+    if (!element) return undefined;
+    const measure = (): void => {
+      const width = element.getBoundingClientRect().width;
+      // Zero is a container not laid out yet, not a narrow one.
+      setNarrow(width > 0 && width < 2 * SIDEBAR_CONTENT_MIN_WIDTH);
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
   const drag = useRef<number | null>(null);
   useEffect(() => {
     if (!resizing) return undefined;
@@ -69,10 +81,11 @@ export function SplitConversationLayout({ breakout, breakoutWidth, main, mode, o
       window.removeEventListener('pointercancel', stop);
     };
   }, [onBreakoutWidthChange, resizing]);
-  const split = mode === 'split' && main !== null && breakout !== null;
+  const shown: SplitConversationMode = mode === 'split' && narrow ? 'breakout' : mode;
+  const split = shown === 'split' && main !== null && breakout !== null;
   const style = breakoutWidth === null ? undefined : { '--split-breakout-width': `${breakoutWidth}px` } as CSSProperties;
   return <div className={clsx('split-conversation', resizing && 'is-resizing')} ref={container} style={style}>
-    {main !== null && <div className="split-conversation-pane is-main" hidden={mode === 'breakout'}>{main}</div>}
+    {main !== null && <div className="split-conversation-pane is-main" hidden={shown === 'breakout'}>{main}</div>}
     {split && <div
       aria-label="Resize breakout"
       aria-orientation="vertical"
@@ -98,8 +111,8 @@ export function SplitConversationLayout({ breakout, breakoutWidth, main, mode, o
       tabIndex={0}
     />}
     {breakout !== null && <div
-      className={clsx('split-conversation-pane is-breakout', (mode === 'breakout' || main === null) && 'is-alone')}
-      hidden={mode === 'main'}
+      className={clsx('split-conversation-pane is-breakout', (shown === 'breakout' || main === null) && 'is-alone')}
+      hidden={shown === 'main'}
     >{breakout}</div>}
   </div>;
 }

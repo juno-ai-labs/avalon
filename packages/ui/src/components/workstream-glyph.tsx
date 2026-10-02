@@ -110,6 +110,7 @@ export function resolveWorkstreamAppearance(id: string, saved?: ResolvableAppear
   /** The mark's pastel background and the icon on it; see `markColors`. */
   tint: string;
   ink: string;
+  bare: string;
 } {
   const generated = workstreamAppearance(id);
   const colorKey = saved?.color ?? generated.color;
@@ -130,9 +131,9 @@ export function resolveWorkstreamAppearance(id: string, saved?: ResolvableAppear
  * shows one stream needs the colour and the symbol, not a second badge.
  */
 export function WorkstreamMark({ id, size = 24, appearance: saved }: { id: string; size?: number; appearance?: SavedAppearance }): React.JSX.Element {
-  // No tint behind it, so the mark is drawn in the ink, which reads on the page.
-  const { Icon, ink } = resolveWorkstreamAppearance(id, saved);
-  return <Icon aria-hidden="true" className="workstream-mark" size={size} strokeWidth={1.9} style={{ color: ink }} />;
+  // No tint behind it, so the mark takes the colour that reads on the page.
+  const { Icon, bare } = resolveWorkstreamAppearance(id, saved);
+  return <Icon aria-hidden="true" className="workstream-mark" size={size} strokeWidth={1.9} style={{ color: bare }} />;
 }
 
 export function WorkstreamGlyph({ id, size = 32, appearance: saved }: { id: string; size?: number; appearance?: SavedAppearance }): React.JSX.Element {

@@ -650,6 +650,10 @@ import {
   WorkspaceSpaceBootstrapFinalizeResultSchema,
   WorkspaceSpaceBootstrapSettleRequestSchema,
   WorkspaceContainerOrderResultSchema,
+  WorkspacePinnedOrderRequestSchema,
+  WorkspacePinnedOrderResultSchema,
+  type WorkspacePinnedOrderRequest,
+  type WorkspacePinnedOrderResult,
   WorkspaceSpaceListRequestSchema,
   WorkspaceSpaceMembersRequestSchema,
   WorkspaceSpaceMembersResultSchema,
@@ -8387,6 +8391,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return result;
   }
 
+  /**
+   * Save this person's order for **All**'s Pinned section and answer with what
+   * was stored, republishing it to their other sessions as `reorderContainer`
+   * does. Anyone who may arrange their own lists may arrange this one.
+   */
+  async reorderAllPinned(input: WorkspacePinnedOrderRequest): Promise<WorkspacePinnedOrderResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspacePinnedOrderRequestSchema, input, "reorder_all_pinned");
+    this.assertWorkspace(request.workspaceId);
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    if (refusal) return { ok: false, code: refusal };
+    const result = WorkspacePinnedOrderResultSchema.parse({
+      ok: true,
+      itemIds: this.spaceStorage().writePinnedOrder(request.userId, request.itemIds, Date.now()),
+    });
+    this.publishSpaceSnapshot(request.userId);
+    return result;
+  }
+
   async spaceSummary(input: WorkspaceSpaceRequest): Promise<WorkspaceSpaceMutationResult> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceRequestSchema, input, "space_summary");
@@ -15705,12 +15728,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private spacesFor(attachment: WorkspaceSocketAttachment): {
     spaces: SpaceSnapshot;
     ordering: PersonalOrder;
+    pinnedOrder: string[];
     spacesReady: boolean;
   } {
     if (attachment.accessClass === "guest") {
       return {
         spaces: { active: { waterline: 0, items: [] }, inactive: { waterline: 0, items: [] } },
         ordering: [],
+        pinnedOrder: [],
         spacesReady: true,
       };
     }
@@ -15723,6 +15748,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return {
       spaces: { active, inactive: spaces.listInactive(attachment.userId) },
       ordering: spaces.readOrders(attachment.workspaceId, attachment.userId),
+      pinnedOrder: spaces.readPinnedOrder(attachment.userId),
       spacesReady: spaces.bootstrapStatus().ready,
     };
   }

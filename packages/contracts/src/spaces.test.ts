@@ -205,6 +205,10 @@ describe("space contracts", () => {
     // Exactly the three lists the product lets a person arrange.
     expect([...OrderedContainerKindSchema.options])
       .toEqual(["organization", "space", "channel"]);
+    // All's Pinned order is not a fourth kind: a shipped client drops a whole
+    // ordering that holds a kind it does not know.
+    expect(ContainerOrderSchema.safeParse({ container: { kind: "pinned" }, itemIds: [CHANNEL_ID] }).success)
+      .toBe(false);
     expect(ContainerOrderSchema.safeParse({
       container: { kind: "workstream", id: SPACE_ID },
       itemIds: [],
