@@ -54,6 +54,7 @@ import {
   parseArguments,
   resolveTargets,
   stripJsonComments,
+  wranglerArguments,
 } from "./migrate-d1.mjs";
 
 // ---------------------------------------------------------------------------
@@ -807,6 +808,38 @@ test("an unknown region is refused, naming the ones that exist", () => {
   assert.deepEqual(resolveTargets(discovered, []), discovered);
   assert.deepEqual(resolveTargets(discovered, ["enterprise"]), [{ region: "enterprise" }]);
   assert.throws(() => resolveTargets(discovered, ["apac"]), /apac is not a region here; found global, enterprise/u);
+});
+
+test("the database name lands after the subcommand, whichever subcommand it is", () => {
+  const target = { region: "enterprise", config: "wrangler.enterprise.jsonc", binding: "DB", remote: false };
+  // `d1 execute DB …` is one token deep; `d1 migrations apply DB` is two.
+  // Splicing on a fixed index puts the binding inside `migrations apply`.
+  assert.deepEqual(
+    wranglerArguments(target, ["execute"], ["--json", "--command", "SELECT 1"]).slice(0, 6),
+    ["exec", "wrangler", "d1", "execute", "DB", "--json"],
+  );
+  assert.deepEqual(
+    wranglerArguments(target, ["migrations", "apply"]).slice(0, 6),
+    ["exec", "wrangler", "d1", "migrations", "apply", "DB"],
+  );
+});
+
+test("a local run is pinned to its own state directory and a hosted run is not", () => {
+  const target = { region: "enterprise", config: "wrangler.enterprise.jsonc", binding: "DB" };
+  const local = wranglerArguments({ ...target, remote: false }, ["migrations", "apply"]);
+  assert.ok(local.includes("--local"));
+  assert.deepEqual(local.slice(local.indexOf("--persist-to"), local.indexOf("--persist-to") + 2),
+    ["--persist-to", ".wrangler/state/enterprise"]);
+  assert.deepEqual(local.slice(local.indexOf("--env-file"), local.indexOf("--env-file") + 2),
+    ["--env-file", ".dev.vars.enterprise"]);
+
+  const remote = wranglerArguments({ ...target, remote: true }, ["migrations", "apply"]);
+  assert.ok(remote.includes("--remote"));
+  // A hosted run must not be pointed at local state or local secrets.
+  assert.ok(!remote.includes("--local"));
+  assert.ok(!remote.includes("--persist-to"));
+  assert.ok(!remote.includes("--env-file"));
+  assert.deepEqual(remote.slice(-2), ["--config", "wrangler.enterprise.jsonc"]);
 });
 
 // ---------------------------------------------------------------------------
