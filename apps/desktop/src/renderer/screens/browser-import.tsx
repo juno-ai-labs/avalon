@@ -1,6 +1,7 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { sessionImportCanonicalUrl } from '@rally/contracts/workstream-links';
-import { Check, CircleAlert, Copy, Ellipsis, LoaderCircle, X } from 'lucide-react';
+import { IconCheck, IconClockHour4 } from '@tabler/icons-react';
+import { CircleAlert, Copy, Ellipsis, LoaderCircle, X } from 'lucide-react';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { BrowserImportContext } from '../../common/browser-import';
 import {
@@ -56,7 +57,7 @@ function ImportSteps({ steps }: { steps: readonly SessionImportStep[] }): React.
   const earlier = Math.max(0, steps.length - LISTED_STEPS);
   return <ol aria-live="polite" className="browser-import-steps">
     {earlier > 0 && <li className="is-earlier" key="earlier">
-      <Check aria-hidden="true" size={14} />
+      <IconClockHour4 aria-hidden="true" size={14} />
       <span>{earlier} previous {earlier === 1 ? 'action' : 'actions'}</span>
     </li>}
     {steps.slice(earlier).map((step) => <li className={`is-${step.status}`} key={step.id}>
@@ -64,7 +65,7 @@ function ImportSteps({ steps }: { steps: readonly SessionImportStep[] }): React.
         ? <LoaderCircle aria-label="In progress" className="spin" size={14} />
         : step.status === 'failed'
           ? <CircleAlert aria-label="Failed" size={14} />
-          : <Check aria-label="Done" size={14} />}
+          : <IconCheck aria-label="Done" size={14} />}
       <span>{step.label}</span>
     </li>)}
     {/* Between tools the model is choosing what to do next; the list should not look stalled. */}
