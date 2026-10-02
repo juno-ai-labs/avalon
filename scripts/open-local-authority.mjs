@@ -19,6 +19,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { pnpmExecutable } from "./migrate-d1.mjs";
 import {
   localAuthorityRegions,
   localAuthorityTarget,
@@ -33,7 +34,7 @@ function query(sql, target) {
   let lastError;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
-      const output = execFileSync("pnpm", [
+      const output = execFileSync(pnpmExecutable(), [
         "exec", "wrangler", "d1", "execute", "DB",
         "--config", target.config,
         "--persist-to", target.state,
@@ -45,7 +46,8 @@ function query(sql, target) {
       return JSON.parse(output.slice(start))[0]?.results ?? [];
     } catch (error) {
       lastError = error;
-      execFileSync("sleep", [String(1 + attempt)]);
+      // A synchronous wait without the Unix `sleep` binary, which Windows lacks.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, (1 + attempt) * 1_000);
     }
   }
   throw lastError;
